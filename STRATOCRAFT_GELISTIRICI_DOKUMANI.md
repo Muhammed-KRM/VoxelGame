@@ -2,7 +2,7 @@
 
 > **Sürüm:** 1.2.0  
 > **Doküman tarihi:** 29.10.2026  
-> **Repo:** `https://github.com/Muhammed-KRM/Stratocraft.git`  
+> **Repo:** `https://github.com/Muhammed-KRM/VoxelGame.git`  
 > **Temel tasarım ve matematiksel referans belgeleri (Ayrılmaz Üçlü Anayasa):**  
 > 1. **Oynanış ve Tasarım Anayasası:** [STRATOCRAFT: EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE - v7.0)](file:///d:/oyun/STRATOCRAFT_%20EVRENSEL%20OYUN%20TASARIM%20VE%20MANTIK%20ANAYASASI%20%28GAME%20LOGIC%20BIBLE%29%20%282%29.md)  
 > 2. **Matematiksel Simülasyon ve Voxel Algoritmaları Raporu:** [STRATOCRAFT: ARKA PLAN MATEMATİKSEL SİMÜLASYON VE VOXEL ALGORİTMALARI RAPORU](file:///d:/oyun/STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md)  
@@ -283,6 +283,11 @@ Bu bölümdeki kurallar **pazarlık konusu değildir**. `"ZORUNLU"` olarak işar
    ```
 5. **İnsan Müdahalesiz (`Zero-Touch`) 3B Varlık Üretimi (ZORUNLU):** Hiçbir fazda kullanıcıdan *"Blender'ı açıp şu modeli yap"* veya *"Unity'de şu materyali elle ata"* gibi manuel işlem istenmez. Tüm 3B modeller `Tools/AutonomousAssetFactory/` altındaki Python/Blender Headless/Blockbench/`MidVoxIO` betikleriyle komut satırından üretilir ve `StratocraftAssetPostprocessor.cs` ile otomatik prefab yapılır.
 6. **Yedekli Çalışma (ZORUNLU):** Her fazın son adımı **"Tüm Testleri Çalıştır + Commit + Tag (`v0.X.0`) + GitHub Push"** adımıdır. Testleri geçmeyen kod commit edilmez.
+7. **Her Faz ve Yeni Oturum Öncesi Zorunlu Devir Raporu (`DURUM_VE_DEVIR.md`) Tazelik Kontrolü (ZORUNLU):** Proje birden fazla bilgisayardan (örn. İş Bilgisayarı ↔ Ev Bilgisayarı) geliştirildiği için yapay zeka ajanı **herhangi bir faza (`Faz 0 → Faz 10`) başlamadan veya yeni bir oturumu devralmadan önce** kök dizindeki [DURUM_VE_DEVIR.md](file:///d:/oyun/DURUM_VE_DEVIR.md) devir raporunun varlığını ve Git geçmişini (`git fetch origin`, `git status -sb`, `git log -3 --oneline --date=iso`) kontrol etmek **zorundadır**:
+   - **Eski mi / Yeni mi Tespiti:** Ajan, `DURUM_VE_DEVIR.md` içindeki `Son Güncelleme Tarihi`, `Referans Son Git Commit` ve `Aktif Faz / Durum` alanlarını mevcut `git log` geçmişi ve diskteki dosyalarla (`docs/test-raporlari/faz*-raporu.md` vb.) karşılaştırarak devir raporunun **YENİ (Güncel)** mi yoksa **ESKİ (Geride Kalmış / Bayat)** mi olduğunu kanıtıyla tespit eder.
+   - **Zorunlu Kullanıcı Onayı:** Koda veya kurulumlara dokunmadan önce tespitini kullanıcıya bildirip sorar (*"Devir raporu YENİ/ESKİ görünüyor [neden: ...], dikkate alarak devam edeyim mi?"*).
+   - **Yeni İse Dikkate Alma:** Rapor **YENİ (Güncel)** ise ve kullanıcı onaylarsa, rapordaki *"Kaldığımız Tam Nokta / Sıradaki İlk İş"*, *"Yarım Kalan (`WIP`) Dosyalar"* ve *"Aktif Donanım / Çalışma Kısıtları"* maddelerinin tamamını dikkate alarak kaldığı satırdan devam eder. Rapor **ESKİ** ise kullanıcı onayıyla raporu mevcut kod durumuna eşitleyip devam eder.
+   - **Oturum ve Faz Sonu Güncellemesi:** Her çalışma oturumu sonunda (faz yarım kalmış olsa bile bilgisayarlar arası geçişten önce) ve her faz kapanışında `DURUM_VE_DEVIR.md` güncellenip GitHub'a pushlanır *(Ayrıntılı protokol için bkz. [BILGISAYARLAR_ARASI_GECIS_REHBERI.md](file:///d:/oyun/BILGISAYARLAR_ARASI_GECIS_REHBERI.md))*.
 
 ## 2.2 Kod Kalitesi Prensipleri
 
@@ -405,7 +410,7 @@ Oyundaki her kritik işlem, ağ paketi, hata ve simülasyon aşaması izlenebili
 
 ## 2.10 Git, Commit ve Faz Etiketleme Kuralları
 
-- **Uzak Depo:** `https://github.com/Muhammed-KRM/Stratocraft.git` (`origin`), ana dal `main`.
+- **Uzak Depo:** `https://github.com/Muhammed-KRM/VoxelGame.git` (`origin`), ana dal `main`.
 - **Commit Mesajları (Conventional Commits + Türkçe Açıklama):**
   ```text
   feat(faz-1): 32-bit voxel motoru, 64-bit binary greedy meshing ve domino yıkım fiziği eklendi
@@ -415,6 +420,7 @@ Oyundaki her kritik işlem, ağ paketi, hata ve simülasyon aşaması izlenebili
   docs(adr): ADR-002 32-bit voxel bit-packing kararı eklendi
   ```
 - **Faz Sonu Etiketi:** Her fazın sonunda `git tag -a v0.<faz>.0 -m "Faz <faz> tamamlandı"` ve `git push origin main --tags` çalıştırılır (`Faz 10` sonunda `v1.0.0`).
+- **Bilgisayarlar Arası Oturum Devri (`WIP` Commit ve `DURUM_VE_DEVIR.md`):** Bir faz tamamlanmadan bilgisayar değiştirilecekse (örn. İş PC → Ev PC geçişi), önce [DURUM_VE_DEVIR.md](file:///d:/oyun/DURUM_VE_DEVIR.md) içine kalınan dosya/satır, aktif kısıtlar ve test durumu işlenir, ardından `wip(faz-X): <kısa özet> [devir]` mesajıyla commitlenip `git push origin main` ile gönderilir.
 - **Git Dışı Tutulacaklar (`.gitignore`):** `.env`, `Library/`, `Temp/`, `Obj/`, `Build/`, `Logs/`, `UserSettings/`, `saves/`, `__pycache__/`, `.venv/`, geçici `.blend1` yedekleri git'e **asla girmez**.
 
 ## 2.11 Dokümantasyon ve ADR Kuralları
@@ -1066,11 +1072,14 @@ Stratocraft/
 ├── .editorconfig                                             # (F0) C#, C++20, HLSL ve Python ortak kodlama stili
 ├── README.md                                                 # (F0→F10) Proje tanıtımı, mimari özet, kurulum ve çalıştırma rehberi
 ├── STRATOCRAFT_GELISTIRICI_DOKUMANI.md                       # (F0) BU DOKÜMAN (Ana Geliştirici ve Faz İnşa Anayasası)
-├── BILGISAYARLAR_ARASI_GECIS_REHBERI.md                      # (F0) Bilgisayar A -> Bilgisayar B yedekleme ve kaldığı fazdan devam rehberi
+├── BILGISAYARLAR_ARASI_GECIS_REHBERI.md                      # (F0) İş PC <-> Ev PC sürüm kilidi, GitHub senkron ve kaldığı fazdan devam rehberi
+├── DURUM_VE_DEVIR.md                                         # (F0→F10) Ortak AI hafızası ve faz/oturum öncesi zorunlu devir raporu (Eski/Yeni kontrolü)
 ├── baslat.ps1                                                # (F0) Tek komutla C++ DLL kontrolü, Asset doğrulaması ve oyunu başlatma
 ├── durdur.ps1                                                # (F0) Çalışan yerel sunucu ve arka plan süreçlerini güvenli kapatma
 │
 ├── scripts/                                                  # ===== OTOMASYON, KALİTE KAPISI VE YEDEKLEME BETİKLERİ =====
+│   ├── setup-environment.ps1                                 # (F0) İki bilgisayarda birebir aynı sürüm araç zincirini (Unity 6, C++20, Python, Blender) kurar
+│   ├── sync-pc.ps1                                           # (F0) Sabah/akşam bilgisayar geçişlerinde Pull/Push, DLL/3B varlık yerel üretimi ve devir kontrolü
 │   ├── generate-secrets.ps1                                  # (F0) Rastgele ADMIN_API_KEY ve Ed25519 kontrat anahtarları üretir
 │   ├── build-native.ps1                                      # (F0) CMake + C++20 ile StratocraftNative.dll/.so derler ve Plugins'e kopyalar
 │   ├── generate-assets.ps1                                   # (F0→F2) Faz bazlı otonom 3B model/doku/VAT üretim ve doğrulama hattını çalıştırır
@@ -2727,9 +2736,24 @@ flowchart TD
 
 ---
 
+### Her Faz ve Yeni Oturum Başında Zorunlu Devir Raporu (`DURUM_VE_DEVIR.md`) Tazelik Kontrolü
+
+Hiçbir faza (`Faz 0 → Faz 10`) veya yeni bir çalışma oturumuna aşağıdaki **Devir ve Tazelik Kontrolü** yapılmadan başlanamaz:
+
+1. **Devir Raporu Var mı Kontrolü:** Yapay zeka ajanı kök dizinde [DURUM_VE_DEVIR.md](file:///d:/oyun/DURUM_VE_DEVIR.md) (veya önceki fazın `docs/test-raporlari/faz*-raporu.md`) dosyasının varlığını ve uzak depo durumunu (`git fetch origin`, `git status -sb`, `git log -3 --oneline --date=iso`) kontrol eder.
+2. **Eski mi / Yeni mi Analizi:** `DURUM_VE_DEVIR.md` içindeki `Son Güncelleme Tarihi`, `Referans Son Git Commit` ve `Aktif Faz / Durum` bilgilerini mevcut Git geçmişi ve diskteki dosyalarla karşılaştırır:
+   - Rapor en son commit ile uyumluysa **YENİ (Güncel)** olarak sınıflandırır.
+   - Rapordan sonra repoya yeni commit'ler atılmışsa veya diskte daha ileri faz dosyaları varsa **ESKİ (Bayat / Geride Kalmış)** olarak sınıflandırır.
+3. **Kullanıcıya Sorma ve Uygulama (ZORUNLU):** Ajan, devir raporunun **YENİ** mi **ESKİ** mi olduğunu kanıtıyla kullanıcıya bildirip onay ister:
+   - Rapor **YENİ** ise (ve kullanıcı onaylarsa), rapordaki *"Kaldığımız Tam Nokta / Sıradaki İlk İş"*, *"Yarım Kalan (`WIP`) Dosyalar"* ve *"Aktif Donanım / Çalışma Kısıtları"* maddelerinin tamamını dikkate alarak çalışmaya başlar.
+   - Rapor **ESKİ** ise kullanıcı onayıyla raporu mevcut kod durumuna güncelleyerek faza başlar.
+4. **Kapanışta Devir Güncellemesi:** Oturum biterken (bilgisayar değişimi öncesi `WIP` dahil) ve faz tamamlandığında [DURUM_VE_DEVIR.md](file:///d:/oyun/DURUM_VE_DEVIR.md) güncellenip GitHub'a pushlanır *(Bkz. [BILGISAYARLAR_ARASI_GECIS_REHBERI.md](file:///d:/oyun/BILGISAYARLAR_ARASI_GECIS_REHBERI.md))*.
+
+---
+
 ### Her Faz Sonunda Zorunlu Ortak Kalite Kapısı (`scripts/quality-gate.ps1`)
 
-Hiçbir faz, aşağıdaki **7 kontrolün tamamı yeşil (`PASS`)** olmadan tamamlanmış sayılamaz ve GitHub'a (`https://github.com/Muhammed-KRM/Stratocraft.git`) commitlenemez:
+Hiçbir faz, aşağıdaki **7 kontrolün tamamı yeşil (`PASS`)** olmadan tamamlanmış sayılamaz ve GitHub'a (`https://github.com/Muhammed-KRM/VoxelGame.git`) commitlenemez:
 
 1. **Sıfır Derleme ve Uyarı Hatası:** C++20 `StratocraftNative` (`-Wall -Wextra -Werror`) ve Unity 6 C# derlemesi `0 Error, 0 Warning` ile geçmelidir.
 2. **Otonom 3B Varlık Doğrulaması:** `pytest Tools/AutonomousAssetFactory/tests` tüm `.glb`, `.svox` ve `_VAT.exr` varlıklarının AABB ölçek (`±%2`), pivot, `+Z` yön, soket ve üçgen bütçesi kurallarından geçtiğini doğrulamalıdır.
@@ -2737,7 +2761,7 @@ Hiçbir faz, aşağıdaki **7 kontrolün tamamı yeşil (`PASS`)** olmadan tamam
 4. **3 Katmanlı Loglama Doğrulaması:** Fazda eklenen sistemlerin `telemetry_logs.db` içindeki 3 katmana (`Network`, `Function`, `SimulationPipeline`) log yazdığı ve hassas verileri (`***`) maskelediği doğrulanmalıdır.
 5. **Bellek ve VRAM Bütçesi:** `F3` telemetri ekranında toplam sistem RAM kullanımı `< 2.500 MB`, kaplama VRAM kullanımı `< 16 MB` ve GC Allocation `0 Byte/kare` olmalıdır.
 6. **Kare Süresi (`Frame Time`) Bütçesi:** Hedef test sahnesinde toplam kare süresi `≤ 16.6 ms` (`60+ FPS`) olmalıdır.
-7. **Git Durumu ve Uzak Depo Eşitlemesi:** `.env` veya `saves/` gibi çalışma zamanı dosyalarının yanlışlıkla stage edilmediği (`git status`) doğrulanmalı, faz commit mesajı ve etiketi (`tag`) oluşturulup `https://github.com/Muhammed-KRM/Stratocraft.git` deposuna `git push origin main --tags` ile gönderilmelidir.
+7. **Git Durumu ve Uzak Depo Eşitlemesi:** `.env` veya `saves/` gibi çalışma zamanı dosyalarının yanlışlıkla stage edilmediği (`git status`) doğrulanmalı, faz commit mesajı ve etiketi (`tag`) oluşturulup `https://github.com/Muhammed-KRM/VoxelGame.git` deposuna `git push origin main --tags` ile gönderilmelidir.
 
 ---
 
@@ -2781,7 +2805,7 @@ Hiçbir faz, aşağıdaki **7 kontrolün tamamı yeşil (`PASS`)** olmadan tamam
    - *(Not: Unity 6 Editör ve IL2CPP / Dedicated Server modüllerini AI terminalden otomatik kurabilir; dilerseniz Unity Hub > Installs ekranından da onaylayabilirsiniz).*
 3. **Ekran Kartı (GPU) Sürücüsü ve GitHub Kimlik Doğrulaması:**
    - Harici NVIDIA ekran kartınız varsa güncel **NVIDIA Studio / Game Ready Driver** (`550+`) sürücüsünü kurun *(Dahili GPU / 8 GB RAM sistemlerde bu adım atlanır; Otonom 3B Fabrika otomatik olarak `Yol A: CPU Blender bpy` moduna geçer)*.
-   - GitHub uzak deposuna (`https://github.com/Muhammed-KRM/Stratocraft.git`) push yapılabilmesi için terminalde bir kez `gh auth login` veya Git Credential Manager penceresini onaylayın.
+   - GitHub uzak deposuna (`https://github.com/Muhammed-KRM/VoxelGame.git`) push yapılabilmesi için terminalde bir kez `gh auth login` veya Git Credential Manager penceresini onaylayın.
 
 ##### B. Otomatik Kurulacaklar (Yapay Zekanın Komutla / Script ile Kuracağı Uygulamalar)
 Yapay zeka ajanı, `Faz 0` başlangıcında aşağıdaki PowerShell betiğini çalıştırarak tüm motorları, derleyicileri ve 3B araçları tek seferde kurar:
@@ -2970,11 +2994,11 @@ Ve ajan `Packages/manifest.json` dosyasını doğrudan yazarak tüm DOTS, Burst,
 ---
 
 ### 5.1.1 Fazın Amacı
-Oyunun üzerine inşa edileceği mühendislik temelini kurmak: Git deposunu başlatıp `https://github.com/Muhammed-KRM/Stratocraft.git` uzak deposuna bağlamak, Unity 6 (`6000.0 LTS`) Hibrit DOTS paketlerini ve `.asmdef` sınırlarını oluşturmak, C++20 `StratocraftNative.dll` SIMD eklentisini derlemek, `%100` otonom 3B varlık fabrikasının çekirdeğini (`asset_validator.py`, `contact_sheet_renderer.py`, `256x16 LUT`, `32x MicroDetail Array`) çalıştırmak, `< 16 MB VRAM` tüketen `StratocraftUberShader.hlsl` gölgelendiricisini, 3 katmanlı SQLite telemetri loglayıcısını ve `F3` canlı performans ekranını ayağa kaldırmak.
+Oyunun üzerine inşa edileceği mühendislik temelini kurmak: Git deposunu başlatıp `https://github.com/Muhammed-KRM/VoxelGame.git` uzak deposuna bağlamak, Unity 6 (`6000.0 LTS`) Hibrit DOTS paketlerini ve `.asmdef` sınırlarını oluşturmak, C++20 `StratocraftNative.dll` SIMD eklentisini derlemek, `%100` otonom 3B varlık fabrikasının çekirdeğini (`asset_validator.py`, `contact_sheet_renderer.py`, `256x16 LUT`, `32x MicroDetail Array`) çalıştırmak, `< 16 MB VRAM` tüketen `StratocraftUberShader.hlsl` gölgelendiricisini, 3 katmanlı SQLite telemetri loglayıcısını ve `F3` canlı performans ekranını ayağa kaldırmak.
 
 ### 5.1.2 Oluşturulacak / Güncellenecek Dosyalar
-- Kök: `.env.example`, `.gitignore`, `.gitattributes`, `.editorconfig`, `README.md`, `STRATOCRAFT_GELISTIRICI_DOKUMANI.md`, `BILGISAYARLAR_ARASI_GECIS_REHBERI.md`, `baslat.ps1`, `durdur.ps1`
-- Betikler: `scripts/generate-secrets.ps1`, `scripts/build-native.ps1`, `scripts/generate-assets.ps1`, `scripts/run-tests.ps1`, `scripts/quality-gate.ps1`
+- Kök: `.env.example`, `.gitignore`, `.gitattributes`, `.editorconfig`, `README.md`, `STRATOCRAFT_GELISTIRICI_DOKUMANI.md`, `BILGISAYARLAR_ARASI_GECIS_REHBERI.md`, `DURUM_VE_DEVIR.md`, `baslat.ps1`, `durdur.ps1`
+- Betikler: `scripts/setup-environment.ps1`, `scripts/sync-pc.ps1`, `scripts/generate-secrets.ps1`, `scripts/build-native.ps1`, `scripts/generate-assets.ps1`, `scripts/run-tests.ps1`, `scripts/quality-gate.ps1`
 - Dokümanlar: `docs/arka-plan/*`, `docs/kararlar/ADR-000-sablon.md`, `docs/kararlar/ADR-001-unity6-dots-burst-ve-cpp20-secimi.md`
 - Otonom 3B Fabrika: `Tools/AutonomousAssetFactory/requirements.txt`, `pyproject.toml`, `Stratocraft_Asset_Manifest.json`, `agent_generate_asset.py`, `asset_validator.py`, `contact_sheet_renderer.py`, `textures/bake_material_lut.py`, `textures/bake_micro_detail_array.py`, `tests/test_manifest_integrity.py`, `tests/test_asset_validator.py`
 - C++20 Native: `NativePlugins/StratocraftNative/CMakeLists.txt`, `include/stratocraft_native_export.h`, `tests/native_unit_tests.cpp`
@@ -2984,7 +3008,7 @@ Oyunun üzerine inşa edileceği mühendislik temelini kurmak: Git deposunu baş
 
 1. **Adım 1 — Git Başlatma ve Uzak Depo (`Remote`) Kurulumu:**
    - Proje kök dizininde (`d:\oyun`) Git henüz başlatılmamışsa `git init -b main` çalıştırılır.
-   - Uzak depo bağlantısı `git remote add origin https://github.com/Muhammed-KRM/Stratocraft.git` (mevcutsa `git remote set-url origin https://github.com/Muhammed-KRM/Stratocraft.git`) olarak ayarlanır.
+   - Uzak depo bağlantısı `git remote add origin https://github.com/Muhammed-KRM/VoxelGame.git` (mevcutsa `git remote set-url origin https://github.com/Muhammed-KRM/VoxelGame.git`) olarak ayarlanır.
    - `.gitignore`, `.gitattributes`, `.editorconfig` ve `.env.example` dosyaları Bölüm 4.9 ve 4.13.1 kurallarına göre yazılır; `scripts/generate-secrets.ps1` çalıştırılarak yerel `.env` üretilir.
 2. **Adım 2 — C++20 `StratocraftNative` İskeleti ve Derleme Hattı:**
    - `NativePlugins/StratocraftNative/CMakeLists.txt` içinde C++20 standardı, AVX2/FMA komut seti bayrakları, `FastNoise2`, `Zstd`, `LZ4`, `xxHash` ve `GoogleTest` hedefleri tanımlanır.
