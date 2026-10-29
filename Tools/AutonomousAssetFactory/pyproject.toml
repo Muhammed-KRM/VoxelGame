@@ -1,0 +1,17 @@
+[project]
+name = "stratocraft-autonomous-asset-factory"
+version = "0.1.0"
+description = "Stratocraft %100 Otonom 3B Model, Kuresel LUT/MicroDetail Doku ve Dogrulama Fabrikasi"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

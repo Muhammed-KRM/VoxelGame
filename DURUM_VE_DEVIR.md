@@ -14,53 +14,50 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#001` |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-29T17:15:00+03:00` |
-| **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
-| **Referans Son Git Commit** | `6895254` (`docs(anayasa): Stratocraft uclu tasarim, matematik ve gelistirici anayasasi ilk surumu eklendi`) üzerine güncellendi |
+| **Devir Numarası** | `#002` |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-29T17:56:00+03:00` |
+| **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows 11`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
+| **Referans Son Git Commit / Etiket** | `v0.0.1-faz0` (`feat(faz0): proje iskeleti, C++20 SIMD cekirdegi, otonom 3B fabrika, UberShader ve 3 katmanli loglama` — `56921b4` üzerine işlendi) |
 | **Aktif Aşama** | `Aşama 1 — Temel Mimari, Hazır Dünya, 3B Modeller ve Yaşayan Temel Dünya (Faz 0 – Faz 2)` |
-| **Aktif Faz** | `Faz 0 — Proje İskeleti, C++20 SIMD Çekirdeği, Otonom 3B Fabrika, Uber-Shader ve 3 Katmanlı Loglama` |
-| **Faz Durumu** | `BASLAMADI (FAZ_0_HAZIRLIK_TAMAMLANDI)` |
+| **Son Tamamlanan Faz** | `Faz 0 — Proje İskeleti, C++20 SIMD Çekirdeği, Otonom 3B Fabrika, Uber-Shader ve 3 Katmanlı Loglama` |
+| **Faz Durumu** | `FAZ_0_TAMAMLANDI (%100 TEST & KALITE KAPISI GECTI — FAZ_1_ICIN_KULLANICI_ONAYI_BEKLENIYOR)` |
 
 ---
 
-## 2. En Son Tamamlanan İşlemler
+## 2. En Son Tamamlanan İşlemler (`Faz 0` Kapanışı)
 
-1. **Üçlü Anayasa Senkronizasyonu:**
-   - `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md`, `STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md` ve `STRATOCRAFT_GELISTIRICI_DOKUMANI.md` arasındaki kataloglar (`75 Batarya`, `25 Mayın & 6 Tuzak Çekirdeği`, `13 Boss`, `21 Yaratık`, `12 Felaket`, `4 Kuşatma Silahı`, `Klan KGP/Ritüeller`, `Two-Phase Domino DAG`) eşitlendi.
-2. **GitHub Uzak Depo Bağlantısı:**
-   - Proje `https://github.com/Muhammed-KRM/VoxelGame.git` (`origin/main`) uzak deposuna bağlandı ve ilk anayasa commit'i (`6895254`) gönderildi.
-   - `STRATOCRAFT_GELISTIRICI_DOKUMANI.md` içindeki repo URL referansları `VoxelGame.git` olarak güncellendi.
-3. **İki Bilgisayarlı (Sabah İş ↔ Akşam Ev) Çalışma ve Devir Altyapısı:**
-   - `BILGISAYARLAR_ARASI_GECIS_REHBERI.md` hazırlandı.
-   - Bu ortak yapay zeka hafıza dosyası (`DURUM_VE_DEVIR.md`) oluşturuldu.
-   - `STRATOCRAFT_GELISTIRICI_DOKUMANI.md` içine **"Her Faz ve Oturum Öncesi Zorunlu Devir Raporu Tazelik Kontrolü (Eski/Yeni Tespiti + Kullanıcı Onayı)"** kuralı eklendi.
+1. **Sıfır-UAC Araç Zinciri ve Çoklu PC Otomasyonu:**
+   - `Git LFS`, `CMake 4.4.4`, `Ninja`, `Astral uv`, `Python 3.11.18 (.venv)`, `SQLite 3.53.0 CLI`, `Node.js LTS`, `.NET SDK 10.0`, `Unity Hub 3.22.5`, `Blockbench 5.2.2`, taşınabilir `llvm-mingw` (`Clang 23 C++20 UCRT x86_64`) ve taşınabilir `Blender 4.2.16 LTS` yeniden başlatma veya UAC engeli olmadan kuruldu.
+   - Tüm `.ps1` betikleri (`setup-environment.ps1`, `sync-pc.ps1`, `generate-secrets.ps1`, `build-native.ps1`, `generate-assets.ps1`, `run-tests.ps1`, `quality-gate.ps1`, `backup.ps1`, `restore.ps1`, `verify-integrity.ps1`) Windows PowerShell 5.1 uyumlu saf ASCII ve `%100` göreceli yol (`$PSScriptRoot`) olarak tamamlandı.
+2. **C++20 `StratocraftNative.dll` (`6/6` `ctest` PASS):**
+   - `AVX2/FMA` 6 halkalı arazi/mağara/14 cevher üretimi, `LZ4 + Zstd + XXH64` bölge sıkıştırma, `Monocypher Ed25519` kontrat imzalama ve gömülü `SQLite 3.53.0 WAL` telemetri motoru `-Wall -Wextra -Werror` ile `0 Hata / 0 Uyarı` derlendi.
+3. **Otonom 3B ve Küresel Doku Fabrikası (`5/5` `pytest` PASS, `ruff` PASS, `3.132 MB` VRAM):**
+   - `256×16 Material LUT`, `16× MatCap`, `32× MicroDetail Array` ve `64³ Noise3D` fırınlandı (**toplam `3.132 MB / 16.000 MB`**).
+   - `faz0_calibration_anvil_pedestal.glb` üretildi, `asset_validator.py` doğrulamasından geçti ve 4 açılı `512×512` PNG öz-denetim renderı görsel olarak kontrol edildi.
+4. **Unity 6 Çekirdek C#, `StratocraftUberShader.hlsl`, 3 Katmanlı Loglama ve `F3` HUD (`5/5` NUnit PASS):**
+   - `FixedQ20_12`, `MaterialIdCatalog`, `EnvLoader`, `SensitiveDataMasker`, `SqliteTelemetryLogger`, `StratocraftNativeBindings`, `StratocraftUberShader.hlsl/.shader`, `LowSpecGraphicsScaler`, `ServerBootstrapAndLoopback`, `F3TelemetryOverlayUi`, `StratocraftAssetPostprocessor` ve `StratocraftProjectSettingsEnforcer` yazıldı ve `quality-gate.ps1 -Phase 0` `%100` geçti.
 
 ---
 
-## 3. Kaldığımız Tam Nokta ve Sıradaki İlk İş (`Faz 0` Başlangıcı)
+## 3. Kaldığımız Tam Nokta ve Sıradaki İlk İş (`Faz 1` Başlangıcı)
 
-1. **`Faz 0` Ortam ve Araç Zinciri Kurulumu (`Bölüm 5.1.0`):**
-   - İki bilgisayarda birebir aynı sürümleri kuracak `scripts/setup-environment.ps1` ve sabah/akşam geçişlerini yönetecek `scripts/sync-pc.ps1` betiklerinin yazılması.
-   - Kullanıcı kurulum onayı verdiğinde eksik araçların (`CMake`, `Ninja`, `LLVM`, `VS 2022 C++ Build Tools`, `Python 3.11 + uv`, `Node.js LTS`, `Git LFS`, `SQLite`, `Blender 4.2 LTS`, `Blockbench`, `Material Maker`, `Unity Hub` ve `Unity 6000.0.25f1`) otomatik kurulması.
-2. **`Faz 0` Kod ve Proje İskeleti (`Bölüm 5.1.1 – 5.1.5`):**
-   - Kök yapılandırmalar: `.gitignore`, `.gitattributes`, `.editorconfig`, `.env.example`, `README.md`, `baslat.ps1`, `durdur.ps1`.
-   - `NativePlugins/StratocraftNative/` C++20 SIMD eklenti iskeleti + `GoogleTest` (`ctest`) doğrulaması (`scripts/build-native.ps1`).
-   - `Tools/AutonomousAssetFactory/` Python çekirdeği (`asset_validator.py`, `contact_sheet_renderer.py`, `< 6.2 MB VRAM` küresel `LUT / MatCap / MicroDetail` dokularının fırınlanması + `pytest`).
-   - Unity 6 Hibrit DOTS paket manifestosu (`Packages/manifest.json`), `StratocraftUberShader.hlsl`, `StratocraftAssetPostprocessor.cs`, 3 katmanlı `SqliteTelemetryLogger.cs`, `ServerBootstrapAndLoopback.cs` ve `F3TelemetryOverlayUi.cs`.
-   - `scripts/quality-gate.ps1 -Phase 0` geçişi, `docs/test-raporlari/faz0-raporu.md` yazımı ve `v0.0.1-faz0` etiketiyle push.
+- **Yarım Kalan (`WIP`) Dosya:** Yoktur (`Faz 0` temiz kapatılmış ve etiketlenmiştir).
+- **Bekleyen Tek Seferlik Kullanıcı Manuel İşlemi:**
+  - `Unity Hub` açılarak Unity ID girişi yapılması, ücretsiz **Personal Lisans** aktivasyonu ve **`Unity 6000.0.25f1`** (*Windows Build Support IL2CPP* + *Dedicated Server*) kurulumunun başlatılması *(Not: `Faz 1` C++20 ve C# çekirdek voxel/akışkan/domino matematik ve birim testleri Unity Editör kurulumu tamamlanırken bile `dotnet test` üzerinden bloklanmadan geliştirilebilir)*.
+- **Kullanıcı `"Faz 1'e geç"` Onayı Verdiğinde Başlanacak İş (`Bölüm 5.2`):**
+  1. `Assets/_Stratocraft/Voxel/`: `32-bit Voxel` (`VoxelCell.cs`, `VoxelBitUtility.cs`), `16×16×16` Sub-Chunk başına `4.096` mikro-blok havuzu (`MicroVoxelPool4096.cs`), `< 0.15 ms` 64-Bit `BinaryGreedyMeshingJob.cs` ve `±4.096m` `K*32m` `ChunkSnappedFloatingOriginSystem.cs`.
+  2. `Assets/_Stratocraft/Physics/`: `16-bit` sonlu akışkanlar (`Water >= 128` & `Lava >= 128` stokiyometrik Doğal Obsidyen) ve `< 2.0 ms` İki Aşamalı Domino yıkım fiziği (`GeodesicSupportDijkstraJob.cs` + `TributaryLoadDagJob.cs` + `GreedyBoxFractureJob.cs`, `<= 12` konveks parça).
+  3. `Assets/_Stratocraft/WorldGen/` & `RegionFileStore.cs`: 6 zorluk halkası (`0–18.000m`), 14 cevher dağılımı (`Y=+300..-105`), 4 mevsim döngüsü ve `.sregion` (`LZ4/Zstd + XXH64`) kayıt sistemi.
 
 ---
 
 ## 4. Aktif Donanım, Performans ve Çalışma Kısıtları (DİKKATE ALINMASI ZORUNLU)
 
-- **Çoklu Bilgisayar Uyumluluğu (`İş PC ↔ Ev PC`):**
-  - Hiçbir dosyada mutlak klasör yolu (`D:\oyun` vb.) kullanılmayacak; tüm scriptler `$PSScriptRoot` / göreli yol kullanacak.
-  - Her iki bilgisayarda da Unity sürümü kesin olarak **`6000.0.25f1`** sürümüne sabitlenecek.
+- **Çoklu Bilgisayar Uyumluluğu (`Sabah İş PC ↔ Akşam Ev PC`):**
+  - İş bilgisayarında ilk kez oturum açıldığında önce `git pull origin main`, ardından `powershell -ExecutionPolicy Bypass -File .\scripts\setup-environment.ps1` ve `.\scripts\sync-pc.ps1 -Pull` çalıştırılmalıdır.
+  - Hiçbir dosyada mutlak klasör yolu (`D:\oyun` vb.) kullanılmayacak; tüm `.ps1` betikleri saf ASCII kalacaktır.
 - **3B Varlık Fabrikası Modu (`Yol A` Seçimi):**
-  - Ev bilgisayarında `NVIDIA GTX 1650 (4 GB VRAM)` bulunduğu ve iki bilgisayar arasında `%100` deterministik çıktı istendiği için `25–30 GB` boyutundaki ağır CUDA / `TRELLIS` / `TripoSG` ağırlıkları **indirilmeyecek**; Otonom 3B Fabrika hızlı **`Yol A (Headless Blender 4.2 + Blockbench + MidVoxIO)`** modunda çalıştırılacak.
-- **Sistem Yükü Koruması (Ev PC):**
-  - Kullanıcı o sırada video kurgusu (edit/render) yapıyorsa ağır kurulumlar (`VS Build Tools`, `Unity 6`) veya ağır derlemeler sorulmadan başlatılmayacak; yalnızca kullanıcı *"kurulumları başlatabilirsin"* dediğinde çalıştırılacak (saf kod/metin dosyası yazımı `%0` yükle yapılabilir).
+  - İki bilgisayar arasında `%100` deterministik çıktı ve düşük VRAM uyumu için ağır `TRELLIS / TripoSG` ağırlıkları indirilmez; `Yol A (Headless Blender 4.2 + Blockbench + Python trimesh)` kullanılır.
 
 ---
 
@@ -68,8 +65,8 @@
 
 | Faz | Başlık | Durum | Son Etiket / Commit | Faz Test Raporu |
 | :--- | :--- | :--- | :--- | :--- |
-| **Faz 0** | Proje İskeleti, C++20 SIMD, Otonom 3B Fabrika, Uber-Shader, 3 Katmanlı Loglama | ⏳ Başlamak Üzere | — | — |
-| **Faz 1** | 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi | ⬜ Bekliyor | — | — |
+| **Faz 0** | Proje İskeleti, C++20 SIMD, Otonom 3B Fabrika, Uber-Shader, 3 Katmanlı Loglama | ✅ Tamamlandı | `v0.0.1-faz0` | [`docs/test-raporlari/faz0-raporu.md`](docs/test-raporlari/faz0-raporu.md) |
+| **Faz 1** | 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi | ⏳ Onay Bekliyor | — | — |
 | **Faz 2** | Otonom 3B Varlıklar, Fiziksel Karakter, 3B Çanta, Madde Kristali ve Canlılar | ⬜ Bekliyor | — | — |
 | **Faz 3** | Temel Üretim, Hologram İnşa, `3D Çit BFS` Klan, KGP ve 6 Fiziksel Ritüel | ⬜ Bekliyor | — | — |
 | **Faz 4** | `240 Hz` Yönlü Savaş, 15 Parça Zırh, GPU Uzuv Kopması ve `Offline Sleeper` | ⬜ Bekliyor | — | — |

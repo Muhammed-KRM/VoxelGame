@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": "Stratocraft",
+  "vramTextureBudgetMB": 16.0,
+  "assets": [
+    {
+      "assetId": "faz0_calibration_anvil_pedestal",
+      "category": "CalibrationProp",
+      "phase": 0,
+      "generatorPath": "PathA_ProceduralGlb",
+      "targetDimensionsMeters": { "x": 0.80, "y": 0.90, "z": 0.50 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 240, "lod1": 120, "lod2": 48 },
+      "defaultMaterialId": 51,
+      "requiredSockets": [
+        "Socket_Interact",
+        "Socket_AnvilTop"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "weapon_hilt_ironwood_longsword",
+      "category": "WeaponHilt",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.24, "y": 0.32, "z": 0.05 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 320, "lod1": 160, "lod2": 60 },
+      "defaultMaterialId": 71,
+      "requiredSockets": [
+        "Socket_Grip_Main",
+        "Socket_Grip_Offhand",
+        "Socket_VoxelBlade"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "struct_clan_crystal_lv1_to_lv5",
+      "category": "ClanStructure",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 1.60, "y": 2.80, "z": 1.60 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 950, "lod1": 480, "lod2": 180 },
+      "defaultMaterialId": 41,
+      "requiredSockets": [
+        "Socket_Interact",
+        "Socket_RitualCore"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    }
+  ]
+}

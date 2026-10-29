@@ -1,0 +1,26 @@
+{
+  "name": "Stratocraft.Tests.EditMode",
+  "rootNamespace": "Stratocraft.Tests.EditMode",
+  "references": [
+    "Stratocraft.Core",
+    "Stratocraft.Rendering",
+    "Stratocraft.Networking",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "nunit.framework.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

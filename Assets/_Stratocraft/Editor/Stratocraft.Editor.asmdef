@@ -1,0 +1,19 @@
+{
+  "name": "Stratocraft.Editor",
+  "rootNamespace": "Stratocraft.Editor",
+  "references": [
+    "Stratocraft.Core",
+    "Stratocraft.Rendering"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

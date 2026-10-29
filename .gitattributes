@@ -1,0 +1,41 @@
+# ==============================================================================
+# Stratocraft — Satır Sonu ve İkili Dosya Kuralları (.gitattributes)
+# ==============================================================================
+
+* text=auto eol=lf
+
+# Windows Betikleri
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Kaynak Kodlar ve Şemalar
+*.cs text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.hlsl text eol=lf
+*.shader text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.asmdef text eol=lf
+
+# Unity YAML Varlıkları
+*.meta text eol=lf
+*.unity text merge=unityyamlmerge eol=lf
+*.prefab text merge=unityyamlmerge eol=lf
+*.asset text merge=unityyamlmerge eol=lf
+*.mat text merge=unityyamlmerge eol=lf
+
+# İkili Dosyalar
+*.png binary
+*.jpg binary
+*.dds binary
+*.exr binary
+*.glb binary
+*.vox binary
+*.svox binary
+*.dll binary
+*.so binary

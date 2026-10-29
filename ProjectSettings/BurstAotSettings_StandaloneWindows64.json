@@ -1,0 +1,14 @@
+{
+  "MonoBehaviour": {
+    "Version": 4,
+    "EnableBurstCompilation": true,
+    "EnableOptimizations": true,
+    "EnableSafetyChecks": false,
+    "EnableDebugInAllBuilds": false,
+    "DebugDataKind": 1,
+    "UsePlatformSDKLinker": true,
+    "TargetCpu": "X64_SSE4, AVX2",
+    "FloatMode": "Fast",
+    "FloatPrecision": "Standard"
+  }
+}

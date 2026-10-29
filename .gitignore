@@ -1,0 +1,99 @@
+# ==============================================================================
+# Stratocraft — Git Dışlama Kuralları (.gitignore)
+# ==============================================================================
+
+# ---------- Gizli Anahtarlar & Yerel Ortam ----------
+.env
+.env.local
+.env.*.local
+
+# ---------- Unity 6 Otomatik Üretilen Klasörler ----------
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+Assets/AssetStoreTools*
+/*.csproj
+/*.unityproj
+/*.sln
+!Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj
+.agents/skills/unity-official-skills/
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crash.dmp
+
+# ---------- Dünya Kayıtları, Telemetri Veritabanları & Yedekler ----------
+[Ss]aves/
+backups/
+BuildLogs/
+*.sregion
+*.sregion.bak
+*.db
+*.db-shm
+*.db-wal
+*.mpack
+
+# ---------- C++20 StratocraftNative Derleme Çıktıları ----------
+NativePlugins/StratocraftNative/build/
+NativePlugins/StratocraftNative/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Assets/Plugins/x86_64/*.dll
+Assets/Plugins/x86_64/*.so
+Assets/Plugins/x86_64/*.dylib
+Assets/Plugins/x86_64/*.pdb
+Assets/Plugins/x86_64/*.exp
+Assets/Plugins/x86_64/*.lib
+
+# ---------- Python 3.11 & Otonom 3B Fabrika Yerel Ortamı ----------
+.venv/
+Tools/AutonomousAssetFactory/.venv/
+Tools/bin/
+Tools/ai_models/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------- Ağır Üretilmiş İkili 3B/Doku Çıktıları (Deterministik Yerel Üretim — LFS Kotası Koruması) ----------
+Assets/Art/Generated/**/*.glb
+Assets/Art/Generated/**/*.dds
+Assets/Art/Generated/**/*.exr
+Assets/Art/Generated/**/*.bin
+Assets/Art/Generated/**/*.png
+*.blend1
+*.blend2
+
+# ---------- Bağımsız .NET Çekirdek Test Çıktıları ----------
+Tests/StandaloneCoreTests/bin/
+Tests/StandaloneCoreTests/obj/
+
+# ---------- İşletim Sistemi & Editör ----------
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vs/
+.idea/
