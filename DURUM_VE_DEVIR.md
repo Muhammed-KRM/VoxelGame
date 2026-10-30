@@ -13,12 +13,13 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#007` (Yeni Sohbet Geçişi Devri) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T16:25:00+03:00` |
+| **Devir Numarası** | `#008` (Faz 1 & Faz 2 Mimari Denetim ve Çözüm Raporları Tamamlandı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T16:55:00+03:00` |
 | **Ortam / Donanım** | `EV-PC` (`Windows 11 Pro`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1`) |
-| **Son Git Commit (`HEAD`)** | `e212451 fix(unity-stage1): .NET Standard 2.1 uyumlulugu (0 Error/0 Warning) ve StratocraftStage1Showcase canli 3B dunya/varlik sahnesi` |
-| **Mevcut Çalışma Aşaması** | `Aşama 1 Görsel Düzeltmeleri (Game Logic Bible Uyumlu Faceted Low-Poly) -> Sıradaki: Aşama 2 (Faz 3)` |
+| **Son Git Commit (`HEAD`)** | `552ec33 docs(mimari): Faz 1 ve Faz 2 sorun tespiti, alt ajan arastirmalari ve cozum mimarisi raporlari eklendi` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Kök Neden Denetimi ve Çözüm Mimarisi Tamamlandı -> Sıradaki: Paket 1 (URP 17 & Uber-Shader) ve Paket 2 (Burst Padded Surface Nets)` |
 | **Aktif Test Durumu** | `24/24 C# NUnit PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS` (`0 Hata, 0 Uyarı`) |
+| **Tamamlanan Mimari Rapor** | [`docs/FAZ1_FAZ2_SORUN_VE_COZUM_MIMARI_RAPORU.md`](docs/FAZ1_FAZ2_SORUN_VE_COZUM_MIMARI_RAPORU.md) + 6 Alt Ajan Araştırması (`docs/arastirma/`) |
 
 ---
 
