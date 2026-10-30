@@ -15,8 +15,7 @@ namespace Stratocraft.Editor
     {
         private const string GeneratedRootPrefix = "Assets/Art/Generated/";
         private const string GeneratedTexturesPrefix = "Assets/Art/Generated/Textures/";
-        private const string SharedUberMaterialPath = "Assets/Art/Generated/Materials/M_Stratocraft_UberMaterial.mat";
-        private const string UberShaderName = "Stratocraft/UberShader_UVFree";
+        private const string SharedUberMaterialPath = StratocraftProjectSettingsEnforcer.SharedUberMaterialPath;
 
         private void OnPreprocessModel()
         {
@@ -66,7 +65,9 @@ namespace Stratocraft.Editor
                 return;
             }
 
-            Material? sharedMat = GetOrCreateSharedUberMaterial();
+            // Unity 6 AssetDatabase v2 kurali: OnPostprocessModel icinde AssetDatabase.CreateAsset cagrilamaz.
+            // Materyal yalnizca salt-okunur yuklenir; henuz olusmamissa delayCall uzerinden uretilip model reimport edilir.
+            Material? sharedMat = AssetDatabase.LoadAssetAtPath<Material>(SharedUberMaterialPath);
             if (sharedMat != null)
             {
                 Renderer[] renderers = rootObject.GetComponentsInChildren<Renderer>(includeInactive: true);
@@ -74,6 +75,19 @@ namespace Stratocraft.Editor
                 {
                     renderers[i].sharedMaterial = sharedMat;
                 }
+            }
+            else
+            {
+                string capturedPath = assetPath;
+                EditorApplication.delayCall += () =>
+                {
+                    if (StratocraftProjectSettingsEnforcer.EnsureSharedUberMaterial() != null &&
+                        !string.IsNullOrEmpty(capturedPath) &&
+                        AssetDatabase.LoadMainAssetAtPath(capturedPath) != null)
+                    {
+                        AssetDatabase.ImportAsset(capturedPath, ImportAssetOptions.ForceUpdate);
+                    }
+                };
             }
 
             // Uzuv kopma kapaklarini (Socket_GoreCap_*) normal durumda gizle
@@ -85,50 +99,6 @@ namespace Stratocraft.Editor
                 {
                     node.gameObject.SetActive(false);
                 }
-            }
-        }
-
-        private static Material? GetOrCreateSharedUberMaterial()
-        {
-            Material? existing = AssetDatabase.LoadAssetAtPath<Material>(SharedUberMaterialPath);
-            if (existing != null)
-            {
-                return existing;
-            }
-
-            Shader? shader = Shader.Find(UberShaderName);
-            if (shader == null)
-            {
-                return null;
-            }
-
-            EnsureFolderExists("Assets/Art/Generated/Materials");
-            var created = new Material(shader)
-            {
-                name = "M_Stratocraft_UberMaterial",
-                enableInstancing = true
-            };
-            AssetDatabase.CreateAsset(created, SharedUberMaterialPath);
-            return created;
-        }
-
-        private static void EnsureFolderExists(string folderPath)
-        {
-            if (AssetDatabase.IsValidFolder(folderPath))
-            {
-                return;
-            }
-
-            string[] parts = folderPath.Split('/');
-            string current = parts[0];
-            for (int i = 1; i < parts.Length; i++)
-            {
-                string next = current + "/" + parts[i];
-                if (!AssetDatabase.IsValidFolder(next))
-                {
-                    AssetDatabase.CreateFolder(current, parts[i]);
-                }
-                current = next;
             }
         }
     }

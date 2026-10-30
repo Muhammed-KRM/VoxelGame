@@ -1,12 +1,12 @@
 # 📌 Stratocraft — Canlı Proje Durumu ve Bilgisayarlar Arası Yapay Zeka Devir Raporu (`DURUM_VE_DEVIR.md`)
 
 > [!IMPORTANT]
-> **YAPAY ZEKA AJANI İÇİN ZORUNLU BAŞLANGIÇ TALİMATI (HER OTURUM VE HER FAZ ÖNCESİ):**
-> 1. Herhangi bir faza (`Faz 0 → Faz 10`) başlamadan veya yeni bir oturum devralmadan önce `git fetch origin` (ağ açıksa), `git status -sb` ve `git log -3 --oneline --date=iso` komutlarını çalıştırarak bu dosyadaki **Son Güncelleme Tarihi** ve **Referans Git Commit** alanlarını mevcut repo geçmişiyle karşılaştır.
-> 2. Bu devir raporunun **YENİ (Güncel)** mi yoksa **ESKİ (Geride Kalmış / Bayat)** mi olduğunu tespit et ve **koda dokunmadan önce kullanıcıya sor**:
->    - **YENİ (Güncel) ise:** Özeti kullanıcıya bildir, onayını al ve aşağıdaki **"Sıradaki İlk İş"** ile **"Aktif Kısıtlar / Özel Notlar"** maddelerinin tamamını dikkate alarak kaldığın satırdan devam et.
+> **YAPAY ZEKA AJANI İÇİN ZORUNLU BAŞLANGIÇ TALİMATI (HER YENİ SOHBET, BİLGİSAYAR GEÇİŞİ VE FAZ ÖNCESİ):**
+> 1. Herhangi bir faza (`Faz 0 → Faz 10`) başlamadan veya yeni bir sohbet/oturum devralmadan önce `git status -sb` ve `git log -5 --oneline --date=iso` komutlarını çalıştırarak bu dosyadaki **Son Güncelleme Tarihi** ve **Devir Commit Mesajı** alanlarını mevcut repo geçmişiyle karşılaştır.
+> 2. Bu devir raporunun **YENİ (Güncel)** mi yoksa **ESKİ (Geride Kalmış / Bayat)** mi olduğunu tespit et ve **koda dokunmadan önce kullanıcıya kısaca özetleyip sor**:
+>    - **YENİ (Güncel) ise:** Önceki sohbette nelerin tamamlandığını ve sıradaki adımın ne olduğunu 4-5 satırla çok kısa özetle, kullanıcının onayını iste ve aşağıdaki **"Kullanıcı Çalışma & İletişim Tercihleri"** ile **"Sıradaki İlk İş"** maddelerinin tamamına uyarak devam et.
 >    - **ESKİ (Bayat) ise:** Rapordan sonra atılmış yeni commit'leri kullanıcıya göster, eski raporu baz almayacağını belirt ve kullanıcı onayıyla bu dosyayı güncel duruma eşitleyip devam et.
-> 3. Her çalışma oturumu bittiğinde (faz yarım kalmış `WIP` olsa bile, özellikle **İş PC ↔ Ev PC** geçişinden hemen önce) ve her faz sonunda bu dosyayı güncelleyip GitHub'a (`origin/main`) pushla.
+> 3. Her çalışma oturumu bittiğinde (faz yarım kalmış `WIP` olsa bile, özellikle **İş PC ↔ Ev PC** veya **Yeni Sohbet** geçişinden hemen önce) ve her faz sonunda bu dosyayı güncelleyip GitHub'a (`origin/main`) pushla.
 
 ---
 
@@ -14,51 +14,56 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#003` |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T10:02:00+03:00` |
-| **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows 11`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
-| **Referans Son Git Commit / Etiket** | `v0.0.1-faz0` sonrası `Unity 6000.6.7f1 + MCP + Skills` eşitlemesi |
+| **Devir Numarası** | `#004` |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T11:10:00+03:00` |
+| **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows 11 Pro`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
+| **Bu Devrin Commit Başlığı (`HEAD`)** | `chore(devir): devir #004 - Unity 6.6 + Blender 4.2 canli MCP kanit testi tamamlandi, Faz 1 hazir` *(bir önceki commit: `efbd6b8`, baz etiket: `v0.0.1-faz0`)* |
 | **Aktif Aşama** | `Aşama 1 — Temel Mimari, Hazır Dünya, 3B Modeller ve Yaşayan Temel Dünya (Faz 0 – Faz 2)` |
 | **Son Tamamlanan Faz** | `Faz 0 — Proje İskeleti, C++20 SIMD Çekirdeği, Otonom 3B Fabrika, Uber-Shader ve 3 Katmanlı Loglama` |
-| **Faz Durumu** | `FAZ_0_TAMAMLANDI (%100 GERCEK UNITY 6.6.7f1 EDITMODE & MCP KURULUMU DOGULANDI — CANLI MCP TESTI / FAZ_1 ONAYI BEKLENIYOR)` |
+| **Faz Durumu** | `FAZ_0_VE_TUM_MCP_KURULUMLARI_TAMAMLANDI (%100 TEST & CANLI BLENDER->UNITY AKTARIMI DOGRULANDI — FAZ_1_ICIN_KULLANICI_ONAYI_BEKLENIYOR)` |
 
 ---
 
-## 2. En Son Tamamlanan İşlemler (`Faz 0` Kapanışı)
+## 2. Önceki Sohbette Yapılanların ve Konuşulanların Tam Özeti (`#001 → #004`)
 
-1. **Sıfır-UAC Araç Zinciri ve Çoklu PC Otomasyonu:**
-   - `Git LFS`, `CMake 4.4.4`, `Ninja`, `Astral uv`, `Python 3.11.18 (.venv)`, `SQLite 3.53.0 CLI`, `Node.js LTS`, `.NET SDK 10.0`, `Unity Hub 3.22.5`, `Blockbench 5.2.2`, taşınabilir `llvm-mingw` (`Clang 23 C++20 UCRT x86_64`) ve taşınabilir `Blender 4.2.16 LTS` yeniden başlatma veya UAC engeli olmadan kuruldu.
-   - Tüm `.ps1` betikleri (`setup-environment.ps1`, `sync-pc.ps1`, `generate-secrets.ps1`, `build-native.ps1`, `generate-assets.ps1`, `run-tests.ps1`, `quality-gate.ps1`, `backup.ps1`, `restore.ps1`, `verify-integrity.ps1`) Windows PowerShell 5.1 uyumlu saf ASCII ve `%100` göreceli yol (`$PSScriptRoot`) olarak tamamlandı.
-2. **C++20 `StratocraftNative.dll` (`6/6` `ctest` PASS):**
-   - `AVX2/FMA` 6 halkalı arazi/mağara/14 cevher üretimi, `LZ4 + Zstd + XXH64` bölge sıkıştırma, `Monocypher Ed25519` kontrat imzalama ve gömülü `SQLite 3.53.0 WAL` telemetri motoru `-Wall -Wextra -Werror` ile `0 Hata / 0 Uyarı` derlendi.
-3. **Otonom 3B ve Küresel Doku Fabrikası (`5/5` `pytest` PASS, `ruff` PASS, `3.132 MB` VRAM):**
-   - `256×16 Material LUT`, `16× MatCap`, `32× MicroDetail Array` ve `64³ Noise3D` fırınlandı (**toplam `3.132 MB / 16.000 MB`**).
-   - `faz0_calibration_anvil_pedestal.glb` üretildi, `asset_validator.py` doğrulamasından geçti ve 4 açılı `512×512` PNG öz-denetim renderı görsel olarak kontrol edildi.
-4. **Unity 6.6 (`6000.6.7f1`) Çekirdek C#, `StratocraftUberShader.hlsl`, 3 Katmanlı Loglama, `F3` HUD ve Canlı MCP/Skill Ekosistemi (`5/5` Gerçek Unity 6.6 EditMode NUnit PASS):**
-   - `Unity 6.6 (6000.6.7f1, changeset b22767f04f04)` + `Windows Build Support (IL2CPP)` + `Windows Dedicated Server` + `Visual Studio Community 2026` kuruldu; proje paketleri (`Entities 6.6.0`, `Burst 2.0.0`, `URP 17.6.0`, `com.unity.pipeline 0.9.1-exp.1`) ve `.meta` GUID'leri eşitlendi.
-   - Antigravity resmi **Unity Plugin (`31` motor yeteneği)**, **4 özel Stratocraft Workspace Skill** (`.agents/skills/stratocraft-*`), **`SessionStart` Hook** (`.agents/hooks.json`), **`Unity CLI 1.0.0-beta.15` + `# unity` MCP Sunucusu (`120+` canlı Editör aracı)**, **`Blender 4.2 LTS` Masaüstü/Başlat kısayolları + `# blender` MCP Sunucusu**, **`Material Maker 1.8`**, **`gltfpack 1.3`** ve **`midvoxio 0.1.6`** kuruldu ve bağlandı.
-   - Gerçek `Unity 6000.6.7f1` Batchmode EditMode test koşusu (`Faz0CoreAndNativeBridgeTests`) `5/5 Passed (0.75s, ExitCode: 0)` ile doğrulandı.
-
----
-
-## 3. Kaldığımız Tam Nokta ve Sıradaki İlk İş (`Faz 1` Başlangıcı)
-
-- **Yarım Kalan (`WIP`) Dosya:** Yoktur (`Faz 0` ve `Unity 6000.6.7f1 + MCP + Skills` kurulumu tamamlanmıştır).
-- **Ev PC Kurulum Durumu:** `Unity Hub` Personal Lisans, `Unity 6.6 (6000.6.7f1)`, `IL2CPP`, `Dedicated Server`, `VS 2026`, `# unity` MCP, `# blender` MCP ve `31+4` Skill kurulumu **tamamlandı**. *(İş PC'ye geçildiğinde `BILGISAYARLAR_ARASI_GECIS_REHBERI.md` uyarınca aynı `Unity 6000.6.7f1` sürümü kurulacaktır).*
-- **Kullanıcı `"Faz 1'e geç"` Onayı Verdiğinde Başlanacak İş (`Bölüm 5.2`):**
-  1. `Assets/_Stratocraft/Voxel/`: `32-bit Voxel` (`VoxelCell.cs`, `VoxelBitUtility.cs`), `16×16×16` Sub-Chunk başına `4.096` mikro-blok havuzu (`MicroVoxelPool4096.cs`), `< 0.15 ms` 64-Bit `BinaryGreedyMeshingJob.cs` ve `±4.096m` `K*32m` `ChunkSnappedFloatingOriginSystem.cs`.
-  2. `Assets/_Stratocraft/Physics/`: `16-bit` sonlu akışkanlar (`Water >= 128` & `Lava >= 128` stokiyometrik Doğal Obsidyen) ve `< 2.0 ms` İki Aşamalı Domino yıkım fiziği (`GeodesicSupportDijkstraJob.cs` + `TributaryLoadDagJob.cs` + `GreedyBoxFractureJob.cs`, `<= 12` konveks parça).
-  3. `Assets/_Stratocraft/WorldGen/` & `RegionFileStore.cs`: 6 zorluk halkası (`0–18.000m`), 14 cevher dağılımı (`Y=+300..-105`), 4 mevsim döngüsü ve `.sregion` (`LZ4/Zstd + XXH64`) kayıt sistemi.
+1. **İki Bilgisayarlı Çalışma Mimarisi (`Sabah İş PC ↔ Akşam Ev PC`):**
+   - Kullanıcı projeyi sabahları **İş PC**, akşamları **Ev PC** üzerinden `https://github.com/Muhammed-KRM/VoxelGame.git` aracılığıyla geliştirmektedir.
+   - Bu amaçla [BILGISAYARLAR_ARASI_GECIS_REHBERI.md](./BILGISAYARLAR_ARASI_GECIS_REHBERI.md), [scripts/sync-pc.ps1](./scripts/sync-pc.ps1) ve bu ortak hafıza dosyası oluşturuldu.
+   - **Kesin Kural:** Hiçbir kod, test veya `.ps1` içinde `D:\oyun` veya Windows kullanıcı adına bağlı sabit (hardcoded) mutlak yol kullanılmaz (`%100` `$PSScriptRoot` / göreceli yol); tüm `.ps1` betikleri saf ASCII olarak yazılır.
+2. **`Faz 0` Mühendislik İskeleti (`%100` Tamamlandı, Etiket: `v0.0.1-faz0`):**
+   - **C++20 `StratocraftNative.dll`:** `VS 2026 MSVC` & `Clang` uyumlu `AVX2/FMA` arazi/mağara/14 cevher gürültüsü, `LZ4 + Zstd + XXH64` sıkıştırma, `Monocypher Ed25519` imza ve gömülü `SQLite 3.53.0 WAL` telemetri motoru (`6/6` `ctest` PASS, `0 Uyarı / 0 Hata`).
+   - **Otonom 3B & Doku Fabrikası (`Yol A`):** `Material LUT (256x16)`, `MatCap (16x)`, `MicroDetail Array (32x)` ve `Noise3D (64^3)` üretildi (**toplam VRAM: `3.132 MB / 16.000 MB`**; `5/5` `pytest` PASS, `ruff` PASS).
+   - **Unity Çekirdek C# & Shader:** `FixedQ20_12`, `MaterialIdCatalog`, `EnvLoader`, `SensitiveDataMasker`, `SqliteTelemetryLogger`, `StratocraftNativeBindings`, `StratocraftUberShader.hlsl/.shader`, `LowSpecGraphicsScaler`, `ServerBootstrapAndLoopback`, `F3TelemetryOverlayUi`, `StratocraftAssetPostprocessor` ve `StratocraftProjectSettingsEnforcer` tamamlandı (`5/5` gerçek Unity 6.6 EditMode NUnit PASS + `5/5` `.NET 10` Standalone NUnit PASS).
+3. **Unity `6000.6.7f1` Sürüm Kilidi + Canlı MCP & Skill Ekosistemi (`Ev PC`):**
+   - `Unity Hub` Personal lisans etkinleştirildi; **`Unity 6.6 (6000.6.7f1, changeset b22767f04f04)`** + **`Windows Build Support (IL2CPP)`** + **`Windows Dedicated Server`** + **`Visual Studio Community 2026`** kuruldu ve tüm proje/paket/doküman sürümleri (`Entities 6.6.0`, `Burst 2.0.0`, `URP 17.6.0`) eşitlendi.
+   - Antigravity'ye **Resmi Unity Plugin (`31` resmi motor yeteneği)**, **4 Özel Stratocraft Skill** (`.agents/skills/stratocraft-*`) ve **`SessionStart` Hook** (`.agents/hooks.json`) eklendi.
+   - Resmi **`Unity CLI 1.0.0-beta.15`**, **`com.unity.pipeline@0.9.1-exp.1`** ve **`# unity` MCP sunucusu** (`port 7800`, `120+` canlı Editör aracı) kuruldu.
+   - **`Blender 4.2.16 LTS`** (`Tools/bin/blender-4.2/blender.exe` + Masaüstü/Başlat kısayolları), **`mcp-for-blender` (`blender_mcp.py`, `Auto-Start Server = True`, `port 9876`)**, **`# blender` MCP sunucusu**, `Material Maker 1.8`, `gltfpack 1.3` ve `midvoxio 0.1.6` kuruldu.
+4. **Canlı Uçtan Uca Kanıt Testi (`Antigravity -> Blender 4.2 -> Unity 6.6`):**
+   - Açık olan Blender 4.2 penceresine canlı bağlanılıp 3 parçalı `Obsidyen Kaide + Altın Mühür + Mavi Klan Kristali` üretildi, `.fbx` olarak dışa aktarıldı ve açık olan Unity 6.6 Editör sahnesine canlı import edilip yerleştirilerek kullanıcı tarafından yan yana doğrulandı.
+   - Test sonrasında sahne temizlendi ve [StratocraftAssetPostprocessor.cs](./Assets/_Stratocraft/Editor/StratocraftAssetPostprocessor.cs) Unity 6 `AssetDatabase v2` kısıtına uygun olarak (`OnPostprocessModel` içinde `CreateAsset` çağırmayıp `delayCall` üzerinden [StratocraftProjectSettingsEnforcer.cs](./Assets/_Stratocraft/Editor/StratocraftProjectSettingsEnforcer.cs) kullanacak şekilde) iyileştirildi (`0 Console Error`).
 
 ---
 
-## 4. Aktif Donanım, Performans ve Çalışma Kısıtları (DİKKATE ALINMASI ZORUNLU)
+## 3. Kullanıcının Özel Çalışma ve İletişim Tercihleri (YENİ SOHBETTE UYULMASI ZORUNLU)
 
-- **Çoklu Bilgisayar Uyumluluğu (`Sabah İş PC ↔ Akşam Ev PC`):**
-  - İş bilgisayarında ilk kez oturum açıldığında önce `git pull origin main`, ardından `powershell -ExecutionPolicy Bypass -File .\scripts\setup-environment.ps1` ve `.\scripts\sync-pc.ps1 -Pull` çalıştırılmalıdır.
-  - Hiçbir dosyada mutlak klasör yolu (`D:\oyun` vb.) kullanılmayacak; tüm `.ps1` betikleri saf ASCII kalacaktır.
-- **3B Varlık Fabrikası Modu (`Yol A` Seçimi):**
-  - İki bilgisayar arasında `%100` deterministik çıktı ve düşük VRAM uyumu için ağır `TRELLIS / TripoSG` ağırlıkları indirilmez; `Yol A (Headless Blender 4.2 + Blockbench + Python trimesh)` kullanılır.
+1. **Önce Kısa ve Net Cevap Ver, Bekletme:** Kullanıcı bir soru sorduğunda veya yönlendirme istediğinde arka planda uzun araçlar çalıştırıp kullanıcıyı bekletme; önce sorusuna kısa, sade ve doğrudan cevap ver.
+2. **Faz Sonlarında ve Manuel İşlemlerde Dur:** Bir faz bittiğinde veya kullanıcının elle tıklaması gereken bir şey olduğunda durup net şekilde söyle; kullanıcı **"geç / başla"** demeden sonraki faza başlama.
+3. **Unity / Blender Pencereleri:** Normal kodlama ve arka plan testleri (`Unity.com -batchmode` / `blender.exe --background`) sırasında pencerelerin açık kalması şart değildir; ancak kullanıcı pencereleri açık tutuyorsa `unity command ... --project-path <proje>` (`port 7800`) ve `# blender` MCP (`port 9876`) üzerinden doğrudan açık olan pencere sürülebilir *(Not: Unity GUI açıkken `UnityLockfile` kilitli olacağı için aynı anda ikinci bir `-batchmode` süreci başlatmak yerine açık Editörün `unity command test run` / `script recompile` komutlarını kullan!)*.
+
+---
+
+## 4. Kaldığımız Tam Nokta ve Sıradaki İlk İş (`Faz 1` Başlangıcı)
+
+- **Yarım Kalan (`WIP`) Dosya:** Yoktur (Çalışma ağacı `%100` temizdir ve GitHub `origin/main` ile birebir eşittir).
+- **Yeni Sohbette Yapay Zekanın İlk Yapacağı Adım:**
+  1. `DURUM_VE_DEVIR.md` ile `git log -5 --oneline` çıktısını karşılaştırıp raporun **YENİ (`#004`, Güncel)** olduğunu kullanıcıya kısaca bildir.
+  2. Kullanıcıdan **`"Faz 1'e başlayalım mı?"`** onayını iste.
+- **Kullanıcı `"Faz 1'e geç"` Onayı Verdiğinde Başlanacak İşler ([STRATOCRAFT_GELISTIRICI_DOKUMANI.md](./STRATOCRAFT_GELISTIRICI_DOKUMANI.md) `Bölüm 5.2`):**
+  1. **URP Pipeline Asset Bağlantısı:** `Assets/_Stratocraft/Rendering/` altında `StratocraftURPAsset.asset` oluşturup `GraphicsSettings.defaultRenderPipeline` ve `QualitySettings.renderPipeline` içine ata (böylece `Entities Graphics` `No SRP present` uyarısı tamamen kalkar).
+  2. **`Assets/_Stratocraft/Voxel/`:** `32-bit Voxel` veri yapısı (`VoxelCell.cs`, `VoxelBitUtility.cs` — `12-bit MatID`, `8-bit Integrity`, `4-bit Temp`, `4-bit Humidity/Charge`, `4-bit Flags`), `16x16x16` Sub-Chunk başına `4.096` mikro-blok havuzu (`MicroVoxelPool4096.cs`), `< 0.15 ms` 64-Bit `BinaryGreedyMeshingJob.cs` ve `±4.096m` `K*32m` `ChunkSnappedFloatingOriginSystem.cs`.
+  3. **`Assets/_Stratocraft/Physics/`:** `16-bit` sonlu akışkanlar (`Water >= 128` + `Lava >= 128` -> stokiyometrik Doğal Obsidyen, vakum bağışıklığı) ve `< 2.0 ms` İki Aşamalı Domino yıkım fiziği (`GeodesicSupportDijkstraJob.cs` Dial's Bucket + `TributaryLoadDagJob.cs` Tek Geçişli DAG + `GreedyBoxFractureJob.cs` `<= 12` konveks parça + `FallingClusterSleepSystem.cs`).
+  4. **`Assets/_Stratocraft/WorldGen/` & `Persistence/`:** 6 zorluk halkası (`0–18.000m`), 14 cevher dağılımı (`Y=+300..-105`), 4 mevsim döngüsü ve `.sregion` (`LZ4/Zstd + XXH64`) kayıt/karantina sistemi + Faz 1 Kalite Kapısı (`scripts/quality-gate.ps1 -Phase 1`).
 
 ---
 
@@ -66,7 +71,7 @@
 
 | Faz | Başlık | Durum | Son Etiket / Commit | Faz Test Raporu |
 | :--- | :--- | :--- | :--- | :--- |
-| **Faz 0** | Proje İskeleti, C++20 SIMD, Otonom 3B Fabrika, Uber-Shader, 3 Katmanlı Loglama | ✅ Tamamlandı | `v0.0.1-faz0` | [`docs/test-raporlari/faz0-raporu.md`](docs/test-raporlari/faz0-raporu.md) |
+| **Faz 0** | Proje İskeleti, C++20 SIMD, Otonom 3B Fabrika, Uber-Shader, 3 Katmanlı Loglama + Canlı MCP | ✅ Tamamlandı | `v0.0.1-faz0` / `#004` | [`docs/test-raporlari/faz0-raporu.md`](docs/test-raporlari/faz0-raporu.md) |
 | **Faz 1** | 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi | ⏳ Onay Bekliyor | — | — |
 | **Faz 2** | Otonom 3B Varlıklar, Fiziksel Karakter, 3B Çanta, Madde Kristali ve Canlılar | ⬜ Bekliyor | — | — |
 | **Faz 3** | Temel Üretim, Hologram İnşa, `3D Çit BFS` Klan, KGP ve 6 Fiziksel Ritüel | ⬜ Bekliyor | — | — |

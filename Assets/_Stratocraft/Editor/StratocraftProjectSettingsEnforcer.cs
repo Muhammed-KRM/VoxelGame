@@ -13,6 +13,9 @@ namespace Stratocraft.Editor
     [InitializeOnLoad]
     public static class StratocraftProjectSettingsEnforcer
     {
+        public const string SharedUberMaterialPath = "Assets/Art/Generated/Materials/M_Stratocraft_UberMaterial.mat";
+        public const string UberShaderName = "Stratocraft/UberShader_UVFree";
+
         private static readonly (int LayerIndex, string LayerName)[] RequiredLayers =
         {
             (8, "VoxelTerrain"),
@@ -83,11 +86,57 @@ namespace Stratocraft.Editor
                 changed = true;
             }
 
+            if (EnsureSharedUberMaterial() != null && !changed)
+            {
+                // EnsureSharedUberMaterial kendi icinde yeni olusturulduysa kaydeder
+            }
+
             if (changed)
             {
                 AssetDatabase.SaveAssets();
                 Debug.Log("[Stratocraft] Faz 0 zorunlu Unity 6 motor, katman (8..15) ve 16 MB VRAM ayarlari uygulandi.");
             }
+        }
+
+        public static Material? EnsureSharedUberMaterial()
+        {
+            if (AssetDatabase.IsAssetImportWorkerProcess())
+            {
+                return AssetDatabase.LoadAssetAtPath<Material>(SharedUberMaterialPath);
+            }
+
+            Material? existing = AssetDatabase.LoadAssetAtPath<Material>(SharedUberMaterialPath);
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            Shader? shader = Shader.Find(UberShaderName);
+            if (shader == null)
+            {
+                return null;
+            }
+
+            string[] parts = "Assets/Art/Generated/Materials".Split('/');
+            string current = parts[0];
+            for (int i = 1; i < parts.Length; i++)
+            {
+                string next = current + "/" + parts[i];
+                if (!AssetDatabase.IsValidFolder(next))
+                {
+                    AssetDatabase.CreateFolder(current, parts[i]);
+                }
+                current = next;
+            }
+
+            var created = new Material(shader)
+            {
+                name = "M_Stratocraft_UberMaterial",
+                enableInstancing = true
+            };
+            AssetDatabase.CreateAsset(created, SharedUberMaterialPath);
+            AssetDatabase.SaveAssets();
+            return created;
         }
 
         private static bool EnsureCustomLayers()
