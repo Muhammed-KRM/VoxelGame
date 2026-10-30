@@ -43,6 +43,71 @@
       "bakeVat": false
     },
     {
+      "assetId": "weapon_shaft_ashwood_polearm",
+      "category": "WeaponHilt",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.16, "y": 1.65, "z": 0.05 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 320, "lod1": 160, "lod2": 60 },
+      "defaultMaterialId": 70,
+      "requiredSockets": [
+        "Socket_Grip_Main",
+        "Socket_Grip_Offhand",
+        "Socket_VoxelBlade"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "armor_set_iron_vanguard",
+      "category": "Armor15Piece",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.62, "y": 1.76, "z": 0.36 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 600, "lod1": 300, "lod2": 120 },
+      "defaultMaterialId": 32,
+      "requiredSockets": [
+        "Socket_Zone_Head",
+        "Socket_Zone_Torso",
+        "Socket_Zone_Arms",
+        "Socket_Zone_Hands",
+        "Socket_Zone_Legs"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "workshop_anvil_16x32x4_station",
+      "category": "WorkshopDevice",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 1.20, "y": 1.10, "z": 0.80 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 650, "lod1": 320, "lod2": 120 },
+      "defaultMaterialId": 51,
+      "requiredSockets": [
+        "Socket_Interact",
+        "Socket_WorkSurface",
+        "Socket_CatalystNorth",
+        "Socket_CatalystSouth",
+        "Socket_CatalystEast",
+        "Socket_CatalystWest"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
       "assetId": "struct_clan_crystal_lv1_to_lv5",
       "category": "ClanStructure",
       "phase": 2,
@@ -59,6 +124,82 @@
         "Socket_RitualCore"
       ],
       "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "siege_trebuchet_5stage_dfa",
+      "category": "SiegeWeapon",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 2.80, "y": 3.40, "z": 4.20 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 1200, "lod1": 600, "lod2": 240 },
+      "defaultMaterialId": 71,
+      "requiredSockets": [
+        "Socket_Crew_Gunner",
+        "Socket_Crew_Pusher_1",
+        "Socket_Crew_Pusher_2",
+        "Socket_Muzzle"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "mob_ash_stalker_vat500",
+      "category": "Creature",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.85, "y": 1.85, "z": 0.65 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 1100, "lod1": 550, "lod2": 220 },
+      "defaultMaterialId": 71,
+      "requiredSockets": [
+        "Socket_GoreCap_Head",
+        "Socket_GoreCap_L_ForeArm",
+        "Socket_GoreCap_R_ForeArm",
+        "Socket_GoreCap_L_Calf",
+        "Socket_GoreCap_R_Calf",
+        "Socket_WeakPoint_Head",
+        "Socket_WeakPoint_ChestCore"
+      ],
+      "dismemberableBones": [
+        "Head",
+        "UpperArm.L",
+        "UpperArm.R",
+        "UpperLeg.L",
+        "UpperLeg.R"
+      ],
+      "bakeVat": true
+    },
+    {
+      "assetId": "boss_phoenix_ember_avatar",
+      "category": "Boss",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 3.60, "y": 4.20, "z": 2.80 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 2400, "lod1": 1200, "lod2": 480 },
+      "defaultMaterialId": 39,
+      "requiredSockets": [
+        "Socket_GoreCap_Head",
+        "Socket_WeakPoint_Head",
+        "Socket_WeakPoint_ChestCore",
+        "Socket_EmberEggDrop"
+      ],
+      "dismemberableBones": [
+        "Head",
+        "UpperArm.L",
+        "UpperArm.R"
+      ],
       "bakeVat": false
     }
   ]

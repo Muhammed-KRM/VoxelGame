@@ -8,6 +8,10 @@
     "Stratocraft.Voxel",
     "Stratocraft.Physics",
     "Stratocraft.WorldGen",
+    "Stratocraft.Character",
+    "Stratocraft.Inventory",
+    "Stratocraft.CreaturesAI",
+    "Stratocraft.UI",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
   ],

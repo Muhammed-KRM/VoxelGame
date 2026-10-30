@@ -1,0 +1,21 @@
+{
+  "name": "Stratocraft.Character",
+  "rootNamespace": "Stratocraft.Character",
+  "references": [
+    "Stratocraft.Core",
+    "Stratocraft.Voxel",
+    "Unity.Burst",
+    "Unity.Collections",
+    "Unity.Entities",
+    "Unity.Mathematics"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

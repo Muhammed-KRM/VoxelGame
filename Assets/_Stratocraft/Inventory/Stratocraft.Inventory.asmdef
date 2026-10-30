@@ -1,0 +1,22 @@
+{
+  "name": "Stratocraft.Inventory",
+  "rootNamespace": "Stratocraft.Inventory",
+  "references": [
+    "Stratocraft.Core",
+    "Stratocraft.Voxel",
+    "Stratocraft.Character",
+    "Unity.Burst",
+    "Unity.Collections",
+    "Unity.Entities",
+    "Unity.Mathematics"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

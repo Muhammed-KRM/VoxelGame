@@ -3,6 +3,8 @@
   "rootNamespace": "Stratocraft.UI",
   "references": [
     "Stratocraft.Core",
+    "Stratocraft.Character",
+    "Stratocraft.Inventory",
     "Unity.InputSystem"
   ],
   "includePlatforms": [],
