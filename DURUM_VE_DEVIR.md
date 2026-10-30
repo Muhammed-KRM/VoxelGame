@@ -14,13 +14,13 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#004` |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T11:10:00+03:00` |
+| **Devir Numarası** | `#005` |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T14:00:00+03:00` |
 | **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows 11 Pro`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
-| **Bu Devrin Commit Başlığı (`HEAD`)** | `chore(devir): devir #004 - Unity 6.6 + Blender 4.2 canli MCP kanit testi tamamlandi, Faz 1 hazir` *(bir önceki commit: `efbd6b8`, baz etiket: `v0.0.1-faz0`)* |
+| **Bu Devrin Commit Başlığı (`HEAD`)** | `feat(faz1): 32-bit voxel, 4096 mikro-havuz, 64-bit greedy meshing, 2-fazli domino yikimi ve .sregion akisi` *(etiket: `v0.1.0-faz1`)* |
 | **Aktif Aşama** | `Aşama 1 — Temel Mimari, Hazır Dünya, 3B Modeller ve Yaşayan Temel Dünya (Faz 0 – Faz 2)` |
-| **Son Tamamlanan Faz** | `Faz 0 — Proje İskeleti, C++20 SIMD Çekirdeği, Otonom 3B Fabrika, Uber-Shader ve 3 Katmanlı Loglama` |
-| **Faz Durumu** | `FAZ_0_VE_TUM_MCP_KURULUMLARI_TAMAMLANDI (%100 TEST & CANLI BLENDER->UNITY AKTARIMI DOGRULANDI — FAZ_1_ICIN_KULLANICI_ONAYI_BEKLENIYOR)` |
+| **Son Tamamlanan Faz** | `Faz 1 — 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi` |
+| **Faz Durumu** | `FAZ_1_TAMAMLANDI (%100 TEST & KALITE KAPISI BASARILI — FAZ_2_DEVAM_EDIYOR)` |
 
 ---
 
@@ -72,8 +72,8 @@
 | Faz | Başlık | Durum | Son Etiket / Commit | Faz Test Raporu |
 | :--- | :--- | :--- | :--- | :--- |
 | **Faz 0** | Proje İskeleti, C++20 SIMD, Otonom 3B Fabrika, Uber-Shader, 3 Katmanlı Loglama + Canlı MCP | ✅ Tamamlandı | `v0.0.1-faz0` / `#004` | [`docs/test-raporlari/faz0-raporu.md`](docs/test-raporlari/faz0-raporu.md) |
-| **Faz 1** | 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi | ⏳ Onay Bekliyor | — | — |
-| **Faz 2** | Otonom 3B Varlıklar, Fiziksel Karakter, 3B Çanta, Madde Kristali ve Canlılar | ⬜ Bekliyor | — | — |
+| **Faz 1** | 32-Bit Voxel Motoru, Greedy Meshing, Akışkanlar, Domino DAG ve Dünya Üretimi | ✅ Tamamlandı | `v0.1.0-faz1` / `#005` | [`docs/test-raporlari/faz1-raporu.md`](docs/test-raporlari/faz1-raporu.md) |
+| **Faz 2** | Otonom 3B Varlıklar, Fiziksel Karakter, 3B Çanta, Madde Kristali ve Canlılar | 🔄 Devam Ediyor | — | — |
 | **Faz 3** | Temel Üretim, Hologram İnşa, `3D Çit BFS` Klan, KGP ve 6 Fiziksel Ritüel | ⬜ Bekliyor | — | — |
 | **Faz 4** | `240 Hz` Yönlü Savaş, 15 Parça Zırh, GPU Uzuv Kopması ve `Offline Sleeper` | ⬜ Bekliyor | — | — |
 | **Faz 5** | Biyom Zindanları, 75 Fiziksel Batarya, 25 Mayın ve 6 Tuzak Çekirdeği | ⬜ Bekliyor | — | — |

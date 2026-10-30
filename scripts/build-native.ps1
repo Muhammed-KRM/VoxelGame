@@ -42,7 +42,12 @@ if ($vcInstallDir) {
     if (Test-Path $vcvars) {
         $ninjaCmd = Get-Command ninja -ErrorAction SilentlyContinue
         $genArg = if ($ninjaCmd) { "-G Ninja" } else { "" }
-        $cmdLine = "`"$vcvars`" && cmake -S `"$NativeDir`" -B `"$BuildDir`" $genArg -DCMAKE_BUILD_TYPE=$Configuration && cmake --build `"$BuildDir`" --config $Configuration --parallel && ctest --test-dir `"$BuildDir`" -C $Configuration --output-on-failure"
+        $ninjaFile = Join-Path $BuildDir "build.ninja"
+        if (Test-Path $ninjaFile) {
+            $cmdLine = "`"$vcvars`" && cmake --build `"$BuildDir`" --config $Configuration --parallel && ctest --test-dir `"$BuildDir`" -C $Configuration --output-on-failure"
+        } else {
+            $cmdLine = "`"$vcvars`" && cmake -S `"$NativeDir`" -B `"$BuildDir`" $genArg -DCMAKE_BUILD_TYPE=$Configuration && cmake --build `"$BuildDir`" --config $Configuration --parallel && ctest --test-dir `"$BuildDir`" -C $Configuration --output-on-failure"
+        }
         cmd.exe /c $cmdLine
         if ($LASTEXITCODE -ne 0) { throw "StratocraftNative C++20 derleme veya ctest basarisiz oldu (ExitCode=$LASTEXITCODE)." }
     } else {

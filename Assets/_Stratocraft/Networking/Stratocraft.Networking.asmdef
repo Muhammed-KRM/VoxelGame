@@ -3,6 +3,7 @@
   "rootNamespace": "Stratocraft.Networking",
   "references": [
     "Stratocraft.Core",
+    "Stratocraft.Voxel",
     "Unity.Collections",
     "Unity.Entities",
     "Unity.Mathematics"

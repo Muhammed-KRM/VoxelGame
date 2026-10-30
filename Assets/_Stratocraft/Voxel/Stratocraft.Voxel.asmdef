@@ -1,0 +1,20 @@
+{
+  "name": "Stratocraft.Voxel",
+  "rootNamespace": "Stratocraft.Voxel",
+  "references": [
+    "Stratocraft.Core",
+    "Unity.Burst",
+    "Unity.Collections",
+    "Unity.Entities",
+    "Unity.Mathematics"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

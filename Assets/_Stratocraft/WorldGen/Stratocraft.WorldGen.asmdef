@@ -1,0 +1,18 @@
+{
+  "name": "Stratocraft.WorldGen",
+  "rootNamespace": "Stratocraft.WorldGen",
+  "references": [
+    "Stratocraft.Core",
+    "Stratocraft.Voxel",
+    "Stratocraft.Physics"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": true,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

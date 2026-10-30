@@ -5,6 +5,9 @@
     "Stratocraft.Core",
     "Stratocraft.Rendering",
     "Stratocraft.Networking",
+    "Stratocraft.Voxel",
+    "Stratocraft.Physics",
+    "Stratocraft.WorldGen",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"
   ],

@@ -18,7 +18,16 @@
 
   <ItemGroup>
     <Compile Include="..\..\Assets\_Stratocraft\Core\**\*.cs" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="..\..\Assets\Tests\EditMode\Faz0CoreAndNativeBridgeTests.cs" Link="EditMode\Faz0CoreAndNativeBridgeTests.cs" />
+    <Compile Include="..\..\Assets\_Stratocraft\Voxel\**\*.cs" Link="Voxel\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\Physics\**\*.cs" Link="Physics\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\WorldGen\**\*.cs" Link="WorldGen\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\Networking\LiteNetLibVoxelStreamer.cs" Link="Networking\LiteNetLibVoxelStreamer.cs" />
+    <Compile Include="..\..\Assets\_Stratocraft\Character\**\*.cs" Link="Character\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\Inventory\**\*.cs" Link="Inventory\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\CreaturesAI\**\*.cs" Link="CreaturesAI\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\UI\**\*.cs" Exclude="..\..\Assets\_Stratocraft\UI\F3TelemetryOverlayUi.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Tests\EditMode\**\*.cs" Link="EditMode\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\Tests\PlayMode\**\*.cs" Link="PlayMode\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

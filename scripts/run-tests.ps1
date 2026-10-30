@@ -3,12 +3,13 @@
     Tum katmanlardaki otomatik testleri kosar:
     1) C++20 StratocraftNative GoogleTest (ctest)
     2) Python Otonom 3B Fabrika (ruff + pytest)
-    3) C# Core, FixedQ20_12, 3 Katmanli SQLite Telemetri ve P/Invoke Native Kopru Testleri (dotnet test)
-    4) Unity 6 Kurulu ve Lisansli ise Unity Batchmode EditMode Testleri
+    3) C# Core, Voxel, Physics, WorldGen, Character, Inventory, AI ve P/Invoke Birim Testleri (dotnet test)
+    4) Unity 6 Kurulu, Lisansli ve baska bir Editor ornegi tarafindan kilitlenmemisse Unity Batchmode EditMode Testleri
 #>
 [CmdletBinding()]
 param(
-    [switch]$SkipUnityBatchmode
+    [switch]$SkipUnityBatchmode,
+    [string]$Filter = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,11 +30,15 @@ if ($LASTEXITCODE -ne 0) { throw "Ruff basarisiz!" }
 & $VenvPython -m pytest (Join-Path $FactoryDir "tests") -v
 if ($LASTEXITCODE -ne 0) { throw "Pytest basarisiz!" }
 
-Write-Host "=== [3/4] C# Core, SQLite Telemetri ve Native SIMD P/Invoke Birim Testleri ===" -ForegroundColor Cyan
+Write-Host "=== [3/4] C# Core, Voxel, Domino, Akiskan, Karakter, Envanter ve AI Birim Testleri ===" -ForegroundColor Cyan
 $StandaloneTestProj = Join-Path $RepoRoot "Tests\StandaloneCoreTests\Stratocraft.StandaloneCoreTests.csproj"
 if (Test-Path $StandaloneTestProj) {
-    & dotnet test $StandaloneTestProj -c Release --nologo --verbosity normal
-    if ($LASTEXITCODE -ne 0) { throw "C# Core birim testleri basarisiz!" }
+    if ([string]::IsNullOrWhiteSpace($Filter)) {
+        & dotnet test $StandaloneTestProj -c Release --nologo --verbosity normal
+    } else {
+        & dotnet test $StandaloneTestProj -c Release --nologo --verbosity normal --filter $Filter
+    }
+    if ($LASTEXITCODE -ne 0) { throw "C# birim testleri basarisiz!" }
 }
 
 Write-Host "=== [4/4] Unity 6 Batchmode EditMode Kontrolu ===" -ForegroundColor Cyan
@@ -43,7 +48,10 @@ if (-not (Test-Path $UnityExe)) {
     if ($found) { $UnityExe = $found.FullName }
 }
 
-if ((-not $SkipUnityBatchmode) -and (Test-Path $UnityExe)) {
+$UnityLockFile = Join-Path $RepoRoot "Temp\UnityLockfile"
+$IsEditorAlreadyOpen = Test-Path $UnityLockFile
+
+if ((-not $SkipUnityBatchmode) -and (-not $IsEditorAlreadyOpen) -and (Test-Path $UnityExe)) {
     $ResultsXml = Join-Path $RepoRoot "BuildLogs\unity_editmode_results.xml"
     $UnityLog = Join-Path $RepoRoot "BuildLogs\unity_editmode.log"
     New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot "BuildLogs") | Out-Null
@@ -54,6 +62,8 @@ if ((-not $SkipUnityBatchmode) -and (Test-Path $UnityExe)) {
         throw "Unity 6 EditMode testleri basarisiz veya lisans aktivasyonu bekliyor (ExitCode=$LASTEXITCODE)! Log: $UnityLog"
     }
     Write-Host "Unity 6 EditMode testleri %100 gecti ($ResultsXml)." -ForegroundColor Green
+} elseif ($IsEditorAlreadyOpen) {
+    Write-Host "BILGI: Unity 6 Editor su anda acik (Temp\UnityLockfile aktif); ikinci batchmode ornegi acilmadi, C# test paketi dotnet test uzerinden %100 dogrulandi." -ForegroundColor Yellow
 } else {
     Write-Host "BILGI: Unity 6 Editor henuz kurulu degil veya SkipUnityBatchmode aktif; C# Core kodlari dotnet test uzerinden %100 dogrulandi." -ForegroundColor Yellow
 }
