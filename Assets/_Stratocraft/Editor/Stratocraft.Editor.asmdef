@@ -3,7 +3,14 @@
   "rootNamespace": "Stratocraft.Editor",
   "references": [
     "Stratocraft.Core",
-    "Stratocraft.Rendering"
+    "Stratocraft.Rendering",
+    "Stratocraft.Voxel",
+    "Stratocraft.Physics",
+    "Stratocraft.WorldGen",
+    "Stratocraft.Character",
+    "Stratocraft.Inventory",
+    "Stratocraft.CreaturesAI",
+    "Stratocraft.UI"
   ],
   "includePlatforms": [
     "Editor"

@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/StratocraftStage1Showcase.unity
+    guid: 83a7e1d0a213e5248866176d714f0dd9
   m_configObjects: {}

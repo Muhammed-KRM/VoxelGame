@@ -57,7 +57,9 @@ namespace Stratocraft.Voxel.Jobs
         /// 16x256x16 chunk dizisinin belirtilen Sub-Chunk dilimi (subChunkY = 0..15) icin Binary Greedy Meshing calistirir.
         /// Uretilen dortgenleri (Quad) onceden tahsis edilmis outQuads tamponuna yazar ve toplam quad sayisini doner.
         /// </summary>
+#if NET5_0_OR_GREATER
         [SkipLocalsInit]
+#endif
         public static unsafe int ExecuteSubChunk(
             ReadOnlySpan<uint> chunkVoxels65536,
             int subChunkY,
@@ -149,7 +151,7 @@ namespace Stratocraft.Voxel.Jobs
 
                     while (posFaces != 0 && quadCount < maxQuads)
                     {
-                        int lx = BitOperations.TrailingZeroCount(posFaces);
+                        int lx = TrailingZeroCount(posFaces);
                         posFaces &= (ushort)(posFaces - 1);
                         uint raw = chunkVoxels65536[((baseY + ly) << 8) | (lz << 4) | lx];
                         outQuads[quadCount++] = CreateQuad((byte)(lx + 1), (byte)ly, (byte)lz, 1, 1, 0, raw);
@@ -157,7 +159,7 @@ namespace Stratocraft.Voxel.Jobs
 
                     while (negFaces != 0 && quadCount < maxQuads)
                     {
-                        int lx = BitOperations.TrailingZeroCount(negFaces);
+                        int lx = TrailingZeroCount(negFaces);
                         negFaces &= (ushort)(negFaces - 1);
                         uint raw = chunkVoxels65536[((baseY + ly) << 8) | (lz << 4) | lx];
                         outQuads[quadCount++] = CreateQuad((byte)lx, (byte)ly, (byte)lz, 1, 1, 1, raw);
@@ -176,7 +178,7 @@ namespace Stratocraft.Voxel.Jobs
 
                     while (posFaces != 0 && quadCount < maxQuads)
                     {
-                        int lz = BitOperations.TrailingZeroCount(posFaces);
+                        int lz = TrailingZeroCount(posFaces);
                         posFaces &= (ushort)(posFaces - 1);
                         uint raw = chunkVoxels65536[((baseY + ly) << 8) | (lz << 4) | lx];
                         outQuads[quadCount++] = CreateQuad((byte)lx, (byte)ly, (byte)(lz + 1), 1, 1, 4, raw);
@@ -184,7 +186,7 @@ namespace Stratocraft.Voxel.Jobs
 
                     while (negFaces != 0 && quadCount < maxQuads)
                     {
-                        int lz = BitOperations.TrailingZeroCount(negFaces);
+                        int lz = TrailingZeroCount(negFaces);
                         negFaces &= (ushort)(negFaces - 1);
                         uint raw = chunkVoxels65536[((baseY + ly) << 8) | (lz << 4) | lx];
                         outQuads[quadCount++] = CreateQuad((byte)lx, (byte)ly, (byte)lz, 1, 1, 5, raw);
@@ -214,7 +216,7 @@ namespace Stratocraft.Voxel.Jobs
                 ushort row = rowMasks16[lz];
                 while (row != 0 && quadCount < maxQuads)
                 {
-                    int startX = BitOperations.TrailingZeroCount(row);
+                    int startX = TrailingZeroCount(row);
                     uint seedRaw = chunkVoxels65536[(worldY << 8) | (lz << 4) | startX];
                     byte seedMat = (byte)(seedRaw & 0xFFu);
 
@@ -295,6 +297,23 @@ namespace Stratocraft.Voxel.Jobs
                 ColorB_SharpnessOrDamage = VoxelBitUtility.GetDamageState(rawVoxel),
                 ColorA_AmbientOcclusion = 255
             };
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int TrailingZeroCount(uint value)
+        {
+#if NET5_0_OR_GREATER
+            return BitOperations.TrailingZeroCount(value);
+#else
+            if (value == 0u) return 32;
+            int count = 0;
+            while ((value & 1u) == 0u)
+            {
+                value >>= 1;
+                count++;
+            }
+            return count;
+#endif
         }
     }
 }

@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -63,7 +64,7 @@ namespace Stratocraft.Core.Persistence
                 WriteRegionFileAtomic(rx, rz);
             }
 
-            return ValueTask.CompletedTask;
+            return default;
         }
 
         /// <inheritdoc />
@@ -75,17 +76,17 @@ namespace Stratocraft.Core.Persistence
             ct.ThrowIfCancellationRequested();
             if (_chunkCache.TryGetValue((chunkX, chunkZ), out ChunkSerializationSnapshot? cached))
             {
-                return ValueTask.FromResult<ChunkSerializationSnapshot?>(cached);
+                return new ValueTask<ChunkSerializationSnapshot?>(cached);
             }
 
             (int rx, int rz) = GetRegionCoord(chunkX, chunkZ);
             if (LoadRegionFromDisk(rx, rz) &&
                 _chunkCache.TryGetValue((chunkX, chunkZ), out ChunkSerializationSnapshot? loaded))
             {
-                return ValueTask.FromResult<ChunkSerializationSnapshot?>(loaded);
+                return new ValueTask<ChunkSerializationSnapshot?>(loaded);
             }
 
-            return ValueTask.FromResult<ChunkSerializationSnapshot?>(null);
+            return new ValueTask<ChunkSerializationSnapshot?>((ChunkSerializationSnapshot?)null);
         }
 
         /// <inheritdoc />
@@ -230,8 +231,9 @@ namespace Stratocraft.Core.Persistence
                 if (File.Exists(targetPath))
                 {
                     File.Copy(targetPath, backupPath, overwrite: true);
+                    File.Delete(targetPath);
                 }
-                File.Move(tempPath, targetPath, overwrite: true);
+                File.Move(tempPath, targetPath);
             }
         }
 
