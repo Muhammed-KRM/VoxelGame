@@ -75,45 +75,69 @@ def build_15piece_armor_mesh(spec: ManifestEntry, out_glb: Path) -> Path:
     colors: list[tuple[int, int, int, int]] = []
     indices: list[int] = []
 
-    # 1) Bacak zirh bolgesi (Greaves/Chausses: y = 0.0 .. 0.42*ty)
+    # 1) Sol ve Sag Bacak zirh bolgesi (Greaves/Chausses: y = 0.0 .. 0.44*ty)
     _append_box_part(
         positions,
         normals,
         colors,
         indices,
-        (-hx * 0.65, 0.0, -hz * 0.70),
-        (hx * 0.65, ty * 0.42, hz * 0.70),
+        (-hx * 0.58, 0.0, -hz * 0.65),
+        (-hx * 0.08, ty * 0.44, hz * 0.65),
         (mat_id, 0, sharpness, 220),
+        profile="sculpted",
     )
-    # 2) Govde zirh bolgesi (Cuirass/Gambeson/Hauberk: y = 0.42*ty .. 0.78*ty)
     _append_box_part(
         positions,
         normals,
         colors,
         indices,
-        (-hx * 0.80, ty * 0.42, -hz),
-        (hx * 0.80, ty * 0.78, hz),
+        (hx * 0.08, 0.0, -hz * 0.65),
+        (hx * 0.58, ty * 0.44, hz * 0.65),
+        (mat_id, 0, sharpness, 220),
+        profile="sculpted",
+    )
+    # 2) Govde zirh bolgesi ve Stop-Rib Gogusluk (Cuirass/Gambeson/Hauberk: y = 0.40*ty .. 0.78*ty)
+    _append_box_part(
+        positions,
+        normals,
+        colors,
+        indices,
+        (-hx * 0.62, ty * 0.40, -hz),
+        (hx * 0.62, ty * 0.78, hz),
         (mat_id, 0, sharpness, 245),
+        profile="sculpted",
     )
-    # 3) Kol ve El zirh bolgesi (Pauldrons/Vambraces/Gauntlets: tam X genisligi -hx .. +hx)
+    # 3) Sol ve Sag Omuzluk / Kol zirh bolgesi (Pauldrons/Vambraces: tam X genisligi -hx .. +hx)
     _append_box_part(
         positions,
         normals,
         colors,
         indices,
-        (-hx, ty * 0.46, -hz * 0.65),
-        (hx, ty * 0.76, hz * 0.65),
+        (-hx, ty * 0.45, -hz * 0.62),
+        (-hx * 0.52, ty * 0.77, hz * 0.62),
         (mat_id, 0, sharpness, 235),
+        profile="sculpted",
     )
-    # 4) Bas/Migfer bolgesi (Helmet/Coif: y = 0.78*ty .. ty)
     _append_box_part(
         positions,
         normals,
         colors,
         indices,
-        (-hx * 0.48, ty * 0.78, -hz * 0.75),
-        (hx * 0.48, ty, hz * 0.75),
+        (hx * 0.52, ty * 0.45, -hz * 0.62),
+        (hx, ty * 0.77, hz * 0.62),
+        (mat_id, 0, sharpness, 235),
+        profile="sculpted",
+    )
+    # 4) Fasetli Sovalyesi Migferi (Helmet/Coif: y = 0.76*ty .. ty)
+    _append_box_part(
+        positions,
+        normals,
+        colors,
+        indices,
+        (-hx * 0.38, ty * 0.76, -hz * 0.72),
+        (hx * 0.38, ty, hz * 0.75),
         (mat_id, 0, sharpness, 255),
+        profile="crystal",
     )
 
     sockets: dict[str, tuple[float, float, float]] = {

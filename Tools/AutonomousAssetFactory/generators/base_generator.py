@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import math
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,43 @@ class BaseAssetGenerator(abc.ABC):
         """Hedef spesifikasyona gore UV-Free Color32 nitelikli .glb dosyasini uretir."""
 
 
+def _append_flat_triangle(
+    positions: list[tuple[float, float, float]],
+    normals: list[tuple[float, float, float]],
+    colors: list[tuple[int, int, int, int]],
+    indices: list[int],
+    p0: tuple[float, float, float],
+    p1: tuple[float, float, float],
+    p2: tuple[float, float, float],
+    rgba: tuple[int, int, int, int],
+    facet_idx: int = 0,
+) -> None:
+    """Tek bir ufak faset ucgenini kendi gercek yuzey normali ve faset AO/ton varyasyonuyla ekler."""
+    ux, uy, uz = p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]
+    vx, vy, vz = p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]
+    nx = uy * vz - uz * vy
+    ny = uz * vx - ux * vz
+    nz = ux * vy - uy * vx
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length < 1e-8:
+        return
+    normal = (nx / length, ny / length, nz / length)
+
+    # Her fasete hafif keskinlik/parlaklik (B) ve Cavity AO (A) varyasyonu uygula (Low-Poly Facet gorunumu)
+    mat_r, temp_g, sharp_b, ao_a = rgba
+    shade_delta = ((facet_idx * 37) % 29) - 14
+    new_b = max(10, min(255, sharp_b + shade_delta))
+    ny_factor = int((normal[1] * 0.5 + 0.5) * 24.0) - 12
+    new_a = max(110, min(255, ao_a + ny_factor))
+    tri_rgba = (mat_r, temp_g, new_b, new_a)
+
+    base_idx = len(positions)
+    positions.extend([p0, p1, p2])
+    normals.extend([normal, normal, normal])
+    colors.extend([tri_rgba, tri_rgba, tri_rgba])
+    indices.extend([base_idx, base_idx + 1, base_idx + 2])
+
+
 def _append_box_part(
     positions: list[tuple[float, float, float]],
     normals: list[tuple[float, float, float]],
@@ -74,31 +112,161 @@ def _append_box_part(
     min_pt: tuple[float, float, float],
     max_pt: tuple[float, float, float],
     rgba: tuple[int, int, int, int],
+    profile: str = "sculpted",
 ) -> None:
-    """Verilen eksen-hizali kutuyu (AABB) sert yuzey normalleri ve Color32 ile mesh listesine ekler."""
+    """
+    Verilen AABB zarfini (%100 birebir min_pt..max_pt sinirlarini koruyarak) Minecraft kutusu yerine
+    ufak fasetli poligonlardan (Deep Rock Galactic / Astroneer / Stilize Yontulmus Fantezi Low-Poly)
+    olusan cok halkali sekizgen/kristal/anatomik prizma olarak mesh listesine ekler.
+    """
     x0, y0, z0 = min_pt
     x1, y1, z1 = max_pt
-    faces = [
-        # +Z (On)
-        ((0.0, 0.0, 1.0), [(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]),
-        # -Z (Arka)
-        ((0.0, 0.0, -1.0), [(x1, y0, z0), (x0, y0, z0), (x0, y1, z0), (x1, y1, z0)]),
-        # +X (Sag)
-        ((1.0, 0.0, 0.0), [(x1, y0, z1), (x1, y0, z0), (x1, y1, z0), (x1, y1, z1)]),
-        # -X (Sol)
-        ((-1.0, 0.0, 0.0), [(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)]),
-        # +Y (Ust)
-        ((0.0, 1.0, 0.0), [(x0, y1, z1), (x1, y1, z1), (x1, y1, z0), (x0, y1, z0)]),
-        # -Y (Alt)
-        ((0.0, -1.0, 0.0), [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)]),
-    ]
-    for normal, quad in faces:
-        base_idx = len(positions)
-        for v in quad:
-            positions.append(v)
-            normals.append(normal)
-            colors.append(rgba)
-        indices.extend([base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3])
+    cx = 0.5 * (x0 + x1)
+    cy = 0.5 * (y0 + y1)
+    cz = 0.5 * (z0 + z1)
+    rx = 0.5 * (x1 - x0)
+    ry = 0.5 * (y1 - y0)
+    rz = 0.5 * (z1 - z0)
+
+    # Boyutlardan en uzunu ana omurga ekseni secilir (0=X, 1=Y, 2=Z)
+    if profile == "wheel":
+        axis = 0  # Tekerlek X ekseni etrafinda doner
+    elif profile == "crystal":
+        axis = 1  # Kristal dikey Y ekseninde yukselir
+    elif profile == "wing":
+        axis = 0  # Kanat X ekseninde acilir
+    elif profile == "horn":
+        axis = 2  # Boynuz / burun / ors boynuzu Z ekseninde uzanir
+    else:
+        if ry >= rx and ry >= rz:
+            axis = 1
+        elif rz >= rx and rz >= ry:
+            axis = 2
+        else:
+            axis = 0
+
+    sides = 8
+    # Profil halkalari: (u_pos in [-1..1], scale_u, scale_v, offset_v)
+    if profile == "crystal":
+        # Altigen/sekizgen kristal: sivri taban, genis orta faset, sivri piramit tepe
+        ring_specs = [
+            (-0.78, 0.72, 0.72, 0.0),
+            (0.0, 1.00, 1.00, 0.0),
+            (0.58, 0.68, 0.68, 0.0),
+        ]
+    elif profile == "horn":
+        # Arkadan one dogru sivrilen boynuz / kurt burnu / ors boynuzu
+        ring_specs = [
+            (-0.85, 0.92, 0.92, 0.0),
+            (0.0, 1.00, 1.00, 0.0),
+            (0.75, 0.42, 0.42, -0.10),
+        ]
+    elif profile == "wing":
+        # Kanat / namlu: elmas kesitli aerodinamik fasetli yuzey
+        ring_specs = [
+            (-0.82, 0.85, 0.85, 0.0),
+            (0.0, 1.00, 1.00, 0.0),
+            (0.82, 0.55, 0.70, 0.05),
+        ]
+    elif profile == "wheel":
+        # Sekizgen kusatma tekerlegi / makara
+        ring_specs = [
+            (-0.85, 0.92, 0.92, 0.0),
+            (0.0, 1.00, 1.00, 0.0),
+            (0.85, 0.92, 0.92, 0.0),
+        ]
+    else:
+        # Anatomik / zirh / kaya yontulmus cok fasetli prizma
+        ring_specs = [
+            (-0.78, 0.74, 0.74, 0.0),
+            (0.0, 1.00, 1.00, 0.0),
+            (0.78, 0.78, 0.78, 0.0),
+        ]
+
+    def _make_point(
+        u_norm: float, su: float, sv: float, ov: float, theta: float
+    ) -> tuple[float, float, float]:
+        ct = math.cos(theta)
+        st = math.sin(theta)
+        if axis == 1:  # Y omurgasi, XZ kesiti
+            px = cx + rx * su * ct
+            py = cy + ry * u_norm
+            pz = cz + rz * min(1.0, max(-1.0, sv * st + ov))
+            return (px, py, pz)
+        elif axis == 2:  # Z omurgasi, XY kesiti
+            px = cx + rx * su * ct
+            py = cy + ry * min(1.0, max(-1.0, sv * st + ov))
+            pz = cz + rz * u_norm
+            return (px, py, pz)
+        else:  # X omurgasi, YZ kesiti
+            px = cx + rx * u_norm
+            py = cy + ry * su * ct
+            pz = cz + rz * min(1.0, max(-1.0, sv * st + ov))
+            return (px, py, pz)
+
+    if axis == 1:
+        cap_neg = (cx, y0, cz)
+        cap_pos = (cx, y1, cz)
+    elif axis == 2:
+        cap_neg = (cx, cy, z0)
+        cap_pos = (cx, cy, z1)
+    else:
+        cap_neg = (x0, cy, cz)
+        cap_pos = (x1, cy, cz)
+
+    rings: list[list[tuple[float, float, float]]] = []
+    for u_norm, su, sv, ov in ring_specs:
+        ring_pts: list[tuple[float, float, float]] = []
+        for k in range(sides):
+            theta = (2.0 * math.pi * k) / sides
+            ring_pts.append(_make_point(u_norm, su, sv, ov, theta))
+        rings.append(ring_pts)
+
+    facet_counter = 0
+    # Alt / Arka kapak fasetleri (cap_neg -> ring[0])
+    first_ring = rings[0]
+    for k in range(sides):
+        kn = (k + 1) % sides
+        _append_flat_triangle(
+            positions, normals, colors, indices,
+            cap_neg, first_ring[kn], first_ring[k],
+            rgba, facet_counter
+        )
+        facet_counter += 1
+
+    # Halkalar arasi faset kusaklari
+    for r_idx in range(len(rings) - 1):
+        r_curr = rings[r_idx]
+        r_next = rings[r_idx + 1]
+        for k in range(sides):
+            kn = (k + 1) % sides
+            p00 = r_curr[k]
+            p01 = r_curr[kn]
+            p10 = r_next[k]
+            p11 = r_next[kn]
+            _append_flat_triangle(
+                positions, normals, colors, indices,
+                p00, p01, p11,
+                rgba, facet_counter
+            )
+            facet_counter += 1
+            _append_flat_triangle(
+                positions, normals, colors, indices,
+                p00, p11, p10,
+                rgba, facet_counter
+            )
+            facet_counter += 1
+
+    # Ust / On kapak fasetleri (ring[-1] -> cap_pos)
+    last_ring = rings[-1]
+    for k in range(sides):
+        kn = (k + 1) % sides
+        _append_flat_triangle(
+            positions, normals, colors, indices,
+            last_ring[k], last_ring[kn], cap_pos,
+            rgba, facet_counter
+        )
+        facet_counter += 1
 
 
 def write_color32_glb(
