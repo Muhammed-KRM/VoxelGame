@@ -1,9 +1,12 @@
 {
-  "version": 1,
-  "description": "Stratocraft Otonom 3B Fabrika ve Kalite Kapisi Oz-Denetim Kancalari",
-  "verificationCommands": {
-    "assetFactory": "powershell -ExecutionPolicy Bypass -File scripts/generate-assets.ps1 -Phase 0",
-    "nativeTests": "powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1",
-    "qualityGate": "powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 0 -AllowPendingUnityLicense"
+  "stratocraft-session-handover": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/agy-session-start.ps1",
+        "timeout": 10
+      }
+    ]
   }
 }

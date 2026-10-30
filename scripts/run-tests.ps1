@@ -37,9 +37,9 @@ if (Test-Path $StandaloneTestProj) {
 }
 
 Write-Host "=== [4/4] Unity 6 Batchmode EditMode Kontrolu ===" -ForegroundColor Cyan
-$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.0.25f1\Editor\Unity.exe"
+$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.com"
 if (-not (Test-Path $UnityExe)) {
-    $found = Get-ChildItem "C:\Program Files\Unity\Hub\Editor\6000*\Editor\Unity.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $found = Get-ChildItem "C:\Program Files\Unity\Hub\Editor\6000*\Editor\Unity.com" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($found) { $UnityExe = $found.FullName }
 }
 
@@ -47,12 +47,13 @@ if ((-not $SkipUnityBatchmode) -and (Test-Path $UnityExe)) {
     $ResultsXml = Join-Path $RepoRoot "BuildLogs\unity_editmode_results.xml"
     $UnityLog = Join-Path $RepoRoot "BuildLogs\unity_editmode.log"
     New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot "BuildLogs") | Out-Null
-    Write-Host "Unity 6 Batchmode EditMode testleri kosuluyor..." -ForegroundColor Cyan
+    if (Test-Path $ResultsXml) { Remove-Item $ResultsXml -Force }
+    Write-Host "Unity 6 Batchmode EditMode testleri kosuluyor ($UnityExe)..." -ForegroundColor Cyan
     & $UnityExe -batchmode -nographics -projectPath $RepoRoot -runTests -testPlatform EditMode -testResults $ResultsXml -logFile $UnityLog
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unity 6 EditMode testleri basarisiz veya lisans aktivasyonu bekliyor! Log: $UnityLog"
+    if (($LASTEXITCODE -ne 0) -or (-not (Test-Path $ResultsXml))) {
+        throw "Unity 6 EditMode testleri basarisiz veya lisans aktivasyonu bekliyor (ExitCode=$LASTEXITCODE)! Log: $UnityLog"
     }
-    Write-Host "Unity 6 EditMode testleri %100 gecti." -ForegroundColor Green
+    Write-Host "Unity 6 EditMode testleri %100 gecti ($ResultsXml)." -ForegroundColor Green
 } else {
     Write-Host "BILGI: Unity 6 Editor henuz kurulu degil veya SkipUnityBatchmode aktif; C# Core kodlari dotnet test uzerinden %100 dogrulandi." -ForegroundColor Yellow
 }

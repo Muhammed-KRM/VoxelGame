@@ -17,7 +17,7 @@
 
 ## 2. 4 Katmanlı Mimari Özeti
 
-1. **Simülasyon Çekirdeği:** `Unity 6000.0.25f1 LTS` + **DOTS Entities** + **C# Burst SIMD** (`< 0.15 ms` Binary Greedy Meshing, İki Aşamalı Domino Yıkım DAG'ı, `240 Hz` Kılıç CCD, 3 Katmanlı `NavSpan` LoD AI).
+1. **Simülasyon Çekirdeği:** `Unity 6.6 (6000.6.7f1)` + **DOTS Entities 6.6** + **C# Burst 2.0 SIMD** (`< 0.15 ms` Binary Greedy Meshing, İki Aşamalı Domino Yıkım DAG'ı, `240 Hz` Kılıç CCD, 3 Katmanlı `NavSpan` LoD AI).
 2. **Yerel C++20 SIMD Eklentisi (`StratocraftNative`):** `AVX2` arazi gürültüsü, `LZ4/Zstd + XXH64` bölge sıkıştırma ve `Ed25519` Kan İmzalı Kontrat kriptografisi.
 3. **Görsel & GPU:** URP Forward+, `GPU Resident Drawer`, tek paylaşımlı **UV-Free `StratocraftUberShader.hlsl`** (`< 16 MB VRAM`) ve `500 Mob` `FP16 VAT`.
 4. **Servisler & `%100` Otonom 3B Fabrika:** 3 katmanlı fail-safe `SQLite WAL` telemetri (`telemetry_logs.db`), `HostLoopback` sunucu eşliği ve `Tools/AutonomousAssetFactory/` Headless CLI varlık üretim hattı.

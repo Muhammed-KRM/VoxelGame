@@ -35,7 +35,7 @@ if ($Mode -eq "CheckOnly") {
     exit 0
 }
 
-$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.0.25f1\Editor\Unity.exe"
+$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.exe"
 if (-not (Test-Path $UnityExe)) {
     $found = Get-ChildItem "C:\Program Files\Unity\Hub\Editor\6000*\Editor\Unity.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($found) { $UnityExe = $found.FullName }
@@ -45,5 +45,5 @@ if (Test-Path $UnityExe) {
     Write-Host "[Stratocraft] Unity 6 aciliyor: $UnityExe" -ForegroundColor Green
     Start-Process -FilePath $UnityExe -ArgumentList "-projectPath `"$RepoRoot`""
 } else {
-    Write-Host "[Stratocraft] UYARI: Unity 6000.0.25f1 henuz kurulu degil. Unity Hub girisi sonrasi kurulum tamamlanmalidir." -ForegroundColor Yellow
+    Write-Host "[Stratocraft] UYARI: Unity 6000.6.7f1 henuz kurulu degil. Unity Hub girisi sonrasi kurulum tamamlanmalidir." -ForegroundColor Yellow
 }

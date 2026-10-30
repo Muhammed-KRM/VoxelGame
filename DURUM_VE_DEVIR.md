@@ -14,13 +14,13 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#002` |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-29T17:56:00+03:00` |
+| **Devir Numarası** | `#003` |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-10-30T10:02:00+03:00` |
 | **Güncelleyen Bilgisayar / Ortam** | `EV-PC` (`Windows 11`, `NVIDIA GeForce GTX 1650 4GB`, `16 GB RAM`, yerel yol: `D:\oyun`) |
-| **Referans Son Git Commit / Etiket** | `v0.0.1-faz0` (`feat(faz0): proje iskeleti, C++20 SIMD cekirdegi, otonom 3B fabrika, UberShader ve 3 katmanli loglama` — `56921b4` üzerine işlendi) |
+| **Referans Son Git Commit / Etiket** | `v0.0.1-faz0` sonrası `Unity 6000.6.7f1 + MCP + Skills` eşitlemesi |
 | **Aktif Aşama** | `Aşama 1 — Temel Mimari, Hazır Dünya, 3B Modeller ve Yaşayan Temel Dünya (Faz 0 – Faz 2)` |
 | **Son Tamamlanan Faz** | `Faz 0 — Proje İskeleti, C++20 SIMD Çekirdeği, Otonom 3B Fabrika, Uber-Shader ve 3 Katmanlı Loglama` |
-| **Faz Durumu** | `FAZ_0_TAMAMLANDI (%100 TEST & KALITE KAPISI GECTI — FAZ_1_ICIN_KULLANICI_ONAYI_BEKLENIYOR)` |
+| **Faz Durumu** | `FAZ_0_TAMAMLANDI (%100 GERCEK UNITY 6.6.7f1 EDITMODE & MCP KURULUMU DOGULANDI — CANLI MCP TESTI / FAZ_1 ONAYI BEKLENIYOR)` |
 
 ---
 
@@ -34,16 +34,17 @@
 3. **Otonom 3B ve Küresel Doku Fabrikası (`5/5` `pytest` PASS, `ruff` PASS, `3.132 MB` VRAM):**
    - `256×16 Material LUT`, `16× MatCap`, `32× MicroDetail Array` ve `64³ Noise3D` fırınlandı (**toplam `3.132 MB / 16.000 MB`**).
    - `faz0_calibration_anvil_pedestal.glb` üretildi, `asset_validator.py` doğrulamasından geçti ve 4 açılı `512×512` PNG öz-denetim renderı görsel olarak kontrol edildi.
-4. **Unity 6 Çekirdek C#, `StratocraftUberShader.hlsl`, 3 Katmanlı Loglama ve `F3` HUD (`5/5` NUnit PASS):**
-   - `FixedQ20_12`, `MaterialIdCatalog`, `EnvLoader`, `SensitiveDataMasker`, `SqliteTelemetryLogger`, `StratocraftNativeBindings`, `StratocraftUberShader.hlsl/.shader`, `LowSpecGraphicsScaler`, `ServerBootstrapAndLoopback`, `F3TelemetryOverlayUi`, `StratocraftAssetPostprocessor` ve `StratocraftProjectSettingsEnforcer` yazıldı ve `quality-gate.ps1 -Phase 0` `%100` geçti.
+4. **Unity 6.6 (`6000.6.7f1`) Çekirdek C#, `StratocraftUberShader.hlsl`, 3 Katmanlı Loglama, `F3` HUD ve Canlı MCP/Skill Ekosistemi (`5/5` Gerçek Unity 6.6 EditMode NUnit PASS):**
+   - `Unity 6.6 (6000.6.7f1, changeset b22767f04f04)` + `Windows Build Support (IL2CPP)` + `Windows Dedicated Server` + `Visual Studio Community 2026` kuruldu; proje paketleri (`Entities 6.6.0`, `Burst 2.0.0`, `URP 17.6.0`, `com.unity.pipeline 0.9.1-exp.1`) ve `.meta` GUID'leri eşitlendi.
+   - Antigravity resmi **Unity Plugin (`31` motor yeteneği)**, **4 özel Stratocraft Workspace Skill** (`.agents/skills/stratocraft-*`), **`SessionStart` Hook** (`.agents/hooks.json`), **`Unity CLI 1.0.0-beta.15` + `# unity` MCP Sunucusu (`120+` canlı Editör aracı)**, **`Blender 4.2 LTS` Masaüstü/Başlat kısayolları + `# blender` MCP Sunucusu**, **`Material Maker 1.8`**, **`gltfpack 1.3`** ve **`midvoxio 0.1.6`** kuruldu ve bağlandı.
+   - Gerçek `Unity 6000.6.7f1` Batchmode EditMode test koşusu (`Faz0CoreAndNativeBridgeTests`) `5/5 Passed (0.75s, ExitCode: 0)` ile doğrulandı.
 
 ---
 
 ## 3. Kaldığımız Tam Nokta ve Sıradaki İlk İş (`Faz 1` Başlangıcı)
 
-- **Yarım Kalan (`WIP`) Dosya:** Yoktur (`Faz 0` temiz kapatılmış ve etiketlenmiştir).
-- **Bekleyen Tek Seferlik Kullanıcı Manuel İşlemi:**
-  - `Unity Hub` açılarak Unity ID girişi yapılması, ücretsiz **Personal Lisans** aktivasyonu ve **`Unity 6000.0.25f1`** (*Windows Build Support IL2CPP* + *Dedicated Server*) kurulumunun başlatılması *(Not: `Faz 1` C++20 ve C# çekirdek voxel/akışkan/domino matematik ve birim testleri Unity Editör kurulumu tamamlanırken bile `dotnet test` üzerinden bloklanmadan geliştirilebilir)*.
+- **Yarım Kalan (`WIP`) Dosya:** Yoktur (`Faz 0` ve `Unity 6000.6.7f1 + MCP + Skills` kurulumu tamamlanmıştır).
+- **Ev PC Kurulum Durumu:** `Unity Hub` Personal Lisans, `Unity 6.6 (6000.6.7f1)`, `IL2CPP`, `Dedicated Server`, `VS 2026`, `# unity` MCP, `# blender` MCP ve `31+4` Skill kurulumu **tamamlandı**. *(İş PC'ye geçildiğinde `BILGISAYARLAR_ARASI_GECIS_REHBERI.md` uyarınca aynı `Unity 6000.6.7f1` sürümü kurulacaktır).*
 - **Kullanıcı `"Faz 1'e geç"` Onayı Verdiğinde Başlanacak İş (`Bölüm 5.2`):**
   1. `Assets/_Stratocraft/Voxel/`: `32-bit Voxel` (`VoxelCell.cs`, `VoxelBitUtility.cs`), `16×16×16` Sub-Chunk başına `4.096` mikro-blok havuzu (`MicroVoxelPool4096.cs`), `< 0.15 ms` 64-Bit `BinaryGreedyMeshingJob.cs` ve `±4.096m` `K*32m` `ChunkSnappedFloatingOriginSystem.cs`.
   2. `Assets/_Stratocraft/Physics/`: `16-bit` sonlu akışkanlar (`Water >= 128` & `Lava >= 128` stokiyometrik Doğal Obsidyen) ve `< 2.0 ms` İki Aşamalı Domino yıkım fiziği (`GeodesicSupportDijkstraJob.cs` + `TributaryLoadDagJob.cs` + `GreedyBoxFractureJob.cs`, `<= 12` konveks parça).

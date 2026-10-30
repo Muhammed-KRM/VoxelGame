@@ -2844,8 +2844,8 @@ Expand-Archive -Path "Tools/bin/mm.zip" -DestinationPath "Tools/bin/material_mak
 Remove-Item "Tools/bin/mm.zip"
 
 # 6. Unity Hub CLI ile Unity 6 + Windows IL2CPP + Dedicated Server Modüllerinin Başsız (Headless) Kurulumu
-& "C:\Program Files\Unity Hub\Unity Hub.exe" -- --headless install --version 6000.0.25f1 --changeset b42f8f8282b9
-& "C:\Program Files\Unity Hub\Unity Hub.exe" -- --headless install-modules --version 6000.0.25f1 -m windows-il2cpp dedicated-server-windows-mono dedicated-server-linux-il2cpp
+& "C:\Program Files\Unity Hub\Unity Hub.exe" -- --headless install --version 6000.6.7f1 --changeset b22767f04f04
+& "C:\Program Files\Unity Hub\Unity Hub.exe" -- --headless install-modules --version 6000.6.7f1 -m windows-il2cpp windows-server-mono
 ```
 
 #### 2. KISIM: UYGULAMA İÇİ EKLENTİLER, MCP SUNUCULARI, UNITY PAKETLERİ VE AÇIK KAYNAK KÜTÜPHANELERİ

@@ -1,7 +1,7 @@
 # 🔄 Stratocraft — Bilgisayarlar Arası Geçiş ve İki Makineden (İş ↔ Ev) Eşzamanlı Geliştirme Rehberi
 
-> **Sürüm:** 1.0.0  
-> **Son Güncelleme:** 29.10.2026  
+> **Sürüm:** 1.1.0  
+> **Son Güncelleme:** 30.10.2026  
 > **Uzak Depo (`origin`):** `https://github.com/Muhammed-KRM/VoxelGame.git`  
 > **İlişkili Belgeler:**
 > - Ana Geliştirici Anayasası: [STRATOCRAFT_GELISTIRICI_DOKUMANI.md](./STRATOCRAFT_GELISTIRICI_DOKUMANI.md)
@@ -27,7 +27,7 @@ Aşağıdaki **4 Altın Kural** ve **Sabah/Akşam Devir Protokolü** bu 4 sorunu
 
 ### Kural 1 — Kesin Sürüm Kilidi (`scripts/setup-environment.ps1`)
 Her iki bilgisayarda da kurulum elle farklı sürümler indirilerek değil, Faz 0'da oluşturulan **`scripts/setup-environment.ps1`** betiğiyle yapılır. Böylece iki makinedeki ana araç sürümleri birebir kilitlenir:
-- **Unity 6 LTS:** `6000.0.25f1` (`changeset: b42f8f8282b9`) + `Windows IL2CPP` + `Dedicated Server`
+- **Unity 6.6:** `6000.6.7f1` (`changeset: b22767f04f04`) + `Windows Build Support (IL2CPP)` + `Windows Dedicated Server` + `com.unity.pipeline` (`Unity CLI + MCP`)
 - **C++20 Araç Zinciri:** `VS 2022 Build Tools (MSVC v143)` + `CMake 3.28+` + `Ninja 1.11+` + `LLVM/Clang 17+`
 - **Python & 3B Fabrika:** `Python 3.11 (64-bit)` + `uv` + `Blender 4.2 LTS` + `Blockbench 4.10+`
 
@@ -66,8 +66,8 @@ Antigravity içinde klonladığınız `VoxelGame` klasörünü açın ve sohbete
 > *"Bu benim ikinci bilgisayarım. `BILGISAYARLAR_ARASI_GECIS_REHBERI.md` ve `DURUM_VE_DEVIR.md` dosyalarını oku, eksik kurulumları birebir aynı sürümlerle kur ve son durumu bana raporla."*
 
 ### Adım 3 — Yalnızca 2 Kısa Manuel Onay
-1. **Unity Hub** kurulduğunda açıp Unity ID hesabınızla giriş yapın ve ücretsiz **Personal** lisansını etkinleştirin *(Ardından AI, Unity `6000.0.25f1` editörünü otomatik indirir)*.
-2. Unity 6 açıldığında üst menüden **`Window > Unity MCP`** penceresinde bağlantıyı bir kez başlatın (`Start Server / Auto-Connect`).
+1. **Unity Hub** kurulduğunda açıp Unity ID hesabınızla giriş yapın, ücretsiz **Personal** lisansını etkinleştirin ve **`Unity 6.6 (6000.6.7f1)`** (`Windows Build Support IL2CPP` + `Windows Dedicated Server`) kurulumunu tamamlayın.
+2. Antigravity eklentilerinden resmi **Unity Plugin (`antigravity-plugins-partners/plugin/unity`)** kartında **Add** butonuna bir kez basın (`com.unity.pipeline` ve `unity mcp configure antigravity` projede zaten ayarlı olduğu için Unity açıldığında MCP otomatik bağlanır).
 
 ---
 
@@ -132,4 +132,4 @@ Yapay zeka ajanı **her yeni oturum başında ve her yeni faza (`Faz 0 → Faz 1
 | **Ev PC'de Harici GPU (`GTX 1650`), İş PC'de Dahili GPU (`Intel/AMD iGPU`) veya Farklı RAM Varsa** | Sorun çıkmaz. Projemiz `8 GB RAM + iGPU` tabanına göre tasarlanmıştır. Otonom 3B Fabrika her iki bilgisayarda da deterministik **Yol A (`Headless Blender 4.2 + Blockbench + MidVoxIO`)** hattını kullanır; oyun içinde ise `LowSpecGraphicsScaler.cs` o anki bilgisayarın RAM/GPU kapasitesine göre ayarları otomatik ölçekler. |
 | **Diğer Bilgisayarda Push Yapmayı Unuttum!** | Yeni bilgisayarda yeni bir dosyada çalışıyorsanız devam edebilirsiniz; eski bilgisayara döndüğünüzde `git stash` -> `git pull --rebase origin main` -> `git stash pop` ile iki işi birleştiririz. Çakışma olmaması için bilgisayardan kalkarken mutlaka devir push'u yapın. |
 | **`DllNotFoundException: StratocraftNative` Hatası** | Yeni bilgisayarda C++ kodu çekilmiş ama henüz derlenmemiştir. `pwsh -File scripts/build-native.ps1` (veya `baslat.ps1`) çalıştırıldığında `StratocraftNative.dll` otomatik derlenip `Assets/Plugins/x86_64/` altına kopyalanır. |
-| **Unity Açılırken Farklı Sürüm Uyarısı Verirse** | **"Open Anyway" (Yine de Aç) butonuna BASMAYIN!** İptal edip `ProjectSettings/ProjectVersion.txt` içindeki tam sürümü (`6000.0.25f1`) Unity Hub üzerinden açın; böylece iki bilgisayar arasında sürüm kayması yaşanmaz. |
+| **Unity Açılırken Farklı Sürüm Uyarısı Verirse** | **"Open Anyway" (Yine de Aç) butonuna BASMAYIN!** İptal edip `ProjectSettings/ProjectVersion.txt` içindeki tam sürümü (`6000.6.7f1`) Unity Hub üzerinden açın; böylece iki bilgisayar arasında sürüm kayması yaşanmaz. |
