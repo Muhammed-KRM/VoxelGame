@@ -81,6 +81,12 @@ namespace Stratocraft.Editor
                 changed = true;
             }
 
+            if (PlayerSettings.colorSpace != ColorSpace.Linear)
+            {
+                PlayerSettings.colorSpace = ColorSpace.Linear;
+                changed = true;
+            }
+
             if (EnsureCustomLayers())
             {
                 changed = true;
@@ -90,6 +96,8 @@ namespace Stratocraft.Editor
             {
                 // EnsureSharedUberMaterial kendi icinde yeni olusturulduysa kaydeder
             }
+
+            StratocraftUrpBootstrap.EnsureUrpAndBindUberTextures();
 
             if (changed)
             {

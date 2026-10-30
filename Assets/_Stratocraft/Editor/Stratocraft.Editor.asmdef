@@ -10,7 +10,12 @@
     "Stratocraft.Character",
     "Stratocraft.Inventory",
     "Stratocraft.CreaturesAI",
-    "Stratocraft.UI"
+    "Stratocraft.UI",
+    "Unity.Burst",
+    "Unity.Collections",
+    "Unity.Mathematics",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime"
   ],
   "includePlatforms": [
     "Editor"

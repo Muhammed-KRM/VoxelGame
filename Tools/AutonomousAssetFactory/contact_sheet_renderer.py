@@ -11,6 +11,11 @@ import pygltflib
 from PIL import Image, ImageDraw
 
 from asset_validator import _read_accessor_array
+from textures.bake_material_lut import _define_base_materials
+
+_CANONICAL_MAT_PALETTE: dict[int, tuple[int, int, int]] = {
+    mat_id: vals[0] for mat_id, vals in _define_base_materials().items()
+}
 
 
 def _project_triangles_panel(
@@ -85,23 +90,25 @@ def _project_triangles_panel(
     return img
 
 
-def _material_id_to_preview_rgb(mat_id: int) -> tuple[int, int, int]:
-    """Kontrol kartinda farkli MaterialID parcalarini ayirt edici fiziksel tonda gosterir."""
-    palette = {
-        1: (128, 132, 138),   # Stone
-        30: (198, 114, 68),   # Copper
-        32: (155, 160, 168),  # Iron
-        35: (232, 192, 68),   # Gold
-        37: (118, 198, 232),  # Mithril
-        41: (156, 112, 238),  # Astral Crystal
-        51: (172, 182, 196),  # Steel
-        60: (144, 156, 174),  # Damascus Steel
-        70: (152, 106, 64),   # OakWood
-        71: (108, 76, 52),    # Ironwood
-    }
-    if mat_id in palette:
-        return palette[mat_id]
-    return ((mat_id * 53) % 180 + 60, (mat_id * 97) % 180 + 60, (mat_id * 149) % 180 + 60)
+def _material_id_to_preview_rgb(mat_id: int, temp_u8: int = 0, ao_u8: int = 240) -> tuple[int, int, int]:
+    """Kontrol kartinda MaterialID + T^4 Blackbody kor pariltisi + Cavity AO tonunu gercekci gosterir."""
+    if mat_id in _CANONICAL_MAT_PALETTE:
+        r, g, b = _CANONICAL_MAT_PALETTE[mat_id]
+    else:
+        r, g, b = ((mat_id * 53) % 180 + 60, (mat_id * 97) % 180 + 60, (mat_id * 149) % 180 + 60)
+
+    ao = 0.55 + 0.45 * (max(0, min(255, ao_u8)) / 255.0)
+    r_f, g_f, b_f = r * ao, g * ao, b * ao
+    if temp_u8 > 24:
+        ht = min(1.0, (temp_u8 - 24) / 231.0)
+        r_f = r_f * (1.0 - 0.5 * ht) + 255.0 * (ht**1.2)
+        g_f = g_f * (1.0 - 0.6 * ht) + 165.0 * (ht**1.9)
+        b_f = b_f * (1.0 - 0.8 * ht) + 70.0 * (ht**3.0)
+    return (
+        int(max(0, min(255, round(r_f)))),
+        int(max(0, min(255, round(g_f)))),
+        int(max(0, min(255, round(b_f)))),
+    )
 
 
 def render_4angle_contact_sheet(
@@ -152,9 +159,25 @@ def render_4angle_contact_sheet(
 
             if prim.attributes.COLOR_0 is not None:
                 cols = _read_accessor_array(gltf, blob, prim.attributes.COLOR_0)
-                mat_ids = cols[:, 0].astype(np.int32)
-                tri_mats = mat_ids[idx[:, 0]]
-                tri_rgb = np.array([_material_id_to_preview_rgb(int(m)) for m in tri_mats], dtype=np.uint8)
+                tri_v0 = idx[:, 0]
+                mat_ids = cols[tri_v0, 0].astype(np.int32)
+                temps = (
+                    cols[tri_v0, 1].astype(np.int32)
+                    if cols.shape[1] >= 2
+                    else np.zeros(len(idx), dtype=np.int32)
+                )
+                aos = (
+                    cols[tri_v0, 3].astype(np.int32)
+                    if cols.shape[1] >= 4
+                    else np.full(len(idx), 240, dtype=np.int32)
+                )
+                tri_rgb = np.array(
+                    [
+                        _material_id_to_preview_rgb(int(m), int(t), int(a))
+                        for m, t, a in zip(mat_ids, temps, aos, strict=False)
+                    ],
+                    dtype=np.uint8,
+                )
             else:
                 tri_rgb = np.full((len(idx), 3), 180, dtype=np.uint8)
 

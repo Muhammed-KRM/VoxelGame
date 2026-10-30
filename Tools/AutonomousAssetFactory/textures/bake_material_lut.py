@@ -15,12 +15,20 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
     """
     return {
         0: ((0, 0, 0), 255, 0, 0, 0),            # Air
-        1: ((124, 128, 134), 196, 0, 0, 0),      # Stone
-        2: ((118, 86, 58), 225, 0, 0, 1),        # Dirt
-        3: ((78, 136, 62), 210, 0, 0, 2),        # Grass
+        1: ((122, 128, 138), 196, 0, 0, 0),      # Stone
+        2: ((126, 90, 60), 225, 0, 0, 1),        # Dirt
+        3: ((74, 154, 68), 205, 0, 0, 2),        # Grass
         4: ((214, 194, 138), 205, 0, 0, 3),      # Sand
-        5: ((42, 44, 50), 235, 15, 0, 4),        # Bedrock
-        6: ((32, 24, 44), 68, 25, 3, 5),         # Natural Obsidian
+        5: ((48, 52, 60), 235, 15, 0, 4),        # Bedrock
+        6: ((38, 28, 56), 58, 35, 3, 5),         # Natural Obsidian
+        7: ((92, 98, 110), 190, 10, 0, 6),       # Basalt
+        8: ((136, 134, 130), 210, 0, 0, 7),      # Cobblestone
+        9: ((150, 146, 140), 220, 0, 0, 7),      # Gravel
+        10: ((168, 218, 248), 54, 20, 3, 12),    # PackedIce
+        11: ((228, 72, 22), 140, 15, 0, 14),     # MagmaBlock
+        12: ((42, 148, 236), 28, 35, 3, 12),     # FiniteWaterSurface
+        13: ((255, 92, 20), 95, 25, 0, 14),      # FiniteLavaSurface
+        15: ((108, 102, 96), 230, 0, 0, 7),      # LooseRubble
         # 14 Yeralti Cevheri (30..43) + Komur/Kozmik (44..46)
         30: ((196, 108, 64), 120, 210, 0, 8),    # CopperOre
         31: ((176, 180, 182), 130, 200, 0, 8),   # TinOre
@@ -47,6 +55,11 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         71: ((98, 70, 50), 168, 15, 2, 25),      # Ironwood (ProcMode = 2)
         72: ((112, 164, 158), 152, 25, 2, 26),   # SpiritWood (ProcMode = 2)
         73: ((184, 216, 132), 140, 35, 2, 27),   # YggdrasilBranch
+        74: ((146, 114, 78), 218, 0, 0, 24),     # TacticalCloth
+        75: ((112, 74, 48), 200, 0, 0, 24),      # LeatherPadding
+        76: ((232, 224, 204), 135, 10, 0, 28),   # BoneIvory
+        77: ((86, 76, 72), 212, 0, 0, 29),       # CreatureFurAsh
+        78: ((252, 168, 44), 76, 160, 3, 30),    # PhoenixFeatherGold
     }
 
 

@@ -9,6 +9,27 @@ from PIL import Image
 
 from generators.armor_15piece_generator import ARMOR_15_SLOTS, Armor15PieceGenerator
 from generators.base_generator import ManifestEntry
+from generators.blender.blender_runner import run_blender_sculpt_batch
+
+
+def _slot_target_dimensions(slot_name: str) -> tuple[float, float, float]:
+    """Her bir anatomik zirh bolgesi ve katmani (Katman 1..3) icin gercekci metre olculeri."""
+    layer_inflate = 0.030 if "layer3" in slot_name else (0.015 if "layer2" in slot_name else 0.0)
+    if slot_name.startswith("head_"):
+        base = (0.28, 0.30, 0.30)
+    elif slot_name.startswith("torso_"):
+        base = (0.50, 0.58, 0.34)
+    elif slot_name.startswith("arms_"):
+        base = (0.48, 0.50, 0.24)
+    elif slot_name.startswith("hands_"):
+        base = (0.34, 0.26, 0.16)
+    else:
+        base = (0.42, 0.76, 0.28)
+    return (
+        round(base[0] + layer_inflate, 4),
+        round(base[1] + layer_inflate * 0.5, 4),
+        round(base[2] + layer_inflate, 4),
+    )
 
 
 def bake_armor_gap_map_atlas(out_png_path: Path, resolution: int = 64) -> Path:
@@ -51,33 +72,39 @@ def auto_skin_15piece_armor(
     base_spec: ManifestEntry,
     output_dir: Path,
 ) -> tuple[list[Path], Path]:
-    """15 parca zirh setini (Katman 1..3 offset kurallariyla) ve 64x64 Gap-Map atlasini uretir."""
+    """15 parca zirh setini (Head/Torso/Arms/Hands/Legs x Katman 1..3) Blender 4.2 ile uretir."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    generator = Armor15PieceGenerator()
+    batch_jobs: list[tuple[ManifestEntry, Path]] = []
     generated_glbs: list[Path] = []
 
     for slot_name in ARMOR_15_SLOTS:
+        slot_mat = 75 if "layer1" in slot_name else (32 if "layer2" in slot_name else 51)
         slot_spec = ManifestEntry(
             asset_id=f"armor_slot_{slot_name}",
             category="Armor15Piece",
             phase=base_spec.phase,
             generator_path=base_spec.generator_path,
-            target_dimensions_meters=base_spec.target_dimensions_meters,
+            target_dimensions_meters=_slot_target_dimensions(slot_name),
             dimension_tolerance_ratio=base_spec.dimension_tolerance_ratio,
             pivot_rule=base_spec.pivot_rule,
             forward_axis=base_spec.forward_axis,
             up_axis=base_spec.up_axis,
-            poly_budget_lod0=base_spec.poly_budget_lod0,
-            poly_budget_lod1=base_spec.poly_budget_lod1,
-            poly_budget_lod2=base_spec.poly_budget_lod2,
-            default_material_id=base_spec.default_material_id,
+            poly_budget_lod0=max(240, base_spec.poly_budget_lod0 // 2),
+            poly_budget_lod1=max(120, base_spec.poly_budget_lod1 // 2),
+            poly_budget_lod2=max(60, base_spec.poly_budget_lod2 // 2),
+            default_material_id=slot_mat,
             required_sockets=list(base_spec.required_sockets),
             dismemberable_bones=[],
             bake_vat=False,
         )
         out_glb = output_dir / f"{slot_spec.asset_id}.glb"
-        generator.generate(slot_spec, out_glb)
+        batch_jobs.append((slot_spec, out_glb))
         generated_glbs.append(out_glb)
+
+    if not run_blender_sculpt_batch(batch_jobs):
+        generator = Armor15PieceGenerator()
+        for slot_spec, out_glb in batch_jobs:
+            generator.generate(slot_spec, out_glb)
 
     gap_atlas = bake_armor_gap_map_atlas(output_dir / "T_ArmorGapMap_64x64_Atlas.png", resolution=64)
     return generated_glbs, gap_atlas

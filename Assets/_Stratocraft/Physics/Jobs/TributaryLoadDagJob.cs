@@ -62,7 +62,29 @@ namespace Stratocraft.Physics.Jobs
                         float totalLoad = props.MassKg + outAccumulatedLoadKg[idx];
                         outAccumulatedLoadKg[idx] = totalLoad;
 
-                        if (totalLoad > props.CompressiveCrushLimitKg)
+                        int lateralConfinedFaces = 0;
+                        if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
+                        {
+                            for (int d = 0; d < 4; d++)
+                            {
+                                int cnx = x + HorizontalDx[d];
+                                int cnz = z + HorizontalDz[d];
+                                if ((uint)cnx >= (uint)sizeX || (uint)cnz >= (uint)sizeZ)
+                                {
+                                    lateralConfinedFaces++;
+                                    continue;
+                                }
+
+                                int cnIdx = GeodesicSupportDijkstraJob.Index3D(cnx, y, cnz, sizeX, sizeY);
+                                if (VoxelBitUtility.GetMaterialId(voxels[cnIdx]) != MaterialIdCatalog.Air &&
+                                    ioUnsupportedOrCrushedMask[cnIdx] == 0)
+                                {
+                                    lateralConfinedFaces++;
+                                }
+                            }
+                        }
+
+                        if (totalLoad > props.ComputeEffectiveCrushLimit(lateralConfinedFaces))
                         {
                             ioUnsupportedOrCrushedMask[idx] = 1;
                             newlyFailedCount++;

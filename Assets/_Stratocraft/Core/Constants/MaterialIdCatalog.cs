@@ -43,6 +43,15 @@ namespace Stratocraft.Core.Constants
         /// <summary>Magma Blogu (11).</summary>
         public const byte MagmaBlock = 11;
 
+        /// <summary>Sonlu Akiskan Su Yuzeyi (12).</summary>
+        public const byte FiniteWaterSurface = 12;
+
+        /// <summary>Sonlu Akiskan Erimis Lav Yuzeyi (13).</summary>
+        public const byte FiniteLavaSurface = 13;
+
+        /// <summary>Yikim Sonrasi Gevsek Moloz / Rubble Voxel (15).</summary>
+        public const byte LooseRubble = 15;
+
         // ---------- 14 Yeralti Cevheri (Madde Kristali Vakumundan Muaf: 30..43) ----------
         /// <summary>1. Bakir Cevheri (30).</summary>
         public const byte CopperOre = 30;
@@ -123,6 +132,21 @@ namespace Stratocraft.Core.Constants
 
         /// <summary>Yggdrasil Dali (73).</summary>
         public const byte YggdrasilBranch = 73;
+
+        /// <summary>Taktiksel Kumas Canta Ortusu (74).</summary>
+        public const byte TacticalCloth = 74;
+
+        /// <summary>ic Katman Deri / Dolgulu Gambeson (75).</summary>
+        public const byte LeatherPadding = 75;
+
+        /// <summary>Kemik / Dis / Boynuz (76).</summary>
+        public const byte BoneIvory = 76;
+
+        /// <summary>Kul Kurdu / Yaratik Postu (77).</summary>
+        public const byte CreatureFurAsh = 77;
+
+        /// <summary>Anka Kusu Altin-Kor Tuyu (78).</summary>
+        public const byte PhoenixFeatherGold = 78;
 
         /// <summary>Zindan Kutsal Koruma Bloklari Baslangici (240..255).</summary>
         public const byte DungeonSanctumImmuneStart = 240;

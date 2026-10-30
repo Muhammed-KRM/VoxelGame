@@ -13,6 +13,7 @@ from asset_validator import ValidationResult, auto_correct_glb_transform, valida
 from contact_sheet_renderer import render_4angle_contact_sheet
 from generators.armor_15piece_generator import Armor15PieceGenerator
 from generators.base_generator import ManifestEntry, build_calibration_glb
+from generators.blender.blender_runner import run_blender_sculpt_batch
 from generators.neural_sculpt_pipeline import NeuralSculptPipeline
 from generators.procedural_creature_builder import ProceduralCreatureBuilder
 from generators.voxel_template_generator import (
@@ -75,11 +76,23 @@ def bake_global_ubershader_textures(repo_root: Path) -> float:
 
 
 def generate_single_asset(entry: ManifestEntry, has_cuda_gpu: bool = False) -> Path:
-    """Tek bir manifesto kaydini kategori ureticisiyle hedef klasore .glb olarak uretir."""
+    """Tek bir manifesto kaydini Blender 4.2 (varsa) veya kategori yedek ureticisiyle .glb olarak uretir."""
     repo = _repo_root()
     sub_folder = _category_to_output_folder(entry.category)
     out_glb = repo / "Assets" / "Art" / "Generated" / sub_folder / f"{entry.asset_id}.glb"
 
+    if run_blender_sculpt_batch([(entry, out_glb)]):
+        return out_glb
+
+    return _generate_single_asset_python_fallback(entry, out_glb, has_cuda_gpu=has_cuda_gpu)
+
+
+def _generate_single_asset_python_fallback(
+    entry: ManifestEntry,
+    out_glb: Path,
+    has_cuda_gpu: bool = False,
+) -> Path:
+    """Blender bulunmayan CI ortamlarinda saf Python yedek ureticisini calistirir."""
     if entry.category == "WeaponHilt":
         return WeaponHiltGenerator().generate(entry, out_glb)
     if entry.category == "Armor15Piece":
@@ -131,8 +144,17 @@ def generate_assets_for_phase(phase: int, force_cpu_fallback: bool = True) -> As
     reports_sheets_dir = repo / "Reports" / "AssetContactSheets"
     reports_sheets_dir.mkdir(parents=True, exist_ok=True)
 
+    batch_jobs: list[tuple[ManifestEntry, Path]] = []
     for entry in entries:
-        glb_path = generate_single_asset(entry, has_cuda_gpu=(not force_cpu_fallback))
+        sub_folder = _category_to_output_folder(entry.category)
+        out_glb = repo / "Assets" / "Art" / "Generated" / sub_folder / f"{entry.asset_id}.glb"
+        batch_jobs.append((entry, out_glb))
+
+    blender_succeeded = run_blender_sculpt_batch(batch_jobs)
+
+    for entry, glb_path in batch_jobs:
+        if not blender_succeeded:
+            _generate_single_asset_python_fallback(entry, glb_path, has_cuda_gpu=(not force_cpu_fallback))
         preview_png = previews_dir / f"{entry.asset_id}_contact_sheet.png"
         val_res = run_self_correction_loop(entry, glb_path, preview_png, max_attempts=3)
         if val_res.is_valid:

@@ -69,7 +69,8 @@ namespace Stratocraft.Physics.Jobs
                         }
 
                         bool isSupportFloor = y <= supportFloorY;
-                        bool isTriaxialAnchor = IsTriaxiallyConfinedNaturalRock(voxels, x, y, z, sizeX, sizeY, sizeZ, raw);
+                        bool isTriaxialAnchor = IsTriaxiallyConfinedNaturalRock(
+                            voxels, x, y, z, sizeX, sizeY, sizeZ, supportFloorY, raw);
 
                         if (isSupportFloor || isTriaxialAnchor)
                         {
@@ -180,6 +181,7 @@ namespace Stratocraft.Physics.Jobs
             int sizeX,
             int sizeY,
             int sizeZ,
+            int supportFloorY,
             uint raw)
         {
             if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
@@ -187,8 +189,8 @@ namespace Stratocraft.Physics.Jobs
                 return false;
             }
 
-            int solidFaces = 0;
-            bool hasBottomNeighbor = false;
+            int lateralSolidFaces = 0;
+            bool hasBottomSupport = y <= supportFloorY;
 
             for (int dir = 0; dir < 6; dir++)
             {
@@ -203,15 +205,18 @@ namespace Stratocraft.Physics.Jobs
                 int nIdx = Index3D(nx, ny, nz, sizeX, sizeY);
                 if (VoxelBitUtility.GetMaterialId(voxels[nIdx]) != MaterialIdCatalog.Air)
                 {
-                    solidFaces++;
-                    if (NeighborDy[dir] == -1)
+                    if (NeighborDy[dir] == 0)
                     {
-                        hasBottomNeighbor = true;
+                        lateralSolidFaces++;
+                    }
+                    else if (NeighborDy[dir] == -1)
+                    {
+                        hasBottomSupport = true;
                     }
                 }
             }
 
-            return hasBottomNeighbor && solidFaces >= 4 && y == 0;
+            return y <= supportFloorY && hasBottomSupport && lateralSolidFaces >= 4;
         }
 
         private static void PushBucket(int[] bucketHeads, int[] nextInBucket, int bucket, int nodeIndex)

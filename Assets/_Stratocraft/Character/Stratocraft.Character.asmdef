@@ -4,6 +4,8 @@
   "references": [
     "Stratocraft.Core",
     "Stratocraft.Voxel",
+    "Stratocraft.Physics",
+    "Stratocraft.Rendering",
     "Unity.Burst",
     "Unity.Collections",
     "Unity.Entities",
