@@ -47,20 +47,42 @@ TEST(StratocraftNativeWorldGen, ChunkNoiseIsDeterministicAndMarksNaturalOriginSt
     EXPECT_EQ(fluidA, fluidB);
     EXPECT_NE(chunkA, chunkDifferent);
 
-    // 2) Y=0 katmani Bedrock (MatID = 5) olmali ve tum bloklarda BlockOriginState (Bit 26..27) == 0 olmalidir
+    // 2) Y=0..7 katmani (-105m Manto) Bedrock (MatID = 5), Y=12..32 Kaynayan Lav Denizi (Settled),
+    // yuzeyde surekli 7-bit SDF gecis bandi (1..126) ve tum bloklarda BlockOriginState == 0 olmalidir.
     size_t solidCount = 0;
+    size_t smoothSdfBandCount = 0;
+    size_t settledLavaCount = 0;
     for (size_t i = 0; i < kVoxelsPerChunk; ++i)
     {
         const uint32_t cell = chunkA[i];
         const uint8_t originState = static_cast<uint8_t>((cell >> 26) & 0x03u);
+        const uint8_t density = static_cast<uint8_t>((cell >> 8) & 0x7Fu);
         EXPECT_EQ(originState, 0u);
         if ((cell & 0xFFu) != 0u)
         {
             ++solidCount;
+            if (density > 0u && density < 127u)
+            {
+                ++smoothSdfBandCount;
+            }
+        }
+
+        const uint16_t fluid = fluidA[i];
+        if (fluid != 0u)
+        {
+            // Dogustan tum sivilar IsSettled=1 (%0 CPU uykuda) olmalidir
+            EXPECT_NE(fluid & (1u << 10), 0u);
+            if (((fluid >> 8) & 0x03u) == 2u)
+            {
+                ++settledLavaCount;
+            }
         }
     }
     EXPECT_EQ(chunkA[0] & 0xFFu, 5u);
+    EXPECT_EQ(chunkA[7 * 256] & 0xFFu, 5u); // arrayY = 7 (-105m Manto siniri)
     EXPECT_GT(solidCount, 8000u);
+    EXPECT_GT(smoothSdfBandCount, 64u);
+    EXPECT_GT(settledLavaCount, 1000u);
     EXPECT_LT(elapsedMs, 5.0);
 }
 

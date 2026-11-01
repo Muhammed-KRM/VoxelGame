@@ -6,20 +6,25 @@ using Stratocraft.Voxel.Data;
 namespace Stratocraft.Voxel.Systems
 {
     /// <summary>
-    /// Cift Esikli (Dual-Threshold) Chunk-Snapped Floating Origin Sistemi (F-03, F-07).
-    /// 1) Gorsel Chunk Kaydirma (±4.096m Esigi, K*32m adim): Aktif chunk'larin kose tamponlarina dokunmadan
-    ///    (0.0 ms yeniden meshleme!) yalnizca Transform konumlarini kaydirir.
-    /// 2) Fizik ve 240 Hz Kilic CCD Kaydirma (±256m Esigi): Yerel fizik orijinini 16 chunk'ta bir guncelleyerek
-    ///    18.000m dis halkada bile FP32 mantissa cozunurlugunu ~15 mikrometre (0.015 mm) duzeyinde tutar.
-    /// Bkz. GAME LOGIC BIBLE Bolum 2.6.A ve GELISTIRICI DOKUMANI Bolum 4.13.5.
+    /// Birlesik (±256m Esikli, K*32m Adimli) Chunk-Snapped Floating Origin Sistemi (GAME LOGIC BIBLE v7.0 Bolum 2.6.A):
+    /// 1) Gorsel &amp; Fizik Chunk Kaydirma (±256m Esigi, K*32m adim): Aktif chunk'larin kose tamponlarina dokunmadan
+    ///    (0.0 ms yeniden meshleme!) yalnizca Transform konumlarini kaydirir ve 18.000m dis halkada bile
+    ///    FP32 mantissa cozunurlugunu &lt;= 15.26 mikrometre (0.015 mm) duzeyinde tutar.
+    /// 2) ShaderMacroPhaseOffset: UV-Free Biplanar UberShader'in kaydirma aninda sifir doku kaymasi (Zero Swim)
+    ///    yasamasi icin _FloatingOriginMacroPhase mod-256m telafi vektorunu saglar.
     /// </summary>
     public sealed class ChunkSnappedFloatingOriginSystem
     {
+        private const double MacroNoiseRepeatPeriodMeters = 256.0;
+
         /// <summary>Birikmis toplam gorsel orijin kaydirma ofseti (metre).</summary>
         public (double X, double Y, double Z) AccumulatedVisualShiftMeters { get; private set; }
 
         /// <summary>Aktif yerel fizik orijini (metre).</summary>
         public (double X, double Y, double Z) PhysicsOriginMeters { get; private set; }
+
+        /// <summary>Shader _FloatingOriginMacroPhase icin [0, 256) araliginda sarilmis faz telafi ofseti.</summary>
+        public (float X, float Y, float Z) ShaderMacroPhaseOffset { get; private set; }
 
         /// <summary>Floating origin kaydirmasi sirasinda tetiklenen mesh yeniden uretim sayisi (Her zaman 0 olmalidir!).</summary>
         public int MeshRebuildsTriggeredByShift { get; private set; }
@@ -31,8 +36,8 @@ namespace Stratocraft.Voxel.Systems
         public int PhysicsShiftCount { get; private set; }
 
         /// <summary>
-        /// Kamera konumunu denetler; ±4.096m gorsel esigi veya ±256m fizik esigi asildiginda
-        /// sifir mesh yeniden uretimiyle (0 ms) koordinat kaydirmasini uygular.
+        /// Kamera konumunu denetler; ±256m esigi asildiginda K*32m adimlarla sifir mesh yeniden uretimiyle
+        /// (0 ms) koordinat kaydirmasini uygular.
         /// </summary>
         public bool UpdateFloatingOrigin(
             ref (float X, float Y, float Z) localCameraPosition,
@@ -45,7 +50,7 @@ namespace Stratocraft.Voxel.Systems
 
             bool shifted = false;
 
-            // 1. Fizik ve 240 Hz Kilic CCD Esigi (±256m -> 15 mikrometre FP32 hassasiyet garantisi)
+            // 1. Fizik ve 240 Hz Kilic CCD Esigi (±256m -> 15.26 mikrometre FP32 hassasiyet garantisi)
             double worldCamX = AccumulatedVisualShiftMeters.X + localCameraPosition.X;
             double worldCamZ = AccumulatedVisualShiftMeters.Z + localCameraPosition.Z;
             double physDeltaX = worldCamX - PhysicsOriginMeters.X;
@@ -55,7 +60,7 @@ namespace Stratocraft.Voxel.Systems
             double physThreshold = StratocraftConstants.PhysicsLocalOriginThresholdMeters;
             if (physDistSq >= physThreshold * physThreshold)
             {
-                double snap = StratocraftConstants.ChunkSizeX;
+                double snap = StratocraftConstants.VisualFloatingOriginSnapMeters;
                 double shiftPhysX = Math.Floor(physDeltaX / snap) * snap;
                 double shiftPhysZ = Math.Floor(physDeltaZ / snap) * snap;
                 PhysicsOriginMeters = (
@@ -65,7 +70,7 @@ namespace Stratocraft.Voxel.Systems
                 PhysicsShiftCount++;
             }
 
-            // 2. Gorsel Chunk-Snapped Floating Origin Esigi (±4.096m -> K * 32m kaydirma, 0 ms mesh rebuild)
+            // 2. Gorsel Chunk-Snapped Floating Origin Esigi (±256m -> K * 32m kaydirma, 0 ms mesh rebuild)
             float camDistXZSq = localCameraPosition.X * localCameraPosition.X
                               + localCameraPosition.Z * localCameraPosition.Z;
             float visualThreshold = StratocraftConstants.VisualFloatingOriginThresholdMeters;
@@ -81,10 +86,15 @@ namespace Stratocraft.Voxel.Systems
                     localCameraPosition.Y,
                     localCameraPosition.Z - deltaShiftZ);
 
-                AccumulatedVisualShiftMeters = (
-                    AccumulatedVisualShiftMeters.X + deltaShiftX,
-                    AccumulatedVisualShiftMeters.Y,
-                    AccumulatedVisualShiftMeters.Z + deltaShiftZ);
+                double nextShiftX = AccumulatedVisualShiftMeters.X + deltaShiftX;
+                double nextShiftY = AccumulatedVisualShiftMeters.Y;
+                double nextShiftZ = AccumulatedVisualShiftMeters.Z + deltaShiftZ;
+                AccumulatedVisualShiftMeters = (nextShiftX, nextShiftY, nextShiftZ);
+
+                ShaderMacroPhaseOffset = (
+                    WrapModuloPositive(nextShiftX, MacroNoiseRepeatPeriodMeters),
+                    WrapModuloPositive(nextShiftY, MacroNoiseRepeatPeriodMeters),
+                    WrapModuloPositive(nextShiftZ, MacroNoiseRepeatPeriodMeters));
 
                 for (int i = 0; i < activeChunks.Count; i++)
                 {
@@ -99,6 +109,16 @@ namespace Stratocraft.Voxel.Systems
             }
 
             return shifted;
+        }
+
+        private static float WrapModuloPositive(double value, double period)
+        {
+            double m = value % period;
+            if (m < 0.0)
+            {
+                m += period;
+            }
+            return (float)m;
         }
     }
 }

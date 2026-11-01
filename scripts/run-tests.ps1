@@ -42,10 +42,19 @@ if (Test-Path $StandaloneTestProj) {
 }
 
 Write-Host "=== [4/4] Unity 6 Batchmode EditMode Kontrolu ===" -ForegroundColor Cyan
-$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.com"
-if (-not (Test-Path $UnityExe)) {
-    $found = Get-ChildItem "C:\Program Files\Unity\Hub\Editor\6000*\Editor\Unity.com" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { $UnityExe = $found.FullName }
+$UnityCandidates = @(
+    (Join-Path $env:USERPROFILE "Unity\6000.6.7f1\Editor\Unity.com"),
+    (Join-Path $env:ProgramFiles "Unity\Hub\Editor\6000.6.7f1\Editor\Unity.com"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.com")
+)
+$UnityExe = $UnityCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $UnityExe) {
+    foreach ($root in @((Join-Path $env:ProgramFiles "Unity\Hub\Editor"), (Join-Path $env:LOCALAPPDATA "Programs\Unity\Hub\Editor"))) {
+        if (Test-Path $root) {
+            $found = Get-ChildItem (Join-Path $root "6000*\Editor\Unity.com") -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $UnityExe = $found.FullName; break }
+        }
+    }
 }
 
 $UnityLockFile = Join-Path $RepoRoot "Temp\UnityLockfile"

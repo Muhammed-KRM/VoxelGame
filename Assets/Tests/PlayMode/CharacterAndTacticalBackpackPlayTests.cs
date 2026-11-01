@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
 using NUnit.Framework;
 using Stratocraft.Character.Camera;
 using Stratocraft.Character.Data;
@@ -7,6 +10,7 @@ using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.HybridLod;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Systems;
+using Stratocraft.UI;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 
@@ -143,6 +147,104 @@ namespace Stratocraft.Tests.PlayMode
             Assert.That(HybridAiLodPromotionSystem.EvaluateTierWithHysteresis(tier, 125.0f), Is.EqualTo(AiSimulationTier.Tier1_NavSpanVatCrowd));
             // 115m'de Tier 0'a terfi etmeli
             Assert.That(HybridAiLodPromotionSystem.EvaluateTierWithHysteresis(tier, 115.0f), Is.EqualTo(AiSimulationTier.Tier0_Full3DEntity));
+        }
+
+        [Test]
+        public void ParkourSlide15Ep_Stamina15PercentLock_CrossChunkOxygenGratingBarotrauma_Wet3xColdAnd3sHudHide()
+        {
+            // 1. 5-Duzlemli CollideAndSlide: 2 duvar kosesinde (X ve Z duvarlari) yalnizca Y ekseni boyunca kayar, 3 duzlem kesisiminde tam durur
+            Span<Vector3> cornerPlanes = stackalloc Vector3[3]
+            {
+                new Vector3(-1f, 0f, 0f),
+                new Vector3(0f, 0f, -1f),
+                new Vector3(0f, 1f, 0f)
+            };
+            Vector3 cornerSlide = PhysicalCharacterControllerSystem.SolveCollideAndSlide5Planes(new Vector3(3f, -2f, 4f), cornerPlanes.Slice(0, 2));
+            Assert.That(cornerSlide.X, Is.EqualTo(0f).Within(1e-4f));
+            Assert.That(cornerSlide.Z, Is.EqualTo(0f).Within(1e-4f));
+            Assert.That(cornerSlide.Y, Is.EqualTo(-2f).Within(1e-4f));
+
+            Vector3 threePlaneStop = PhysicalCharacterControllerSystem.SolveCollideAndSlide5Planes(new Vector3(3f, -2f, 4f), cornerPlanes);
+            Assert.That(threePlaneStop.Length(), Is.EqualTo(0f).Within(1e-4f));
+
+            // 2. 15 EP Kayma (Slide) ve %15 Stamina Tukenme Histerezis Kilidi
+            var controller = new PhysicalCharacterControllerSystem();
+            var movement = CharacterMovementState.CreateDefault();
+            var vitals = CharacterVitalsComponent.CreateDefault();
+            Assert.That(PhysicalCharacterControllerSystem.TryInitiateSlide(ref movement, ref vitals, (0f, 1f)), Is.True);
+            Assert.That(vitals.Stamina, Is.EqualTo(85.0f).Within(0.01f));
+            Assert.That(movement.Stance, Is.EqualTo(CharacterStance.Sliding));
+
+            vitals.Stamina = 0.0f;
+            controller.StepMovement(ref movement, ref vitals, CharacterStance.Sprinting, (0f, 1f), availableVoxelHeadroomBlocks: 3, deltaTime: 0.016f);
+            Assert.That(movement.IsExhaustedStaminaLock, Is.EqualTo(1));
+            Assert.That(movement.Stance, Is.Not.EqualTo(CharacterStance.Sprinting), "Stamina sifirlandiginda depar kilitlenmelidir.");
+
+            vitals.Stamina = 10.0f; // %10 (< %15 esik) -> hala kilitli!
+            movement.SlideRemainingSeconds = 0f;
+            controller.StepMovement(ref movement, ref vitals, CharacterStance.Sprinting, (0f, 1f), availableVoxelHeadroomBlocks: 3, deltaTime: 0.016f);
+            Assert.That(movement.IsExhaustedStaminaLock, Is.EqualTo(1));
+            Assert.That(movement.Stance, Is.EqualTo(CharacterStance.Standing));
+
+            vitals.Stamina = 16.0f; // >= %15 esik -> kilit acilir ve depar (7.0 m/s) aktif olur!
+            controller.StepMovement(ref movement, ref vitals, CharacterStance.Sprinting, (0f, 1f), availableVoxelHeadroomBlocks: 3, deltaTime: 0.016f);
+            Assert.That(movement.IsExhaustedStaminaLock, Is.EqualTo(0));
+            Assert.That(movement.CurrentSpeedMetersPerSec, Is.EqualTo(7.0f).Within(0.01f));
+
+            // 3. Coklu-Chunk Kapali Magara O2 BFS + Demir Izgara (IronGrating=125) Gecirgenligi + Boyle-Mariotte >50m Basinc Ezilmesi
+            using var chunkA = new VoxelChunkComponent(0, 0);
+            using var chunkB = new VoxelChunkComponent(1, 0);
+            uint stoneRaw = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            for (int x = 13; x <= 15; x++)
+                for (int y = 18; y <= 22; y++)
+                    for (int z = 6; z <= 10; z++)
+                        chunkA.SetVoxel(x, y, z, new VoxelCell(stoneRaw));
+
+            for (int x = 0; x <= 2; x++)
+                for (int y = 18; y <= 22; y++)
+                    for (int z = 6; z <= 10; z++)
+                        chunkB.SetVoxel(x, y, z, new VoxelCell(stoneRaw));
+
+            // Chunk sinirini (chunkA x=15 <-> chunkB x=0) Demir Izgara (IronGrating) ile ayiran 3 hucrelik kapali tunel
+            chunkA.SetVoxel(14, 20, 8, VoxelCell.Air);
+            chunkA.SetVoxel(15, 20, 8, new VoxelCell(VoxelBitUtility.PackStandard(MaterialIdCatalog.IronGrating, 127, 1, 0, BlokKokenDurumu.OyuncuItemBlogu, 0)));
+            chunkB.SetVoxel(0, 20, 8, VoxelCell.Air);
+
+            var worldMap = new Dictionary<(int cx, int cz), VoxelChunkComponent>
+            {
+                [(0, 0)] = chunkA,
+                [(1, 0)] = chunkB
+            };
+
+            var oxygenSys = new EnclosedOxygenFloodFillSystem();
+            int crossChunkVolume = oxygenSys.MeasureConnectedAirVolumeWorld(chunkA, worldMap, startWorldX: 14, startY: 20, startWorldZ: 8);
+            Assert.That(crossChunkVolume, Is.EqualTo(3), "Chunk sinirindaki kapali tunel gokyuzune sizmamali ve Demir Izgara uzerinden 3 hucre olcmelidir.");
+
+            var diverVitals = CharacterVitalsComponent.CreateDefault();
+            diverVitals.SubmergedDepthMeters = 60.0f; // > 50m -> Barotravma basinc ezilmesi!
+            oxygenSys.StepOxygen(ref diverVitals, connectedAirVoxels: 0, isHoldingLitTorch: false, deltaTime: 2.0f);
+            Assert.That((diverVitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.BarotraumaCrush) != 0, Is.True);
+            Assert.That(diverVitals.CurrentHp, Is.LessThan(diverVitals.MaxHp));
+
+            // 4. Surekli Islaklik (Wetness01) Sogukta 3x Isi Kaybi ve 3.0s Otomatik HUD Gizleme
+            var thermal = new ThermalAndBiologySystem();
+            var dryVitals = CharacterVitalsComponent.CreateDefault();
+            var wetVitals = CharacterVitalsComponent.CreateDefault();
+            wetVitals.Wetness01 = 1.0f;
+            wetVitals.SubmergedDepthMeters = 0.5f;
+
+            thermal.StepBiology(ref dryVitals, ambientTempCelsius: -10.0f, armorThermalInsulation01: 0.4f, isSubmergedOrInRain: false, deltaTime: 5.0f);
+            thermal.StepBiology(ref wetVitals, ambientTempCelsius: -10.0f, armorThermalInsulation01: 0.4f, isSubmergedOrInRain: true, deltaTime: 5.0f);
+            float dryDrop = 37.0f - dryVitals.CoreBodyTempCelsius;
+            float wetDrop = 37.0f - wetVitals.CoreBodyTempCelsius;
+            Assert.That(wetDrop, Is.GreaterThan(dryDrop * 2.5f), "Islak karakter sogukta kuru karaktere gore ~3x daha hizli isi kaybetmelidir.");
+
+            var hud = new HudAndCrosshairController();
+            var calmVitals = CharacterVitalsComponent.CreateDefault();
+            var calmMove = CharacterMovementState.CreateDefault();
+            Assert.That(hud.BuildHudSnapshot(in calmVitals, in calmMove, HolsterSlotIndex.None, deltaTime: 2.0f).HudOpacity01, Is.EqualTo(1.0f).Within(0.01f));
+            Assert.That(hud.BuildHudSnapshot(in calmVitals, in calmMove, HolsterSlotIndex.None, deltaTime: 2.0f).HudOpacity01, Is.LessThan(0.1f), "3.0s tam dolu sakinlikten sonra HUD gizlenmelidir.");
         }
     }
 }

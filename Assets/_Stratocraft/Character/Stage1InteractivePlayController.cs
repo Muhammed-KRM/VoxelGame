@@ -205,11 +205,11 @@ namespace Stratocraft.Character
                 }
             }
 
-            // 1-4 Tuslari: Fiziksel Kilif Gecisi (1.8 sn gercekci kindan cekme suresi)
-            if (Input.GetKeyDown(KeyCode.Alpha1)) SwitchHolster(1, 1.8f);
-            if (Input.GetKeyDown(KeyCode.Alpha2)) SwitchHolster(2, 1.8f);
-            if (Input.GetKeyDown(KeyCode.Alpha3)) SwitchHolster(3, 1.8f);
-            if (Input.GetKeyDown(KeyCode.Alpha4)) SwitchHolster(4, 1.8f);
+            // 1-4 Tuslari: Bible §6 Fiziksel Kilif Gecisi (Bel: 0.5s/0.6s, Sirt: 0.9s/1.0s gercekci kindan cekme suresi)
+            if (Input.GetKeyDown(KeyCode.Alpha1)) SwitchHolster(1, 0.5f);
+            if (Input.GetKeyDown(KeyCode.Alpha2)) SwitchHolster(2, 0.6f);
+            if (Input.GetKeyDown(KeyCode.Alpha3)) SwitchHolster(3, 0.9f);
+            if (Input.GetKeyDown(KeyCode.Alpha4)) SwitchHolster(4, 1.0f);
 
             // G Tusu: Acil Silah Atma (0.0 sn Quick-Drop + Fiziksel dunya nesnesi dusurme)
             if (Input.GetKeyDown(KeyCode.G))
@@ -247,7 +247,7 @@ namespace Stratocraft.Character
             Rigidbody rb = dropped.AddComponent<Rigidbody>();
             rb.mass = 2.4f;
             rb.AddForce(transform.forward * 2.8f + Vector3.up * 1.4f, ForceMode.Impulse);
-            Destroy(dropped, 25f);
+            // Kalici dunya nesnesi: despawn (Destroy) yapilmaz!
         }
 
         private void SwitchHolster(int slot, float durationSec)
@@ -285,7 +285,8 @@ namespace Stratocraft.Character
                 _selectedShapeId = _shapeWheelCycle[_shapeWheelIndex];
             }
 
-            if (Input.GetKeyDown(KeyCode.R))
+            // T veya R Tusu: Mimari Sekil 90-derece Kuantali Yon Rotasyonu
+            if (Input.GetKeyDown(KeyCode.T) || Input.GetKeyDown(KeyCode.R))
             {
                 _selectedRotation = (byte)((_selectedRotation + 1) & 3);
             }

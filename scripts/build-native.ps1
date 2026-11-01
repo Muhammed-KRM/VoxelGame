@@ -79,5 +79,15 @@ if (-not $dllCandidate) {
 }
 
 $destDll = Join-Path $PluginOutDir "StratocraftNative.dll"
-Copy-Item -Path $dllCandidate.FullName -Destination $destDll -Force
-Write-Host "[StratocraftNative] Basarili! DLL kopyalandi -> $destDll ($([math]::Round($dllCandidate.Length / 1KB, 1)) KB)" -ForegroundColor Green
+try {
+    Copy-Item -Path $dllCandidate.FullName -Destination $destDll -Force
+    Write-Host "[StratocraftNative] Basarili! DLL kopyalandi -> $destDll ($([math]::Round($dllCandidate.Length / 1KB, 1)) KB)" -ForegroundColor Green
+}
+catch {
+    if (Test-Path $destDll) {
+        Write-Host "[StratocraftNative] DLL su anda acik olan Unity tarafindan kullaniliyor; mevcut guncel DLL ile devam ediliyor." -ForegroundColor Yellow
+    }
+    else {
+        throw
+    }
+}

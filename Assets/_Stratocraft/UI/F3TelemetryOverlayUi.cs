@@ -74,7 +74,7 @@ namespace Stratocraft.UI
             float streamingMb = Texture.currentTextureMemory / (1024f * 1024f);
             _cachedTextureVramMb = streamingMb > 0.01f
                 ? streamingMb
-                : Mathf.Min(15.9f, texBytes / (1024f * 1024f));
+                : (texBytes / (1024f * 1024f));
         }
 
         private void OnGUI()

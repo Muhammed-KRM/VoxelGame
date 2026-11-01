@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Math;
 using Stratocraft.Voxel.Data;
 
 #if UNITY_5_3_OR_NEWER
@@ -21,7 +22,7 @@ namespace Stratocraft.Voxel.Jobs
     /// Ufak fasetli poligonlardan (Deep Rock Galactic / Astroneer / 7 Days to Die tarzi Flat-Shaded Low-Poly)
     /// olusan tekil ucgen (Triangle) verisi.
     /// Color32 kanallari dogrudan StratocraftUberShader sozlesmesine paketlenir:
-    /// R = MaterialId (0..255), G = Temperature (T^4 Blackbody), B = FacetShade/Sharpness, A = AmbientOcclusion.
+    /// R = MaterialId (0..255), G = Temperature (T^4 Blackbody), B = FacetShade/Sharpness, A = (ao4 &lt;&lt; 4) | wear4.
     /// </summary>
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct FacetedVoxelTriangle
@@ -37,18 +38,21 @@ namespace Stratocraft.Voxel.Jobs
     }
 
     /// <summary>
-    /// GAME LOGIC BIBLE Bolum 2.7.B "Cift Kanalli Hibrit Yuzey Orme (Two-Channel Hybrid Meshing)" motoru:
-    /// - Kanal 1 (ShapeID == 0 Dogal Arazi): 18 x (maxY + 2) x 18 komsu-apronlu (Padded Neighbor Apron)
-    ///   7-bit SDF Density (IsoLevel=64) uzerinde 17 x (maxY + 1) x 17 Dual Contouring / Surface Nets +
-    ///   1/256m IEEE-754 Kuantalama + Tek-Sahipli Kenar Kurali (Single-Owner Edge Emission) calistirarak
-    ///   chunk sinirlarinda %100 catlaksiz (0.000m seam) ve alti/yan ucurumlari tamamen kapali 3B hacimsel
-    ///   low-poly ada, magara kubbeleri, sarkit-dikit sutunlar ve cevher damarlari uretir.
-    /// - Kanal 2A (ShapeID == 63): 4x4x4 (0.25m) Mikro-Voksel yontulmus kabartma alt-meshleyici.
-    /// - Kanal 2B (ShapeID == 1..62): 7 Days to Die tarzi mimari sekiller (komsu yuzey elemesi + -0.22m zemin etegi).
+    /// GAME LOGIC BIBLE v7.0 Bolum 2.7.B "Cift Kanalli Hibrit Yuzey Orme (Two-Channel Hybrid Meshing)" motoru:
+    /// - Kanal 1 (ShapeID == 0 Dogal Arazi): 18 x (maxY + 2) x 18 komsu-apronlu 7-bit SDF Density (IsoLevel=64)
+    ///   + Face-Solidarity Ic SDF Sabitleme (max(d, 96) -> Mimari duvar-toprak birlesiminde 0.000m yariksiz gecis!)
+    ///   + 1/256m IEEE-754 Kuantalama + Tek-Sahipli Kenar Kurali + Sifir-GC ThreadStatic tamponlar.
+    /// - Kanal 2A (ShapeID == 63): Gercek MicroVoxelPool4096 64-bit ulong maskesinden 2B Greedy 0.25m alt-meshleyici.
+    /// - Kanal 2B (ShapeID == 1..62): 62 Kanonik Mimari Sekil x 32 Yonelim (SO(3) + 22.5/45 derece) + FullFaceMask yuzey eleme.
     /// </summary>
     public static class HybridSurfaceNetsAndShapeMesher
     {
-        public const byte IsoLevel = 64;
+        public const byte IsoLevel = StratocraftConstants.SdfIsoLevel;
+        private const int MaxPadX = 18;
+        private const int MaxPadY = 258;
+        private const int MaxPadZ = 18;
+        private const int MaxPaddedLength = MaxPadX * MaxPadY * MaxPadZ;
+        private const int MaxDualLength = 17 * 257 * 17;
 
         private static readonly int[] CubeEdgeCorners = new int[24]
         {
@@ -57,16 +61,26 @@ namespace Stratocraft.Voxel.Jobs
             0, 4,  1, 5,  2, 6,  3, 7  // dikey kenarlar
         };
 
+        // Sifir-GC yeniden kullanilabilir is-parcacigi-yerel (ThreadStatic) calisma tamponlari
+        [ThreadStatic] private static uint[]? _tsPaddedRaw;
+        [ThreadStatic] private static uint[]? _tsPaddedChannel1Sdf;
+        [ThreadStatic] private static Vector3[]? _tsDualVertices;
+        [ThreadStatic] private static byte[]? _tsDualMaterials;
+        [ThreadStatic] private static byte[]? _tsDualTemps;
+        [ThreadStatic] private static byte[]? _tsDualAo;
+        [ThreadStatic] private static bool[]? _tsDualValid;
+
         /// <summary>
-        /// Komsu chunk apronunu (18 x (maxY + 2) x 18) okuyarak chunk sinirlarinda 0.000m dikis garantili
-        /// ve dis dunya sinirlarinda 3B kapali (su gecirmez / watertight) fasetli hibrit mesh uretir.
+        /// Komsu chunk apronunu ve istege bagli MicroVoxelPool4096 sozlugunu okuyarak chunk sinirlarinda ve
+        /// mimari duvar-arazi temaslarinda 0.000m dikis garantili fasetli hibrit mesh uretir.
         /// </summary>
         public static void GenerateSeamlessHybridChunkMesh(
             int chunkX,
             int chunkZ,
             int maxY,
             IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
-            List<FacetedVoxelTriangle> outTriangles)
+            List<FacetedVoxelTriangle> outTriangles,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools)
         {
             if (worldChunks == null)
             {
@@ -85,7 +99,15 @@ namespace Stratocraft.Voxel.Jobs
             const int padX = 18;
             const int padZ = 18;
             int padY = maxY + 2;
-            uint[] padded = new uint[padX * padY * padZ];
+            int padTotal = padX * padY * padZ;
+
+            uint[] padded = _tsPaddedRaw ??= new uint[MaxPaddedLength];
+            uint[] channel1Sdf = _tsPaddedChannel1Sdf ??= new uint[MaxPaddedLength];
+            Array.Clear(padded, 0, padTotal);
+            Array.Clear(channel1Sdf, 0, padTotal);
+
+            MicroVoxelPool4096?[]? centerMicroPools = null;
+            worldMicroPools?.TryGetValue((chunkX, chunkZ), out centerMicroPools);
 
             // 1. Komsu Apron Doldurma: px, pz in [0..17] -> local [-1..16], py in [0..maxY+1] -> wy in [-1..maxY]
             for (int py = 0; py < padY; py++)
@@ -93,7 +115,7 @@ namespace Stratocraft.Voxel.Jobs
                 int wy = py - 1;
                 if (wy < 0 || wy >= maxY)
                 {
-                    continue; // wy < 0 ve wy >= maxY = Hava (0u) -> 3B adanin alt kabugunu ve tavanini kapatir!
+                    continue;
                 }
 
                 for (int pz = 0; pz < padZ; pz++)
@@ -123,17 +145,25 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
+            // 1B. Face-Solidarity Ic SDF Sabitleme (Mimari Duvar <-> Dogal SDF Arazi V-Hendegi Kusursuz Kapatma):
+            // Mimari veya yontulmus bir blok dogal SDF araziye temas ettiginde, Kanal 1 yuzeyinin 0.5m geri cekilip
+            // duvar dibinde yarik acmasini engellemek icin mimari hucre icine komsu arazinin MatID'si ile
+            // Density = 96 (rho = +0.5) sanal ankraj yogunlugu yazilir.
+            BuildEffectiveChannel1SdfGrid(
+                padded, channel1Sdf, padX, padY, padZ, chunkX, chunkZ, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools);
+
             // 2. KANAL 1 DUAL HUCRE MERKEZLERI: 17 x (maxY + 1) x 17
             const int dualSizeX = 17;
             const int dualSizeZ = 17;
             int dualSizeY = maxY + 1;
             int dualTotal = dualSizeX * dualSizeY * dualSizeZ;
 
-            Vector3[] dualVertices = new Vector3[dualTotal];
-            byte[] dualMaterials = new byte[dualTotal];
-            byte[] dualTemps = new byte[dualTotal];
-            byte[] dualAo = new byte[dualTotal];
-            bool[] dualValid = new bool[dualTotal];
+            Vector3[] dualVertices = _tsDualVertices ??= new Vector3[MaxDualLength];
+            byte[] dualMaterials = _tsDualMaterials ??= new byte[MaxDualLength];
+            byte[] dualTemps = _tsDualTemps ??= new byte[MaxDualLength];
+            byte[] dualAo = _tsDualAo ??= new byte[MaxDualLength];
+            bool[] dualValid = _tsDualValid ??= new bool[MaxDualLength];
+            Array.Clear(dualValid, 0, dualTotal);
 
             Span<float> cornerDensities = stackalloc float[8];
 
@@ -150,6 +180,7 @@ namespace Stratocraft.Voxel.Jobs
                         int insideMask = 0;
                         byte dominantMat = 0;
                         byte highestPrio = 0;
+                        byte maxDamage = 0;
                         float densitySum = 0f;
 
                         for (int c = 0; c < 8; c++)
@@ -158,8 +189,7 @@ namespace Stratocraft.Voxel.Jobs
                             int oz = (c >> 1) & 1;
                             int oy = (c >> 2) & 1;
 
-                            uint rawOrig = padded[((dy + oy) * padZ + (dz + oz)) * padX + (dx + ox)];
-                            uint rawSdf = FilterNaturalSdfSample(rawOrig);
+                            uint rawSdf = channel1Sdf[((dy + oy) * padZ + (dz + oz)) * padX + (dx + ox)];
                             byte mat = VoxelBitUtility.GetMaterialId(rawSdf);
                             byte dByte = mat == 0 ? (byte)0 : VoxelBitUtility.GetDensityOrLiquid(rawSdf);
 
@@ -169,6 +199,9 @@ namespace Stratocraft.Voxel.Jobs
                             if (dByte >= IsoLevel && mat != 0)
                             {
                                 insideMask |= (1 << c);
+                                byte dmg = VoxelBitUtility.GetDamageState(rawSdf);
+                                if (dmg > maxDamage) maxDamage = dmg;
+
                                 byte prio = GetMaterialVisualPriority(mat);
                                 if (prio >= highestPrio)
                                 {
@@ -212,10 +245,10 @@ namespace Stratocraft.Voxel.Jobs
                             ? (edgeAccum / edgeCrossings)
                             : new Vector3(0.5f, 0.5f, 0.5f);
 
-                        // Dunya koordinatina bagli deterministik DRG / Astroneer jeodezik faset kirilmasi
                         Vector3 jitter = ComputeDeterministicFacetJitter(wCellX, wCellY, wCellZ);
                         if (dominantMat == MaterialIdCatalog.FiniteWaterSurface ||
-                            dominantMat == MaterialIdCatalog.FiniteLavaSurface)
+                            dominantMat == MaterialIdCatalog.FiniteLavaSurface ||
+                            dominantMat == MaterialIdCatalog.FiniteAcidSurface)
                         {
                             localPos.X = Math.Clamp(localPos.X + jitter.X * 0.25f, 0.14f, 0.86f);
                             localPos.Z = Math.Clamp(localPos.Z + jitter.Z * 0.25f, 0.14f, 0.86f);
@@ -242,21 +275,19 @@ namespace Stratocraft.Voxel.Jobs
                         dualTemps[dualIdx] = ResolveMaterialDefaultTemperature(resolvedMat);
 
                         float avgDensity01 = Math.Clamp(densitySum / (8f * 127f), 0f, 1f);
-                        byte cavityAo = (byte)Math.Clamp((int)(255f - avgDensity01 * 76f), 138, 255);
-                        dualAo[dualIdx] = cavityAo;
+                        byte cavityAo8 = (byte)Math.Clamp((int)(255f - avgDensity01 * 76f), 138, 255);
+                        dualAo[dualIdx] = PackAoAndWear(cavityAo8, maxDamage);
                         dualValid[dualIdx] = true;
                     }
                 }
             }
 
-            // 3. KANAL 1 TEK-SAHIPLI KENAR UCGENLEMESI (Single-Owner Edge Quad Emission):
-            // Bati veya Guney komsu chunk yoksa (3B adanin dis siniri), px=0 / pz=0 dis ucurum kabugu da kapatilir.
+            // 3. KANAL 1 TEK-SAHIPLI KENAR UCGENLEMESI (Single-Owner Edge Quad Emission)
             bool hasWestNeighbor = worldChunks.ContainsKey((chunkX - 1, chunkZ));
             bool hasSouthNeighbor = worldChunks.ContainsKey((chunkX, chunkZ - 1));
             int startPxForXEdges = hasWestNeighbor ? 1 : 0;
             int startPzForZEdges = hasSouthNeighbor ? 1 : 0;
 
-            // +X Kenarlari: (px, py, pz) -> (px + 1, py, pz)
             for (int py = 1; py <= maxY; py++)
             {
                 int wy = py - 1;
@@ -265,8 +296,8 @@ namespace Stratocraft.Voxel.Jobs
                     int wz = chunkWorldOffsetZ + pz - 1;
                     for (int px = startPxForXEdges; px <= 16; px++)
                     {
-                        bool c0 = IsPaddedNaturalSolid(padded, padX, padZ, px, py, pz);
-                        bool c1 = IsPaddedNaturalSolid(padded, padX, padZ, px + 1, py, pz);
+                        bool c0 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py, pz);
+                        bool c1 = IsChannel1Solid(channel1Sdf, padX, padZ, px + 1, py, pz);
                         if (c0 != c1)
                         {
                             int wx = chunkWorldOffsetX + px - 1;
@@ -286,7 +317,6 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            // +Y Kenarlari: (px, py, pz) -> (px, py + 1, pz) (py=0 adanin alt kabugunu, py=maxY tavanini kapatir!)
             for (int py = 0; py <= maxY; py++)
             {
                 int wy = py - 1;
@@ -295,8 +325,8 @@ namespace Stratocraft.Voxel.Jobs
                     int wz = chunkWorldOffsetZ + pz - 1;
                     for (int px = 1; px <= 16; px++)
                     {
-                        bool c0 = IsPaddedNaturalSolid(padded, padX, padZ, px, py, pz);
-                        bool c1 = IsPaddedNaturalSolid(padded, padX, padZ, px, py + 1, pz);
+                        bool c0 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py, pz);
+                        bool c1 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py + 1, pz);
                         if (c0 != c1)
                         {
                             int wx = chunkWorldOffsetX + px - 1;
@@ -316,7 +346,6 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            // +Z Kenarlari: (px, py, pz) -> (px, py, pz + 1)
             for (int py = 1; py <= maxY; py++)
             {
                 int wy = py - 1;
@@ -325,8 +354,8 @@ namespace Stratocraft.Voxel.Jobs
                     int wz = chunkWorldOffsetZ + pz - 1;
                     for (int px = 1; px <= 16; px++)
                     {
-                        bool c0 = IsPaddedNaturalSolid(padded, padX, padZ, px, py, pz);
-                        bool c1 = IsPaddedNaturalSolid(padded, padX, padZ, px, py, pz + 1);
+                        bool c0 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py, pz);
+                        bool c1 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py, pz + 1);
                         if (c0 != c1)
                         {
                             int wx = chunkWorldOffsetX + px - 1;
@@ -350,6 +379,11 @@ namespace Stratocraft.Voxel.Jobs
             for (int ly = 0; ly < maxY; ly++)
             {
                 int py = ly + 1;
+                int subY = ly >> 4;
+                MicroVoxelPool4096? subPool = (centerMicroPools != null && subY < centerMicroPools.Length)
+                    ? centerMicroPools[subY]
+                    : null;
+
                 for (int lz = 0; lz < 16; lz++)
                 {
                     int pz = lz + 1;
@@ -371,12 +405,30 @@ namespace Stratocraft.Voxel.Jobs
 
                         uint belowRaw = padded[((py - 1) * padZ + pz) * padX + px];
                         bool restsOnNaturalSdf = VoxelBitUtility.GetMaterialId(belowRaw) != 0 &&
-                                                 VoxelBitUtility.GetShapeId(belowRaw) == 0;
+                                                 VoxelBitUtility.GetShapeId(belowRaw) == 0 &&
+                                                 VoxelBitUtility.GetDensityOrLiquid(belowRaw) >= IsoLevel;
 
-                        byte occludedMask = ComputeArchitecturalNeighborMask(padded, padX, padZ, px, py, pz);
-                        byte rot = VoxelBitUtility.GetRotationState(raw);
+                        byte occludedMask = ComputeArchitecturalNeighborMask(
+                            padded, padX, padZ, px, py, pz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools);
                         byte dmg = VoxelBitUtility.GetDamageState(raw);
 
+                        if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+                        {
+                            ushort slot12 = VoxelBitUtility.GetMicroPoolIndex(raw);
+                            ulong mask64 = (subPool != null && subPool.IsAllocated)
+                                ? subPool.GetMask(slot12)
+                                : BuildProceduralButtressMask64((byte)(slot12 & 0x1Fu));
+
+                            if (mask64 != 0UL)
+                            {
+                                byte packedAo = PackAoAndWear((byte)Math.Clamp(245 - dmg * 8, 145, 250), dmg);
+                                EmitMicroVoxel4x4x4FromMask(
+                                    new Vector3(lx, ly, lz), matId, mask64, packedAo, occludedMask, outTriangles);
+                            }
+                            continue;
+                        }
+
+                        byte rot = VoxelBitUtility.GetRotationState(raw);
                         EmitArchitecturalShape(
                             new Vector3(lx, ly, lz),
                             matId,
@@ -391,9 +443,18 @@ namespace Stratocraft.Voxel.Jobs
             }
         }
 
-        /// <summary>
-        /// Geriye donuk uyumlu tekil chunk cagrisi (komsu sozlugu olmadan cagrildiginda 3B kapali tek ada uretir).
-        /// </summary>
+        /// <summary>Geriye donuk uyumlu 5-parametreli cagri.</summary>
+        public static void GenerateSeamlessHybridChunkMesh(
+            int chunkX,
+            int chunkZ,
+            int maxY,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
+            List<FacetedVoxelTriangle> outTriangles)
+        {
+            GenerateSeamlessHybridChunkMesh(chunkX, chunkZ, maxY, worldChunks, outTriangles, worldMicroPools: null);
+        }
+
+        /// <summary>Geriye donuk uyumlu tekil chunk cagrisi.</summary>
         public static void GenerateHybridChunkMesh(
             ReadOnlySpan<uint> chunkVoxels65536,
             int maxY,
@@ -409,7 +470,173 @@ namespace Stratocraft.Voxel.Jobs
             {
                 [(cx, cz)] = copy
             };
-            GenerateSeamlessHybridChunkMesh(cx, cz, maxY, singleDict, outTriangles);
+            GenerateSeamlessHybridChunkMesh(cx, cz, maxY, singleDict, outTriangles, worldMicroPools: null);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte PackAoAndWear(byte ao8Bit, byte wear4Bit)
+        {
+            uint ao4 = (uint)(ao8Bit >> 4);
+            return (byte)((ao4 << 4) | ((uint)wear4Bit & 0x0Fu));
+        }
+
+        private static void BuildEffectiveChannel1SdfGrid(
+            uint[] paddedRaw,
+            uint[] outChannel1Sdf,
+            int padX,
+            int padY,
+            int padZ,
+            int centerCx,
+            int centerCz,
+            int chunkWorldOffsetX,
+            int chunkWorldOffsetZ,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools)
+        {
+            ReadOnlySpan<int> ndx = stackalloc int[6] { 1, -1, 0, 0, 0, 0 };
+            ReadOnlySpan<int> ndy = stackalloc int[6] { 0, 0, 1, -1, 0, 0 };
+            ReadOnlySpan<int> ndz = stackalloc int[6] { 0, 0, 0, 0, 1, -1 };
+
+            for (int py = 0; py < padY; py++)
+            {
+                for (int pz = 0; pz < padZ; pz++)
+                {
+                    for (int px = 0; px < padX; px++)
+                    {
+                        int pIdx = (py * padZ + pz) * padX + px;
+                        uint raw = paddedRaw[pIdx];
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        if (mat == 0)
+                        {
+                            outChannel1Sdf[pIdx] = 0u;
+                            continue;
+                        }
+
+                        byte shape = VoxelBitUtility.GetShapeId(raw);
+                        if (shape == 0)
+                        {
+                            outChannel1Sdf[pIdx] = raw;
+                            continue;
+                        }
+
+                        // Kanal 2A/2B hucre: Komsu dogal SDF arazi varsa ve bu blok o yonde yuzey temasi sagliyorsa
+                        // arazi kabugunun duvar icine catlaksiz gomulmesi icin Density = 96 ankraji kur!
+                        byte ownFaces = ResolvePaddedCellFaceCoverageMask(
+                            raw, px, py, pz, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools);
+                        byte bestNeighborMat = 0;
+                        byte bestNeighborPrio = 0;
+                        byte maxNeighborDensity = 0;
+
+                        for (int dir = 0; dir < 6; dir++)
+                        {
+                            int qx = px + ndx[dir];
+                            int qy = py + ndy[dir];
+                            int qz = pz + ndz[dir];
+                            if ((uint)qx >= (uint)padX || (uint)qy >= (uint)padY || (uint)qz >= (uint)padZ)
+                            {
+                                continue;
+                            }
+
+                            // Yuzey uyumu: ya o yondeki yuz tam kapalidir ya da alt (-Y) temel/sutun temasidir
+                            bool hasFaceContact = ((ownFaces & (1 << dir)) != 0) || (dir == 3);
+                            if (!hasFaceContact)
+                            {
+                                continue;
+                            }
+
+                            uint nRaw = paddedRaw[(qy * padZ + qz) * padX + qx];
+                            byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
+                            if (nMat == 0 || VoxelBitUtility.GetShapeId(nRaw) != 0)
+                            {
+                                continue;
+                            }
+
+                            byte nDens = VoxelBitUtility.GetDensityOrLiquid(nRaw);
+                            if (nDens >= IsoLevel)
+                            {
+                                if (nDens > maxNeighborDensity) maxNeighborDensity = nDens;
+                                byte prio = GetMaterialVisualPriority(nMat);
+                                if (prio >= bestNeighborPrio)
+                                {
+                                    bestNeighborPrio = prio;
+                                    bestNeighborMat = nMat;
+                                }
+                            }
+                        }
+
+                        if (bestNeighborMat != 0)
+                        {
+                            byte pinnedDensity = Math.Max(maxNeighborDensity, StratocraftConstants.SdfConfinedSolidLevel);
+                            outChannel1Sdf[pIdx] = VoxelBitUtility.PackStandard(
+                                bestNeighborMat, pinnedDensity, shapeId: 0, rot24: 0, BlokKokenDurumu.DogalKutle, dmg4: 0);
+                        }
+                        else
+                        {
+                            outChannel1Sdf[pIdx] = 0u;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static byte ResolvePaddedCellFaceCoverageMask(
+            uint raw,
+            int px,
+            int py,
+            int pz,
+            int centerCx,
+            int centerCz,
+            int chunkWorldOffsetX,
+            int chunkWorldOffsetZ,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools)
+        {
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            if (mat == 0)
+            {
+                return 0;
+            }
+
+            byte shape = VoxelBitUtility.GetShapeId(raw);
+            if (shape == 0)
+            {
+                // Tam gomulu SDF kaya (Density >= 96) bitisik mimari ic yuzu kapatabilir
+                return VoxelBitUtility.GetDensityOrLiquid(raw) >= 112
+                    ? ArchitecturalShapeCatalog.AllSixFacesMask
+                    : (byte)0;
+            }
+
+            if (shape == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            {
+                if (worldMicroPools == null)
+                {
+                    return 0;
+                }
+
+                int wy = py - 1;
+                if ((uint)wy >= 256u)
+                {
+                    return 0;
+                }
+
+                int wx = chunkWorldOffsetX + px - 1;
+                int wz = chunkWorldOffsetZ + pz - 1;
+                int ncx = (px >= 1 && px <= 16) ? centerCx : FloorDiv16(wx);
+                int ncz = (pz >= 1 && pz <= 16) ? centerCz : FloorDiv16(wz);
+                if (!worldMicroPools.TryGetValue((ncx, ncz), out MicroVoxelPool4096?[]? pools) || pools == null)
+                {
+                    return 0;
+                }
+
+                MicroVoxelPool4096? subPool = pools[wy >> 4];
+                if (subPool == null || !subPool.IsAllocated)
+                {
+                    return 0;
+                }
+
+                ulong mask64 = subPool.GetMask(VoxelBitUtility.GetMicroPoolIndex(raw));
+                return ArchitecturalShapeCatalog.GetMicroVoxelFullFaceMask(mask64);
+            }
+
+            return ArchitecturalShapeCatalog.GetFullFaceMask(shape, VoxelBitUtility.GetRotationState(raw));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -425,48 +652,43 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint FilterNaturalSdfSample(uint raw)
+        private static bool IsChannel1Solid(uint[] channel1Sdf, int padX, int padZ, int px, int py, int pz)
         {
-            byte mat = VoxelBitUtility.GetMaterialId(raw);
-            if (mat == 0)
-            {
-                return 0u;
-            }
-
-            if (VoxelBitUtility.GetShapeId(raw) >= 1)
-            {
-                return 0u;
-            }
-
-            return raw;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool IsPaddedNaturalSolid(uint[] padded, int padX, int padZ, int px, int py, int pz)
-        {
-            uint raw = FilterNaturalSdfSample(padded[(py * padZ + pz) * padX + px]);
+            uint raw = channel1Sdf[(py * padZ + pz) * padX + px];
             byte mat = VoxelBitUtility.GetMaterialId(raw);
             return mat != 0 && VoxelBitUtility.GetDensityOrLiquid(raw) >= IsoLevel;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte ComputeArchitecturalNeighborMask(uint[] padded, int padX, int padZ, int px, int py, int pz)
+        private static byte ComputeArchitecturalNeighborMask(
+            uint[] padded,
+            int padX,
+            int padZ,
+            int px,
+            int py,
+            int pz,
+            int chunkWorldOffsetX,
+            int chunkWorldOffsetZ,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools)
         {
-            // Bit 0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z (sadece tam kup mimari bloklar ShapeID==1 birbirini kapatir)
-            byte mask = 0;
-            if (IsFullMasonryBlock(padded[(py * padZ + pz) * padX + (px + 1)])) mask |= 1 << 0;
-            if (IsFullMasonryBlock(padded[(py * padZ + pz) * padX + (px - 1)])) mask |= 1 << 1;
-            if (IsFullMasonryBlock(padded[((py + 1) * padZ + pz) * padX + px])) mask |= 1 << 2;
-            if (IsFullMasonryBlock(padded[((py - 1) * padZ + pz) * padX + px])) mask |= 1 << 3;
-            if (IsFullMasonryBlock(padded[(py * padZ + (pz + 1)) * padX + px])) mask |= 1 << 4;
-            if (IsFullMasonryBlock(padded[(py * padZ + (pz - 1)) * padX + px])) mask |= 1 << 5;
-            return mask;
-        }
+            int centerCx = FloorDiv16(chunkWorldOffsetX);
+            int centerCz = FloorDiv16(chunkWorldOffsetZ);
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool IsFullMasonryBlock(uint raw)
-        {
-            return VoxelBitUtility.GetMaterialId(raw) != 0 && VoxelBitUtility.GetShapeId(raw) == 1;
+            // Bit 0:+X (komsu -X kapali olmali), 1:-X (komsu +X kapali), 2:+Y (-Y kapali), 3:-Y (+Y kapali), 4:+Z (-Z), 5:-Z (+Z)
+            byte mask = 0;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[(py * padZ + pz) * padX + (px + 1)], px + 1, py, pz, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FaceNegX) != 0)
+                mask |= ArchitecturalShapeCatalog.FacePosX;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[(py * padZ + pz) * padX + (px - 1)], px - 1, py, pz, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FacePosX) != 0)
+                mask |= ArchitecturalShapeCatalog.FaceNegX;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[((py + 1) * padZ + pz) * padX + px], px, py + 1, pz, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FaceNegY) != 0)
+                mask |= ArchitecturalShapeCatalog.FacePosY;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[((py - 1) * padZ + pz) * padX + px], px, py - 1, pz, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FacePosY) != 0)
+                mask |= ArchitecturalShapeCatalog.FaceNegY;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[(py * padZ + (pz + 1)) * padX + px], px, py, pz + 1, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FaceNegZ) != 0)
+                mask |= ArchitecturalShapeCatalog.FacePosZ;
+            if ((ResolvePaddedCellFaceCoverageMask(padded[(py * padZ + (pz - 1)) * padX + px], px, py, pz - 1, centerCx, centerCz, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools) & ArchitecturalShapeCatalog.FacePosZ) != 0)
+                mask |= ArchitecturalShapeCatalog.FaceNegZ;
+            return mask;
         }
 
         private static void EmitDualQuadAsFacetedTriangles(
@@ -499,8 +721,8 @@ namespace Stratocraft.Voxel.Jobs
             byte tempA = Math.Max(dualTemps[i0], Math.Max(dualTemps[i1], dualTemps[i2]));
             byte tempB = Math.Max(dualTemps[i0], Math.Max(dualTemps[i2], dualTemps[i3]));
 
-            byte aoA = (byte)((dualAo[i0] + dualAo[i1] + dualAo[i2]) / 3);
-            byte aoB = (byte)((dualAo[i0] + dualAo[i2] + dualAo[i3]) / 3);
+            byte aoA = AveragePackedAoWear(dualAo[i0], dualAo[i1], dualAo[i2]);
+            byte aoB = AveragePackedAoWear(dualAo[i0], dualAo[i2], dualAo[i3]);
 
             byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245);
             byte shadeB = (byte)Math.Clamp(120 + (int)((seedHash >> 7) & 0x7Fu) - 36, 72, 245);
@@ -534,6 +756,14 @@ namespace Stratocraft.Voxel.Jobs
                     AddFacetedTriangleWithTemp(v1, v0, v3, matB, tempB, shadeB, aoB, outTriangles);
                 }
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte AveragePackedAoWear(byte p0, byte p1, byte p2)
+        {
+            int ao4 = ((p0 >> 4) + (p1 >> 4) + (p2 >> 4)) / 3;
+            int wear4 = Math.Max(p0 & 0x0F, Math.Max(p1 & 0x0F, p2 & 0x0F));
+            return (byte)((ao4 << 4) | wear4);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -601,9 +831,8 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         /// <summary>
-        /// GAME LOGIC BIBLE Bolum 2.7.A &amp; 2.7.B Kanal 2A/2B:
-        /// 7 Days to Die tarzi mimari parcalari ve ShapeID==63 4x4x4 mikro-voksel yontma bloklarini uretir.
-        /// Dogal SDF arazi ustune oturan parcalarda -0.22m temel etegi (foundation skirt) uzatarak bosluk birakmaz.
+        /// GAME LOGIC BIBLE v7.0 Bolum 2.7.A &amp; 2.7.B Kanal 2A/2B:
+        /// 62 Kanonik Mimari Sekil x 32 Yonelim (0..23 SO(3) Kubik + 24..31 22.5/45 derece) ureticisi.
         /// </summary>
         public static void EmitArchitecturalShape(
             Vector3 cellOrigin,
@@ -615,49 +844,314 @@ namespace Stratocraft.Voxel.Jobs
             bool extendFoundationSkirt = false,
             byte occludedFaceMask = 0)
         {
-            byte baseAo = (byte)Math.Clamp(245 - damageState * 8, 145, 250);
+            byte baseAo = PackAoAndWear((byte)Math.Clamp(245 - damageState * 8, 145, 250), damageState);
             Vector3 center = cellOrigin + new Vector3(0.5f, 0.5f, 0.5f);
-            float yawRad = (rotationState & 3) * (MathF.PI * 0.5f);
             float skirtDrop = extendFoundationSkirt ? 0.24f : 0.0f;
 
             switch (shapeId)
             {
-                case 2: // Sekizgen Tas Sutun (Octagonal Column + Plinth)
-                    EmitOctagonalPillar(cellOrigin, matId, baseAo, skirtDrop, outTriangles);
+                case ArchitecturalShapeCatalog.FullMasonryCube:
+                    EmitChamferedMasonryBlock(center, matId, baseAo, skirtDrop, occludedFaceMask, outTriangles);
                     break;
-                case 3: // 45 Derece Egimli Rampa / Cati
-                    EmitSlopedRamp(center, yawRad, matId, baseAo, skirtDrop, outTriangles);
+
+                case ArchitecturalShapeCatalog.OctagonalColumn:
+                case 47 or 48 or 49 or 50:
+                    EmitOctagonalPillar(center, rotationState, matId, baseAo, skirtDrop, outTriangles);
                     break;
-                case 4: // Kemer Tasi (Arch Voussoir)
-                    EmitArchVoussoir(center, yawRad, matId, baseAo, outTriangles);
+
+                case ArchitecturalShapeCatalog.Ramp45:
+                case 27 or 28 or 29 or 30:
+                    EmitSlopedRamp(center, rotationState, slopeMinY: -0.50f, slopeMaxY: 0.50f, matId, baseAo, skirtDrop, outTriangles);
                     break;
-                case 5: // Kilit Tasi (Trapezoidal Keystone)
-                    EmitTrapezoidalKeystone(center, yawRad, matId, baseAo, outTriangles);
+
+                case ArchitecturalShapeCatalog.Ramp22Low:
+                case 31 or 32 or 33 or 34:
+                    EmitSlopedRamp(center, rotationState, slopeMinY: -0.50f, slopeMaxY: 0.0f, matId, baseAo, skirtDrop, outTriangles);
                     break;
-                case 6: // Pahli Savunma Duvari / Mazgal
-                    EmitBeveledBattlementWall(center, yawRad, matId, baseAo, skirtDrop, outTriangles);
+
+                case ArchitecturalShapeCatalog.Ramp22High:
+                    EmitSlopedRamp(center, rotationState, slopeMinY: 0.0f, slopeMaxY: 0.50f, matId, baseAo, skirtDrop, outTriangles);
                     break;
-                case 7: // Fasetli Cevher / Kristal Salkimi
+
+                case ArchitecturalShapeCatalog.ArchVoussoir:
+                case ArchitecturalShapeCatalog.GothicArchHalf:
+                case 55 or 56 or 57 or 58:
+                    EmitArchVoussoir(center, rotationState, matId, baseAo, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.TrapezoidalKeystone:
+                case 51 or 52:
+                    EmitTrapezoidalKeystone(center, rotationState, matId, baseAo, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.BattlementMerlon:
+                case ArchitecturalShapeCatalog.ArrowSlitWall:
+                case ArchitecturalShapeCatalog.ButtressSupport:
+                case 43 or 44 or 45 or 46 or 53 or 54:
+                    EmitBeveledBattlementWall(center, rotationState, matId, baseAo, skirtDrop, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.FacetedCrystalSpire:
                     EmitFacetedCrystalCluster(center, matId, baseAo, skirtDrop, outTriangles);
                     break;
-                case 63: // Kanal 2A: 4x4x4 (0.25m) Yontulmus Mikro-Voksel Kabartma Blogu
-                    EmitMicroVoxel4x4x4ChiseledBlock(cellOrigin, matId, rotationState, baseAo, outTriangles);
+
+                case ArchitecturalShapeCatalog.HalfSlab:
+                case ArchitecturalShapeCatalog.TrophyPlinth:
+                case 21 or 22 or 23 or 24 or 25 or 26:
+                    EmitTaperedBoxRotated(center, rotationState, 0.495f, 0.495f, 0.49f, 0.49f, -0.50f - skirtDrop, 0.0f, matId, baseAo, 0, outTriangles);
                     break;
-                default: // ShapeID == 1: Komsu yuzey elemeli (Face-Culled) Pahli Kesme Tas Blok
+
+                case ArchitecturalShapeCatalog.QuarterBeam:
+                case ArchitecturalShapeCatalog.CorniceMolding:
+                case ArchitecturalShapeCatalog.GratingFrame:
+                case 59 or 60 or 61 or 62:
+                    EmitTaperedBoxRotated(center, rotationState, 0.22f, 0.495f, 0.22f, 0.495f, -0.22f, 0.22f, matId, baseAo, 0, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.InnerRoofCorner45:
+                case 35 or 36 or 37 or 38:
+                    EmitRoofCorner(center, rotationState, isInnerCorner: true, matId, baseAo, skirtDrop, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.OuterRoofCorner45:
+                case 39 or 40 or 41 or 42:
+                    EmitRoofCorner(center, rotationState, isInnerCorner: false, matId, baseAo, skirtDrop, outTriangles);
+                    break;
+
+                case ArchitecturalShapeCatalog.StairStep:
+                    EmitStairSteps(center, rotationState, matId, baseAo, skirtDrop, outTriangles);
+                    break;
+
+                case VoxelBitUtility.ChiseledMicroVoxelShapeId:
+                    EmitMicroVoxel4x4x4FromMask(cellOrigin, matId, BuildProceduralButtressMask64(rotationState), baseAo, occludedFaceMask, outTriangles);
+                    break;
+
+                default:
                     EmitChamferedMasonryBlock(center, matId, baseAo, skirtDrop, occludedFaceMask, outTriangles);
                     break;
             }
         }
 
-        private static void EmitMicroVoxel4x4x4ChiseledBlock(
+        /// <summary>
+        /// Kanal 2A: Gercek MicroVoxelPool4096 64-bit ulong maskesini 6 yonde 4x4 2B Greedy birlestirme ile orer!
+        /// </summary>
+        public static void EmitMicroVoxel4x4x4FromMask(
             Vector3 cellOrigin,
             byte matId,
-            byte patternSeed,
-            byte ao,
+            ulong mask64,
+            byte packedAoWear,
+            byte outerOccludedFaceMask,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            // 4x4x4 = 64 adet 0.25m mikro-voksel: koseleri oyulmus runik/kale payandasi (komsu ic yuzeyler elenir!)
-            Span<byte> subGrid = stackalloc byte[64];
+            if (mask64 == 0UL)
+            {
+                return;
+            }
+
+            const float step = 0.25f;
+            Span<byte> rows = stackalloc byte[4];
+
+            // 1) +Y ve -Y (sy = 0..3): satir=sz (0..3), bit=sx (0..3)
+            for (int sy = 0; sy < 4; sy++)
+            {
+                // +Y
+                if (!(sy == 3 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FacePosY) != 0))
+                {
+                    rows.Clear();
+                    for (int sz = 0; sz < 4; sz++)
+                    {
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool above = sy < 3 && (((mask64 >> (((sy + 1) << 4) | (sz << 2) | sx)) & 1UL) != 0UL);
+                            if (cur && !above) rows[sz] |= (byte)(1 << sx);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 2, sliceCoord: (sy + 1) * step, rows, step, outTriangles);
+                }
+
+                // -Y
+                if (!(sy == 0 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FaceNegY) != 0))
+                {
+                    rows.Clear();
+                    for (int sz = 0; sz < 4; sz++)
+                    {
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool below = sy > 0 && (((mask64 >> (((sy - 1) << 4) | (sz << 2) | sx)) & 1UL) != 0UL);
+                            if (cur && !below) rows[sz] |= (byte)(1 << sx);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 3, sliceCoord: sy * step, rows, step, outTriangles);
+                }
+            }
+
+            // 2) +X ve -X (sx = 0..3): satir=sy (0..3), bit=sz (0..3)
+            for (int sx = 0; sx < 4; sx++)
+            {
+                if (!(sx == 3 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FacePosX) != 0))
+                {
+                    rows.Clear();
+                    for (int sy = 0; sy < 4; sy++)
+                    {
+                        for (int sz = 0; sz < 4; sz++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool pos = sx < 3 && (((mask64 >> ((sy << 4) | (sz << 2) | (sx + 1))) & 1UL) != 0UL);
+                            if (cur && !pos) rows[sy] |= (byte)(1 << sz);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 0, sliceCoord: (sx + 1) * step, rows, step, outTriangles);
+                }
+
+                if (!(sx == 0 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FaceNegX) != 0))
+                {
+                    rows.Clear();
+                    for (int sy = 0; sy < 4; sy++)
+                    {
+                        for (int sz = 0; sz < 4; sz++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool neg = sx > 0 && (((mask64 >> ((sy << 4) | (sz << 2) | (sx - 1))) & 1UL) != 0UL);
+                            if (cur && !neg) rows[sy] |= (byte)(1 << sz);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 1, sliceCoord: sx * step, rows, step, outTriangles);
+                }
+            }
+
+            // 3) +Z ve -Z (sz = 0..3): satir=sy (0..3), bit=sx (0..3)
+            for (int sz = 0; sz < 4; sz++)
+            {
+                if (!(sz == 3 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FacePosZ) != 0))
+                {
+                    rows.Clear();
+                    for (int sy = 0; sy < 4; sy++)
+                    {
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool pos = sz < 3 && (((mask64 >> ((sy << 4) | ((sz + 1) << 2) | sx)) & 1UL) != 0UL);
+                            if (cur && !pos) rows[sy] |= (byte)(1 << sx);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 4, sliceCoord: (sz + 1) * step, rows, step, outTriangles);
+                }
+
+                if (!(sz == 0 && (outerOccludedFaceMask & ArchitecturalShapeCatalog.FaceNegZ) != 0))
+                {
+                    rows.Clear();
+                    for (int sy = 0; sy < 4; sy++)
+                    {
+                        for (int sx = 0; sx < 4; sx++)
+                        {
+                            bool cur = ((mask64 >> ((sy << 4) | (sz << 2) | sx)) & 1UL) != 0UL;
+                            bool neg = sz > 0 && (((mask64 >> ((sy << 4) | ((sz - 1) << 2) | sx)) & 1UL) != 0UL);
+                            if (cur && !neg) rows[sy] |= (byte)(1 << sx);
+                        }
+                    }
+                    EmitMicroGreedy4x4(cellOrigin, matId, packedAoWear, axisDir: 5, sliceCoord: sz * step, rows, step, outTriangles);
+                }
+            }
+        }
+
+        private static void EmitMicroGreedy4x4(
+            Vector3 origin,
+            byte matId,
+            byte ao,
+            int axisDir,
+            float sliceCoord,
+            Span<byte> rows4,
+            float step,
+            List<FacetedVoxelTriangle> outTriangles)
+        {
+            for (int r = 0; r < 4; r++)
+            {
+                byte row = rows4[r];
+                while (row != 0)
+                {
+                    int start = BitOps.TrailingZeroCount(row);
+                    int w = 1;
+                    while (start + w < 4 && ((row >> (start + w)) & 1) != 0)
+                    {
+                        w++;
+                    }
+
+                    byte spanMask = (byte)(((1 << w) - 1) << start);
+                    row &= (byte)~spanMask;
+
+                    int h = 1;
+                    while (r + h < 4 && (rows4[r + h] & spanMask) == spanMask)
+                    {
+                        rows4[r + h] &= (byte)~spanMask;
+                        h++;
+                    }
+
+                    float u0 = start * step;
+                    float u1 = (start + w) * step;
+                    float v0 = r * step;
+                    float v1 = (r + h) * step;
+                    byte shade = (byte)(172 + ((start * 7 + r * 11 + axisDir * 5) & 3) * 16);
+
+                    switch (axisDir)
+                    {
+                        case 2: // +Y (u=X, v=Z)
+                            AddFacetedQuad(
+                                origin + new Vector3(u0, sliceCoord, v0),
+                                origin + new Vector3(u0, sliceCoord, v1),
+                                origin + new Vector3(u1, sliceCoord, v1),
+                                origin + new Vector3(u1, sliceCoord, v0),
+                                matId, shade, (byte)(shade - 10), ao, outTriangles);
+                            break;
+                        case 3: // -Y
+                            AddFacetedQuad(
+                                origin + new Vector3(u0, sliceCoord, v0),
+                                origin + new Vector3(u1, sliceCoord, v0),
+                                origin + new Vector3(u1, sliceCoord, v1),
+                                origin + new Vector3(u0, sliceCoord, v1),
+                                matId, 130, 120, ao, outTriangles);
+                            break;
+                        case 0: // +X (u=Z, v=Y)
+                            AddFacetedQuad(
+                                origin + new Vector3(sliceCoord, v0, u0),
+                                origin + new Vector3(sliceCoord, v1, u0),
+                                origin + new Vector3(sliceCoord, v1, u1),
+                                origin + new Vector3(sliceCoord, v0, u1),
+                                matId, shade, (byte)(shade - 12), ao, outTriangles);
+                            break;
+                        case 1: // -X
+                            AddFacetedQuad(
+                                origin + new Vector3(sliceCoord, v0, u1),
+                                origin + new Vector3(sliceCoord, v1, u1),
+                                origin + new Vector3(sliceCoord, v1, u0),
+                                origin + new Vector3(sliceCoord, v0, u0),
+                                matId, shade, (byte)(shade - 12), ao, outTriangles);
+                            break;
+                        case 4: // +Z (u=X, v=Y)
+                            AddFacetedQuad(
+                                origin + new Vector3(u1, v0, sliceCoord),
+                                origin + new Vector3(u1, v1, sliceCoord),
+                                origin + new Vector3(u0, v1, sliceCoord),
+                                origin + new Vector3(u0, v0, sliceCoord),
+                                matId, shade, (byte)(shade - 14), ao, outTriangles);
+                            break;
+                        case 5: // -Z
+                            AddFacetedQuad(
+                                origin + new Vector3(u0, v0, sliceCoord),
+                                origin + new Vector3(u0, v1, sliceCoord),
+                                origin + new Vector3(u1, v1, sliceCoord),
+                                origin + new Vector3(u1, v0, sliceCoord),
+                                matId, shade, (byte)(shade - 14), ao, outTriangles);
+                            break;
+                    }
+                }
+            }
+        }
+
+        private static ulong BuildProceduralButtressMask64(byte patternSeed)
+        {
+            ulong mask = 0UL;
             for (int sy = 0; sy < 4; sy++)
             {
                 for (int sz = 0; sz < 4; sz++)
@@ -666,71 +1160,34 @@ namespace Stratocraft.Voxel.Jobs
                     {
                         bool isCornerEdge = (sx == 0 || sx == 3) && (sz == 0 || sz == 3) && (sy == 1 || sy == 2);
                         bool topNotch = sy == 3 && ((sx + sz + patternSeed) & 1) == 1 && (sx == 0 || sx == 3 || sz == 0 || sz == 3);
-                        subGrid[(sy << 4) | (sz << 2) | sx] = (!isCornerEdge && !topNotch) ? (byte)1 : (byte)0;
-                    }
-                }
-            }
-
-            const float step = 0.25f;
-            for (int sy = 0; sy < 4; sy++)
-            {
-                for (int sz = 0; sz < 4; sz++)
-                {
-                    for (int sx = 0; sx < 4; sx++)
-                    {
-                        if (subGrid[(sy << 4) | (sz << 2) | sx] == 0)
+                        if (!isCornerEdge && !topNotch)
                         {
-                            continue;
+                            mask |= 1UL << ((sy << 4) | (sz << 2) | sx);
                         }
-
-                        float x0 = cellOrigin.X + sx * step;
-                        float y0 = cellOrigin.Y + sy * step;
-                        float z0 = cellOrigin.Z + sz * step;
-                        float x1 = x0 + step;
-                        float y1 = y0 + step;
-                        float z1 = z0 + step;
-
-                        byte shade = (byte)(175 + ((sx * 7 + sy * 13 + sz * 5) % 4) * 16);
-
-                        // +Y / -Y
-                        if (sy == 3 || subGrid[((sy + 1) << 4) | (sz << 2) | sx] == 0)
-                            AddFacetedQuad(new Vector3(x0, y1, z0), new Vector3(x0, y1, z1), new Vector3(x1, y1, z1), new Vector3(x1, y1, z0), matId, shade, (byte)(shade - 10), ao, outTriangles);
-                        if (sy == 0 || subGrid[((sy - 1) << 4) | (sz << 2) | sx] == 0)
-                            AddFacetedQuad(new Vector3(x0, y0, z0), new Vector3(x1, y0, z0), new Vector3(x1, y0, z1), new Vector3(x0, y0, z1), matId, 130, 120, ao, outTriangles);
-
-                        // +X / -X
-                        if (sx == 3 || subGrid[(sy << 4) | (sz << 2) | (sx + 1)] == 0)
-                            AddFacetedQuad(new Vector3(x1, y0, z0), new Vector3(x1, y1, z0), new Vector3(x1, y1, z1), new Vector3(x1, y0, z1), matId, shade, (byte)(shade - 12), ao, outTriangles);
-                        if (sx == 0 || subGrid[(sy << 4) | (sz << 2) | (sx - 1)] == 0)
-                            AddFacetedQuad(new Vector3(x0, y0, z1), new Vector3(x0, y1, z1), new Vector3(x0, y1, z0), new Vector3(x0, y0, z0), matId, shade, (byte)(shade - 12), ao, outTriangles);
-
-                        // +Z / -Z
-                        if (sz == 3 || subGrid[(sy << 4) | ((sz + 1) << 2) | sx] == 0)
-                            AddFacetedQuad(new Vector3(x1, y0, z1), new Vector3(x1, y1, z1), new Vector3(x0, y1, z1), new Vector3(x0, y0, z1), matId, shade, (byte)(shade - 14), ao, outTriangles);
-                        if (sz == 0 || subGrid[(sy << 4) | ((sz - 1) << 2) | sx] == 0)
-                            AddFacetedQuad(new Vector3(x0, y0, z0), new Vector3(x0, y1, z0), new Vector3(x1, y1, z0), new Vector3(x1, y0, z0), matId, shade, (byte)(shade - 14), ao, outTriangles);
                     }
                 }
             }
+            return mask;
         }
 
         private static void EmitOctagonalPillar(
-            Vector3 cellOrigin,
+            Vector3 center,
+            byte rot,
             byte matId,
             byte ao,
             float skirtDrop,
             List<FacetedVoxelTriangle> outTriangles)
         {
             const int sides = 8;
-            float cx = cellOrigin.X + 0.5f;
-            float cz = cellOrigin.Z + 0.5f;
-            float y0 = cellOrigin.Y - skirtDrop;
-            float y1 = cellOrigin.Y + 0.16f;
-            float y2 = cellOrigin.Y + 0.84f;
-            float y3 = cellOrigin.Y + 1.0f;
-
+            float y0 = -0.50f - skirtDrop;
+            const float y1 = -0.34f;
+            const float y2 = 0.34f;
+            const float y3 = 0.50f;
             const float rBase = 0.46f;
             const float rShaft = 0.36f;
+
+            Vector3 topCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y3, 0f), center, rot);
+            Vector3 botCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y0, 0f), center, rot);
 
             for (int i = 0; i < sides; i++)
             {
@@ -745,72 +1202,130 @@ namespace Stratocraft.Voxel.Jobs
                 byte shade1 = (byte)(155 + (i % 3) * 22);
                 byte shade2 = (byte)(140 + ((i + 1) % 3) * 22);
 
-                Vector3 b0 = new Vector3(cx + c0 * rBase, y0, cz + s0 * rBase);
-                Vector3 b1 = new Vector3(cx + c1 * rBase, y0, cz + s1 * rBase);
-                Vector3 m0 = new Vector3(cx + c0 * rShaft, y1, cz + s0 * rShaft);
-                Vector3 m1 = new Vector3(cx + c1 * rShaft, y1, cz + s1 * rShaft);
+                Vector3 b0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rBase, y0, s0 * rBase), center, rot);
+                Vector3 b1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rBase, y0, s1 * rBase), center, rot);
+                Vector3 m0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y1, s0 * rShaft), center, rot);
+                Vector3 m1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y1, s1 * rShaft), center, rot);
                 AddFacetedQuad(b0, m0, m1, b1, matId, shade1, shade2, ao, outTriangles);
 
-                Vector3 t0 = new Vector3(cx + c0 * rShaft, y2, cz + s0 * rShaft);
-                Vector3 t1 = new Vector3(cx + c1 * rShaft, y2, cz + s1 * rShaft);
+                Vector3 t0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y2, s0 * rShaft), center, rot);
+                Vector3 t1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y2, s1 * rShaft), center, rot);
                 AddFacetedQuad(m0, t0, t1, m1, matId, shade1, shade2, ao, outTriangles);
 
-                Vector3 u0 = new Vector3(cx + c0 * rBase, y3, cz + s0 * rBase);
-                Vector3 u1 = new Vector3(cx + c1 * rBase, y3, cz + s1 * rBase);
+                Vector3 u0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rBase, y3, s0 * rBase), center, rot);
+                Vector3 u1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rBase, y3, s1 * rBase), center, rot);
                 AddFacetedQuad(t0, u0, u1, t1, matId, shade1, shade2, ao, outTriangles);
 
-                AddFacetedTriangle(new Vector3(cx, y3, cz), u1, u0, matId, 210, ao, outTriangles);
-                AddFacetedTriangle(new Vector3(cx, y0, cz), b0, b1, matId, 130, ao, outTriangles);
+                AddFacetedTriangle(topCenter, u1, u0, matId, 210, ao, outTriangles);
+                AddFacetedTriangle(botCenter, b0, b1, matId, 130, ao, outTriangles);
             }
         }
 
         private static void EmitSlopedRamp(
             Vector3 center,
-            float yawRad,
+            byte rot,
+            float slopeMinY,
+            float slopeMaxY,
+            byte matId,
+            byte ao,
+            float skirtDrop,
+            List<FacetedVoxelTriangle> outTriangles)
+        {
+            float baseMinY = -0.50f - skirtDrop;
+            Vector3 bFL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, baseMinY, -0.49f), center, rot);
+            Vector3 bFR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, baseMinY, -0.49f), center, rot);
+            Vector3 bBL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, baseMinY, 0.49f), center, rot);
+            Vector3 bBR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, baseMinY, 0.49f), center, rot);
+
+            Vector3 fLowL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, slopeMinY, -0.49f), center, rot);
+            Vector3 fLowR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, slopeMinY, -0.49f), center, rot);
+            Vector3 tBackL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, slopeMaxY, 0.49f), center, rot);
+            Vector3 tBackR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, slopeMaxY, 0.49f), center, rot);
+
+            AddFacetedQuad(fLowL, tBackL, tBackR, fLowR, matId, 212, 198, ao, outTriangles);
+            AddFacetedQuad(bBR, tBackR, tBackL, bBL, matId, 150, 140, ao, outTriangles);
+            AddFacetedQuad(bBL, bFL, bFR, bBR, matId, 120, 120, ao, outTriangles);
+            if (slopeMinY > baseMinY + 0.01f)
+            {
+                AddFacetedQuad(bFL, fLowL, fLowR, bFR, matId, 180, 170, ao, outTriangles);
+                AddFacetedQuad(bFL, bBL, tBackL, fLowL, matId, 175, 165, ao, outTriangles);
+                AddFacetedQuad(bFR, fLowR, tBackR, bBR, matId, 175, 165, ao, outTriangles);
+            }
+            else
+            {
+                AddFacetedTriangle(bFL, bBL, tBackL, matId, 175, ao, outTriangles);
+                AddFacetedTriangle(bFR, tBackR, bBR, matId, 175, ao, outTriangles);
+            }
+        }
+
+        private static void EmitRoofCorner(
+            Vector3 center,
+            byte rot,
+            bool isInnerCorner,
             byte matId,
             byte ao,
             float skirtDrop,
             List<FacetedVoxelTriangle> outTriangles)
         {
             float minY = -0.50f - skirtDrop;
-            Vector3 bFL = RotateY(new Vector3(-0.48f, minY, -0.48f), center, yawRad);
-            Vector3 bFR = RotateY(new Vector3(0.48f, minY, -0.48f), center, yawRad);
-            Vector3 bBL = RotateY(new Vector3(-0.48f, minY, 0.48f), center, yawRad);
-            Vector3 bBR = RotateY(new Vector3(0.48f, minY, 0.48f), center, yawRad);
+            Vector3 b00 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, minY, -0.49f), center, rot);
+            Vector3 b10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, minY, -0.49f), center, rot);
+            Vector3 b11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, minY, 0.49f), center, rot);
+            Vector3 b01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, minY, 0.49f), center, rot);
+            Vector3 apex11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, 0.50f, 0.49f), center, rot);
 
-            Vector3 tBL = RotateY(new Vector3(-0.46f, 0.50f, 0.25f), center, yawRad);
-            Vector3 tBR = RotateY(new Vector3(0.46f, 0.50f, 0.25f), center, yawRad);
-            Vector3 tBackL = RotateY(new Vector3(-0.48f, 0.50f, 0.48f), center, yawRad);
-            Vector3 tBackR = RotateY(new Vector3(0.48f, 0.50f, 0.48f), center, yawRad);
+            AddFacetedQuad(b01, b00, b10, b11, matId, 120, 120, ao, outTriangles);
+            if (!isInnerCorner)
+            {
+                AddFacetedTriangle(b00, b01, apex11, matId, 205, ao, outTriangles);
+                AddFacetedTriangle(b00, apex11, b10, matId, 195, ao, outTriangles);
+                AddFacetedTriangle(b01, apex11, b11, matId, 165, ao, outTriangles);
+                AddFacetedTriangle(b10, apex11, b11, matId, 160, ao, outTriangles);
+            }
+            else
+            {
+                Vector3 apex01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, 0.50f, 0.49f), center, rot);
+                Vector3 apex10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, 0.50f, -0.49f), center, rot);
+                AddFacetedTriangle(b00, apex01, apex11, matId, 210, ao, outTriangles);
+                AddFacetedTriangle(b00, apex11, apex10, matId, 198, ao, outTriangles);
+                AddFacetedQuad(b11, apex11, apex01, b01, matId, 155, 145, ao, outTriangles);
+                AddFacetedQuad(b10, apex10, apex11, b11, matId, 160, 150, ao, outTriangles);
+                AddFacetedTriangle(b00, b01, apex01, matId, 175, ao, outTriangles);
+                AddFacetedTriangle(b00, apex10, b10, matId, 175, ao, outTriangles);
+            }
+        }
 
-            AddFacetedQuad(bFL, tBL, tBR, bFR, matId, 210, 195, ao, outTriangles);
-            AddFacetedQuad(tBL, tBackL, tBackR, tBR, matId, 225, 215, ao, outTriangles);
-            AddFacetedQuad(bBR, tBackR, tBackL, bBL, matId, 150, 140, ao, outTriangles);
-            AddFacetedQuad(bBL, bFL, bFR, bBR, matId, 120, 120, ao, outTriangles);
-            AddFacetedTriangle(bFL, bBL, tBL, matId, 175, ao, outTriangles);
-            AddFacetedTriangle(bBL, tBackL, tBL, matId, 165, ao, outTriangles);
-            AddFacetedTriangle(bFR, tBR, bBR, matId, 175, ao, outTriangles);
-            AddFacetedTriangle(bBR, tBR, tBackR, matId, 165, ao, outTriangles);
+        private static void EmitStairSteps(
+            Vector3 center,
+            byte rot,
+            byte matId,
+            byte ao,
+            float skirtDrop,
+            List<FacetedVoxelTriangle> outTriangles)
+        {
+            EmitTaperedBoxRotated(center, rot, 0.495f, 0.495f, 0.495f, 0.495f, -0.50f - skirtDrop, 0.0f, matId, ao, 0, outTriangles);
+            Vector3 upperCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, 0.25f, 0.2475f), center, rot);
+            EmitTaperedBoxRotated(upperCenter, rot, 0.495f, 0.2475f, 0.495f, 0.2475f, -0.25f, 0.25f, matId, ao, 0, outTriangles);
         }
 
         private static void EmitArchVoussoir(
             Vector3 center,
-            float yawRad,
+            byte rot,
             byte matId,
             byte ao,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            Vector3 outerBL = RotateY(new Vector3(-0.48f, -0.15f, -0.44f), center, yawRad);
-            Vector3 outerBR = RotateY(new Vector3(-0.48f, -0.15f, 0.44f), center, yawRad);
-            Vector3 archMidL = RotateY(new Vector3(-0.05f, 0.18f, -0.42f), center, yawRad);
-            Vector3 archMidR = RotateY(new Vector3(-0.05f, 0.18f, 0.42f), center, yawRad);
-            Vector3 innerTL = RotateY(new Vector3(0.48f, 0.36f, -0.42f), center, yawRad);
-            Vector3 innerTR = RotateY(new Vector3(0.48f, 0.36f, 0.42f), center, yawRad);
+            Vector3 outerBL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, -0.15f, -0.44f), center, rot);
+            Vector3 outerBR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, -0.15f, 0.44f), center, rot);
+            Vector3 archMidL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.05f, 0.18f, -0.42f), center, rot);
+            Vector3 archMidR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.05f, 0.18f, 0.42f), center, rot);
+            Vector3 innerTL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.36f, -0.42f), center, rot);
+            Vector3 innerTR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.36f, 0.42f), center, rot);
 
-            Vector3 topL0 = RotateY(new Vector3(-0.48f, 0.50f, -0.44f), center, yawRad);
-            Vector3 topR0 = RotateY(new Vector3(-0.48f, 0.50f, 0.44f), center, yawRad);
-            Vector3 topL1 = RotateY(new Vector3(0.48f, 0.50f, -0.44f), center, yawRad);
-            Vector3 topR1 = RotateY(new Vector3(0.48f, 0.50f, 0.44f), center, yawRad);
+            Vector3 topL0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, 0.50f, -0.44f), center, rot);
+            Vector3 topR0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, 0.50f, 0.44f), center, rot);
+            Vector3 topL1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.50f, -0.44f), center, rot);
+            Vector3 topR1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.50f, 0.44f), center, rot);
 
             AddFacetedQuad(outerBL, outerBR, archMidR, archMidL, matId, 155, 145, ao, outTriangles);
             AddFacetedQuad(archMidL, archMidR, innerTR, innerTL, matId, 165, 150, ao, outTriangles);
@@ -825,23 +1340,23 @@ namespace Stratocraft.Voxel.Jobs
 
         private static void EmitTrapezoidalKeystone(
             Vector3 center,
-            float yawRad,
+            byte rot,
             byte matId,
             byte ao,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            EmitTaperedBox(center, yawRad, 0.30f, 0.46f, 0.50f, 0.48f, -0.42f, 0.52f, matId, ao, 0, outTriangles);
+            EmitTaperedBoxRotated(center, rot, 0.30f, 0.46f, 0.50f, 0.48f, -0.42f, 0.50f, matId, ao, 0, outTriangles);
         }
 
         private static void EmitBeveledBattlementWall(
             Vector3 center,
-            float yawRad,
+            byte rot,
             byte matId,
             byte ao,
             float skirtDrop,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            EmitTaperedBox(center, yawRad, 0.49f, 0.28f, 0.46f, 0.20f, -0.50f - skirtDrop, 0.50f, matId, ao, 0, outTriangles);
+            EmitTaperedBoxRotated(center, rot, 0.49f, 0.28f, 0.46f, 0.20f, -0.50f - skirtDrop, 0.50f, matId, ao, 0, outTriangles);
         }
 
         private static void EmitFacetedCrystalCluster(
@@ -896,13 +1411,13 @@ namespace Stratocraft.Voxel.Jobs
             byte occludedFaceMask,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            EmitTaperedBox(
+            EmitTaperedBoxRotated(
                 center,
-                yawRad: 0f,
-                bottomHalfX: 0.495f,
-                bottomHalfZ: 0.495f,
-                topHalfX: 0.475f,
-                topHalfZ: 0.475f,
+                rot: 0,
+                bottomHalfX: 0.50f,
+                bottomHalfZ: 0.50f,
+                topHalfX: 0.50f,
+                topHalfZ: 0.50f,
                 minY: -0.50f - skirtDrop,
                 maxY: 0.50f,
                 matId,
@@ -911,9 +1426,9 @@ namespace Stratocraft.Voxel.Jobs
                 outTriangles);
         }
 
-        private static void EmitTaperedBox(
+        private static void EmitTaperedBoxRotated(
             Vector3 center,
-            float yawRad,
+            byte rot,
             float bottomHalfX,
             float bottomHalfZ,
             float topHalfX,
@@ -925,34 +1440,22 @@ namespace Stratocraft.Voxel.Jobs
             byte occludedMask,
             List<FacetedVoxelTriangle> outTriangles)
         {
-            Vector3 b0 = RotateY(new Vector3(-bottomHalfX, minY, -bottomHalfZ), center, yawRad);
-            Vector3 b1 = RotateY(new Vector3(bottomHalfX, minY, -bottomHalfZ), center, yawRad);
-            Vector3 b2 = RotateY(new Vector3(bottomHalfX, minY, bottomHalfZ), center, yawRad);
-            Vector3 b3 = RotateY(new Vector3(-bottomHalfX, minY, bottomHalfZ), center, yawRad);
+            Vector3 b0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-bottomHalfX, minY, -bottomHalfZ), center, rot);
+            Vector3 b1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(bottomHalfX, minY, -bottomHalfZ), center, rot);
+            Vector3 b2 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(bottomHalfX, minY, bottomHalfZ), center, rot);
+            Vector3 b3 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-bottomHalfX, minY, bottomHalfZ), center, rot);
 
-            Vector3 t0 = RotateY(new Vector3(-topHalfX, maxY, -topHalfZ), center, yawRad);
-            Vector3 t1 = RotateY(new Vector3(topHalfX, maxY, -topHalfZ), center, yawRad);
-            Vector3 t2 = RotateY(new Vector3(topHalfX, maxY, topHalfZ), center, yawRad);
-            Vector3 t3 = RotateY(new Vector3(-topHalfX, maxY, topHalfZ), center, yawRad);
+            Vector3 t0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-topHalfX, maxY, -topHalfZ), center, rot);
+            Vector3 t1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(topHalfX, maxY, -topHalfZ), center, rot);
+            Vector3 t2 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(topHalfX, maxY, topHalfZ), center, rot);
+            Vector3 t3 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-topHalfX, maxY, topHalfZ), center, rot);
 
-            // Bit 0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z
-            if ((occludedMask & (1 << 2)) == 0) AddFacetedQuad(t0, t3, t2, t1, matId, 225, 210, ao, outTriangles);
-            if ((occludedMask & (1 << 3)) == 0) AddFacetedQuad(b0, b1, b2, b3, matId, 130, 120, ao, outTriangles);
-            if ((occludedMask & (1 << 5)) == 0) AddFacetedQuad(b0, t0, t1, b1, matId, 190, 175, ao, outTriangles);
-            if ((occludedMask & (1 << 0)) == 0) AddFacetedQuad(b1, t1, t2, b2, matId, 180, 165, ao, outTriangles);
-            if ((occludedMask & (1 << 4)) == 0) AddFacetedQuad(b2, t2, t3, b3, matId, 175, 160, ao, outTriangles);
-            if ((occludedMask & (1 << 1)) == 0) AddFacetedQuad(b3, t3, t0, b0, matId, 185, 170, ao, outTriangles);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector3 RotateY(Vector3 localOffset, Vector3 center, float yawRad)
-        {
-            float c = MathF.Cos(yawRad);
-            float s = MathF.Sin(yawRad);
-            return new Vector3(
-                center.X + localOffset.X * c - localOffset.Z * s,
-                center.Y + localOffset.Y,
-                center.Z + localOffset.X * s + localOffset.Z * c);
+            if ((occludedMask & ArchitecturalShapeCatalog.FacePosY) == 0) AddFacetedQuad(t0, t3, t2, t1, matId, 225, 210, ao, outTriangles);
+            if ((occludedMask & ArchitecturalShapeCatalog.FaceNegY) == 0) AddFacetedQuad(b0, b1, b2, b3, matId, 130, 120, ao, outTriangles);
+            if ((occludedMask & ArchitecturalShapeCatalog.FaceNegZ) == 0) AddFacetedQuad(b0, t0, t1, b1, matId, 190, 175, ao, outTriangles);
+            if ((occludedMask & ArchitecturalShapeCatalog.FacePosX) == 0) AddFacetedQuad(b1, t1, t2, b2, matId, 180, 165, ao, outTriangles);
+            if ((occludedMask & ArchitecturalShapeCatalog.FacePosZ) == 0) AddFacetedQuad(b2, t2, t3, b3, matId, 175, 160, ao, outTriangles);
+            if ((occludedMask & ArchitecturalShapeCatalog.FaceNegX) == 0) AddFacetedQuad(b3, t3, t0, b0, matId, 185, 170, ao, outTriangles);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1016,6 +1519,7 @@ namespace Stratocraft.Voxel.Jobs
             {
                 MaterialIdCatalog.FiniteLavaSurface => 242,
                 MaterialIdCatalog.MagmaBlock => 195,
+                MaterialIdCatalog.CampfireBlock => 210,
                 MaterialIdCatalog.StarCore => 170,
                 _ => 0
             };
@@ -1024,9 +1528,10 @@ namespace Stratocraft.Voxel.Jobs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetMaterialVisualPriority(byte matId)
         {
-            if (matId >= MaterialIdCatalog.CopperOre && matId <= MaterialIdCatalog.StarCore)
+            if ((matId >= MaterialIdCatalog.CopperOre && matId <= MaterialIdCatalog.GemVeinEnd) ||
+                (matId >= MaterialIdCatalog.SulfurOre && matId <= MaterialIdCatalog.RedDiamondGem))
             {
-                return 52; // 14 yeralti cevher damari magara duvarlarinda net gorunur
+                return 52;
             }
 
             return matId switch
@@ -1034,7 +1539,9 @@ namespace Stratocraft.Voxel.Jobs
                 MaterialIdCatalog.Air => 0,
                 MaterialIdCatalog.Basalt => 10,
                 MaterialIdCatalog.Stone => 12,
+                MaterialIdCatalog.Stalagnate => 14,
                 MaterialIdCatalog.Dirt => 16,
+                MaterialIdCatalog.Clay => 17,
                 MaterialIdCatalog.LooseRubble => 18,
                 MaterialIdCatalog.Sand => 20,
                 MaterialIdCatalog.Grass => 26,
@@ -1068,7 +1575,7 @@ namespace Stratocraft.Voxel.Jobs
 
         /// <summary>
         /// Mesh.AllocateWritableMeshData ile SIFIR ara dizi (0 B GC array copy) kullanarak dogrudan
-        /// StratocraftUberShader Color32 (R=MatID, G=Temp, B=FacetShade, A=AO) formatinda Unity Mesh olusturur.
+        /// StratocraftUberShader Color32 (R=MatID, G=Temp, B=FacetShade, A=(ao4&lt;&lt;4)|wear4) formatinda Unity Mesh olusturur.
         /// </summary>
         public static UnityEngine.Mesh BuildUnityMeshZeroGc(
             List<FacetedVoxelTriangle> tris,
@@ -1152,9 +1659,6 @@ namespace Stratocraft.Voxel.Jobs
             return mesh;
         }
 
-        /// <summary>
-        /// Unity Burst SIMD (1.8+) ile derlenen 18x(maxY+2)x18 Padded Surface Nets Dual Vertex hesaplayici is parcacigi.
-        /// </summary>
         [BurstCompile(FloatPrecision.Standard, FloatMode.Fast, CompileSynchronously = true)]
         public struct PaddedSurfaceNetsDualBurstJob : IJob
         {

@@ -1,4 +1,5 @@
 using System;
+using Stratocraft.Core.Constants;
 
 namespace Stratocraft.WorldGen
 {
@@ -11,21 +12,34 @@ namespace Stratocraft.WorldGen
     }
 
     /// <summary>
-    /// Deterministic 4-season atmospheric and weather cycle affecting surface temperature,
-    /// precipitation, and wind drag vectors.
+    /// Kanonik 4 Mevsim, Gunduz/Gece (40dk Gunduz + 20dk Gece = 3600sn) ve Kanli Ay (Her 3 gecede 1) Sistemi.
+    /// Bkz. GAME LOGIC BIBLE v7.0 Bolum 10.3.
     /// </summary>
     public sealed class SeasonAndWeatherSystem
     {
-        public const double SecondsPerInGameDay = 1200.0;
-        public const int DaysPerSeason = 7;
+        public const double SecondsPerInGameDay = StratocraftConstants.SecondsPerInGameDay; // 3600.0s
+        public const double DaylightSeconds = StratocraftConstants.DaylightDurationSeconds;  // 2400.0s (40 dk)
+        public const int DaysPerSeason = StratocraftConstants.DaysPerSeason;                 // 24 gun
 
         public SeasonType CurrentSeason { get; private set; } = SeasonType.Spring;
+        public int CurrentDayIndex { get; private set; }
+        public bool IsNight { get; private set; }
+        public bool IsBloodMoonNight { get; private set; }
         public float AmbientTemperatureCelsius { get; private set; } = 18.0f;
         public float PrecipitationIntensity01 { get; private set; }
+        public float WindSpeedMps { get; private set; } = 2.0f;
 
         public void EvaluateAtWorldTime(double totalWorldSeconds, int ringTier, float altitudeMeters)
         {
-            int totalDays = (int)Math.Floor(totalWorldSeconds / SecondsPerInGameDay);
+            double clampedSeconds = Math.Max(0.0, totalWorldSeconds);
+            int totalDays = (int)Math.Floor(clampedSeconds / SecondsPerInGameDay);
+            double timeInDay = clampedSeconds - totalDays * SecondsPerInGameDay;
+
+            CurrentDayIndex = totalDays;
+            IsNight = timeInDay >= DaylightSeconds;
+            // Her 3 gecede 1 Kanli Ay (Gun 2, 5, 8... geceleri, yani 3. gece ve katlari)
+            IsBloodMoonNight = IsNight && (((totalDays + 1) % StratocraftConstants.BloodMoonCycleDays) == 0);
+
             int seasonIndex = (totalDays / DaysPerSeason) & 0x3;
             CurrentSeason = (SeasonType)seasonIndex;
 
@@ -38,13 +52,14 @@ namespace Stratocraft.WorldGen
                 _ => 15.0f
             };
 
-            // Altitude lapse rate (-6.5 C per 1000m) + outer ring extremity
+            float nightCooling = IsNight ? -6.0f : 0.0f;
             float lapse = -(altitudeMeters / 1000.0f) * 6.5f;
-            float ringShift = (ringTier - 1) * (CurrentSeason == SeasonType.Winter ? -3.5f : 2.0f);
-            AmbientTemperatureCelsius = baseTemp + lapse + ringShift;
+            float ringShift = (Math.Max(0, ringTier - 1)) * (CurrentSeason == SeasonType.Winter ? -3.5f : 2.0f);
+            AmbientTemperatureCelsius = baseTemp + nightCooling + lapse + ringShift;
 
-            double weatherPhase = (totalWorldSeconds * 0.0025) + ringTier * 1.7;
+            double weatherPhase = (clampedSeconds * 0.0025) + ringTier * 1.7;
             PrecipitationIntensity01 = Math.Clamp((float)(Math.Sin(weatherPhase) * 0.5 + 0.35), 0f, 1f);
+            WindSpeedMps = 1.5f + PrecipitationIntensity01 * 9.5f + Math.Max(0, ringTier - 1) * 1.1f;
         }
     }
 }

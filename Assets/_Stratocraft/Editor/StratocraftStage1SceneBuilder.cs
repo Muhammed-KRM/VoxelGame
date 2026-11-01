@@ -5,6 +5,7 @@ using System.IO;
 using Stratocraft.Character;
 using Stratocraft.Core.Constants;
 using Stratocraft.Editor;
+using Stratocraft.Physics.Data;
 using Stratocraft.Rendering;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
@@ -69,23 +70,43 @@ namespace Stratocraft.EditorTools
                 voxelLayer = 0;
             }
 
-            // Once TUM 16 chunk voksel verisini uret ki komsu apronlari (18x(maxY+2)x18) birbirini eksiksiz okusun!
+            // Once TUM 16 chunk voksel ve sonlu akiskan verisini uret ki komsu apronlari (18x(maxY+2)x18) birbirini eksiksiz okusun!
             var worldChunks = new Dictionary<(int cx, int cz), uint[]>(16);
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(16);
             for (int cz = ChunkMin; cz <= ChunkMax; cz++)
             {
                 for (int cx = ChunkMin; cx <= ChunkMax; cx++)
                 {
-                    worldChunks[(cx, cz)] = PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    worldChunks[(cx, cz)] = voxels;
+                    fluidChunks[(cx, cz)] = fluids;
                 }
+            }
+
+            string fluidMatPath = GeneratedAssetsFolder + "/Mat_StratocraftFluidSurface.mat";
+            Material? fluidMat = AssetDatabase.LoadAssetAtPath<Material>(fluidMatPath);
+            Shader? fluidShader = Shader.Find("Stratocraft/FluidSurface");
+            if (fluidMat == null)
+            {
+                fluidMat = new Material(fluidShader != null ? fluidShader : Shader.Find("Universal Render Pipeline/Lit"));
+                fluidMat.name = "Mat_Stratocraft_FluidSurface";
+                AssetDatabase.CreateAsset(fluidMat, fluidMatPath);
+            }
+            else if (fluidShader != null && fluidMat.shader != fluidShader)
+            {
+                fluidMat.shader = fluidShader;
+                EditorUtility.SetDirty(fluidMat);
             }
 
             var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(16);
             var reusableTris = new List<FacetedVoxelTriangle>(12288);
+            var reusableFluidTris = new List<FacetedVoxelTriangle>(4096);
 
             for (int cz = ChunkMin; cz <= ChunkMax; cz++)
             {
                 for (int cx = ChunkMin; cx <= ChunkMax; cx++)
                 {
+                    // 1. Kati Arazi Voksel Orme (0.000m Dikissiz Padded Surface Nets + 7DTD Sekiller)
                     reusableTris.Clear();
                     HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                         cx,
@@ -116,6 +137,32 @@ namespace Stratocraft.EditorTools
                     {
                         mc = chunkGo.AddComponent<MeshCollider>();
                         mc.enabled = false;
+                    }
+
+                    // 2. Sonlu Akiskan (Su, Lav) Surekli Yuzeyi + +0.35m Kiyi Etegi Orme
+                    reusableFluidTris.Clear();
+                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
+                        cx,
+                        cz,
+                        Stage1InteractivePlayController.MaxEditableVoxelY,
+                        worldChunks,
+                        fluidChunks,
+                        reusableFluidTris);
+
+                    if (reusableFluidTris.Count > 0)
+                    {
+                        string fluidMeshName = $"Mesh_FluidSurfaceChunk_{cx}_{cz}";
+                        Mesh fluidMesh = SaveZeroGcMeshAsset(fluidMeshName, reusableFluidTris);
+
+                        GameObject fluidGo = CreateMeshObject(
+                            $"FluidSurface_{cx}_{cz}",
+                            chunkGo.transform,
+                            Vector3.zero,
+                            Quaternion.identity,
+                            Vector3.one,
+                            fluidMesh,
+                            fluidMat,
+                            addCollider: false);
                     }
 
                     builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], mf, mc);
@@ -335,9 +382,10 @@ namespace Stratocraft.EditorTools
         /// 3B kapali hacimsel ada (ust cimen/kaya platosu + 3B dik falez duvarlari + sivrilen bazalt alt govde) +
         /// Catenary Dome Magara + Stalagnate Destek Sutunu + Lav Kalderasi + Su Havuzu + Stokiyometrik Obsidyen.
         /// </summary>
-        private static uint[] PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
+        private static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
         {
             uint[] voxels = new uint[65536];
+            ushort[] fluids = new ushort[65536];
             int worldOffsetX = chunkX * 16;
             int worldOffsetZ = chunkZ * 16;
 
@@ -361,23 +409,24 @@ namespace Stratocraft.EditorTools
                     float bottomH = SampleIslandUnderbellyY(wx, wz);
 
                     // Guneydogu Volkanik Lav Kalderasi & Kaynak Suyu Havuzu + Stokiyometrik Obsidyen Damari
+                    bool isObsidianSeam = radialMargin > 1.2f &&
+                                          wz >= -9.8f && wz <= -4.6f &&
+                                          wx >= 4.8f && wx <= 6.2f;
+
                     float calderaDist = Vector2.Distance(new Vector2(wx, wz), new Vector2(8.2f, -7.2f));
-                    bool inLavaCaldera = calderaDist < 4.1f && radialMargin > 1.2f;
+                    bool inLavaCaldera = !isObsidianSeam && calderaDist < 4.1f && radialMargin > 1.2f;
                     if (inLavaCaldera)
                     {
                         topH = Mathf.Min(topH, 9.15f);
                     }
 
                     float waterPoolDist = Vector2.Distance(new Vector2(wx, wz), new Vector2(3.1f, -7.2f));
-                    bool inWaterPool = waterPoolDist < 2.9f && !inLavaCaldera && radialMargin > 1.2f;
+                    bool inWaterPool = !isObsidianSeam && waterPoolDist < 2.9f && !inLavaCaldera && radialMargin > 1.2f;
                     if (inWaterPool)
                     {
                         topH = Mathf.Min(topH, 9.15f);
                     }
 
-                    bool isObsidianSeam = radialMargin > 1.2f &&
-                                          wz >= -9.8f && wz <= -4.6f &&
-                                          wx >= 4.8f && wx <= 6.2f;
                     if (isObsidianSeam)
                     {
                         topH = Mathf.Min(topH, 9.35f);
@@ -385,6 +434,22 @@ namespace Stratocraft.EditorTools
 
                     for (int y = 1; y < Stage1InteractivePlayController.MaxEditableVoxelY - 1; y++)
                     {
+                        int idx = (y << 8) | (lz << 4) | lx;
+
+                        // Akiskan Cukurlari: y in [7..9] arasindaki hacim kati arazide oyuk olarak birakilir
+                        // ve 16-bit FluidCell16 katmanina yerlesir!
+                        if (inLavaCaldera && y >= 7 && y <= 9)
+                        {
+                            fluids[idx] = FluidCell16.Pack(FluidType.Lava, 255, isSettled: true).RawValue;
+                            continue;
+                        }
+
+                        if (inWaterPool && y >= 7 && y <= 9)
+                        {
+                            fluids[idx] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true).RawValue;
+                            continue;
+                        }
+
                         // 3B Kapali Ada SDF: Hem ust yuzeyden (topH - y), hem alt yuzeyden (y - bottomH), hem falez kenarindan (radialMargin) sinirli!
                         float distFromTop = topH - y;
                         float distFromBottom = y - bottomH;
@@ -434,7 +499,6 @@ namespace Stratocraft.EditorTools
                             isObsidianSeam,
                             isStalagnatePillar);
 
-                        int idx = (y << 8) | (lz << 4) | lx;
                         voxels[idx] = VoxelBitUtility.PackStandard(
                             matId: matId,
                             density: clampedDensity,
@@ -448,7 +512,7 @@ namespace Stratocraft.EditorTools
 
             // KANAL 2A & 2B: 7 Days to Die Mimari Kemer, Sutunlar, Rampa, Mazgal ve 4x4x4 Yontulmus Runik Payandalar
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
-            return voxels;
+            return (voxels, fluids);
         }
 
         private static byte ResolveGeologicalMaterial(
@@ -463,19 +527,19 @@ namespace Stratocraft.EditorTools
             bool isObsidianSeam,
             bool isStalagnatePillar)
         {
-            if (isObsidianSeam && y >= 7)
+            if (isObsidianSeam)
             {
                 return MaterialIdCatalog.NaturalObsidian; // Stokiyometrik Su + Lav birlesimi (MatID=6)
             }
 
-            if (inLavaCaldera && y >= 7)
+            if (inLavaCaldera)
             {
-                return MaterialIdCatalog.FiniteLavaSurface; // Erimis Lav Kalderasi (MatID=13, Temp=242 T^4 Glow!)
+                return y >= 5 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
             }
 
-            if (inWaterPool && y >= 7)
+            if (inWaterPool)
             {
-                return MaterialIdCatalog.FiniteWaterSurface; // Sonlu Kaynak Suyu Havuzu (MatID=12)
+                return MaterialIdCatalog.Sand;
             }
 
             // Adanin alt bazalt omurgasi ve dik dis falez duvarlari
@@ -911,7 +975,7 @@ namespace Stratocraft.EditorTools
 
         private static void SetupUrpLightingAndPostProcessVolume()
         {
-            Light[] lights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None);
+            Light[] lights = UnityEngine.Object.FindObjectsByType<Light>(FindObjectsInactive.Include);
             for (int i = 0; i < lights.Length; i++)
             {
                 if (lights[i].type == LightType.Directional)

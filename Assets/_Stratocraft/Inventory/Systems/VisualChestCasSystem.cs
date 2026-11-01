@@ -1,24 +1,36 @@
+#nullable enable
 using System;
 using System.Threading;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
+using Stratocraft.Inventory.Data;
 
 namespace Stratocraft.Inventory.Systems
 {
     /// <summary>
-    /// Fiziksel Görsel Sandık (Visual Chest) 64-Bit Atomik Compare-And-Swap (CAS) Eşzamanlılık Sistemi.
-    /// - Kapağı açıldığında içindeki eşyaları menüsüz 3B olarak gösterir ve dünyadan doğrudan (E tuşu) alınmasını sağlar.
-    /// - Aynı milisaniyede 8 farklı oyuncu/iş parçacığı aynı yuvadaki son eşyayı çekmeye çalıştığında
-    ///   Interlocked.CompareExchange(ref _packedSlots[slot], nextState, expectedState) sayesinde
-    ///   yalnızca 1 oyuncu başarılı olur, 7'si reddedilir (%0 Eşya Kopyalama / Duplication).
-    /// - Paket Düzeni (64-bit): [Bit 32..63: uint Version] | [Bit 16..31: ushort ItemId] | [Bit 0..15: ushort Count]
+    /// GAME LOGIC BIBLE v7.0 Bolum 4.4 — Fiziksel Gorsel Sandik (Visual Chest) 2-Fazli 64-Bit Lock-Word Atomik CAS
+    /// ve 110 Derece Sonumlu Harmonik Kapak Yayi Sistemi:
+    /// - 8 farkli oyuncu/is parcacigi ayni milisaniyede ayni yuvadaki son 16B yigini veya 128B benzersiz Run'lu kilici
+    ///   cekmeye calistiginda Interlocked.CompareExchange ile yalnizca 1 oyuncu basarili olur (%0 Duplication, %0 Struct Tearing!).
+    /// - 16-Byte StackableItemSlot ve 128-Byte UniqueEquipmentInstance verilerini TAM KAYIPSIZ muhafaza eder!
+    /// - Sandik kapagi E tusu ile acildiginda 0 dereceden 110 dereceye gercek sonumlu yay fizigiyle acilir.
     /// </summary>
     public sealed class VisualChestCasSystem
     {
+        public const float MaxLidOpenAngleDegrees = 110.0f;
+        private const uint WriteLockBit = 0x8000_0000u;
+
         private readonly long[] _packedSlots;
+        private readonly StackableItemSlot[] _stackPayloads;
+        private readonly UniqueEquipmentInstance[] _uniquePayloads;
+        private readonly byte[] _isUniqueEquipmentSlot;
         private readonly IGameLogService? _logger;
 
+        private float _lidAngularVelocityDegPerSec;
+
         public int SlotCapacity => _packedSlots.Length;
+        public bool IsLidOpen { get; private set; }
+        public float LidOpenAngleDegrees { get; private set; }
 
         public VisualChestCasSystem(int slotCount = 16, IGameLogService? logger = null)
         {
@@ -28,7 +40,32 @@ namespace Stratocraft.Inventory.Systems
             }
 
             _packedSlots = new long[slotCount];
+            _stackPayloads = new StackableItemSlot[slotCount];
+            _uniquePayloads = new UniqueEquipmentInstance[slotCount];
+            _isUniqueEquipmentSlot = new byte[slotCount];
             _logger = logger;
+        }
+
+        public void SetLidOpen(bool open)
+        {
+            IsLidOpen = open;
+        }
+
+        /// <summary>110 derecelik sonumlu harmonik sandik kapagi yayini ilerletir.</summary>
+        public float StepLidSpring(float deltaTime)
+        {
+            float target = IsLidOpen ? MaxLidOpenAngleDegrees : 0.0f;
+            const float stiffness = 140.0f;
+            const float damping = 18.5f;
+            float accel = (target - LidOpenAngleDegrees) * stiffness - _lidAngularVelocityDegPerSec * damping;
+            _lidAngularVelocityDegPerSec += accel * deltaTime;
+            LidOpenAngleDegrees = Math.Clamp(LidOpenAngleDegrees + _lidAngularVelocityDegPerSec * deltaTime, 0.0f, MaxLidOpenAngleDegrees);
+            if (MathF.Abs(target - LidOpenAngleDegrees) < 0.05f && MathF.Abs(_lidAngularVelocityDegPerSec) < 0.1f)
+            {
+                LidOpenAngleDegrees = target;
+                _lidAngularVelocityDegPerSec = 0f;
+            }
+            return LidOpenAngleDegrees;
         }
 
         public static long PackSlotState(uint version, ushort itemId, ushort count)
@@ -52,22 +89,90 @@ namespace Stratocraft.Inventory.Systems
         public (uint Version, ushort ItemId, ushort Count) ReadSlotAtomic(int slotIndex)
         {
             long packed = Interlocked.Read(ref _packedSlots[slotIndex]);
-            return UnpackSlotState(packed);
+            var (ver, item, cnt) = UnpackSlotState(packed);
+            return (ver & ~WriteLockBit, item, cnt);
         }
 
-        /// <summary>
-        /// Sandık yuvasına başlangıç eşyası yerleştirir (veya atomik olarak günceller).
-        /// </summary>
         public void InitializeSlot(int slotIndex, ushort itemId, ushort count, uint initialVersion = 1u)
         {
-            long next = PackSlotState(initialVersion, itemId, count);
+            _isUniqueEquipmentSlot[slotIndex] = 0;
+            _uniquePayloads[slotIndex] = default;
+            _stackPayloads[slotIndex] = itemId != 0 && count > 0
+                ? new StackableItemSlot(itemId, count)
+                : StackableItemSlot.Empty;
+            long next = PackSlotState(initialVersion & ~WriteLockBit, itemId, count);
             Interlocked.Exchange(ref _packedSlots[slotIndex], next);
         }
 
-        /// <summary>
-        /// Beklenen versiyon (expectedVersion) ile tek adımlı (Single-Shot) atomik çekim yapar.
-        /// Aynı anda aynı versiyonu okuyan 8 iş parçacığından yalnızca 1'i CAS yarışını kazanır.
-        /// </summary>
+        /// <summary>128-Byte benzersiz silah/zirh ornegini (Runlar, Ors imzasi, Keskinlik dahil) sandik yuvasina atomik yerlestirir.</summary>
+        public bool TryDepositUniqueEquipmentAtomic(int slotIndex, in UniqueEquipmentInstance weapon, out uint newVersion)
+        {
+            newVersion = 0u;
+            if (weapon.InstanceGuid == 0UL || weapon.ArchetypeItemId == 0)
+            {
+                return false;
+            }
+
+            long observed = Interlocked.Read(ref _packedSlots[slotIndex]);
+            var (curVer, curItem, curCount) = UnpackSlotState(observed);
+            if ((curVer & WriteLockBit) != 0 || curItem != 0 || curCount != 0)
+            {
+                return false;
+            }
+
+            // Faz 1: WriteLockBit ile yuvayi atomik kilitle
+            long lockedState = PackSlotState(curVer | WriteLockBit, weapon.ArchetypeItemId, 1);
+            if (Interlocked.CompareExchange(ref _packedSlots[slotIndex], lockedState, observed) != observed)
+            {
+                return false;
+            }
+
+            // Faz 2: 128-Byte payload'u tam yaz ve kilidi yeni versiyonla ac
+            _uniquePayloads[slotIndex] = weapon;
+            _stackPayloads[slotIndex] = default;
+            _isUniqueEquipmentSlot[slotIndex] = 1;
+            Thread.MemoryBarrier();
+
+            uint committedVer = ((curVer & ~WriteLockBit) + 1u) & ~WriteLockBit;
+            long committedState = PackSlotState(committedVer, weapon.ArchetypeItemId, 1);
+            Interlocked.Exchange(ref _packedSlots[slotIndex], committedState);
+            newVersion = committedVer;
+            return true;
+        }
+
+        /// <summary>128-Byte benzersiz silah/zirh ornegini %0 yirtilma ve %0 kopyalama garantisiyle atomik ceker.</summary>
+        public bool TryWithdrawUniqueEquipmentAtomic(int slotIndex, out UniqueEquipmentInstance withdrawnWeapon, out uint newVersion)
+        {
+            withdrawnWeapon = default;
+            newVersion = 0u;
+
+            long observed = Interlocked.Read(ref _packedSlots[slotIndex]);
+            var (curVer, curItem, curCount) = UnpackSlotState(observed);
+            if ((curVer & WriteLockBit) != 0 || curItem == 0 || curCount != 1 || _isUniqueEquipmentSlot[slotIndex] == 0)
+            {
+                return false;
+            }
+
+            // Faz 1: WriteLockBit ile tek kazanan sec
+            long lockedState = PackSlotState(curVer | WriteLockBit, 0, 0);
+            if (Interlocked.CompareExchange(ref _packedSlots[slotIndex], lockedState, observed) != observed)
+            {
+                return false;
+            }
+
+            // Faz 2: 128-Byte payload'u kayipsiz oku, temizle ve kilidi ac
+            Thread.MemoryBarrier();
+            withdrawnWeapon = _uniquePayloads[slotIndex];
+            _uniquePayloads[slotIndex] = default;
+            _isUniqueEquipmentSlot[slotIndex] = 0;
+            Thread.MemoryBarrier();
+
+            uint committedVer = ((curVer & ~WriteLockBit) + 1u) & ~WriteLockBit;
+            Interlocked.Exchange(ref _packedSlots[slotIndex], PackSlotState(committedVer, 0, 0));
+            newVersion = committedVer;
+            return withdrawnWeapon.InstanceGuid != 0UL;
+        }
+
         public bool TryWithdrawExactVersion(
             int slotIndex,
             uint expectedVersion,
@@ -87,7 +192,7 @@ namespace Stratocraft.Inventory.Systems
             long currentPacked = Interlocked.Read(ref _packedSlots[slotIndex]);
             var (curVer, curItemId, curCount) = UnpackSlotState(currentPacked);
 
-            if (curVer != expectedVersion || curItemId == 0 || curCount < requestedAmount)
+            if ((curVer & WriteLockBit) != 0 || curVer != expectedVersion || curItemId == 0 || curCount < requestedAmount)
             {
                 _logger?.LogFunctionError(
                     ErrorCodes.EscrowCasConflict,
@@ -99,7 +204,7 @@ namespace Stratocraft.Inventory.Systems
 
             ushort remainingCount = (ushort)(curCount - requestedAmount);
             ushort nextItemId = remainingCount == 0 ? (ushort)0 : curItemId;
-            uint nextVer = unchecked(curVer + 1u);
+            uint nextVer = ((curVer & ~WriteLockBit) + 1u) & ~WriteLockBit;
 
             long expectedPacked = PackSlotState(expectedVersion, curItemId, curCount);
             long nextPacked = PackSlotState(nextVer, nextItemId, remainingCount);
@@ -115,16 +220,22 @@ namespace Stratocraft.Inventory.Systems
                 return false;
             }
 
+            if (remainingCount == 0)
+            {
+                _stackPayloads[slotIndex] = default;
+                _uniquePayloads[slotIndex] = default;
+                _isUniqueEquipmentSlot[slotIndex] = 0;
+            }
+            else if (!_stackPayloads[slotIndex].IsEmpty)
+            {
+                _stackPayloads[slotIndex].Count = remainingCount;
+            }
+
             withdrawnItemId = curItemId;
             newVersion = nextVer;
             return true;
         }
 
-        /// <summary>
-        /// Yuvadaki mevcut eşyayı atomik olarak çekmeye çalışır (CAS yarışında kaybederse tekrar denemez veya
-        /// yalnızca stok varsa 1 kez kazanır). Eşzamanlı 8 iş parçacığı son 1 eşyayı çekmeye çalıştığında
-        /// tam olarak 1 iş parçacığı true alır.
-        /// </summary>
         public bool TryWithdrawAtomic(
             int slotIndex,
             ushort requestedAmount,

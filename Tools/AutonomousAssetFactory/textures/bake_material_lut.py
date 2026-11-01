@@ -28,7 +28,12 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         11: ((228, 72, 22), 140, 15, 0, 14),     # MagmaBlock
         12: ((42, 148, 236), 28, 35, 3, 12),     # FiniteWaterSurface
         13: ((255, 92, 20), 95, 25, 0, 14),      # FiniteLavaSurface
+        14: ((230, 232, 235), 70, 0, 0, 7),      # Marble
         15: ((108, 102, 96), 230, 0, 0, 7),      # LooseRubble
+        16: ((168, 142, 120), 215, 0, 0, 1),     # Clay
+        17: ((118, 114, 124), 180, 5, 0, 0),     # Stalagnate
+        18: ((145, 175, 195), 160, 20, 3, 12),   # Floatstone
+        19: ((60, 220, 40), 30, 20, 3, 19),      # FiniteAcidSurface
         # 14 Yeralti Cevheri (30..43) + Komur/Kozmik (44..46)
         30: ((196, 108, 64), 120, 210, 0, 8),    # CopperOre
         31: ((176, 180, 182), 130, 200, 0, 8),   # TinOre
@@ -50,6 +55,14 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         # Alasimlar & Ahsaplar
         50: ((188, 132, 68), 96, 235, 0, 21),    # Bronze
         51: ((168, 176, 188), 82, 245, 0, 22),   # Steel
+        52: ((220, 215, 45), 180, 0, 0, 8),      # SulfurOre
+        53: ((240, 240, 245), 40, 10, 3, 12),    # QuartzGem
+        54: ((160, 60, 210), 35, 15, 3, 16),     # AmethystGem
+        55: ((35, 75, 215), 30, 20, 3, 12),      # SapphireGem
+        56: ((30, 195, 80), 32, 18, 3, 17),      # EmeraldGem
+        57: ((215, 30, 65), 32, 18, 3, 14),      # RubyGem
+        58: ((200, 245, 255), 25, 30, 3, 15),    # DiamondGem
+        59: ((240, 50, 80), 20, 40, 3, 15),      # RedDiamondGem
         60: ((152, 162, 178), 64, 250, 1, 23),   # DamascusSteel (ProcMode = 1)
         70: ((156, 110, 68), 188, 0, 2, 24),     # OakWood (ProcMode = 2)
         71: ((98, 70, 50), 168, 15, 2, 25),      # Ironwood (ProcMode = 2)
@@ -60,6 +73,22 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         76: ((232, 224, 204), 135, 10, 0, 28),   # BoneIvory
         77: ((86, 76, 72), 212, 0, 0, 29),       # CreatureFurAsh
         78: ((252, 168, 44), 76, 160, 3, 30),    # PhoenixFeatherGold
+        # Mimari Bloklar (120..125)
+        120: ((135, 138, 142), 175, 0, 0, 7),    # StoneBrick
+        121: ((168, 122, 78), 185, 0, 2, 24),    # WoodPlank
+        122: ((120, 130, 145), 70, 245, 0, 22),  # ReinforcedSteelBlock
+        123: ((42, 32, 60), 50, 40, 3, 5),       # ObsidianBrick
+        124: ((185, 160, 95), 235, 0, 0, 3),     # ThatchTile
+        125: ((85, 90, 98), 110, 230, 0, 22),    # IronGrating
+        160: ((60, 175, 240), 55, 180, 3, 20),   # BatteryCore
+        165: ((45, 215, 130), 195, 0, 3, 2),     # GlowingMoss
+        166: ((225, 95, 25), 120, 0, 0, 14),     # CampfireBlock
+        # Boss Trofe Yapi Bloklari (180..195)
+        **{
+            mat_id: ((180 + (mat_id * 7) % 60, 80 + (mat_id * 11) % 100, 140 + (mat_id * 13) % 80),
+                     80, 120, 3, 28)
+            for mat_id in range(180, 196)
+        },
     }
 
 

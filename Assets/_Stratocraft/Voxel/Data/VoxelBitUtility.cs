@@ -1,24 +1,32 @@
 using System.Runtime.CompilerServices;
+using System.Threading;
+using Stratocraft.Core.Constants;
 
 namespace Stratocraft.Voxel.Data
 {
     /// <summary>
-    /// 32-Bit VoxelCell Context-Sensitive Union bit okuma ve yazma yardimcisi (DRY tek dogruluk kaynagi).
-    /// Bkz. MATEMATIKSEL SIMULASYON RAPORU Bolum 1.1 ve GELISTIRICI DOKUMANI Bolum 4.13.5.
+    /// 32-Bit VoxelCell Context-Sensitive Union bit okuma, yazma ve atomik CAS kilitleme yardimcisi.
+    /// Bkz. GAME LOGIC BIBLE v7.0 Bolum 2.2 ve MATEMATIKSEL SIMULASYON RAPORU Bolum 1.1.
     /// </summary>
     public static class VoxelBitUtility
     {
         /// <summary>4x4x4 Mikro-Voxel yontulmus bloklari temsil eden ozel ShapeID degeri (63).</summary>
         public const byte ChiseledMicroVoxelShapeId = 63;
 
-        /// <summary>Varsayilan tam dolu SDF yogunlugu (127).</summary>
+        /// <summary>ChiseledMicroVoxelShapeId icin kisa es-anlamli sabit (63).</summary>
+        public const byte MicroVoxelShapeId = 63;
+
+        /// <summary>7-bit SDF yuzey esigi (IsoLevel = 64 -> rho = 0.0).</summary>
+        public const byte IsoDensity = StratocraftConstants.SdfIsoLevel;
+
+        /// <summary>Varsayilan tam dolu SDF yogunlugu (127 -> rho = +1.0).</summary>
         public const byte FullDensity = 127;
 
         /// <summary>Bit [0..7] (8-bit): MaterialID doner.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetMaterialId(uint raw) => (byte)(raw & 0xFFu);
 
-        /// <summary>Bit [8..14] (7-bit): Density veya sivi seviyesini doner.</summary>
+        /// <summary>Bit [8..14] (7-bit): Density (0..127) doner (ShapeID != 63 iken).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetDensityOrLiquid(uint raw) => (byte)((raw >> 8) & 0x7Fu);
 
@@ -26,7 +34,7 @@ namespace Stratocraft.Voxel.Data
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetShapeId(uint raw) => (byte)((raw >> 15) & 0x3Fu);
 
-        /// <summary>Bit [21..25] (5-bit): Rotation (0..23) doner.</summary>
+        /// <summary>Bit [21..25] (5-bit): Rotation (0..31: 0..23 SO(3) Kubik + 24..31 22.5/45 derece egik) doner.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetRotationState(uint raw) => (byte)((raw >> 21) & 0x1Fu);
 
@@ -48,6 +56,20 @@ namespace Stratocraft.Voxel.Data
             return (ushort)(((raw >> 8) & 0x7Fu) | (((raw >> 21) & 0x1Fu) << 7));
         }
 
+        /// <summary>Verilen hucrenin fiziksel olarak kati yuzey (SDF >= 64 veya Mimari/Mikro sekil) olup olmadigini doner.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsPhysicallySolid(uint raw)
+        {
+            byte mat = GetMaterialId(raw);
+            if (mat == MaterialIdCatalog.Air)
+            {
+                return false;
+            }
+
+            byte shape = GetShapeId(raw);
+            return shape != 0 || GetDensityOrLiquid(raw) >= IsoDensity;
+        }
+
         /// <summary>Standart (yontulmamis, ShapeID != 63) bir 32-bit VoxelCell degeri paketler.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint PackStandard(
@@ -58,6 +80,11 @@ namespace Stratocraft.Voxel.Data
             BlokKokenDurumu origin,
             byte dmg4)
         {
+            if (matId == MaterialIdCatalog.Air)
+            {
+                return 0u;
+            }
+
             return (uint)matId
                 | (((uint)density & 0x7Fu) << 8)
                 | (((uint)shapeId & 0x3Fu) << 15)
@@ -77,6 +104,11 @@ namespace Stratocraft.Voxel.Data
             BlokKokenDurumu origin,
             byte dmg4)
         {
+            if (matId == MaterialIdCatalog.Air)
+            {
+                return 0u;
+            }
+
             uint low7 = (uint)localMicroPoolIdx12 & 0x7Fu;
             uint high5 = ((uint)localMicroPoolIdx12 >> 7) & 0x1Fu;
 
@@ -100,6 +132,29 @@ namespace Stratocraft.Voxel.Data
         public static uint WithDamageState(uint raw, byte newDamage4)
         {
             return (raw & ~(0xFu << 28)) | (((uint)newDamage4 & 0xFu) << 28);
+        }
+
+        /// <summary>
+        /// Oyuncu yapimi bir esya-blogu (OriginState == OyuncuItemBlogu) cok oyunculu yaris kosuluna karsi
+        /// atomik Compare-And-Swap (CAS) ile VoxelLockedAtomic (3) durumuna kilitler.
+        /// Dogal kutle (0) bloklar veya zaten baska bataryaya kilitlenmis (3) bloklar reddedilir!
+        /// </summary>
+        public static unsafe bool TryLockItemBlockAtomic(uint[] chunkVoxels, int flatIndex)
+        {
+            uint observed = Volatile.Read(ref chunkVoxels[flatIndex]);
+            if (GetMaterialId(observed) == MaterialIdCatalog.Air ||
+                GetOriginState(observed) != BlokKokenDurumu.OyuncuItemBlogu)
+            {
+                return false;
+            }
+
+            uint locked = WithOriginState(observed, BlokKokenDurumu.VoxelLockedAtomic);
+            fixed (uint* ptr = &chunkVoxels[flatIndex])
+            {
+                int* intPtr = (int*)ptr;
+                int prev = Interlocked.CompareExchange(ref *intPtr, unchecked((int)locked), unchecked((int)observed));
+                return unchecked((uint)prev) == observed;
+            }
         }
     }
 }

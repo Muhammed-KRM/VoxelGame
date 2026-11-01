@@ -23,10 +23,13 @@ namespace Stratocraft.Voxel.Data
         OyuncuItemBlogu = 1,
 
         /// <summary>
-        /// 2 (10b): Olusturma Bataryasi (#26..#50) tarafindan savasta uretilen gecici/taktiksel blok.
-        /// Kirildiginda %0 esya dusurur (Zero-Drop Exploit Prevention).
+        /// 2 (10b): Olusturma Bataryasi (#26..#50) tarafindan savasta uretilen gecici/taktiksel blok
+        /// veya %5 Kadim Zindan / Kutsal Alan kalici yapi blogu (Zero-Drop Exploit Prevention).
         /// </summary>
         BataryaUretimi = 2,
+
+        /// <summary>2 (10b) Kanonik Anayasa es-anlamlisi: Kalici Zindan / Batarya Yapisi (%0 Esya Dusumu).</summary>
+        KaliciYapi = 2,
 
         /// <summary>
         /// 3 (11b): Aktif bir batarya, mekanizma veya kusatma silahi govdesine kilitlenmis atomik blok.

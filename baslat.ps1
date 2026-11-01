@@ -35,10 +35,19 @@ if ($Mode -eq "CheckOnly") {
     exit 0
 }
 
-$UnityExe = "C:\Program Files\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.exe"
-if (-not (Test-Path $UnityExe)) {
-    $found = Get-ChildItem "C:\Program Files\Unity\Hub\Editor\6000*\Editor\Unity.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { $UnityExe = $found.FullName }
+$UnityCandidates = @(
+    (Join-Path $env:USERPROFILE "Unity\6000.6.7f1\Editor\Unity.exe"),
+    (Join-Path $env:ProgramFiles "Unity\Hub\Editor\6000.6.7f1\Editor\Unity.exe"),
+    (Join-Path $env:LOCALAPPDATA "Programs\Unity\Hub\Editor\6000.6.7f1\Editor\Unity.exe")
+)
+$UnityExe = $UnityCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $UnityExe) {
+    foreach ($root in @((Join-Path $env:ProgramFiles "Unity\Hub\Editor"), (Join-Path $env:LOCALAPPDATA "Programs\Unity\Hub\Editor"))) {
+        if (Test-Path $root) {
+            $found = Get-ChildItem (Join-Path $root "6000*\Editor\Unity.exe") -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $UnityExe = $found.FullName; break }
+        }
+    }
 }
 
 if (Test-Path $UnityExe) {

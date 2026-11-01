@@ -6,15 +6,15 @@ using Stratocraft.Inventory.Data;
 namespace Stratocraft.Inventory.Systems
 {
     /// <summary>
-    /// I Tuşu 3B Fiziksel Kumaş Çanta (Tactical Cloth Backpack) Sistemi.
-    /// - Çanta açıldığında oyun durmaz (Pause yok); kamera çantanın içine eğilir ve yürüme hızı
-    ///   %70 düşer (4.0 m/s -> 1.2 m/s).
-    /// - Çantanın içinden zırh veya ağır silah kuşanmak 3.0 - 4.0 saniyelik fiziksel kanal süresi
-    ///   (EquipChannelRemainingSeconds) gerektirir.
+    /// GAME LOGIC BIBLE v7.0 Bolum 4.2 — I Tusu 3B Fiziksel Kumas Canta (Tactical Cloth Backpack) Sistemi:
+    /// - Canta acildiginda oyun durmaz (Pause yok); kamera cantanin icine egilir ve yurume hizi
+    ///   %70 duser (4.0 m/s -&gt; 1.2 m/s).
+    /// - Cantanin icinden zirh veya agir silah kusanmak 3.0 - 4.0 saniyelik fiziksel kanal suresi gerektirir.
+    /// - Kusanma kanal suresi devam ederken oyuncu hasar alirsa (OnDamageTaken) islem ANINDA iptal olur!
     /// </summary>
     public sealed class TacticalClothBackpackSystem
     {
-        public const float DefaultBackpackEquipDurationSeconds = 3.5f; // 3.0 - 4.0 sn aralığı
+        public const float DefaultBackpackEquipDurationSeconds = 3.5f; // 3.0 - 4.0 sn araligi
         public const int MaxGridSlots = 36;
 
         private readonly StackableItemSlot[] _slots = new StackableItemSlot[MaxGridSlots];
@@ -23,13 +23,12 @@ namespace Stratocraft.Inventory.Systems
         public bool IsBackpackOpen { get; private set; }
         public float EquipChannelRemainingSeconds { get; private set; }
         public ulong PendingEquipInstanceGuid { get; private set; }
+        public int InterruptedEquipCount { get; private set; }
 
         public IReadOnlyList<StackableItemSlot> Slots => _slots;
+        public ReadOnlySpan<StackableItemSlot> SlotsSpan => _slots;
         public IReadOnlyList<UniqueEquipmentInstance> StoredEquipment => _storedEquipment;
 
-        /// <summary>
-        /// I tuşuna basıldığında 3B kumaş çantayı açar veya kapatır; CharacterMovementState bayrağını günceller.
-        /// </summary>
         public void ToggleBackpack(ref CharacterMovementState movementState)
         {
             IsBackpackOpen = !IsBackpackOpen;
@@ -37,10 +36,23 @@ namespace Stratocraft.Inventory.Systems
 
             if (!IsBackpackOpen)
             {
-                // Çanta kapatılırsa devam eden zırh/silah kuşanma işlemi iptal olur
-                EquipChannelRemainingSeconds = 0.0f;
-                PendingEquipInstanceGuid = 0UL;
+                CancelPendingEquipChannel();
             }
+        }
+
+        /// <summary>
+        /// Oyuncu canta karistirirken / zirh giyerken saldiriya ugrarsa 3.0-4.0s kusanma animasyonunu aninda keser!
+        /// </summary>
+        public bool OnDamageTaken(float damageAmount)
+        {
+            if (damageAmount <= 0f || PendingEquipInstanceGuid == 0UL)
+            {
+                return false;
+            }
+
+            CancelPendingEquipChannel();
+            InterruptedEquipCount++;
+            return true;
         }
 
         public bool TryAddStackable(StackableItemSlot item)
@@ -50,16 +62,66 @@ namespace Stratocraft.Inventory.Systems
                 return false;
             }
 
-            for (int i = 0; i < MaxGridSlots; i++)
+            ushort remaining = item.Count;
+
+            // 1. Once ayni ItemId ve PurityTier tasiyan kismi yiginlara ekle
+            for (int i = 0; i < MaxGridSlots && remaining > 0; i++)
             {
-                if (_slots[i].IsEmpty)
+                if (!_slots[i].IsEmpty &&
+                    _slots[i].ItemId == item.ItemId &&
+                    _slots[i].PurityTier == item.PurityTier &&
+                    _slots[i].OriginFlags == item.OriginFlags &&
+                    _slots[i].Count < _slots[i].MaxStackSize)
                 {
-                    _slots[i] = item;
-                    return true;
+                    ushort space = (ushort)(_slots[i].MaxStackSize - _slots[i].Count);
+                    ushort add = Math.Min(space, remaining);
+                    _slots[i].Count += add;
+                    remaining -= add;
                 }
             }
 
-            return false;
+            // 2. Kalan miktari bos yuvalara yerlestir
+            for (int i = 0; i < MaxGridSlots && remaining > 0; i++)
+            {
+                if (_slots[i].IsEmpty)
+                {
+                    ushort maxStack = item.MaxStackSize == 0 ? (ushort)64 : item.MaxStackSize;
+                    ushort put = Math.Min(maxStack, remaining);
+                    StackableItemSlot next = item;
+                    next.Count = put;
+                    next.MaxStackSize = maxStack;
+                    _slots[i] = next;
+                    remaining -= put;
+                }
+            }
+
+            return remaining == 0;
+        }
+
+        public bool TryTakeFromSlot(int slotIndex, ushort requestedCount, out StackableItemSlot extracted)
+        {
+            extracted = default;
+            if ((uint)slotIndex >= MaxGridSlots || requestedCount == 0 || _slots[slotIndex].IsEmpty)
+            {
+                return false;
+            }
+
+            StackableItemSlot cur = _slots[slotIndex];
+            ushort take = Math.Min(cur.Count, requestedCount);
+            extracted = cur;
+            extracted.Count = take;
+
+            if (cur.Count == take)
+            {
+                _slots[slotIndex] = default;
+            }
+            else
+            {
+                cur.Count -= take;
+                _slots[slotIndex] = cur;
+            }
+
+            return true;
         }
 
         public void AddUniqueEquipment(UniqueEquipmentInstance equipment)
@@ -67,9 +129,6 @@ namespace Stratocraft.Inventory.Systems
             _storedEquipment.Add(equipment);
         }
 
-        /// <summary>
-        /// Çanta açıkken içindeki bir zırh veya silahı kuşanma sürecini başlatır (3.0 - 4.0 sn).
-        /// </summary>
         public bool BeginEquipFromBackpack(ulong instanceGuid, float durationSeconds = DefaultBackpackEquipDurationSeconds)
         {
             if (!IsBackpackOpen)
@@ -90,9 +149,6 @@ namespace Stratocraft.Inventory.Systems
             return false;
         }
 
-        /// <summary>
-        /// Kuşanma sayacını ilerletir; süre tamamlandığında true ve kuşanılan ekipmanı döner.
-        /// </summary>
         public bool StepEquipChannel(float deltaTime, out UniqueEquipmentInstance equippedItem)
         {
             equippedItem = default;
@@ -121,6 +177,12 @@ namespace Stratocraft.Inventory.Systems
             }
 
             return false;
+        }
+
+        private void CancelPendingEquipChannel()
+        {
+            EquipChannelRemainingSeconds = 0.0f;
+            PendingEquipInstanceGuid = 0UL;
         }
     }
 }

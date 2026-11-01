@@ -12,22 +12,25 @@ using Stratocraft.Core.NativeBridge;
 namespace Stratocraft.Core.Persistence
 {
     /// <summary>
-    /// 32x32 chunk (512x512m) .sregion atomik yazici/okuyucu (LZ4/Zstd + XXH64 + Corrupt Chunk Quarantine + 14 gun Pristine Decay).
-    /// Bkz. STRATOCRAFT_GELISTIRICI_DOKUMANI Bolum 4.10 ve 4.13.4.
+    /// 32x32 chunk (512x512m) .sregion atomik yazici/okuyucu:
+    /// Seed-Delta XOR + Y-Katmanli RLE + Zstd Seviye 3 + XXH64 + MicroVoxelPool4096 + Corrupt Quarantine + 14 Gercek Gun Pristine Decay.
+    /// Bkz. GAME LOGIC BIBLE v7.0 Bolum 2.6.B ve MATEMATIKSEL RAPOR Bolum 1.3.
     /// </summary>
     public sealed class RegionFileStore : IWorldPersistenceService
     {
         private const uint RegionMagic = 0x4E475253u; // "SRGN"
-        private const ushort RegionFormatVersion = 1;
+        private const ushort RegionFormatVersionV1 = 1;
+        private const ushort RegionFormatVersionV2 = 2; // Seed-Delta XOR + RLE + MicroPool + UTC Decay
         private const ulong ChecksumSeed = 0x53545241544F4352UL;
 
         private readonly string _regionsDirectory;
         private readonly IGameLogService? _logger;
+        private readonly int? _worldSeedForDelta;
         private readonly ConcurrentDictionary<(int ChunkX, int ChunkZ), ChunkSerializationSnapshot> _chunkCache = new();
         private readonly object _fileIoLock = new();
 
         /// <summary>Yeni bir RegionFileStore ornegi olusturur.</summary>
-        public RegionFileStore(string saveDirectory, IGameLogService? logger = null)
+        public RegionFileStore(string saveDirectory, IGameLogService? logger = null, int? worldSeedForDelta = null)
         {
             if (string.IsNullOrWhiteSpace(saveDirectory))
             {
@@ -37,6 +40,7 @@ namespace Stratocraft.Core.Persistence
             _regionsDirectory = Path.Combine(saveDirectory, "regions");
             Directory.CreateDirectory(_regionsDirectory);
             _logger = logger;
+            _worldSeedForDelta = worldSeedForDelta;
         }
 
         /// <summary>Bellekte ve diskte tutulan aktif kayitli chunk sayisi.</summary>
@@ -150,13 +154,45 @@ namespace Stratocraft.Core.Persistence
                     ? currentGameDay - snap.LastVisitedGameDay
                     : 0u;
 
-                if (ageDays >= decayThresholdDays)
+                if (ageDays >= decayThresholdDays && _chunkCache.TryRemove(kvp.Key, out _))
                 {
-                    if (_chunkCache.TryRemove(kvp.Key, out _))
-                    {
-                        prunedCount++;
-                        touchedRegions.Add(GetRegionCoord(kvp.Key.ChunkX, kvp.Key.ChunkZ));
-                    }
+                    prunedCount++;
+                    touchedRegions.Add(GetRegionCoord(kvp.Key.ChunkX, kvp.Key.ChunkZ));
+                }
+            }
+
+            foreach ((int rx, int rz) in touchedRegions)
+            {
+                WriteRegionFileAtomic(rx, rz);
+            }
+
+            return prunedCount;
+        }
+
+        /// <inheritdoc />
+        public int PruneAbandonedWildernessChunksByUtcMinutes(
+            uint currentUtcMinutes,
+            uint decayThresholdRealMinutes = StratocraftConstants.PristineChunkDecayRealMinutes)
+        {
+            int prunedCount = 0;
+            var touchedRegions = new HashSet<(int Rx, int Rz)>();
+
+            foreach (KeyValuePair<(int ChunkX, int ChunkZ), ChunkSerializationSnapshot> kvp in _chunkCache)
+            {
+                ChunkSerializationSnapshot snap = kvp.Value;
+                if (snap.IsInsideClan || snap.HasActiveStructures || snap.LastVisitedUtcMinutes == 0u)
+                {
+                    continue;
+                }
+
+                uint ageMinutes = currentUtcMinutes >= snap.LastVisitedUtcMinutes
+                    ? currentUtcMinutes - snap.LastVisitedUtcMinutes
+                    : 0u;
+
+                if (ageMinutes >= decayThresholdRealMinutes && _chunkCache.TryRemove(kvp.Key, out _))
+                {
+                    prunedCount++;
+                    touchedRegions.Add(GetRegionCoord(kvp.Key.ChunkX, kvp.Key.ChunkZ));
                 }
             }
 
@@ -204,7 +240,7 @@ namespace Stratocraft.Core.Persistence
                     return;
                 }
 
-                byte[] uncompressedPayload = SerializeRegionChunks(regionChunks);
+                byte[] uncompressedPayload = SerializeRegionChunksV2(regionChunks, _worldSeedForDelta);
                 int maxCompressedCapacity = uncompressedPayload.Length + 65536;
                 byte[] compressedBuffer = new byte[maxCompressedCapacity];
                 int compressedSize = CompressZstdSafe(uncompressedPayload, compressedBuffer);
@@ -219,7 +255,7 @@ namespace Stratocraft.Core.Persistence
                 using (var bw = new BinaryWriter(fs))
                 {
                     bw.Write(RegionMagic);
-                    bw.Write(RegionFormatVersion);
+                    bw.Write(RegionFormatVersionV2);
                     bw.Write((ushort)regionChunks.Count);
                     bw.Write(checksum);
                     bw.Write(uncompressedPayload.Length);
@@ -249,7 +285,6 @@ namespace Stratocraft.Core.Persistence
 
                 if (!VerifyRegionChecksum(regionX, regionZ))
                 {
-                    // Corrupt Chunk Quarantine: .bak yedegini dene
                     string backupPath = targetPath + ".bak";
                     if (File.Exists(backupPath))
                     {
@@ -268,6 +303,7 @@ namespace Stratocraft.Core.Persistence
                 }
 
                 byte[] fileBytes = File.ReadAllBytes(targetPath);
+                ushort version = BitConverter.ToUInt16(fileBytes, 4);
                 int uncompressedLen = BitConverter.ToInt32(fileBytes, 16);
                 int compressedLen = BitConverter.ToInt32(fileBytes, 20);
 
@@ -281,38 +317,129 @@ namespace Stratocraft.Core.Persistence
                     return false;
                 }
 
-                DeserializeRegionChunks(uncompressed);
+                if (version >= RegionFormatVersionV2)
+                {
+                    DeserializeRegionChunksV2(uncompressed);
+                }
+                else
+                {
+                    DeserializeRegionChunksV1(uncompressed);
+                }
                 return true;
             }
         }
 
-        private static byte[] SerializeRegionChunks(List<ChunkSerializationSnapshot> chunks)
+        private static unsafe void GenerateSeedBaseline(int worldSeed, int chunkX, int chunkZ, uint[] baseVoxels, ushort[] baseFluids)
+        {
+            fixed (uint* vPtr = baseVoxels)
+            fixed (ushort* fPtr = baseFluids)
+            {
+                StratocraftNativeBindings.GenerateChunkSimd(worldSeed, chunkX, chunkZ, vPtr, fPtr);
+            }
+        }
+
+        private static byte[] SerializeRegionChunksV2(List<ChunkSerializationSnapshot> chunks, int? worldSeed)
         {
             using var ms = new MemoryStream();
             using var bw = new BinaryWriter(ms);
             bw.Write(chunks.Count);
+
+            uint[]? baselineVoxels = worldSeed.HasValue ? new uint[StratocraftConstants.VoxelsPerChunk] : null;
+            ushort[]? baselineFluids = worldSeed.HasValue ? new ushort[StratocraftConstants.VoxelsPerChunk] : null;
+
             foreach (ChunkSerializationSnapshot c in chunks)
             {
                 bw.Write(c.ChunkX);
                 bw.Write(c.ChunkZ);
                 bw.Write(c.LastVisitedGameDay);
+                bw.Write(c.LastVisitedUtcMinutes);
                 bw.Write(c.IsInsideClan);
                 bw.Write(c.HasActiveStructures);
 
-                bw.Write(c.VoxelCells.Length);
-                byte[] voxelBytes = new byte[c.VoxelCells.Length * sizeof(uint)];
-                Buffer.BlockCopy(c.VoxelCells, 0, voxelBytes, 0, voxelBytes.Length);
-                bw.Write(voxelBytes);
+                bool useSeedDelta = worldSeed.HasValue
+                    && c.VoxelCells.Length == StratocraftConstants.VoxelsPerChunk
+                    && c.FluidCells.Length == StratocraftConstants.VoxelsPerChunk;
 
+                bw.Write(useSeedDelta);
+                if (useSeedDelta)
+                {
+                    bw.Write(worldSeed!.Value);
+                    GenerateSeedBaseline(worldSeed.Value, c.ChunkX, c.ChunkZ, baselineVoxels!, baselineFluids!);
+                }
+
+                // 1) Voxel RLE (Seed-Delta XOR aktifse c.VoxelCells[i] ^ baselineVoxels[i] uzerinden)
+                bw.Write(c.VoxelCells.Length);
+                WriteRleUInt32(bw, c.VoxelCells, useSeedDelta ? baselineVoxels : null);
+
+                // 2) Fluid RLE (Seed-Delta XOR aktifse c.FluidCells[i] ^ baselineFluids[i] uzerinden)
                 bw.Write(c.FluidCells.Length);
-                byte[] fluidBytes = new byte[c.FluidCells.Length * sizeof(ushort)];
-                Buffer.BlockCopy(c.FluidCells, 0, fluidBytes, 0, fluidBytes.Length);
-                bw.Write(fluidBytes);
+                WriteRleUInt16(bw, c.FluidCells, useSeedDelta ? baselineFluids : null);
+
+                // 3) MicroVoxelPool4096 seyrek kayitlari
+                var micro = c.MicroPoolEntries;
+                bw.Write(micro.Length);
+                for (int i = 0; i < micro.Length; i++)
+                {
+                    bw.Write(micro[i].SubChunkY);
+                    bw.Write(micro[i].SlotIndex12);
+                    bw.Write(micro[i].Mask64);
+                }
             }
+
             return ms.ToArray();
         }
 
-        private void DeserializeRegionChunks(byte[] uncompressed)
+        private void DeserializeRegionChunksV2(byte[] uncompressed)
+        {
+            using var ms = new MemoryStream(uncompressed);
+            using var br = new BinaryReader(ms);
+            int count = br.ReadInt32();
+
+            uint[]? baselineVoxels = null;
+            ushort[]? baselineFluids = null;
+
+            for (int i = 0; i < count; i++)
+            {
+                int cx = br.ReadInt32();
+                int cz = br.ReadInt32();
+                uint lastDay = br.ReadUInt32();
+                uint lastUtcMin = br.ReadUInt32();
+                bool inClan = br.ReadBoolean();
+                bool hasStruct = br.ReadBoolean();
+
+                bool useSeedDelta = br.ReadBoolean();
+                if (useSeedDelta)
+                {
+                    int encodedSeed = br.ReadInt32();
+                    baselineVoxels ??= new uint[StratocraftConstants.VoxelsPerChunk];
+                    baselineFluids ??= new ushort[StratocraftConstants.VoxelsPerChunk];
+                    GenerateSeedBaseline(encodedSeed, cx, cz, baselineVoxels, baselineFluids);
+                }
+
+                int voxelLen = br.ReadInt32();
+                uint[] voxels = ReadRleUInt32(br, voxelLen, useSeedDelta ? baselineVoxels : null);
+
+                int fluidLen = br.ReadInt32();
+                ushort[] fluids = ReadRleUInt16(br, fluidLen, useSeedDelta ? baselineFluids : null);
+
+                int microLen = br.ReadInt32();
+                var micro = microLen > 0
+                    ? new (byte SubChunkY, ushort SlotIndex12, ulong Mask64)[microLen]
+                    : Array.Empty<(byte, ushort, ulong)>();
+                for (int m = 0; m < microLen; m++)
+                {
+                    byte subY = br.ReadByte();
+                    ushort slot12 = br.ReadUInt16();
+                    ulong mask64 = br.ReadUInt64();
+                    micro[m] = (subY, slot12, mask64);
+                }
+
+                _chunkCache[(cx, cz)] = new ChunkSerializationSnapshot(
+                    cx, cz, voxels, fluids, lastDay, inClan, hasStruct, lastUtcMin, micro);
+            }
+        }
+
+        private void DeserializeRegionChunksV1(byte[] uncompressed)
         {
             using var ms = new MemoryStream(uncompressed);
             using var br = new BinaryReader(ms);
@@ -338,6 +465,148 @@ namespace Stratocraft.Core.Persistence
                 _chunkCache[(cx, cz)] = new ChunkSerializationSnapshot(
                     cx, cz, voxels, fluids, lastDay, inClan, hasStruct);
             }
+        }
+
+        private static void WriteRleUInt32(BinaryWriter bw, uint[] values, uint[]? xorBaseline)
+        {
+            int len = values.Length;
+            if (len == 0)
+            {
+                bw.Write(0);
+                return;
+            }
+
+            long runCountPos = bw.BaseStream.Position;
+            bw.Write(0);
+            int runs = 0;
+
+            uint current = xorBaseline != null ? (values[0] ^ xorBaseline[0]) : values[0];
+            ushort count = 1;
+
+            for (int i = 1; i < len; i++)
+            {
+                uint val = xorBaseline != null ? (values[i] ^ xorBaseline[i]) : values[i];
+                if (val == current && count < ushort.MaxValue)
+                {
+                    count++;
+                }
+                else
+                {
+                    bw.Write(count);
+                    bw.Write(current);
+                    runs++;
+                    current = val;
+                    count = 1;
+                }
+            }
+
+            bw.Write(count);
+            bw.Write(current);
+            runs++;
+
+            long endPos = bw.BaseStream.Position;
+            bw.BaseStream.Position = runCountPos;
+            bw.Write(runs);
+            bw.BaseStream.Position = endPos;
+        }
+
+        private static uint[] ReadRleUInt32(BinaryReader br, int totalLength, uint[]? xorBaseline)
+        {
+            uint[] output = new uint[totalLength];
+            int runs = br.ReadInt32();
+            int cursor = 0;
+
+            for (int r = 0; r < runs; r++)
+            {
+                ushort count = br.ReadUInt16();
+                uint deltaVal = br.ReadUInt32();
+                int end = System.Math.Min(totalLength, cursor + count);
+                if (xorBaseline != null)
+                {
+                    for (int i = cursor; i < end; i++)
+                    {
+                        output[i] = deltaVal ^ xorBaseline[i];
+                    }
+                }
+                else
+                {
+                    Array.Fill(output, deltaVal, cursor, end - cursor);
+                }
+                cursor = end;
+            }
+
+            return output;
+        }
+
+        private static void WriteRleUInt16(BinaryWriter bw, ushort[] values, ushort[]? xorBaseline)
+        {
+            int len = values.Length;
+            if (len == 0)
+            {
+                bw.Write(0);
+                return;
+            }
+
+            long runCountPos = bw.BaseStream.Position;
+            bw.Write(0);
+            int runs = 0;
+
+            ushort current = xorBaseline != null ? (ushort)(values[0] ^ xorBaseline[0]) : values[0];
+            ushort count = 1;
+
+            for (int i = 1; i < len; i++)
+            {
+                ushort val = xorBaseline != null ? (ushort)(values[i] ^ xorBaseline[i]) : values[i];
+                if (val == current && count < ushort.MaxValue)
+                {
+                    count++;
+                }
+                else
+                {
+                    bw.Write(count);
+                    bw.Write(current);
+                    runs++;
+                    current = val;
+                    count = 1;
+                }
+            }
+
+            bw.Write(count);
+            bw.Write(current);
+            runs++;
+
+            long endPos = bw.BaseStream.Position;
+            bw.BaseStream.Position = runCountPos;
+            bw.Write(runs);
+            bw.BaseStream.Position = endPos;
+        }
+
+        private static ushort[] ReadRleUInt16(BinaryReader br, int totalLength, ushort[]? xorBaseline)
+        {
+            ushort[] output = new ushort[totalLength];
+            int runs = br.ReadInt32();
+            int cursor = 0;
+
+            for (int r = 0; r < runs; r++)
+            {
+                ushort count = br.ReadUInt16();
+                ushort deltaVal = br.ReadUInt16();
+                int end = System.Math.Min(totalLength, cursor + count);
+                if (xorBaseline != null)
+                {
+                    for (int i = cursor; i < end; i++)
+                    {
+                        output[i] = (ushort)(deltaVal ^ xorBaseline[i]);
+                    }
+                }
+                else
+                {
+                    Array.Fill(output, deltaVal, cursor, end - cursor);
+                }
+                cursor = end;
+            }
+
+            return output;
         }
 
         private static unsafe ulong ComputeSpanXxHash64(ReadOnlySpan<byte> data)
