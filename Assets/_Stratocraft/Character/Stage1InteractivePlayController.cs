@@ -8,6 +8,7 @@ using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
+using Stratocraft.WorldGen.Generators;
 using Stratocraft.Voxel.Jobs;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -23,8 +24,8 @@ namespace Stratocraft.Character
     /// - C Tusu (Sol Bilek Madde Kristali CSG Fircasi): Komsu-apronlu (18x(maxY+2)x18) coklu chunk sinirinda
     ///   0.000m dikissiz SDF vakumlama/insa, Cevher Rezonans Bagisikligi (ERR_ORE_RESONANCE_IMMUNE: 30..46),
     ///   ShapeID (0, 1, 2, 3, 4, 5, 6, 7, 63 4x4x4 Mikro-Voksel) ve canli Domino Yapisal Cokus (Shift+Sol Tik).
-    /// - I Tusu (The Forest 1.40x1.00m 3B Canta Ortusu, %70 hiz dususu -> 1.2 m/s), 1-4 Fiziksel Kilif (1.8 sn),
-    ///   G Tusu 0.0 sn Acil Fiziksel Silah Atma (Quick-Drop) ve LMB/RMB Camera-Clutch 360° Yakin Dovus.
+    /// - I Tusu (The Forest 1.40x1.00m 3B Canta Ortusu, %70 hiz dususu -> 1.2 m/s, tiklanabilir nesneler & kilif kusanma),
+    ///   1-4 Fiziksel Kilif (1.8 sn), G Tusu 0.0 sn Acil Fiziksel Silah Atma (Quick-Drop) ve LMB/RMB Camera-Clutch.
     /// </summary>
     public sealed class Stage1InteractivePlayController : MonoBehaviour
     {
@@ -79,8 +80,21 @@ namespace Stratocraft.Character
         private float _cameraDistance = 5.6f;
         private float _verticalVelocity;
         private bool _isGrounded = true;
+        private bool _lastGroundedState = true;
         private bool _staminaExhaustedLock;
         private CharacterStance _currentStance = CharacterStance.Standing;
+
+        // FPS Viewmodel, Animasyon & Locomotion Bobbing
+        private Vector3 _weaponBaseLocalPos = new Vector3(0.42f, 1.05f, 0.28f);
+        private Quaternion _weaponBaseLocalRot = Quaternion.Euler(20f, -15f, -12f);
+        private Vector3 _crystalBaseLocalPos = new Vector3(-0.44f, 1.02f, 0.22f);
+        private Quaternion _crystalBaseLocalRot = Quaternion.Euler(35f, 0f, 20f);
+        private float _walkStepCycle;
+        private Vector3 _headBobOffset;
+        private float _cameraLandingBounce;
+        private float _pitchBeforeBackpack;
+        private float _attackSwingTimer;
+        private const float AttackSwingDuration = 0.32f;
 
         // 3.66m Surtunmeli Kayma (Slide) ve 2.20m Ledge Mantle durumu
         private float _slideRemainingDist;
@@ -100,8 +114,16 @@ namespace Stratocraft.Character
         private int _shapeWheelIndex = 0;
         private string _lastCsgFeedbackText = "Hazir (C ile ac -> Sol Tik: SDF Vakum, Shift+Sol Tik: Yapi Kir/Domino, Sag Tik: Insa)";
 
-        // The Forest 3B Canta Ortusu (I) durumu
+        // Madde Kristali Hedefleme
+        private bool _hasAimHit;
+        private RaycastHit _targetAimHit;
+        private string _aimVoxelMatName = "Yok";
+        private int _aimVoxelDensity = 0;
+
+        // The Forest 3B Canta Ortusu (I) durumu & Tiklama
         private bool _backpackMatOpen;
+        private int _backpackHoveredZone = -1;
+        private string _backpackHoveredText = string.Empty;
 
         // Kamera Kilitli Serbest Aci Savas (Camera-Clutch + 1-Euro benzeri yumusatma) durumu
         private bool _isCameraClutchActive;
@@ -115,6 +137,8 @@ namespace Stratocraft.Character
 
         // Sifir-GC OnGUI stili
         private GUIStyle? _cachedHudBoxStyle;
+        private GUIStyle? _cachedCrosshairStyle;
+        private GUIStyle? _cachedTooltipStyle;
 
         public void RegisterEditableChunk(
             Vector2Int chunkCoord,
@@ -153,8 +177,35 @@ namespace Stratocraft.Character
         {
             if (PlayerCamera == null)
             {
-                PlayerCamera = UnityEngine.Camera.main;
+                PlayerCamera = UnityEngine.Camera.main ?? UnityEngine.Object.FindFirstObjectByType<UnityEngine.Camera>();
+                if (PlayerCamera == null)
+                {
+                    GameObject camGo = new GameObject("Main Camera");
+                    camGo.tag = "MainCamera";
+                    PlayerCamera = camGo.AddComponent<UnityEngine.Camera>();
+                    camGo.AddComponent<UnityEngine.AudioListener>();
+                }
             }
+
+            if (WeaponPivot != null)
+            {
+                _weaponBaseLocalPos = WeaponPivot.localPosition;
+                _weaponBaseLocalRot = WeaponPivot.localRotation;
+            }
+
+            if (LeftWristCrystalTransform != null)
+            {
+                _crystalBaseLocalPos = LeftWristCrystalTransform.localPosition;
+                _crystalBaseLocalRot = LeftWristCrystalTransform.localRotation;
+            }
+
+            if (TacticalBackpackMatRoot != null)
+            {
+                TacticalBackpackMatRoot.gameObject.SetActive(false);
+            }
+
+            // Sahnedeki tum voksel chunk'larinin calisma ani verisini garantile (CSG ve Domino icin sart!)
+            EnsureChunksInitialized();
 
             // Ana oynanis varsayilan olarak FPS (Birinci Sahis) modunda baslar!
             _isFirstPersonMode = true;
@@ -164,6 +215,39 @@ namespace Stratocraft.Character
 
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+        }
+
+        private void EnsureChunksInitialized()
+        {
+            if (_worldChunks.Count > 0)
+            {
+                return;
+            }
+
+            var meshFilters = FindObjectsByType<MeshFilter>(FindObjectsSortMode.None);
+            for (int i = 0; i < meshFilters.Length; i++)
+            {
+                var mf = meshFilters[i];
+                string name = mf.gameObject.name;
+                if (!name.StartsWith("VoxelChunk_", StringComparison.Ordinal) || !name.EndsWith("_Seamless3DIsland", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string[] parts = name.Split('_');
+                if (parts.Length >= 4 && int.TryParse(parts[1], out int cx) && int.TryParse(parts[2], out int cz))
+                {
+                    var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    var mc = mf.GetComponent<MeshCollider>();
+                    if (mc == null)
+                    {
+                        mc = mf.gameObject.AddComponent<MeshCollider>();
+                        mc.sharedMesh = mf.sharedMesh;
+                    }
+                    mc.enabled = true;
+                    RegisterEditableChunk(new Vector2Int(cx, cz), voxels, mf, mc);
+                }
+            }
         }
 
         public void ApplyFirstPersonVisibility()
@@ -215,19 +299,11 @@ namespace Stratocraft.Character
                 _backpackMatOpen = !_backpackMatOpen;
                 if (_backpackMatOpen)
                 {
+                    _pitchBeforeBackpack = _cameraPitch;
                     Cursor.lockState = CursorLockMode.None;
                     Cursor.visible = true;
-                }
-                else
-                {
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
-                }
 
-                if (TacticalBackpackMatRoot != null)
-                {
-                    TacticalBackpackMatRoot.gameObject.SetActive(_backpackMatOpen);
-                    if (_backpackMatOpen)
+                    if (TacticalBackpackMatRoot != null)
                     {
                         Vector3 forwardFlat = transform.forward;
                         forwardFlat.y = 0f;
@@ -236,10 +312,39 @@ namespace Stratocraft.Character
                             forwardFlat = Vector3.forward;
                         }
                         forwardFlat.Normalize();
-                        TacticalBackpackMatRoot.position = transform.position + forwardFlat * 1.35f + Vector3.up * 0.03f;
+
+                        Vector3 targetMatPos = transform.position + forwardFlat * 1.30f;
+                        if (UnityEngine.Physics.Raycast(targetMatPos + Vector3.up * 1.5f, Vector3.down, out RaycastHit groundHit, 3.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                        {
+                            targetMatPos.y = groundHit.point.y + 0.03f;
+                        }
+                        else
+                        {
+                            targetMatPos.y = transform.position.y + 0.03f;
+                        }
+
+                        TacticalBackpackMatRoot.position = targetMatPos;
                         TacticalBackpackMatRoot.rotation = Quaternion.LookRotation(forwardFlat, Vector3.up);
+                        TacticalBackpackMatRoot.gameObject.SetActive(true);
                     }
                 }
+                else
+                {
+                    _cameraPitch = _pitchBeforeBackpack;
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                    if (TacticalBackpackMatRoot != null)
+                    {
+                        TacticalBackpackMatRoot.gameObject.SetActive(false);
+                    }
+                }
+            }
+
+            // Canta acikken kamerayi yumusakca cantaya bakacak aciya (~52 derece asagi) eg ve nesne etkilesimini tara
+            if (_backpackMatOpen)
+            {
+                _cameraPitch = Mathf.Lerp(_cameraPitch, 52f, Time.deltaTime * 7.5f);
+                UpdateBackpackInteraction();
             }
 
             // 1-4 Tuslari: Bible §6 Fiziksel Kilif Gecisi (Bel: 0.5s/0.6s, Sirt: 0.9s/1.0s gercekci kindan cekme suresi)
@@ -254,6 +359,70 @@ namespace Stratocraft.Character
                 _holsterSwitchRemaining = 0f;
                 SpawnQuickDroppedWeaponProp();
                 _lastCombatActionText = "G Quick-Drop (0.0 sn): Silah fiziksel olarak yere birakildi, yedek cekildi!";
+            }
+        }
+
+        private void UpdateBackpackInteraction()
+        {
+            if (PlayerCamera == null || TacticalBackpackMatRoot == null)
+            {
+                return;
+            }
+
+            Ray ray = PlayerCamera.ScreenPointToRay(Input.mousePosition);
+            if (UnityEngine.Physics.Raycast(ray, out RaycastHit hit, 5.0f))
+            {
+                Vector3 localPoint = TacticalBackpackMatRoot.InverseTransformPoint(hit.point);
+
+                // Zone 3: Dovulmus Sam Celigi Uzun Kilic (local (-0.25, 0.08, 0.24))
+                float distSword = Vector2.Distance(new Vector2(localPoint.x, localPoint.z), new Vector2(-0.25f, 0.24f));
+                if (distSword < 0.35f || hit.collider.gameObject.name.Contains("Sword"))
+                {
+                    _backpackHoveredZone = 3;
+                    _backpackHoveredText = "DOVULMUS SAM CELIGI UZUN KILIC (1.8 kg)\n[Sol Tik]: 1. Bel Kinina Kusan (3.0 sn)";
+                    if (Input.GetMouseButtonDown(0))
+                    {
+                        _activeHolsterSlot = 1;
+                        _holsterSwitchRemaining = 3.0f;
+                        _lastCombatActionText = "Dovulmus Kilic 1. Bel Kinina Kusanildi! (3.0 sn)";
+                    }
+                    return;
+                }
+
+                // Zone 0: Demir Kulce Piramidi (-0.38, 0.05, -0.18)
+                float distIron = Vector2.Distance(new Vector2(localPoint.x, localPoint.z), new Vector2(-0.38f, -0.18f));
+                if (distIron < 0.25f || hit.collider.gameObject.name.Contains("IronIngot"))
+                {
+                    _backpackHoveredZone = 0;
+                    _backpackHoveredText = "DEMIR KULCE PIRAMIDI (14x = 28.0 kg)\nFasetli Dokum — Zirh & Silah Dovme Rezervi";
+                    return;
+                }
+
+                // Zone 1: Altin Kulce Piramidi (0.02, 0.05, -0.18)
+                float distGold = Vector2.Distance(new Vector2(localPoint.x, localPoint.z), new Vector2(0.02f, -0.18f));
+                if (distGold < 0.25f || hit.collider.gameObject.name.Contains("GoldIngot"))
+                {
+                    _backpackHoveredZone = 1;
+                    _backpackHoveredText = "SAF ALTIN KULCE PIRAMIDI (14x = 28.0 kg)\nBatarya Atesleme ve Kilit Tasi Rezervi";
+                    return;
+                }
+
+                // Zone 2: Mithril Kristal Salkimi (0.40, 0.05, -0.18)
+                float distMithril = Vector2.Distance(new Vector2(localPoint.x, localPoint.z), new Vector2(0.40f, -0.18f));
+                if (distMithril < 0.25f || hit.collider.gameObject.name.Contains("Mithril"))
+                {
+                    _backpackHoveredZone = 2;
+                    _backpackHoveredText = "MITHRIL KRISTAL SALKIMI (10x = 10.0 kg)\nSeviye 3 Efsanevi Runik Rezonans Cevheri";
+                    return;
+                }
+
+                _backpackHoveredZone = -1;
+                _backpackHoveredText = "The Forest 1.40x1.00m Taktik Kumas Canta Ortusu\n(Incelemek veya kusanmak icin nesnelerin uzerine gelin)";
+            }
+            else
+            {
+                _backpackHoveredZone = -1;
+                _backpackHoveredText = string.Empty;
             }
         }
 
@@ -284,7 +453,6 @@ namespace Stratocraft.Character
             Rigidbody rb = dropped.AddComponent<Rigidbody>();
             rb.mass = 2.4f;
             rb.AddForce(transform.forward * 2.8f + Vector3.up * 1.4f, ForceMode.Impulse);
-            // Kalici dunya nesnesi: despawn (Destroy) yapilmaz!
         }
 
         private void SwitchHolster(int slot, float durationSec)
@@ -308,12 +476,6 @@ namespace Stratocraft.Character
             if (Input.GetKeyDown(KeyCode.C))
             {
                 _matterCrystalActive = !_matterCrystalActive;
-                if (LeftWristCrystalTransform != null)
-                {
-                    LeftWristCrystalTransform.localScale = _matterCrystalActive
-                        ? new Vector3(0.42f, 0.42f, 0.42f)
-                        : new Vector3(0.28f, 0.28f, 0.28f);
-                }
             }
 
             if (Input.GetKeyDown(KeyCode.V))
@@ -328,6 +490,41 @@ namespace Stratocraft.Character
                 _selectedRotation = (byte)((_selectedRotation + 1) & 3);
             }
 
+            // Reticle ve Hedefleme Raycast'i
+            if (PlayerCamera != null)
+            {
+                Ray aimRay = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+                _hasAimHit = UnityEngine.Physics.Raycast(aimRay, out _targetAimHit, 24.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+                if (_hasAimHit)
+                {
+                    Vector3 samplePos = _targetAimHit.point - _targetAimHit.normal * 0.32f;
+                    int wx = Mathf.FloorToInt(samplePos.x);
+                    int wy = Mathf.Clamp(Mathf.FloorToInt(samplePos.y), 1, MaxEditableVoxelY - 2);
+                    int wz = Mathf.FloorToInt(samplePos.z);
+                    int cx = FloorDiv16(wx);
+                    int cz = FloorDiv16(wz);
+                    int lx = wx - cx * 16;
+                    int lz = wz - cz * 16;
+                    if (_worldChunks.TryGetValue((cx, cz), out uint[]? vChunk))
+                    {
+                        uint raw = vChunk[(wy << 8) | (lz << 4) | lx];
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        _aimVoxelMatName = GetMaterialName(mat);
+                        _aimVoxelDensity = VoxelBitUtility.GetDensityOrLiquid(raw);
+                    }
+                    else
+                    {
+                        _aimVoxelMatName = "Arazi";
+                        _aimVoxelDensity = 127;
+                    }
+                }
+                else
+                {
+                    _aimVoxelMatName = "Yok";
+                    _aimVoxelDensity = 0;
+                }
+            }
+
             if (!_matterCrystalActive || PlayerCamera == null)
             {
                 return;
@@ -339,8 +536,9 @@ namespace Stratocraft.Character
                 bool structuralBreakMode = Input.GetKey(KeyCode.LeftShift);
                 ApplyMatterCrystalCsgBrush(vacuumMode: true, structuralBreakMode: structuralBreakMode);
             }
-            else if (Input.GetMouseButtonDown(1))
+            else if (Input.GetMouseButtonDown(1) && _csgCooldownTimer <= 0f)
             {
+                _csgCooldownTimer = 0.12f;
                 ApplyMatterCrystalCsgBrush(vacuumMode: false, structuralBreakMode: false);
             }
         }
@@ -353,7 +551,7 @@ namespace Stratocraft.Character
             }
 
             Ray ray = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-            if (!UnityEngine.Physics.Raycast(ray, out RaycastHit hit, 20.0f))
+            if (!UnityEngine.Physics.Raycast(ray, out RaycastHit hit, 24.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
                 return;
             }
@@ -369,7 +567,7 @@ namespace Stratocraft.Character
 
             if (vacuumMode)
             {
-                float brushRadius = structuralBreakMode ? 1.15f : 2.10f;
+                float brushRadius = structuralBreakMode ? 1.45f : 2.20f;
                 int minWx = Mathf.FloorToInt(targetPos.x - brushRadius);
                 int maxWx = Mathf.CeilToInt(targetPos.x + brushRadius);
                 int minWy = Mathf.Max(1, Mathf.FloorToInt(targetPos.y - brushRadius));
@@ -429,7 +627,7 @@ namespace Stratocraft.Character
 
                             byte oldDensity = VoxelBitUtility.GetDensityOrLiquid(raw);
                             float falloff = 1.0f - (dist / brushRadius);
-                            int delta = Mathf.Max(22, Mathf.RoundToInt(falloff * 52f));
+                            int delta = Mathf.Max(28, Mathf.RoundToInt(falloff * 64f));
                             int newDensity = oldDensity - delta;
 
                             if (newDensity < 20)
@@ -803,6 +1001,30 @@ namespace Stratocraft.Character
                 _isGrounded = false;
             }
 
+            // Yere inis yay darbesi (Landing bounce)
+            if (!_lastGroundedState && _isGrounded)
+            {
+                _cameraLandingBounce = 0.10f;
+            }
+            _lastGroundedState = _isGrounded;
+            _cameraLandingBounce = Mathf.Lerp(_cameraLandingBounce, 0f, dt * 10f);
+
+            // Prosedurel Adim / Kosu Kafasi Sallanmasi (Head Bob)
+            float movedSpeed = horizontalVel.magnitude;
+            if (_isGrounded && movedSpeed > 0.1f)
+            {
+                _walkStepCycle += dt * (movedSpeed * 2.8f);
+            }
+            else
+            {
+                _walkStepCycle = Mathf.Lerp(_walkStepCycle, 0f, dt * 4f);
+            }
+
+            float bobScale = _currentStance == CharacterStance.Sprinting ? 1.35f : 1.0f;
+            float bobX = Mathf.Cos(_walkStepCycle) * 0.022f * bobScale;
+            float bobY = Mathf.Sin(_walkStepCycle * 2f) * 0.035f * bobScale;
+            _headBobOffset = new Vector3(bobX, bobY, 0f);
+
             transform.position = pos;
         }
 
@@ -813,7 +1035,7 @@ namespace Stratocraft.Character
             float height)
         {
             const float skinWidth = 0.025f;
-            const float stepOffset = 0.48f; // Merdiven/faset basamaklarini puruzsuz cikmak icin alt kureyi hafif yukari al
+            const float stepOffset = 0.48f;
             Vector3 pos = startPos;
             Vector3 rem = displacement;
 
@@ -884,13 +1106,11 @@ namespace Stratocraft.Character
             }
             fwd.Normalize();
 
-            // Onunde duvar var mi?
             if (!UnityEngine.Physics.Raycast(transform.position + Vector3.up * 1.0f, fwd, out RaycastHit wallHit, 1.15f))
             {
                 return false;
             }
 
-            // 2.25m yukaridan one dogru cikinti ustunde basacak duzlem var mi?
             Vector3 probeTop = transform.position + fwd * (wallHit.distance + 0.42f) + Vector3.up * 2.30f;
             if (!UnityEngine.Physics.Raycast(probeTop, Vector3.down, out RaycastHit ledgeHit, 1.45f))
             {
@@ -903,7 +1123,6 @@ namespace Stratocraft.Character
                 return false;
             }
 
-            // Cikinti uzerinde karakterin sigacagi bosluk var mi?
             Vector3 targetBase = ledgeHit.point + Vector3.up * 0.03f;
             if (UnityEngine.Physics.CheckCapsule(
                     targetBase + Vector3.up * 0.45f,
@@ -926,7 +1145,13 @@ namespace Stratocraft.Character
             float mouseX = Input.GetAxis("Mouse X");
             float mouseY = Input.GetAxis("Mouse Y");
 
+            if (_attackSwingTimer > 0f)
+            {
+                _attackSwingTimer = Mathf.Max(0f, _attackSwingTimer - dt);
+            }
+
             bool combatHeld = !_matterCrystalActive &&
+                              !_backpackMatOpen &&
                               _holsterSwitchRemaining <= 0f &&
                               (Input.GetMouseButton(0) || Input.GetMouseButton(1));
             _isCameraClutchActive = combatHeld;
@@ -936,7 +1161,6 @@ namespace Stratocraft.Character
                 Vector2 rawDelta = new Vector2(mouseX, mouseY);
                 if (rawDelta.sqrMagnitude > 0.002f)
                 {
-                    // Hiz-uyarli 1-Euro benzeri titresimsiz savurma filtresi
                     float speedFactor = Mathf.Clamp01(0.22f + rawDelta.magnitude * 0.28f);
                     _filteredSwingDir = Vector2.Lerp(_filteredSwingDir, rawDelta.normalized, speedFactor).normalized;
                 }
@@ -948,27 +1172,16 @@ namespace Stratocraft.Character
                 _lastCombatActionText = isParry
                     ? $"Camera-Clutch PARRY (Forte u=0.18): Aci={angleDeg:0}° | Darbe Saptirma"
                     : $"Camera-Clutch KESME (Foible v=0.88): Aci={angleDeg:0}° | Guc=%{_swingCharge01 * 100f:0}";
-
-                if (WeaponPivot != null)
-                {
-                    float pitchOffset = _isFirstPersonMode ? _cameraPitch : 0f;
-                    WeaponPivot.localRotation = Quaternion.Euler(
-                        25f - _filteredSwingDir.y * 55f + pitchOffset,
-                        _filteredSwingDir.x * 65f,
-                        -angleDeg * 0.65f);
-                }
             }
             else
             {
-                if (WeaponPivot != null)
-                {
-                    float pitchOffset = _isFirstPersonMode ? _cameraPitch : 0f;
-                    WeaponPivot.localRotation = Quaternion.Slerp(
-                        WeaponPivot.localRotation,
-                        Quaternion.Euler(20f + pitchOffset, -15f, -12f),
-                        dt * 10f);
-                }
                 _swingCharge01 = 0f;
+
+                if (Input.GetMouseButtonDown(0) && !_matterCrystalActive && !_backpackMatOpen && _holsterSwitchRemaining <= 0f)
+                {
+                    _attackSwingTimer = AttackSwingDuration;
+                    _lastCombatActionText = "Hizli Savurma Darbesi (Foible v=0.88)";
+                }
 
                 if (Input.GetKey(KeyCode.LeftAlt) || !_backpackMatOpen)
                 {
@@ -977,7 +1190,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Fare Imleci Kilidi (FPS standardi: Sol tik imleci kilitler, Esc serbest birakir)
+            // Fare Imleci Kilidi
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 Cursor.lockState = CursorLockMode.None;
@@ -989,14 +1202,6 @@ namespace Stratocraft.Character
                 Cursor.visible = false;
             }
 
-            if (LeftWristCrystalTransform != null && _isFirstPersonMode)
-            {
-                LeftWristCrystalTransform.localRotation = Quaternion.Euler(
-                    35f + _cameraPitch * 0.45f,
-                    0f,
-                    20f);
-            }
-
             float scroll = Input.GetAxis("Mouse ScrollWheel");
             if (!_isFirstPersonMode && Mathf.Abs(scroll) > 0.001f)
             {
@@ -1005,19 +1210,81 @@ namespace Stratocraft.Character
 
             transform.rotation = Quaternion.Euler(0f, _cameraYaw, 0f);
 
+            // Kamera ve First-Person Viewmodel Yerlesimi
             if (PlayerCamera != null)
             {
                 float eyeHeight = Mathf.Max(0.52f, PhysicalCharacterControllerSystem.GetStanceCapsuleHeight(_currentStance) - 0.12f);
                 Quaternion camRot = Quaternion.Euler(_cameraPitch, _cameraYaw, 0f);
-                Vector3 pivot = transform.position + new Vector3(0f, eyeHeight, 0f);
+                Vector3 pivot = transform.position + new Vector3(0f, eyeHeight - _cameraLandingBounce, 0f);
 
                 if (_isFirstPersonMode)
                 {
-                    PlayerCamera.transform.position = pivot + camRot * Vector3.forward * 0.10f;
+                    Vector3 camFinalPos = pivot + camRot * (Vector3.forward * 0.10f + _headBobOffset);
+                    PlayerCamera.transform.position = camFinalPos;
                     PlayerCamera.transform.rotation = camRot;
+
+                    // 1. First-Person Silah Viewmodel Konumu ve Savurma Animasyonu
+                    if (WeaponPivot != null)
+                    {
+                        Vector3 weaponBaseOffset = new Vector3(0.30f, -0.24f, 0.50f) + _headBobOffset * 0.4f;
+                        Quaternion weaponRot;
+
+                        if (_isCameraClutchActive)
+                        {
+                            float angleDeg = Mathf.Atan2(_filteredSwingDir.x, _filteredSwingDir.y) * Mathf.Rad2Deg;
+                            weaponRot = Quaternion.Euler(
+                                25f - _filteredSwingDir.y * 45f,
+                                _filteredSwingDir.x * 55f,
+                                -angleDeg * 0.65f);
+                        }
+                        else if (Input.GetMouseButton(1) && !_matterCrystalActive)
+                        {
+                            // Forte Parry Gardi
+                            weaponBaseOffset = new Vector3(0.06f, -0.16f, 0.42f);
+                            weaponRot = Quaternion.Euler(35f, 30f, -48f);
+                        }
+                        else if (_attackSwingTimer > 0f)
+                        {
+                            // Canli Kilic Savurma (Slash) Kavis Animasyonu
+                            float swingT = 1f - (_attackSwingTimer / AttackSwingDuration);
+                            float sinT = Mathf.Sin(swingT * Mathf.PI);
+                            weaponBaseOffset += new Vector3(-sinT * 0.22f, -sinT * 0.12f, sinT * 0.15f);
+                            weaponRot = Quaternion.Euler(
+                                20f + sinT * 40f,
+                                -15f - sinT * 70f,
+                                -12f - sinT * 85f);
+                        }
+                        else
+                        {
+                            // Normal Hazir Durus (Ready Stance)
+                            weaponRot = Quaternion.Euler(18f, -14f, -10f);
+                        }
+
+                        WeaponPivot.position = camFinalPos + camRot * weaponBaseOffset;
+                        WeaponPivot.rotation = camRot * weaponRot;
+                    }
+
+                    // 2. First-Person Sol Bilek Madde Kristali Konumu
+                    if (LeftWristCrystalTransform != null)
+                    {
+                        if (_matterCrystalActive)
+                        {
+                            Vector3 crystalOffset = new Vector3(-0.28f, -0.20f, 0.44f) + _headBobOffset * 0.25f;
+                            LeftWristCrystalTransform.position = camFinalPos + camRot * crystalOffset;
+                            LeftWristCrystalTransform.rotation = camRot * Quaternion.Euler(32f, 18f, -12f);
+                            LeftWristCrystalTransform.localScale = new Vector3(0.38f, 0.38f, 0.38f);
+                        }
+                        else
+                        {
+                            Vector3 hiddenOffset = new Vector3(-0.35f, -0.65f, 0.30f);
+                            LeftWristCrystalTransform.position = camFinalPos + camRot * hiddenOffset;
+                            LeftWristCrystalTransform.localScale = new Vector3(0.20f, 0.20f, 0.20f);
+                        }
+                    }
                 }
                 else
                 {
+                    // TPS Modu: Kamera karakter arkasinda yay cizer
                     Vector3 desiredOffset = -(camRot * Vector3.forward * _cameraDistance);
                     float safeDist = _cameraDistance;
                     if (UnityEngine.Physics.SphereCast(
@@ -1034,6 +1301,18 @@ namespace Stratocraft.Character
 
                     PlayerCamera.transform.position = pivot - (camRot * Vector3.forward * safeDist);
                     PlayerCamera.transform.rotation = camRot;
+
+                    if (WeaponPivot != null)
+                    {
+                        WeaponPivot.localPosition = _weaponBaseLocalPos;
+                        WeaponPivot.localRotation = _weaponBaseLocalRot;
+                    }
+                    if (LeftWristCrystalTransform != null)
+                    {
+                        LeftWristCrystalTransform.localPosition = _crystalBaseLocalPos;
+                        LeftWristCrystalTransform.localRotation = _crystalBaseLocalRot;
+                        LeftWristCrystalTransform.localScale = new Vector3(0.28f, 0.28f, 0.28f);
+                    }
                 }
             }
         }
@@ -1104,6 +1383,35 @@ namespace Stratocraft.Character
             return v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
         }
 
+        private static string GetMaterialName(byte matId)
+        {
+            return matId switch
+            {
+                MaterialIdCatalog.Air => "Hava",
+                MaterialIdCatalog.Stone => "Ham Tas",
+                MaterialIdCatalog.Dirt => "Toprak",
+                MaterialIdCatalog.Grass => "Cimenli Toprak",
+                MaterialIdCatalog.Sand => "Kum",
+                MaterialIdCatalog.Bedrock => "Ana Kaya",
+                MaterialIdCatalog.NaturalObsidian => "Dogal Obsidyen",
+                MaterialIdCatalog.Basalt => "Bazalt",
+                MaterialIdCatalog.Cobblestone => "Kiriktas",
+                MaterialIdCatalog.Gravel => "Cakil",
+                MaterialIdCatalog.MagmaBlock => "Magma Blogu",
+                MaterialIdCatalog.FiniteWaterSurface => "Su Yuzeyi",
+                MaterialIdCatalog.FiniteLavaSurface => "Lav Yuzeyi",
+                MaterialIdCatalog.CopperOre => "Bakir Cevheri (Muaf)",
+                MaterialIdCatalog.TinOre => "Kalay Cevheri (Muaf)",
+                MaterialIdCatalog.IronOre => "Demir Cevheri (Muaf)",
+                MaterialIdCatalog.GoldOre => "Altin Cevheri (Muaf)",
+                MaterialIdCatalog.TitaniumOre => "Titanyum Cevheri (Muaf)",
+                MaterialIdCatalog.MithrilOre => "Mithril Cevheri (Muaf)",
+                MaterialIdCatalog.AstralOre => "Astral Cevheri (Muaf)",
+                MaterialIdCatalog.StarCore => "Yildiz Cekirdegi",
+                _ => $"Materyal #{matId}"
+            };
+        }
+
         private void OnGUI()
         {
             _cachedHudBoxStyle ??= new GUIStyle(GUI.skin.box)
@@ -1113,6 +1421,49 @@ namespace Stratocraft.Character
                 normal = { textColor = Color.white }
             };
 
+            _cachedCrosshairStyle ??= new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 18,
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(0.9f, 0.95f, 1f, 0.85f) }
+            };
+
+            _cachedTooltipStyle ??= new GUIStyle(GUI.skin.box)
+            {
+                fontSize = 12,
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(1f, 0.92f, 0.45f, 1f) }
+            };
+
+            float cx = Screen.width * 0.5f;
+            float cy = Screen.height * 0.5f;
+
+            // 1. Ekran Ortasi Hedefleme Gostergesi (Reticle)
+            if (_isFirstPersonMode && !_backpackMatOpen)
+            {
+                string reticleChar = _matterCrystalActive ? "◎" : "+";
+                GUI.Label(new Rect(cx - 15f, cy - 15f, 30f, 30f), reticleChar, _cachedCrosshairStyle);
+
+                // Madde Kristali aktifken hedef voxel bilgisi
+                if (_matterCrystalActive)
+                {
+                    string targetInfo = _hasAimHit
+                        ? $"Hedef: {_aimVoxelMatName} (Yogunluk: {_aimVoxelDensity}) - {_targetAimHit.distance:0.1}m"
+                        : "Hedef: Menzil Disi (>24m)";
+                    GUI.Box(new Rect(cx - 150f, cy + 22f, 300f, 26f), targetInfo, _cachedTooltipStyle);
+                }
+            }
+
+            // 2. The Forest Canta Acikken Fare Uzerindeki Nesne Tooltip'i
+            if (_backpackMatOpen && !string.IsNullOrEmpty(_backpackHoveredText))
+            {
+                Vector2 mousePos = Event.current.mousePosition;
+                GUI.Box(new Rect(mousePos.x + 14f, mousePos.y + 14f, 320f, 48f), _backpackHoveredText, _cachedTooltipStyle);
+            }
+
+            // 3. Ana HUD Paneli
             string shapeName = _selectedShapeId switch
             {
                 0 => "0: Dogal SDF Arazi (Kanal 1 Surface Nets)",
@@ -1126,17 +1477,17 @@ namespace Stratocraft.Character
                 _ => "1: Komsu-Elemeli Pahli Kesme Tas Blok"
             };
 
-            string camLabel = _isFirstPersonMode ? "FPS (Birinci Sahis)" : "TPS (Ucuncu Sahis)";
+            string camLabel = _isFirstPersonMode ? "FPS (Birinci Sahis - Ana Mod)" : "TPS (Ucuncu Sahis - F5)";
             string hudText =
                 "=== STRATOCRAFT FAZ 1 & FAZ 2 CANLI MEKANIK KONTROLCUSU (GAME LOGIC BIBLE) ===\n" +
                 $"[Durus: {_currentStance}] Hiz Siniri: {PhysicalCharacterControllerSystem.GetStanceBaseSpeed(_currentStance):0.0} m/s | HP: {_vitals.CurrentHp:0}/{_vitals.MaxHp:0} | Stamina: %{_vitals.Stamina:0} | O2: %{_vitals.LungOxygenPercent:0} | [F5] {camLabel}\n" +
-                "[WASD+Shift] Kosu | [Ctrl] Comel / Kosarken 3.66m Kayma | [Z] 0.65m Surunme (1x1m Tunel) | [Space] Zipla / 2.2m Mantle\n" +
-                $"[C Tusu] Sol Bilek Madde Kristali: {(_matterCrystalActive ? "AKTIF" : "KAPALI")} -> {_lastCsgFeedbackText}\n" +
+                "[WASD+Shift] Kosu | [Ctrl] Comel / Kosarken 3.66m Kayma | [Z] 0.65m Surunme | [Space] Zipla / 2.2m Mantle\n" +
+                $"[C Tusu] Sol Bilek Madde Kristali: {(_matterCrystalActive ? "AKTIF (Sol Tik: Vakum, Sag Tik: Insa)" : "KAPALI")} -> {_lastCsgFeedbackText}\n" +
                 $"[V Tusu] Sekil Carki: {shapeName} | [R] Rotasyon: {_selectedRotation * 90}°\n" +
-                $"[I Tusu] The Forest 3B Canta Ortusu (1.40x1.00m): {(_backpackMatOpen ? "ACIK (Hiz 1.2 m/s)" : "KAPALI")} | [1-4] Kilif {_activeHolsterSlot} {(_holsterSwitchRemaining > 0f ? $"({_holsterSwitchRemaining:0.1}s)" : "(Hazir)")} | [G] 0.0s Quick-Drop\n" +
-                $"[LMB/RMB] Serbest Aci Dovus (Camera-Clutch): {_lastCombatActionText}";
+                $"[I Tusu] The Forest 3B Canta Ortusu: {(_backpackMatOpen ? "ACIK (Hiz 1.2 m/s - Esyalari Tikla)" : "KAPALI")} | [1-4] Kilif {_activeHolsterSlot} {(_holsterSwitchRemaining > 0f ? $"({_holsterSwitchRemaining:0.1}s)" : "(Hazir)")} | [G] 0.0s Quick-Drop\n" +
+                $"[LMB/RMB] Serbest Aci Dovus: {_lastCombatActionText}";
 
-            GUI.Box(new Rect(12f, 12f, 770f, 162f), hudText, _cachedHudBoxStyle);
+            GUI.Box(new Rect(12f, 12f, 790f, 162f), hudText, _cachedHudBoxStyle);
         }
     }
 }

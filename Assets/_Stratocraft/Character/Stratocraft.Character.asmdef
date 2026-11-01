@@ -5,6 +5,7 @@
     "Stratocraft.Core",
     "Stratocraft.Voxel",
     "Stratocraft.Physics",
+    "Stratocraft.WorldGen",
     "Stratocraft.Rendering",
     "Unity.Burst",
     "Unity.Collections",
