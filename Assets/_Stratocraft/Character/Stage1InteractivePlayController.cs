@@ -10,6 +10,7 @@ using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Stratocraft.Character
 {
@@ -34,6 +35,7 @@ namespace Stratocraft.Character
         public Transform? WeaponPivot;
         public Transform? LeftWristCrystalTransform;
         public Transform? TacticalBackpackMatRoot;
+        public GameObject? PlayerBodyRoot;
         public Material? SharedVoxelMaterial;
 
         [Header("Movement & Parkour (Bolum 3.5.D)")]
@@ -153,6 +155,28 @@ namespace Stratocraft.Character
             {
                 PlayerCamera = UnityEngine.Camera.main;
             }
+
+            // Ana oynanis varsayilan olarak FPS (Birinci Sahis) modunda baslar!
+            _isFirstPersonMode = true;
+            _cameraPitch = 0f;
+            _cameraYaw = transform.eulerAngles.y;
+            ApplyFirstPersonVisibility();
+
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
+
+        public void ApplyFirstPersonVisibility()
+        {
+            if (PlayerBodyRoot != null)
+            {
+                var renderers = PlayerBodyRoot.GetComponentsInChildren<Renderer>(true);
+                var shadowMode = _isFirstPersonMode ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
+                for (int i = 0; i < renderers.Length; i++)
+                {
+                    renderers[i].shadowCastingMode = shadowMode;
+                }
+            }
         }
 
         private void Update()
@@ -178,15 +202,28 @@ namespace Stratocraft.Character
                 _holsterSwitchRemaining = Mathf.Max(0f, _holsterSwitchRemaining - Time.deltaTime);
             }
 
+            // F5 Tusu: FPS (Birinci Sahis) / TPS (Ucuncu Sahis) Kamera Gecisi
             if (Input.GetKeyDown(KeyCode.F5))
             {
                 _isFirstPersonMode = !_isFirstPersonMode;
+                ApplyFirstPersonVisibility();
             }
 
             // I Tusu: The Forest Tarzi 3B Fiziksel Canta Ortusu (Oyun durmaz, hiz %70 duser: 4.0 -> 1.2 m/s)
             if (Input.GetKeyDown(KeyCode.I))
             {
                 _backpackMatOpen = !_backpackMatOpen;
+                if (_backpackMatOpen)
+                {
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
+                }
+                else
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+
                 if (TacticalBackpackMatRoot != null)
                 {
                     TacticalBackpackMatRoot.gameObject.SetActive(_backpackMatOpen);
@@ -914,19 +951,21 @@ namespace Stratocraft.Character
 
                 if (WeaponPivot != null)
                 {
+                    float pitchOffset = _isFirstPersonMode ? _cameraPitch : 0f;
                     WeaponPivot.localRotation = Quaternion.Euler(
-                        25f - _filteredSwingDir.y * 55f,
+                        25f - _filteredSwingDir.y * 55f + pitchOffset,
                         _filteredSwingDir.x * 65f,
                         -angleDeg * 0.65f);
                 }
             }
             else
             {
-                if (_swingCharge01 > 0.1f && WeaponPivot != null)
+                if (WeaponPivot != null)
                 {
+                    float pitchOffset = _isFirstPersonMode ? _cameraPitch : 0f;
                     WeaponPivot.localRotation = Quaternion.Slerp(
                         WeaponPivot.localRotation,
-                        Quaternion.Euler(20f, -15f, -12f),
+                        Quaternion.Euler(20f + pitchOffset, -15f, -12f),
                         dt * 10f);
                 }
                 _swingCharge01 = 0f;
@@ -934,8 +973,28 @@ namespace Stratocraft.Character
                 if (Input.GetKey(KeyCode.LeftAlt) || !_backpackMatOpen)
                 {
                     _cameraYaw += mouseX * 2.6f;
-                    _cameraPitch = Mathf.Clamp(_cameraPitch - mouseY * 2.2f, -35f, 70f);
+                    _cameraPitch = Mathf.Clamp(_cameraPitch - mouseY * 2.2f, -85f, 85f);
                 }
+            }
+
+            // Fare Imleci Kilidi (FPS standardi: Sol tik imleci kilitler, Esc serbest birakir)
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
+            else if (Input.GetMouseButtonDown(0) && !_backpackMatOpen && Cursor.lockState != CursorLockMode.Locked)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+
+            if (LeftWristCrystalTransform != null && _isFirstPersonMode)
+            {
+                LeftWristCrystalTransform.localRotation = Quaternion.Euler(
+                    35f + _cameraPitch * 0.45f,
+                    0f,
+                    20f);
             }
 
             float scroll = Input.GetAxis("Mouse ScrollWheel");
@@ -948,13 +1007,13 @@ namespace Stratocraft.Character
 
             if (PlayerCamera != null)
             {
-                float eyeHeight = Mathf.Max(0.48f, PhysicalCharacterControllerSystem.GetStanceCapsuleHeight(_currentStance) - 0.16f);
+                float eyeHeight = Mathf.Max(0.52f, PhysicalCharacterControllerSystem.GetStanceCapsuleHeight(_currentStance) - 0.12f);
                 Quaternion camRot = Quaternion.Euler(_cameraPitch, _cameraYaw, 0f);
                 Vector3 pivot = transform.position + new Vector3(0f, eyeHeight, 0f);
 
                 if (_isFirstPersonMode)
                 {
-                    PlayerCamera.transform.position = pivot + transform.forward * 0.18f;
+                    PlayerCamera.transform.position = pivot + camRot * Vector3.forward * 0.10f;
                     PlayerCamera.transform.rotation = camRot;
                 }
                 else

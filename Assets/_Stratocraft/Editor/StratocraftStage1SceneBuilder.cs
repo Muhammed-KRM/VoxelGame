@@ -835,7 +835,7 @@ namespace Stratocraft.EditorTools
             playerRoot.transform.localPosition = position;
             playerRoot.transform.localRotation = Quaternion.Euler(0f, 22f, 0f);
 
-            PlaceGlbModel(
+            GameObject? bodyGo = PlaceGlbModel(
                 "armor_set_iron_vanguard.glb",
                 "PlayerBody_EquippedIronVanguard",
                 playerRoot.transform,
@@ -901,10 +901,12 @@ namespace Stratocraft.EditorTools
 
             controller = playerRoot.AddComponent<Stage1InteractivePlayController>();
             controller.PlayerCamera = Camera.main;
+            controller.PlayerBodyRoot = bodyGo;
             controller.WeaponPivot = swordGo != null ? swordGo.transform : null;
             controller.LeftWristCrystalTransform = wristCrystalGo.transform;
             controller.TacticalBackpackMatRoot = backpackMatTransform;
             controller.SharedVoxelMaterial = sharedMat;
+            controller.ApplyFirstPersonVisibility();
 
             foreach (KeyValuePair<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)> kvp in builtChunks)
             {
