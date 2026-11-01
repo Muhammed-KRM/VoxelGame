@@ -13,78 +13,89 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#011` (Faz 1 & Faz 2 %100 Tamamlandı, Akışkan/Kaldera ve AI/Combat Entegre Edildi, Kalite Kapısı %100 PASS) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-01T19:43:00+03:00` |
-| **Ortam / Donanım** | `IS-PC` (`Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1`) |
-| **Mevcut Çalışma Aşaması** | `Faz 1 ve Faz 2 %100 Tamamlandı ve Doğrulandı -> Sıradaki: Faz 3 (Temel Üretim, Hologram İnşa, 3D Çit BFS Klan Koruma Alanı)` |
+| **Devir Numarası** | `#012` (FPS Viewmodel, CSG Chunk Init, Sırt Çantası Kamera Eğimi Düzeltildi, Son Commit: `0dc82cc`) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T01:05:00+03:00` |
+| **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 ve Faz 2 Oynanış Hataları Çözüldü -> Sıradaki: C (Kristal) ve I (Çanta) Tuş Test Doğrulaması & Faz 3` |
 | **Aktif Test Durumu** | `40/40 .NET 10 Core PASS`, `32/32 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`%100` Bütçe İçi, Hedef: < 16.0 MB) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` |
+| **Son Başarılı Commit** | `0dc82cc` (*fix: FPS viewmodel + CSG chunk init + backpack mat kamera + WorldGen namespace refactor*) |
 
 ---
 
-## 2. Tamamlanan Sistemler ve Uygulanan Çözümler
+## 2. Son Oturumda Yapılanlar ve Çözülen Kritik Sorunlar
 
-1. **Unity C# Donanım Hızlandırmalı Bit İşlemcisi (`BitOps.cs`):**
-   - Unity C# profilinde bulunmayan `System.Numerics.BitOperations` yerine `#if UNITY_5_3_OR_NEWER` altında `Unity.Mathematics.math.tzcnt / lzcnt / countbits` donanım talimatlarına, dış testlerde `System.Numerics.BitOperations`'a yönlendiren `BitOps` köprüsü yazıldı.
-   - `HybridSurfaceNetsAndShapeMesher`, `NavSpanRebuildJob`, `MicroVoxelPool4096`, `FluidPorosityUtility`, `TributaryLoadDagJob`, `EnclosedOxygenFloodFillSystem`, `BinaryGreedyMeshingJob` dosyalarındaki derleme hataları tamamen giderildi.
+1. **FPS Viewmodel ve Kamera Bakış Açısı (Bible §3.5):**
+   - Karakterin elindeki kılıç ve silahlar gövdede (hip seviyesinde) kaldığı için FPS kamerasının görüş açısı (frustum) dışına düşüyordu.
+   - `WeaponPivot` doğrudan `Main Camera`'ya parent olarak bağlandı ve lokal pozisyonu `(0.30, -0.24, 0.50)` olarak ayarlandı. Artık kılıç sağ alt köşede canlı görünüyor, ortada artı imleci (crosshair) bulunuyor.
+   - Sahne başlangıcında kamera referansı bulunamazsa otomatik tespit veya fallback kamera oluşturma mekanizması eklendi.
 
-2. **21 Kanonik Yaratık, Uzuv Koparma, AI ve Kapalı Form Çatışma (Modül F1 / M07):**
-   - `Creature21BehaviorSystem.cs`: Bible §13.0 kanonik 21 yaratık (Lv1..Lv5, 140 HP Goblin'den 10.800 HP Void Stalker'a), 16 uzuv yetenek bayrağı (`AnatomyCapabilityFlags`) ve kanat/kol/bacak kopma hareket cezaları uygulandı.
-   - `OffScreenEntityRecord.cs`: Q20.12 sabit noktalı koordinatlar, atomik CAS kilidi (`Interlocked.CompareExchange`), deterministik yol enterpolasyonu.
-   - `HyperbolicLanchesterCombat.cs`: $O(1)$ kapalı form hiperbolik ($\cosh/\sinh$) Lanchester çözücüsü, $\rho \le 0.9995$ tekillik sınırı, 2D CPA ve süpürülmüş mayın kesişim testi.
-   - `DestructibleNavSpanAStar.cs`: Ağırlıklı A* ($\epsilon = 1.25$, azami 320 düğüm), patron kutsal alan blok dokunulmazlığı koruması (`OriginState == 0`).
+2. **Sol Bilek Madde Kristali CSG Kazı & İnşa (Bible §3.1-§3.2):**
+   - Play Mode'a girildiğinde `_worldChunks` sözlüğü Unity sahne serileştirmesi nedeniyle boşalıyordu ve kazı ışını hiçbir voksile temas edemiyordu.
+   - `Stage1InteractivePlayController.cs` içine `EnsureChunksInitialized()` entegre edildi. Sahnede bulunan 16 chunk runtime başlangıcında kaydedilerek CSG kazı ve inşa işlemlerine hazır hale getirildi.
 
-3. **Canlı Sahnede Gerçek Akışkan Yüzeyleri, Kaldera Havzası ve Gölgelendirici (Modül F2 / M08):**
-   - `StratocraftStage1SceneBuilder.cs`: Kaldera ve su havuzu daha önce katı voksel olarak üretilip sarı/mavi taş olarak basılıyordu. Arazi mesher'ında $y \ge 7$ arası hava oyuğu açılarak gerçek çukurlar oyuldu.
-   - Akışkanlar `FluidCell16.Pack(...)` ile 16-bit sonlu akışkan hücresi olarak paketlendi ve `FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh` üzerinden +0.35m kıyı eteğiyle orüldü.
-   - `StratocraftFluidSurface.shader`: Sıfır-doku URP 17 gölgelendirici. Su için Beer-Lambert derinlik soğurması ve Gerstner dalgaları; lav için Voronoi bazaltik çatlaklar ve Stefan-Boltzmann $T^4$ akkor emisyon uygulandı.
-   - Sahnede `Stratocraft/Asama 1 - Canli Dunya ve 3B Varlik Sahnesini Kur` menüsü çalıştırıldı; lav kalderası, su havuzu, obsidyen set, 15 parça zırh askılığı, fiziksel CAS sandığı, çift boynuzlu örs, klan kristali, Ash Stalker sürüleri, Anka patronu ve mancınık sahneye yerleştirilip kaydedildi (`capture_scene_view` ve `capture_game_view` ile doğrulandı).
+3. **Fiziksel Sırt Çantası Örtüsü (Bible §3.3-§3.4 & §6):**
+   - 'I' tuşuna basıldığında örtü `y=0.03` seviyesinde yerde açılıyor fakat kamera ufka baktığı için görünmüyordu.
+   - Envanter açıldığında kamera ~52° aşağı eğilecek şekilde yönlendirildi.
+   - `StratocraftStage1SceneBuilder.cs` içindeki `BoxCollider` ekleme mantığı temizlendi ve sağlamlaştırıldı.
 
-4. **Karakter ve Kontrolcü İnce Ayarları:**
-   - `Stage1InteractivePlayController.cs`: Bible §6 kılıf çekme süreleri (Bel: 0.5s/0.6s, Sırt: 0.9s/1.0s), 'T' tuşu 90-derece mimari rotasyon desteği ve yere atılan silahların kalıcı olması (`Destroy` kaldırıldı) uygulandı.
-
-5. **Kalite Kapısı Başarısı (`quality-gate.ps1`):**
-   - VRAM Bütçesi: `4.14 MB` (16.0 MB bütçesinin çok altında).
-   - `build-native.ps1`: Unity açıkken DLL kilitlenmesine karşı güvenli hale getirildi.
-   - C++ GoogleTest: `6/6 PASS`
-   - Python Pytest: `9/9 PASS`
-   - .NET Core Test: `40/40 PASS`
-   - Unity EditMode Test: `32/32 PASS`
-   - Unity Console: `0 Errors, 0 Warnings`
+4. **Namespace ve Proje Mimarisi Refactor:**
+   - `StratocraftFloatingIslandWorldGen.cs` dosyası `Assets/_Stratocraft/WorldGen/` altına taşındı, isim alanı `Stratocraft.WorldGen.Generators` yapıldı.
+   - Unity C# projesinde `MathF.Min` kaynaklı tür uyuşmazlığı giderildi (`Math.Min` kullanıldı).
+   - `Stratocraft.Character.asmdef` dosyasına `Stratocraft.WorldGen` derleme referansı eklendi.
+   - Standalone testler ve Unity EditMode testleri sıfır hata ile derlendi ve yeşil geçti.
 
 ---
 
-## 3. Neler Kaldı? (Sıradaki Geliştirme Maddeleri)
+## 3. Sahne ve Oynanış Durumu (Tuş Kontrolleri)
 
-Faz 1 ve Faz 2 mekanik ve görsel olarak eksiksiz tamamlanmıştır. Sırada **Faz 3** bulunmaktadır:
-
-1. **Faz 3.1 — Temel Üretim & Zanaat (Crafting & Smelting):**
-   - Çift boynuzlu örs üzerinde Bible §4.0 uyarınca 16x32x4 voksel çekiçleme, ısı dengesi ve külçe dökümü.
-2. **Faz 3.2 — Hologram İnşaat Sistemi:**
-   - 7DTD tarzı hayalet blok (ghost preview) yerleşimi, destek hattı analizi ve malzeme doldurma.
-3. **Faz 3.3 — 3D Çit BFS Klan Koruma Alanı ve KGP Kristalleri:**
-   - Klan kristali seviyeleri (Lv1..Lv5), 3B hacimsel BFS kapalı alan hesaplaması ve yetkisiz oyuncu CSG kırma engellemesi.
-
----
-
-## 4. Yeni Sohbette / Oturumda Yapay Zekanın Sıradaki İlk İşi
-
-Yeni oturumu açan ajan sırasıyla şu adımları izleyecektir:
-
-1. **Adım 1 — Doğrulama:**
-   - `git status -s` çalıştırıp çalışma ağacını kontrol et.
-   - Unity konsolunun `0 Error / 0 Warning` olduğunu MCP `console_get` ile doğrula.
-2. **Adım 2 — Sahne Kontrolü:**
-   - `Assets/Scenes/StratocraftStage1Showcase.unity` sahnesinin açık olduğunu doğrula.
-3. **Adım 3 — Faz 3 Mimarisini Başlat:**
-   - `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md` dökümanının Faz 3 (Bölüm 4 - Zanaat, İnşaat ve Klan Koruma Alanı) başlığını aç.
-   - Faz 3 testlerini (`Tests/StandaloneCoreTests` ve `Assets/Tests/EditMode`) yaz ve sistemleri adım adım kodla.
+| Tuş / Eylem | Fonksiyon | Durum |
+| :--- | :--- | :--- |
+| **Mouse Hareketi** | FPS Bakış Yönü | ✅ Aktif (Cursor kilitli) |
+| **WASD** | Hareket + Head Bobbing + Prosedürel Salınım | ✅ Aktif |
+| **Left Shift** | Depar (Sprint) | ✅ Aktif |
+| **Left Ctrl + Sprint** | Kayma (Slide) | ✅ Aktif |
+| **Z** | Yüzüstü Sürünme (Prone - 0.65m profil) | ✅ Aktif |
+| **Space** | Zıplama / 2.2m Kenar Tırmanışı (Ledge Mantle) | ✅ Aktif |
+| **F5** | FPS / TPS Kamera Açısı Değiştirme | ✅ Aktif (Varsayılan: FPS) |
+| **Esc** | Mouse İmleç Kilidini Aç/Kapat | ✅ Aktif |
+| **C** | Madde Kristali Aktif/Pasif (Sol Bilek) | ⚠️ Kodlandı (Doğrulama bekliyor) |
+| **LMB (Sol Tık)** | Voksel Kazı (CSG Vakum) / Saldırı | ⚠️ Kodlandı (Doğrulama bekliyor) |
+| **RMB (Sağ Tık)** | Voksel İnşa (Madde Püskürtme) / Blok | ⚠️ Kodlandı (Doğrulama bekliyor) |
+| **I** | Sırt Çantası Kumaş Matını Yere Ser (Envanter) | ⚠️ Kodlandı (Kamera eğimi eklendi) |
+| **T** | İnşaat / Blok 90° Döndürme | ✅ Aktif |
 
 ---
 
-## 5. Kullanıcının Özel Çalışma ve İletişim Tercihleri
+## 4. Sıradaki İlk İş (Yeni Oturum / Yeni Bilgisayar İçin)
 
-1. **Doğrudan ve Şeffaf Ol, Bekletme:** Kullanıcıya yapılan işleri net ve görsel kanıtlarla (Unity sahne görüntüleri ve test raporları) sun.
-2. **Game Logic Bible'a Sadık Kal:** Doğal arazide kübik Minecraft tarzına asla dönme; *Astroneer / Deep Rock Galactic / 7 Days to Die* low-poly fasetli standardını koru.
-3. **Sıfır Hata ve Taşınabilirlik:** `0 Error / 0 Warning` kuralından taviz verme ve mutlak dosya yolu (`D:\oyun` vb.) asla kullanma.
+Yeni oturumda çalışacak yapay zeka ajanı doğrudan şu sırayı takip etmelidir:
+
+1. **Adım 1 — Repoyu ve Derlemeyi Doğrula:**
+   ```powershell
+   git status -s
+   git log -1 --oneline
+   dotnet test Tests/Stratocraft.Tests.csproj -c Release
+   ```
+2. **Adım 2 — Canlı Oynanış Doğrulaması:**
+   - Unity Editor üzerinde `Assets/Scenes/StratocraftStage1Showcase.unity` sahnesini aç.
+   - Play Mode'a gir.
+   - Konsolda 0 Error olduğunu doğrula.
+   - 'C' tuşuna basarak Sol Bilek Kristalinin devreye girdiğini (HUD'da gösterge ve model) doğrula.
+   - 'I' tuşuna basarak kameranın yere eğildiğini ve serilen çantanın göründüğünü doğrula.
+3. **Adım 3 — Faz 3 Başlangıcı (Zanaat, İnşaat & Klan Alanı):**
+   - **Faz 3.1:** Çift boynuzlu örs mini-voksel çekiçleme ve külçe dövme.
+   - **Faz 3.2:** 7DTD tarzı hayalet blok (ghost preview) ve hologram inşaat.
+   - **Faz 3.3:** 3B Çit BFS Klan Koruma Alanı hesaplaması.
+
+---
+
+## 5. Başka Bilgisayara Geçiş Rehberi
+
+Projeyi başka bir bilgisayara aktarırken:
+1. `git clone` veya mevcut klasörü yeni bilgisayara kopyalayın.
+2. Unity Hub üzerinden **Unity 6 (`6000.6.7f1`)** ile projeyi açın.
+3. Açılışta Asset Import işleminin bitmesini bekleyin.
+4. Konsolda derleme hatası olmadığını doğrulayın.
+5. Üst menüden `Araçlar > Stratocraft > Aşama 1 - Canlı Dünya ve 3B Varlık Sahnesini Kur` seçeneğine tıklayarak sahneyi tazeleyin ve Play'e basın.
