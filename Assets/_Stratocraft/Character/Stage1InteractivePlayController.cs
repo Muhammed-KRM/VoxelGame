@@ -86,6 +86,7 @@ namespace Stratocraft.Character
         {
             EnsureCameraAndSceneReferences();
             EnsureChunksInitialized();
+            EnsureCreaturesInitialized();
             InitializePersistenceAndTelemetry();
             _movementBridge.SetSafeSpawnPosition(transform.position);
             _isFirstPersonMode = true; _cameraYaw = transform.eulerAngles.y; _cameraPitch = 0f;
@@ -327,6 +328,26 @@ namespace Stratocraft.Character
                     var chunkComp = new VoxelChunkComponent(cx, cz);
                     chunkComp.VisualWorldPosition = (cx * 16f, 0f, cz * 16f);
                     _floatingOriginChunks.Add(chunkComp);
+                }
+            }
+        }
+
+        private void EnsureCreaturesInitialized()
+        {
+            if (_creatureBridge.AgentCount > 0) return;
+            var creaturesParent = GameObject.Find("04_Faz2_Creatures_VAT_Siege_And_PhoenixBoss");
+            if (creaturesParent != null)
+            {
+                float phase = 0f;
+                foreach (Transform child in creaturesParent.transform)
+                {
+                    bool isBoss = child.name.StartsWith("Boss_", StringComparison.OrdinalIgnoreCase);
+                    bool isCreature = child.name.StartsWith("Creature_", StringComparison.OrdinalIgnoreCase);
+                    if (isBoss || isCreature)
+                    {
+                        RegisterPatrollingCreature(child, child.position, phase, isBoss);
+                        phase += 1.35f;
+                    }
                 }
             }
         }

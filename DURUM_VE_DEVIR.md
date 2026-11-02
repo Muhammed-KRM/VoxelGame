@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#015` (Faz 1 & 2 Derin Denetim Eksikleri: Domino Kütle Korunumu, Akışkan Simülasyonu, G Tuşu 3B Silah Bırakma, Floating Origin ve Yaratık Engel Basamak Algılama Tamamlandı) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T20:44:00+03:00` |
+| **Devir Numarası** | `#016` (Canlı Yaratıkların Runtime Kaydı (`EnsureCreaturesInitialized`), Eliptik Devriye Gezintisi, Yakın Dövüş Dinamik Lunge/Strafe Hareketi ve Unity Arka Plan Çalışması Düzeltildi) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T22:02:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Sahne & Mimari Eksikleri %100 Giderildi -> Sıradaki: Faz 3 Başlangıcı (Örs Zanaatı & Klan Alanı)` |
+| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Sahne & Canlı Yapay Zeka Hareketi %100 Doğrulandı -> Sıradaki: Faz 3 Başlangıcı (Örs Zanaatı & Klan Alanı)` |
 | **Aktif Test Durumu** | `42/42 .NET 10 Core PASS`, `34/34 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: < 16.0 MB) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -24,7 +24,27 @@
 
 ---
 
-## 2. Son Oturumda Yapılanlar (Devir #015 — Derin Denetimde Tespit Edilen 5 Kritik Sahne Eksiğinin Giderilmesi)
+## 2. Son Oturumda Yapılanlar (Devir #016 — Canlıların Hareket Sorunlarının Teşhisi ve Tam Çözümü)
+
+1. **Geliştirme 1 — Canlıların Play Modunda Sahneden Otomatik Tanınması (`EnsureCreaturesInitialized` - `Stage1InteractivePlayController.cs`):**
+   - **Kök Neden:** Scene Builder editörde çalışırken `playController.RegisterPatrollingCreature(...)` çağırıyordu. Ancak `Stage1CreatureSimulationBridge` C# sınıfı `[SerializeField]` olmadığı için Unity Play moduna girdiğinde `_creatureBridge._agents` listesi serileşmeyip sıfırlanıyordu (`Count == 0`). Sahne çalışsa bile içinde kayıtlı canlı bulunmuyordu.
+   - **Çözüm:** `EnsureCreaturesInitialized()` metodu eklendi; oyun başında `04_Faz2_Creatures_VAT_Siege_And_PhoenixBoss` altındaki Ash Stalker'lar ve Anka Boss'u hiyerarşiden taranarak runtime'da anında canlı simülasyona kaydedildi.
+
+2. **Geliştirme 2 — Eliptik Devriye Turu ve Yöne Doğru Dönüş (`StepPatrolAgent` - `Stage1CreatureSimulationBridge.cs`):**
+   - **Kök Neden:** Canlılar sadece tek bir eksende sinüs salınımı yapıyor ve baktıkları yönü hareket yönüne göre güncellemiyordu.
+   - **Çözüm:** `AnchorPos` etrafında doğal eliptik rota (`radiusX = 2.4m`, `radiusZ = 2.0m`) ve yürüdükleri teğet açısına göre otomatik yönelme (`moveYaw`), basamak tırmanma ve iki ayaklı adım sarsıntısı (`pitch`/`roll`) eklendi.
+
+3. **Geliştirme 3 — Yakın Dövüşte Kilitlenip Kalmanın Engellenmesi (Dinamik Strafe & Lunge - `StepAggroAgent`):**
+   - **Kök Neden:** Yaratık oyuncuya 2.15 metreden yaklaştığında doğrudan `MeleeAttack` durumuna geçiyor ve hiçbir pozisyon güncellemesi almayıp heykel gibi donuyordu.
+   - **Çözüm:** `MeleeAttack` sırasında oyuncunun etrafında dairesel adımlama (`circling strafe`) ve saldırı darbesi sırasında öne doğru ani hamle (`lunge`) eklendi.
+
+4. **Geliştirme 4 — Voksel Sütun Taramasının Tavan Sınırından İtibaren Güvenceye Alınması (`SampleVoxelOrTerrainHeight`):**
+   - **Kök Neden:** `startY = currentY + 3` hesabı, yaratık bir anlığına adanın yüzeyinden aşağı kaydığında üstündeki katı vokselleri kaçırabiliyordu.
+   - **Çözüm:** `topY = MaxEditableVoxelY - 2` (62 voksel) tavanından aşağı doğru tarama yapılarak adanın en üst katı bloğu bit-seviyesinde sıfır maliyetle kesin tespit edildi.
+
+5. **Geliştirme 5 — Unity Arka Planda Zaman Akışının Açılması (`runInBackground = true`):**
+   - **Kök Neden:** Unity editörü arka plandayken (`runInBackground: false`) `Time.time` ilerlemiyor ve oyun duraklatılmış gibi görünüyordu.
+   - **Çözüm:** `Application.runInBackground = true` ayarlandı; editör arka plandayken dahi 60 FPS simülasyon ve canlı hareketleri kesintisiz devam ediyor.
 
 1. **Geliştirme 1 — Domino Yıkımda 24 Blok Sınırının Kaldırılması & Kütle Korunumlu Pancake Katman Yığılması (`StructuralCollapseSystem.cs`):**
    - **Kök Neden:** `rubbleTarget = Math.Clamp((int)MathF.Ceiling(sourceVoxelCount * 0.65f), 1, 24)` formülü yüzünden çöken bina ne kadar büyük olursa olsun yere en fazla 24 blok moloz düşüyor, kalan yüzlerce blok buharlaşıyordu; ayrıca arama yarıçapı `r <= 2` sabitti.

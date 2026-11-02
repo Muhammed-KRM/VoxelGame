@@ -36,6 +36,9 @@ namespace Stratocraft.Character
         private readonly List<LiveCreatureAgent> _agents = new(8);
         private readonly List<FacetedVoxelTriangle> _limbMeshTris = new(64);
 
+        /// <summary>Kayitli canli ajan sayisi.</summary>
+        public int AgentCount => _agents.Count;
+
         /// <summary>Son yaratik etkilesim veya savas olayi bildirimi.</summary>
         public string LastCreatureEventText { get; private set; } =
             "Canlilar: Devriyede (Yaklasinca Aggro/Takip | Kilicla Uzuv Kesme | Yuksekteyken Sutun Yikma)";
@@ -86,7 +89,8 @@ namespace Stratocraft.Character
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
                 if (horizDist < nearestDist) { nearestDist = horizDist; nearest = a; }
 
-                if (horizDist <= (a.IsFlyingBoss ? 15.5f : 11.5f))
+                float aggroRange = a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 6.5f);
+                if (horizDist <= aggroRange)
                 {
                     StepAggroAgent(a, playerPos, horizDist, toPlayer.y, isPlayerParrying, ref playerVitals, worldChunks, dirtyChunks, collapseBridge, time, deltaTime);
                 }
@@ -106,22 +110,27 @@ namespace Stratocraft.Character
         private void StepPatrolAgent(LiveCreatureAgent a, float time, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             a.State = CreatureAiState.Patrol;
-            float t = time * 1.35f + a.PhaseOffset;
+            float t = time * 1.15f + a.PhaseOffset;
             if (a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0)
             {
-                Vector3 offset = new Vector3(Mathf.Sin(t * 0.7f) * 1.8f, Mathf.Sin(t * 1.9f) * 0.45f, Mathf.Cos(t * 0.7f) * 1.4f);
+                Vector3 offset = new Vector3(Mathf.Sin(t * 0.7f) * 2.8f, Mathf.Sin(t * 1.9f) * 0.65f, Mathf.Cos(t * 0.7f) * 2.4f);
                 a.Root.position = a.AnchorPos + offset;
-                a.Root.rotation = Quaternion.Euler(Mathf.Sin(t * 1.9f) * 8f, a.BaseYaw + Mathf.Sin(t * 0.7f) * 28f, Mathf.Cos(t * 1.9f) * 6f);
+                a.Root.rotation = Quaternion.Euler(Mathf.Sin(t * 1.9f) * 8f, a.BaseYaw + Mathf.Sin(t * 0.7f) * 35f, Mathf.Cos(t * 1.9f) * 8f);
                 return;
             }
 
-            float stride = Mathf.Sin(t * 1.1f) * 1.85f * a.SpeedMultiplier;
-            Vector3 forward = Quaternion.Euler(0f, a.BaseYaw, 0f) * Vector3.forward;
-            Vector3 nextPos = a.AnchorPos + forward * stride;
+            float radiusX = 2.4f * a.SpeedMultiplier;
+            float radiusZ = 2.0f * a.SpeedMultiplier;
+            Vector3 patrolOffset = new Vector3(Mathf.Sin(t) * radiusX, 0f, Mathf.Cos(t) * radiusZ);
+            Vector3 nextPos = a.AnchorPos + patrolOffset;
             nextPos.y = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks);
             a.Root.position = nextPos;
-            float pitch = a.LegSevered ? 62f : Mathf.Abs(Mathf.Cos(t * 2.2f)) * 5f;
-            a.Root.rotation = Quaternion.Euler(pitch, a.BaseYaw + (Mathf.Cos(t * 1.1f) >= 0f ? 0f : 180f), 0f);
+
+            Vector3 moveDir = new Vector3(Mathf.Cos(t) * radiusX, 0f, -Mathf.Sin(t) * radiusZ);
+            float moveYaw = Mathf.Atan2(moveDir.x, moveDir.z) * Mathf.Rad2Deg;
+            float pitch = a.LegSevered ? 58f : Mathf.Abs(Mathf.Sin(t * 3.5f)) * 7f;
+            float roll = a.LegSevered ? 12f : Mathf.Sin(t * 3.5f) * 4f;
+            a.Root.rotation = Quaternion.Euler(pitch, moveYaw, roll);
         }
 
         private void StepAggroAgent(
@@ -141,7 +150,7 @@ namespace Stratocraft.Character
             Vector3 flatDir = new Vector3(playerPos.x - pos.x, 0f, playerPos.z - pos.z);
             if (flatDir.sqrMagnitude > 0.001f) flatDir.Normalize();
 
-            if (horizDist > 2.15f)
+            if (horizDist > 2.05f)
             {
                 a.State = CreatureAiState.AggroChase;
                 bool flying = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
@@ -157,7 +166,6 @@ namespace Stratocraft.Character
                     float targetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, pos.y, worldChunks);
                     float stepDelta = targetY - pos.y;
 
-                    // 1.2m'ye kadar olan basamaklari tirmanir; cok dik duvarda yan tegete sapar
                     if (stepDelta <= 1.25f)
                     {
                         nextPos.y = Mathf.MoveTowards(pos.y, targetY, deltaTime * 6.5f);
@@ -165,7 +173,6 @@ namespace Stratocraft.Character
                     }
                     else
                     {
-                        // Engelin etrafini dolasmak icin sag/sol teget yonu
                         Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
                         Vector3 detourPos = pos + tangent * (a.BaseSpeed * a.SpeedMultiplier * deltaTime * 0.75f);
                         detourPos.y = SampleVoxelOrTerrainHeight(detourPos.x, detourPos.z, pos.y, worldChunks);
@@ -173,6 +180,8 @@ namespace Stratocraft.Character
                     }
                 }
                 a.Root.position = pos;
+                float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
+                a.Root.rotation = Quaternion.Euler(a.LegSevered ? 64f : Mathf.Sin(time * 8f) * 6f, targetYaw, 0f);
             }
             else if (vertDelta >= 2.2f && (a.Capabilities & AnatomyCapabilityFlags.VoxelSiegeBreaker) != 0)
             {
@@ -182,10 +191,24 @@ namespace Stratocraft.Character
                     a.AttackCooldown = 1.15f;
                     ExecuteSupportPillarSiegeStrike(a, playerPos, worldChunks, dirtyChunks, collapseBridge);
                 }
+                float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
+                a.Root.rotation = Quaternion.Euler(15f, targetYaw, 0f);
             }
             else
             {
                 a.State = CreatureAiState.MeleeAttack;
+                Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
+                float strafe = Mathf.Sin(time * 2.8f + a.PhaseOffset) * 0.35f * deltaTime;
+                Vector3 meleePos = pos + tangent * strafe;
+                if (a.AttackCooldown > 0.85f)
+                {
+                    meleePos += flatDir * (1.2f * deltaTime);
+                }
+                meleePos.y = a.IsFlyingBoss
+                    ? Mathf.Lerp(pos.y, playerPos.y + 0.9f, deltaTime * 4f)
+                    : SampleVoxelOrTerrainHeight(meleePos.x, meleePos.z, pos.y, worldChunks);
+                a.Root.position = meleePos;
+
                 if (a.AttackCooldown <= 0f)
                 {
                     a.AttackCooldown = 1.25f;
@@ -196,10 +219,11 @@ namespace Stratocraft.Character
                         ? $"PARRY BASARILI! {a.DisplayName} darbesi Forte ile saptirildi (-{finalDmg:F1} HP)."
                         : $"{a.DisplayName} saldirdi! (-{finalDmg:F1} HP | Kalan HP: {playerVitals.CurrentHp:F0})";
                 }
-            }
 
-            float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
-            a.Root.rotation = Quaternion.Euler(a.LegSevered ? 64f : Mathf.Sin(time * 8f) * 6f, targetYaw, 0f);
+                float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
+                float combatPitch = a.AttackCooldown > 0.85f ? -14f : (a.LegSevered ? 55f : Mathf.Sin(time * 6f) * 8f);
+                a.Root.rotation = Quaternion.Euler(combatPitch, targetYaw, 0f);
+            }
         }
 
         private void ExecuteSupportPillarSiegeStrike(
@@ -322,8 +346,8 @@ namespace Stratocraft.Character
 
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
             {
-                int startY = Mathf.Clamp(Mathf.FloorToInt(currentY) + 3, 2, Stage1InteractivePlayController.MaxEditableVoxelY - 1);
-                for (int y = startY; y >= 1; y--)
+                int topY = Stage1InteractivePlayController.MaxEditableVoxelY - 2;
+                for (int y = topY; y >= 1; y--)
                 {
                     uint raw = chunk[(y << 8) | (lz << 4) | lx];
                     if (VoxelBitUtility.IsPhysicallySolid(raw))
