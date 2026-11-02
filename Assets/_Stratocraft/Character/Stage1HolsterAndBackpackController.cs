@@ -76,7 +76,7 @@ namespace Stratocraft.Character
                 UpdateBackpackMatClickInteraction(playerTransform, playerCamera, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack, miningCtrl);
             }
             HandleHolsterSlotHotkeys(miningCtrl);
-            HandleQuickDropAndInteractHotkeys(playerTransform, anvilTransform, miningCtrl);
+            HandleQuickDropAndInteractHotkeys(playerTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl);
             SyncHandToolVisuals(swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl.SelectedMaterialId, miningCtrl.IsCrystalActive);
         }
 
@@ -145,7 +145,9 @@ namespace Stratocraft.Character
         }
 
         private void HandleQuickDropAndInteractHotkeys(
-            Transform playerTransform, Transform? anvilTransform, Stage1MatterCrystalAndMiningController miningCtrl)
+            Transform playerTransform, Transform? anvilTransform, GameObject? swordVisual,
+            GameObject? pickaxeVisual, GameObject? axeVisual, Material? sharedVoxelMat,
+            Stage1MatterCrystalAndMiningController miningCtrl)
         {
             if (Input.GetKeyDown(KeyCode.G) && ActiveHolsterSlot != 0)
             {
@@ -153,12 +155,41 @@ namespace Stratocraft.Character
                 if (HolsterMachine.ExecuteQuickDropG(out UniqueEquipmentInstance dropped)) { _droppedSlotIndex = prevSlot; _droppedEquipment = dropped; }
                 ActiveHolsterSlot = 0;
                 if (_droppedWorldToolProxy != null) UnityEngine.Object.Destroy(_droppedWorldToolProxy);
-                _droppedWorldToolProxy = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                if (_droppedWorldToolProxy.TryGetComponent<Collider>(out var col)) UnityEngine.Object.Destroy(col);
-                _droppedWorldToolProxy.name = "DroppedWeapon_QuickDropG";
-                _droppedWorldToolProxy.transform.position = playerTransform.position + playerTransform.forward * 1.15f + Vector3.up * 0.25f;
-                _droppedWorldToolProxy.transform.localScale = new Vector3(0.18f, 0.12f, 0.85f);
-                miningCtrl.LastFeedbackText = "G Tusu (0.0s Quick-Drop): El esyasi yere atildi! [E] ile geri alin.";
+
+                _droppedWorldToolProxy = new GameObject($"Dropped_{GetActiveSlotWeaponName(prevSlot)}_QuickDropG");
+                _droppedWorldToolProxy.transform.position = playerTransform.position + playerTransform.forward * 1.05f + Vector3.up * 0.12f;
+                _droppedWorldToolProxy.transform.rotation = Quaternion.Euler(85f, playerTransform.eulerAngles.y + 45f, 15f);
+
+                MeshFilter? sourceMf = prevSlot switch
+                {
+                    1 => swordVisual != null ? swordVisual.GetComponentInChildren<MeshFilter>() : null,
+                    2 => pickaxeVisual != null ? pickaxeVisual.GetComponentInChildren<MeshFilter>() : null,
+                    3 => axeVisual != null ? axeVisual.GetComponentInChildren<MeshFilter>() : null,
+                    4 => _heldMaterialBlockMf,
+                    _ => null
+                };
+
+                if (sourceMf != null && sourceMf.sharedMesh != null)
+                {
+                    var mf = _droppedWorldToolProxy.AddComponent<MeshFilter>();
+                    mf.sharedMesh = sourceMf.sharedMesh;
+                    var mr = _droppedWorldToolProxy.AddComponent<MeshRenderer>();
+                    var origRenderer = sourceMf.GetComponent<Renderer>();
+                    mr.sharedMaterial = origRenderer != null && origRenderer.sharedMaterial != null
+                        ? origRenderer.sharedMaterial
+                        : sharedVoxelMat;
+                    _droppedWorldToolProxy.transform.localScale = sourceMf.transform.lossyScale;
+                }
+                else
+                {
+                    var fallback = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    if (fallback.TryGetComponent<Collider>(out var c)) UnityEngine.Object.Destroy(c);
+                    fallback.transform.SetParent(_droppedWorldToolProxy.transform, false);
+                    fallback.transform.localScale = new Vector3(0.08f, 0.08f, 0.75f);
+                    if (sharedVoxelMat != null && fallback.TryGetComponent<Renderer>(out var r)) r.sharedMaterial = sharedVoxelMat;
+                }
+
+                miningCtrl.LastFeedbackText = $"G Tusu (0.0s Quick-Drop): {GetActiveSlotWeaponName(prevSlot)} yere atildi! [E] ile geri alin.";
             }
             if (!Input.GetKeyDown(KeyCode.E)) return;
             if (_droppedWorldToolProxy != null && Vector3.Distance(playerTransform.position, _droppedWorldToolProxy.transform.position) <= 3.2f)

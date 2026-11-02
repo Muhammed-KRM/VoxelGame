@@ -8,6 +8,7 @@ using Stratocraft.Character.Systems;
 using Stratocraft.Core.Logging;
 using Stratocraft.Core.Persistence;
 using Stratocraft.Inventory.Systems;
+using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.Voxel.Systems;
@@ -37,11 +38,17 @@ namespace Stratocraft.Character
         public Material? SharedVoxelMaterial;
 
         private readonly Dictionary<(int cx, int cz), uint[]> _worldChunks = new();
+        private readonly Dictionary<(int cx, int cz), ushort[]> _fluidChunks = new();
         private readonly Dictionary<(int cx, int cz), MeshFilter> _chunkMeshFilters = new();
+        private readonly Dictionary<(int cx, int cz), MeshFilter> _fluidMeshFilters = new();
         private readonly Dictionary<(int cx, int cz), MeshCollider> _chunkColliders = new();
         private readonly HashSet<(int cx, int cz)> _dirtyChunks = new();
+        private readonly HashSet<(int cx, int cz)> _dirtyFluidChunks = new();
         private readonly List<FacetedVoxelTriangle> _reusableTris = new(8192);
+        private readonly List<FacetedVoxelTriangle> _reusableFluidTris = new(4096);
         private readonly List<VoxelChunkComponent> _floatingOriginChunks = new(8);
+        private readonly FluidSimulationSystem _fluidSystem = new();
+        private float _fluidTickTimer;
         private readonly Stage1PlayerMovementBridge _movementBridge = new();
         private readonly Stage1StructuralCollapseBridge _collapseBridge = new();
         private readonly Stage1MatterCrystalAndMiningController _miningCtrl = new();
@@ -62,10 +69,14 @@ namespace Stratocraft.Character
         private GUIStyle? _hudBoxStyle, _crosshairStyle, _tooltipStyle;
 
         /// <summary>Sahnedeki bir voksel chunk'ini canli CSG, Domino ve .sregion sistemlerine kaydeder.</summary>
-        public void RegisterEditableChunk(Vector2Int chunkCoord, uint[] voxels65536, MeshFilter mf, MeshCollider mc)
+        public void RegisterEditableChunk(
+            Vector2Int chunkCoord, uint[] voxels65536, MeshFilter mf, MeshCollider mc,
+            ushort[]? fluids65536 = null, MeshFilter? fluidMf = null)
         {
             var key = (chunkCoord.x, chunkCoord.y);
             _worldChunks[key] = voxels65536; _chunkMeshFilters[key] = mf; _chunkColliders[key] = mc;
+            if (fluids65536 != null) _fluidChunks[key] = fluids65536;
+            if (fluidMf != null) _fluidMeshFilters[key] = fluidMf;
         }
         /// <summary>Sahnedeki bir yaratigi canli AI, HP, Uzuv Kopmasi ve Sutun Yikma koprusune kaydeder.</summary>
         public void RegisterPatrollingCreature(Transform creatureRoot, Vector3 anchorPos, float phaseOffset, bool isFlyingBoss = false)
@@ -91,8 +102,33 @@ namespace Stratocraft.Character
             StepMovementAndOxygen(dt);
             StepHolsterBackpackAndMining(dt);
             StepCombatCreaturesAndRig(dt);
+            StepFluidSimulation(dt);
             RebuildAllDirtyChunks();
             if (spanId >= 0L) _telemetryLogger?.LogPipelineEnd(spanId, "OK");
+        }
+
+        private void StepFluidSimulation(float dt)
+        {
+            _fluidTickTimer -= dt;
+            if (_fluidTickTimer > 0f) return;
+            _fluidTickTimer = 0.12f;
+
+            foreach (var kv in _worldChunks)
+            {
+                if (!_fluidChunks.TryGetValue(kv.Key, out ushort[]? fluids) || fluids == null) continue;
+                int sliceVolume = 16 * MaxEditableVoxelY * 16;
+                long remaining = _fluidSystem.StepChunkFluid(
+                    kv.Value.AsSpan(0, sliceVolume),
+                    fluids.AsSpan(0, sliceVolume),
+                    16, MaxEditableVoxelY, 16,
+                    out int obsidianCount, out int steamCount);
+
+                if (obsidianCount > 0 || steamCount > 0)
+                {
+                    _dirtyChunks.Add(kv.Key);
+                    _dirtyFluidChunks.Add(kv.Key);
+                }
+            }
         }
         private void StepMovementAndOxygen(float dt)
         {
@@ -206,14 +242,22 @@ namespace Stratocraft.Character
                     _lastConnectedAirVoxels = _oxygenSystem.MeasureConnectedAirVolume(_oxygenScratchChunk, wx - cx * 16, wy, wz - cz * 16, 96);
                 }
                 var camTuple = (transform.position.x, transform.position.y, transform.position.z);
+                var prevTuple = camTuple;
                 _floatingOriginSystem.UpdateFloatingOrigin(ref camTuple, _floatingOriginChunks);
+                if (Mathf.Abs(camTuple.Item1 - prevTuple.Item1) > 0.01f || Mathf.Abs(camTuple.Item3 - prevTuple.Item3) > 0.01f)
+                {
+                    Vector3 shift = new Vector3(camTuple.Item1 - prevTuple.Item1, 0f, camTuple.Item3 - prevTuple.Item3);
+                    transform.position += shift;
+                    foreach (var mf in _chunkMeshFilters.Values)
+                        if (mf != null) mf.transform.position += shift;
+                }
             }
             bool holdingTorch = _holsterCtrl.ActiveHolsterSlot == 4 && !_miningCtrl.IsCrystalActive;
             _oxygenSystem.StepOxygen(ref _movementBridge.Vitals, _lastConnectedAirVoxels, holdingTorch, dt);
         }
         private void RebuildAllDirtyChunks()
         {
-            if (_dirtyChunks.Count == 0) return;
+            if (_dirtyChunks.Count == 0 && _dirtyFluidChunks.Count == 0) return;
             foreach (var key in _dirtyChunks)
             {
                 if (!_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) || mf == null) continue;
@@ -227,6 +271,21 @@ namespace Stratocraft.Character
                 }
             }
             _dirtyChunks.Clear();
+
+            if (_dirtyFluidChunks.Count > 0)
+            {
+                foreach (var key in _dirtyFluidChunks)
+                {
+                    if (!_fluidMeshFilters.TryGetValue(key, out MeshFilter? fmf) || fmf == null) continue;
+                    _reusableFluidTris.Clear();
+                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
+                        key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris);
+                    fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
+                        _reusableFluidTris, $"DynamicFluidSurface_{key.cx}_{key.cz}", fmf.sharedMesh);
+                }
+                _dirtyFluidChunks.Clear();
+            }
+
             _movementBridge.ResolveVoxelAndColliderDepenetration(transform, _worldChunks);
         }
 
@@ -248,10 +307,26 @@ namespace Stratocraft.Character
                 string[] p = n.Split('_');
                 if (p.Length >= 3 && int.TryParse(p[1], out int cx) && int.TryParse(p[2], out int cz))
                 {
-                    var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    var (voxels, fluids) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
                     var mc = filters[i].GetComponent<MeshCollider>() ?? filters[i].gameObject.AddComponent<MeshCollider>();
                     mc.sharedMesh = filters[i].sharedMesh;
-                    RegisterEditableChunk(new Vector2Int(cx, cz), voxels, filters[i], mc);
+
+                    MeshFilter? fluidMf = null;
+                    var childMf = filters[i].GetComponentsInChildren<MeshFilter>(true);
+                    for (int c = 0; c < childMf.Length; c++)
+                    {
+                        if (childMf[c] != filters[i] && childMf[c].gameObject.name.StartsWith("FluidSurface_", StringComparison.Ordinal))
+                        {
+                            fluidMf = childMf[c];
+                            break;
+                        }
+                    }
+
+                    RegisterEditableChunk(new Vector2Int(cx, cz), voxels, filters[i], mc, fluids, fluidMf);
+
+                    var chunkComp = new VoxelChunkComponent(cx, cz);
+                    chunkComp.VisualWorldPosition = (cx * 16f, 0f, cz * 16f);
+                    _floatingOriginChunks.Add(chunkComp);
                 }
             }
         }

@@ -279,15 +279,18 @@ namespace Stratocraft.Physics.Systems
                 eccentricityMeters: 0.35f,
                 clusterRadiusMeters: MathF.Max(0.75f, MathF.Pow(Math.Max(1, sourceVoxelCount), 0.3333f)));
 
-            int rubbleTarget = Math.Clamp((int)MathF.Ceiling(sourceVoxelCount * 0.65f), 1, 24);
+            int rubbleTarget = Math.Clamp((int)MathF.Ceiling(sourceVoxelCount * 0.65f), 1, 1024);
             int placed = 0;
+            int maxRadius = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(rubbleTarget) * 0.75f), 2, 8);
 
-            for (int r = 0; r <= 2 && placed < rubbleTarget; r++)
+            for (int r = 0; r <= maxRadius && placed < rubbleTarget; r++)
             {
                 for (int dz = -r; dz <= r && placed < rubbleTarget; dz++)
                 {
                     for (int dx = -r; dx <= r && placed < rubbleTarget; dx++)
                     {
+                        if (Math.Max(Math.Abs(dx), Math.Abs(dz)) != r) continue;
+
                         int tx = settleLocalX + dx;
                         int tz = settleLocalZ + dz;
                         if ((uint)tx >= (uint)sizeX || (uint)tz >= (uint)sizeZ)
@@ -302,7 +305,7 @@ namespace Stratocraft.Physics.Systems
                             ty--;
                         }
 
-                        while (ty < sizeY - 1 && VoxelBitUtility.IsPhysicallySolid(
+                        while (ty < sizeY - 2 && VoxelBitUtility.IsPhysicallySolid(
                                    chunkVoxels[GeodesicSupportDijkstraJob.GridIndex(tx, ty, tz, sizeX, sizeY, sizeZ, layout)]))
                         {
                             ty++;

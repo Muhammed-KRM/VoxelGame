@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#014` (Faz 1 & Faz 2 Canlı PlayMode Testinde Bildirilen 6 Kritik Oynanış Hatası Tamamen Giderildi) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T17:48:00+03:00` |
+| **Devir Numarası** | `#015` (Faz 1 & 2 Derin Denetim Eksikleri: Domino Kütle Korunumu, Akışkan Simülasyonu, G Tuşu 3B Silah Bırakma, Floating Origin ve Yaratık Engel Basamak Algılama Tamamlandı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T20:44:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Tamamlandı (8/8 Paket + 6 Canlı PlayMode Düzeltmesi PASS) -> Sıradaki: Kullanıcı Doğrulaması / Faz 3` |
+| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Sahne & Mimari Eksikleri %100 Giderildi -> Sıradaki: Faz 3 Başlangıcı (Örs Zanaatı & Klan Alanı)` |
 | **Aktif Test Durumu** | `42/42 .NET 10 Core PASS`, `34/34 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: < 16.0 MB) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -24,7 +24,27 @@
 
 ---
 
-## 2. Son Oturumda Yapılanlar (Devir #014 — 6 Canlı PlayMode Hatasının Kök Neden Çözümleri)
+## 2. Son Oturumda Yapılanlar (Devir #015 — Derin Denetimde Tespit Edilen 5 Kritik Sahne Eksiğinin Giderilmesi)
+
+1. **Geliştirme 1 — Domino Yıkımda 24 Blok Sınırının Kaldırılması & Kütle Korunumlu Pancake Katman Yığılması (`StructuralCollapseSystem.cs`):**
+   - **Kök Neden:** `rubbleTarget = Math.Clamp((int)MathF.Ceiling(sourceVoxelCount * 0.65f), 1, 24)` formülü yüzünden çöken bina ne kadar büyük olursa olsun yere en fazla 24 blok moloz düşüyor, kalan yüzlerce blok buharlaşıyordu; ayrıca arama yarıçapı `r <= 2` sabitti.
+   - **Çözüm:** Tavan sınırı `1024` bloğa çıkarıldı (`Math.Clamp(..., 1, 1024)`), dinamik yarıçap (`r <= maxRadius`) eklendi ve dikeyde dolan sütunların üstüne katman katman yığılma (`ty++`) ile gerçek Pancake çöküş ve kütle korunumu sağlandı.
+
+2. **Geliştirme 2 — Akışkan (Su & Lav) Simülasyonunun ve Sıvı Yüzey Meşinin Sahnede Canlı Döngüye Bağlanması (`Stage1InteractivePlayController.cs`):**
+   - **Kök Neden:** `FluidSimulationSystem` ve `FluidSurfaceSkirtMesher` sınıfları yazılmış olmasına rağmen canlı sahne kontrolcüsünde hiçbir zaman çağrılmıyordu; sahnede gölet ve lav kalderası sadece kuru çukurlardı.
+   - **Çözüm:** `_fluidChunks`, `_fluidMeshFilters` ve `FluidSimulationSystem` canlı sahneye bağlandı. `Update` içinde 8 Hz hızında `StepFluidSimulation` adımlanıyor; blok kırılıp bent yıkıldığında su ve lav akıyor, karşılaştıklarında `Obsidyen (ID=11)` üretiyor ve `RebuildAllDirtyChunks` içinde `FluidSurfaceSkirtMesher` ile dinamik sıvı yüzeyi yeniden örülüyor.
+
+3. **Geliştirme 3 — G Tuşu Quick-Drop ile Yere Beyaz Küp Yerine Eldeki Gerçek 3B Silahın/Aletin Atılması (`Stage1HolsterAndBackpackController.cs`):**
+   - **Kök Neden:** `HandleQuickDropAndInteractHotkeys` metodu `GameObject.CreatePrimitive(PrimitiveType.Cube)` ile renksiz beyaz bir kutu oluşturuyordu.
+   - **Çözüm:** Elden bırakılan aletin aktif slotuna göre gerçek 3B meşi (`Kılıç`, `Demir Kazma`, `Demir Balta` veya `İnşa Bloğu`) klonlanarak yere fiziksel yönüyle bırakılıyor; `E` ile geri alındığında kusursuz olarak aynı el yuvasına kuşanılıyor.
+
+4. **Geliştirme 4 — Chunk-Snapped Floating Origin'in Canlı Sahneye Gerçekten Bağlanması (`Stage1InteractivePlayController.cs`):**
+   - **Kök Neden:** `_floatingOriginChunks` listesi boştu ve kamera koordinat tuple'ı yerel kopya olarak verilip Unity Transform'ları ötelenmiyordu.
+   - **Çözüm:** `EnsureChunksInitialized` içinde sahnedeki tüm aktif chunk'ların `VoxelChunkComponent` bileşenleri listeye bağlandı; `_floatingOriginSystem.UpdateFloatingOrigin` tetiklendiğinde `transform.position` ve sahnedeki tüm chunk meşleri fiziksel olarak $-(K \times 32\text{m})$ kaydırılıyor.
+
+5. **Geliştirme 5 — Canlıların Voksel Araziyi Tanıması, Basamak Aşması (Step-Up) ve Duvarlardan Sıyrılması (`Stage1CreatureSimulationBridge.cs`):**
+   - **Kök Neden:** Yaratıklar yürürken ve kovalarken voksel bloklarını görmüyor, sadece ada matematik formülünden (`SampleIslandTopSurfaceY`) yükseklik alıp blokların içine giriyordu.
+   - **Çözüm:** `SampleVoxelOrTerrainHeight` metoduyla canlı voksel verisi tarandı; yaratıklar önlerinde $\le 1.25\text{m}$ basamak varsa tırmanıyor (`step-up`), önlerinde aşamayacakları yüksek bir duvar/blok varsa teğet yönüne saparak engelin etrafından dolanıyor.
 
 1. **Çözüm 1 — Sürekli Zıplama/Ekran Titremesi (Pogo-Stick Jitter) ve Normal Zıplayamama Hatası (`Stage1PlayerMovementBridge.cs` - 292 satır):**
    - **Kök Neden:** `SampleSupportGroundHeight` yüzey yüksekliğini `y + 0.65f` döndürürken, hemen ardından çalışan `ResolveVoxelAndColliderDepenetration` metodu `footWy = FloorToInt(pos.y + 0.12f)` kontrolüyle oyuncuyu her karede `y + 1.04f`'e fırlatıyor, ertesi karede `IsGrounded = 0` olduğu için yerçekimi tekrar aşağı çekiyor ve `Space` ile zıplama engelleniyordu.

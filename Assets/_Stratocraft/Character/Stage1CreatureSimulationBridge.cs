@@ -92,7 +92,7 @@ namespace Stratocraft.Character
                 }
                 else
                 {
-                    StepPatrolAgent(a, time);
+                    StepPatrolAgent(a, time, worldChunks);
                 }
             }
             if (nearest != null)
@@ -103,7 +103,7 @@ namespace Stratocraft.Character
             }
         }
 
-        private void StepPatrolAgent(LiveCreatureAgent a, float time)
+        private void StepPatrolAgent(LiveCreatureAgent a, float time, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             a.State = CreatureAiState.Patrol;
             float t = time * 1.35f + a.PhaseOffset;
@@ -118,7 +118,7 @@ namespace Stratocraft.Character
             float stride = Mathf.Sin(t * 1.1f) * 1.85f * a.SpeedMultiplier;
             Vector3 forward = Quaternion.Euler(0f, a.BaseYaw, 0f) * Vector3.forward;
             Vector3 nextPos = a.AnchorPos + forward * stride;
-            nextPos.y = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(nextPos.x, nextPos.z);
+            nextPos.y = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks);
             a.Root.position = nextPos;
             float pitch = a.LegSevered ? 62f : Mathf.Abs(Mathf.Cos(t * 2.2f)) * 5f;
             a.Root.rotation = Quaternion.Euler(pitch, a.BaseYaw + (Mathf.Cos(t * 1.1f) >= 0f ? 0f : 180f), 0f);
@@ -144,11 +144,34 @@ namespace Stratocraft.Character
             if (horizDist > 2.15f)
             {
                 a.State = CreatureAiState.AggroChase;
-                pos += flatDir * (a.BaseSpeed * a.SpeedMultiplier * deltaTime);
                 bool flying = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
-                pos.y = flying
-                    ? Mathf.Lerp(pos.y, playerPos.y + 1.25f, deltaTime * 3.0f)
-                    : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(pos.x, pos.z);
+                Vector3 nextPos = pos + flatDir * (a.BaseSpeed * a.SpeedMultiplier * deltaTime);
+
+                if (flying)
+                {
+                    nextPos.y = Mathf.Lerp(pos.y, playerPos.y + 1.25f, deltaTime * 3.0f);
+                    pos = nextPos;
+                }
+                else
+                {
+                    float targetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, pos.y, worldChunks);
+                    float stepDelta = targetY - pos.y;
+
+                    // 1.2m'ye kadar olan basamaklari tirmanir; cok dik duvarda yan tegete sapar
+                    if (stepDelta <= 1.25f)
+                    {
+                        nextPos.y = Mathf.MoveTowards(pos.y, targetY, deltaTime * 6.5f);
+                        pos = nextPos;
+                    }
+                    else
+                    {
+                        // Engelin etrafini dolasmak icin sag/sol teget yonu
+                        Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
+                        Vector3 detourPos = pos + tangent * (a.BaseSpeed * a.SpeedMultiplier * deltaTime * 0.75f);
+                        detourPos.y = SampleVoxelOrTerrainHeight(detourPos.x, detourPos.z, pos.y, worldChunks);
+                        pos = detourPos;
+                    }
+                }
                 a.Root.position = pos;
             }
             else if (vertDelta >= 2.2f && (a.Capabilities & AnatomyCapabilityFlags.VoxelSiegeBreaker) != 0)
@@ -285,6 +308,32 @@ namespace Stratocraft.Character
             go.transform.localScale = new Vector3(0.24f, 0.52f, 0.24f);
             go.AddComponent<MeshFilter>().sharedMesh = limbMesh;
             if (sharedMat != null) go.AddComponent<MeshRenderer>().sharedMaterial = sharedMat;
+        }
+
+        private static float SampleVoxelOrTerrainHeight(
+            float worldX, float worldZ, float currentY, Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            int wx = Mathf.FloorToInt(worldX);
+            int wz = Mathf.FloorToInt(worldZ);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            int lx = wx - cx * 16;
+            int lz = wz - cz * 16;
+
+            if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
+            {
+                int startY = Mathf.Clamp(Mathf.FloorToInt(currentY) + 3, 2, Stage1InteractivePlayController.MaxEditableVoxelY - 1);
+                for (int y = startY; y >= 1; y--)
+                {
+                    uint raw = chunk[(y << 8) | (lz << 4) | lx];
+                    if (VoxelBitUtility.IsPhysicallySolid(raw))
+                    {
+                        return y + 1.0f;
+                    }
+                }
+            }
+
+            return StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
         }
     }
 }
