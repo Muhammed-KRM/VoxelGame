@@ -6,7 +6,7 @@ Mesh:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Mesh_SeamlessIslandChunk_-2_0
+  m_Name: DynamicSeamlessChunk_-2_0
   serializedVersion: 12
   m_SubMeshes:
   - serializedVersion: 2
