@@ -36,7 +36,9 @@ namespace Stratocraft.Physics.Jobs
         private static readonly int[] StepDz = { 0, 0, 0, 0, 1, -1, 0, 0, 1, -1 };
 
         [ThreadStatic] private static int[]? _tlsBucketHeads;
+        [ThreadStatic] private static int[]? _tlsPrevInBucket;
         [ThreadStatic] private static int[]? _tlsNextInBucket;
+        [ThreadStatic] private static short[]? _tlsNodeBucket;
         [ThreadStatic] private static int[]? _tlsAnchorCol;
         [ThreadStatic] private static int[]? _tlsParentIdx;
         [ThreadStatic] private static short[]? _tlsSpringY;
@@ -65,14 +67,18 @@ namespace Stratocraft.Physics.Jobs
             EnsureScratchBuffers(
                 totalVoxels,
                 out int[] bucketHeads,
+                out int[] prevInBucket,
                 out int[] nextInBucket,
+                out short[] nodeBucket,
                 out int[] anchorCol,
                 out int[] parentIdx,
                 out short[] springY,
                 out byte[] archLocked);
 
             Array.Fill(bucketHeads, -1, 0, MaxDialBuckets);
+            Array.Fill(prevInBucket, -1, 0, totalVoxels);
             Array.Fill(nextInBucket, -1, 0, totalVoxels);
+            Array.Fill(nodeBucket, (short)-1, 0, totalVoxels);
             Array.Fill(anchorCol, -1, 0, totalVoxels);
             Array.Fill(parentIdx, -1, 0, totalVoxels);
             Array.Clear(archLocked, 0, totalVoxels);
@@ -102,7 +108,9 @@ namespace Stratocraft.Physics.Jobs
                             props.IsSkyAnchor ||
                             VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.KaliciYapi;
                         bool isTriaxialAnchor = IsTwoDeepTriaxiallyConfinedRock(
-                            voxels, x, y, z, sizeX, sizeY, sizeZ, supportFloorY, raw, layout);
+                            voxels, x, y, z, sizeX, sizeY, sizeZ, supportFloorY, raw, layout) ||
+                            IsFloatingIslandNaturalSpineFoundation(
+                                voxels, x, y, z, sizeX, sizeY, sizeZ, raw, layout);
 
                         if (isSupportFloor || isPermanentOrSkyAnchor || isTriaxialAnchor)
                         {
@@ -110,7 +118,7 @@ namespace Stratocraft.Physics.Jobs
                             outCantileverSpan[idx] = 0;
                             anchorCol[idx] = EncodeAnchorColumn(x, z);
                             springY[idx] = (short)y;
-                            PushBucket(bucketHeads, nextInBucket, 0, idx);
+                            PushBucket(bucketHeads, prevInBucket, nextInBucket, nodeBucket, 0, idx);
                         }
                         else
                         {
@@ -127,8 +135,15 @@ namespace Stratocraft.Physics.Jobs
                 while (bucketHeads[dist] != -1)
                 {
                     int current = bucketHeads[dist];
-                    bucketHeads[dist] = nextInBucket[current];
+                    int nextHead = nextInBucket[current];
+                    bucketHeads[dist] = nextHead;
+                    if (nextHead != -1)
+                    {
+                        prevInBucket[nextHead] = -1;
+                    }
+                    prevInBucket[current] = -1;
                     nextInBucket[current] = -1;
+                    nodeBucket[current] = -1;
 
                     if (outGeodesicDistance[current] < dist)
                     {
@@ -221,7 +236,7 @@ namespace Stratocraft.Physics.Jobs
                             anchorCol[nIdx] = isPureVerticalColumn ? EncodeAnchorColumn(nx, nz) : curAnchor;
                             springY[nIdx] = nextSpringY;
                             parentIdx[nIdx] = current;
-                            PushBucket(bucketHeads, nextInBucket, candDist, nIdx);
+                            PushBucket(bucketHeads, prevInBucket, nextInBucket, nodeBucket, candDist, nIdx);
                         }
                     }
                 }
@@ -474,10 +489,73 @@ namespace Stratocraft.Physics.Jobs
             return confinedDirs >= 4;
         }
 
+        /// <summary>
+        /// Yuzen Ada (Floating Island) dogal omurga mesnedi:
+        /// YMajorChunk duzeninde (yuzen ada chunk'lari) bir sutundaki en alt dogal bazalt/kaya kabugu (y &lt;= 9)
+        /// adanin kaldırma omurgasina baglidir; ustteki dogal bloklar ise aralarinda kazilmis bosluk olmadigi surece
+        /// dikey kolon (w_vert = 0) uzerinden bu omurgadan destek alir.
+        /// </summary>
+        private static bool IsFloatingIslandNaturalSpineFoundation(
+            ReadOnlySpan<uint> voxels,
+            int x,
+            int y,
+            int z,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            uint raw,
+            VoxelGridMemoryLayout layout)
+        {
+            if (layout != VoxelGridMemoryLayout.YMajorChunk ||
+                y > 10 ||
+                VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
+            {
+                return false;
+            }
+
+            // Bu sutundaki en alt kati/SDF kabuk vokselinden y'ye kadar kazilmis bir hava boslugu (Air) var mi?
+            int lowestShellY = -1;
+            for (int scanY = 1; scanY <= y; scanY++)
+            {
+                uint scanRaw = voxels[GridIndex(x, scanY, z, sizeX, sizeY, sizeZ, layout)];
+                bool isNaturalShellOrSolid = VoxelBitUtility.GetMaterialId(scanRaw) != MaterialIdCatalog.Air &&
+                                             VoxelBitUtility.GetDensityOrLiquid(scanRaw) >= 16;
+                if (isNaturalShellOrSolid)
+                {
+                    if (lowestShellY < 0)
+                    {
+                        lowestShellY = scanY;
+                    }
+                }
+                else if (lowestShellY >= 0)
+                {
+                    // Altinda kazilmis gercek bir hava boslugu / magara var -> artik dogrudan ada omurgasina oturmuyor!
+                    return false;
+                }
+            }
+
+            if (lowestShellY < 0 || lowestShellY > 9)
+            {
+                return false;
+            }
+
+            // Tek basina havada kalan 1 blokluk parcalar degil, en az 2 dogal kati komsusu olan ada govdesi
+            int solidNeighbors = 0;
+            if (x > 0 && VoxelBitUtility.IsPhysicallySolid(voxels[GridIndex(x - 1, y, z, sizeX, sizeY, sizeZ, layout)])) solidNeighbors++;
+            if (x + 1 < sizeX && VoxelBitUtility.IsPhysicallySolid(voxels[GridIndex(x + 1, y, z, sizeX, sizeY, sizeZ, layout)])) solidNeighbors++;
+            if (z > 0 && VoxelBitUtility.IsPhysicallySolid(voxels[GridIndex(x, y, z - 1, sizeX, sizeY, sizeZ, layout)])) solidNeighbors++;
+            if (z + 1 < sizeZ && VoxelBitUtility.IsPhysicallySolid(voxels[GridIndex(x, y, z + 1, sizeX, sizeY, sizeZ, layout)])) solidNeighbors++;
+            if (y + 1 < sizeY && VoxelBitUtility.IsPhysicallySolid(voxels[GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout)])) solidNeighbors++;
+
+            return solidNeighbors >= 2;
+        }
+
         private static void EnsureScratchBuffers(
             int totalVoxels,
             out int[] bucketHeads,
+            out int[] prevInBucket,
             out int[] nextInBucket,
+            out short[] nodeBucket,
             out int[] anchorCol,
             out int[] parentIdx,
             out short[] springY,
@@ -491,7 +569,9 @@ namespace Stratocraft.Physics.Jobs
             if (_tlsNextInBucket == null || _tlsNextInBucket.Length < totalVoxels)
             {
                 int cap = Math.Max(totalVoxels, 4096);
+                _tlsPrevInBucket = new int[cap];
                 _tlsNextInBucket = new int[cap];
+                _tlsNodeBucket = new short[cap];
                 _tlsAnchorCol = new int[cap];
                 _tlsParentIdx = new int[cap];
                 _tlsSpringY = new short[cap];
@@ -499,7 +579,9 @@ namespace Stratocraft.Physics.Jobs
             }
 
             bucketHeads = _tlsBucketHeads;
+            prevInBucket = _tlsPrevInBucket!;
             nextInBucket = _tlsNextInBucket!;
+            nodeBucket = _tlsNodeBucket!;
             anchorCol = _tlsAnchorCol!;
             parentIdx = _tlsParentIdx!;
             springY = _tlsSpringY!;
@@ -517,15 +599,49 @@ namespace Stratocraft.Physics.Jobs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void PushBucket(int[] bucketHeads, int[] nextInBucket, int bucket, int nodeIndex)
+        private static void PushBucket(
+            int[] bucketHeads,
+            int[] prevInBucket,
+            int[] nextInBucket,
+            short[] nodeBucket,
+            int bucket,
+            int nodeIndex)
         {
-            if (nextInBucket[nodeIndex] != -1 || bucketHeads[bucket] == nodeIndex)
+            int curBucket = nodeBucket[nodeIndex];
+            if (curBucket == bucket)
             {
                 return;
             }
 
-            nextInBucket[nodeIndex] = bucketHeads[bucket];
+            if (curBucket != -1)
+            {
+                int p = prevInBucket[nodeIndex];
+                int n = nextInBucket[nodeIndex];
+                if (p != -1)
+                {
+                    nextInBucket[p] = n;
+                }
+                else
+                {
+                    bucketHeads[curBucket] = n;
+                }
+
+                if (n != -1)
+                {
+                    prevInBucket[n] = p;
+                }
+            }
+
+            int oldHead = bucketHeads[bucket];
+            prevInBucket[nodeIndex] = -1;
+            nextInBucket[nodeIndex] = oldHead;
+            if (oldHead != -1)
+            {
+                prevInBucket[oldHead] = nodeIndex;
+            }
+
             bucketHeads[bucket] = nodeIndex;
+            nodeBucket[nodeIndex] = (short)bucket;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

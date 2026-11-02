@@ -253,6 +253,17 @@ namespace Stratocraft.WorldGen.Generators
                 return MaterialIdCatalog.Dirt;
             }
 
+            // 14 Yeralti Cevheri (OreDistributionTable: Bor, Kukurt, Bakir, Kalay, Demir, Gumus, Altin, Kobalit, Titanyum, Platin, Uranyum, Mithril, Astralit, Aetherium)
+            int depthFromSurface = Math.Max(1, (int)(topH - y));
+            int mappedGeologicalY = -(depthFromSurface * 12) - (Math.Abs(wx * 13 + wz * 29) % 45);
+            int ringTier = Math.Clamp((Math.Abs(wx) + Math.Abs(wz)) / 6, 0, 6);
+            float geoNoise01 = ((Math.Abs(wx * 73856093 ^ y * 19349663 ^ wz * 83492791) & 1023) / 1023.0f);
+            byte sampledOre = OreDistributionTable.SampleOreMaterial(mappedGeologicalY, ringTier, geoNoise01);
+            if (sampledOre != MaterialIdCatalog.Stone)
+            {
+                return sampledOre;
+            }
+
             int oreHash = Math.Abs(wx * 73 + y * 37 + wz * 19) & 31;
             return oreHash switch
             {

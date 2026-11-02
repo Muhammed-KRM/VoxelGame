@@ -157,6 +157,12 @@ namespace Stratocraft.Physics.Jobs
                             continue;
                         }
 
+                        if (geodesicDistance[idx] == 0)
+                        {
+                            // Gokyuzu ankraji / yuzen ada omurga mesnedi tabani yuku dogrudan ada temelinde sönümler
+                            continue;
+                        }
+
                         // B) Alti Bos (Konsol veya Kemer): Kesme (Shear) Dayanimi Kontrolu ve Daha Yakin Mesnetlere (%50-%50 Kilit Tasi Dahil) Aktarim
                         if (lateralConfinedFaces < 4 && totalLoad > props.ComputeEffectiveShearLimit(microCrossSection16))
                         {
@@ -340,6 +346,13 @@ namespace Stratocraft.Physics.Jobs
             Span<byte> ioUnsupportedOrCrushedMask,
             VoxelGridMemoryLayout layout)
         {
+            int maxCoord = alongX ? sizeX : sizeZ;
+            if (cavityY <= 0 || spanStart <= 0 || (spanStart + spanWidth) >= maxCoord)
+            {
+                // Acik gokyuzu veya dis sinir boslugu yeralti maden galerisi degildir
+                return 0;
+            }
+
             int loosenedCount = 0;
             float halfSpan = spanWidth * 0.5f;
             float center = spanStart + halfSpan - 0.5f;
@@ -348,6 +361,13 @@ namespace Stratocraft.Physics.Jobs
             {
                 int x = alongX ? s : fixedCoord;
                 int z = alongX ? fixedCoord : s;
+
+                int floorCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, cavityY - 1, z, sizeX, sizeY, sizeZ, layout);
+                if (!VoxelBitUtility.IsPhysicallySolid(voxels[floorCheckIdx]))
+                {
+                    // Yuzen adanin altindaki acik gokyuzu gibi tabani olmayan bosluklarda Terzaghi tavan gocugu uygulanmaz
+                    continue;
+                }
 
                 int roofCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, cavityY + 1, z, sizeX, sizeY, sizeZ, layout);
                 uint roofRaw = voxels[roofCheckIdx];

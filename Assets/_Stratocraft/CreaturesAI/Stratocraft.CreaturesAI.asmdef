@@ -6,7 +6,6 @@
     "Stratocraft.Voxel",
     "Stratocraft.Physics",
     "Stratocraft.WorldGen",
-    "Stratocraft.Character",
     "Unity.Burst",
     "Unity.Collections",
     "Unity.Entities",

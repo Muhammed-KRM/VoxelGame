@@ -63,6 +63,46 @@
       "bakeVat": false
     },
     {
+      "assetId": "tool_pickaxe_iron",
+      "category": "WeaponHilt",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.52, "y": 0.72, "z": 0.08 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 320, "lod1": 160, "lod2": 60 },
+      "defaultMaterialId": 51,
+      "requiredSockets": [
+        "Socket_Grip_Main",
+        "Socket_Grip_Offhand",
+        "Socket_VoxelBlade"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
+      "assetId": "tool_axe_iron",
+      "category": "WeaponHilt",
+      "phase": 2,
+      "generatorPath": "PathA_BlenderBpy",
+      "targetDimensionsMeters": { "x": 0.36, "y": 0.68, "z": 0.07 },
+      "dimensionToleranceRatio": 0.02,
+      "pivotRule": "BottomCenter_Zero",
+      "forwardAxis": "+Z",
+      "upAxis": "+Y",
+      "polyBudget": { "lod0": 320, "lod1": 160, "lod2": 60 },
+      "defaultMaterialId": 51,
+      "requiredSockets": [
+        "Socket_Grip_Main",
+        "Socket_Grip_Offhand",
+        "Socket_VoxelBlade"
+      ],
+      "dismemberableBones": [],
+      "bakeVat": false
+    },
+    {
       "assetId": "armor_set_iron_vanguard",
       "category": "Armor15Piece",
       "phase": 2,

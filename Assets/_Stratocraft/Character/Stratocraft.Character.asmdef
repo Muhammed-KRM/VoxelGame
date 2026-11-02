@@ -7,6 +7,8 @@
     "Stratocraft.Physics",
     "Stratocraft.WorldGen",
     "Stratocraft.Rendering",
+    "Stratocraft.Inventory",
+    "Stratocraft.CreaturesAI",
     "Unity.Burst",
     "Unity.Collections",
     "Unity.Entities",

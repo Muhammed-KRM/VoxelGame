@@ -13,38 +13,79 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#012` (FPS Viewmodel, CSG Chunk Init, Sırt Çantası Kamera Eğimi Düzeltildi, Son Commit: `0dc82cc`) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T01:05:00+03:00` |
+| **Devir Numarası** | `#014` (Faz 1 & Faz 2 Canlı PlayMode Testinde Bildirilen 6 Kritik Oynanış Hatası Tamamen Giderildi) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T17:48:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 ve Faz 2 Oynanış Hataları Çözüldü -> Sıradaki: C (Kristal) ve I (Çanta) Tuş Test Doğrulaması & Faz 3` |
-| **Aktif Test Durumu** | `40/40 .NET 10 Core PASS`, `32/32 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
-| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`%100` Bütçe İçi, Hedef: < 16.0 MB) |
-| **Çalışma Belleği (RAM)** | `< 2.5 GB` |
-| **Son Başarılı Commit** | `0dc82cc` (*fix: FPS viewmodel + CSG chunk init + backpack mat kamera + WorldGen namespace refactor*) |
+| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Tamamlandı (8/8 Paket + 6 Canlı PlayMode Düzeltmesi PASS) -> Sıradaki: Kullanıcı Doğrulaması / Faz 3` |
+| **Aktif Test Durumu** | `42/42 .NET 10 Core PASS`, `34/34 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: < 16.0 MB) |
+| **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
+| **Son Kalite Kapısı** | `powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 2` -> **`PASS (Exit Code: 0)`** |
 
 ---
 
-## 2. Son Oturumda Yapılanlar ve Çözülen Kritik Sorunlar
+## 2. Son Oturumda Yapılanlar (Devir #014 — 6 Canlı PlayMode Hatasının Kök Neden Çözümleri)
 
-1. **FPS Viewmodel ve Kamera Bakış Açısı (Bible §3.5):**
-   - Karakterin elindeki kılıç ve silahlar gövdede (hip seviyesinde) kaldığı için FPS kamerasının görüş açısı (frustum) dışına düşüyordu.
-   - `WeaponPivot` doğrudan `Main Camera`'ya parent olarak bağlandı ve lokal pozisyonu `(0.30, -0.24, 0.50)` olarak ayarlandı. Artık kılıç sağ alt köşede canlı görünüyor, ortada artı imleci (crosshair) bulunuyor.
-   - Sahne başlangıcında kamera referansı bulunamazsa otomatik tespit veya fallback kamera oluşturma mekanizması eklendi.
+1. **Çözüm 1 — Sürekli Zıplama/Ekran Titremesi (Pogo-Stick Jitter) ve Normal Zıplayamama Hatası (`Stage1PlayerMovementBridge.cs` - 292 satır):**
+   - **Kök Neden:** `SampleSupportGroundHeight` yüzey yüksekliğini `y + 0.65f` döndürürken, hemen ardından çalışan `ResolveVoxelAndColliderDepenetration` metodu `footWy = FloorToInt(pos.y + 0.12f)` kontrolüyle oyuncuyu her karede `y + 1.04f`'e fırlatıyor, ertesi karede `IsGrounded = 0` olduğu için yerçekimi tekrar aşağı çekiyor ve `Space` ile zıplama engelleniyordu.
+   - **Çözüm:** Zemin yüksekliği (`Physics.Raycast` + voksel tavan sınırlaması) ile gömülme kurtarma (`ResolveVoxelAndColliderDepenetration`) tek bir tutarlı referansta birleştirildi; `0.16s` `CoyoteGroundedTimer` ve `0.20s` `JumpLaunchTimer` eklendi. Karakter zeminde sıfır titremeyle pürüzsüz yürür ve `Space` tuşuyla her basışta kararlı zıplar.
 
-2. **Sol Bilek Madde Kristali CSG Kazı & İnşa (Bible §3.1-§3.2):**
-   - Play Mode'a girildiğinde `_worldChunks` sözlüğü Unity sahne serileştirmesi nedeniyle boşalıyordu ve kazı ışını hiçbir voksile temas edemiyordu.
-   - `Stage1InteractivePlayController.cs` içine `EnsureChunksInitialized()` entegre edildi. Sahnede bulunan 16 chunk runtime başlangıcında kaydedilerek CSG kazı ve inşa işlemlerine hazır hale getirildi.
+2. **Çözüm 2 — Eldeki Malzemeyi Bırakma (`Q` / `4`) ve İnşa Önizlemesinin (Ghost Preview) Sürekli Ekranda Kalması (`Stage1HolsterAndBackpackController.cs`, `Stage1MatterCrystalAndMiningController.cs`):**
+   - **Kök Neden:** `UpdatePlacementGhostVisual` metodu `activeSlot != 1` koşulu yüzünden elde Kazma (`2`) veya Balta (`3`) varken bile inşa önizleme küpünü ekranda tutuyordu; ayrıca `4` numaralı malzeme yuvasından çıkma kısayolu net değildi.
+   - **Çözüm:** **`Q` tuşu** (veya tekrar **`4` tuşuna** basmak) eldeki malzemeyi anında bırakıp Kazmaya (`Slot 2`) döner ve önizlemeyi kapatır. İnşa önizleme hayaleti yalnızca elde malzeme varken (`Slot 4`) gösterilir; Kılıçta (`Slot 1`) tamamen gizlenir.
 
-3. **Fiziksel Sırt Çantası Örtüsü (Bible §3.3-§3.4 & §6):**
-   - 'I' tuşuna basıldığında örtü `y=0.03` seviyesinde yerde açılıyor fakat kamera ufka baktığı için görünmüyordu.
-   - Envanter açıldığında kamera ~52° aşağı eğilecek şekilde yönlendirildi.
-   - `StratocraftStage1SceneBuilder.cs` içindeki `BoxCollider` ekleme mantığı temizlendi ve sağlamlaştırıldı.
+3. **Çözüm 3 — Malzemeleri Sadece Şekilli Değil, Doğal Arazi Haliyle (`ShapeID = 0: Doğal Hal`) Koyabilme (`Stage1MatterCrystalAndMiningController.cs`):**
+   - **Kök Neden:** `ExecuteCrystalOrRubblePlacement` içinde `SelectedShapeId == 0 ? (byte)1 : SelectedShapeId` ifadesi `ShapeID = 0` (Doğal Arazi) seçili olsa bile zorla `ShapeID = 1` (Tam Küp Blok) yazıyordu.
+   - **Çözüm:** Varsayılan inşa modu **`0: Doğal Hal (Organik Arazi)`** (`ShapeID = 0`, `BlokKokenDurumu.DogalKutle`) yapıldı; `Right Click` ile konulduğunda `HybridSurfaceNetsAndShapeMesher` (**Kanal 1 Surface Nets**) üzerinden mevcut araziyle `0.000m` dikişsiz organik tepecik olarak birleşir. **`V` tuşu** ile `0: Doğal Hal` ve `1..7` mimari şekiller (`Tam Küp`, `45° Rampa`, `İç/Dış Köşe`, `Kemer`, `Kilit Taşı`, `Sekizgen Sütun`, `Mikro-Blok`) arasında geçiş yapılır.
 
-4. **Namespace ve Proje Mimarisi Refactor:**
-   - `StratocraftFloatingIslandWorldGen.cs` dosyası `Assets/_Stratocraft/WorldGen/` altına taşındı, isim alanı `Stratocraft.WorldGen.Generators` yapıldı.
-   - Unity C# projesinde `MathF.Min` kaynaklı tür uyuşmazlığı giderildi (`Math.Min` kullanıldı).
-   - `Stratocraft.Character.asmdef` dosyasına `Stratocraft.WorldGen` derleme referansı eklendi.
-   - Standalone testler ve Unity EditMode testleri sıfır hata ile derlendi ve yeşil geçti.
+4. **Çözüm 4 — Kazma/Balta/Kristal ile Kırma Alanı Boyutunu Seçme (`Fare Tekerleği` / `T`) ve 3B Kırma Çerçevesi (`Stage1MatterCrystalAndMiningController.cs`):**
+   - **Kök Neden:** `ExecutePhysicalToolStrike` fırça yarıçapını yok sayıp her zaman tek voksel kırıyordu ve yerde kırma alanını gösteren bir 3B çerçeve yoktu.
+   - **Çözüm:** **Fare Tekerleği (`Scroll`)** veya **`T` tuşu** ile kırma alanı **`1x1x1 Tek Blok` -> `2x2x2 Orta Alan` -> `3x3x3 Geniş Alan` -> `5x5x5 Dev Kazı`** arasında seçilir, yerde altın sarısı 3B kırma çerçevesi büyüyüp küçülür ve kazma/balta seçilen hacmin tamamını kırar.
+
+5. **Çözüm 5 — Karakter 3B Modelinde Baş Üstünde Duran Gövde Parçası ve Çömelme/Kalkma Uyumsuzluğu (`StratocraftStage1SceneBuilder.cs`, `Stage1ArticulatedRigAnimator.cs`):**
+   - **Kök Neden:** `TacticalClothBackpack_3Tier` nesnesi `armor_slot_torso_layer3_cuirass.glb` (vertex'leri zaten `y ≈ 1.15m` göğüs hizasında olan zırh gövdesi) kullanılarak `playerRoot` altına `localPosition.y = 1.18f` ile eklenmişti (`1.18 + 1.15 = 2.33m` yükseklikte başın üstünde havada duruyordu ve çömelince `PlayerBodyRoot` ile birlikte inmiyordu).
+   - **Çözüm:** `TacticalClothBackpack_3Tier` doğrudan `PlayerBody_EquippedIronVanguard` (`bodyGo`) altına sırt hizasına (`y = 0.42f, z = -0.18f`, ölçek `(0.65, 0.55, 0.50)`) bağlandı ve çömelme (`Ctrl`) `targetYOffset = 0f` olarak düzeltildi. Artık ayaklar zemine tam basar, gövde/sırt parçası çömelip kalkarken karakterle tek parça hareket eder ve FPS modunda kameranın içine girmez.
+
+6. **Çözüm 6 — FPS Kılıç Görünümü, Kamera Sabitleme (`Camera-Clutch` Tam Kilit) ve Omuzdan Tam Ekran Kılıç Savurma Yayı (`Stage1DirectionalCombatBridge.cs`, `Stage1InteractivePlayController.cs`):**
+   - **Kök Neden:** Silahlar `playerRoot` altında kalça hizasında (`y = 1.05m`) durduğu için FPS kamerasının (`y = 1.64m`) önünde görünmüyordu; `StepCombatAndCameraInput` içinde `IsClutchEngaged` aktifken bile kameraya `clutchYawDeltaDeg` eklenmeye devam ediyordu; ayrıca `ApplyInertialWeaponTransform` kılıcı kendi ekseninde döndürüyordu.
+   - **Çözüm:** FPS modunda aktif silah/alet doğrudan `PlayerCamera.transform.TransformPoint(...)` ile ekranın sağ-ön görüş alanına bağlandı. Kılıç (`Slot 1`) seçiliyken `Sol Tık` veya `Sağ Tık` basılı tutulduğunda **kamera dönüşü `%100` sabitlenir (`KAMERA KİLİTLİ`)**; fareyi çekip bırakınca (veya basılı tutarken hızla savurunca) kılıç olduğu yerde dönmez, 2. derece eylemsizlik momenti (`I_weapon`) ve aerodinamik sürüklenmeyle omuz-kol yayında ekranın bir ucundan nişangah merkezini yararak karşı uca doğru tam ekran savrulur.
+
+---
+
+## 3. Önceki Oturumda Tamamlanan 8 Ana Mimari Paket (`docs/FAZ1_FAZ2_GERCEK_DURUM_VE_EKSIKLER_DENETIM_RAPORU.md`)
+
+1. **Paket 1 — Anti-Burial Kapsül Çarpışma Kilidi & Fiziksel Karakter Köprüsü (`Stage1PlayerMovementBridge.cs` - 295 satır):**
+   - `CanPlaceBlockOutsidePlayerCapsule`: Oyuncunun kendi kapsül hacmi (`±0.05m` güvenlik payı) içine blok koyup dünyadan düşmesini kesin olarak engeller.
+   - `StepCharacterPhysics` & `ResolveVoxelAndColliderDepenetration`: `PhysicalCharacterControllerSystem.StepMovement` ve `TryInitiateSlide` sistemlerini canlı sahneye bağlar; voksel ve collider sıkışmalarını her karede dışarı iter (`RescueFromVoid` emniyeti dahil).
+
+2. **Paket 2 — Kütle Korunumlu Domino Yıkım (`Shift+LMB` & `RMB`), `18 KB PrebakedFracturePatternLut` Çoklu Faktörlü Kırılma & `Taş Moloz (15)` (`PrebakedFracturePatternLut.cs`, `StructuralCollapseSystem.cs`, `Stage1StructuralCollapseBridge.cs` - 278 satır):**
+   - Hem blok kırıldığında hem de blok eklendiğinde (`VoxelGridMemoryLayout.YMajorChunk`) `Dial's Bucket Geodesic Dijkstra` + `Single-Pass Tributary Load DAG` ile uçan/aşırı yüklü parçalar tespit edilir.
+   - Kopan blok kümeleri yok olmaz; `64` yuvalı halka tamponda yerçekimiyle düşer (`>= 16` eşzamanlı kümede `Surge Mode` O(1) LUT baypası devreye girer).
+   - Çarpma anında `18,432 Byte` (`18 KB`) `PrebakedFracturePatternLut` üzerinden düşme yüksekliği, malzeme sağlamlığı, kütle merkezi eksantrikliği ve darbe odaklanmasına göre $\Phi_{\text{frac}}$ hesaplanır; kırılan vokseller `ShapeID=63` düzensiz mikro-voksel parçalarına ve `LooseRubble (15)` (**Taş Moloz**) bloklarına dönüşür, alt zemini delebilir (`DoesImpactBreachFloorBlock`) ve altındaki canlı/oyuncuya kinetik ezilme hasarı verir.
+
+3. **Paket 3 — `264-Byte Q24.8` Madde Kristali Kütle Muhasebesi, `Alt+Tekerlek` Fırça Yarıçapı (`0.5m..4.0m`), `B` Malzeme Seçimi ve Sertliğe Göre Kademeli Kırma (`Stage1MatterCrystalAndMiningController.cs` - 299 satır):**
+   - `CrystalMassStorage` ve `MatterCrystalVacuumSystem` canlı sahneye bağlandı; vakumlanan her voksel gerçek `Q24.8 kg` kütlesiyle kristale eklenir, inşa ederken seçilen malzemenin (`B` tuşu) kütlesinden düşülür (kütle bitince sınırsız koyma engellenir).
+   - `14` Rezonans Cevheri (`Demir #100` .. `Aetherium #113`) ve `Oyuncu İtem Bloğu (1)` kristalle vakumlanamaz (`ERR_ORE_RESONANCE_IMMUNE`); fiziksel kazma ile vuruş başına `DamageState (0..15)` artırılarak malzeme sertliğine göre kademeli kırılır.
+
+4. **Paket 4 — Otonom 3B Kazma/Balta GLB Modelleri, `1–4` El Kılıfları, `G` `0.0s` Quick-Drop + `E` Toplama, `I` 3B Çanta Örtüsü ve `64-Bit CAS` Sandık + Örs Geri Dönüşümü (`Stage1HolsterAndBackpackController.cs` - 285 satır):**
+   - `Tools/AutonomousAssetFactory/generators/weapon_hilt_generator.py` ile `tool_pickaxe_iron.glb` ve `tool_axe_iron.glb` üretildi (`10/10` 3B varlık `asset_validator.py` PASS).
+   - `1`: Kılıç (`0.6s`), `2`: Demir Kazma (`0.6s`), `3`: Demir Balta (`0.6s`), `4`: Çıplak El / Madde Kristali (`0.2s`).
+   - `G` tuşu eldeki aleti `0.0s` sürede fiziksel olarak yere düşürür; yerde duran alete veya `I` çanta örtüsü üzerindeki eşyalara bakıp `E` / `Sol Tık` ile kuşanılır.
+   - Görsel sandığa (`VisualChest`) bakıp `E`'ye basınca `VisualChestCasSystem` (`64-Bit CAS`) çalışır ve sandık kapağı `110°` yay fiziğiyle açılır; Çift Boynuzlu Örse bakıp `E`'ye basınca `4x Taş Moloz (15) -> 1x Ham Taş (3)` geri dönüşümü yapılır.
+
+5. **Paket 5 — 3 Parçalı Eklem Hiyerarşisi (`UpperBodyRoot` + `LowerLegsRoot`) ve Prosedürel Karakter Animatörü (`Stage1ArticulatedRigAnimator.cs` - 191 satır):**
+   - `F5` TPS kamerada `Ctrl` (Çömelme / Kayma) ve `Z` (Yüzüstü Sürünme) durumlarında artık sadece kamera inmez; karakterin üst gövdesi, bacakları ve silah kolu fiziksel duruşa, yürüme salınımına ve kazma/kılıç savurma açılarına göre gerçek zamanlı eklemlenir.
+
+6. **Paket 6 — `240 Hz` Ataletli `360°` Serbest Açı Yakın Dövüş, `OneEuroFilter3D`, `CameraClutchController` ve Stable PD Tork Amortisörü (`Stage1DirectionalCombatBridge.cs` - 215 satır):**
+   - Fare hareketi `OneEuroFilter3D` ile filtrelenir, `CameraClutchController` ile `±20°` ölü bölge / `%85` sönümlü takip uygulanır ve silahın gerçek kütlesi (`MassKg`) ile ikinci dereceden Stable PD açısal yay-sönümleyici üzerinden `360°` serbest açılı ataletli savurma + `Forte/Foible` hasar/parry fiziği çalıştırılır.
+
+7. **Paket 7 — Yaşayan 21 Canlı AI Durum Makinesi (`Patrol/Aggro/Chase/Attack`), Uzuv Koparma ve `TARGET_SUPPORT_PILLARS` Domino Tetiklemesi (`Stage1CreatureSimulationBridge.cs` - 289 satır):**
+   - Sahnede heykel gibi duran 3 canlı (`ArmoredGolem`, `PackStalker`, `FlyingStrider`) artık `Creature21BehaviorSystem` ve `HybridAiLodPromotionSystem` ile devriye gezer, oyuncuyu algılar, kovalar ve saldırır.
+   - Oyuncu yüksek bir sütun/kule üstüne çıkarsa canlılar `TARGET_SUPPORT_PILLARS` durumuna geçip alt sütun voksellerini kırarak Domino çökmesini tetikler; kılıç/balta darbeleri canlılara hasar verir ve uzuv koparır.
+
+8. **Paket 8 — SRP Orkestratörü (`<= 300` Satır Kuralı), `F6/F9` `.sregion` Kayıt/Yükleme, Yüzen Orijin, `30sn` Kapalı Kutu Oksijen BFS, SQLite Telemetri ve `14` Cevher Dünya Üretimi (`Stage1InteractivePlayController.cs` - 298 satır):**
+   - `1159` satırlık monolitik kontrolcü, Geliştirici Dokümanı Bölüm 4.2 kurallarına (`<= 300` satır/sınıf, `<= 40-80` satır/metot, maks 3 iç içe blok, Türkçe XML docstring, `0 B/kare` GC Alloc) tam uyumlu 7 modüler sınıfa ayrıldı.
+   - `StratocraftFloatingIslandWorldGen` içine `OreDistributionTable.SampleOreMaterial` entegre edildi; `F6`/`F9` `.sregion` kaydet/yükle, `ChunkSnappedFloatingOriginSystem`, `EnclosedOxygenFloodFillSystem` ve `SqliteTelemetryLogger` canlı döngüye bağlandı.
 
 ---
 
@@ -52,50 +93,29 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **Mouse Hareketi** | FPS Bakış Yönü | ✅ Aktif (Cursor kilitli) |
-| **WASD** | Hareket + Head Bobbing + Prosedürel Salınım | ✅ Aktif |
-| **Left Shift** | Depar (Sprint) | ✅ Aktif |
-| **Left Ctrl + Sprint** | Kayma (Slide) | ✅ Aktif |
-| **Z** | Yüzüstü Sürünme (Prone - 0.65m profil) | ✅ Aktif |
-| **Space** | Zıplama / 2.2m Kenar Tırmanışı (Ledge Mantle) | ✅ Aktif |
-| **F5** | FPS / TPS Kamera Açısı Değiştirme | ✅ Aktif (Varsayılan: FPS) |
-| **Esc** | Mouse İmleç Kilidini Aç/Kapat | ✅ Aktif |
-| **C** | Madde Kristali Aktif/Pasif (Sol Bilek) | ⚠️ Kodlandı (Doğrulama bekliyor) |
-| **LMB (Sol Tık)** | Voksel Kazı (CSG Vakum) / Saldırı | ⚠️ Kodlandı (Doğrulama bekliyor) |
-| **RMB (Sağ Tık)** | Voksel İnşa (Madde Püskürtme) / Blok | ⚠️ Kodlandı (Doğrulama bekliyor) |
-| **I** | Sırt Çantası Kumaş Matını Yere Ser (Envanter) | ⚠️ Kodlandı (Kamera eğimi eklendi) |
-| **T** | İnşaat / Blok 90° Döndürme | ✅ Aktif |
+| **Mouse Hareketi** | FPS/TPS Bakış + `Camera-Clutch` Serbest Açı Kılıç Yönlendirme | ✅ Aktif |
+| **WASD + Shift / Ctrl / Z / Space** | Yürüme, Koşu, Kayma (`3.66m`), Yüzüstü Sürünme (`0.65m`), Zıplama / `2.2m` Mantle | ✅ Aktif (`PhysicalCharacterControllerSystem` + 3B Parçalı Rig) |
+| **F5** | FPS / TPS Kamera Açısı Değiştirme | ✅ Aktif |
+| **1 / 2 / 3 / 4** | El Kılıfları (`1`: Kılıç, `2`: Demir Kazma, `3`: Demir Balta, `4`: Çıplak El / Kristal) | ✅ Aktif |
+| **G / E** | `G`: Eldeki Aleti `0.0s` Yere At (`Quick-Drop`) \| `E`: Yerden Alet Al / Sandık Aç / Örs Geri Dönüşüm | ✅ Aktif |
+| **C** | Sol Bilek Madde Kristali Modu Aç/Kapat | ✅ Aktif (`264-Byte Q24.8` Kütle Muhasebesi) |
+| **Alt + Fare Tekerleği** | Madde Kristali Kazı/İnşa Fırça Yarıçapı (`0.5m .. 4.0m`) | ✅ Aktif |
+| **B / V / T** | `B`: İnşa Malzemesi Seç (`Ham Taş`, `Toprak`, `Ahşap`, `Taş Moloz`) \| `V`: Şekil Çarkı (`0..7`) \| `T`: `90°` Döndür | ✅ Aktif |
+| **LMB / Shift+LMB / RMB** | Kristal Vakum / Kazma Kademeli Kırma + Domino Yıkım + Kütle Korumalı İnşa (Anti-Burial Korumalı) | ✅ Aktif |
+| **I** | `The Forest` 3B Kumaş Çanta Örtüsü (Üzerindeki Eşyaya Tıklayarak Kuşanma / Kristale Aktarma) | ✅ Aktif |
+| **F6 / F9** | `.sregion` + `CrystalMassStorage` + Karakter Durumu Hızlı Kaydet (`F6`) / Hızlı Yükle (`F9`) | ✅ Aktif |
 
 ---
 
 ## 4. Sıradaki İlk İş (Yeni Oturum / Yeni Bilgisayar İçin)
 
-Yeni oturumda çalışacak yapay zeka ajanı doğrudan şu sırayı takip etmelidir:
-
-1. **Adım 1 — Repoyu ve Derlemeyi Doğrula:**
+1. **Adım 1 — Repoyu ve Kalite Kapısını Doğrula:**
    ```powershell
    git status -s
-   git log -1 --oneline
-   dotnet test Tests/Stratocraft.Tests.csproj -c Release
+   git log -5 --oneline --date=iso
+   powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 2
    ```
-2. **Adım 2 — Canlı Oynanış Doğrulaması:**
-   - Unity Editor üzerinde `Assets/Scenes/StratocraftStage1Showcase.unity` sahnesini aç.
-   - Play Mode'a gir.
-   - Konsolda 0 Error olduğunu doğrula.
-   - 'C' tuşuna basarak Sol Bilek Kristalinin devreye girdiğini (HUD'da gösterge ve model) doğrula.
-   - 'I' tuşuna basarak kameranın yere eğildiğini ve serilen çantanın göründüğünü doğrula.
-3. **Adım 3 — Faz 3 Başlangıcı (Zanaat, İnşaat & Klan Alanı):**
-   - **Faz 3.1:** Çift boynuzlu örs mini-voksel çekiçleme ve külçe dövme.
-   - **Faz 3.2:** 7DTD tarzı hayalet blok (ghost preview) ve hologram inşaat.
-   - **Faz 3.3:** 3B Çit BFS Klan Koruma Alanı hesaplaması.
-
----
-
-## 5. Başka Bilgisayara Geçiş Rehberi
-
-Projeyi başka bir bilgisayara aktarırken:
-1. `git clone` veya mevcut klasörü yeni bilgisayara kopyalayın.
-2. Unity Hub üzerinden **Unity 6 (`6000.6.7f1`)** ile projeyi açın.
-3. Açılışta Asset Import işleminin bitmesini bekleyin.
-4. Konsolda derleme hatası olmadığını doğrulayın.
-5. Üst menüden `Araçlar > Stratocraft > Aşama 1 - Canlı Dünya ve 3B Varlık Sahnesini Kur` seçeneğine tıklayarak sahneyi tazeleyin ve Play'e basın.
+2. **Adım 2 — Faz 3 Başlangıcı (Zanaat, İnşaat & Klan Alanı):**
+   - **Faz 3.1:** Çift boynuzlu örs `16x32x4` mini-voksel çekiçleme, 4 Harmonizer katalizörü ve külçe dövme.
+   - **Faz 3.2:** 7DTD tarzı hayalet blok (ghost preview) ve yapısal yük önizlemeli hologram inşaat.
+   - **Faz 3.3:** 3B Çit BFS Klan Koruma Alanı (`KGP`, Kristal HP ve 3-yönlü `IsSiegeable`) hesaplaması.

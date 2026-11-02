@@ -127,6 +127,13 @@ namespace Stratocraft.Voxel.Data
             return (raw & ~(0x3u << 26)) | (((uint)newOrigin & 0x3u) << 26);
         }
 
+        /// <summary>Mevcut bir VoxelCell'in yalnizca Density/Liquid (Bits 8..14, 7-bit) alanini gunceller.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static uint WithDensityOrLiquid(uint raw, byte newDensity7)
+        {
+            return (raw & ~(0x7Fu << 8)) | (((uint)newDensity7 & 0x7Fu) << 8);
+        }
+
         /// <summary>Mevcut bir VoxelCell'in yalnizca DamageState (Bits 28..31) alanini gunceller.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static uint WithDamageState(uint raw, byte newDamage4)

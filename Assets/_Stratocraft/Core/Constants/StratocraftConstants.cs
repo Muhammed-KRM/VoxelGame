@@ -165,6 +165,9 @@ namespace Stratocraft.Core.Constants
         /// <summary>Stokiyometrik Su + Lav -> Dogal Obsidyen reaksiyon esigi (128 / 255).</summary>
         public const byte StoichiometricFluidThreshold = 128;
 
+        /// <summary>Evrensel yercekimi ivmesi (m/s^2).</summary>
+        public const float GravityAcceleration = 9.81f;
+
         /// <summary>Solo zindan yaratik/Boss maksimum HP olcekleme tavani (1.30x).</summary>
         public const float SoloDungeonMaxHpMultiplier = 1.30f;
     }

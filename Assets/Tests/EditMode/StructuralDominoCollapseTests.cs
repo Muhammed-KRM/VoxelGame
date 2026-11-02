@@ -1,10 +1,13 @@
 using System.Numerics;
 using NUnit.Framework;
+using Stratocraft.Character;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Math;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
+using Stratocraft.WorldGen.Generators;
 
 namespace Stratocraft.Tests.EditMode
 {
@@ -220,6 +223,54 @@ namespace Stratocraft.Tests.EditMode
             uint sampleRubble = chunk[(1 << 8) | (8 << 4) | 8];
             Assert.That(VoxelBitUtility.GetMaterialId(sampleRubble), Is.EqualTo(MaterialIdCatalog.LooseRubble));
             Assert.That(VoxelBitUtility.GetOriginState(sampleRubble), Is.EqualTo(BlokKokenDurumu.DogalKutle));
+        }
+
+        [Test]
+        public void PrebakedFracturePatternLut_ImpactFractureAndShardMasks_Respect18KbBudgetAndPhysics()
+        {
+            Assert.That(PrebakedFracturePatternLut.TotalStaticLutBytes, Is.LessThanOrEqualTo(18432));
+
+            float phiLow = PrebakedFracturePatternLut.ComputeImpactFractureRatio(
+                clusterMassKg: 400f, dropHeightMeters: 0.4f, materialCriticalEnergyJoules: 45000f, comEccentricityMeters: 0f, maxHalfExtentMeters: 1f);
+            float phiHigh = PrebakedFracturePatternLut.ComputeImpactFractureRatio(
+                clusterMassKg: 6000f, dropHeightMeters: 9.5f, materialCriticalEnergyJoules: 12000f, comEccentricityMeters: 1.2f, maxHalfExtentMeters: 1f);
+
+            Assert.That(phiLow, Is.LessThan(0.25f));
+            Assert.That(phiHigh, Is.GreaterThanOrEqualTo(0.75f));
+
+            ulong shardMask = PrebakedFracturePatternLut.GetMicroVoxelShardMask64(42);
+            int pop = BitOps.PopCount(shardMask);
+            Assert.That(pop, Is.InRange(8, 56));
+        }
+
+        [Test]
+        public void AntiBurialInertialCombatAndOreWorldGen_MeetPhase1AndPhase2AuditSpecs()
+        {
+            Assert.That(Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(4, 10, 4, 4.5f, 10.0f, 4.5f, 1.8f), Is.False);
+            Assert.That(Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(7, 10, 4, 4.5f, 10.0f, 4.5f, 1.8f), Is.True);
+
+            float inertia = Stage1DirectionalCombatBridge.ComputeWeaponMomentOfInertia(1.65f, 0.88f, 0.45f, 0.14f);
+            Assert.That(inertia, Is.InRange(0.40f, 0.50f));
+
+            var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);
+            int oreVoxels = 0;
+            for (int i = 0; i < voxels.Length; i++)
+            {
+                if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(VoxelBitUtility.GetMaterialId(voxels[i])))
+                {
+                    oreVoxels++;
+                }
+            }
+            Assert.That(oreVoxels, Is.GreaterThan(0), "Yeralti katmaninda (y=4..10) 14 cevher tablosundan damarlar uretilmelidir!");
+
+            // Yuzen ada (lowestSolidY > 0, YMajorChunk) uzerinde 1 yuzey blogu kirildiginda adanin tamami YIKILMAMALIDIR!
+            voxels[(9 << 8) | (8 << 4) | 8] = 0u;
+            var collapseSys = new StructuralCollapseSystem();
+            var islandClusters = new FallingStructureClusterComponent[GreedyBoxFractureJob.MaxCompoundBoxes];
+            collapseSys.EvaluateAndFracture(
+                voxels, 16, 30, 16, supportFloorY: 0, Vector3.Zero, Vector3.Zero,
+                islandClusters, out int islandCollapsed, VoxelGridMemoryLayout.YMajorChunk);
+            Assert.That(islandCollapsed, Is.EqualTo(0), "Yuzen adada 1 blok kirildiginda adanin omurgasi cökmemelidir!");
         }
     }
 }

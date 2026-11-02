@@ -46,13 +46,14 @@ def build_modular_weapon_hilt(spec: ManifestEntry, out_glb: Path) -> Path:
         (hx * 0.30, ty * 0.82, hz * 0.70),
         (mat_id, 0, 64, 235),
     )
-    # 3) Balcak (Crossguard - tam hedef X/Z genisligini saglar, el dograma korumasi)
+    # 3) Balcak / Alet Basi (Crossguard / Pickaxe / Axe head - tam hedef X/Z genisligini saglar)
+    head_y_min = ty * 0.72 if ("pickaxe" in spec.asset_id or "axe" in spec.asset_id) else ty * 0.82
     _append_box_part(
         positions,
         normals,
         colors,
         indices,
-        (-hx, ty * 0.82, -hz),
+        (-hx, head_y_min, -hz),
         (hx, ty, hz),
         (51, 0, 210, 250),
     )

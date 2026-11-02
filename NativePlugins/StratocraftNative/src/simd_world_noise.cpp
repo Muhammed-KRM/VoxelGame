@@ -32,7 +32,7 @@ constexpr int32_t kLavaSeaMinArrayY = 12;
 constexpr int32_t kLavaSeaMaxArrayY = 32;
 
 // MaterialIdCatalog sabitleri (GAME LOGIC BIBLE v7.0 ile birebir senkron)
-constexpr uint8_t kMatAir = 0;
+[[maybe_unused]] constexpr uint8_t kMatAir = 0;
 constexpr uint8_t kMatStone = 1;
 constexpr uint8_t kMatDirt = 2;
 constexpr uint8_t kMatGrass = 3;

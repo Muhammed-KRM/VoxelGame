@@ -415,9 +415,19 @@ namespace Stratocraft.Voxel.Jobs
                         if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
                         {
                             ushort slot12 = VoxelBitUtility.GetMicroPoolIndex(raw);
-                            ulong mask64 = (subPool != null && subPool.IsAllocated)
-                                ? subPool.GetMask(slot12)
-                                : BuildProceduralButtressMask64((byte)(slot12 & 0x1Fu));
+                            ulong mask64;
+                            if (subPool != null && subPool.IsAllocated)
+                            {
+                                mask64 = subPool.GetMask(slot12);
+                            }
+                            else if (matId == MaterialIdCatalog.LooseRubble || slot12 >= 32)
+                            {
+                                mask64 = BuildProceduralFractureShardMask64((byte)(slot12 & 0xFFu));
+                            }
+                            else
+                            {
+                                mask64 = BuildProceduralButtressMask64((byte)(slot12 & 0x1Fu));
+                            }
 
                             if (mask64 != 0UL)
                             {
@@ -1168,6 +1178,39 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
             return mask;
+        }
+
+        private static ulong BuildProceduralFractureShardMask64(byte shardPatternIdx)
+        {
+            int band = shardPatternIdx >> 5;
+            int variant = shardPatternIdx & 31;
+            int maxHeight = Math.Clamp(4 - (band / 2), 1, 4);
+            int centerBiasX = (variant & 1) + 1;
+            int centerBiasZ = ((variant >> 1) & 1) + 1;
+            ulong mask = 0UL;
+
+            for (int sy = 0; sy < maxHeight; sy++)
+            {
+                for (int sz = 0; sz < 4; sz++)
+                {
+                    for (int sx = 0; sx < 4; sx++)
+                    {
+                        uint h = HashCoord(sx + variant * 3, sy + band * 7, sz + shardPatternIdx * 5, 0x9E3779B9u);
+                        int manhattan = Math.Abs(sx - centerBiasX) + Math.Abs(sz - centerBiasZ) + sy;
+                        int threshold = Math.Clamp(220 - band * 18 - manhattan * 24, 38, 236);
+                        if (sy == 0 && sx >= 1 && sx <= 2 && sz >= 1 && sz <= 2)
+                        {
+                            mask |= 1UL << ((sy << 4) | (sz << 2) | sx);
+                        }
+                        else if ((h & 0xFFu) < (uint)threshold)
+                        {
+                            mask |= 1UL << ((sy << 4) | (sz << 2) | sx);
+                        }
+                    }
+                }
+            }
+
+            return mask == 0UL ? 0x0000_0000_0000_0660UL : mask;
         }
 
         private static void EmitOctagonalPillar(

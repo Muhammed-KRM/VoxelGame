@@ -181,7 +181,7 @@ namespace Stratocraft.EditorTools
                 Quaternion.Euler(0f, 25f, 0f),
                 uberMat);
 
-            PlaceGlbModel(
+            GameObject? anvilStationGo = PlaceGlbModel(
                 "workshop_anvil_16x32x4_station.glb",
                 "Workshop_Anvil_16x32x4_Station",
                 workshopRoot.transform,
@@ -197,7 +197,7 @@ namespace Stratocraft.EditorTools
                 Quaternion.identity,
                 uberMat);
 
-            BuildPhysical3DCasStorageChest(
+            Transform chestLidTransform = BuildPhysical3DCasStorageChest(
                 workshopRoot.transform,
                 new Vector3(-1.2f, SampleIslandTopSurfaceY(-1.2f, -1.6f), -1.6f),
                 uberMat);
@@ -219,6 +219,8 @@ namespace Stratocraft.EditorTools
                 backpackMatRoot.transform,
                 builtChunks,
                 out Stage1InteractivePlayController playController);
+            playController.ChestLidTransform = chestLidTransform;
+            playController.AnvilTransform = anvilStationGo != null ? anvilStationGo.transform : null;
 
             PlaceGlbModel(
                 "armor_set_iron_vanguard.glb",
@@ -339,7 +341,7 @@ namespace Stratocraft.EditorTools
         /// GAME LOGIC BIBLE Bolum 3.4:
         /// Kapagi acilmis, icindeki fiziksel kulce ve kristaller dogrudan 3B gorunen Fiziksel CAS Sandigi.
         /// </summary>
-        private static void BuildPhysical3DCasStorageChest(
+        private static Transform BuildPhysical3DCasStorageChest(
             Transform parent,
             Vector3 worldPos,
             Material sharedMat)
@@ -369,8 +371,8 @@ namespace Stratocraft.EditorTools
                 sharedMat,
                 addCollider: true);
 
-            // Acik duran 3B sandik kapagi (-62 derece geriye acilmis)
-            CreateMeshObject(
+            // Acik duran 3B sandik kapagi (VisualChestCasSystem 110 derece yay ile kontrol edilir)
+            GameObject lidGo = CreateMeshObject(
                 "CASChest_HingedOpenLid",
                 chestRoot.transform,
                 new Vector3(0f, 0.48f, 0.28f),
@@ -393,6 +395,7 @@ namespace Stratocraft.EditorTools
                 MaterialIdCatalog.GoldOre,
                 "CASChest_Slot1_GoldIngots",
                 sharedMat);
+            return lidGo.transform;
         }
 
         private static void BuildTheForest3DBackpackClothMat(
@@ -428,11 +431,21 @@ namespace Stratocraft.EditorTools
             BuildIngotPyramidOnMat(parent, new Vector3(0.40f, 0.05f, -0.18f), MaterialIdCatalog.MithrilOre, "MatZone2_MithrilCrystalStack", sharedMat);
 
             PlaceGlbModel(
-                "weapon_hilt_ironwood_longsword.glb",
-                "MatZone3_CraftedSword_Slot",
+                "tool_pickaxe_iron.glb",
+                "MatZone3_IronPickaxe_Slot",
                 parent,
-                new Vector3(-0.25f, 0.08f, 0.24f),
+                new Vector3(-0.28f, 0.08f, 0.24f),
                 Quaternion.Euler(90f, 35f, 0f),
+                sharedMat,
+                new Vector3(0.85f, 0.85f, 0.85f),
+                addCollider: true);
+
+            PlaceGlbModel(
+                "tool_axe_iron.glb",
+                "MatZone4_IronAxe_Slot",
+                parent,
+                new Vector3(0.26f, 0.08f, 0.24f),
+                Quaternion.Euler(90f, -25f, 0f),
                 sharedMat,
                 new Vector3(0.85f, 0.85f, 0.85f),
                 addCollider: true);
@@ -566,14 +579,36 @@ namespace Stratocraft.EditorTools
             PlaceGlbModel(
                 "armor_slot_torso_layer3_cuirass.glb",
                 "TacticalClothBackpack_3Tier",
-                playerRoot.transform,
-                new Vector3(0f, 1.18f, -0.26f),
+                bodyGo != null ? bodyGo.transform : playerRoot.transform,
+                new Vector3(0f, 0.42f, -0.18f),
                 Quaternion.Euler(0f, 180f, 0f),
                 sharedMat,
-                new Vector3(0.72f, 0.82f, 0.62f),
+                new Vector3(0.65f, 0.55f, 0.50f),
                 addCollider: false);
 
-            UnityEngine.Camera? sceneCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindFirstObjectByType<UnityEngine.Camera>();
+            GameObject? pickaxeGo = PlaceGlbModel(
+                "tool_pickaxe_iron.glb",
+                "RightHand_EquippedIronPickaxe",
+                playerRoot.transform,
+                new Vector3(0.42f, 1.05f, 0.28f),
+                Quaternion.Euler(20f, -15f, -12f),
+                sharedMat,
+                scaleOverride: null,
+                addCollider: false);
+            if (pickaxeGo != null) pickaxeGo.SetActive(false);
+
+            GameObject? axeGo = PlaceGlbModel(
+                "tool_axe_iron.glb",
+                "RightHand_EquippedIronAxe",
+                playerRoot.transform,
+                new Vector3(0.42f, 1.05f, 0.28f),
+                Quaternion.Euler(20f, -15f, -12f),
+                sharedMat,
+                scaleOverride: null,
+                addCollider: false);
+            if (axeGo != null) axeGo.SetActive(false);
+
+            UnityEngine.Camera? sceneCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
             if (sceneCam == null)
             {
                 GameObject camGo = new GameObject("Main Camera");
@@ -585,6 +620,8 @@ namespace Stratocraft.EditorTools
             controller.PlayerCamera = sceneCam;
             controller.PlayerBodyRoot = bodyGo;
             controller.WeaponPivot = swordGo != null ? swordGo.transform : null;
+            controller.PickaxeVisualRoot = pickaxeGo;
+            controller.AxeVisualRoot = axeGo;
             controller.LeftWristCrystalTransform = wristCrystalGo.transform;
             controller.TacticalBackpackMatRoot = backpackMatTransform;
             controller.SharedVoxelMaterial = sharedMat;
@@ -755,7 +792,7 @@ namespace Stratocraft.EditorTools
             Vector3 lookTarget = new Vector3(0.8f, 8.4f, -1.5f);
             Quaternion camRot = Quaternion.LookRotation((lookTarget - camPos).normalized, Vector3.up);
 
-            UnityEngine.Camera? mainCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindFirstObjectByType<UnityEngine.Camera>();
+            UnityEngine.Camera? mainCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
             if (mainCam == null)
             {
                 GameObject camGo = new GameObject("Main Camera");

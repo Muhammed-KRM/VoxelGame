@@ -349,6 +349,56 @@ def _sculpt_clan_crystal(bm: bmesh.types.BMesh, layer: Any) -> None:
 
 
 def _sculpt_weapon_hilt(bm: bmesh.types.BMesh, layer: Any, asset_id: str) -> None:
+    if "pickaxe" in asset_id:
+        # Cift Uclu Madenci Kazmasi (Demiragaci Sap + Kavisli Celik Kazma Basi + Topuz)
+        _add_lofted_tube(
+            bm, layer,
+            [
+                ((0.0, 0.0, 0.0), (0.024, 0.020), 0.0),
+                ((0.0, 0.05, 0.0), (0.017, 0.015), 0.0),
+                ((0.0, 0.58, 0.0), (0.022, 0.018), 0.0),
+                ((0.0, 0.72, 0.0), (0.028, 0.024), 0.0),
+            ],
+            sides=8, rgba=(71, 0, 170, 240),
+        )
+        _add_chamfered_box(
+            bm, layer, (0.0, 0.62, 0.0), (0.09, 0.08, 0.075), (51, 0, 238, 250), bevel_amt=0.18
+        )
+        _add_extruded_spine_limb(
+            bm, layer,
+            [
+                ((-0.26, 0.56, 0.0), 0.008, 0.008),
+                ((-0.14, 0.61, 0.0), 0.026, 0.022),
+                ((0.0, 0.63, 0.0), 0.036, 0.030),
+                ((0.14, 0.61, 0.0), 0.026, 0.022),
+                ((0.26, 0.56, 0.0), 0.008, 0.008),
+            ],
+            sides=6, rgba=(60, 0, 248, 252),
+        )
+        return
+    if "axe" in asset_id:
+        # Sakalli Oduncu/Savas Baltasi (Disbudak Sap + Genis Kavisli Celik Agiz + Arka Cekic)
+        _add_lofted_tube(
+            bm, layer,
+            [
+                ((0.0, 0.0, 0.0), (0.025, 0.018), 0.0),
+                ((0.0, 0.06, 0.0), (0.018, 0.014), 0.0),
+                ((0.0, 0.54, 0.0), (0.022, 0.017), 0.0),
+                ((0.0, 0.68, 0.0), (0.026, 0.020), 0.0),
+            ],
+            sides=8, rgba=(70, 0, 168, 240),
+        )
+        _add_chamfered_box(
+            bm, layer, (-0.06, 0.57, 0.0), (0.08, 0.07, 0.065), (51, 0, 232, 248), bevel_amt=0.16
+        )
+        _add_chamfered_box(
+            bm, layer, (0.09, 0.56, 0.0), (0.18, 0.16, 0.032), (60, 0, 248, 252), bevel_amt=0.15
+        )
+        _add_chamfered_box(
+            bm, layer, (0.15, 0.54, 0.0), (0.06, 0.22, 0.014), (60, 0, 252, 255), bevel_amt=0.12
+        )
+        return
+
     is_polearm = "polearm" in asset_id or "shaft" in asset_id
     if is_polearm:
         # 1.65m Disbudak Mizrak/Halberd Sapi + Bronz/Celik bogum halkalari + Ust namlu bilezigi
