@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#016` (Canlı Yaratıkların Runtime Kaydı (`EnsureCreaturesInitialized`), Eliptik Devriye Gezintisi, Yakın Dövüş Dinamik Lunge/Strafe Hareketi ve Unity Arka Plan Çalışması Düzeltildi) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-02T22:02:00+03:00` |
+| **Devir Numarası** | `#017` (Faz 1 ve Faz 2 Acımasız Teknik Denetimi ve Kök Neden Raporunun Çıkarılması) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-03T12:15:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 0, Faz 1 ve Faz 2 Sahne & Canlı Yapay Zeka Hareketi %100 Doğrulandı -> Sıradaki: Faz 3 Başlangıcı (Örs Zanaatı & Klan Alanı)` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 ve Faz 2 Denetimi Tamamlandı -> Sıradaki: Raporlanan Kritik Kök Nedenlerin (Kılıç, Sıvılar, Animasyon, Madencilik) Düzeltilmesine Başlanması` |
 | **Aktif Test Durumu** | `42/42 .NET 10 Core PASS`, `34/34 Unity EditMode PASS`, `9/9 Python PyTest PASS`, `6/6 C++ GoogleTest PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: < 16.0 MB) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -24,7 +24,21 @@
 
 ---
 
-## 2. Son Oturumda Yapılanlar (Devir #016 — Canlıların Hareket Sorunlarının Teşhisi ve Tam Çözümü)
+## 2. Son Oturumda Yapılanlar (Devir #017 — Faz 1 ve Faz 2 Acımasız Teknik Denetim)
+
+1. **`docs/FAZ1_FAZ2_GERCEK_DURUM_VE_EKSIKLER_RAPORU_V2.md` Oluşturuldu:**
+   - Kullanıcının şikayetleri üzerine Faz 1 ve Faz 2 mekaniklerinin altı kazındı ve büyük çoğunluğunun "göstermelik (stub/hack)" olduğu kanıtlandı.
+2. **Kritik Kök Nedenler Tespit Edildi:**
+   - **Sıvılar:** Havada doğuyor ve `WakeFluidNeighborhood` hiç çağrılmadığı için uykuda kalıyor.
+   - **Kılıç:** `cleavePitch` formülünde `dir.y` tamamen unutulmuş; kılıç sadece dikey sallanıyor.
+   - **Animasyon:** Blender modellerinde kemik yok, karakterler `Z` ile yere yattığında diz bükmek yerine kalas gibi öne devriliyor.
+   - **Madencilik:** `Mathf.Max(3, ...)` zorlaması yüzünden dünyanın en sert Obsidyeni bile `0.45` saniyede anında kırılıyor.
+   - **Envanter:** Görünür bir UI (Hotbar) yok ve `I` çantasından eşya transferi kodlanmamış.
+3. **Senkronizasyon:** Diğer PC'deki yerel mesh farklılıkları silinerek `#016` commit'leri güvenle çekildi (`git pull --ff-only`).
+
+---
+
+## 3. Önceki Oturumda Tamamlananlar (Devir #016 — Canlıların Hareket Sorunlarının Teşhisi ve Tam Çözümü)
 
 1. **Geliştirme 1 — Canlıların Play Modunda Sahneden Otomatik Tanınması (`EnsureCreaturesInitialized` - `Stage1InteractivePlayController.cs`):**
    - **Kök Neden:** Scene Builder editörde çalışırken `playController.RegisterPatrollingCreature(...)` çağırıyordu. Ancak `Stage1CreatureSimulationBridge` C# sınıfı `[SerializeField]` olmadığı için Unity Play moduna girdiğinde `_creatureBridge._agents` listesi serileşmeyip sıfırlanıyordu (`Count == 0`). Sahne çalışsa bile içinde kayıtlı canlı bulunmuyordu.
@@ -155,7 +169,8 @@
    git log -5 --oneline --date=iso
    powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 2
    ```
-2. **Adım 2 — Faz 3 Başlangıcı (Zanaat, İnşaat & Klan Alanı):**
-   - **Faz 3.1:** Çift boynuzlu örs `16x32x4` mini-voksel çekiçleme, 4 Harmonizer katalizörü ve külçe dövme.
-   - **Faz 3.2:** 7DTD tarzı hayalet blok (ghost preview) ve yapısal yük önizlemeli hologram inşaat.
+2. **Adım 2 — `FAZ1_FAZ2_GERCEK_DURUM_VE_EKSIKLER_RAPORU_V2.md` İçindeki Kritik Hataları Temizleme:**
+   - **Öncelik A (Savaş):** `Stage1DirectionalCombatBridge.cs` dosyasını açıp serbest yönlü Mordhau/Exanima tarzı kılıç savurmasını ve `Camera-Clutch` kısıtlamasını düzelt.
+   - **Öncelik B (Sıvılar & Yıkım):** Su/Lav'ın çukura yerleşmesini ve `WakeFluidNeighborhood` ile akmasını sağla. Zemin yıkım sabitlemesini kaldır.
+   - **Öncelik C (Madencilik & Aletler):** 0.45 saniye kırma zorlamasını kaldır, Anayasal sertlik katsayılarını bağla ve yere bırakılan eşyaların (Fiziksel Kılıflar) silinmesi hatasını gider.
    - **Faz 3.3:** 3B Çit BFS Klan Koruma Alanı (`KGP`, Kristal HP ve 3-yönlü `IsSiegeable`) hesaplaması.
