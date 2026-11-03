@@ -527,9 +527,9 @@ namespace Stratocraft.Physics.Jobs
                                     }
                                 }
 
-                                if ((nCell.Type == FluidType.None || nCell.Type == pipeType) && (nCap - nCell.Mass) >= 8)
+                                if (dy[d] >= 0 && (nCell.Type == FluidType.None || nCell.Type == pipeType) && nCap >= 128 && (nCap - nCell.Mass) >= 16)
                                 {
-                                    // Yukari (+Y) veya yan cikis agzi adayi (gercek bosluk tasiyan alcak U-kolu!)
+                                    // Yukari (+Y) veya yan acik cikis agzi adayi (gercek bosluk tasiyan alcak U-kolu!)
                                     if (ny < bestOutletY)
                                     {
                                         bestOutletY = ny;

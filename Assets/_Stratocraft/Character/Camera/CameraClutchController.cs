@@ -88,9 +88,16 @@ namespace Stratocraft.Character.Camera
             WristYawRadians = Math.Clamp(WristYawRadians + smoothDeltaYaw, -1.35f, 1.35f);
             WristPitchRadians = Math.Clamp(WristPitchRadians + smoothDeltaPitch, -1.10f, 1.10f);
 
-            CameraYawRadians += EvaluatePiecewiseClutchDelta(WristYawRadians) * deltaTime * 8.0f;
+            // Fare durdugunda (smoothDeltaYaw == 0) kamera ASLA topac gibi kendi kendine donmeye devam etmez!
+            // Karakter yalnizca anlik fare hareketinin kucuk bir orani (%8..%24) kadar savurma yonune dogal omuz/govde esligi yapar.
+            float yawExtend01 = Math.Clamp((MathF.Abs(WristYawRadians) - DeadzoneLimitRadians) / (1.35f - DeadzoneLimitRadians), 0f, 1f);
+            float pitchExtend01 = Math.Clamp((MathF.Abs(WristPitchRadians) - DeadzoneLimitRadians) / (1.10f - DeadzoneLimitRadians), 0f, 1f);
+            float yawFollowRatio = 0.08f + 0.16f * yawExtend01;
+            float pitchFollowRatio = 0.06f + 0.12f * pitchExtend01;
+
+            CameraYawRadians += smoothDeltaYaw * yawFollowRatio;
             CameraPitchRadians = Math.Clamp(
-                CameraPitchRadians + EvaluatePiecewiseClutchDelta(WristPitchRadians) * deltaTime * 8.0f,
+                CameraPitchRadians + smoothDeltaPitch * pitchFollowRatio,
                 -1.45f,
                 1.45f);
         }

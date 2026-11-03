@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Stratocraft.Character;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Math;
+using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
@@ -254,14 +255,42 @@ namespace Stratocraft.Tests.EditMode
 
             var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);
             int oreVoxels = 0;
+            int bedrockCoreVoxels = 0;
             for (int i = 0; i < voxels.Length; i++)
             {
-                if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(VoxelBitUtility.GetMaterialId(voxels[i])))
+                byte matId = VoxelBitUtility.GetMaterialId(voxels[i]);
+                if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(matId))
                 {
                     oreVoxels++;
                 }
+                else if (matId == MaterialIdCatalog.Bedrock)
+                {
+                    bedrockCoreVoxels++;
+                }
             }
             Assert.That(oreVoxels, Is.GreaterThan(0), "Yeralti katmaninda (y=4..10) 14 cevher tablosundan damarlar uretilmelidir!");
+            Assert.That(bedrockCoreVoxels, Is.GreaterThan(0), "Yuzen adanin derin cekirdek omurgasinda (y<=4) kirilmaz Bedrock bulunmalidir!");
+
+            var (_, seFluids) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(0, -1);
+            int unsettledBasinFluidCount = 0;
+            for (int i = 0; i < seFluids.Length; i++)
+            {
+                if (seFluids[i] != 0 && !new FluidCell16(seFluids[i]).IsSettled)
+                {
+                    unsettledBasinFluidCount++;
+                }
+            }
+            Assert.That(unsettledBasinFluidCount, Is.GreaterThan(0), "Guneydogu chunk (0,-1) icinde su ve lav cukur icinde aktif (isSettled=false) olarak dogmalidir!");
+
+            var holster = new BodyHolsterStateMachine();
+            Assert.That(holster.ActiveDrawnSlot, Is.EqualTo(HolsterSlotIndex.None));
+            holster.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
+            holster.StepHolster(1.0f);
+            Assert.That(holster.ActiveDrawnSlot, Is.EqualTo(HolsterSlotIndex.WaistLeft_Slot1));
+            float sheatheSec = holster.RequestSheatheToEmptyHands();
+            Assert.That(sheatheSec, Is.GreaterThan(0f));
+            holster.StepHolster(1.0f);
+            Assert.That(holster.ActiveDrawnSlot, Is.EqualTo(HolsterSlotIndex.None));
 
             // Yuzen ada (lowestSolidY > 0, YMajorChunk) uzerinde 1 yuzey blogu kirildiginda adanin tamami YIKILMAMALIDIR!
             voxels[(9 << 8) | (8 << 4) | 8] = 0u;

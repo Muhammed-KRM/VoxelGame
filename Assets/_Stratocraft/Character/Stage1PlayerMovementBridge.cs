@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
+using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 #if UNITY_5_3_OR_NEWER
 using UnityEngine;
@@ -86,11 +87,12 @@ namespace Stratocraft.Character
             if (lz >= 14 && worldChunks.ContainsKey((cx, cz + 1))) dirtyChunks.Add((cx, cz + 1));
         }
 
-        /// <summary>WASD, kosu, kayma, surunme, 2.2m mantle, ziplama ve kapsul-arazi depenetration cozumunu ilerletir.</summary>
+        /// <summary>WASD, kosu, kayma, surunme, 2.2m mantle, ziplama, sivi kaldirma/lav hasari ve kapsul-arazi depenetration cozumunu ilerletir.</summary>
         public void StepCharacterPhysics(
             Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks, Vector2 moveInput,
             bool wantSprint, bool wantCrouch, bool wantProne, bool jumpOrMantlePressed, bool isBackpackOpen,
-            float equippedMassKg, float deltaTime, out string statusFeedback)
+            float equippedMassKg, float deltaTime, out string statusFeedback,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null)
         {
             statusFeedback = string.Empty;
             _movementState.EquippedMassKg = equippedMassKg;
@@ -129,8 +131,56 @@ namespace Stratocraft.Character
                 statusFeedback = "Kayma (Slide) Basladi (-15 EP -> 3.58m)";
 
             ApplyJumpOrMantleVerticalImpulse(playerTransform, jumpOrMantlePressed, grounded || _coyoteGroundedTimer > 0f, hasLedgeAhead, ledgeTopY, ref statusFeedback);
+            StepFluidBuoyancyAndHazards(playerTransform, fluidChunks, deltaTime, ref statusFeedback);
             IntegrateHorizontalAndVerticalMotion(playerTransform, worldChunks, wishDir, deltaTime);
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
+        }
+
+        private void StepFluidBuoyancyAndHazards(
+            Transform playerTransform, Dictionary<(int cx, int cz), ushort[]>? fluidChunks, float dt, ref string statusFeedback)
+        {
+            if (fluidChunks == null) { _vitals.SubmergedDepthMeters = 0f; return; }
+            Vector3 pos = playerTransform.position;
+            int wx = Mathf.FloorToInt(pos.x), wz = Mathf.FloorToInt(pos.z);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? f) || f == null) { _vitals.SubmergedDepthMeters = 0f; return; }
+
+            int lx = wx - cx * 16, lz = wz - cz * 16;
+            int feetWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 0.25f), 1, 28);
+            int waistWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 0.85f), 1, 28);
+            int headWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 1.45f), 1, 28);
+            FluidCell16 feetCell = new FluidCell16(f[(feetWy << 8) | (lz << 4) | lx]);
+            FluidCell16 waistCell = new FluidCell16(f[(waistWy << 8) | (lz << 4) | lx]);
+            FluidCell16 headCell = new FluidCell16(f[(headWy << 8) | (lz << 4) | lx]);
+
+            bool inLava = (feetCell.Type == FluidType.Lava && feetCell.Mass >= 24) || (waistCell.Type == FluidType.Lava && waistCell.Mass >= 24);
+            bool inWater = (feetCell.Type == FluidType.Water && feetCell.Mass >= 24) || (waistCell.Type == FluidType.Water && waistCell.Mass >= 24);
+            bool headSubmerged = headCell.Type != FluidType.None && headCell.Mass >= 64;
+            _vitals.SubmergedDepthMeters = headSubmerged ? 1.5f : 0f;
+
+            if (inLava)
+            {
+                _movementState.CurrentSpeedMetersPerSec *= 0.42f;
+                _vitals.CurrentHp = Mathf.Max(1f, _vitals.CurrentHp - 18.0f * dt);
+                _vitals.CoreBodyTempCelsius = Mathf.Min(43.0f, _vitals.CoreBodyTempCelsius + 4.0f * dt);
+                statusFeedback = "VOLKANIK LAV YANIGI! (-18 HP/s) Hemen lav kalderasindan cikin!";
+            }
+            else if (inWater)
+            {
+                _movementState.CurrentSpeedMetersPerSec *= 0.62f;
+                _vitals.Wetness01 = 1.0f;
+                if (Input.GetKey(KeyCode.Space))
+                {
+                    _verticalVelocity = Mathf.Max(_verticalVelocity, 3.6f);
+                    _jumpLaunchTimer = 0.12f;
+                    _movementState.IsGrounded = 0;
+                    statusFeedback = "Suda Yuzme (Arsimet Kaldirma Kuvveti + Space)";
+                }
+            }
+            else
+            {
+                _vitals.Wetness01 = Mathf.Max(0f, _vitals.Wetness01 - 0.08f * dt);
+            }
         }
 
         private void ApplyJumpOrMantleVerticalImpulse(

@@ -103,6 +103,22 @@ namespace Stratocraft.Inventory.Systems
             return duration;
         }
 
+        public float RequestSheatheToEmptyHands()
+        {
+            if (ActiveDrawnSlot == HolsterSlotIndex.None)
+            {
+                TargetTransitionSlot = HolsterSlotIndex.None;
+                RemainingTransitionSeconds = 0.0f;
+                return 0.0f;
+            }
+
+            float sheatheCost = IsBackSlot(ActiveDrawnSlot) ? BackSheatheSeconds : WaistSheatheSeconds;
+            ActiveDrawnSlot = HolsterSlotIndex.None;
+            TargetTransitionSlot = HolsterSlotIndex.None;
+            RemainingTransitionSeconds = sheatheCost;
+            return sheatheCost;
+        }
+
         /// <summary>
         /// G Tusu (Quick-Drop): Eldeki silahi 0.0 sn'de yere kalici fiziksel 3B varlik olarak birakir ve elleri aninda bosaltir.
         /// </summary>

@@ -266,10 +266,13 @@ namespace Stratocraft.Physics.Systems
             int sourceVoxelCount,
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.YMajorChunk,
             float dropHeightMeters = 3.0f,
-            byte dominantMaterialId = MaterialIdCatalog.Stone,
+            byte dominantMaterialId = MaterialIdCatalog.LooseRubble,
             Span<byte> outPlacedShardIndices = default)
         {
-            StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(dominantMaterialId);
+            byte rubbleMat = dominantMaterialId == MaterialIdCatalog.Air
+                ? MaterialIdCatalog.LooseRubble
+                : dominantMaterialId;
+            StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(rubbleMat);
             float massKg = Math.Max(1, sourceVoxelCount) * props.MassKg;
             float phi = PrebakedFracturePatternLut.ComputeImpactFractureRatio(
                 massKg,
@@ -317,23 +320,17 @@ namespace Stratocraft.Physics.Systems
                             if (!VoxelBitUtility.IsPhysicallySolid(chunkVoxels[idx]))
                             {
                                 int seed = (tx * 73) ^ (ty * 37) ^ (tz * 19) ^ (placed * 11);
-                                PrebakedFracturePatternLut.SelectShardMask64(seed, phi, out byte shardIdx, out byte popCount);
+                                PrebakedFracturePatternLut.SelectShardMask64(seed, phi, out byte shardIdx, out _);
 
-                                // Duzensiz 4x4x4 kirik parca gorunumu (ShapeID=63 veya LooseRubble=15)
+                                // Her maddenin kendi moloz versiyonu (kendi MaterialId degerini koruyarak ShapeID=63 4x4x4 kirik parca maskesi alir).
                                 byte dmg = (byte)Math.Clamp(4 + (int)(phi * 3.5f), 2, 14);
-                                byte rot = (byte)(seed & 3);
-                                byte shape = (placed % 2 == 0 && phi >= 0.35f) ? VoxelBitUtility.MicroVoxelShapeId : (byte)0;
-                                byte mat = (shape == VoxelBitUtility.MicroVoxelShapeId && dominantMaterialId != MaterialIdCatalog.Air)
-                                    ? dominantMaterialId
-                                    : MaterialIdCatalog.LooseRubble;
+                                ushort shardSlot = (ushort)(32 + (shardIdx & 0x3F));
 
-                                chunkVoxels[idx] = VoxelBitUtility.PackStandard(
-                                    mat,
-                                    density: (byte)Math.Clamp(80 + popCount * 2, 96, 220),
-                                    shapeId: shape,
-                                    rot24: rot,
-                                    origin: BlokKokenDurumu.DogalKutle,
-                                    dmg4: dmg);
+                                chunkVoxels[idx] = VoxelBitUtility.PackChiseled(
+                                    rubbleMat,
+                                    shardSlot,
+                                    BlokKokenDurumu.DogalKutle,
+                                    dmg);
 
                                 if (!outPlacedShardIndices.IsEmpty && placed < outPlacedShardIndices.Length)
                                 {

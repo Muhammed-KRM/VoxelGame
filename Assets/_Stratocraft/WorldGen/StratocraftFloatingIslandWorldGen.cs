@@ -9,8 +9,9 @@ namespace Stratocraft.WorldGen.Generators
     /// <summary>
     /// GAME LOGIC BIBLE Bolum 2.2 ve 2.6:
     /// Yuzen adanin 3B kapali hacimsel voksel arazisini (ust plato + falez duvarlari + alt bazalt omurga),
-    /// sonlu akiskan (su/lav) cukurlarini, catenary dome magarayi ve 7DTD mimari kemer/sutunlarini
-    /// hem Editor sahne insasinda hem de Play Mode calisma aninda sifir sapmayla ureten deterministik dunya ureteci.
+    /// %100 sizdirmaz (FullDensity=127) sonlu akiskan (su/lav) canaklarini, catenary dome magarayi,
+    /// tohum (ActiveWorldSeed) tabanli kesilebilir/devrilebilir voksel agaclari ve cok duvarli yikilabilir
+    /// 7DTD mimari kule/tapinak/kemer yapilarini ureten deterministik dunya ureteci.
     /// Pure C# (.NET 10 ve Unity 6 uyumlu).
     /// </summary>
     public static class StratocraftFloatingIslandWorldGen
@@ -19,23 +20,37 @@ namespace Stratocraft.WorldGen.Generators
         public const int ChunkMin = -2;
         public const int ChunkMax = 1;
 
+        /// <summary>Aktif dunya tohumu (Varsayilan 1453; Play Mode icinde [F7] ile rastgele degistirilebilir).</summary>
+        public static int ActiveWorldSeed { get; set; } = 1453;
+
         private static float Clamp01(float v) => Math.Clamp(v, 0f, 1f);
         private static float Lerp(float a, float b, float t) => a + (b - a) * Math.Clamp(t, 0f, 1f);
         private static int RoundToInt(float v) => (int)MathF.Round(v);
 
+        private static float SeedPhaseOffset(int salt)
+        {
+            int s = ActiveWorldSeed == 1453 ? 0 : ((ActiveWorldSeed * 73856093) ^ (salt * 19349663));
+            return (s & 1023) * (MathF.PI * 2f / 1024f);
+        }
+
         public static float ComputeIslandCoastRadius(float worldX, float worldZ)
         {
             float angle = MathF.Atan2(worldZ, worldX);
-            return 20.8f
-                + MathF.Sin(angle * 3f + 0.65f) * 2.25f
-                + MathF.Cos(angle * 5f - 0.40f) * 1.35f
-                + MathF.Sin(angle * 7f + 1.20f) * 0.65f;
+            float p1 = SeedPhaseOffset(1);
+            float p2 = SeedPhaseOffset(2);
+            float p3 = SeedPhaseOffset(3);
+            return 21.4f
+                + MathF.Sin(angle * 3f + 0.65f + p1) * 2.25f
+                + MathF.Cos(angle * 5f - 0.40f + p2) * 1.35f
+                + MathF.Sin(angle * 7f + 1.20f + p3) * 0.65f;
         }
 
         public static float SampleIslandTopSurfaceY(float worldX, float worldZ)
         {
-            float ridge = MathF.Sin(worldX * 0.16f) * 1.45f + MathF.Cos(worldZ * 0.15f) * 1.35f;
-            float detail = MathF.Sin((worldX + worldZ) * 0.29f) * 0.48f;
+            float p1 = SeedPhaseOffset(4);
+            float p2 = SeedPhaseOffset(5);
+            float ridge = MathF.Sin(worldX * 0.16f + p1) * 1.45f + MathF.Cos(worldZ * 0.15f + p2) * 1.35f;
+            float detail = MathF.Sin((worldX + worldZ) * 0.29f + p1 * 0.5f) * 0.48f;
             float baseH = 9.35f + ridge + detail;
 
             // Merkez atolye, CAS sandigi ve 7DTD kemer meydanini duzlestir (y ~ 9.15m)
@@ -75,7 +90,51 @@ namespace Stratocraft.WorldGen.Generators
             float crag = MathF.Sin(worldX * 0.27f + 0.5f) * 0.85f + MathF.Cos(worldZ * 0.25f - 0.3f) * 0.85f;
             float spire = MathF.Sin(worldX * 0.48f) * MathF.Cos(worldZ * 0.44f) * 0.75f;
             float underY = 2.35f + (normR * normR) * 4.45f + crag * 0.55f + spire * 0.45f;
+
+            // Guneydogu Su Havuzu ve Lav Kalderasi altinda kalin bazalt taban garantisi (delinmeyi onler)
+            if (worldX >= -1.0f && worldX <= 13.5f && worldZ >= -12.5f && worldZ <= -3.0f)
+            {
+                underY = MathF.Min(underY, 2.8f);
+            }
+
             return Math.Clamp(underY, 1.8f, 7.6f);
+        }
+
+        private static void EvaluateBasinState(
+            int wx,
+            int wz,
+            float radialMargin,
+            out bool inWaterPool,
+            out bool inLavaCaldera,
+            out bool isObsidianSeam,
+            out bool inBasinWall)
+        {
+            isObsidianSeam = radialMargin > 1.2f &&
+                             wx >= 5 && wx <= 6 &&
+                             wz >= -10 && wz <= -4;
+
+            float calderaDx = wx - 8.5f;
+            float calderaDz = wz - (-7.2f);
+            float calderaDist = MathF.Sqrt(calderaDx * calderaDx + calderaDz * calderaDz);
+            inLavaCaldera = !isObsidianSeam &&
+                            wx >= 7 && wx <= 11 &&
+                            wz >= -10 && wz <= -5 &&
+                            calderaDist < 3.1f &&
+                            radialMargin > 2.2f;
+
+            float waterDx = wx - 2.6f;
+            float waterDz = wz - (-7.2f);
+            float waterPoolDist = MathF.Sqrt(waterDx * waterDx + waterDz * waterDz);
+            inWaterPool = !isObsidianSeam &&
+                          !inLavaCaldera &&
+                          wx >= 1 && wx <= 4 &&
+                          wz >= -9 && wz <= -5 &&
+                          waterPoolDist < 2.25f &&
+                          radialMargin > 2.2f;
+
+            bool nearWater = wx >= 0 && wx <= 5 && wz >= -11 && wz <= -3 && waterPoolDist < 3.65f;
+            bool nearLava = wx >= 6 && wx <= 13 && wz >= -11 && wz <= -3 && calderaDist < 4.55f;
+            inBasinWall = !inWaterPool && !inLavaCaldera && (isObsidianSeam || nearWater || nearLava);
         }
 
         public static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
@@ -103,47 +162,37 @@ namespace Stratocraft.WorldGen.Generators
                     float topH = SampleIslandTopSurfaceY(wx, wz);
                     float bottomH = SampleIslandUnderbellyY(wx, wz);
 
-                    // Guneydogu Volkanik Lav Kalderasi & Kaynak Suyu Havuzu + Stokiyometrik Obsidyen Damari
-                    bool isObsidianSeam = radialMargin > 1.2f &&
-                                          wz >= -9.8f && wz <= -4.6f &&
-                                          wx >= 4.8f && wx <= 6.2f;
+                    EvaluateBasinState(
+                        wx, wz, radialMargin,
+                        out bool inWaterPool,
+                        out bool inLavaCaldera,
+                        out bool isObsidianSeam,
+                        out bool inBasinWall);
 
-                    float calderaDx = wx - 8.2f;
-                    float calderaDz = wz - (-7.2f);
-                    float calderaDist = MathF.Sqrt(calderaDx * calderaDx + calderaDz * calderaDz);
-                    bool inLavaCaldera = !isObsidianSeam && calderaDist < 4.1f && radialMargin > 1.2f;
-                    if (inLavaCaldera)
+                    if (inLavaCaldera || inWaterPool)
                     {
-                        topH = MathF.Min(topH, 9.15f);
+                        topH = 6.75f;
+                        bottomH = MathF.Min(bottomH, 2.5f);
                     }
-
-                    float waterDx = wx - 3.1f;
-                    float waterDz = wz - (-7.2f);
-                    float waterPoolDist = MathF.Sqrt(waterDx * waterDx + waterDz * waterDz);
-                    bool inWaterPool = !isObsidianSeam && waterPoolDist < 2.9f && !inLavaCaldera && radialMargin > 1.2f;
-                    if (inWaterPool)
+                    else if (inBasinWall)
                     {
-                        topH = MathF.Min(topH, 9.15f);
-                    }
-
-                    if (isObsidianSeam)
-                    {
-                        topH = MathF.Min(topH, 9.35f);
+                        topH = MathF.Max(topH, 9.65f);
+                        bottomH = MathF.Min(bottomH, 2.8f);
                     }
 
                     for (int y = 1; y < MaxEditableVoxelY - 1; y++)
                     {
                         int idx = (y << 8) | (lz << 4) | lx;
 
-                        if (inLavaCaldera && y >= 7 && y <= 9)
+                        if (inLavaCaldera && (y == 7 || y == 8))
                         {
-                            fluids[idx] = FluidCell16.Pack(FluidType.Lava, 255, isSettled: true).RawValue;
+                            fluids[idx] = FluidCell16.Pack(FluidType.Lava, 255, isSettled: false, pressureHead: y == 7 ? (byte)1 : (byte)0).RawValue;
                             continue;
                         }
 
-                        if (inWaterPool && y >= 7 && y <= 9)
+                        if (inWaterPool && (y == 7 || y == 8))
                         {
-                            fluids[idx] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true).RawValue;
+                            fluids[idx] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false, pressureHead: y == 7 ? (byte)1 : (byte)0).RawValue;
                             continue;
                         }
 
@@ -172,6 +221,16 @@ namespace Stratocraft.WorldGen.Generators
                         if (inCaveDome || inCaveMouth)
                         {
                             densityInt = Math.Min(densityInt, 14);
+                        }
+
+                        // %100 Sizdirmaz Su ve Lav Canagi Tabani (y=3..6) ve Canak Duvarlari (y=3..8)
+                        if ((inWaterPool || inLavaCaldera) && y >= 3 && y <= 6)
+                        {
+                            densityInt = VoxelBitUtility.FullDensity;
+                        }
+                        else if (inBasinWall && y >= 3 && y <= 8)
+                        {
+                            densityInt = VoxelBitUtility.FullDensity;
                         }
 
                         if (densityInt < 10)
@@ -204,6 +263,7 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
+            PopulateIslandTreesForChunk(chunkX, chunkZ, voxels);
             return (voxels, fluids);
         }
 
@@ -236,6 +296,10 @@ namespace Stratocraft.WorldGen.Generators
 
             if (y <= bottomH + 1.55f || radialMargin < 0.85f)
             {
+                if (y <= 4 && radialMargin > 5.0f && ((wx + wz) & 1) == 0)
+                {
+                    return MaterialIdCatalog.Bedrock;
+                }
                 return y <= bottomH + 1.55f ? MaterialIdCatalog.Basalt : MaterialIdCatalog.Stone;
             }
 
@@ -253,18 +317,18 @@ namespace Stratocraft.WorldGen.Generators
                 return MaterialIdCatalog.Dirt;
             }
 
-            // 14 Yeralti Cevheri (OreDistributionTable: Bor, Kukurt, Bakir, Kalay, Demir, Gumus, Altin, Kobalit, Titanyum, Platin, Uranyum, Mithril, Astralit, Aetherium)
+            int seedXor = ActiveWorldSeed * 19349663;
             int depthFromSurface = Math.Max(1, (int)(topH - y));
-            int mappedGeologicalY = -(depthFromSurface * 12) - (Math.Abs(wx * 13 + wz * 29) % 45);
+            int mappedGeologicalY = -(depthFromSurface * 12) - (Math.Abs(wx * 13 + wz * 29 + seedXor) % 45);
             int ringTier = Math.Clamp((Math.Abs(wx) + Math.Abs(wz)) / 6, 0, 6);
-            float geoNoise01 = ((Math.Abs(wx * 73856093 ^ y * 19349663 ^ wz * 83492791) & 1023) / 1023.0f);
+            float geoNoise01 = ((Math.Abs((wx * 73856093) ^ (y * 19349663) ^ (wz * 83492791) ^ seedXor) & 1023) / 1023.0f);
             byte sampledOre = OreDistributionTable.SampleOreMaterial(mappedGeologicalY, ringTier, geoNoise01);
             if (sampledOre != MaterialIdCatalog.Stone)
             {
                 return sampledOre;
             }
 
-            int oreHash = Math.Abs(wx * 73 + y * 37 + wz * 19) & 31;
+            int oreHash = Math.Abs(wx * 73 + y * 37 + wz * 19 + seedXor) & 31;
             return oreHash switch
             {
                 0 => MaterialIdCatalog.GoldOre,
@@ -280,6 +344,7 @@ namespace Stratocraft.WorldGen.Generators
         {
             if (chunkX == -1 && chunkZ == -1)
             {
+                // Merkez Meydan Giris Kemeri ve Yan Sur Duvarlari
                 const int baseY = 9;
                 const int archLz = 14;
 
@@ -309,6 +374,7 @@ namespace Stratocraft.WorldGen.Generators
             }
             else if (chunkX == 0 && chunkZ == -1)
             {
+                // Kaldera ve Su Havuzu Gozlem Dikmeleri
                 SetArchitecturalVoxel(voxels, 5, 9, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
                 SetArchitecturalVoxel(voxels, 5, 10, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
                 SetArchitecturalVoxel(voxels, 11, 9, 11, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
@@ -316,15 +382,207 @@ namespace Stratocraft.WorldGen.Generators
             }
             else if (chunkX == 0 && chunkZ == 0)
             {
-                int p1Y = RoundToInt(SampleIslandTopSurfaceY(5f, 5f));
-                SetArchitecturalVoxel(voxels, 5, p1Y, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 63, rot: 0);
-                SetArchitecturalVoxel(voxels, 5, p1Y + 1, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 5, p1Y + 2, 5, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+                // Kuzeydogu Cok Duvarli Yikilabilir Gozetleme Kulesi (Domino Çökme Test Yapisi: lx=5..9, lz=4..8)
+                int baseY = Math.Max(9, RoundToInt(SampleIslandTopSurfaceY(7f, 6f)));
+                int[] cornerX = { 5, 9, 5, 9 };
+                int[] cornerZ = { 4, 4, 8, 8 };
 
+                // 4 Tasiyici Köse Sütunu (Ayaklar kirildiginda ust kat ve kubbe Domino sistemiyle coker!)
+                for (int c = 0; c < 4; c++)
+                {
+                    int cx = cornerX[c];
+                    int cz = cornerZ[c];
+                    EnsureSolidFoundationUnder(voxels, cx, baseY, cz);
+                    SetArchitecturalVoxel(voxels, cx, baseY, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: (byte)(c & 3));
+                    SetArchitecturalVoxel(voxels, cx, baseY + 1, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, cx, baseY + 2, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                }
+
+                // Ust Kat Kemer Kirisleri ve Ahsap/Tas Tavan Cati Halkasi (y = baseY + 3)
+                for (int x = 5; x <= 9; x++)
+                {
+                    byte shape = (x == 7) ? (byte)5 : (byte)4;
+                    byte mat = (x == 7) ? MaterialIdCatalog.GoldOre : MaterialIdCatalog.StoneBrick;
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 4, mat, shapeId: shape, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, mat, shapeId: shape, rot: 2);
+                }
+                for (int z = 5; z <= 7; z++)
+                {
+                    byte shape = (z == 6) ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, 5, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 1);
+                    SetArchitecturalVoxel(voxels, 9, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 3);
+                }
+
+                // Kule Ust Teras Dosemesi ve Siperlik Mazgallari (y = baseY + 3..4)
+                for (int z = 5; z <= 7; z++)
+                {
+                    for (int x = 6; x <= 8; x++)
+                    {
+                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.OakWood, shapeId: 1, rot: 0);
+                    }
+                }
+                SetArchitecturalVoxel(voxels, 5, baseY + 4, 4, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
+                SetArchitecturalVoxel(voxels, 9, baseY + 4, 4, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
+                SetArchitecturalVoxel(voxels, 5, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 2);
+                SetArchitecturalVoxel(voxels, 9, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 3);
+                SetArchitecturalVoxel(voxels, 7, baseY + 4, 6, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
+
+                // Ek Bati Dikmesi (lx=11, lz=5)
                 int p2Y = RoundToInt(SampleIslandTopSurfaceY(11f, 5f));
+                EnsureSolidFoundationUnder(voxels, 11, p2Y, 5);
                 SetArchitecturalVoxel(voxels, 11, p2Y, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 63, rot: 1);
                 SetArchitecturalVoxel(voxels, 11, p2Y + 1, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 11, p2Y + 2, 5, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
+                SetArchitecturalVoxel(voxels, 11, p2Y + 2, 5, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+            }
+            else if (chunkX == -2 && chunkZ == -1)
+            {
+                // Guneybati Kadim Tapinak Kameriyesi (lx=10..14, lz=8..12)
+                int baseY = Math.Max(8, RoundToInt(SampleIslandTopSurfaceY(-20f, -6f)));
+                int[] colX = { 10, 14, 10, 14 };
+                int[] colZ = { 8, 8, 12, 12 };
+                for (int i = 0; i < 4; i++)
+                {
+                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i]);
+                    SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
+                }
+                for (int x = 10; x <= 14; x++)
+                {
+                    SetArchitecturalVoxel(voxels, x, baseY + 2, 8, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 2, 12, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                }
+                for (int z = 9; z <= 11; z++)
+                {
+                    SetArchitecturalVoxel(voxels, 10, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                    SetArchitecturalVoxel(voxels, 14, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                }
+                EnsureSolidFoundationUnder(voxels, 12, baseY, 10);
+                SetArchitecturalVoxel(voxels, 12, baseY, 10, MaterialIdCatalog.NaturalObsidian, shapeId: 1, rot: 0);
+                SetArchitecturalVoxel(voxels, 12, baseY + 1, 10, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+            }
+        }
+
+        /// <summary>
+        /// Adanin farkli biyom bolgelerine tohum (ActiveWorldSeed) ile konumlanan, Balta [Slot 3] ile govdesi
+        /// kesildiginde Domino Yapısal Çökme sistemiyle devrilen 3B voksel agaclar (Mese ve Demir Agaci) yerlestirir.
+        /// </summary>
+        public static void PopulateIslandTreesForChunk(int chunkX, int chunkZ, uint[] voxels)
+        {
+            int seedShiftX = ActiveWorldSeed == 1453 ? 0 : ((ActiveWorldSeed * 17) % 3) - 1;
+            int seedShiftZ = ActiveWorldSeed == 1453 ? 0 : ((ActiveWorldSeed * 31) % 3) - 1;
+
+            if (chunkX == -1 && chunkZ == -1)
+            {
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(3 + seedShiftX, 2, 4), Math.Clamp(5 + seedShiftZ, 3, 7), trunkHeight: 4, isIronwood: false);
+            }
+            else if (chunkX == 0 && chunkZ == 0)
+            {
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(2 + seedShiftX, 2, 3), Math.Clamp(11 + seedShiftZ, 10, 13), trunkHeight: 5, isIronwood: false);
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(12 + seedShiftX, 11, 13), Math.Clamp(11 + seedShiftZ, 9, 13), trunkHeight: 4, isIronwood: true);
+            }
+            else if (chunkX == -1 && chunkZ == 0)
+            {
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(13 + seedShiftX, 12, 14), Math.Clamp(3 + seedShiftZ, 2, 5), trunkHeight: 5, isIronwood: true);
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(3 + seedShiftX, 2, 5), Math.Clamp(12 + seedShiftZ, 11, 13), trunkHeight: 4, isIronwood: false);
+            }
+            else if (chunkX == 1 && chunkZ == -1)
+            {
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(2 + seedShiftX, 2, 4), Math.Clamp(12 + seedShiftZ, 10, 13), trunkHeight: 4, isIronwood: false);
+            }
+            else if (chunkX == 1 && chunkZ == 0)
+            {
+                BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(3 + seedShiftX, 2, 4), Math.Clamp(4 + seedShiftZ, 2, 6), trunkHeight: 4, isIronwood: false);
+            }
+        }
+
+        private static void BuildVoxelTree(
+            uint[] voxels,
+            int chunkX,
+            int chunkZ,
+            int lx,
+            int lz,
+            int trunkHeight,
+            bool isIronwood)
+        {
+            int wx = chunkX * 16 + lx;
+            int wz = chunkZ * 16 + lz;
+            float r = MathF.Sqrt(wx * wx + wz * wz);
+            float coastR = ComputeIslandCoastRadius(wx, wz);
+            if (coastR - r < 3.2f)
+            {
+                return;
+            }
+
+            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), 7, 18);
+            EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
+
+            byte woodMat = isIronwood ? MaterialIdCatalog.Ironwood : MaterialIdCatalog.OakWood;
+
+            // Govdenin alt bogumlarinin (dy=1..2) yan arazi egimlerine (Grass/Dirt) yapisip havada asili kalmamasi icin
+            // govde cevresindeki 1 blokluk bogumu temizle; boylece tek bir kutuk kesildiginde agac %100 devrilir.
+            for (int dy = 1; dy <= 2; dy++)
+            {
+                int cy = baseY + dy;
+                if (cy > 0 && cy < 255)
+                {
+                    if (lx > 0) voxels[(cy << 8) | (lz << 4) | (lx - 1)] = 0u;
+                    if (lx < 15) voxels[(cy << 8) | (lz << 4) | (lx + 1)] = 0u;
+                    if (lz > 0) voxels[(cy << 8) | ((lz - 1) << 4) | lx] = 0u;
+                    if (lz < 15) voxels[(cy << 8) | ((lz + 1) << 4) | lx] = 0u;
+                }
+            }
+
+            // Govde (Octagonal Pillar shapeId=2, balta ile kesildiginde ust kisim ve yaprak taci Domino ile yikilir)
+            for (int dy = 0; dy <= trunkHeight; dy++)
+            {
+                SetArchitecturalVoxel(voxels, lx, baseY + dy, lz, woodMat, shapeId: 2, rot: 0);
+            }
+
+            int crownBaseY = baseY + trunkHeight;
+            // Yan Dallar
+            SetArchitecturalVoxel(voxels, lx - 1, crownBaseY - 1, lz, woodMat, shapeId: 4, rot: 1);
+            SetArchitecturalVoxel(voxels, lx + 1, crownBaseY - 1, lz, woodMat, shapeId: 4, rot: 3);
+            SetArchitecturalVoxel(voxels, lx, crownBaseY - 1, lz - 1, woodMat, shapeId: 4, rot: 2);
+            SetArchitecturalVoxel(voxels, lx, crownBaseY - 1, lz + 1, woodMat, shapeId: 4, rot: 0);
+
+            // 3B Yaprak Taci (Alt genis katman + ust kubbe; Grass MaxCantileverSpanBlocks=2 sinirina %100 uyumlu)
+            for (int dz = -2; dz <= 2; dz++)
+            {
+                for (int dx = -2; dx <= 2; dx++)
+                {
+                    int distMan = Math.Abs(dx) + Math.Abs(dz);
+                    if (distMan > 2) continue;
+                    byte leafMat = (distMan == 0 && isIronwood) ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Grass;
+                    if (distMan > 0)
+                    {
+                        SetArchitecturalVoxel(voxels, lx + dx, crownBaseY, lz + dz, leafMat, shapeId: 1, rot: 0);
+                    }
+                    SetArchitecturalVoxel(voxels, lx + dx, crownBaseY + 1, lz + dz, MaterialIdCatalog.Grass, shapeId: 1, rot: 0);
+                    if (distMan <= 1)
+                    {
+                        SetArchitecturalVoxel(voxels, lx + dx, crownBaseY + 2, lz + dz, leafMat, shapeId: 6, rot: 0);
+                    }
+                }
+            }
+        }
+
+        private static void EnsureSolidFoundationUnder(uint[] voxels, int lx, int baseY, int lz)
+        {
+            if (lx < 0 || lx >= 16 || lz < 0 || lz >= 16) return;
+            for (int y = Math.Max(2, baseY - 2); y < baseY; y++)
+            {
+                int idx = (y << 8) | (lz << 4) | lx;
+                uint cur = voxels[idx];
+                byte mat = VoxelBitUtility.GetMaterialId(cur);
+                if (mat == MaterialIdCatalog.Air)
+                {
+                    voxels[idx] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+                else if (VoxelBitUtility.GetShapeId(cur) == 0 && VoxelBitUtility.GetDensityOrLiquid(cur) < VoxelBitUtility.FullDensity)
+                {
+                    voxels[idx] = VoxelBitUtility.WithDensityOrLiquid(cur, VoxelBitUtility.FullDensity);
+                }
             }
         }
 

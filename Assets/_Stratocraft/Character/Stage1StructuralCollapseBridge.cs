@@ -43,6 +43,7 @@ namespace Stratocraft.Character
         private int _activeClusterCount;
 
         public Material? DefaultVoxelMaterial { get; set; }
+        public Stage1MatterCrystalAndMiningController? MiningControllerForItemDrops { get; set; }
         public int ActiveFallingClusterCount => _activeClusterCount;
         public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
         public float LastImpactFractureRatio { get; private set; }
@@ -89,7 +90,7 @@ namespace Stratocraft.Character
             {
                 FallingStructureClusterComponent c = _evalBuffer[i];
                 if (_activeClusterCount >= SurgeModeActiveClusterLimit) { BakeClusterDirectlyInSurgeMode(in c, chunkVoxels, maxEditableY); surgeBaked++; }
-                else { SpawnFallingClusterIntoRingBuffer(c, cx, cz, matToUse); spawnedDynamic++; }
+                else { SpawnFallingClusterIntoRingBuffer(c, cx, cz, chunkVoxels, matToUse); spawnedDynamic++; }
             }
             feedbackText = surgeBaked > 0
                 ? $"DOMINO + SURGE MODE! {collapsedVoxels} blok ({spawnedDynamic} dinamik, {surgeBaked} aninda moloz) [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]"
@@ -103,7 +104,7 @@ namespace Stratocraft.Character
             int sliceVolume = 16 * maxY * 16;
             Array.Copy(src, dst, sliceVolume);
             int baseWx = cx * 16, baseWz = cz * 16;
-            int minY = Mathf.Max(1, Mathf.FloorToInt(pivotWorld.y) - 1);
+            int minY = Mathf.Max(4, Mathf.FloorToInt(pivotWorld.y) - 3);
 
             for (int y = 1; y < maxY; y++)
             for (int lz = 0; lz < 16; lz++)
@@ -116,9 +117,8 @@ namespace Stratocraft.Character
 
                 float dx = (baseWx + lx + 0.5f) - pivotWorld.x;
                 float dz = (baseWz + lz + 0.5f) - pivotWorld.z;
-                bool outsideLocalEdit = (dx * dx + dz * dz) > 12.25f || y < minY;
-                bool hasSolidBelow = y > 1 && VoxelBitUtility.IsPhysicallySolid(src[((y - 1) << 8) | (lz << 4) | lx]);
-                if (outsideLocalEdit || hasSolidBelow)
+                bool outsideLocalEdit = (dx * dx + dz * dz) > 20.25f || y < minY;
+                if (outsideLocalEdit)
                 {
                     dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
                 }
@@ -145,7 +145,7 @@ namespace Stratocraft.Character
         }
 
         private void SpawnFallingClusterIntoRingBuffer(
-            FallingStructureClusterComponent cluster, int cx, int cz, Material? sharedMat)
+            FallingStructureClusterComponent cluster, int cx, int cz, uint[] chunkVoxels, Material? sharedMat)
         {
             int slotIdx = _ringWriteCursor;
             _ringWriteCursor = (_ringWriteCursor + 1) % MaxRingBufferSlots;
@@ -158,8 +158,25 @@ namespace Stratocraft.Character
 
             _proxyTris.Clear();
             byte domMat = cluster.DominantMaterialId == 0 ? MaterialIdCatalog.Stone : cluster.DominantMaterialId;
-            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), domMat, 1, 0, 6, _proxyTris);
+            int minLx = Mathf.Clamp(cluster.MinBounds.X, 0, 15), maxLx = Mathf.Clamp(cluster.MaxBounds.X, 0, 15);
+            int minLy = Mathf.Clamp(cluster.MinBounds.Y, 1, 28), maxLy = Mathf.Clamp(cluster.MaxBounds.Y, 1, 28);
+            int minLz = Mathf.Clamp(cluster.MinBounds.Z, 0, 15), maxLz = Mathf.Clamp(cluster.MaxBounds.Z, 0, 15);
+            float centerLx = (minLx + maxLx + 1) * 0.5f, centerLy = (minLy + maxLy + 1) * 0.5f, centerLz = (minLz + maxLz + 1) * 0.5f;
+
+            int emittedBlocks = 0;
+            for (int ly = minLy; ly <= maxLy && emittedBlocks < 24; ly++)
+            for (int lz = minLz; lz <= maxLz && emittedBlocks < 24; lz++)
+            for (int lx = minLx; lx <= maxLx && emittedBlocks < 24; lx++)
+            {
+                var relOrigin = new System.Numerics.Vector3(lx - centerLx, ly - centerLy, lz - centerLz);
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(relOrigin, domMat, 1, 0, 6, _proxyTris);
+                emittedBlocks++;
+            }
+            if (emittedBlocks == 0)
+            {
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), domMat, 1, 0, 6, _proxyTris);
+            }
             Mesh coloredMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_FallingCluster_{slotIdx}");
 
             GameObject proxy = new GameObject($"FallingCluster_{cx}_{cz}_{slotIdx}");
@@ -167,11 +184,8 @@ namespace Stratocraft.Character
             MeshRenderer mr = proxy.AddComponent<MeshRenderer>();
             if (sharedMat != null) mr.sharedMaterial = sharedMat;
 
-            float sx = Mathf.Clamp(cluster.MaxBounds.X - cluster.MinBounds.X + 1, 0.75f, 3.2f);
-            float sy = Mathf.Clamp(cluster.MaxBounds.Y - cluster.MinBounds.Y + 1, 0.75f, 3.2f);
-            float sz = Mathf.Clamp(cluster.MaxBounds.Z - cluster.MinBounds.Z + 1, 0.75f, 3.2f);
             proxy.transform.position = new Vector3(cluster.CenterOfMass.X, cluster.CenterOfMass.Y, cluster.CenterOfMass.Z);
-            proxy.transform.localScale = new Vector3(sx, sy, sz);
+            proxy.transform.localScale = Vector3.one;
 
             Vector3 torqueVec = new Vector3(
                 cluster.OverturningTorqueNm.X, cluster.OverturningTorqueNm.Y, cluster.OverturningTorqueNm.Z);
@@ -203,8 +217,9 @@ namespace Stratocraft.Character
 
             float halfHeight = Mathf.Max(0.5f, (slot.Cluster.MaxBounds.Y - slot.Cluster.MinBounds.Y + 1) * 0.5f);
             int probeY = Mathf.Clamp(Mathf.FloorToInt(slot.CurrentCenterY - halfHeight), 1, maxEditableY - 2);
-            int centerLx = Mathf.Clamp((slot.Cluster.MinBounds.X + slot.Cluster.MaxBounds.X) / 2, 0, 15);
-            int centerLz = Mathf.Clamp((slot.Cluster.MinBounds.Z + slot.Cluster.MaxBounds.Z) / 2, 0, 15);
+            int minLx = Mathf.Clamp(slot.Cluster.MinBounds.X, 0, 15), maxLx = Mathf.Clamp(slot.Cluster.MaxBounds.X, 0, 15);
+            int minLz = Mathf.Clamp(slot.Cluster.MinBounds.Z, 0, 15), maxLz = Mathf.Clamp(slot.Cluster.MaxBounds.Z, 0, 15);
+            int centerLx = (minLx + maxLx) / 2, centerLz = (minLz + maxLz) / 2;
 
             if (!worldChunks.TryGetValue((slot.ChunkX, slot.ChunkZ), out uint[]? chunkVoxels))
             {
@@ -212,20 +227,41 @@ namespace Stratocraft.Character
                 return;
             }
 
-            uint belowRaw = chunkVoxels[(probeY << 8) | (centerLz << 4) | centerLx];
-            byte belowMat = VoxelBitUtility.GetMaterialId(belowRaw);
+            byte hitMat = MaterialIdCatalog.Air;
+            for (int lz = minLz; lz <= maxLz && hitMat == MaterialIdCatalog.Air; lz++)
+            for (int lx = minLx; lx <= maxLx; lx++)
+            {
+                uint belowRaw = chunkVoxels[(probeY << 8) | (lz << 4) | lx];
+                if (VoxelBitUtility.IsPhysicallySolid(belowRaw))
+                {
+                    hitMat = VoxelBitUtility.GetMaterialId(belowRaw);
+                    centerLx = lx;
+                    centerLz = lz;
+                    break;
+                }
+            }
 
-            if (belowMat != MaterialIdCatalog.Air && probeY > 2)
+            if (hitMat != MaterialIdCatalog.Air && probeY > 2)
             {
                 float dropHeight = Mathf.Max(0.5f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = Mathf.Max(Mathf.Abs(slot.VerticalVelocity), PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight));
 
-                if (StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, belowMat) &&
-                    VoxelBitUtility.GetOriginState(belowRaw) == BlokKokenDurumu.OyuncuItemBlogu)
+                if (probeY > 5 && StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, hitMat))
                 {
-                    chunkVoxels[(probeY << 8) | (centerLz << 4) | centerLx] = 0u;
+                    for (int lz = minLz; lz <= maxLz; lz++)
+                    for (int lx = minLx; lx <= maxLx; lx++)
+                    {
+                        int bIdx = (probeY << 8) | (lz << 4) | lx;
+                        byte bm = VoxelBitUtility.GetMaterialId(chunkVoxels[bIdx]);
+                        if (bm != MaterialIdCatalog.Air && bm != MaterialIdCatalog.Bedrock &&
+                            StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, bm))
+                        {
+                            chunkVoxels[bIdx] = 0u;
+                        }
+                    }
                     dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
                     slot.VerticalVelocity *= 0.65f;
+                    impactNotification = $"PANCAKE ALT KAT DELINDI! (Hiz={vHit:0.1} m/s -> Kat y={probeY} coktu)";
                     return;
                 }
 
@@ -258,7 +294,23 @@ namespace Stratocraft.Character
                 settleLx, settleLy, settleLz, Math.Max(1, slot.Cluster.VoxelCount),
                 VoxelGridMemoryLayout.YMajorChunk, dropHeight, slot.Cluster.DominantMaterialId);
 
+            byte domMat = slot.Cluster.DominantMaterialId == MaterialIdCatalog.Air
+                ? MaterialIdCatalog.LooseRubble
+                : slot.Cluster.DominantMaterialId;
+            string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(domMat);
+
             Vector3 impactWorld = new Vector3(slot.Cluster.CenterOfMass.X, slot.CurrentCenterY, slot.Cluster.CenterOfMass.Z);
+            if (MiningControllerForItemDrops != null)
+            {
+                int dropItemCount = Mathf.Clamp(Mathf.CeilToInt(slot.Cluster.VoxelCount * 0.45f), 2, 6);
+                for (int d = 0; d < dropItemCount; d++)
+                {
+                    Vector3 offset = new Vector3((d % 3 - 1) * 0.42f, 0.45f + d * 0.12f, ((d / 3) - 0.5f) * 0.42f);
+                    MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                        impactWorld + offset, domMat, shape: 1, count: 1, DefaultVoxelMaterial);
+                }
+            }
+
             float crushDamage = 0f;
             if (Vector3.Distance(playerPos, impactWorld) <= 3.2f)
             {
@@ -267,8 +319,8 @@ namespace Stratocraft.Character
             }
 
             impactNotification = crushDamage > 0.5f
-                ? $"YAPI CARPMASI! Phi={phi:0.00} | {deposited} blok Tas Moloz'a parcalandi | Ezilme Hasari: -{crushDamage:0} HP!"
-                : $"YAPI YERE CAKILDI! Yukseklik={dropHeight:0.1}m | Phi={phi:0.00} | {deposited} parca Tas Moloz olustu.";
+                ? $"YAPI CARPMASI! Phi={phi:0.00} | {deposited} blok {matName} Molozu + Yere Item Dustu | Ezilme Hasari: -{crushDamage:0} HP!"
+                : $"YAPI YERE CAKILDI! Yukseklik={dropHeight:0.1}m | {deposited} parca {matName} Molozu + Yere 3B {matName} Item Dustu.";
         }
 
         private static void BakeClusterDirectlyInSurgeMode(
