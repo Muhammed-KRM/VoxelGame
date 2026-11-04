@@ -35,8 +35,8 @@ namespace Stratocraft.EditorTools
     {
         private const string SceneAssetPath = "Assets/Scenes/StratocraftStage1Showcase.unity";
         private const string GeneratedAssetsFolder = "Assets/Art/GeneratedSceneAssets";
-        private const int ChunkMin = -4;
-        private const int ChunkMax = 3; // [-4..3] -> [-64m .. +64m] 8x8 = 64 chunk (128x128m baslangic kitasi, Play Mode'da 15.000m kesintisiz)
+        private const int ChunkMin = -10;
+        private const int ChunkMax = 9; // [-10..9] -> [-160m .. +160m] 20x20 = 400 Gercek 3B Hacimsel (16x16x160m) VoxelChunk (5 Yeralti Katmani + Magaralar + 12 Biyom)
 
         [MenuItem("Stratocraft/Asama 1 - Canli Dunya ve 3B Varlik Sahnesini Kur")]
         public static void BuildStage1ShowcaseScene()
@@ -71,17 +71,29 @@ namespace Stratocraft.EditorTools
                 voxelLayer = 0;
             }
 
-            // Once TUM 64 chunk voksel ve sonlu akiskan verisini uret ki komsu apronlari (18x(maxY+2)x18) birbirini eksiksiz okusun!
-            var worldChunks = new Dictionary<(int cx, int cz), uint[]>(64);
-            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(64);
-            for (int cz = ChunkMin; cz <= ChunkMax; cz++)
+            // Eski yuzeysel ContinentSector asset dosyalarini temizle
+            CleanUpLegacyMacroSectorAssets();
+
+            int gridWidth = ChunkMax - ChunkMin + 1;
+            int totalChunkCount = gridWidth * gridWidth;
+
+            // 1. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk (16x16x160m) verisini tum CPU cekirdeklerinde PARALEL uret!
+            var popResults = new (int cx, int cz, uint[] voxels, ushort[] fluids)[totalChunkCount];
+            System.Threading.Tasks.Parallel.For(0, totalChunkCount, idx =>
             {
-                for (int cx = ChunkMin; cx <= ChunkMax; cx++)
-                {
-                    var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(cx, cz);
-                    worldChunks[(cx, cz)] = voxels;
-                    fluidChunks[(cx, cz)] = fluids;
-                }
+                int cz = ChunkMin + (idx / gridWidth);
+                int cx = ChunkMin + (idx % gridWidth);
+                var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(cx, cz);
+                popResults[idx] = (cx, cz, voxels, fluids);
+            });
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>(totalChunkCount);
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(totalChunkCount);
+            for (int i = 0; i < totalChunkCount; i++)
+            {
+                var r = popResults[i];
+                worldChunks[(r.cx, r.cz)] = r.voxels;
+                fluidChunks[(r.cx, r.cz)] = r.fluids;
             }
 
             string fluidMatPath = GeneratedAssetsFolder + "/Mat_StratocraftFluidSurface.mat";
@@ -99,80 +111,86 @@ namespace Stratocraft.EditorTools
                 EditorUtility.SetDirty(fluidMat);
             }
 
-            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(64);
-            var reusableTris = new List<FacetedVoxelTriangle>(12288);
-            var reusableFluidTris = new List<FacetedVoxelTriangle>(4096);
-
-            for (int cz = ChunkMin; cz <= ChunkMax; cz++)
+            // 2. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk'in Kati (SurfaceNets + 5 Yeralti Katmani + 7DTD) ve Akiskan ucgenlerini PARALEL or!
+            int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
+            var solidTriLists = new List<FacetedVoxelTriangle>[totalChunkCount];
+            var fluidTriLists = new List<FacetedVoxelTriangle>[totalChunkCount];
+            System.Threading.Tasks.Parallel.For(0, totalChunkCount, idx =>
             {
-                for (int cx = ChunkMin; cx <= ChunkMax; cx++)
+                int cz = ChunkMin + (idx / gridWidth);
+                int cx = ChunkMin + (idx % gridWidth);
+                var sTris = new List<FacetedVoxelTriangle>(8192);
+                var fTris = new List<FacetedVoxelTriangle>(1024);
+
+                bool isOuterBoundary = cx == ChunkMin || cx == ChunkMax || cz == ChunkMin || cz == ChunkMax;
+                bool isCenterCaveZone = cx >= -2 && cx <= 2 && cz >= -2 && cz <= 2;
+                int meshMinY = (isOuterBoundary || isCenterCaveZone) ? 0 : 64;
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    cx, cz, maxEditableY, worldChunks, sTris, minY: meshMinY);
+                FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
+                    cx, cz, maxEditableY, worldChunks, fluidChunks, fTris);
+
+                solidTriLists[idx] = sTris;
+                fluidTriLists[idx] = fTris;
+            });
+
+            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(totalChunkCount);
+
+            // 3. Adim: Ana is parcaciginda (Main Thread) Unity Mesh ve VoxelChunk GameObject'lerini olustur
+            for (int idx = 0; idx < totalChunkCount; idx++)
+            {
+                int cz = ChunkMin + (idx / gridWidth);
+                int cx = ChunkMin + (idx % gridWidth);
+                var sTris = solidTriLists[idx];
+                var fTris = fluidTriLists[idx];
+
+                string meshName = $"Mesh_SeamlessIslandChunk_{cx}_{cz}";
+                bool isCoreAssetChunk = cx >= -2 && cx <= 1 && cz >= -2 && cz <= 1;
+                Mesh chunkMesh = isCoreAssetChunk
+                    ? SaveZeroGcMeshAsset(meshName, sTris)
+                    : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, meshName);
+
+                Vector3 chunkWorldPos = new Vector3(cx * 16f, 0f, cz * 16f);
+                string chunkGoName = $"VoxelChunk_{cx}_{cz}_Seamless3DIsland";
+                bool isNearPhysicsRing = cx >= -2 && cx <= 2 && cz >= -2 && cz <= 2;
+                GameObject chunkGo = CreateMeshObject(
+                    chunkGoName,
+                    voxelWorldRoot.transform,
+                    chunkWorldPos,
+                    Quaternion.identity,
+                    Vector3.one,
+                    chunkMesh,
+                    uberMat,
+                    addCollider: sTris.Count >= 1 && isNearPhysicsRing);
+                chunkGo.layer = voxelLayer;
+
+                MeshFilter mf = chunkGo.GetComponent<MeshFilter>();
+                MeshCollider mc = chunkGo.GetComponent<MeshCollider>();
+                if (mc == null)
                 {
-                    // 1. Kati Arazi Voksel Orme (0.000m Dikissiz Padded Surface Nets + 7DTD Sekiller)
-                    reusableTris.Clear();
-                    HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
-                        cx,
-                        cz,
-                        Stage1InteractivePlayController.MaxEditableVoxelY,
-                        worldChunks,
-                        reusableTris);
+                    mc = chunkGo.AddComponent<MeshCollider>();
+                    mc.enabled = false;
+                }
 
-                    string meshName = $"Mesh_SeamlessIslandChunk_{cx}_{cz}";
-                    bool isCoreAssetChunk = cx >= -2 && cx <= 1 && cz >= -2 && cz <= 1;
-                    Mesh chunkMesh = isCoreAssetChunk
-                        ? SaveZeroGcMeshAsset(meshName, reusableTris)
-                        : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(reusableTris, meshName);
+                if (fTris.Count > 0)
+                {
+                    string fluidMeshName = $"Mesh_FluidSurfaceChunk_{cx}_{cz}";
+                    Mesh fluidMesh = isCoreAssetChunk
+                        ? SaveZeroGcMeshAsset(fluidMeshName, fTris)
+                        : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, fluidMeshName);
 
-                    Vector3 chunkWorldPos = new Vector3(cx * 16f, 0f, cz * 16f);
-                    string chunkGoName = $"VoxelChunk_{cx}_{cz}_Seamless3DIsland";
-                    GameObject chunkGo = CreateMeshObject(
-                        chunkGoName,
-                        voxelWorldRoot.transform,
-                        chunkWorldPos,
+                    CreateMeshObject(
+                        $"FluidSurface_{cx}_{cz}",
+                        chunkGo.transform,
+                        Vector3.zero,
                         Quaternion.identity,
                         Vector3.one,
-                        chunkMesh,
-                        uberMat,
-                        addCollider: reusableTris.Count >= 1);
-                    chunkGo.layer = voxelLayer;
-
-                    MeshFilter mf = chunkGo.GetComponent<MeshFilter>();
-                    MeshCollider mc = chunkGo.GetComponent<MeshCollider>();
-                    if (mc == null)
-                    {
-                        mc = chunkGo.AddComponent<MeshCollider>();
-                        mc.enabled = false;
-                    }
-
-                    // 2. Sonlu Akiskan (Su, Lav) Surekli Yuzeyi + +0.35m Kiyi Etegi Orme
-                    reusableFluidTris.Clear();
-                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
-                        cx,
-                        cz,
-                        Stage1InteractivePlayController.MaxEditableVoxelY,
-                        worldChunks,
-                        fluidChunks,
-                        reusableFluidTris);
-
-                    if (reusableFluidTris.Count > 0)
-                    {
-                        string fluidMeshName = $"Mesh_FluidSurfaceChunk_{cx}_{cz}";
-                        Mesh fluidMesh = isCoreAssetChunk
-                            ? SaveZeroGcMeshAsset(fluidMeshName, reusableFluidTris)
-                            : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(reusableFluidTris, fluidMeshName);
-
-                        GameObject fluidGo = CreateMeshObject(
-                            $"FluidSurface_{cx}_{cz}",
-                            chunkGo.transform,
-                            Vector3.zero,
-                            Quaternion.identity,
-                            Vector3.one,
-                            fluidMesh,
-                            fluidMat,
-                            addCollider: false);
-                    }
-
-                    builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], mf, mc);
+                        fluidMesh,
+                        fluidMat,
+                        addCollider: false);
                 }
+
+                builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], mf, mc);
             }
 
             // 3. Faz 2: 16x32x4 Cift Boynuzlu Demirci Atolyesi, Fiziksel 3B CAS Sandigi ve Klan Koruma Kristali
@@ -730,9 +748,10 @@ namespace Stratocraft.EditorTools
             RenderSettings.ambientEquatorColor = new Color(0.38f, 0.42f, 0.48f);
             RenderSettings.ambientGroundColor = new Color(0.22f, 0.19f, 0.17f);
             RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogColor = new Color(0.16f, 0.23f, 0.33f, 1.0f);
-            RenderSettings.fogDensity = 0.0045f;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogColor = new Color(0.46f, 0.62f, 0.82f, 1.0f);
+            RenderSettings.fogStartDistance = 480.0f;
+            RenderSettings.fogEndDistance = 2600.0f;
 
             // Global Post-Processing Volume + URP Forward+ Noktasal Atmosfer Isiklari
             GameObject envRoot = new GameObject("00_Faz0_URP_ForwardPlus_Volume_And_ClusterLights");
@@ -741,10 +760,11 @@ namespace Stratocraft.EditorTools
             globalVol.priority = 1f;
             globalVol.sharedProfile = StratocraftUrpBootstrap.EnsureGlobalVolumeProfile();
 
+            float baseLightsY = StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY;
             CreateForwardPlusPointLight(
                 envRoot.transform,
                 "PointLight_VolcanicLavaCaldera",
-                new Vector3(8.2f, 10.2f, -7.2f),
+                new Vector3(8.2f, baseLightsY + 1.2f, -7.2f),
                 new Color(1.0f, 0.42f, 0.10f),
                 intensity: 11.5f,
                 range: 14.0f);
@@ -752,7 +772,7 @@ namespace Stratocraft.EditorTools
             CreateForwardPlusPointLight(
                 envRoot.transform,
                 "PointLight_ForgeAnvilHearth",
-                new Vector3(-3.4f, 10.6f, -2.2f),
+                new Vector3(-3.4f, baseLightsY + 1.6f, -2.2f),
                 new Color(1.0f, 0.56f, 0.18f),
                 intensity: 7.5f,
                 range: 10.0f);
@@ -760,7 +780,7 @@ namespace Stratocraft.EditorTools
             CreateForwardPlusPointLight(
                 envRoot.transform,
                 "PointLight_ClanCrystalResonance",
-                new Vector3(1.8f, 11.4f, -1.4f),
+                new Vector3(1.8f, baseLightsY + 2.4f, -1.4f),
                 new Color(0.25f, 0.88f, 1.0f),
                 intensity: 6.5f,
                 range: 11.0f);
@@ -768,10 +788,10 @@ namespace Stratocraft.EditorTools
             CreateForwardPlusPointLight(
                 envRoot.transform,
                 "PointLight_CatenaryCaveMithrilGlow",
-                new Vector3(-8.2f, 11.2f, 8.2f),
+                new Vector3(-8.2f, baseLightsY - 12.0f, 8.2f),
                 new Color(0.30f, 0.85f, 1.0f),
-                intensity: 5.5f,
-                range: 11.0f);
+                intensity: 6.5f,
+                range: 14.0f);
         }
 
         private static void CreateForwardPlusPointLight(
@@ -797,9 +817,10 @@ namespace Stratocraft.EditorTools
 
         private static void PositionMainCameraAndSceneView(Transform playerTarget)
         {
-            // 128x128m 5 biyomlu baslangic kitasini (Karli Zirve, Magara Dagi, Kumtasi Kanyonu, Volkanik Kaldera, Merkez Vadi) gosteren panoramik aci
-            Vector3 camPos = new Vector3(-22.5f, 28.5f, -34.5f);
-            Vector3 lookTarget = new Vector3(0.8f, 9.2f, 2.5f);
+            // 224x224m baslangic kitasini, 12 biyom gecisini, 96m derinlikli 5 yeralti katmanini ve Ucan Gokyuzu Adalarini gosteren panoramik aci
+            float baseSurfY = StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY;
+            Vector3 camPos = new Vector3(-24.5f, baseSurfY + 26.0f, -32.5f);
+            Vector3 lookTarget = new Vector3(4.0f, baseSurfY + 4.5f, 12.0f);
             Quaternion camRot = Quaternion.LookRotation((lookTarget - camPos).normalized, Vector3.up);
 
             UnityEngine.Camera? mainCam = UnityEngine.Camera.main;
@@ -827,8 +848,9 @@ namespace Stratocraft.EditorTools
             mainCam.transform.position = camPos;
             mainCam.transform.rotation = camRot;
             mainCam.fieldOfView = 54f;
+            mainCam.farClipPlane = 4500f;
             mainCam.clearFlags = CameraClearFlags.SolidColor;
-            mainCam.backgroundColor = new Color(0.13f, 0.19f, 0.29f, 1.0f);
+            mainCam.backgroundColor = new Color(0.36f, 0.52f, 0.72f, 1.0f);
 
             if (!mainCam.TryGetComponent<UniversalAdditionalCameraData>(out var camData))
             {
@@ -841,11 +863,26 @@ namespace Stratocraft.EditorTools
             if (SceneView.lastActiveSceneView != null)
             {
                 SceneView sv = SceneView.lastActiveSceneView;
-                sv.LookAt(lookTarget, camRot, 56.0f, false, true);
+                Quaternion svRot = Quaternion.Euler(36.0f, 36.0f, 0.0f);
+                sv.LookAt(new Vector3(0.0f, baseSurfY - 12.0f, 0.0f), svRot, 340.0f, false, true);
                 sv.Repaint();
             }
 
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
+        }
+
+        private static void CleanUpLegacyMacroSectorAssets()
+        {
+            for (int sz = -2; sz <= 1; sz++)
+            {
+                for (int sx = -2; sx <= 1; sx++)
+                {
+                    string p1 = $"{GeneratedAssetsFolder}/Mesh_ContinentSector_{sx}_{sz}.asset";
+                    string p2 = $"{GeneratedAssetsFolder}/Mesh_ContinentFluid_{sx}_{sz}.asset";
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(p1) != null) AssetDatabase.DeleteAsset(p1);
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(p2) != null) AssetDatabase.DeleteAsset(p2);
+                }
+            }
         }
 
         private static void Place15ArmorPiecesRack(Transform parent, Vector3 rackOrigin, Material sharedMat)

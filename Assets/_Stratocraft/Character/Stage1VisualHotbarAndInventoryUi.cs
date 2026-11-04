@@ -50,9 +50,9 @@ namespace Stratocraft.Character
     }
 
     /// <summary>
-    /// Minecraft / ARK tarzi 9 Kare Slotlu Görsel Hotbar (1..9 + 0 Bos El), Prosedurel 2B/Izometrik Esya Ikonlari,
-    /// Fare ile Surukle-Birak (Drag &amp; Drop / Sag Tik Yariya Bolme / Shift+Tik Hizli Aktarim) 24-Slot Canta ([I])
-    /// ve 16-Slot CAS Sandik ([E]) Arayuz Kontrolcusu.
+    /// Alt Kemer/Kilif Durum Bari (0: Bos El, 1..9: Kilif Yuvalari) + [I] Tusu The Forest Tarzi
+    /// 3B Fiziksel Kumas Canta Ortusu Uzerinde Serbest 3B Surukle-Birak (3D Raycast Plane Drag &amp; Drop)
+    /// Veri, Kanal ve Diyajetik 3B Bilgi Etiketi Kontrolcusu. (2B Minecraft/IMGUI envanter/sandik penceresi YOKTUR!)
     /// </summary>
     public sealed class Stage1VisualHotbarAndInventoryUi
     {
@@ -65,9 +65,24 @@ namespace Stratocraft.Character
         public readonly VisualInventorySlot[] ChestSlots = new VisualInventorySlot[ChestSlotCount];
 
         public VisualInventorySlot CursorHeldSlot;
+        public bool DragOriginIsHotbar { get; private set; }
+        public int DragOriginSlotIndex { get; private set; } = -1;
+
         public int SelectedHotbarIndex { get; private set; } = -1; // -1 = Bos El [0], 0..8 = Slot [1..9]
         public bool IsChestWindowOpen { get; set; }
         public string HoveredSlotTooltip { get; private set; } = string.Empty;
+
+        /// <summary>3B Kumas Canta Ortusu uzerinde fareyle uzerine gelinen 3B esyanin dunya konumu ve bilgi etiketi.</summary>
+        public bool HasHovered3DMatSlot { get; set; }
+        public Vector3 Hovered3DMatWorldPos { get; set; }
+        public string Hovered3DMatTitle { get; set; } = string.Empty;
+        public string Hovered3DMatDetail { get; set; } = string.Empty;
+        public Transform? ActiveBackpackMatRoot { get; set; }
+
+        public float ChannelRemainingSec { get; private set; }
+        public float ChannelTotalSec { get; private set; }
+        public string ChannelLabel { get; private set; } = string.Empty;
+        public bool IsChannelActive => ChannelRemainingSec > 0.001f;
 
         private readonly Dictionary<int, Texture2D> _iconCache = new(64);
         private Texture2D? _slotBgTex;
@@ -108,30 +123,29 @@ namespace Stratocraft.Character
 
         private void InitializeDefaultSlots()
         {
-            // Hotbar 1..9 (Index 0..8)
             HotbarSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1.0f };
             HotbarSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 0, Count = 1, Durability01 = 0.96f };
             HotbarSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 0, Count = 1, Durability01 = 0.95f };
             HotbarSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.ToolMicroChisel, SubId = 0, Count = 1, Durability01 = 1.0f };
-            HotbarSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 6, Durability01 = 1.0f }; // Su Matarasi
+            HotbarSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 6, Durability01 = 1.0f };
             HotbarSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Stone, Count = 16, Durability01 = 1.0f };
             HotbarSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.OakWood, Count = 8, Durability01 = 1.0f };
             HotbarSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Cobblestone, Count = 8, Durability01 = 1.0f };
             HotbarSlots[8] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Basalt, Count = 8, Durability01 = 1.0f };
 
-            // Canta (Backpack 24 Slot) baslangic stoklari
             BackpackSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Dirt, Count = 12, Durability01 = 1.0f };
             BackpackSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Sand, Count = 8, Durability01 = 1.0f };
             BackpackSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.NaturalObsidian, Count = 4, Durability01 = 1.0f };
             BackpackSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.LooseRubble, Count = 8, Durability01 = 1.0f };
             BackpackSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.StoneBrick, Count = 12, Durability01 = 1.0f };
             BackpackSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Marble, Count = 8, Durability01 = 1.0f };
-            BackpackSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 2, Count = 4, Durability01 = 1.0f }; // Lav Matarasi
-            BackpackSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 12, Durability01 = 1.0f }; // Bakir Kulce
-            BackpackSlots[8] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 2, Count = 12, Durability01 = 1.0f }; // Demir Kulce
-            BackpackSlots[9] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 3, Count = 12, Durability01 = 1.0f }; // Mithril Kulce
+            BackpackSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 2, Count = 4, Durability01 = 1.0f };
+            BackpackSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 12, Durability01 = 1.0f };
+            BackpackSlots[8] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 2, Count = 12, Durability01 = 1.0f };
+            BackpackSlots[9] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 3, Count = 12, Durability01 = 1.0f };
+            BackpackSlots[10] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.GoldOre, Count = 6, Durability01 = 1.0f };
+            BackpackSlots[11] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.MithrilOre, Count = 4, Durability01 = 1.0f };
 
-            // Sandik (16 Slot) baslangic esyalari
             ChestSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 8, Durability01 = 1.0f };
             ChestSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 2, Count = 6, Durability01 = 1.0f };
             ChestSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 3, Count = 4, Durability01 = 1.0f };
@@ -143,19 +157,96 @@ namespace Stratocraft.Character
         }
 
         /// <summary>Secili Hotbar slotundaki esyayi dondurur (Bos El ise Empty doner).</summary>
-        public VisualInventorySlot GetActiveHotbarSlot()
-        {
-            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount)
-            {
-                return default;
-            }
-            return HotbarSlots[SelectedHotbarIndex];
-        }
+        public VisualInventorySlot GetActiveHotbarSlot() =>
+            (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) ? default : HotbarSlots[SelectedHotbarIndex];
 
         /// <summary>Belirli bir Hotbar slotunu (0..8 -> [1..9], -1 -> Bos El [0]) secer.</summary>
-        public void SelectHotbarSlot(int index)
-        {
+        public void SelectHotbarSlot(int index) =>
             SelectedHotbarIndex = Mathf.Clamp(index, -1, HotbarSlotCount - 1);
+
+        /// <summary>
+        /// Secili Hotbar slotunda insa edilebilir VoxelBlock, OreChunk veya MetalIngot varsa 1 adet tuketir ve MaterialId dondurur.
+        /// </summary>
+        public bool TryConsumeSelectedBuildableVoxel(out byte materialId)
+        {
+            materialId = 0;
+            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return false;
+            ref VisualInventorySlot slot = ref HotbarSlots[SelectedHotbarIndex];
+            if (slot.IsEmpty) return false;
+
+            if (slot.Kind == InventoryItemKind.VoxelBlock ||
+                slot.Kind == InventoryItemKind.OreChunk ||
+                slot.Kind == InventoryItemKind.MetalIngot)
+            {
+                byte resolvedMat = slot.Kind == InventoryItemKind.MetalIngot
+                    ? (slot.SubId switch
+                    {
+                        1 => MaterialIdCatalog.CopperOre,
+                        2 => MaterialIdCatalog.IronOre,
+                        3 => MaterialIdCatalog.MithrilOre,
+                        _ => slot.SubId != 0 ? slot.SubId : MaterialIdCatalog.Steel
+                    })
+                    : slot.SubId;
+
+                if (resolvedMat == 0) return false;
+                materialId = resolvedMat;
+                slot.Count--;
+                if (slot.Count <= 0)
+                {
+                    slot = default;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>Secili aletin dayaniklilik cubugunu (0..1) gunceller.</summary>
+        public void UpdateSelectedToolDurability(float durability01)
+        {
+            float clamped = Mathf.Clamp01(durability01);
+            if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount && !HotbarSlots[SelectedHotbarIndex].IsEmpty)
+            {
+                HotbarSlots[SelectedHotbarIndex].Durability01 = clamped;
+                return;
+            }
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                if (HotbarSlots[i].Kind == InventoryItemKind.ToolPickaxe || HotbarSlots[i].Kind == InventoryItemKind.ToolAxe)
+                {
+                    HotbarSlots[i].Durability01 = clamped;
+                }
+            }
+        }
+
+        /// <summary>Fiziksel kusanma (1.5s) veya Madde Kristali aktarim (3.0s) kanalini baslatir.</summary>
+        public void StartEquipOrTransferChannel(float durationSec, string label)
+        {
+            ChannelTotalSec = Mathf.Max(0.1f, durationSec);
+            ChannelRemainingSec = ChannelTotalSec;
+            ChannelLabel = label;
+        }
+
+        /// <summary>Aktif kusanma/transfer kanalini ilerletir.</summary>
+        public void StepChannel(float dt, Stage1MatterCrystalAndMiningController? miningCtrl = null)
+        {
+            if (ChannelRemainingSec <= 0f) return;
+            ChannelRemainingSec = Mathf.Max(0f, ChannelRemainingSec - dt);
+            if (ChannelRemainingSec <= 0f)
+            {
+                if (miningCtrl != null)
+                {
+                    miningCtrl.LastFeedbackText = $"TAMAMLANDI: {ChannelLabel}";
+                }
+                ChannelLabel = string.Empty;
+            }
+        }
+
+        /// <summary>Hasar alindiginda veya canta kapatildiginda aktif kanali aninda iptal eder.</summary>
+        public void CancelActiveChannel()
+        {
+            ChannelRemainingSec = 0f;
+            ChannelTotalSec = 0f;
+            ChannelLabel = string.Empty;
         }
 
         /// <summary>Secili matara slotunun sivi turunu dondurur (0=Bos, 1=Su, 2=Lav).</summary>
@@ -196,10 +287,7 @@ namespace Stratocraft.Character
             SelectedHotbarIndex = 0;
         }
 
-        /// <summary>
-        /// Madde Kristali (CrystalStorage) ve Moloz sayaclari ile gorsel Hotbar/Canta slotlarini cift yonlu senkronize eder.
-        /// Kazilan veya yerden alinan her yeni blok/cevher otomatik olarak uygun slota (veya bos slota) eklenir!
-        /// </summary>
+        /// <summary>Madde Kristali (CrystalStorage) ve Moloz sayaclari ile gorsel Hotbar/Canta slotlarini cift yonlu senkronize eder.</summary>
         public void SyncWithCrystalStorage(Stage1MatterCrystalAndMiningController miningCtrl)
         {
             for (int m = 0; m < TrackedCrystalMaterials.Length; m++)
@@ -220,7 +308,7 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>UI icinde surukle-birak veya sandik transferi yapildiginda CrystalStorage miktarlarini gunceller.</summary>
+        /// <summary>3B Canta Ortusu uzerinde surukle-birak veya sandik transferi yapildiginda CrystalStorage miktarlarini gunceller.</summary>
         public void PushUiCountsToCrystalStorage(Stage1MatterCrystalAndMiningController miningCtrl)
         {
             for (int m = 0; m < TrackedCrystalMaterials.Length; m++)
@@ -289,7 +377,6 @@ namespace Stratocraft.Character
 
             if (delta > 0)
             {
-                // Once mevcut yigini bulup artir
                 for (int i = 0; i < HotbarSlotCount; i++)
                 {
                     if (!HotbarSlots[i].IsEmpty && HotbarSlots[i].Kind == kind && HotbarSlots[i].SubId == matId)
@@ -306,7 +393,6 @@ namespace Stratocraft.Character
                         return;
                     }
                 }
-                // Mevcut yigin yoksa ilk bos Hotbar veya Canta slotuna koy
                 for (int i = 0; i < HotbarSlotCount; i++)
                 {
                     if (HotbarSlots[i].IsEmpty)
@@ -327,7 +413,6 @@ namespace Stratocraft.Character
             else
             {
                 int rem = -delta;
-                // Once secili slottan dus
                 if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount)
                 {
                     ref var sel = ref HotbarSlots[SelectedHotbarIndex];
@@ -363,8 +448,135 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Ekranin altinda 9 kare slotlu Minecraft/ARK tarzi Hotbar'i, aciksa [I] 24-Slot Canta Izgarasini
-        /// ve aciksa [E] 16-Slot Sandik Izgarasini cizer ve fare surukle-birak etkilesimlerini yonetir.
+        /// 3B Kumas Canta Ortusu (The Forest Stili) uzerindeki bir 3B yuvadan esya suruklemeyi baslatir.
+        /// </summary>
+        public bool Begin3DMatSlotDrag(bool isHotbar, int slotIndex, Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            VisualInventorySlot[] arr = isHotbar ? HotbarSlots : BackpackSlots;
+            if ((uint)slotIndex >= (uint)arr.Length || arr[slotIndex].IsEmpty) return false;
+
+            CursorHeldSlot = arr[slotIndex];
+            DragOriginIsHotbar = isHotbar;
+            DragOriginSlotIndex = slotIndex;
+            arr[slotIndex] = default;
+            PushUiCountsToCrystalStorage(miningCtrl);
+            return true;
+        }
+
+        /// <summary>
+        /// 3B Kumas Canta Ortusu uzerinde suruklenen 3B esyayi hedef 3B yuvaya birakir, birlestirir veya yerini degistirir (Swap).
+        /// </summary>
+        public void Complete3DMatSlotDrop(
+            bool targetIsHotbar,
+            int targetSlotIndex,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Action onActiveSlotChanged)
+        {
+            if (CursorHeldSlot.IsEmpty) return;
+
+            VisualInventorySlot[] targetArr = targetIsHotbar ? HotbarSlots : BackpackSlots;
+            if ((uint)targetSlotIndex >= (uint)targetArr.Length)
+            {
+                ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
+                onActiveSlotChanged();
+                return;
+            }
+
+            ref VisualInventorySlot targetSlot = ref targetArr[targetSlotIndex];
+            VisualInventorySlot placed = CursorHeldSlot;
+
+            if (targetSlot.IsEmpty)
+            {
+                targetSlot = CursorHeldSlot;
+                CursorHeldSlot = default;
+            }
+            else if (targetSlot.CanStackWith(in CursorHeldSlot))
+            {
+                targetSlot.Count += CursorHeldSlot.Count;
+                CursorHeldSlot = default;
+            }
+            else
+            {
+                // 3B Kumas Ortu Uzerinde Serbest Yer Degistirme (Spatial 3D Swap):
+                // Hedef yuvadaki esya suruklemenin basladigi kaynak yuvaya gonderilir!
+                VisualInventorySlot displaced = targetSlot;
+                targetSlot = CursorHeldSlot;
+                CursorHeldSlot = default;
+
+                VisualInventorySlot[] originArr = DragOriginIsHotbar ? HotbarSlots : BackpackSlots;
+                if ((uint)DragOriginSlotIndex < (uint)originArr.Length && originArr[DragOriginSlotIndex].IsEmpty)
+                {
+                    originArr[DragOriginSlotIndex] = displaced;
+                }
+                else if (!TryMergeOrPlaceIntoArray(in displaced, BackpackSlots))
+                {
+                    TryMergeOrPlaceIntoArray(in displaced, HotbarSlots);
+                }
+            }
+
+            if (targetIsHotbar)
+            {
+                SelectedHotbarIndex = targetSlotIndex;
+            }
+            if (targetIsHotbar != DragOriginIsHotbar)
+            {
+                TriggerChannelForSlotItem(in placed, miningCtrl);
+            }
+
+            DragOriginSlotIndex = -1;
+            PushUiCountsToCrystalStorage(miningCtrl);
+            onActiveSlotChanged();
+        }
+
+        /// <summary>
+        /// 3B Kumas Canta Ortusu uzerindeki bir 3B yuvaya Sag Tik (Yariya Bolme / Tekli Birakma) veya Shift+Sol Tik (Hizli Aktarim) uygular.
+        /// </summary>
+        public void Handle3DMatSlotSecondaryOrQuickAction(
+            bool isHotbar,
+            int slotIndex,
+            int mouseButton,
+            bool isShift,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            VisualChestCasSystem chestCasSystem,
+            Action onActiveSlotChanged)
+        {
+            VisualInventorySlot[] arr = isHotbar ? HotbarSlots : BackpackSlots;
+            if ((uint)slotIndex >= (uint)arr.Length) return;
+
+            HandleSlotMouseClick(
+                ref arr[slotIndex],
+                slotIndex,
+                isHotbar: isHotbar,
+                isChest: false,
+                mouseButton: mouseButton,
+                isShift: isShift,
+                miningCtrl: miningCtrl,
+                chestCasSystem: chestCasSystem);
+            onActiveSlotChanged();
+        }
+
+        /// <summary>
+        /// Suruklenen 3B esya kumas ortunun disina birakildiginda esyayi kaybolmadan alindigi 3B yuvaya geri koyar.
+        /// </summary>
+        public void ReturnCursorHeldItemToOriginOrInventory(Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (CursorHeldSlot.IsEmpty) return;
+            VisualInventorySlot[] originArr = DragOriginIsHotbar ? HotbarSlots : BackpackSlots;
+            if ((uint)DragOriginSlotIndex < (uint)originArr.Length && originArr[DragOriginSlotIndex].IsEmpty)
+            {
+                originArr[DragOriginSlotIndex] = CursorHeldSlot;
+                CursorHeldSlot = default;
+                DragOriginSlotIndex = -1;
+                PushUiCountsToCrystalStorage(miningCtrl);
+                return;
+            }
+            ReturnCursorHeldItemToInventory(miningCtrl);
+        }
+
+        /// <summary>
+        /// Ekranin en altinda kompakt [0..9] Kemer/Kilif Durum Barini cizer ve [I] 3B Kumas Canta Ortusu acikken
+        /// ortu uzerindeki 3B esyalarin diyajetik Dunya->Ekran (WorldToScreenPoint) 3B bilgi etiketini gosterir.
+        /// (2B Minecraft envanter ve 2B sandik pencereleri tamamen kaldirilmistir!)
         /// </summary>
         public void DrawHotbarAndInventoryOnGui(
             bool isBackpackOpen,
@@ -377,43 +589,27 @@ namespace Stratocraft.Character
             SyncWithCrystalStorage(miningCtrl);
             HoveredSlotTooltip = string.Empty;
 
-            if (!isBackpackOpen && IsChestWindowOpen)
-            {
-                IsChestWindowOpen = false;
-            }
-
-            // Canta kapaliysa ama farede item kalmissa geri birak
-            if (!isBackpackOpen && !CursorHeldSlot.IsEmpty)
-            {
-                ReturnCursorHeldItemToInventory(miningCtrl);
-            }
+            if (!isBackpackOpen && IsChestWindowOpen) IsChestWindowOpen = false;
+            if (!isBackpackOpen && !CursorHeldSlot.IsEmpty) ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
+            if (!isBackpackOpen) HasHovered3DMatSlot = false;
 
             float screenW = Screen.width;
             float screenH = Screen.height;
             Event ev = Event.current;
             Vector2 mousePos = ev.mousePosition;
 
-            // 1. ALT 9 KARE SLOTLU HOTBAR + [0] BOS EL GOSTERGESI
-            const float slotSize = 58f;
+            const float slotSize = 54f;
             const float slotGap = 6f;
-            const int totalBarSlots = HotbarSlotCount + 1; // [0: Bos El] + [1..9]
+            const int totalBarSlots = HotbarSlotCount + 1;
             float totalBarWidth = totalBarSlots * slotSize + (totalBarSlots - 1) * slotGap + 16f;
             float barX = (screenW - totalBarWidth) * 0.5f;
-            float barY = screenH - slotSize - 14f;
+            float barY = screenH - slotSize - 12f;
 
             GUI.DrawTexture(new Rect(barX - 6f, barY - 6f, totalBarWidth + 12f, slotSize + 12f), _windowBgTex!);
 
-            // [0] Bos El Kare Slotu
             Rect emptyHandRect = new Rect(barX + 8f, barY, slotSize, slotSize);
             bool emptyHandSelected = SelectedHotbarIndex == -1 && !miningCtrl.IsCrystalActive;
-            DrawSingleSlotBox(
-                emptyHandRect,
-                new VisualInventorySlot { Kind = InventoryItemKind.Empty, Count = 0 },
-                keyLabel: "0",
-                isSelected: emptyHandSelected,
-                isEmptyHandIndicator: true,
-                combatBridge,
-                mousePos);
+            DrawSingleSlotBox(emptyHandRect, default, "0", emptyHandSelected, true, combatBridge, mousePos);
 
             if (ev.type == EventType.MouseDown && emptyHandRect.Contains(mousePos))
             {
@@ -423,7 +619,6 @@ namespace Stratocraft.Character
                 ev.Use();
             }
 
-            // [1..9] Kare Hotbar Slotlari
             for (int i = 0; i < HotbarSlotCount; i++)
             {
                 float sx = barX + 8f + (i + 1) * (slotSize + slotGap);
@@ -431,23 +626,23 @@ namespace Stratocraft.Character
                 Rect slotRect = new Rect(sx, sy, slotSize, slotSize);
                 bool isSel = SelectedHotbarIndex == i && !miningCtrl.IsCrystalActive;
 
-                DrawSingleSlotBox(
-                    slotRect,
-                    HotbarSlots[i],
-                    keyLabel: (i + 1).ToString(),
-                    isSelected: isSel,
-                    isEmptyHandIndicator: false,
-                    combatBridge,
-                    mousePos);
+                DrawSingleSlotBox(slotRect, HotbarSlots[i], (i + 1).ToString(), isSel, false, combatBridge, mousePos);
 
-                if (ev.type == EventType.MouseDown && slotRect.Contains(mousePos))
+                if ((ev.type == EventType.MouseDown || ev.type == EventType.MouseUp) && slotRect.Contains(mousePos))
                 {
                     if (isBackpackOpen)
                     {
-                        HandleSlotMouseClick(ref HotbarSlots[i], isHotbar: true, isChest: false, ev.button, ev.shift, miningCtrl, chestCasSystem);
-                        onActiveSlotChanged();
+                        if (ev.type == EventType.MouseUp && ev.button == 0 && !CursorHeldSlot.IsEmpty)
+                        {
+                            Complete3DMatSlotDrop(targetIsHotbar: true, targetSlotIndex: i, miningCtrl, onActiveSlotChanged);
+                        }
+                        else if (ev.type == EventType.MouseDown)
+                        {
+                            HandleSlotMouseClick(ref HotbarSlots[i], i, isHotbar: true, isChest: false, ev.button, ev.shift, miningCtrl, chestCasSystem);
+                            onActiveSlotChanged();
+                        }
                     }
-                    else
+                    else if (ev.type == EventType.MouseDown)
                     {
                         SelectedHotbarIndex = i;
                         miningCtrl.IsCrystalActive = false;
@@ -457,127 +652,249 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Secili Slot Baslik Cubugu (Hotbar'in hemen ustunde)
             string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge);
-            GUI.Box(new Rect(screenW * 0.5f - 270f, barY - 32f, 540f, 24f), activeTitle, _slotTitleBannerStyle!);
+            GUI.Box(new Rect(screenW * 0.5f - 285f, barY - 30f, 570f, 22f), activeTitle, _slotTitleBannerStyle!);
 
-            // 2. [I] CANTA IZGARASI (4x6 = 24 Kare Slot) & [E] SANDIK IZGARASI (4x4 = 16 Kare Slot)
+            // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (Tekerlek / [B] / Tıklama ile malzeme seçimi)
+            if (miningCtrl.IsCrystalActive)
+            {
+                DrawCrystalContentsAndMaterialPickerPanel(screenW, barY, miningCtrl, combatBridge, ev, mousePos);
+            }
+
             if (isBackpackOpen)
             {
-                const int bpCols = 6;
-                const int bpRows = 4;
-                float bpWidth = bpCols * slotSize + (bpCols - 1) * slotGap + 24f;
-                float bpHeight = bpRows * slotSize + (bpRows - 1) * slotGap + 56f;
+                // 3B Kumaş Çanta Örtüsü üzerindeki her dolu 3B yuvanın üstüne isim + adet rozeti (x16, x12 vb.) çiz
+                Draw3DMatSlotStackBadges(screenW, screenH, combatBridge);
 
-                float chestCols = 4;
-                float chestWidth = chestCols * slotSize + (chestCols - 1) * slotGap + 24f;
-                float totalWinWidth = IsChestWindowOpen ? (bpWidth + chestWidth + 20f) : bpWidth;
-                float startX = (screenW - totalWinWidth) * 0.5f;
-                float startY = (screenH - bpHeight) * 0.5f - 30f;
-
-                // Canta Penceresi
-                Rect bpWinRect = new Rect(startX, startY, bpWidth, bpHeight);
-                GUI.DrawTexture(bpWinRect, _windowBgTex!);
+                // Ust ince diyajetik rehber seridi (3B Kumas Canta Ortusunun ustunu ASLA kapatmaz!)
+                Rect matBannerRect = new Rect(screenW * 0.5f - 410f, 178f, 820f, 28f);
+                GUI.DrawTexture(matBannerRect, _windowBgTex!);
                 GUI.Label(
-                    new Rect(startX + 12f, startY + 8f, bpWidth - 24f, 26f),
-                    "SIRT CANTASI ENVANTERI (24 Slot) — [Sol Tik] Tasi/Degistir | [Sag Tik] Yariya Bol | [Shift+Tik] Hizli Aktar",
-                    _windowTitleStyle!);
+                    matBannerRect,
+                    "✦ [I] 3B FİZİKSEL KUMAŞ ÇANTA ÖRTÜSÜ (Kamera Kilitli) — 3B Eşyaları Fareyle Tutup Örtüde İstediğin Bölmeye veya Kılıf [1..9] Şeridine Sürükle & Bırak!",
+                    _slotTitleBannerStyle!);
 
-                for (int r = 0; r < bpRows; r++)
+                if (IsChannelActive)
                 {
-                    for (int c = 0; c < bpCols; c++)
+                    float prog01 = 1f - Mathf.Clamp01(ChannelRemainingSec / Mathf.Max(0.1f, ChannelTotalSec));
+                    Rect chBg = new Rect(screenW * 0.5f - 290f, 214f, 580f, 24f);
+                    Rect chFg = new Rect(chBg.x + 3f, chBg.y + 3f, (chBg.width - 6f) * prog01, 18f);
+                    GUI.DrawTexture(chBg, _windowBgTex!);
+                    Color prev = GUI.color;
+                    GUI.color = new Color(0.20f, 0.85f, 0.55f, 0.85f);
+                    GUI.DrawTexture(chFg, _whitePixelTex!);
+                    GUI.color = prev;
+                    GUI.Label(chBg, $"{ChannelLabel} — Kalan: {ChannelRemainingSec:0.1}sn (Hasar Alinirsa Iptal Olur!)", _slotTitleBannerStyle!);
+                }
+
+                // 3B Kumas Ortu Uzerindeki Hovered 3B Esya Icin WorldToScreenPoint Diyajetik Bilgi Karti
+                if (HasHovered3DMatSlot && !string.IsNullOrEmpty(Hovered3DMatTitle))
+                {
+                    Vector2 tipPos = mousePos + new Vector2(18f, -58f);
+                    UnityEngine.Camera? cam = UnityEngine.Camera.main;
+                    if (cam != null)
                     {
-                        int idx = r * bpCols + c;
-                        Rect rSlot = new Rect(
-                            startX + 12f + c * (slotSize + slotGap),
-                            startY + 40f + r * (slotSize + slotGap),
-                            slotSize,
-                            slotSize);
-
-                        DrawSingleSlotBox(
-                            rSlot,
-                            BackpackSlots[idx],
-                            keyLabel: string.Empty,
-                            isSelected: false,
-                            isEmptyHandIndicator: false,
-                            combatBridge,
-                            mousePos);
-
-                        if (ev.type == EventType.MouseDown && rSlot.Contains(mousePos))
+                        Vector3 sp = cam.WorldToScreenPoint(Hovered3DMatWorldPos + Vector3.up * 0.14f);
+                        if (sp.z > 0.05f)
                         {
-                            HandleSlotMouseClick(ref BackpackSlots[idx], isHotbar: false, isChest: false, ev.button, ev.shift, miningCtrl, chestCasSystem);
-                            onActiveSlotChanged();
-                            ev.Use();
+                            tipPos = new Vector2(sp.x - 185f, (screenH - sp.y) - 66f);
                         }
                     }
+
+                    const float tw = 380f;
+                    const float th = 58f;
+                    float tx = Mathf.Clamp(tipPos.x, 12f, screenW - tw - 12f);
+                    float ty = Mathf.Clamp(tipPos.y, 216f, barY - th - 36f);
+                    GUI.Box(new Rect(tx, ty, tw, th), $"{Hovered3DMatTitle}\n{Hovered3DMatDetail}", _tooltipBoxStyle!);
                 }
-
-                // Sandik Penceresi ([E] ile sandik acildiginda yaninda cikar)
-                if (IsChestWindowOpen)
-                {
-                    float chestX = startX + bpWidth + 20f;
-                    Rect chestWinRect = new Rect(chestX, startY, chestWidth, bpHeight);
-                    GUI.DrawTexture(chestWinRect, _windowBgTex!);
-                    GUI.Label(
-                        new Rect(chestX + 12f, startY + 8f, chestWidth - 24f, 26f),
-                        $"ATOLYE CAS SANDIGI (16 Slot | Ver:{chestCasSystem.ReadSlotAtomic(0).Version})",
-                        _windowTitleStyle!);
-
-                    for (int r = 0; r < 4; r++)
-                    {
-                        for (int c = 0; c < 4; c++)
-                        {
-                            int idx = r * 4 + c;
-                            Rect cSlot = new Rect(
-                                chestX + 12f + c * (slotSize + slotGap),
-                                startY + 40f + r * (slotSize + slotGap),
-                                slotSize,
-                                slotSize);
-
-                            DrawSingleSlotBox(
-                                cSlot,
-                                ChestSlots[idx],
-                                keyLabel: string.Empty,
-                                isSelected: false,
-                                isEmptyHandIndicator: false,
-                                combatBridge,
-                                mousePos);
-
-                            if (ev.type == EventType.MouseDown && cSlot.Contains(mousePos))
-                            {
-                                HandleSlotMouseClick(ref ChestSlots[idx], isHotbar: false, isChest: true, ev.button, ev.shift, miningCtrl, chestCasSystem);
-                                onActiveSlotChanged();
-                                ev.Use();
-                            }
-                        }
-                    }
-                }
-
-                // Fare Imlecinde Tasinan Esya
-                if (!CursorHeldSlot.IsEmpty)
-                {
-                    Rect dragRect = new Rect(mousePos.x - 24f, mousePos.y - 24f, 48f, 48f);
-                    Texture2D icon = GetOrBuildIconForSlot(CursorHeldSlot, combatBridge.ActiveWeaponArchetype);
-                    GUI.DrawTexture(dragRect, icon);
-                    if (CursorHeldSlot.Count > 1)
-                    {
-                        GUI.Label(new Rect(dragRect.x + 14f, dragRect.y + 28f, 34f, 18f), $"x{CursorHeldSlot.Count}", _countLabelStyle!);
-                    }
-                }
-
-                // Slot Ipucu (Tooltip)
-                if (!string.IsNullOrEmpty(HoveredSlotTooltip) && CursorHeldSlot.IsEmpty)
+                else if (!string.IsNullOrEmpty(HoveredSlotTooltip) && CursorHeldSlot.IsEmpty)
                 {
                     float tw = 340f;
                     float tx = Mathf.Clamp(mousePos.x + 16f, 10f, screenW - tw - 10f);
-                    float ty = Mathf.Clamp(mousePos.y + 16f, 10f, screenH - 72f);
+                    float ty = Mathf.Clamp(mousePos.y - 64f, 10f, barY - 62f);
                     GUI.Box(new Rect(tx, ty, tw, 54f), HoveredSlotTooltip, _tooltipBoxStyle!);
                 }
             }
         }
 
+        private void DrawCrystalContentsAndMaterialPickerPanel(
+            float screenW,
+            float barY,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge combatBridge,
+            Event ev,
+            Vector2 mousePos)
+        {
+            ReadOnlySpan<byte> mats = Stage1MatterCrystalAndMiningController.GetCrystalBuildableMaterials();
+            const float cellW = 58f;
+            const float cellH = 50f;
+            const float gap = 4f;
+            float panelW = mats.Length * cellW + (mats.Length - 1) * gap + 16f;
+            float panelH = cellH + 30f;
+            float px = (screenW - panelW) * 0.5f;
+            float py = barY - panelH - 36f;
+
+            Rect bgRect = new Rect(px, py, panelW, panelH);
+            GUI.DrawTexture(bgRect, _windowBgTex!);
+            string header =
+                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Fare Tekerleği / B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [T]: {miningCtrl.BrushAreaLabel}";
+            GUI.Label(new Rect(px + 6f, py + 3f, panelW - 12f, 20f), header, _slotTitleBannerStyle!);
+
+            byte selectedMat = miningCtrl.SelectedMaterialId;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                byte matId = mats[i];
+                int count = miningCtrl.GetMaterialCountInCrystal(matId);
+                float cx = px + 8f + i * (cellW + gap);
+                float cy = py + 24f;
+                Rect cellRect = new Rect(cx, cy, cellW, cellH);
+
+                bool isSelected = matId == selectedMat;
+                bool isHovered = cellRect.Contains(mousePos);
+                GUI.DrawTexture(cellRect, isSelected ? _slotSelectedBgTex! : (isHovered ? _slotHoverBgTex! : _slotBgTex!));
+
+                if (isSelected)
+                {
+                    Color prev = GUI.color;
+                    GUI.color = new Color(0.25f, 0.95f, 1.0f, 0.98f);
+                    GUI.DrawTexture(new Rect(cellRect.x, cellRect.y, cellRect.width, 2f), _whitePixelTex!);
+                    GUI.DrawTexture(new Rect(cellRect.x, cellRect.yMax - 2f, cellRect.width, 2f), _whitePixelTex!);
+                    GUI.DrawTexture(new Rect(cellRect.x, cellRect.y, 2f, cellRect.height), _whitePixelTex!);
+                    GUI.DrawTexture(new Rect(cellRect.xMax - 2f, cellRect.y, 2f, cellRect.height), _whitePixelTex!);
+                    GUI.color = prev;
+                }
+
+                var previewSlot = new VisualInventorySlot
+                {
+                    Kind = InventoryItemKind.VoxelBlock,
+                    SubId = matId,
+                    Count = count,
+                    Durability01 = 1f
+                };
+                Texture2D icon = GetOrBuildIconForSlot(in previewSlot, combatBridge.ActiveWeaponArchetype);
+                Color prevIconCol = GUI.color;
+                if (count <= 0) GUI.color = new Color(0.55f, 0.55f, 0.55f, 0.55f);
+                GUI.DrawTexture(new Rect(cellRect.x + 13f, cellRect.y + 3f, 32f, 30f), icon);
+                GUI.color = prevIconCol;
+
+                string shortName = GetShortMaterialBadgeName(matId);
+                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + 1f, cellRect.width - 4f, 14f), shortName, _keyBadgeStyle!);
+                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 18f, cellRect.width - 5f, 16f), $"x{count}", _countLabelStyle!);
+
+                if (ev.type == EventType.MouseDown && cellRect.Contains(mousePos))
+                {
+                    miningCtrl.SelectMaterial(matId);
+                    miningCtrl.LastFeedbackText =
+                        $"Kristal İnşa Malzemesi Seçildi: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} (Stok: x{count}) -> [Sağ Tık] Dünyaya Koy";
+                    ev.Use();
+                }
+            }
+        }
+
+        private void Draw3DMatSlotStackBadges(
+            float screenW,
+            float screenH,
+            Stage1DirectionalCombatBridge combatBridge)
+        {
+            if (ActiveBackpackMatRoot == null) return;
+            UnityEngine.Camera? cam = UnityEngine.Camera.main;
+            if (cam == null) return;
+
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                if (HotbarSlots[i].IsEmpty) continue;
+                Vector3 localPos = Stage1HolsterAndBackpackController.GetHotbarMatSlotLocalPos(i);
+                DrawSingle3DMatBadge(cam, ActiveBackpackMatRoot.TransformPoint(localPos + new Vector3(0f, 0.055f, 0f)), in HotbarSlots[i], i + 1, screenW, screenH, combatBridge);
+            }
+
+            for (int i = 0; i < BackpackSlotCount; i++)
+            {
+                if (BackpackSlots[i].IsEmpty) continue;
+                Vector3 localPos = Stage1HolsterAndBackpackController.GetBackpackMatSlotLocalPos(i);
+                DrawSingle3DMatBadge(cam, ActiveBackpackMatRoot.TransformPoint(localPos + new Vector3(0f, 0.055f, 0f)), in BackpackSlots[i], 0, screenW, screenH, combatBridge);
+            }
+        }
+
+        private void DrawSingle3DMatBadge(
+            UnityEngine.Camera cam,
+            Vector3 worldPos,
+            in VisualInventorySlot slot,
+            int hotbarNumber,
+            float screenW,
+            float screenH,
+            Stage1DirectionalCombatBridge combatBridge)
+        {
+            Vector3 sp = cam.WorldToScreenPoint(worldPos);
+            if (sp.z <= 0.1f) return;
+
+            float sx = sp.x;
+            float sy = screenH - sp.y;
+            if (sx < 20f || sx > screenW - 20f || sy < 190f || sy > screenH - 70f) return;
+
+            string shortLabel = GetShortSlotBadgeLabel(in slot);
+            string badgeText = slot.Count > 1 || slot.Kind == InventoryItemKind.VoxelBlock || slot.Kind == InventoryItemKind.OreChunk || slot.Kind == InventoryItemKind.MetalIngot
+                ? $"{shortLabel} x{slot.Count}"
+                : (hotbarNumber > 0 ? $"[{hotbarNumber}] {shortLabel}" : shortLabel);
+
+            const float bw = 78f;
+            const float bh = 20f;
+            Rect r = new Rect(sx - bw * 0.5f, sy - bh * 0.5f, bw, bh);
+            GUI.DrawTexture(r, _windowBgTex!);
+            GUI.Label(r, badgeText, _keyBadgeStyle!);
+        }
+
+        private static string GetShortSlotBadgeLabel(in VisualInventorySlot slot) => slot.Kind switch
+        {
+            InventoryItemKind.WeaponSword => "Kılıç",
+            InventoryItemKind.ToolPickaxe => "Kazma",
+            InventoryItemKind.ToolAxe => "Balta",
+            InventoryItemKind.ToolMicroChisel => "Keski",
+            InventoryItemKind.ToolFluidFlask => slot.SubId == 2 ? "LavMtr" : (slot.SubId == 1 ? "SuMtr" : "Matara"),
+            InventoryItemKind.MetalIngot => slot.SubId == 1 ? "Bakır" : (slot.SubId == 2 ? "Demir" : "Mithril"),
+            InventoryItemKind.OreChunk => GetShortMaterialBadgeName(slot.SubId),
+            InventoryItemKind.VoxelBlock => GetShortMaterialBadgeName(slot.SubId),
+            _ => "Eşya"
+        };
+
+        private static string GetShortMaterialBadgeName(byte matId) => matId switch
+        {
+            MaterialIdCatalog.Stone => "Taş",
+            MaterialIdCatalog.Dirt => "Toprak",
+            MaterialIdCatalog.Grass => "Çim",
+            MaterialIdCatalog.Sand => "Kum",
+            MaterialIdCatalog.Basalt => "Bazalt",
+            MaterialIdCatalog.NaturalObsidian => "Obsid",
+            MaterialIdCatalog.Cobblestone => "Kırıktaş",
+            MaterialIdCatalog.OakWood => "Meşe",
+            MaterialIdCatalog.Ironwood => "D.Ağaç",
+            MaterialIdCatalog.Marble => "Mermer",
+            MaterialIdCatalog.StoneBrick => "Tuğla",
+            MaterialIdCatalog.LooseRubble => "Moloz",
+            MaterialIdCatalog.WoodPlank => "Kalas",
+            MaterialIdCatalog.CopperOre => "BakırCv",
+            MaterialIdCatalog.IronOre => "DemirCv",
+            MaterialIdCatalog.GoldOre => "AltınCv",
+            MaterialIdCatalog.MithrilOre => "Mithril",
+            _ => $"M#{matId}"
+        };
+
+        private void TriggerChannelForSlotItem(in VisualInventorySlot item, Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (item.IsEmpty) return;
+            bool isCrystalMass = item.Kind == InventoryItemKind.VoxelBlock ||
+                                 item.Kind == InventoryItemKind.OreChunk ||
+                                 item.Kind == InventoryItemKind.MetalIngot;
+            float dur = isCrystalMass ? 3.0f : 1.5f;
+            string label = isCrystalMass
+                ? "Canta <-> Madde Kristali Kutle Aktarim Kanali (3.0sn)"
+                : "Canta -> Kilif Silah/Alet Kusanma Kanali (1.5sn)";
+            StartEquipOrTransferChannel(dur, label);
+            miningCtrl.LastFeedbackText = $"{label} baslatildi...";
+        }
+
         private void HandleSlotMouseClick(
             ref VisualInventorySlot clickedSlot,
+            int slotIndex,
             bool isHotbar,
             bool isChest,
             int mouseButton,
@@ -587,27 +904,29 @@ namespace Stratocraft.Character
         {
             if (isShift && !clickedSlot.IsEmpty)
             {
-                // Shift + Tik: Hizli Aktarim (Sandik <-> Canta <-> Hotbar)
                 VisualInventorySlot moving = clickedSlot;
                 bool moved;
                 if (isChest)
                 {
                     moved = TryMergeOrPlaceIntoArray(moving, BackpackSlots) || TryMergeOrPlaceIntoArray(moving, HotbarSlots);
-                    if (moved) chestCasSystem.TryWithdrawAtomic(0, 1, out _, out _);
+                    if (moved)
+                    {
+                        chestCasSystem.TryWithdrawAtomic(slotIndex, (ushort)Mathf.Max(1, moving.Count), out _, out uint casVer);
+                        miningCtrl.LastFeedbackText = $"CAS Sandiktan cekildi (Slot {slotIndex} | CAS Ver={casVer})";
+                    }
                 }
                 else if (isHotbar)
                 {
-                    moved = (IsChestWindowOpen && TryMergeOrPlaceIntoArray(moving, ChestSlots)) ||
-                            TryMergeOrPlaceIntoArray(moving, BackpackSlots);
+                    moved = TryMergeOrPlaceIntoArray(moving, BackpackSlots);
                 }
                 else
                 {
-                    moved = (IsChestWindowOpen && TryMergeOrPlaceIntoArray(moving, ChestSlots)) ||
-                            TryMergeOrPlaceIntoArray(moving, HotbarSlots);
+                    moved = TryMergeOrPlaceIntoArray(moving, HotbarSlots);
                 }
 
                 if (moved)
                 {
+                    TriggerChannelForSlotItem(in moving, miningCtrl);
                     clickedSlot = default;
                     PushUiCountsToCrystalStorage(miningCtrl);
                 }
@@ -616,13 +935,15 @@ namespace Stratocraft.Character
 
             if (mouseButton == 1)
             {
-                // Sag Tik: Imlec bossa yiginin yarisini al; imlecte esya varsa 1 adet birak
                 if (CursorHeldSlot.IsEmpty && !clickedSlot.IsEmpty)
                 {
                     int takeHalf = Mathf.Max(1, (clickedSlot.Count + 1) / 2);
                     CursorHeldSlot = clickedSlot;
                     CursorHeldSlot.Count = takeHalf;
+                    DragOriginIsHotbar = isHotbar;
+                    DragOriginSlotIndex = slotIndex;
                     clickedSlot.Count -= takeHalf;
+                    if (isChest) chestCasSystem.TryWithdrawAtomic(slotIndex, (ushort)takeHalf, out _, out _);
                     if (clickedSlot.Count <= 0) clickedSlot = default;
                 }
                 else if (!CursorHeldSlot.IsEmpty)
@@ -640,22 +961,27 @@ namespace Stratocraft.Character
                         CursorHeldSlot.Count--;
                         if (CursorHeldSlot.Count <= 0) CursorHeldSlot = default;
                     }
+                    if (isChest) chestCasSystem.InitializeSlot(slotIndex, clickedSlot.SubId, (ushort)clickedSlot.Count);
+                    TriggerChannelForSlotItem(in clickedSlot, miningCtrl);
                 }
                 PushUiCountsToCrystalStorage(miningCtrl);
                 return;
             }
 
-            // Sol Tik: Tasi, Birlestir veya Yer Degistir (Swap)
             if (CursorHeldSlot.IsEmpty)
             {
                 if (!clickedSlot.IsEmpty)
                 {
                     CursorHeldSlot = clickedSlot;
+                    DragOriginIsHotbar = isHotbar;
+                    DragOriginSlotIndex = slotIndex;
+                    if (isChest) chestCasSystem.TryWithdrawAtomic(slotIndex, (ushort)Mathf.Max(1, clickedSlot.Count), out _, out _);
                     clickedSlot = default;
                 }
             }
             else
             {
+                VisualInventorySlot placed = CursorHeldSlot;
                 if (clickedSlot.IsEmpty)
                 {
                     clickedSlot = CursorHeldSlot;
@@ -672,6 +998,8 @@ namespace Stratocraft.Character
                     clickedSlot = CursorHeldSlot;
                     CursorHeldSlot = temp;
                 }
+                if (isChest) chestCasSystem.InitializeSlot(slotIndex, clickedSlot.SubId, (ushort)clickedSlot.Count);
+                TriggerChannelForSlotItem(in placed, miningCtrl);
             }
 
             PushUiCountsToCrystalStorage(miningCtrl);
@@ -706,6 +1034,7 @@ namespace Stratocraft.Character
                 TryMergeOrPlaceIntoArray(in CursorHeldSlot, HotbarSlots);
             }
             CursorHeldSlot = default;
+            DragOriginSlotIndex = -1;
             PushUiCountsToCrystalStorage(miningCtrl);
         }
 
@@ -722,7 +1051,6 @@ namespace Stratocraft.Character
             Texture2D bg = isSelected ? _slotSelectedBgTex! : (hovered ? _slotHoverBgTex! : _slotBgTex!);
             GUI.DrawTexture(rect, bg);
 
-            // Parlak Secili Cerceve Cizgisi
             if (isSelected)
             {
                 Color prev = GUI.color;
@@ -744,13 +1072,11 @@ namespace Stratocraft.Character
                 Texture2D icon = GetOrBuildIconForSlot(in slot, combatBridge.ActiveWeaponArchetype);
                 GUI.DrawTexture(new Rect(rect.x + 7f, rect.y + 6f, rect.width - 14f, rect.height - 14f), icon);
 
-                // Adet gostergesi (sag alt kose)
                 if (slot.Count > 1 || slot.Kind == InventoryItemKind.VoxelBlock || slot.Kind == InventoryItemKind.OreChunk || slot.Kind == InventoryItemKind.MetalIngot)
                 {
                     GUI.Label(new Rect(rect.x + 4f, rect.y + rect.height - 20f, rect.width - 7f, 18f), $"x{slot.Count}", _countLabelStyle!);
                 }
 
-                // Alet / Silah Dayaniklilik Cubugu
                 if (slot.Kind == InventoryItemKind.WeaponSword ||
                     slot.Kind == InventoryItemKind.ToolPickaxe ||
                     slot.Kind == InventoryItemKind.ToolAxe ||
@@ -785,64 +1111,58 @@ namespace Stratocraft.Character
         {
             if (miningCtrl.IsCrystalActive)
             {
-                return $"[C] MADDE KRISTALI AKTIF ({miningCtrl.BrushAreaLabel}) — [Sol Tik] Vakumla | [Sag Tik] Insa Et ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)})";
+                return $"[C] MADDE KRISTALI AKTIF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tik] Vakumla | [Sag Tik] Insa Et ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)})";
             }
 
             if (SelectedHotbarIndex == -1)
             {
-                return "[0] BOS EL — Yumusak Toprak/Yaprak Kazma & [E] Etkilesim (Tekerlek veya [1..9] ile Slot Sec)";
+                return "[0] BOS EL — Yumusak Toprak/Yaprak Kazma & [E] Dunya/Sandik Etkilesimi ([1..9] veya Tekerlek ile Kilif Sec)";
             }
 
             VisualInventorySlot slot = GetActiveHotbarSlot();
             if (slot.IsEmpty)
             {
-                return $"[{SelectedHotbarIndex + 1}] BOS SLOT — [I] Cantadan bu slota istedigin aleti/blogu surukle!";
+                return $"[{SelectedHotbarIndex + 1}] BOS KILIF YUVASI — [I] 3B Kumas Cantayi acip bu yuvaya 3B esya surukleyin!";
             }
 
             return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)}";
         }
 
-        public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge combatBridge)
+        public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge? combatBridge = null) => slot.Kind switch
         {
-            return slot.Kind switch
+            InventoryItemKind.WeaponSword => combatBridge != null ? combatBridge.GetWeaponDisplayName() : "Celik Uzun Kilic (1.85 kg)",
+            InventoryItemKind.ToolPickaxe => "Demir Kazma (2.40 kg)",
+            InventoryItemKind.ToolAxe => "Demir Balta (2.10 kg)",
+            InventoryItemKind.ToolMicroChisel => "Mimari Mikro-Keski (4x4x4 Yontma)",
+            InventoryItemKind.ToolFluidFlask => slot.SubId switch
             {
-                InventoryItemKind.WeaponSword => combatBridge.GetWeaponDisplayName(),
-                InventoryItemKind.ToolPickaxe => "Demir Kazma (2.40 kg)",
-                InventoryItemKind.ToolAxe => "Demir Balta (2.10 kg)",
-                InventoryItemKind.ToolMicroChisel => "Mimari Mikro-Keski (4x4x4 Yontma)",
-                InventoryItemKind.ToolFluidFlask => slot.SubId switch
-                {
-                    1 => "Kristal Su Matarasi (Akiskan Su)",
-                    2 => "Volkanik Lav Matarasi (Akiskan Lav)",
-                    _ => "Bos Kristal Matara"
-                },
-                InventoryItemKind.VoxelBlock or InventoryItemKind.OreChunk => Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId),
-                InventoryItemKind.MetalIngot => slot.SubId switch
-                {
-                    1 => "Saf Bakir Kulce",
-                    2 => "Saf Demir Kulce",
-                    3 => "Saf Mithril Kulce",
-                    _ => "Metal Kulce"
-                },
-                _ => "Bos Slot"
-            };
-        }
+                1 => "Kristal Su Matarasi (Akiskan Su)",
+                2 => "Volkanik Lav Matarasi (Akiskan Lav)",
+                _ => "Bos Kristal Matara"
+            },
+            InventoryItemKind.VoxelBlock or InventoryItemKind.OreChunk => Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId),
+            InventoryItemKind.MetalIngot => slot.SubId switch
+            {
+                1 => "Saf Bakir Kulce",
+                2 => "Saf Demir Kulce",
+                3 => "Saf Mithril Kulce",
+                _ => "Metal Kulce"
+            },
+            _ => "Bos Yuva"
+        };
 
-        private static string GetSlotUsageHint(in VisualInventorySlot slot)
+        private static string GetSlotUsageHint(in VisualInventorySlot slot) => slot.Kind switch
         {
-            return slot.Kind switch
-            {
-                InventoryItemKind.WeaponSword => "[Sol Tik+Fare] Yonsel Kesik | [Sag Tik+Fare] Capraz Blok & Saptirma | [G] Stil",
-                InventoryItemKind.ToolPickaxe => "[Sol Tik+Fare] Kaya ve Cevher Damari Kirma",
-                InventoryItemKind.ToolAxe => "[Sol Tik+Fare] Agac Govdesi Devirme & Ahsap Kirma",
-                InventoryItemKind.ToolMicroChisel => "[Sol Tik] 4x4x4 Mikro-Voksel Yont | [Sag Tik] Mikro-Voksel Ekle",
-                InventoryItemKind.ToolFluidFlask => "[Sol Tik] Su/Lav Doldur | [Sag Tik] Dunyaya Akiskan Su/Lav Dok",
-                InventoryItemKind.VoxelBlock => "[Sag Tik] Dunyaya Blok Yerlestir | [V] Mimari Sekil Degistir | [R] Dondur",
-                InventoryItemKind.OreChunk => "Ors/Izabe ocaginda islenebilir ham cevher",
-                InventoryItemKind.MetalIngot => "16x32x4 Ors uzerinde silah/zirh dovme malzemesi",
-                _ => string.Empty
-            };
-        }
+            InventoryItemKind.WeaponSword => "[Sol Tik+Fare] Yonsel Kesik | [Sag Tik+Fare] Capraz Blok & Saptirma | [G] Stil",
+            InventoryItemKind.ToolPickaxe => "[Sol Tik+Fare] Kaya ve Cevher Damari Kirma",
+            InventoryItemKind.ToolAxe => "[Sol Tik+Fare] Agac Govdesi Devirme & Ahsap Kirma",
+            InventoryItemKind.ToolMicroChisel => "[Sol Tik] 4x4x4 Mikro-Voksel Yont | [Sag Tik] Mikro-Voksel Ekle",
+            InventoryItemKind.ToolFluidFlask => "[Sol Tik] Su/Lav Doldur | [Sag Tik] Dunyaya Akiskan Su/Lav Dok",
+            InventoryItemKind.VoxelBlock => "[Sag Tik] Dunyaya Blok Yerlestir | [V] Mimari Sekil Degistir | [R] 24-Yon Dondur",
+            InventoryItemKind.OreChunk => "[Sag Tik] Dunyaya Cevher Koy veya Ors/Izabe Ocaginda Islet",
+            InventoryItemKind.MetalIngot => "[Sag Tik] Dunyaya Kulce Koy veya 16x32x4 Ors Uzerinde Silah/Zirh Dov",
+            _ => string.Empty
+        };
 
         private static string FormatSlotTooltip(
             in VisualInventorySlot slot,
@@ -851,7 +1171,7 @@ namespace Stratocraft.Character
         {
             if (isEmptyHand)
             {
-                return "[0] BOS EL\nCiplak elle yumusak toprak kazma, [E] ile yerden esya/sandik acma.";
+                return "[0] BOS EL\nCiplak elle yumusak toprak kazma, [E] ile yerden esya/sandik/ors etkilesimi.";
             }
             string name = GetSlotDisplayName(in slot, combatBridge);
             string hint = GetSlotUsageHint(in slot);
@@ -963,33 +1283,15 @@ namespace Stratocraft.Character
 
             switch (slot.Kind)
             {
-                case InventoryItemKind.Empty:
-                    DrawEmptyHandIcon(tex);
-                    break;
-                case InventoryItemKind.WeaponSword:
-                    DrawSwordIcon(tex, swordArch);
-                    break;
-                case InventoryItemKind.ToolPickaxe:
-                    DrawPickaxeIcon(tex);
-                    break;
-                case InventoryItemKind.ToolAxe:
-                    DrawAxeIcon(tex);
-                    break;
-                case InventoryItemKind.ToolMicroChisel:
-                    DrawChiselIcon(tex);
-                    break;
-                case InventoryItemKind.ToolFluidFlask:
-                    DrawFluidFlaskIcon(tex, slot.SubId);
-                    break;
-                case InventoryItemKind.VoxelBlock:
-                    DrawIsometricVoxelCubeIcon(tex, slot.SubId);
-                    break;
-                case InventoryItemKind.OreChunk:
-                    DrawOreChunkIcon(tex, slot.SubId);
-                    break;
-                case InventoryItemKind.MetalIngot:
-                    DrawIngotIcon(tex, slot.SubId);
-                    break;
+                case InventoryItemKind.Empty: DrawEmptyHandIcon(tex); break;
+                case InventoryItemKind.WeaponSword: DrawSwordIcon(tex, swordArch); break;
+                case InventoryItemKind.ToolPickaxe: DrawPickaxeIcon(tex); break;
+                case InventoryItemKind.ToolAxe: DrawAxeIcon(tex); break;
+                case InventoryItemKind.ToolMicroChisel: DrawChiselIcon(tex); break;
+                case InventoryItemKind.ToolFluidFlask: DrawFluidFlaskIcon(tex, slot.SubId); break;
+                case InventoryItemKind.VoxelBlock: DrawIsometricVoxelCubeIcon(tex, slot.SubId); break;
+                case InventoryItemKind.OreChunk: DrawOreChunkIcon(tex, slot.SubId); break;
+                case InventoryItemKind.MetalIngot: DrawIngotIcon(tex, slot.SubId); break;
             }
 
             tex.Apply(false, false);
@@ -1000,10 +1302,8 @@ namespace Stratocraft.Character
         {
             Color skin = new Color(0.84f, 0.68f, 0.54f, 0.85f);
             Color leather = new Color(0.36f, 0.24f, 0.16f, 0.95f);
-            // Avuc ici ve eldiven bilekligi
             FillRect(tex, 16, 10, 16, 16, skin);
             FillRect(tex, 15, 6, 18, 6, leather);
-            // 4 parmak + basparmak
             FillRect(tex, 16, 26, 3, 12, skin);
             FillRect(tex, 20, 26, 3, 14, skin);
             FillRect(tex, 24, 26, 3, 13, skin);
@@ -1013,20 +1313,14 @@ namespace Stratocraft.Character
 
         private static void DrawSwordIcon(Texture2D tex, CombatWeaponArchetype arch)
         {
-            Color bladeBright = arch == CombatWeaponArchetype.Katana
-                ? new Color(0.85f, 0.95f, 1.0f, 1f)
-                : new Color(0.86f, 0.89f, 0.94f, 1f);
+            Color bladeBright = arch == CombatWeaponArchetype.Katana ? new Color(0.85f, 0.95f, 1.0f, 1f) : new Color(0.86f, 0.89f, 0.94f, 1f);
             Color bladeEdge = new Color(0.55f, 0.62f, 0.72f, 1f);
-            Color guardGold = arch == CombatWeaponArchetype.Rapier
-                ? new Color(0.95f, 0.78f, 0.25f, 1f)
-                : new Color(0.78f, 0.64f, 0.22f, 1f);
+            Color guardGold = arch == CombatWeaponArchetype.Rapier ? new Color(0.95f, 0.78f, 0.25f, 1f) : new Color(0.78f, 0.64f, 0.22f, 1f);
             Color gripLeather = new Color(0.42f, 0.22f, 0.14f, 1f);
 
-            // Kabza (sol alt: 8,8 -> 16,16)
             DrawThickLine(tex, 7, 7, 15, 15, 2, gripLeather);
-            FillRect(tex, 5, 5, 4, 4, guardGold); // Pommel
+            FillRect(tex, 5, 5, 4, 4, guardGold);
 
-            // Balcak (Crossguard)
             if (arch == CombatWeaponArchetype.Rapier)
             {
                 DrawThickLine(tex, 11, 19, 19, 11, 3, guardGold);
@@ -1041,14 +1335,12 @@ namespace Stratocraft.Character
                 DrawThickLine(tex, 10, 21, 21, 10, 2, guardGold);
             }
 
-            // Namlu (16,16 -> 42,42)
             int thickness = arch == CombatWeaponArchetype.Greatsword ? 3 : (arch == CombatWeaponArchetype.Rapier ? 1 : 2);
             DrawThickLine(tex, 16, 16, 42, 42, thickness, bladeBright);
             DrawThickLine(tex, 17, 15, 42, 40, 1, bladeEdge);
 
             if (arch == CombatWeaponArchetype.Greatsword)
             {
-                // Greatsword / Zweihander ricasso kancalari
                 DrawThickLine(tex, 20, 24, 24, 20, 2, guardGold);
             }
         }
@@ -1058,9 +1350,7 @@ namespace Stratocraft.Character
             Color wood = new Color(0.58f, 0.38f, 0.20f, 1f);
             Color steel = new Color(0.74f, 0.80f, 0.88f, 1f);
             Color edge = new Color(0.92f, 0.96f, 1.0f, 1f);
-            // Ahsap sap (8,8 -> 36,36)
             DrawThickLine(tex, 8, 8, 35, 35, 2, wood);
-            // Kavisli kazma kafasi
             DrawThickLine(tex, 22, 38, 36, 36, 3, steel);
             DrawThickLine(tex, 36, 36, 38, 22, 3, steel);
             DrawThickLine(tex, 18, 40, 23, 38, 2, edge);
@@ -1072,9 +1362,7 @@ namespace Stratocraft.Character
             Color wood = new Color(0.58f, 0.38f, 0.20f, 1f);
             Color steel = new Color(0.72f, 0.78f, 0.86f, 1f);
             Color brightEdge = new Color(0.94f, 0.97f, 1.0f, 1f);
-            // Ahsap sap
             DrawThickLine(tex, 8, 8, 36, 36, 2, wood);
-            // Genis balta agzi
             DrawThickLine(tex, 28, 32, 38, 24, 4, steel);
             DrawThickLine(tex, 26, 28, 36, 18, 4, steel);
             DrawThickLine(tex, 38, 26, 35, 16, 2, brightEdge);
@@ -1088,7 +1376,6 @@ namespace Stratocraft.Character
             DrawThickLine(tex, 9, 9, 22, 22, 3, handle);
             DrawThickLine(tex, 22, 22, 25, 25, 3, ferrule);
             DrawThickLine(tex, 25, 25, 40, 40, 2, steel);
-            // 4x4 mikro-kup sembolu (sol ust kose)
             FillRect(tex, 8, 30, 5, 5, steel);
             FillRect(tex, 15, 30, 5, 5, ferrule);
             FillRect(tex, 8, 37, 5, 5, ferrule);
@@ -1119,7 +1406,6 @@ namespace Stratocraft.Character
             Color leftCol = baseCol * 0.82f; leftCol.a = 1f;
             Color rightCol = baseCol * 0.60f; rightCol.a = 1f;
 
-            // Izometrik 3B kup cizimi (merkez 24,24)
             for (int y = 6; y <= 42; y++)
             {
                 for (int x = 8; x <= 40; x++)
@@ -1127,7 +1413,6 @@ namespace Stratocraft.Character
                     float dx = x - 24f;
                     float dy = y - 24f;
 
-                    // Ust elmas yuzey: dy >= |dx|*0.5 ve dy <= 18 - |dx|*0.5
                     if (dy >= Mathf.Abs(dx) * 0.5f && dy <= 16f - Mathf.Abs(dx) * 0.5f)
                     {
                         Color c = (matId == MaterialIdCatalog.Dirt) ? new Color(0.32f, 0.68f, 0.26f, 1f) : topCol;
@@ -1135,7 +1420,6 @@ namespace Stratocraft.Character
                         c.a = 1f;
                         tex.SetPixel(x, y, c);
                     }
-                    // Sol yan yuzey
                     else if (dx < 0f && dx >= -16f && dy < -dx * 0.5f && dy >= -16f - dx * 0.5f)
                     {
                         Color c = leftCol;
@@ -1150,7 +1434,6 @@ namespace Stratocraft.Character
                         c.a = 1f;
                         tex.SetPixel(x, y, c);
                     }
-                    // Sag yan yuzey
                     else if (dx >= 0f && dx <= 16f && dy < dx * 0.5f && dy >= -16f + dx * 0.5f)
                     {
                         Color c = rightCol;
@@ -1184,37 +1467,34 @@ namespace Stratocraft.Character
         {
             Color col = ingotType switch
             {
-                1 => new Color(0.92f, 0.52f, 0.24f, 1f), // Bakir
-                2 => new Color(0.78f, 0.82f, 0.88f, 1f), // Demir
-                _ => new Color(0.35f, 0.88f, 0.98f, 1f)  // Mithril
+                1 => new Color(0.92f, 0.52f, 0.24f, 1f),
+                2 => new Color(0.78f, 0.82f, 0.88f, 1f),
+                _ => new Color(0.35f, 0.88f, 0.98f, 1f)
             };
             FillRect(tex, 10, 14, 28, 12, col * 0.78f);
             FillRect(tex, 13, 20, 22, 8, col);
             FillRect(tex, 15, 24, 18, 3, Color.Lerp(col, Color.white, 0.45f));
         }
 
-        private static Color GetMaterialIconColor(byte matId)
+        private static Color GetMaterialIconColor(byte matId) => matId switch
         {
-            return matId switch
-            {
-                MaterialIdCatalog.Stone => new Color(0.56f, 0.58f, 0.62f, 1f),
-                MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass => new Color(0.52f, 0.36f, 0.22f, 1f),
-                MaterialIdCatalog.Sand => new Color(0.88f, 0.80f, 0.52f, 1f),
-                MaterialIdCatalog.Basalt => new Color(0.26f, 0.28f, 0.32f, 1f),
-                MaterialIdCatalog.NaturalObsidian => new Color(0.24f, 0.14f, 0.38f, 1f),
-                MaterialIdCatalog.Cobblestone => new Color(0.48f, 0.50f, 0.52f, 1f),
-                MaterialIdCatalog.StoneBrick => new Color(0.64f, 0.66f, 0.70f, 1f),
-                MaterialIdCatalog.Marble => new Color(0.92f, 0.92f, 0.95f, 1f),
-                MaterialIdCatalog.OakWood => new Color(0.60f, 0.40f, 0.22f, 1f),
-                MaterialIdCatalog.Ironwood => new Color(0.38f, 0.30f, 0.26f, 1f),
-                MaterialIdCatalog.LooseRubble => new Color(0.50f, 0.46f, 0.40f, 1f),
-                MaterialIdCatalog.CopperOre => new Color(0.92f, 0.50f, 0.22f, 1f),
-                MaterialIdCatalog.IronOre => new Color(0.82f, 0.64f, 0.52f, 1f),
-                MaterialIdCatalog.GoldOre => new Color(1.00f, 0.84f, 0.20f, 1f),
-                MaterialIdCatalog.MithrilOre => new Color(0.30f, 0.90f, 1.00f, 1f),
-                _ => new Color(0.65f, 0.65f, 0.65f, 1f)
-            };
-        }
+            MaterialIdCatalog.Stone => new Color(0.56f, 0.58f, 0.62f, 1f),
+            MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass => new Color(0.52f, 0.36f, 0.22f, 1f),
+            MaterialIdCatalog.Sand => new Color(0.88f, 0.80f, 0.52f, 1f),
+            MaterialIdCatalog.Basalt => new Color(0.26f, 0.28f, 0.32f, 1f),
+            MaterialIdCatalog.NaturalObsidian => new Color(0.24f, 0.14f, 0.38f, 1f),
+            MaterialIdCatalog.Cobblestone => new Color(0.48f, 0.50f, 0.52f, 1f),
+            MaterialIdCatalog.StoneBrick => new Color(0.64f, 0.66f, 0.70f, 1f),
+            MaterialIdCatalog.Marble => new Color(0.92f, 0.92f, 0.95f, 1f),
+            MaterialIdCatalog.OakWood => new Color(0.60f, 0.40f, 0.22f, 1f),
+            MaterialIdCatalog.Ironwood => new Color(0.38f, 0.30f, 0.26f, 1f),
+            MaterialIdCatalog.LooseRubble => new Color(0.50f, 0.46f, 0.40f, 1f),
+            MaterialIdCatalog.CopperOre => new Color(0.92f, 0.50f, 0.22f, 1f),
+            MaterialIdCatalog.IronOre => new Color(0.82f, 0.64f, 0.52f, 1f),
+            MaterialIdCatalog.GoldOre => new Color(1.00f, 0.84f, 0.20f, 1f),
+            MaterialIdCatalog.MithrilOre => new Color(0.30f, 0.90f, 1.00f, 1f),
+            _ => new Color(0.65f, 0.65f, 0.65f, 1f)
+        };
 
         private static void FillRect(Texture2D tex, int x0, int y0, int w, int h, Color c)
         {

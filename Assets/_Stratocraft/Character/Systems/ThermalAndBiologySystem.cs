@@ -13,7 +13,23 @@ namespace Stratocraft.Character.Systems
     {
         public const float NormalBodyTempCelsius = 37.0f;
         public const float HypothermiaThresholdCelsius = 35.0f;
+        public const float SevereHypothermiaThresholdCelsius = 33.5f;
         public const float HyperthermiaThresholdCelsius = 39.5f;
+        public const float SevereHyperthermiaThresholdCelsius = 40.5f;
+
+        /// <summary>Ornek bazli atardamar kanama hizi (HP/s).</summary>
+        public float BleedRateHpPerSec { get; set; }
+
+        /// <summary>Canli oyuncu savas koprusu tarafindan tetiklenen kuresel atardamar kanama hizi (HP/s).</summary>
+        public static float GlobalPlayerBleedRateHpPerSec { get; set; }
+
+        /// <summary>Oyuncuya bolgesel atardamar kanamasi (HeavyBleeding) ekler.</summary>
+        public static void ApplyRegionalBleeding(ref CharacterVitalsComponent vitals, float addBleedRateHpPerSec = 1.5f)
+        {
+            if (addBleedRateHpPerSec <= 0f) return;
+            GlobalPlayerBleedRateHpPerSec = Math.Min(12.0f, GlobalPlayerBleedRateHpPerSec + addBleedRateHpPerSec);
+            vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.HeavyBleeding;
+        }
 
         /// <summary>
         /// 6 bilesenli cevresel hissedilen sicaklik hesaplayicisi:
@@ -99,11 +115,16 @@ namespace Stratocraft.Character.Systems
             float decay = MathF.Exp(-baseConductance * deltaTime);
             vitals.CoreBodyTempCelsius = targetCoreTemp + (vitals.CoreBodyTempCelsius - targetCoreTemp) * decay;
 
-            // 3. Hipotermi (< 35.0 C) ve Hipertermi (> 39.5 C) Etkileri
-            if (vitals.CoreBodyTempCelsius < HypothermiaThresholdCelsius)
+            // 3. Hipotermi (< 35.0 C) ve Hipertermi (> 39.5 C) Etkileri (GAME LOGIC BIBLE §3.2.A & §3.5.B)
+            bool isHypothermic = vitals.CoreBodyTempCelsius < HypothermiaThresholdCelsius;
+            bool isHyperthermic = vitals.CoreBodyTempCelsius > HyperthermiaThresholdCelsius;
+
+            if (isHypothermic)
             {
                 vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.Hypothermia;
-                float severity = 1.0f + MathF.Max(0f, HypothermiaThresholdCelsius - vitals.CoreBodyTempCelsius) * 0.8f;
+                float severity = vitals.CoreBodyTempCelsius < SevereHypothermiaThresholdCelsius
+                    ? (1.0f + (SevereHypothermiaThresholdCelsius - vitals.CoreBodyTempCelsius) * 0.8f)
+                    : 1.0f;
                 vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.5f * severity * deltaTime);
             }
             else
@@ -111,22 +132,71 @@ namespace Stratocraft.Character.Systems
                 vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.Hypothermia;
             }
 
-            if (vitals.CoreBodyTempCelsius > HyperthermiaThresholdCelsius)
+            if (isHyperthermic)
             {
                 vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.Hyperthermia;
                 vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.9f * deltaTime);
+                vitals.Stamina = MathF.Max(0.0f, vitals.Stamina - 2.5f * deltaTime);
+                if (vitals.CoreBodyTempCelsius > SevereHyperthermiaThresholdCelsius)
+                {
+                    vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.8f * deltaTime);
+                }
             }
             else
             {
                 vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.Hyperthermia;
             }
 
-            // 4. Bazal Metabolizma Tuketimi (sogukta titreme kCal tuketimini artirir)
-            float coldShiverMultiplier = vitals.CoreBodyTempCelsius < 36.0f ? 1.6f : 1.0f;
+            // 4. Bazal Metabolizma Tuketimi: Hipotermide titreme kCal tuketimini 2.0x artirir, Hipertermide su kaybi 2.0x artar!
+            float coldShiverMultiplier = isHypothermic
+                ? 2.0f
+                : (vitals.CoreBodyTempCelsius < 36.0f ? 1.6f : 1.0f);
+            float heatThirstMultiplier = isHyperthermic ? 2.0f : 1.0f;
             vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 0.35f * coldShiverMultiplier * deltaTime);
-            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.05f * deltaTime);
+            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.05f * heatThirstMultiplier * deltaTime);
 
-            // 5. 0 HP durumunda 30 saniyelik BleedOut geri sayimi
+            // 5. Aclik / Susuzluk Cezasi vs. Tokluk (Well-Fed) Yenilenme Bonusu
+            if (vitals.HungerKcal <= 0.01f || vitals.ThirstHydration <= 0.01f)
+            {
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.5f * deltaTime);
+                float maxStarvedStamina = vitals.MaxStamina * 0.40f;
+                if (vitals.Stamina > maxStarvedStamina)
+                {
+                    vitals.Stamina = maxStarvedStamina;
+                }
+            }
+            else if (vitals.HungerKcal >= 1600.0f &&
+                     vitals.ThirstHydration >= 80.0f &&
+                     vitals.CurrentHp > 0.0f &&
+                     !isHypothermic &&
+                     !isHyperthermic &&
+                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush)) == 0)
+            {
+                vitals.CurrentHp = MathF.Min(vitals.MaxHp, vitals.CurrentHp + 0.8f * deltaTime);
+                vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 4.0f * deltaTime);
+            }
+
+            // 6. Atardamar Kanamasi (Arterial Bleeding) ve Dogal Pihtilasma (0.35 HP/s^2 azalma)
+            float activeBleed = MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec);
+            if ((vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 && activeBleed <= 0.001f)
+            {
+                activeBleed = 1.5f;
+                BleedRateHpPerSec = 1.5f;
+            }
+            if (activeBleed > 0.001f)
+            {
+                vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.HeavyBleeding;
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - activeBleed * deltaTime);
+                float clotStep = 0.35f * deltaTime;
+                BleedRateHpPerSec = MathF.Max(0.0f, BleedRateHpPerSec - clotStep);
+                GlobalPlayerBleedRateHpPerSec = MathF.Max(0.0f, GlobalPlayerBleedRateHpPerSec - clotStep);
+                if (MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec) <= 0.001f)
+                {
+                    vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.HeavyBleeding;
+                }
+            }
+
+            // 7. 0 HP durumunda 30 saniyelik BleedOut geri sayimi
             if (vitals.CurrentHp <= 0.0f && vitals.BleedOutTimerSeconds > 0.0f)
             {
                 vitals.BleedOutTimerSeconds = MathF.Max(0.0f, vitals.BleedOutTimerSeconds - deltaTime);

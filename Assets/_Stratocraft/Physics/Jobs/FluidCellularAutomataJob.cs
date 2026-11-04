@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
@@ -265,6 +266,260 @@ namespace Stratocraft.Physics.Jobs
             float volumetricFlowM3PerSec = (massUnitsTransferredPerTick / 255.0f) * tickRateHz;
             float effectiveJetVelocity = MathF.Min(6.0f, 0.75f + volumetricFlowM3PerSec * 1.4f);
             return densityKgPerM3 * volumetricFlowM3PerSec * effectiveJetVelocity * MathF.Max(0.25f, wheelRadiusMeters) * 0.05f;
+        }
+
+        /// <summary>
+        /// Komşu chunk sınırlarında (lx = 15 &lt;-&gt; 0 ve lz = 15 &lt;-&gt; 0) su, lav ve asit akışkanlarının
+        /// görünmez duvara çarpmadan 16m chunk sınırlarını kesintisiz geçmesini ve sınırda stokiyometrik
+        /// su+lav reaksiyonuna girmesini sağlar.
+        /// </summary>
+        public static int ExchangeChunkBorderFluids(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Dictionary<(int cx, int cz), ushort[]> fluidChunks,
+            int maxY,
+            HashSet<(int cx, int cz)> dirtyFluidChunks,
+            HashSet<(int cx, int cz)>? dirtySolidChunks = null)
+        {
+            if (worldChunks == null || fluidChunks == null || fluidChunks.Count == 0)
+            {
+                return 0;
+            }
+
+            int exchangedBorders = 0;
+            foreach (KeyValuePair<(int cx, int cz), ushort[]> kv in fluidChunks)
+            {
+                (int cx, int cz) keyA = kv.Key;
+                ushort[] fluidsA = kv.Value;
+                if (fluidsA == null || !worldChunks.TryGetValue(keyA, out uint[]? voxelsA) || voxelsA == null)
+                {
+                    continue;
+                }
+
+                // +X Sınırı: keyA (lx = 15) <-> (cx + 1, cz) (lx = 0)
+                (int cx, int cz) keyEast = (keyA.cx + 1, keyA.cz);
+                if (fluidChunks.TryGetValue(keyEast, out ushort[]? fluidsEast) &&
+                    fluidsEast != null &&
+                    worldChunks.TryGetValue(keyEast, out uint[]? voxelsEast) &&
+                    voxelsEast != null)
+                {
+                    exchangedBorders += ExchangeSingleChunkSeam(
+                        keyA, voxelsA, fluidsA,
+                        keyEast, voxelsEast, fluidsEast,
+                        alongXSeam: true,
+                        maxY,
+                        dirtyFluidChunks,
+                        dirtySolidChunks);
+                }
+
+                // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
+                (int cx, int cz) keyNorth = (keyA.cx, keyA.cz + 1);
+                if (fluidChunks.TryGetValue(keyNorth, out ushort[]? fluidsNorth) &&
+                    fluidsNorth != null &&
+                    worldChunks.TryGetValue(keyNorth, out uint[]? voxelsNorth) &&
+                    voxelsNorth != null)
+                {
+                    exchangedBorders += ExchangeSingleChunkSeam(
+                        keyA, voxelsA, fluidsA,
+                        keyNorth, voxelsNorth, fluidsNorth,
+                        alongXSeam: false,
+                        maxY,
+                        dirtyFluidChunks,
+                        dirtySolidChunks);
+                }
+            }
+
+            return exchangedBorders;
+        }
+
+        private static int ExchangeSingleChunkSeam(
+            (int cx, int cz) keyA,
+            uint[] voxelsA,
+            ushort[] fluidsA,
+            (int cx, int cz) keyB,
+            uint[] voxelsB,
+            ushort[] fluidsB,
+            bool alongXSeam,
+            int maxY,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            HashSet<(int cx, int cz)>? dirtySolidChunks)
+        {
+            int limitY = Math.Min(maxY, Math.Min(fluidsA.Length >> 8, fluidsB.Length >> 8));
+            limitY = Math.Min(limitY, Math.Min(voxelsA.Length >> 8, voxelsB.Length >> 8));
+            if (limitY <= 0)
+            {
+                return 0;
+            }
+
+            int seamTransfers = 0;
+            bool dirtyFluidA = false;
+            bool dirtyFluidB = false;
+            bool dirtySolidA = false;
+            bool dirtySolidB = false;
+
+            for (int y = 0; y < limitY; y++)
+            {
+                int yBase = y << 8;
+                for (int s = 0; s < 16; s++)
+                {
+                    int ax = alongXSeam ? 15 : s;
+                    int az = alongXSeam ? s : 15;
+                    int bx = alongXSeam ? 0 : s;
+                    int bz = alongXSeam ? s : 0;
+
+                    int idxA = yBase | (az << 4) | ax;
+                    int idxB = yBase | (bz << 4) | bx;
+
+                    FluidCell16 aCell = new FluidCell16(fluidsA[idxA]);
+                    FluidCell16 bCell = new FluidCell16(fluidsB[idxB]);
+                    if (aCell.Mass == 0 && bCell.Mass == 0)
+                    {
+                        continue;
+                    }
+
+                    byte aCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxelsA[idxA]);
+                    byte bCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxelsB[idxB]);
+                    if (aCap == 0 || bCap == 0)
+                    {
+                        continue;
+                    }
+
+                    // 1) Sınır ötesi Su + Lav reaksiyonu
+                    if (aCell.Type != FluidType.None && bCell.Type != FluidType.None && aCell.Type != bCell.Type)
+                    {
+                        if (IsWaterLavaPair(aCell.Type, bCell.Type))
+                        {
+                            FluidCell16 water = aCell.Type == FluidType.Water ? aCell : bCell;
+                            FluidCell16 lava = aCell.Type == FluidType.Lava ? aCell : bCell;
+                            if (TryReactWaterAndLava(ref water, ref lava, out VoxelCell formedSolid, out bool formedObsidian))
+                            {
+                                fluidsA[idxA] = 0;
+                                fluidsB[idxB] = 0;
+                                if (formedObsidian)
+                                {
+                                    if (bCell.Type == FluidType.Lava)
+                                    {
+                                        voxelsB[idxB] = formedSolid.RawValue;
+                                        dirtySolidB = true;
+                                    }
+                                    else
+                                    {
+                                        voxelsA[idxA] = formedSolid.RawValue;
+                                        dirtySolidA = true;
+                                    }
+                                }
+
+                                WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
+                                WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
+                                dirtyFluidA = true;
+                                dirtyFluidB = true;
+                                seamTransfers++;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // 2) Sınır ötesi yanal (veya -Y düşüş destekli) kütle korunumlu akış
+                    FluidType activeType = aCell.Mass > 0 ? aCell.Type : bCell.Type;
+                    if (activeType == FluidType.None)
+                    {
+                        continue;
+                    }
+
+                    int diff = aCell.Mass - bCell.Mass;
+                    int absDiff = Math.Abs(diff);
+                    int minDiffThreshold = activeType == FluidType.Lava ? LavaBinghamYieldThreshold : 2;
+                    if (absDiff < minDiffThreshold)
+                    {
+                        continue;
+                    }
+
+                    int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
+                    int transfer = Math.Max(1, absDiff / viscosityDiv);
+
+                    if (diff > 0)
+                    {
+                        transfer = Math.Min(transfer, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
+                        if (transfer > 0)
+                        {
+                            fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false, aCell.PressureHead).RawValue;
+                            fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false, bCell.PressureHead).RawValue;
+                            WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
+                            WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
+                            dirtyFluidA = true;
+                            dirtyFluidB = true;
+                            seamTransfers++;
+                        }
+                    }
+                    else
+                    {
+                        transfer = Math.Min(transfer, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
+                        if (transfer > 0)
+                        {
+                            fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false, bCell.PressureHead).RawValue;
+                            fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false, aCell.PressureHead).RawValue;
+                            WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
+                            WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
+                            dirtyFluidA = true;
+                            dirtyFluidB = true;
+                            seamTransfers++;
+                        }
+                    }
+                }
+            }
+
+            if (dirtyFluidChunks != null)
+            {
+                if (dirtyFluidA) dirtyFluidChunks.Add(keyA);
+                if (dirtyFluidB) dirtyFluidChunks.Add(keyB);
+            }
+
+            if (dirtySolidChunks != null)
+            {
+                if (dirtySolidA) dirtySolidChunks.Add(keyA);
+                if (dirtySolidB) dirtySolidChunks.Add(keyB);
+            }
+
+            return seamTransfers;
+        }
+
+        private static void WakeChunkCellAndNeighbors(ushort[] fluids, int lx, int ly, int lz, int limitY)
+        {
+            int idx = (ly << 8) | (lz << 4) | lx;
+            if ((uint)idx < (uint)fluids.Length && (fluids[idx] & 0xFF) != 0)
+            {
+                fluids[idx] = FluidCell16.WakeRaw(fluids[idx]);
+            }
+
+            if (lx > 0)
+            {
+                int n = idx - 1;
+                if ((fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
+            if (lx < 15)
+            {
+                int n = idx + 1;
+                if ((fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
+            if (lz > 0)
+            {
+                int n = idx - 16;
+                if ((fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
+            if (lz < 15)
+            {
+                int n = idx + 16;
+                if ((fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
+            if (ly > 0)
+            {
+                int n = idx - 256;
+                if ((fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
+            if (ly + 1 < limitY)
+            {
+                int n = idx + 256;
+                if ((uint)n < (uint)fluids.Length && (fluids[n] & 0xFF) != 0) fluids[n] = FluidCell16.WakeRaw(fluids[n]);
+            }
         }
 
         private static void RunLateralPairPass(

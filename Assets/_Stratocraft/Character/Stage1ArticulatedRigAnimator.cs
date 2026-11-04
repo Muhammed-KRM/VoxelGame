@@ -52,6 +52,9 @@ namespace Stratocraft.Character
         private float _smoothedRightFootIkLift;
         private bool _shadowModeInitialized;
         private bool _lastFirstPersonShadowState;
+        private bool _lastProneShadowState;
+        private int _lastBodyChildCount = -1;
+        private readonly List<Renderer> _cachedBodyRenderers = new(32);
 
         /// <summary>Oyuncunun sol kolu koptu mu? (True ise tek el agirlik cezasi devreye girer ve kol gorseli kesik guduge donusur).</summary>
         public bool PlayerLeftArmSevered { get; set; }
@@ -116,6 +119,9 @@ namespace Stratocraft.Character
             _smoothedHipHeightY = Mathf.Lerp(_smoothedHipHeightY, targetHipHeightY, blend);
             _smoothedKneeFlexDeg = Mathf.Lerp(_smoothedKneeFlexDeg, targetKneeFlexDeg, blend);
 
+            bool isProne = movementState.Stance == CharacterStance.ProneCrawling ||
+                           movementState.Stance == CharacterStance.BleedOutCrawl;
+
             if (playerBodyRoot != null)
             {
                 if (!playerBodyRoot.activeSelf)
@@ -125,27 +131,12 @@ namespace Stratocraft.Character
 
                 EnsureArticulatedLimbPivots(playerBodyRoot.transform, sharedVoxelMat);
 
-                if (!_shadowModeInitialized || _lastFirstPersonShadowState != isFirstPersonMode)
+                if (!_shadowModeInitialized ||
+                    _lastFirstPersonShadowState != isFirstPersonMode ||
+                    _lastProneShadowState != isProne ||
+                    _lastBodyChildCount != playerBodyRoot.transform.childCount)
                 {
-                    _shadowModeInitialized = true;
-                    _lastFirstPersonShadowState = isFirstPersonMode;
-                    var childRenderers = playerBodyRoot.GetComponentsInChildren<Renderer>(true);
-                    for (int r = 0; r < childRenderers.Length; r++)
-                    {
-                        Transform rt = childRenderers[r].transform;
-                        if (rt == playerBodyRoot.transform ||
-                            rt.name.IndexOf("TacticalClothBackpack", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            childRenderers[r].enabled = false;
-                            continue;
-                        }
-
-                        bool isHeadPart = _headCounterPitchPivot != null && rt.IsChildOf(_headCounterPitchPivot);
-                        childRenderers[r].enabled = true;
-                        childRenderers[r].shadowCastingMode = (isFirstPersonMode && isHeadPart)
-                            ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly
-                            : UnityEngine.Rendering.ShadowCastingMode.On;
-                    }
+                    ApplyFirstPersonShadowPolicy(playerBodyRoot.transform, isFirstPersonMode, isProne);
                 }
 
                 // Eski statik ikinci zirh kopyasini (TacticalClothBackpack_3Tier) gizle; artikule sirt cantasi zaten omurgaya bagli!
@@ -160,7 +151,9 @@ namespace Stratocraft.Character
                 }
 
                 Transform bodyTr = playerBodyRoot.transform;
-                float strideBob = horizontalSpeed > 0.12f ? Mathf.Abs(Mathf.Sin(_locomotionCyclePhase)) * 0.038f : 0f;
+                float strideBob = horizontalSpeed > 0.12f
+                    ? Mathf.Abs(Mathf.Sin(_locomotionCyclePhase)) * (isFirstPersonMode ? 0.018f : 0.038f)
+                    : 0f;
                 float strideYawTwist = horizontalSpeed > 0.12f ? Mathf.Sin(_locomotionCyclePhase) * 6.0f : 0f;
 
                 // Kok dugum daima y=0 (zemin yuzeyi) seviyesinde sabit kalir; asla negatif y ile yerin icine girmez!
@@ -192,7 +185,142 @@ namespace Stratocraft.Character
             }
 
             UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg);
+            if (isFirstPersonMode && playerBodyRoot != null && playerCamera != null)
+            {
+                EnforceFirstPersonCameraProximityGuard(playerBodyRoot.transform, playerCamera.transform.position, isProne);
+            }
             UpdateLeftWristCrystalPose(playerCamera, leftWristCrystal, isFirstPersonMode, isMatterCrystalActive, deltaTime);
+        }
+
+        /// <summary>
+        /// Anayasa Bolum 3.1 — Gercek Birinci Sahis (True First-Person) Golge-Koruyucu Gorunurluk Politikasi:
+        /// FPS modunda kafa/migfer, boyunluk, gogus/karin zirhi, sirt cantasi, pelvis kemeri, omuz zirhlari (Pauldron),
+        /// ust kol/uyluk eklemleri ve vucut kilif proksilerini (<c>Holster_*</c>) <see cref="UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly"/>
+        /// yapar (yerde gercekci tam vucut golgesi %100 korunurken kameranin icine hicbir poligon giremez).
+        /// TPS ([F5]) modunda ise tum zirh parcalari <see cref="UnityEngine.Rendering.ShadowCastingMode.On"/> olarak tam gorunur.
+        /// </summary>
+        public void ApplyFirstPersonShadowPolicy(Transform playerBodyRoot, bool isFirstPersonMode, bool isProne = false)
+        {
+            if (playerBodyRoot == null) return;
+
+            _shadowModeInitialized = true;
+            _lastFirstPersonShadowState = isFirstPersonMode;
+            _lastProneShadowState = isProne;
+            _lastBodyChildCount = playerBodyRoot.childCount;
+
+            _cachedBodyRenderers.Clear();
+            playerBodyRoot.GetComponentsInChildren(true, _cachedBodyRenderers);
+
+            for (int r = 0; r < _cachedBodyRenderers.Count; r++)
+            {
+                Renderer rend = _cachedBodyRenderers[r];
+                if (rend == null) continue;
+
+                Transform rt = rend.transform;
+                if (rt == playerBodyRoot ||
+                    rt.name.IndexOf("TacticalClothBackpack", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    rend.enabled = false;
+                    continue;
+                }
+
+                rend.enabled = true;
+                bool shadowsOnly = isFirstPersonMode && IsFirstPersonBodyOccluder(rt, isProne);
+                rend.shadowCastingMode = shadowsOnly
+                    ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly
+                    : UnityEngine.Rendering.ShadowCastingMode.On;
+            }
+        }
+
+        private bool IsFirstPersonBodyOccluder(Transform rt, bool isProne)
+        {
+            if (_headCounterPitchPivot != null && rt.IsChildOf(_headCounterPitchPivot))
+            {
+                return true;
+            }
+
+            string n = rt.name;
+            // Kafa, migfer, boyunluk, gogus/karin zirhi, sirt cantasi, pelvis kemeri/tasset, omuz zirhi (Pauldron),
+            // ust kol, ust uyluk (HipPivot_Vis) ve vucuda asili kilif proksileri (Holster_*) FPS modunda daima ShadowsOnly'dir:
+            if (n.IndexOf("Head", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Helmet", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Visor", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Crest", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Gorget", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Collar", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Chest", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Cuirass", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Plastron", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Abdomen", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("SpineTorso", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("ExplorerPack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("PackBedroll", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("PackFrame", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("PelvisBelt", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("PelvisMail", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Tasset", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Pauldron", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Shoulder", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("UpperArm", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("HipPivot_Vis", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Holster_", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("GoreCap", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            // Yuzustu surunurken (isProne) ileri uzanan surunme kollari (Elbow / Wrist / Forearm) kameranin onunden gecerek
+            // gorusu kapatmamasi icin surunme esnasinda FPS modunda ShadowsOnly yapilir:
+            if (isProne)
+            {
+                if ((_rightArmShoulderPivot != null && rt.IsChildOf(_rightArmShoulderPivot)) ||
+                    (_leftArmShoulderPivot != null && rt.IsChildOf(_leftArmShoulderPivot)) ||
+                    n.IndexOf("Elbow", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    n.IndexOf("Forearm", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    n.IndexOf("Wrist", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void EnforceFirstPersonCameraProximityGuard(Transform playerBodyRoot, Vector3 cameraWorldPos, bool isProne)
+        {
+            if (_cachedBodyRenderers.Count == 0 || _lastBodyChildCount != playerBodyRoot.childCount)
+            {
+                ApplyFirstPersonShadowPolicy(playerBodyRoot, isFirstPersonMode: true, isProne);
+            }
+
+            const float minSafeCameraDistanceSq = 0.32f * 0.32f;
+            for (int r = 0; r < _cachedBodyRenderers.Count; r++)
+            {
+                Renderer rend = _cachedBodyRenderers[r];
+                if (rend == null || !rend.enabled) continue;
+
+                Transform rt = rend.transform;
+                if (IsFirstPersonBodyOccluder(rt, isProne))
+                {
+                    if (rend.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly)
+                    {
+                        rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly;
+                    }
+                    continue;
+                }
+
+                // Alt bacaklar (KneePivot, Poleyn, FootPivot) ve on kollar normalde FPS'te gorunurdur (ShadowCastingMode.On);
+                // ancak derin comelme/kayma/surunme gecisinde kameraya 0.32m'den fazla yaklasirlarsa aninda ShadowsOnly korumasi devreye girer!
+                Vector3 closest = rend.bounds.ClosestPoint(cameraWorldPos);
+                float distSq = (closest - cameraWorldPos).sqrMagnitude;
+                var desiredMode = distSq < minSafeCameraDistanceSq
+                    ? UnityEngine.Rendering.ShadowCastingMode.ShadowsOnly
+                    : UnityEngine.Rendering.ShadowCastingMode.On;
+                if (rend.shadowCastingMode != desiredMode)
+                {
+                    rend.shadowCastingMode = desiredMode;
+                }
+            }
         }
 
         /// <summary>
@@ -628,15 +756,25 @@ namespace Stratocraft.Character
             float minEyeHeight = isProne ? 0.58f : 0.72f;
             float eyeHeight = Mathf.Max(minEyeHeight, movementState.CapsuleHeightMeters - 0.14f);
             float viewBob = (horizontalSpeed > 0.15f && movementState.IsGrounded != 0)
-                ? Mathf.Sin(_locomotionCyclePhase * 2f) * (isProne ? 0.014f : 0.024f)
+                ? Mathf.Abs(Mathf.Sin(_locomotionCyclePhase)) * (isProne ? 0.014f : 0.022f)
                 : 0f;
 
             Vector3 eyeWorld = playerRoot.position + new Vector3(0f, eyeHeight + viewBob, 0f);
-            Quaternion lookRot = Quaternion.Euler(cameraPitchDeg, playerRoot.eulerAngles.y, 0f);
+            float subtleRollDeg = Mathf.Clamp(_smoothedBodyRollDeg * 0.22f, -2.5f, 2.5f);
+            Quaternion lookRot = Quaternion.Euler(cameraPitchDeg, playerRoot.eulerAngles.y, subtleRollDeg);
 
             if (isFirstPersonMode)
             {
-                Vector3 targetCamPos = eyeWorld + playerRoot.forward * (isProne ? 0.04f : 0.10f);
+                if (Mathf.Abs(cam.nearClipPlane - 0.05f) > 0.005f)
+                {
+                    cam.nearClipPlane = 0.05f;
+                }
+
+                // Omurga ileri egildiginde (Comelme: 18°, Surunme: 78°) FPS kamerasi geride (sirt cantasinin/gogsun icinde)
+                // kalmamali; omurga ileri uzanimi ile uyumlu olarak basin gercek ileri dunya konumuna tasinmalidir!
+                float spinePitchRad = Mathf.Max(0f, _smoothedBodyPitchDeg) * Mathf.Deg2Rad;
+                float dynamicForwardOffset = 0.14f + Mathf.Sin(spinePitchRad) * (isProne ? 0.40f : 0.24f);
+                Vector3 targetCamPos = eyeWorld + playerRoot.forward * dynamicForwardOffset;
                 // Egimli Surface Nets zemini uzerinde surunurken veya egilirken kameranin ve kilicin yerin altina girmesini %100 engelle
                 if (UnityEngine.Physics.Raycast(new Vector3(targetCamPos.x, targetCamPos.y + 1.4f, targetCamPos.z), Vector3.down,
                     out RaycastHit groundHit, 3.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
@@ -649,22 +787,62 @@ namespace Stratocraft.Character
             }
             else
             {
-                Vector3 tpsOffset = lookRot * new Vector3(0.45f, 0.62f, -3.55f);
-                Vector3 targetTpsPos = eyeWorld + tpsOffset;
-                if (UnityEngine.Physics.Raycast(new Vector3(targetTpsPos.x, targetTpsPos.y + 2.0f, targetTpsPos.z), Vector3.down,
-                    out RaycastHit tpsGroundHit, 4.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                // Gercek Omuz Ustu (Over-the-Shoulder) TPS Kamerasi:
+                // Orbit merkezi oyuncunun sag omuz/ust gogus hizasindadir; boylece yukari (+gokyuzune) veya asagi (-yere)
+                // bakildiginda karakterin basi, omuzlari, zirhli govdesi ve sag kilic kolu ekranin sol-alt kadraninda daima net gorunur!
+                float shoulderHeight = Mathf.Max(0.50f, eyeHeight * 0.86f) + viewBob * 0.4f;
+                Vector3 shoulderPivot = playerRoot.position + Vector3.up * shoulderHeight + playerRoot.right * 0.44f;
+                float tpsPitch = Mathf.Clamp(cameraPitchDeg, -62f, 70f);
+                Quaternion tpsRot = Quaternion.Euler(tpsPitch, playerRoot.eulerAngles.y, 0f);
+
+                float boomDist = tpsPitch < 0f
+                    ? Mathf.Lerp(2.25f, 1.35f, Mathf.InverseLerp(0f, -62f, tpsPitch))
+                    : Mathf.Lerp(2.25f, 1.95f, Mathf.InverseLerp(0f, 70f, tpsPitch));
+
+                Vector3 desiredCamPos = shoulderPivot + tpsRot * new Vector3(0.08f, 0.14f, -boomDist);
+                Vector3 castVec = desiredCamPos - shoulderPivot;
+                float castDist = castVec.magnitude;
+                Vector3 finalCamPos = desiredCamPos;
+
+                if (castDist > 0.05f)
                 {
-                    if (targetTpsPos.y < tpsGroundHit.point.y + 0.45f)
+                    Vector3 castDir = castVec / castDist;
+                    if (UnityEngine.Physics.SphereCast(
+                        shoulderPivot, 0.20f, castDir, out RaycastHit obstacleHit, castDist,
+                        UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
                     {
-                        targetTpsPos.y = tpsGroundHit.point.y + 0.45f;
+                        if (!obstacleHit.transform.IsChildOf(playerRoot) && obstacleHit.transform != playerRoot)
+                        {
+                            float safeDist = Mathf.Max(0.55f, obstacleHit.distance - 0.12f);
+                            finalCamPos = shoulderPivot + castDir * safeDist;
+                        }
                     }
                 }
-                cam.transform.position = targetTpsPos;
-                cam.transform.rotation = Quaternion.LookRotation((eyeWorld + playerRoot.forward * 4.0f) - cam.transform.position, Vector3.up);
+
+                if (UnityEngine.Physics.Raycast(new Vector3(finalCamPos.x, finalCamPos.y + 2.0f, finalCamPos.z), Vector3.down,
+                    out RaycastHit tpsGroundHit, 4.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                {
+                    if (!tpsGroundHit.transform.IsChildOf(playerRoot) && finalCamPos.y < tpsGroundHit.point.y + 0.32f)
+                    {
+                        finalCamPos.y = tpsGroundHit.point.y + 0.32f;
+                    }
+                }
+
+                cam.transform.position = finalCamPos;
+                Vector3 aimPoint = shoulderPivot + (tpsRot * Vector3.forward) * 30.0f;
+                Vector3 aimDir = aimPoint - finalCamPos;
+                if (aimDir.sqrMagnitude > 0.001f)
+                {
+                    cam.transform.rotation = Quaternion.LookRotation(aimDir.normalized, Vector3.up);
+                }
+                else
+                {
+                    cam.transform.rotation = tpsRot;
+                }
             }
         }
 
-        private static void UpdateLeftWristCrystalPose(
+        private void UpdateLeftWristCrystalPose(
             UnityEngine.Camera? cam,
             Transform? leftWristCrystal,
             bool isFirstPersonMode,
@@ -685,9 +863,20 @@ namespace Stratocraft.Character
                 leftWristCrystal.position = cam.transform.TransformPoint(activeOffset);
                 leftWristCrystal.rotation = cam.transform.rotation * Quaternion.Euler(25f, spin, 15f);
             }
+            else if (_leftWristPivot != null)
+            {
+                // TPS modunda sol bilek kristali havada asili kalmaz; artikule sol eldiven/bilek eklemine yapisir!
+                leftWristCrystal.position = _leftWristPivot.TransformPoint(new Vector3(-0.04f, -0.02f, 0.08f));
+                leftWristCrystal.rotation = _leftWristPivot.rotation * Quaternion.Euler(35f, spin, 20f);
+            }
+            else if (_leftElbowPivot != null)
+            {
+                leftWristCrystal.position = _leftElbowPivot.TransformPoint(new Vector3(-0.04f, -0.22f, 0.08f));
+                leftWristCrystal.rotation = _leftElbowPivot.rotation * Quaternion.Euler(35f, spin, 20f);
+            }
             else
             {
-                leftWristCrystal.localPosition = new Vector3(-0.44f, 1.02f, 0.22f);
+                leftWristCrystal.localPosition = new Vector3(-0.32f, 0.92f, 0.18f);
                 leftWristCrystal.localRotation = Quaternion.Euler(35f, spin, 20f);
             }
         }

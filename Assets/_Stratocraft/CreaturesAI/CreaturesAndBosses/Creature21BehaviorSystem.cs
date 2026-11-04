@@ -100,13 +100,19 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
     }
 
     /// <summary>
-    /// GAME LOGIC BIBLE v7.0 Bolum 13.0 Kanonik 21 Yasayan Yaratic Katalogu (Halka Lv1..Lv5: 5+5+5+4+2=21),
-    /// Anatomik Yetenek Matrisi (Uzuv Kopmasiyla Dinamik Yetenek Kaybi: string ve enum limb asiri yuklemeli)
+    /// GAME LOGIC BIBLE v7.0 Bolum 13.0 Kanonik 21 Yasayan Yaratik Katalogu (Halka Lv1..Lv5: 5+5+5+4+2=21),
+    /// Anatomik Yetenek Matrisi (Uzuv Kopmasiyla Dinamik Yetenek Kaybi), Phoenix Kor Yumurta Yeniden Dogus Kurali
     /// ve Anti-Pillar-Cheese (TARGET_SUPPORT_PILLARS: Oyuncu yuksek bir sutuna ciktiginda altindaki tasiyici
     /// blogu kirip Domino yikimini tetikleme) davranis sistemi.
     /// </summary>
     public sealed class Creature21BehaviorSystem
     {
+        public const float PhoenixEmberEggMaxHp = 2500f;
+        public const float PhoenixEmberEggDurationSeconds = 10.0f;
+        public const float PhoenixRebirthHpRatio = 0.60f;
+        public const float PhoenixRebirthDamageMultiplier = 1.50f;
+        public const float PhoenixWeakPointCriticalMultiplier = 3.0f;
+
         private static readonly CreatureArchetypeDefinition[] Catalog21 =
         {
             // Halka 1 (Lv1: 200 - 1.000m) — 5 Canli
@@ -172,6 +178,60 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
             }
 
             return Catalog21[creatureId - 1];
+        }
+
+        public static bool IsTamableArchetype(byte creatureId)
+        {
+            return creatureId == 3 || creatureId == 5 || creatureId == 10 || creatureId == 14 || creatureId == 16 || creatureId == 19;
+        }
+
+        public static bool IsMountableArchetype(byte creatureId)
+        {
+            if (creatureId < 1 || creatureId > Catalog21.Length) return false;
+            var caps = Catalog21[creatureId - 1].InitialCapabilities;
+            return (caps & (AnatomyCapabilityFlags.CapMountGround | AnatomyCapabilityFlags.CapMountFlying)) != 0;
+        }
+
+        public static byte SelectArchetypeForRingAndIndex(byte ringIndex, int slotOffset)
+        {
+            int idx = Math.Abs(slotOffset);
+            return ringIndex switch
+            {
+                1 => (byte)(1 + (idx % 5)),
+                2 => (byte)(6 + (idx % 5)),
+                3 => (byte)(11 + (idx % 5)),
+                4 => (byte)(16 + (idx % 4)),
+                _ => (byte)(20 + (idx % 2))
+            };
+        }
+
+        /// <summary>
+        /// Phoenix Boss 10 sn / 2.500 HP Kor Yumurta (Ember Egg) geri sayimini ilerletir.
+        /// 10 sn icinde yumurta kirilmazsa MaxHp degerini OriginalMaxHp olarak geri yukler ve
+        /// %60 OriginalMaxHp (2500 * 0.60 = 1500 DEGIL!) + 1.5x hasar carpani ile yeniden dogurur.
+        /// </summary>
+        public static bool TickPhoenixEmberEgg(
+            ref float emberEggTimer,
+            float deltaTime,
+            float originalMaxHp,
+            out float restoredMaxHp,
+            out float rebornCurrentHp,
+            out float rebornDamageMultiplier)
+        {
+            emberEggTimer -= deltaTime;
+            if (emberEggTimer <= 0f)
+            {
+                emberEggTimer = 0f;
+                restoredMaxHp = originalMaxHp > 0f ? originalMaxHp : 680f;
+                rebornCurrentHp = restoredMaxHp * PhoenixRebirthHpRatio;
+                rebornDamageMultiplier = PhoenixRebirthDamageMultiplier;
+                return true;
+            }
+
+            restoredMaxHp = PhoenixEmberEggMaxHp;
+            rebornCurrentHp = PhoenixEmberEggMaxHp;
+            rebornDamageMultiplier = 1.0f;
+            return false;
         }
 
         /// <summary>

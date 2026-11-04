@@ -3,31 +3,15 @@
 using System;
 using System.Collections.Generic;
 using Stratocraft.Character.Data;
+using Stratocraft.Character.Systems;
 using Stratocraft.Voxel.Data;
 using UnityEngine;
 
 namespace Stratocraft.Character
 {
-    public enum DuelistNpcMode : byte
-    {
-        ActiveDuel = 0,
-        BlockPracticeOnly = 1,
-        AttackPracticeOnly = 2
-    }
+    public enum DuelistNpcMode : byte { ActiveDuel = 0, BlockPracticeOnly = 1, AttackPracticeOnly = 2 }
+    public enum CombatDirectionQuadrant : byte { Overhead = 0, Right = 1, Left = 2, Lower = 3 }
 
-    public enum CombatDirectionQuadrant : byte
-    {
-        Overhead = 0,
-        Right = 1,
-        Left = 2,
-        Lower = 3
-    }
-
-    /// <summary>
-    /// Fiziksel Kılıç Dövüşü Geri Bildirim (Prosedürel Ses, 3B Kesim İzi, Kıvılcım/Kan Parçacıkları,
-    /// 3B Yüzen Hasar/Çarpışma Yazıları) ve Canlı Eğitim Arenası (<c>Kılıç Ustası Düellocu NPC</c> +
-    /// <c>Mekanik Eğitim Makinesi</c>) Köprüsü.
-    /// </summary>
     public sealed class Stage1CombatFeedbackAndArenaBridge
     {
         private struct FloatingCombatPopup
@@ -35,11 +19,9 @@ namespace Stratocraft.Character
             public Vector3 WorldPos;
             public string Text;
             public Color Color;
-            public float RemainingTime;
-            public float TotalTime;
+            public float RemainingTime, TotalTime;
             public int FontSize;
         }
-
         private struct ImpactParticle
         {
             public Transform Transform;
@@ -50,69 +32,38 @@ namespace Stratocraft.Character
 
         private readonly List<FloatingCombatPopup> _popups = new(24);
         private readonly List<ImpactParticle> _particles = new(48);
-        private readonly Vector3[] _trailBaseHistory = new Vector3[10];
-        private readonly Vector3[] _trailTipHistory = new Vector3[10];
+        private readonly Vector3[] _trailBaseHistory = new Vector3[10], _trailTipHistory = new Vector3[10];
         private readonly List<Vector3> _trailVerts = new(32);
         private readonly List<Color32> _trailColors = new(32);
         private readonly List<int> _trailTris = new(96);
         private int _trailPointCount;
         private Mesh? _trailMesh;
         private GameObject? _trailGo;
-
-        // Prosedürel PCM Ses Sentezleyici (0 KB harici ses dosyası, %100 çalışma zamanı dalga üretimi)
         private AudioSource? _audioSource;
-        private AudioClip? _clipWhooshLight;
-        private AudioClip? _clipWhooshHeavy;
-        private AudioClip? _clipSwordClash;
-        private AudioClip? _clipWallRicochet;
-        private AudioClip? _clipFleshCleave;
-        private AudioClip? _clipDummyThud;
-
-        // Merkez Nişangah Vuruş İmleci (Hit-Marker)
+        private AudioClip? _clipWhooshLight, _clipWhooshHeavy, _clipSwordClash, _clipWallRicochet, _clipFleshCleave, _clipDummyThud;
         private float _hitMarkerTimer;
         private Color _hitMarkerColor = Color.white;
         private string _hitMarkerLabel = string.Empty;
 
-        // 1) Mekanik Eğitim Makinesi (Training Automaton / Strike Meter)
-        private Transform? _automatonRoot;
-        private Transform? _automatonTorsoPivot;
-        private Transform? _automatonSpinArmPivot;
-        private Vector2 _automatonTiltAnglesDeg;
-        private Vector2 _automatonTiltVelocityDeg;
-        private float _automatonSpinAngleDeg;
-        private int _automatonLastHitSwingId = -1;
-        private float _automatonLastDamage;
-        private float _automatonLastSpeedMps;
-        private string _automatonLastZone = "-";
-        private string _automatonLastNote = "Vuruş Bekleniyor (LMB Kesik veya Dönen Kola RMB Blok Dene!)";
-        private float _automatonSpinHitCooldown;
+        private Transform? _automatonRoot, _automatonTorsoPivot, _automatonSpinArmPivot;
+        private Vector2 _automatonTiltAnglesDeg, _automatonTiltVelocityDeg;
+        private float _automatonSpinAngleDeg, _automatonLastDamage, _automatonLastSpeedMps, _automatonSpinHitCooldown;
+        private int _automatonLastHitSwingId = -1, _automatonLastKickId = -1;
+        private string _automatonLastZone = "-", _automatonLastNote = "Vuruş Bekleniyor (LMB Kesik, F Tekme veya Dönen Kola RMB Blok Dene!)";
 
-        // 2) Kılıç Ustası Düellocu NPC (Master Sword Duelist Knight)
-        private Transform? _duelistRoot;
-        private Transform? _duelistSwordPivot;
-        private Transform? _duelistShieldIndicator;
+        private Transform? _duelistRoot, _duelistSwordPivot;
         private readonly Vector3[] _npcPrevBladePts = new Vector3[Stage1DirectionalCombatBridge.BladeSamplePointCount];
         private readonly Vector3[] _npcCurrBladePts = new Vector3[Stage1DirectionalCombatBridge.BladeSamplePointCount];
-        private bool _npcBladePtsInit;
+        private bool _npcBladePtsInit, _duelistStrikeResolvedThisSwing, _duelistCurrentStrikeIsHeavySmash;
         private DuelistNpcMode _duelistMode = DuelistNpcMode.ActiveDuel;
-        private CombatDirectionQuadrant _duelistGuardDir = CombatDirectionQuadrant.Overhead;
-        private CombatDirectionQuadrant _duelistAttackDir = CombatDirectionQuadrant.Right;
-        private float _duelistHp = 500f;
+        private CombatDirectionQuadrant _duelistGuardDir = CombatDirectionQuadrant.Overhead, _duelistAttackDir = CombatDirectionQuadrant.Right;
+        private float _duelistHp = 500f, _duelistStateTimer = 1.8f, _duelistSlashProgress01;
         private const float DuelistMaxHp = 500f;
-        private float _duelistStateTimer = 1.8f;
-        private int _duelistPhase; // 0: Guarding/Circling, 1: Windup Telegraph, 2: Active Slash, 3: Staggered/Open
-        private float _duelistSlashProgress01;
-        private int _duelistLastPlayerSwingId = -1;
-        private bool _duelistStrikeResolvedThisSwing;
-        private int _duelistStrikeCounter;
-        private bool _duelistCurrentStrikeIsHeavySmash;
-        private Vector2 _duelistCurrentBladeRad = new(0.2f, 0.8f);
-        private Vector2 _duelistTargetBladeRad = new(0.2f, 0.8f);
-        private GUIStyle? _popupStyle;
-        private GUIStyle? _worldLabelStyle;
+        private int _duelistPhase, _duelistLastPlayerSwingId = -1, _duelistLastKickId = -1, _duelistStrikeCounter;
+        private Vector2 _duelistCurrentBladeRad = new(0.2f, 0.8f), _duelistTargetBladeRad = new(0.2f, 0.8f);
+        private GUIStyle? _popupStyle, _worldLabelStyle;
 
-        public string ArenaStatusSummary { get; private set; } =
-            "[F10] Eğitim Arenası: Kılıç Ustası NPC & Mekanik Kukla Hazır";
+        public string ArenaStatusSummary { get; private set; } = "[F10] Eğitim Arenası: Kılıç Ustası NPC & Mekanik Kukla Hazır";
 
         public void EnsureInitialized(Transform playerTransform, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
@@ -126,7 +77,6 @@ namespace Stratocraft.Character
                 _audioSource.volume = 0.88f;
                 SynthesizeAllCombatAudioClips();
             }
-
             if (_trailGo == null)
             {
                 _trailGo = new GameObject("BladeSwingTrailRibbon");
@@ -137,7 +87,6 @@ namespace Stratocraft.Character
                 _trailMesh = new Mesh { name = "DynamicBladeTrailMesh" };
                 mf.sharedMesh = _trailMesh;
             }
-
             if (_particles.Count == 0)
             {
                 Mesh cubeMesh = BuildUnitColoredCubeMesh(new Color32(255, 220, 110, 255));
@@ -147,93 +96,53 @@ namespace Stratocraft.Character
                     GameObject pGo = new GameObject($"ImpactSpark_{i}");
                     pGo.transform.SetParent(poolRoot.transform, false);
                     pGo.SetActive(false);
-                    var mf = pGo.AddComponent<MeshFilter>();
-                    mf.sharedMesh = cubeMesh;
+                    pGo.AddComponent<MeshFilter>().sharedMesh = cubeMesh;
                     var mr = pGo.AddComponent<MeshRenderer>();
                     if (sharedMat != null) mr.sharedMaterial = sharedMat;
-                    _particles.Add(new ImpactParticle
-                    {
-                        Transform = pGo.transform,
-                        Renderer = mr,
-                        Velocity = Vector3.zero,
-                        RemainingTime = 0f
-                    });
+                    _particles.Add(new ImpactParticle { Transform = pGo.transform, Renderer = mr });
                 }
             }
-
             if (_automatonRoot == null || _duelistRoot == null)
-            {
                 SpawnOrRelocateArenaTargets(playerTransform, sharedMat, worldChunks);
-            }
         }
 
-        public void SpawnOrRelocateArenaTargets(
-            Transform playerTransform,
-            Material? sharedMat,
-            Dictionary<(int cx, int cz), uint[]> worldChunks)
+        public void SpawnOrRelocateArenaTargets(Transform playerTransform, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
-            Vector3 fwd = playerTransform.forward;
-            fwd.y = 0f;
+            Vector3 fwd = new Vector3(playerTransform.forward.x, 0f, playerTransform.forward.z);
             if (fwd.sqrMagnitude < 0.01f) fwd = Vector3.forward;
             fwd.Normalize();
             Vector3 right = new Vector3(fwd.z, 0f, -fwd.x);
 
             Vector3 automatonPos = playerTransform.position + fwd * 3.8f - right * 1.65f;
             automatonPos.y = SampleGroundY(automatonPos.x, automatonPos.z, playerTransform.position.y, worldChunks);
-
             Vector3 duelistPos = playerTransform.position + fwd * 4.1f + right * 1.55f;
             duelistPos.y = SampleGroundY(duelistPos.x, duelistPos.z, playerTransform.position.y, worldChunks);
 
-            if (_automatonRoot == null)
-            {
-                BuildMechanicalTrainingAutomaton(automatonPos, sharedMat);
-            }
-            else
-            {
-                _automatonRoot.position = automatonPos;
-            }
+            if (_automatonRoot == null) BuildMechanicalTrainingAutomaton(automatonPos, sharedMat);
+            else _automatonRoot.position = automatonPos;
 
-            if (_duelistRoot == null)
-            {
-                BuildMasterSwordDuelistNpc(duelistPos, sharedMat);
-            }
-            else
-            {
-                _duelistRoot.position = duelistPos;
-                _duelistHp = DuelistMaxHp;
-                _duelistPhase = 0;
-                _duelistStateTimer = 1.2f;
-            }
+            if (_duelistRoot == null) BuildMasterSwordDuelistNpc(duelistPos, sharedMat);
+            else { _duelistRoot.position = duelistPos; _duelistHp = DuelistMaxHp; _duelistPhase = 0; _duelistStateTimer = 1.2f; }
 
-            if (_automatonRoot != null)
-            {
-                Vector3 toPlayer = playerTransform.position - _automatonRoot.position;
-                toPlayer.y = 0f;
-                if (toPlayer.sqrMagnitude > 0.01f)
-                    _automatonRoot.rotation = Quaternion.LookRotation(toPlayer.normalized, Vector3.up);
-            }
-            if (_duelistRoot != null)
-            {
-                Vector3 toPlayer = playerTransform.position - _duelistRoot.position;
-                toPlayer.y = 0f;
-                if (toPlayer.sqrMagnitude > 0.01f)
-                    _duelistRoot.rotation = Quaternion.LookRotation(toPlayer.normalized, Vector3.up);
-            }
+            AlignTargetToPlayer(_automatonRoot, playerTransform.position);
+            AlignTargetToPlayer(_duelistRoot, playerTransform.position);
         }
 
-        public void CycleDuelistModeAndSummonArena(
-            Transform playerTransform,
-            Material? sharedMat,
-            Dictionary<(int cx, int cz), uint[]> worldChunks)
+        private static void AlignTargetToPlayer(Transform? target, Vector3 playerPos)
+        {
+            if (target == null) return;
+            Vector3 toPlayer = new Vector3(playerPos.x - target.position.x, 0f, playerPos.z - target.position.z);
+            if (toPlayer.sqrMagnitude > 0.01f) target.rotation = Quaternion.LookRotation(toPlayer.normalized, Vector3.up);
+        }
+
+        public void CycleDuelistModeAndSummonArena(Transform playerTransform, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             _duelistMode = (DuelistNpcMode)(((int)_duelistMode + 1) % 3);
             SpawnOrRelocateArenaTargets(playerTransform, sharedMat, worldChunks);
             string modeLabel = GetDuelistModeLabel(_duelistMode);
             ArenaStatusSummary = $"[F10] Eğitim Arenası Önüne Çağrıldı! | Düellocu Modu: {modeLabel}";
             if (_duelistRoot != null)
-            {
                 SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 2.3f, $"⚔️ DÜELLOCU MODU: {modeLabel}", new Color(0.45f, 0.95f, 1f), 2.5f, 15);
-            }
         }
 
         public static string GetDuelistModeLabel(DuelistNpcMode mode) => mode switch
@@ -254,44 +163,45 @@ namespace Stratocraft.Character
         };
 
         public void StepFeedbackAndArena(
-            float dt,
-            Transform playerTransform,
-            Stage1DirectionalCombatBridge combatBridge,
-            ref CharacterVitalsComponent playerVitals,
-            Material? sharedMat,
-            Dictionary<(int cx, int cz), uint[]> worldChunks,
-            bool playerMissingArm)
+            float dt, Transform playerTransform, Stage1DirectionalCombatBridge combatBridge,
+            ref CharacterVitalsComponent playerVitals, Material? sharedMat,
+            Dictionary<(int cx, int cz), uint[]> worldChunks, bool playerMissingArm)
         {
             EnsureInitialized(playerTransform, sharedMat, worldChunks);
+
+            combatBridge.IsPlayerHypothermic = playerVitals.CoreBodyTempCelsius < 35.0f;
+            float pendingStamina = combatBridge.ConsumePendingStaminaDrain();
+            if (pendingStamina > 0f)
+            {
+                playerVitals.Stamina = Mathf.Max(0f, playerVitals.Stamina - pendingStamina);
+                if (playerVitals.Stamina <= 0.05f) combatBridge.IsPlayerExhaustedLock = true;
+            }
+            if (combatBridge.IsPlayerExhaustedLock && playerVitals.Stamina >= playerVitals.MaxStamina * 0.15f)
+                combatBridge.IsPlayerExhaustedLock = false;
+            else if (playerVitals.Stamina <= 0.05f)
+                combatBridge.IsPlayerExhaustedLock = true;
+
+            if (combatBridge.IsFeintTriggeredLastFrame) TriggerHitMarker(new Color(0.55f, 0.95f, 1f), "🎭 ALDATMA (FEINT)!");
+            else if (combatBridge.IsMorphTriggeredLastFrame) TriggerHitMarker(new Color(0.45f, 1f, 0.78f), "🗡️ SAPLAMA MORPH!");
 
             if (_hitMarkerTimer > 0f) _hitMarkerTimer = Mathf.Max(0f, _hitMarkerTimer - dt);
             if (_automatonSpinHitCooldown > 0f) _automatonSpinHitCooldown = Mathf.Max(0f, _automatonSpinHitCooldown - dt);
 
-            // 1) Savurma başlangıcı (Whoosh) ve Duvar Sekmesi (Ricochet) olaylarını tüket ve ses/efekt üret!
             if (combatBridge.ConsumePendingSwingWhoosh(out float wMass, out float spdMult, out bool isSpecial))
-            {
                 PlaySwingWhoosh(wMass, spdMult, isSpecial);
-            }
 
             if (combatBridge.ConsumePendingWallRicochet(out Vector3 wallHitPos, out byte matId, out float wallSpd))
             {
                 PlayWallRicochetClink();
                 SpawnImpactBurst(wallHitPos, isSparks: true, count: 10, speed: 4.8f);
                 string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId);
-                SpawnFloatingPopup(
-                    wallHitPos + Vector3.up * 0.15f,
-                    $"💥 DUVAR SEKMESİ! ({matName} | {wallSpd:F1} m/s)",
-                    new Color(1f, 0.78f, 0.28f),
-                    1.35f,
-                    14);
+                SpawnFloatingPopup(wallHitPos + Vector3.up * 0.15f, $"💥 DUVAR SEKMESİ! ({matName} | {wallSpd:F1} m/s)", new Color(1f, 0.78f, 0.28f), 1.35f, 14);
                 TriggerHitMarker(new Color(1f, 0.75f, 0.25f), "💥 ENGEL SEKMESİ");
             }
 
-            // 2) 3B Kılıç Savurma İzi (Blade Swing Trail Ribbon) güncelle
             UpdateBladeSwingTrailMesh(combatBridge);
-
-            // 3) Kıvılcım/Kan parçacıklarını ve yüzen 3B yazıları ilerlet
             StepImpactParticles(dt);
+
             for (int i = _popups.Count - 1; i >= 0; i--)
             {
                 var p = _popups[i];
@@ -301,75 +211,50 @@ namespace Stratocraft.Character
                 else _popups[i] = p;
             }
 
-            // 4) Mekanik Eğitim Makinesi (Training Automaton) fiziği ve çarpışma testi
             StepMechanicalTrainingAutomaton(dt, playerTransform, combatBridge, ref playerVitals, playerMissingArm);
-
-            // 5) Kılıç Ustası Düellocu NPC (Master Sword Duelist) yapay zekası, 3B Kılıç Çarpıştırma ve Blok testi
             StepMasterSwordDuelistNpc(dt, playerTransform, combatBridge, ref playerVitals, worldChunks, playerMissingArm);
         }
 
         public void NotifyCreatureStruckFeedback(
-            Vector3 hitWorldPos,
-            float damage,
-            float hitSpeedMps,
-            string bladeZone,
-            string bonusLabel,
-            string severNote,
-            bool isClawClash)
+            Vector3 hitWorldPos, float damage, float hitSpeedMps, string bladeZone, string bonusLabel, string severNote, bool isClawClash)
         {
             if (isClawClash)
             {
                 PlaySwordClashClang(0.95f);
                 SpawnImpactBurst(hitWorldPos, isSparks: true, count: 14, speed: 6.2f);
-                SpawnFloatingPopup(
-                    hitWorldPos + Vector3.up * 0.35f,
-                    $"⚔️ PENÇE ÇARPIŞMASI! ({bladeZone} -> Kontra Hazır!)",
-                    new Color(0.45f, 0.96f, 1f),
-                    1.65f,
-                    15);
+                SpawnFloatingPopup(hitWorldPos + Vector3.up * 0.35f, $"⚔️ PENÇE ÇARPIŞMASI! ({bladeZone} -> Kontra Hazır!)", new Color(0.45f, 0.96f, 1f), 1.65f, 15);
                 TriggerHitMarker(new Color(0.45f, 0.96f, 1f), "⚔️ BLOK / CLASH!");
                 return;
             }
-
             PlayFleshCleaveHit(!string.IsNullOrEmpty(severNote));
             SpawnImpactBurst(hitWorldPos, isSparks: false, count: !string.IsNullOrEmpty(severNote) ? 16 : 10, speed: 5.2f);
-            Color popCol = !string.IsNullOrEmpty(severNote)
-                ? new Color(1f, 0.25f, 0.25f)
-                : (damage >= 65f ? new Color(1f, 0.88f, 0.22f) : new Color(1f, 0.52f, 0.22f));
-            string popupText = $"🩸 -{damage:F0} HP [{bladeZone} | {hitSpeedMps:F1}m/s]{bonusLabel}{severNote}";
-            SpawnFloatingPopup(hitWorldPos + Vector3.up * 0.35f, popupText, popCol, 1.75f, 15);
+            Color popCol = !string.IsNullOrEmpty(severNote) ? new Color(1f, 0.25f, 0.25f) : (damage >= 65f ? new Color(1f, 0.88f, 0.22f) : new Color(1f, 0.52f, 0.22f));
+            SpawnFloatingPopup(hitWorldPos + Vector3.up * 0.35f, $"🩸 -{damage:F0} HP [{bladeZone} | {hitSpeedMps:F1}m/s]{bonusLabel}{severNote}", popCol, 1.75f, 15);
             TriggerHitMarker(popCol, $"-{damage:F0} HP ({bladeZone})");
         }
 
         private void StepMechanicalTrainingAutomaton(
-            float dt,
-            Transform playerTransform,
-            Stage1DirectionalCombatBridge combatBridge,
-            ref CharacterVitalsComponent playerVitals,
-            bool playerMissingArm)
+            float dt, Transform playerTransform, Stage1DirectionalCombatBridge combatBridge,
+            ref CharacterVitalsComponent playerVitals, bool playerMissingArm)
         {
             if (_automatonRoot == null || _automatonTorsoPivot == null) return;
 
-            // Yay-Sönümlemeli (Spring-Damper) gövde eğilme fiziği
             Vector2 springForce = -_automatonTiltAnglesDeg * 58f - _automatonTiltVelocityDeg * 7.5f;
             _automatonTiltVelocityDeg += springForce * dt;
             _automatonTiltAnglesDeg += _automatonTiltVelocityDeg * dt;
             _automatonTorsoPivot.localRotation = Quaternion.Euler(_automatonTiltAnglesDeg.y, 0f, -_automatonTiltAnglesDeg.x);
 
-            // Dönen yatay eğitim kolu (saniyede 115° döner, oyuncu RMB ile blok veya LMB ile çarpıştırma çalışabilir)
             if (_automatonSpinArmPivot != null)
             {
                 _automatonSpinAngleDeg = (_automatonSpinAngleDeg + 115f * dt) % 360f;
                 _automatonSpinArmPivot.localRotation = Quaternion.Euler(0f, _automatonSpinAngleDeg, 0f);
-
                 Vector3 armTipWorld = _automatonSpinArmPivot.position + _automatonSpinArmPivot.right * 1.15f;
                 if (_automatonSpinHitCooldown <= 0f && combatBridge.AreBladePointsValid)
                 {
                     ReadOnlySpan<Vector3> currPts = combatBridge.CurrBladeWorldPoints;
                     for (int k = 0; k < Stage1DirectionalCombatBridge.BladeSamplePointCount; k++)
                     {
-                        if (Vector3.Distance(currPts[k], armTipWorld) <= 0.36f &&
-                            (combatBridge.IsParryStance || combatBridge.IsActiveAttackSwing))
+                        if (Vector3.Distance(currPts[k], armTipWorld) <= 0.36f && (combatBridge.IsParryStance || combatBridge.IsActiveAttackSwing))
                         {
                             _automatonSpinHitCooldown = 0.65f;
                             _automatonSpinAngleDeg = (_automatonSpinAngleDeg - 45f) % 360f;
@@ -377,12 +262,7 @@ namespace Stratocraft.Character
                             PlaySwordClashClang(0.88f);
                             SpawnImpactBurst(armTipWorld, isSparks: true, count: 12, speed: 5.5f);
                             _automatonLastNote = "⚔️ DÖNEN KOL BLOKLANDI! (⚡ 1.8sn RIPOSTE AÇILDI!)";
-                            SpawnFloatingPopup(
-                                armTipWorld + Vector3.up * 0.25f,
-                                "⚔️ MEKANİK KOL PARRY! (⚡ RIPOSTE HAZIR!)",
-                                new Color(0.4f, 0.95f, 1f),
-                                1.55f,
-                                14);
+                            SpawnFloatingPopup(armTipWorld + Vector3.up * 0.25f, "⚔️ MEKANİK KOL PARRY! (⚡ RIPOSTE HAZIR!)", new Color(0.4f, 0.95f, 1f), 1.55f, 14);
                             TriggerHitMarker(new Color(0.4f, 0.95f, 1f), "🛡️ PARRY -> RIPOSTE!");
                             break;
                         }
@@ -390,25 +270,41 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (!combatBridge.AreBladePointsValid || !combatBridge.IsActiveAttackSwing) return;
-            if (_automatonLastHitSwingId == combatBridge.CurrentSwingId) return;
+            Vector3 dummyCenter = _automatonRoot.position + Vector3.up * 1.12f;
+
+            if (combatBridge.IsKickOrBashActive && _automatonLastKickId != combatBridge.CurrentKickOrBashId)
+            {
+                float flatDist = Vector2.Distance(new Vector2(playerTransform.position.x, playerTransform.position.z), new Vector2(_automatonRoot.position.x, _automatonRoot.position.z));
+                if (flatDist <= Stage1DirectionalCombatBridge.KickRangeMeters + 0.35f)
+                {
+                    _automatonLastKickId = combatBridge.CurrentKickOrBashId;
+                    float bashDmg = combatBridge.IsPommelBashActive ? 18f : 12f;
+                    _automatonLastDamage = bashDmg;
+                    _automatonLastSpeedMps = combatBridge.IsPommelBashActive ? 6.2f : 5.4f;
+                    _automatonLastZone = combatBridge.IsPommelBashActive ? "Kabza Darbesi (RMB+F)" : "Fiziksel Tekme (F)";
+                    _automatonLastNote = combatBridge.IsPommelBashActive
+                        ? "🔨 KABZA DARBESİ (POMMEL BASH): Kukla Sarsıldı (-18 HP)!"
+                        : "🦵 FİZİKSEL TEKME (KICK): Kukla Geri İtildi (-12 HP)!";
+                    _automatonTiltVelocityDeg += new Vector2(0f, 240f);
+                    PlayDummyStrikeThud(true);
+                    SpawnImpactBurst(dummyCenter, isSparks: combatBridge.IsPommelBashActive, count: 10, speed: 4.5f);
+                    SpawnFloatingPopup(dummyCenter + Vector3.up * 0.4f, _automatonLastNote, new Color(1f, 0.78f, 0.25f), 1.65f, 15);
+                    TriggerHitMarker(new Color(1f, 0.78f, 0.25f), combatBridge.IsPommelBashActive ? "🔨 KABZA DARBESİ!" : "🦵 TEKME!");
+                    return;
+                }
+            }
+
+            if (!combatBridge.AreBladePointsValid || !combatBridge.IsActiveAttackSwing || _automatonLastHitSwingId == combatBridge.CurrentSwingId) return;
 
             ReadOnlySpan<Vector3> prevBlade = combatBridge.PrevBladeWorldPoints;
             ReadOnlySpan<Vector3> currBlade = combatBridge.CurrBladeWorldPoints;
-            Vector3 dummyCenter = _automatonRoot.position + Vector3.up * 1.12f;
-
             int hitIdx = -1;
             float bestDist = 99f;
             for (int k = Stage1DirectionalCombatBridge.BladeSamplePointCount - 1; k >= 0; k--)
             {
                 float d = DistancePointToSegment(dummyCenter, prevBlade[k], currBlade[k]);
-                if (d <= 0.56f && d < bestDist)
-                {
-                    bestDist = d;
-                    hitIdx = k;
-                }
+                if (d <= 0.56f && d < bestDist) { bestDist = d; hitIdx = k; }
             }
-
             if (hitIdx < 0) return;
 
             float localSpd = combatBridge.BladeLocalSwingSpeedMetersPerSec * (0.48f + (hitIdx + 1) * 0.11f);
@@ -424,14 +320,15 @@ namespace Stratocraft.Character
             float riposteMult = combatBridge.WasLastSlashRiposte ? 1.85f : 1.0f;
             float iaidoMult = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
             float jumpMult = combatBridge.IsAerialJumpStrike ? 1.40f : 1.0f;
-            float speed01 = Mathf.Clamp01((localSpd - 1.5f) / 10.5f);
-            float dmg = Mathf.Lerp(24f, 92f, speed01) * zoneMult * combatBridge.EdgeAlignment01 * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult;
+            float dmg = Mathf.Lerp(24f, 92f, Mathf.Clamp01((localSpd - 1.5f) / 10.5f)) *
+                        zoneMult * combatBridge.EdgeAlignment01 * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult;
 
             _automatonLastDamage = dmg;
             _automatonLastSpeedMps = localSpd;
             _automatonLastZone = $"{zone} (u={uHit:F2})";
 
             string styleBonus = string.Empty;
+            if (combatBridge.IsFlatBladeSlap) styleBonus += " [👋 YASSI NAMLU ŞAPLAĞI 0.35x Künt!]";
             if (combatBridge.WasLastSlashRiposte) styleBonus += " [⚡ RIPOSTE 1.85x!]";
             if (combatBridge.WasLastSlashIaidoCharged) styleBonus += " [⚡ IAIJUTSU 1.60x!]";
             if (combatBridge.WasLastSlashPreChambered) styleBonus += " [ÖN-KURUM 1.38x!]";
@@ -440,32 +337,21 @@ namespace Stratocraft.Character
             if (mismatch) styleBonus += " [⚠️ UYUMSUZ SİLAH %35]";
 
             _automatonLastNote = $"SON VURUŞ: -{dmg:F0} HP | Hız={localSpd:F1}m/s | {zone}{styleBonus}";
-
-            Vector2 slashDir = combatBridge.CurrentSlashDirUnit.sqrMagnitude > 0.01f
-                ? combatBridge.CurrentSlashDirUnit
-                : new Vector2(1f, 0f);
+            Vector2 slashDir = combatBridge.CurrentSlashDirUnit.sqrMagnitude > 0.01f ? combatBridge.CurrentSlashDirUnit : new Vector2(1f, 0f);
             _automatonTiltVelocityDeg += slashDir * Mathf.Clamp(dmg * 3.2f, 80f, 340f);
 
             combatBridge.NotifyBladeCleaveThroughFlesh();
             PlayDummyStrikeThud(combatBridge.IsGuardCrushActive);
             SpawnImpactBurst(currBlade[hitIdx], isSparks: combatBridge.IsGuardCrushActive, count: 12, speed: 4.8f);
-            SpawnFloatingPopup(
-                currBlade[hitIdx] + Vector3.up * 0.35f,
-                $"🎯 EĞİTİM KUKLASI: -{dmg:F0} HP ({localSpd:F1} m/s | {zone}){styleBonus}",
-                new Color(1f, 0.92f, 0.32f),
-                1.85f,
-                15);
+            SpawnFloatingPopup(currBlade[hitIdx] + Vector3.up * 0.35f, $"🎯 EĞİTİM KUKLASI: -{dmg:F0} HP ({localSpd:F1} m/s | {zone}){styleBonus}",
+                combatBridge.IsFlatBladeSlap ? new Color(0.85f, 0.72f, 0.45f) : new Color(1f, 0.92f, 0.32f), 1.85f, 15);
             TriggerHitMarker(new Color(1f, 0.92f, 0.32f), $"-{dmg:F0} HP [KUKLA]");
             combatBridge.LastCombatActionText = _automatonLastNote;
         }
 
         private void StepMasterSwordDuelistNpc(
-            float dt,
-            Transform playerTransform,
-            Stage1DirectionalCombatBridge combatBridge,
-            ref CharacterVitalsComponent playerVitals,
-            Dictionary<(int cx, int cz), uint[]> worldChunks,
-            bool playerMissingArm)
+            float dt, Transform playerTransform, Stage1DirectionalCombatBridge combatBridge,
+            ref CharacterVitalsComponent playerVitals, Dictionary<(int cx, int cz), uint[]> worldChunks, bool playerMissingArm)
         {
             if (_duelistRoot == null || _duelistSwordPivot == null) return;
 
@@ -474,13 +360,9 @@ namespace Stratocraft.Character
             float distToPlayer = flatToPlayer.magnitude;
 
             if (flatToPlayer.sqrMagnitude > 0.01f)
-            {
-                Quaternion targetRot = Quaternion.LookRotation(flatToPlayer.normalized, Vector3.up);
-                _duelistRoot.rotation = Quaternion.Slerp(_duelistRoot.rotation, targetRot, dt * 8.5f);
-            }
+                _duelistRoot.rotation = Quaternion.Slerp(_duelistRoot.rotation, Quaternion.LookRotation(flatToPlayer.normalized, Vector3.up), dt * 8.5f);
 
-            // Oyuncu 2.3m - 4.8m menzildeyken hafif düello adımlaması
-            if (distToPlayer > 2.65f && distToPlayer < 9.5f && _duelistMode != DuelistNpcMode.BlockPracticeOnly)
+            if (distToPlayer > 2.65f && distToPlayer < 9.5f && _duelistMode != DuelistNpcMode.BlockPracticeOnly && _duelistPhase != 3)
             {
                 Vector3 stepPos = _duelistRoot.position + flatToPlayer.normalized * (1.85f * dt);
                 stepPos.y = SampleGroundY(stepPos.x, stepPos.z, _duelistRoot.position.y, worldChunks);
@@ -493,8 +375,6 @@ namespace Stratocraft.Character
                 _duelistRoot.position = backPos;
             }
 
-            // Düellocu Durum Makinesi:
-            // Phase 0: Guard Tutma (1.3sn) -> Phase 1: Saldırı Kurulumu/Telegraph (0.58sn) -> Phase 2: Aktif Kesik (0.36sn) -> Phase 3: Sersemleme (Stagger)
             _duelistStateTimer -= dt;
             if (_duelistPhase == 0)
             {
@@ -503,9 +383,7 @@ namespace Stratocraft.Character
                 {
                     _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
                     if (_duelistMode == DuelistNpcMode.BlockPracticeOnly || distToPlayer > 4.2f)
-                    {
                         _duelistStateTimer = 1.45f;
-                    }
                     else
                     {
                         _duelistAttackDir = _duelistGuardDir;
@@ -514,22 +392,15 @@ namespace Stratocraft.Character
                         _duelistPhase = 1;
                         _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.78f : 0.60f;
                         _duelistStrikeResolvedThisSwing = false;
-
                         if (_duelistCurrentStrikeIsHeavySmash)
-                        {
-                            SpawnFloatingPopup(
-                                _duelistRoot.position + Vector3.up * 2.15f,
+                            SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 2.15f,
                                 $"⚠️ AĞIR YARMA DARBESİ GELİYOR ({GetDirectionLabel(_duelistAttackDir)} 5.4kg)! [Sabit Blok YARILIR -> RMB + Fare İle SAPTIR!]",
-                                new Color(1f, 0.55f, 0.12f),
-                                1.65f,
-                                15);
-                        }
+                                new Color(1f, 0.55f, 0.12f), 1.65f, 15);
                     }
                 }
             }
             else if (_duelistPhase == 1)
             {
-                // Telegraph / Wind-up: Kılıcı saldırı yönünün gerisine çekerek oyuncuya hangi yönden vuracağını net gösterir!
                 _duelistTargetBladeRad = GetQuadrantAngles(_duelistAttackDir) * (_duelistCurrentStrikeIsHeavySmash ? 1.38f : 1.25f);
                 if (_duelistStateTimer <= 0f)
                 {
@@ -543,9 +414,7 @@ namespace Stratocraft.Character
                 float slashDur = _duelistCurrentStrikeIsHeavySmash ? 0.42f : 0.34f;
                 _duelistSlashProgress01 = Mathf.Clamp01(_duelistSlashProgress01 + dt / slashDur);
                 Vector2 startRad = GetQuadrantAngles(_duelistAttackDir) * 1.22f;
-                Vector2 endRad = -startRad * 0.95f;
-                _duelistTargetBladeRad = Vector2.Lerp(startRad, endRad, _duelistSlashProgress01);
-
+                _duelistTargetBladeRad = Vector2.Lerp(startRad, -startRad * 0.95f, _duelistSlashProgress01);
                 if (_duelistSlashProgress01 >= 1.0f || _duelistStateTimer <= 0f)
                 {
                     _duelistPhase = 0;
@@ -554,30 +423,20 @@ namespace Stratocraft.Character
             }
             else if (_duelistPhase == 3)
             {
-                // Sersemlemiş (Parry veya Sword Clash sonrası açık hedef!)
                 _duelistTargetBladeRad = new Vector2(0.95f, -0.75f);
-                if (_duelistStateTimer <= 0f)
-                {
-                    _duelistPhase = 0;
-                    _duelistStateTimer = 1.1f;
-                }
+                if (_duelistStateTimer <= 0f) { _duelistPhase = 0; _duelistStateTimer = 1.1f; }
             }
 
             float bladeLerpSpeed = _duelistPhase == 2 ? 22f : 10f;
             _duelistCurrentBladeRad = Vector2.Lerp(_duelistCurrentBladeRad, _duelistTargetBladeRad, Mathf.Clamp01(dt * bladeLerpSpeed));
-
-            // Düellocunun kılıcını 3B uzayda konumlandır ve 5 namlu noktasını hesapla:
-            // Phase 0 (Guard/Blok) sırasında NPC de kılıcını ucunu ileri dürtmek yerine YAN-SİPER BARİYERİ (npcTipDir.z = 0.12f) olarak tutar!
-            Vector3 shoulderLocal = new Vector3(
+            _duelistSwordPivot.localPosition = new Vector3(
                 0.34f - _duelistCurrentBladeRad.x * 0.32f,
                 1.22f + _duelistCurrentBladeRad.y * 0.28f,
                 0.42f + (_duelistPhase == 2 ? Mathf.Sin(_duelistSlashProgress01 * Mathf.PI) * 0.45f : 0.12f));
-            _duelistSwordPivot.localPosition = shoulderLocal;
 
             Vector3 npcTipDir;
             if (_duelistPhase == 0)
             {
-                // NPC Yan-Siper Blok Duruşu (ucunu ileri değil, gövde önünde yan/çapraz bariyer olarak tutar!)
                 float sideSign = Mathf.Abs(_duelistCurrentBladeRad.x) > 0.1f ? Mathf.Sign(_duelistCurrentBladeRad.x) : 1.0f;
                 npcTipDir = _duelistGuardDir == CombatDirectionQuadrant.Overhead
                     ? new Vector3(0.92f, 0.32f, 0.10f).normalized
@@ -585,48 +444,55 @@ namespace Stratocraft.Character
                         ? new Vector3(sideSign * 0.48f, -0.86f, 0.10f).normalized
                         : new Vector3(sideSign * 0.42f, 0.89f, 0.10f).normalized);
             }
-            else
-            {
-                npcTipDir = new Vector3(
-                    -_duelistCurrentBladeRad.x * 0.75f,
-                    _duelistCurrentBladeRad.y * 0.85f,
-                    0.65f).normalized;
-            }
+            else npcTipDir = new Vector3(-_duelistCurrentBladeRad.x * 0.75f, _duelistCurrentBladeRad.y * 0.85f, 0.65f).normalized;
             _duelistSwordPivot.localRotation = Quaternion.LookRotation(Vector3.forward, npcTipDir);
 
-            Vector3 npcHiltWorld = _duelistSwordPivot.position;
-            Vector3 npcBladeUp = _duelistSwordPivot.up.normalized;
+            Vector3 npcHiltWorld = _duelistSwordPivot.position, npcBladeUp = _duelistSwordPivot.up.normalized;
             for (int i = 0; i < Stage1DirectionalCombatBridge.BladeSamplePointCount; i++)
             {
-                float u = (i + 1) * 0.24f;
-                Vector3 pt = npcHiltWorld + npcBladeUp * (1.28f * u);
-                if (!_npcBladePtsInit)
-                {
-                    _npcPrevBladePts[i] = pt;
-                    _npcCurrBladePts[i] = pt;
-                }
-                else
-                {
-                    _npcPrevBladePts[i] = _npcCurrBladePts[i];
-                    _npcCurrBladePts[i] = pt;
-                }
+                Vector3 pt = npcHiltWorld + npcBladeUp * (1.28f * ((i + 1) * 0.24f));
+                _npcPrevBladePts[i] = _npcBladePtsInit ? _npcCurrBladePts[i] : pt;
+                _npcCurrBladePts[i] = pt;
             }
             _npcBladePtsInit = true;
 
-            if (!combatBridge.AreBladePointsValid || distToPlayer > 3.8f) return;
+            if (combatBridge.IsKickOrBashActive && _duelistLastKickId != combatBridge.CurrentKickOrBashId && distToPlayer <= Stage1DirectionalCombatBridge.KickRangeMeters + 0.35f)
+            {
+                _duelistLastKickId = combatBridge.CurrentKickOrBashId;
+                _duelistPhase = 3;
+                _duelistStateTimer = combatBridge.IsPommelBashActive ? 1.55f : 1.25f;
+                _duelistStrikeResolvedThisSwing = true;
+                float kickDmg = combatBridge.IsPommelBashActive ? 18f : 10f;
+                _duelistHp = Mathf.Max(1f, _duelistHp - kickDmg);
 
+                if (flatToPlayer.sqrMagnitude > 0.01f)
+                {
+                    Vector3 pushPos = _duelistRoot.position - flatToPlayer.normalized * 0.65f;
+                    pushPos.y = SampleGroundY(pushPos.x, pushPos.z, _duelistRoot.position.y, worldChunks);
+                    _duelistRoot.position = pushPos;
+                }
+                combatBridge.NotifySuccessfulParryOrClash(Vector2.up, openRiposteWindow: true);
+                PlayDummyStrikeThud(true);
+                SpawnImpactBurst(_duelistRoot.position + Vector3.up * 1.2f, isSparks: combatBridge.IsPommelBashActive, count: 14, speed: 5.5f);
+                string bashLabel = combatBridge.IsPommelBashActive
+                    ? $"🔨 KABZA DARBESİ (POMMEL BASH)! -{kickDmg:F0} HP [Gard Kırıldı + 0.8s Sarsıntı -> ⚡ RIPOSTE!]"
+                    : $"🦵 FİZİKSEL TEKME (KICK)! -{kickDmg:F0} HP [Düellocu Geri İtildi & Gardı Kırıldı!]";
+                SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 1.95f, bashLabel, new Color(1f, 0.82f, 0.25f), 1.85f, 15);
+                TriggerHitMarker(new Color(1f, 0.82f, 0.25f), combatBridge.IsPommelBashActive ? "🔨 KABZA -> GARD KIRILDI!" : "🦵 TEKME -> GARD KIRILDI!");
+                combatBridge.LastCombatActionText = bashLabel;
+                return;
+            }
+
+            if (!combatBridge.AreBladePointsValid || distToPlayer > 3.8f) return;
             ReadOnlySpan<Vector3> pPrev = combatBridge.PrevBladeWorldPoints;
             ReadOnlySpan<Vector3> pCurr = combatBridge.CurrBladeWorldPoints;
 
             // A) DÜELLOCU SALDIRIRKEN:
-            // 1) Oyuncu da kılıç savuruyorsa -> HAVADA 3B KILIÇ ÇARPIŞMASI (SWORD CLASH / CHAMBER)!
-            // 2) Oyuncu Sağ Tık (RMB) ile doğru yönde Guard tutuyorsa -> FİZİKSEL BLOK, AĞIR DARBEDE BLOK YARILMASI VEYA SON-ANDA YÖNLÜ SAPTIRMA (DEFLECT)!
             if ((_duelistPhase == 1 && _duelistStateTimer < 0.24f) || _duelistPhase == 2)
             {
-                bool bladesIntersect = TryFindBladeVsBladeIntersection(pPrev, pCurr, out Vector3 clashWorldPos);
+                bool bladesIntersect = TryFindBladeVsBladeIntersection(pPrev, pCurr, out Vector3 clashWorldPos, out float clashPlayerBladeU);
                 bool playerSwingingToClash = combatBridge.IsActiveAttackSwing &&
                                              (bladesIntersect || (distToPlayer <= 2.95f && combatBridge.SlashProgress01 >= 0.18f && combatBridge.SlashProgress01 <= 0.85f));
-
                 if (playerSwingingToClash)
                 {
                     _duelistPhase = 3;
@@ -636,15 +502,10 @@ namespace Stratocraft.Character
                     combatBridge.NotifySuccessfulParryOrClash(-combatBridge.CurrentSlashDirUnit, openRiposteWindow: true);
                     PlaySwordClashClang(1.0f);
                     SpawnImpactBurst(midClash, isSparks: true, count: 18, speed: 6.8f);
-                    SpawnFloatingPopup(
-                        midClash + Vector3.up * 0.28f,
-                        "⚔️ KILIÇ ÇARPIŞMASI! (SWORD CLASH -> ⚡ 1.8s RIPOSTE HAZIR!)",
-                        new Color(0.35f, 0.96f, 1f),
-                        1.85f,
-                        16);
+                    CheckAndApplyKatanaCrossguardHandLaceration(combatBridge, ref playerVitals, playerTransform.position, bladesIntersect ? clashPlayerBladeU : 0.28f);
+                    SpawnFloatingPopup(midClash + Vector3.up * 0.28f, "⚔️ KILIÇ ÇARPIŞMASI! (SWORD CLASH -> ⚡ 1.8s RIPOSTE HAZIR!)", new Color(0.35f, 0.96f, 1f), 1.85f, 16);
                     TriggerHitMarker(new Color(0.35f, 0.96f, 1f), "⚔️ KILIÇ ÇARPIŞMASI!");
-                    combatBridge.LastCombatActionText =
-                        "⚔️ HAVADA KILIÇ ÇARPIŞMASI (Sword Clash)! Düellocu sarsıldı -> Şimdi LMB ile 1.85x KUSURSUZ KONTRA (Riposte) vur!";
+                    combatBridge.LastCombatActionText = "⚔️ HAVADA KILIÇ ÇARPIŞMASI (Sword Clash)! Düellocu sarsıldı -> Şimdi LMB ile 1.85x KUSURSUZ KONTRA (Riposte) vur!";
                     return;
                 }
 
@@ -652,21 +513,17 @@ namespace Stratocraft.Character
                 {
                     _duelistStrikeResolvedThisSwing = true;
                     bool playerParryingDirection = combatBridge.IsParryStance &&
-                                                   (bladesIntersect ||
-                                                    combatBridge.IsActiveDeflectWindow ||
-                                                    DoesPlayerGuardCoverAttack(_duelistAttackDir, combatBridge.CurrentBladeAnglesRad));
-
+                                                   (bladesIntersect || combatBridge.IsActiveDeflectWindow || DoesPlayerGuardCoverAttack(_duelistAttackDir, combatBridge.CurrentBladeAnglesRad));
                     if (playerParryingDirection)
                     {
                         float npcStrikeMass = _duelistCurrentStrikeIsHeavySmash ? 5.40f : 1.85f;
                         float npcStrikeSpeed = _duelistCurrentStrikeIsHeavySmash ? 7.6f : 5.1f;
                         Vector2 incomingAttackDir = -GetQuadrantAngles(_duelistAttackDir).normalized;
-
                         ParryResolutionOutcome parryOutcome = combatBridge.EvaluateIncomingStrikeAgainstPlayerGuard(
-                            npcStrikeMass, npcStrikeSpeed, incomingAttackDir, playerMissingArm,
-                            out float bleedThroughDmg, out string resSummary);
+                            npcStrikeMass, npcStrikeSpeed, incomingAttackDir, playerMissingArm, out float bleedThroughDmg, out _);
 
                         Vector3 parryPos = bladesIntersect ? clashWorldPos : pCurr[2];
+                        CheckAndApplyKatanaCrossguardHandLaceration(combatBridge, ref playerVitals, playerTransform.position, bladesIntersect ? clashPlayerBladeU : 0.28f);
 
                         if (parryOutcome == ParryResolutionOutcome.MasterDeflect)
                         {
@@ -674,45 +531,30 @@ namespace Stratocraft.Character
                             _duelistStateTimer = 2.15f;
                             PlaySwordClashClang(1.12f);
                             SpawnImpactBurst(parryPos, isSparks: true, count: 22, speed: 7.4f);
-                            SpawnFloatingPopup(
-                                parryPos + Vector3.up * 0.30f,
-                                $"⚡ SON ANDA YÖNLÜ SAPTIRMA (MASTER DEFLECT)! [{npcStrikeMass:F1}kg Darbe Saptırıldı -> 2.1x KONTRA!]",
-                                new Color(0.25f, 1f, 0.92f),
-                                2.1f,
-                                16);
+                            SpawnFloatingPopup(parryPos + Vector3.up * 0.30f, $"⚡ SON ANDA YÖNLÜ SAPTIRMA (MASTER DEFLECT)! [{npcStrikeMass:F1}kg Darbe Saptırıldı -> 2.1x KONTRA!]", new Color(0.25f, 1f, 0.92f), 2.1f, 16);
                             TriggerHitMarker(new Color(0.25f, 1f, 0.92f), "⚡ SAPTIRMA -> 2.1x KONTRA!");
                             return;
                         }
-
                         if (parryOutcome == ParryResolutionOutcome.SolidParry)
                         {
                             _duelistPhase = 3;
                             _duelistStateTimer = 1.65f;
                             PlaySwordClashClang(0.95f);
                             SpawnImpactBurst(parryPos, isSparks: true, count: 16, speed: 6.2f);
-                            SpawnFloatingPopup(
-                                parryPos + Vector3.up * 0.25f,
-                                "🛡️ SAĞLAM YAN-SİPER BLOK! (⚡ 1.8s RIPOSTE AÇILDI!)",
-                                new Color(0.45f, 1f, 0.65f),
-                                1.85f,
-                                16);
+                            SpawnFloatingPopup(parryPos + Vector3.up * 0.25f, "🛡️ SAĞLAM YAN-SİPER BLOK! (⚡ 1.8s RIPOSTE AÇILDI!)", new Color(0.45f, 1f, 0.65f), 1.85f, 16);
                             TriggerHitMarker(new Color(0.45f, 1f, 0.65f), "🛡️ BLOK -> RIPOSTE!");
                             return;
                         }
 
-                        // GuardCrushedByMass veya MismatchedSelfRecoil:
                         playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - bleedThroughDmg);
                         PlaySwordClashClang(0.78f);
                         PlayFleshCleaveHit(false);
                         SpawnImpactBurst(parryPos, isSparks: true, count: 14, speed: 5.5f);
-                        SpawnFloatingPopup(
-                            playerTransform.position + Vector3.up * 1.55f,
+                        SpawnFloatingPopup(playerTransform.position + Vector3.up * 1.55f,
                             parryOutcome == ParryResolutionOutcome.GuardCrushedByMass
                                 ? $"💥 BLOK YARILDI (GUARD CRUSH)! -{bleedThroughDmg:F0} HP ({npcStrikeMass:F1}kg Darbeyi İnce Kılıçla Sabit Tutma -> RMB+Fare SAPTIR!)"
                                 : $"⚠️ UYUMSUZ SİLAH GUARD BREAK! (-{bleedThroughDmg:F0} HP)",
-                            new Color(1f, 0.42f, 0.18f),
-                            2.15f,
-                            15);
+                            new Color(1f, 0.42f, 0.18f), 2.15f, 15);
                         TriggerHitMarker(new Color(1f, 0.42f, 0.18f), $"💥 BLOK YARILDI -{bleedThroughDmg:F0}");
                         return;
                     }
@@ -721,17 +563,13 @@ namespace Stratocraft.Character
                         float baseNpcDmg = _duelistCurrentStrikeIsHeavySmash ? 19f : 12f;
                         float npcDmg = combatBridge.IsParryStance ? (baseNpcDmg * 0.55f) : baseNpcDmg;
                         playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - npcDmg);
+                        ThermalAndBiologySystem.ApplyRegionalBleeding(ref playerVitals, 1.5f);
                         PlayFleshCleaveHit(false);
                         string blockHint = combatBridge.IsParryStance
                             ? $"Yanlış Guard Yönü! ({GetDirectionLabel(_duelistAttackDir)} yönüne RMB tut veya RMB+Fare ile SAPTIR!)"
                             : $"RMB ile {GetDirectionLabel(_duelistAttackDir)} yönünde blok tut veya RMB+Fare ile SAPTIR!";
-                        SpawnFloatingPopup(
-                            _duelistRoot.position + Vector3.up * 1.85f,
-                            $"❗ DÜELLOCU VURDU: -{npcDmg:F0} HP ({blockHint})",
-                            new Color(1f, 0.38f, 0.38f),
-                            1.75f,
-                            14);
-                        combatBridge.LastCombatActionText = $"❗ DÜELLOCU İSABETİ (-{npcDmg:F0} HP) | {blockHint}";
+                        SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 1.85f, $"❗ DÜELLOCU VURDU: -{npcDmg:F0} HP + 🩸 KANAMA (1.5 HP/s) ({blockHint})", new Color(1f, 0.35f, 0.35f), 1.85f, 14);
+                        combatBridge.LastCombatActionText = $"❗ DÜELLOCU İSABETİ (-{npcDmg:F0} HP + 🩸 Kanama) | {blockHint}";
                     }
                 }
             }
@@ -743,11 +581,7 @@ namespace Stratocraft.Character
             int hitPt = -1;
             for (int k = Stage1DirectionalCombatBridge.BladeSamplePointCount - 1; k >= 0; k--)
             {
-                if (DistancePointToSegment(npcTorso, pPrev[k], pCurr[k]) <= 0.62f)
-                {
-                    hitPt = k;
-                    break;
-                }
+                if (DistancePointToSegment(npcTorso, pPrev[k], pCurr[k]) <= 0.62f) { hitPt = k; break; }
             }
             if (hitPt < 0) return;
 
@@ -757,65 +591,40 @@ namespace Stratocraft.Character
             _duelistLastPlayerSwingId = combatBridge.CurrentSwingId;
             CombatDirectionQuadrant playerAttackQuad = ClassifyPlayerSlashQuadrant(combatBridge.CurrentSlashDirUnit);
 
-            // Düellocu sersemlememişse (Phase != 3) ve oyuncunun saldırdığı yönü koruyorsa -> FİZİKSEL BLOK ETKİLEŞİMİ!
-            bool npcCanBlock = _duelistPhase == 0 &&
-                               !combatBridge.WasLastSlashRiposte &&
-                               !combatBridge.WasLastSlashIaidoCharged &&
+            bool npcCanBlock = _duelistPhase == 0 && !combatBridge.WasLastSlashRiposte && !combatBridge.WasLastSlashIaidoCharged &&
                                combatBridge.CurrentThrustExtensionMeters < 0.35f &&
                                (playerAttackQuad == _duelistGuardDir || _duelistMode == DuelistNpcMode.BlockPracticeOnly);
-
             bool wasGuardCrushed = false;
             if (npcCanBlock)
             {
                 _duelistCurrentBladeRad = GetQuadrantAngles(playerAttackQuad);
                 Vector2 npcGuardUnit = _duelistCurrentBladeRad.normalized;
-                bool npcDidDeflect = ((_duelistStrikeCounter % 2) == 1) &&
-                                     combatBridge.ActiveWeaponArchetype != CombatWeaponArchetype.Greatsword &&
-                                     !combatBridge.IsGuardCrushActive;
-
+                bool npcDidDeflect = ((_duelistStrikeCounter % 2) == 1) && combatBridge.ActiveWeaponArchetype != CombatWeaponArchetype.Greatsword && !combatBridge.IsGuardCrushActive;
                 PlayerBlockedReactionType blockedReaction = combatBridge.ResolvePlayerAttackAgainstEnemyBlock(
-                    defenderWeaponMassKg: 1.85f,
-                    defenderGuardDirUnit: npcGuardUnit,
-                    defenderDidActiveDeflect: npcDidDeflect,
-                    playerMissingArm: playerMissingArm,
-                    out _);
+                    defenderWeaponMassKg: 1.85f, defenderGuardDirUnit: npcGuardUnit, defenderDidActiveDeflect: npcDidDeflect,
+                    playerMissingArm: playerMissingArm, out _);
 
-                if (blockedReaction == PlayerBlockedReactionType.CrushedEnemyBlock)
-                {
-                    // Oyuncunun ağır/ivmeli kılıcı (örn. Zweihänder 5.6kg veya hızlı kurulmuş darbe) NPC bloğunu YARIP GEÇTİ!
-                    wasGuardCrushed = true;
-                }
+                if (blockedReaction == PlayerBlockedReactionType.CrushedEnemyBlock) wasGuardCrushed = true;
                 else if (blockedReaction == PlayerBlockedReactionType.GlancingDeflection)
                 {
-                    // YÖN SAPMASI (GLANCING DEFLECTION): Oyuncunun kılıcı 90° çapraz yöne kayarak saptı!
                     PlaySwordClashClang(1.04f);
                     SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 16, speed: 6.4f);
                     _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
-                    SpawnFloatingPopup(
-                        pCurr[hitPt] + Vector3.up * 0.32f,
-                        "↩️ YÖN SAPMASI (GLANCING DEFLECT)! Kılıcın Rakibin Çapraz Siperinden Yana Kaydı!",
-                        new Color(0.55f, 0.92f, 1f),
-                        1.85f,
-                        15);
+                    SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.32f, "↩️ YÖN SAPMASI (GLANCING DEFLECT)! Kılıcın Rakibin Çapraz Siperinden Yana Kaydı!", new Color(0.55f, 0.92f, 1f), 1.85f, 15);
                     TriggerHitMarker(new Color(0.55f, 0.92f, 1f), "↩️ YÖN SAPMASI!");
                     return;
                 }
                 else
                 {
-                    // SERT GERİ SEKME (HARD REBOUND BOUNCE): Kılıç geldiği yöne fiziksel yay tepkisiyle geri sekti!
                     PlaySwordClashClang(0.92f);
                     SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 15, speed: 5.9f);
                     _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
-                    SpawnFloatingPopup(
-                        pCurr[hitPt] + Vector3.up * 0.32f,
-                        $"🛡️ SERT GERİ SEKME (REBOUND)! ({GetDirectionLabel(playerAttackQuad)} Kapalıydı -> Açık Yöne Vur veya Ağır Kılıçla Bloğu Yar!)",
-                        new Color(0.88f, 0.90f, 1f),
-                        1.85f,
-                        14);
+                    SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.32f, $"🛡️ SERT GERİ SEKME (REBOUND)! ({GetDirectionLabel(playerAttackQuad)} Kapalıydı -> Açık Yöne Vur, [Q] Feint Yap veya [F] Tekme At!)", new Color(0.88f, 0.90f, 1f), 1.85f, 14);
                     TriggerHitMarker(new Color(0.88f, 0.90f, 1f), "🛡️ GERİ SEKME (REBOUND)");
                     return;
                 }
             }
+
             float uHit = (hitPt + 1) * 0.20f;
             string zoneName = uHit >= 0.65f ? "Foible (Uç)" : (uHit <= 0.35f ? "Forte" : "Mesne");
             float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
@@ -825,18 +634,13 @@ namespace Stratocraft.Character
             float preBonus = combatBridge.WasLastSlashPreChambered ? 1.38f : 1.0f;
             float crushMult = wasGuardCrushed ? 0.68f : 1.0f;
             float rawDamage = Mathf.Lerp(28f, 95f, Mathf.Clamp01((hitSpeed - 1.5f) / 10f)) *
-                              zoneMult * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult;
+                              zoneMult * combatBridge.EdgeAlignment01 * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult;
 
             _duelistHp -= rawDamage;
             if (_duelistHp <= 0f)
             {
                 _duelistHp = DuelistMaxHp;
-                SpawnFloatingPopup(
-                    _duelistRoot.position + Vector3.up * 2.2f,
-                    "🏆 DÜELLOCU YENİLDİ! (Canı Eğitim İçin 500 HP Yenilendi!)",
-                    new Color(0.35f, 1f, 0.45f),
-                    2.4f,
-                    16);
+                SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 2.2f, "🏆 DÜELLOCU YENİLDİ! (Canı Eğitim İçin 500 HP Yenilendi!)", new Color(0.35f, 1f, 0.45f), 2.4f, 16);
             }
 
             _duelistPhase = 3;
@@ -848,13 +652,15 @@ namespace Stratocraft.Character
                 PlaySwordClashClang(1.0f);
                 PlayFleshCleaveHit(false);
                 SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 16, speed: 6.4f);
-                SpawnFloatingPopup(
-                    pCurr[hitPt] + Vector3.up * 0.35f,
-                    $"🔥 BLOK YARMA (GUARD CRUSH)! -{rawDamage:F0} HP [Juggernaut Bloğu Ezdi!]",
-                    new Color(1f, 0.55f, 0.15f),
-                    1.85f,
-                    16);
+                SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.35f, $"🔥 BLOK YARMA (GUARD CRUSH)! -{rawDamage:F0} HP [Juggernaut Bloğu Ezdi!]", new Color(1f, 0.55f, 0.15f), 1.85f, 16);
                 TriggerHitMarker(new Color(1f, 0.55f, 0.15f), $"🔥 BLOK YARMA -{rawDamage:F0}");
+            }
+            else if (combatBridge.IsFlatBladeSlap)
+            {
+                PlayDummyStrikeThud(false);
+                SpawnImpactBurst(pCurr[hitPt], isSparks: false, count: 8, speed: 3.8f);
+                SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.35f, $"👋 YASSI NAMLU ŞAPLAĞI (FLAT-BLADE SLAP)! -{rawDamage:F0} HP [0.35x Künt | 0 Kanama -> Gardı Kesim Yönüne Çevir!]", new Color(0.92f, 0.75f, 0.38f), 1.85f, 15);
+                TriggerHitMarker(new Color(0.92f, 0.75f, 0.38f), $"👋 YASSI ŞAPLAK -{rawDamage:F0}");
             }
             else
             {
@@ -865,59 +671,55 @@ namespace Stratocraft.Character
                     : (combatBridge.WasLastSlashIaidoCharged
                         ? " [⚡ IAIJUTSU ŞİMŞEK KESİĞİ 1.60x!]"
                         : (combatBridge.CurrentThrustExtensionMeters >= 0.35f ? " [🗡️ İĞNE HAMLESİ!]" : string.Empty));
-                SpawnFloatingPopup(
-                    pCurr[hitPt] + Vector3.up * 0.35f,
-                    $"🩸 -{rawDamage:F0} HP ({zoneName} | {hitSpeed:F1}m/s){tag}",
-                    new Color(1f, 0.32f, 0.32f),
-                    1.75f,
-                    15);
+                SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.35f, $"🩸 -{rawDamage:F0} HP ({zoneName} | {hitSpeed:F1}m/s){tag}", new Color(1f, 0.32f, 0.32f), 1.75f, 15);
                 TriggerHitMarker(new Color(1f, 0.32f, 0.32f), $"-{rawDamage:F0} HP ({zoneName})");
             }
         }
 
+        private void CheckAndApplyKatanaCrossguardHandLaceration(
+            Stage1DirectionalCombatBridge combatBridge, ref CharacterVitalsComponent playerVitals, Vector3 playerWorldPos, float playerBladeU)
+        {
+            if (combatBridge.ActiveWeaponArchetype != CombatWeaponArchetype.Katana || playerBladeU > 0.32f || combatBridge.IsActiveDeflectWindow) return;
+            playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - 8f);
+            ThermalAndBiologySystem.ApplyRegionalBleeding(ref playerVitals, 0.8f);
+            string msg = "🩸 KABZA BAĞI EL KESİĞİ (TSUBA SLIDE)! -8 HP [Katana'da Geniş Siperlik Yok -> Dipte (u<=0.32) Sabit Tutma, RMB+Fare SAPTIR!]";
+            SpawnFloatingPopup(playerWorldPos + Vector3.up * 1.65f, msg, new Color(1f, 0.28f, 0.28f), 2.15f, 15);
+            combatBridge.LastCombatActionText = msg;
+        }
+
         private bool TryFindBladeVsBladeIntersection(
-            ReadOnlySpan<Vector3> playerPrev,
-            ReadOnlySpan<Vector3> playerCurr,
-            out Vector3 clashPos)
+            ReadOnlySpan<Vector3> playerPrev, ReadOnlySpan<Vector3> playerCurr, out Vector3 clashPos, out float playerBladeU)
         {
             for (int i = 0; i < Stage1DirectionalCombatBridge.BladeSamplePointCount; i++)
             {
                 Vector3 p = playerCurr[i];
                 for (int j = 0; j < Stage1DirectionalCombatBridge.BladeSamplePointCount; j++)
                 {
-                    float d = DistancePointToSegment(p, _npcPrevBladePts[j], _npcCurrBladePts[j]);
-                    if (d <= 0.48f)
+                    if (DistancePointToSegment(p, _npcPrevBladePts[j], _npcCurrBladePts[j]) <= 0.48f)
                     {
                         clashPos = Vector3.Lerp(p, _npcCurrBladePts[j], 0.5f);
+                        playerBladeU = (i + 1) * 0.20f;
                         return true;
                     }
                 }
             }
-            clashPos = Vector3.zero;
+            clashPos = Vector3.zero; playerBladeU = 0.5f;
             return false;
         }
 
-        private static bool DoesPlayerGuardCoverAttack(CombatDirectionQuadrant npcAttackDir, Vector2 playerBladeRad)
+        private static bool DoesPlayerGuardCoverAttack(CombatDirectionQuadrant npcAttackDir, Vector2 playerBladeRad) => npcAttackDir switch
         {
-            return npcAttackDir switch
-            {
-                CombatDirectionQuadrant.Overhead => playerBladeRad.y > 0.15f,
-                CombatDirectionQuadrant.Lower => playerBladeRad.y < -0.10f,
-                CombatDirectionQuadrant.Right => playerBladeRad.x > -0.15f,
-                CombatDirectionQuadrant.Left => playerBladeRad.x < 0.15f,
-                _ => true
-            };
-        }
+            CombatDirectionQuadrant.Overhead => playerBladeRad.y > 0.15f,
+            CombatDirectionQuadrant.Lower => playerBladeRad.y < -0.10f,
+            CombatDirectionQuadrant.Right => playerBladeRad.x > -0.15f,
+            CombatDirectionQuadrant.Left => playerBladeRad.x < 0.15f,
+            _ => true
+        };
 
-        private static CombatDirectionQuadrant ClassifyPlayerSlashQuadrant(Vector2 slashDirUnit)
-        {
-            // Oyuncu yukarıdan aşağıya (-Y) kesiyorsa ÜST (Overhead) saldırıdır
-            if (Mathf.Abs(slashDirUnit.y) > Mathf.Abs(slashDirUnit.x))
-            {
-                return slashDirUnit.y < 0f ? CombatDirectionQuadrant.Overhead : CombatDirectionQuadrant.Lower;
-            }
-            return slashDirUnit.x < 0f ? CombatDirectionQuadrant.Right : CombatDirectionQuadrant.Left;
-        }
+        private static CombatDirectionQuadrant ClassifyPlayerSlashQuadrant(Vector2 slashDirUnit) =>
+            Mathf.Abs(slashDirUnit.y) > Mathf.Abs(slashDirUnit.x)
+                ? (slashDirUnit.y < 0f ? CombatDirectionQuadrant.Overhead : CombatDirectionQuadrant.Lower)
+                : (slashDirUnit.x < 0f ? CombatDirectionQuadrant.Right : CombatDirectionQuadrant.Left);
 
         private static Vector2 GetQuadrantAngles(CombatDirectionQuadrant quad) => quad switch
         {
@@ -931,39 +733,18 @@ namespace Stratocraft.Character
         private void UpdateBladeSwingTrailMesh(Stage1DirectionalCombatBridge combatBridge)
         {
             if (_trailMesh == null || !combatBridge.AreBladePointsValid) return;
-
-            bool showTrail = combatBridge.SlashPhase == BallisticSlashPhase.ActiveFullArcSwing ||
-                             combatBridge.CurrentThrustExtensionMeters >= 0.15f;
-            if (!showTrail)
+            if (combatBridge.SlashPhase != BallisticSlashPhase.ActiveFullArcSwing && combatBridge.CurrentThrustExtensionMeters < 0.15f)
             {
-                if (_trailPointCount > 0)
-                {
-                    _trailPointCount = 0;
-                    _trailMesh.Clear();
-                }
+                if (_trailPointCount > 0) { _trailPointCount = 0; _trailMesh.Clear(); }
                 return;
             }
-
             ReadOnlySpan<Vector3> pts = combatBridge.CurrBladeWorldPoints;
-            Vector3 basePt = pts[0];
-            Vector3 tipPt = pts[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1];
+            Vector3 basePt = pts[0], tipPt = pts[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1];
+            if (_trailPointCount > 0 && Vector3.Distance(_trailTipHistory[0], tipPt) < 0.03f) return;
 
-            if (_trailPointCount > 0 && Vector3.Distance(_trailTipHistory[0], tipPt) < 0.03f)
-            {
-                return;
-            }
-
-            int maxHistory = _trailBaseHistory.Length;
-            int nextCount = Mathf.Min(maxHistory, _trailPointCount + 1);
-            for (int i = nextCount - 1; i >= 1; i--)
-            {
-                _trailBaseHistory[i] = _trailBaseHistory[i - 1];
-                _trailTipHistory[i] = _trailTipHistory[i - 1];
-            }
-            _trailBaseHistory[0] = basePt;
-            _trailTipHistory[0] = tipPt;
-            _trailPointCount = nextCount;
-
+            int nextCount = Mathf.Min(_trailBaseHistory.Length, _trailPointCount + 1);
+            for (int i = nextCount - 1; i >= 1; i--) { _trailBaseHistory[i] = _trailBaseHistory[i - 1]; _trailTipHistory[i] = _trailTipHistory[i - 1]; }
+            _trailBaseHistory[0] = basePt; _trailTipHistory[0] = tipPt; _trailPointCount = nextCount;
             if (_trailPointCount < 2) return;
 
             Color32 tipColor = combatBridge.WasLastSlashRiposte
@@ -977,49 +758,31 @@ namespace Stratocraft.Character
                 };
             Color32 baseColor = new Color32((byte)(tipColor.r / 2), (byte)(tipColor.g / 2), (byte)(tipColor.b / 2), 180);
 
-            _trailVerts.Clear();
-            _trailColors.Clear();
-            _trailTris.Clear();
-
+            _trailVerts.Clear(); _trailColors.Clear(); _trailTris.Clear();
             for (int i = 0; i < _trailPointCount; i++)
             {
                 float fade = 1.0f - (float)i / _trailPointCount;
-                Vector3 lerpedBase = Vector3.Lerp(_trailTipHistory[i], _trailBaseHistory[i], fade * 0.85f);
-                _trailVerts.Add(lerpedBase);
+                _trailVerts.Add(Vector3.Lerp(_trailTipHistory[i], _trailBaseHistory[i], fade * 0.85f));
                 _trailVerts.Add(_trailTipHistory[i]);
-                _trailColors.Add(baseColor);
-                _trailColors.Add(tipColor);
+                _trailColors.Add(baseColor); _trailColors.Add(tipColor);
             }
-
             for (int i = 0; i < _trailPointCount - 1; i++)
             {
-                int v0 = i * 2;
-                int v1 = v0 + 1;
-                int v2 = v0 + 2;
-                int v3 = v0 + 3;
-                // Çift yüzlü (Double-sided) şerit üçgenleri
-                _trailTris.Add(v0); _trailTris.Add(v1); _trailTris.Add(v3);
-                _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v2);
-                _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v1);
-                _trailTris.Add(v0); _trailTris.Add(v2); _trailTris.Add(v3);
+                int v0 = i * 2, v1 = v0 + 1, v2 = v0 + 2, v3 = v0 + 3;
+                _trailTris.Add(v0); _trailTris.Add(v1); _trailTris.Add(v3); _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v2);
+                _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v1); _trailTris.Add(v0); _trailTris.Add(v2); _trailTris.Add(v3);
             }
-
             _trailMesh.Clear();
-            _trailMesh.SetVertices(_trailVerts);
-            _trailMesh.SetColors(_trailColors);
-            _trailMesh.SetTriangles(_trailTris, 0);
-            _trailMesh.RecalculateNormals();
-            _trailMesh.RecalculateBounds();
+            _trailMesh.SetVertices(_trailVerts); _trailMesh.SetColors(_trailColors); _trailMesh.SetTriangles(_trailTris, 0);
+            _trailMesh.RecalculateNormals(); _trailMesh.RecalculateBounds();
         }
 
         private void SpawnImpactBurst(Vector3 worldPos, bool isSparks, int count, float speed)
         {
-            int spawned = 0;
-            for (int i = 0; i < _particles.Count && spawned < count; i++)
+            for (int i = 0, spawned = 0; i < _particles.Count && spawned < count; i++)
             {
                 var p = _particles[i];
                 if (p.RemainingTime > 0f) continue;
-
                 p.RemainingTime = isSparks ? 0.34f : 0.45f;
                 p.Transform.gameObject.SetActive(true);
                 p.Transform.position = worldPos;
@@ -1038,21 +801,11 @@ namespace Stratocraft.Character
             {
                 var p = _particles[i];
                 if (p.RemainingTime <= 0f) continue;
-
                 p.RemainingTime -= dt;
-                if (p.RemainingTime <= 0f)
-                {
-                    p.Transform.gameObject.SetActive(false);
-                    _particles[i] = p;
-                    continue;
-                }
-
+                if (p.RemainingTime <= 0f) { p.Transform.gameObject.SetActive(false); _particles[i] = p; continue; }
                 p.Velocity.y -= 13.5f * dt;
                 p.Transform.position += p.Velocity * dt;
-                if (p.Velocity.sqrMagnitude > 0.01f)
-                {
-                    p.Transform.rotation = Quaternion.LookRotation(p.Velocity.normalized);
-                }
+                if (p.Velocity.sqrMagnitude > 0.01f) p.Transform.rotation = Quaternion.LookRotation(p.Velocity.normalized);
                 _particles[i] = p;
             }
         }
@@ -1060,101 +813,66 @@ namespace Stratocraft.Character
         public void SpawnFloatingPopup(Vector3 worldPos, string text, Color color, float duration = 1.6f, int fontSize = 15)
         {
             if (_popups.Count >= 18) _popups.RemoveAt(0);
-            _popups.Add(new FloatingCombatPopup
-            {
-                WorldPos = worldPos,
-                Text = text,
-                Color = color,
-                RemainingTime = duration,
-                TotalTime = duration,
-                FontSize = fontSize
-            });
+            _popups.Add(new FloatingCombatPopup { WorldPos = worldPos, Text = text, Color = color, RemainingTime = duration, TotalTime = duration, FontSize = fontSize });
         }
 
-        private void TriggerHitMarker(Color color, string label)
-        {
-            _hitMarkerTimer = 0.38f;
-            _hitMarkerColor = color;
-            _hitMarkerLabel = label;
-        }
+        private void TriggerHitMarker(Color color, string label) { _hitMarkerTimer = 0.38f; _hitMarkerColor = color; _hitMarkerLabel = label; }
 
         public void DrawCombatFeedbackAndArenaHud(UnityEngine.Camera? cam)
         {
             if (cam == null) return;
+            _popupStyle ??= new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+            _worldLabelStyle ??= new GUIStyle(GUI.skin.box) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, fontSize = 12, normal = { textColor = Color.white } };
 
-            _popupStyle ??= new GUIStyle(GUI.skin.label)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontStyle = FontStyle.Bold
-            };
-            _worldLabelStyle ??= new GUIStyle(GUI.skin.box)
-            {
-                alignment = TextAnchor.MiddleCenter,
-                fontStyle = FontStyle.Bold,
-                fontSize = 12,
-                normal = { textColor = Color.white }
-            };
-
-            // 1) Merkez Nişangah Hit-Marker (✕)
             if (_hitMarkerTimer > 0f)
             {
-                float cx = Screen.width * 0.5f;
-                float cy = Screen.height * 0.5f;
-                _popupStyle.fontSize = 22;
-                _popupStyle.normal.textColor = _hitMarkerColor;
-                GUI.Label(new Rect(cx - 120f, cy - 38f, 240f, 32f), $"✕  {_hitMarkerLabel}  ✕", _popupStyle);
+                _popupStyle.fontSize = 22; _popupStyle.normal.textColor = _hitMarkerColor;
+                GUI.Label(new Rect(Screen.width * 0.5f - 120f, Screen.height * 0.5f - 38f, 240f, 32f), $"✕  {_hitMarkerLabel}  ✕", _popupStyle);
             }
-
-            // 2) Mekanik Eğitim Makinesi 3B Durum Tabelası
             if (_automatonRoot != null)
             {
-                Vector3 screenPt = cam.WorldToScreenPoint(_automatonRoot.position + Vector3.up * 2.25f);
-                if (screenPt.z > 0.5f && screenPt.z < 24f)
+                Vector3 worldAnchor = _automatonRoot.position + Vector3.up * 2.25f;
+                Vector3 sp = cam.WorldToScreenPoint(worldAnchor);
+                float lookDot = Vector3.Dot(cam.transform.forward, (worldAnchor - cam.transform.position).normalized);
+                if (sp.z > 0.5f && sp.z < 14f && lookDot > 0.72f)
                 {
-                    float sx = screenPt.x;
-                    float sy = Screen.height - screenPt.y;
-                    string dummyText =
-                        $"🎯 MEKANİK EĞİTİM KUKLASI (Darbe & Parry Ölçer)\n" +
-                        $"Son Hasar: {_automatonLastDamage:F0} | Hız: {_automatonLastSpeedMps:F1} m/s | Bölge: {_automatonLastZone}\n" +
-                        $"{_automatonLastNote}";
-                    GUI.Box(new Rect(sx - 210f, sy - 34f, 420f, 58f), dummyText, _worldLabelStyle);
+                    float boxX = Mathf.Clamp(sp.x - 210f, 12f, Screen.width - 432f);
+                    float boxY = Screen.height - sp.y - 34f;
+                    if (boxX < 1090f && boxY < 184f) boxY = 184f;
+                    string dummyText = $"🎯 MEKANİK EĞİTİM KUKLASI (Darbe & Parry Ölçer)\nSon Hasar: {_automatonLastDamage:F0} | Hız: {_automatonLastSpeedMps:F1} m/s | Bölge: {_automatonLastZone}\n{_automatonLastNote}";
+                    GUI.Box(new Rect(boxX, boxY, 420f, 58f), dummyText, _worldLabelStyle);
                 }
             }
-
-            // 3) Kılıç Ustası Düellocu NPC 3B Durum ve Saldırı/Gard Göstergesi
             if (_duelistRoot != null)
             {
-                Vector3 screenPt = cam.WorldToScreenPoint(_duelistRoot.position + Vector3.up * 2.35f);
-                if (screenPt.z > 0.5f && screenPt.z < 24f)
+                Vector3 worldAnchor = _duelistRoot.position + Vector3.up * 2.35f;
+                Vector3 sp = cam.WorldToScreenPoint(worldAnchor);
+                float lookDot = Vector3.Dot(cam.transform.forward, (worldAnchor - cam.transform.position).normalized);
+                if (sp.z > 0.5f && sp.z < 14f && lookDot > 0.72f)
                 {
-                    float sx = screenPt.x;
-                    float sy = Screen.height - screenPt.y;
+                    float boxX = Mathf.Clamp(sp.x - 245f, 12f, Screen.width - 502f);
+                    float boxY = Screen.height - sp.y - 28f;
+                    if (boxX < 1090f && boxY < 184f) boxY = 184f;
                     string stateLine = _duelistPhase switch
                     {
-                        1 => $"⚠️ SALDIRI GELİYOR: {GetDirectionLabel(_duelistAttackDir)}! (RMB ile Blokla veya LMB ile Kılıç Çarpıştır!)",
+                        1 => $"⚠️ SALDIRI GELİYOR: {GetDirectionLabel(_duelistAttackDir)}! (RMB ile Blokla, LMB Çarpıştır veya [F] Tekme At!)",
                         2 => $"⚔️ KESİK İNİYOR: {GetDirectionLabel(_duelistAttackDir)}!",
                         3 => $"💫 SERSEMLEDİ (STAGGERED)! -> ŞİMDİ LMB İLE KONTRA (RIPOSTE) VUR!",
-                        _ => $"🛡️ AKTİF GARD: {GetDirectionLabel(_duelistGuardDir)} (Diğer yönler açık!)"
+                        _ => $"🛡️ AKTİF GARD: {GetDirectionLabel(_duelistGuardDir)} (Açık yöne vur, [Q] Feint veya [F] Tekme ile kır!)"
                     };
-                    string npcText =
-                        $"⚔️ KILIÇ USTASI DÜELLOCU NPC (HP: {_duelistHp:F0}/{DuelistMaxHp:F0} | [F10] Mod: {GetDuelistModeLabel(_duelistMode)})\n" +
-                        $"{stateLine}";
-                    GUI.Box(new Rect(sx - 245f, sy - 28f, 490f, 48f), npcText, _worldLabelStyle);
+                    string npcText = $"⚔️ KILIÇ USTASI DÜELLOCU NPC (HP: {_duelistHp:F0}/{DuelistMaxHp:F0} | [F10] Mod: {GetDuelistModeLabel(_duelistMode)})\n{stateLine}";
+                    GUI.Box(new Rect(boxX, boxY, 490f, 48f), npcText, _worldLabelStyle);
                 }
             }
-
-            // 4) Yüzen 3B Vuruş / Çarpışma / Blok Popupları
             for (int i = 0; i < _popups.Count; i++)
             {
                 var p = _popups[i];
                 Vector3 sp = cam.WorldToScreenPoint(p.WorldPos);
                 if (sp.z <= 0.2f || sp.z > 32f) continue;
-
                 float alpha = Mathf.Clamp01(p.RemainingTime / Mathf.Max(0.2f, p.TotalTime * 0.45f));
                 _popupStyle.fontSize = p.FontSize;
                 _popupStyle.normal.textColor = new Color(0f, 0f, 0f, alpha * 0.85f);
-                float x = sp.x - 220f;
-                float y = (Screen.height - sp.y) - 16f;
+                float x = sp.x - 220f, y = (Screen.height - sp.y) - 16f;
                 GUI.Label(new Rect(x + 1.5f, y + 1.5f, 440f, 34f), p.Text, _popupStyle);
                 _popupStyle.normal.textColor = new Color(p.Color.r, p.Color.g, p.Color.b, alpha);
                 GUI.Label(new Rect(x, y, 440f, 34f), p.Text, _popupStyle);
@@ -1166,36 +884,21 @@ namespace Stratocraft.Character
             GameObject root = new GameObject("Arena_MechanicalTrainingAutomaton");
             root.transform.position = worldPos;
             _automatonRoot = root.transform;
-
-            // Taş/Demir Kaide
-            CreateColoredBoxPart(root.transform, "Pedestal", new Vector3(0f, 0.18f, 0f), new Vector3(0.48f, 0.18f, 0.48f),
-                new Color32(90, 96, 108, 255), new Color32(130, 138, 152, 255), sharedMat);
-
-            // Yaylı Gövde Pivotu
+            CreateColoredBoxPart(root.transform, "Pedestal", new Vector3(0f, 0.18f, 0f), new Vector3(0.48f, 0.18f, 0.48f), new Color32(90, 96, 108, 255), new Color32(130, 138, 152, 255), sharedMat);
             GameObject torsoPivot = new GameObject("AutomatonTorsoPivot");
             torsoPivot.transform.SetParent(root.transform, false);
             torsoPivot.transform.localPosition = new Vector3(0f, 0.36f, 0f);
             _automatonTorsoPivot = torsoPivot.transform;
-
-            // Meşe Gövde + 4 Yönlü Zırh Plakası + Kafa
-            CreateColoredBoxPart(torsoPivot.transform, "WoodenPost", new Vector3(0f, 0.55f, 0f), new Vector3(0.14f, 0.55f, 0.14f),
-                new Color32(112, 72, 38, 255), new Color32(148, 98, 54, 255), sharedMat);
-            CreateColoredBoxPart(torsoPivot.transform, "PaddedBarrelTorso", new Vector3(0f, 0.78f, 0f), new Vector3(0.28f, 0.36f, 0.24f),
-                new Color32(158, 108, 58, 255), new Color32(196, 146, 82, 255), sharedMat);
-            CreateColoredBoxPart(torsoPivot.transform, "TargetPlateFront", new Vector3(0f, 0.78f, 0.26f), new Vector3(0.22f, 0.28f, 0.03f),
-                new Color32(190, 48, 48, 255), new Color32(235, 195, 65, 255), sharedMat);
-            CreateColoredBoxPart(torsoPivot.transform, "DummyHead", new Vector3(0f, 1.32f, 0f), new Vector3(0.18f, 0.18f, 0.18f),
-                new Color32(168, 132, 88, 255), new Color32(215, 185, 135, 255), sharedMat);
-
-            // Dönen Eğitim Kolu (Spinning Sparring Arm)
+            CreateColoredBoxPart(torsoPivot.transform, "WoodenPost", new Vector3(0f, 0.55f, 0f), new Vector3(0.14f, 0.55f, 0.14f), new Color32(112, 72, 38, 255), new Color32(148, 98, 54, 255), sharedMat);
+            CreateColoredBoxPart(torsoPivot.transform, "PaddedBarrelTorso", new Vector3(0f, 0.78f, 0f), new Vector3(0.28f, 0.36f, 0.24f), new Color32(158, 108, 58, 255), new Color32(196, 146, 82, 255), sharedMat);
+            CreateColoredBoxPart(torsoPivot.transform, "TargetPlateFront", new Vector3(0f, 0.78f, 0.26f), new Vector3(0.22f, 0.28f, 0.03f), new Color32(190, 48, 48, 255), new Color32(235, 195, 65, 255), sharedMat);
+            CreateColoredBoxPart(torsoPivot.transform, "DummyHead", new Vector3(0f, 1.32f, 0f), new Vector3(0.18f, 0.18f, 0.18f), new Color32(168, 132, 88, 255), new Color32(215, 185, 135, 255), sharedMat);
             GameObject spinPivot = new GameObject("SpinningSparArmPivot");
             spinPivot.transform.SetParent(torsoPivot.transform, false);
             spinPivot.transform.localPosition = new Vector3(0f, 0.86f, 0f);
             _automatonSpinArmPivot = spinPivot.transform;
-            CreateColoredBoxPart(spinPivot.transform, "SparBar", new Vector3(0.58f, 0f, 0f), new Vector3(0.58f, 0.045f, 0.045f),
-                new Color32(120, 82, 42, 255), new Color32(210, 218, 232, 255), sharedMat);
-            CreateColoredBoxPart(spinPivot.transform, "SparStrikePad", new Vector3(1.12f, 0f, 0f), new Vector3(0.10f, 0.12f, 0.08f),
-                new Color32(225, 85, 45, 255), new Color32(255, 215, 75, 255), sharedMat);
+            CreateColoredBoxPart(spinPivot.transform, "SparBar", new Vector3(0.58f, 0f, 0f), new Vector3(0.58f, 0.045f, 0.045f), new Color32(120, 82, 42, 255), new Color32(210, 218, 232, 255), sharedMat);
+            CreateColoredBoxPart(spinPivot.transform, "SparStrikePad", new Vector3(1.12f, 0f, 0f), new Vector3(0.10f, 0.12f, 0.08f), new Color32(225, 85, 45, 255), new Color32(255, 215, 75, 255), sharedMat);
         }
 
         private void BuildMasterSwordDuelistNpc(Vector3 worldPos, Material? sharedMat)
@@ -1203,13 +906,8 @@ namespace Stratocraft.Character
             GameObject root = new GameObject("Arena_MasterSwordDuelistNPC");
             root.transform.position = worldPos;
             _duelistRoot = root.transform;
-
-            Color32 darkArmor = new Color32(62, 70, 86, 255);
-            Color32 brightSteel = new Color32(175, 188, 210, 255);
-            Color32 royalTabard = new Color32(158, 34, 46, 255);
-            Color32 goldCrest = new Color32(228, 185, 68, 255);
-
-            // Bacaklar, Zırhlı Gövde, Omuzluklar ve Şövalye Miğferi
+            Color32 darkArmor = new Color32(62, 70, 86, 255), brightSteel = new Color32(175, 188, 210, 255);
+            Color32 royalTabard = new Color32(158, 34, 46, 255), goldCrest = new Color32(228, 185, 68, 255);
             CreateColoredBoxPart(root.transform, "LeftLeg", new Vector3(-0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, sharedMat);
             CreateColoredBoxPart(root.transform, "RightLeg", new Vector3(0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, sharedMat);
             CreateColoredBoxPart(root.transform, "ArmoredTorso", new Vector3(0f, 1.12f, 0f), new Vector3(0.26f, 0.34f, 0.18f), royalTabard, brightSteel, sharedMat);
@@ -1217,8 +915,6 @@ namespace Stratocraft.Character
             CreateColoredBoxPart(root.transform, "ShoulderRight", new Vector3(0.34f, 1.36f, 0f), new Vector3(0.11f, 0.10f, 0.14f), darkArmor, goldCrest, sharedMat);
             CreateColoredBoxPart(root.transform, "KnightHelm", new Vector3(0f, 1.64f, 0f), new Vector3(0.16f, 0.17f, 0.17f), darkArmor, brightSteel, sharedMat);
             CreateColoredBoxPart(root.transform, "HelmPlume", new Vector3(0f, 1.86f, -0.04f), new Vector3(0.04f, 0.08f, 0.16f), royalTabard, goldCrest, sharedMat);
-
-            // Düellocunun Elindeki Gerçek 3B Uzun Kılıç (5 Çarpışma Noktalı)
             GameObject swordPivot = new GameObject("DuelistSwordPivot");
             swordPivot.transform.SetParent(root.transform, false);
             swordPivot.transform.localPosition = new Vector3(0.36f, 1.25f, 0.45f);
@@ -1230,14 +926,7 @@ namespace Stratocraft.Character
             _duelistSwordPivot = swordPivot.transform;
         }
 
-        private static GameObject CreateColoredBoxPart(
-            Transform parent,
-            string name,
-            Vector3 localPos,
-            Vector3 halfExtents,
-            Color32 bottomColor,
-            Color32 topColor,
-            Material? sharedMat)
+        private static GameObject CreateColoredBoxPart(Transform parent, string name, Vector3 localPos, Vector3 halfExtents, Color32 bottomColor, Color32 topColor, Material? sharedMat)
         {
             GameObject go = new GameObject(name);
             go.transform.SetParent(parent, false);
@@ -1245,128 +934,46 @@ namespace Stratocraft.Character
             var mf = go.AddComponent<MeshFilter>();
             var mr = go.AddComponent<MeshRenderer>();
             if (sharedMat != null) mr.sharedMaterial = sharedMat;
-
-            Vector3[] v =
-            {
-                new(-halfExtents.x, -halfExtents.y, -halfExtents.z),
-                new(halfExtents.x, -halfExtents.y, -halfExtents.z),
-                new(halfExtents.x, -halfExtents.y, halfExtents.z),
-                new(-halfExtents.x, -halfExtents.y, halfExtents.z),
-                new(-halfExtents.x, halfExtents.y, -halfExtents.z),
-                new(halfExtents.x, halfExtents.y, -halfExtents.z),
-                new(halfExtents.x, halfExtents.y, halfExtents.z),
-                new(-halfExtents.x, halfExtents.y, halfExtents.z)
+            Vector3[] v = {
+                new(-halfExtents.x, -halfExtents.y, -halfExtents.z), new(halfExtents.x, -halfExtents.y, -halfExtents.z),
+                new(halfExtents.x, -halfExtents.y, halfExtents.z), new(-halfExtents.x, -halfExtents.y, halfExtents.z),
+                new(-halfExtents.x, halfExtents.y, -halfExtents.z), new(halfExtents.x, halfExtents.y, -halfExtents.z),
+                new(halfExtents.x, halfExtents.y, halfExtents.z), new(-halfExtents.x, halfExtents.y, halfExtents.z)
             };
-            Color32[] c =
-            {
-                bottomColor, bottomColor, bottomColor, bottomColor,
-                topColor, topColor, topColor, topColor
-            };
-            int[] tris =
-            {
-                0,4,5, 0,5,1,
-                1,5,6, 1,6,2,
-                2,6,7, 2,7,3,
-                3,7,4, 3,4,0,
-                4,7,6, 4,6,5,
-                3,0,1, 3,1,2
-            };
+            Color32[] c = { bottomColor, bottomColor, bottomColor, bottomColor, topColor, topColor, topColor, topColor };
+            int[] tris = { 0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3, 3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2 };
             Mesh m = new Mesh { name = $"Mesh_{name}" };
-            m.SetVertices(v);
-            m.SetColors(c);
-            m.SetTriangles(tris, 0);
-            m.RecalculateNormals();
-            m.RecalculateBounds();
+            m.SetVertices(v); m.SetColors(c); m.SetTriangles(tris, 0); m.RecalculateNormals(); m.RecalculateBounds();
             mf.sharedMesh = m;
             return go;
         }
 
         private static Mesh BuildUnitColoredCubeMesh(Color32 col)
         {
-            Vector3[] v =
-            {
-                new(-0.5f, -0.5f, -0.5f), new(0.5f, -0.5f, -0.5f), new(0.5f, -0.5f, 0.5f), new(-0.5f, -0.5f, 0.5f),
-                new(-0.5f, 0.5f, -0.5f), new(0.5f, 0.5f, -0.5f), new(0.5f, 0.5f, 0.5f), new(-0.5f, 0.5f, 0.5f)
-            };
+            Vector3[] v = { new(-0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,-0.5f), new(0.5f,-0.5f,0.5f), new(-0.5f,-0.5f,0.5f), new(-0.5f,0.5f,-0.5f), new(0.5f,0.5f,-0.5f), new(0.5f,0.5f,0.5f), new(-0.5f,0.5f,0.5f) };
             Color32[] c = { col, col, col, col, col, col, col, col };
-            int[] tris =
-            {
-                0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3,
-                3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2
-            };
+            int[] tris = { 0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3, 3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2 };
             Mesh m = new Mesh { name = "ImpactParticleCube" };
-            m.SetVertices(v);
-            m.SetColors(c);
-            m.SetTriangles(tris, 0);
-            m.RecalculateNormals();
-            m.RecalculateBounds();
+            m.SetVertices(v); m.SetColors(c); m.SetTriangles(tris, 0); m.RecalculateNormals(); m.RecalculateBounds();
             return m;
         }
 
         private void SynthesizeAllCombatAudioClips()
         {
-            const int sampleRate = 22050;
-            _clipWhooshLight = CreateProceduralClip("WhooshLight", sampleRate, 0.22f, (t, norm) =>
-            {
-                float env = Mathf.Sin(norm * Mathf.PI);
-                float freq = Mathf.Lerp(520f, 240f, norm);
-                float noise = Mathf.Sin(t * 4890f) * Mathf.Cos(t * 7310f);
-                return (Mathf.Sin(t * freq * Mathf.PI * 2f) * 0.45f + noise * 0.55f) * env * 0.55f;
-            });
-
-            _clipWhooshHeavy = CreateProceduralClip("WhooshHeavy", sampleRate, 0.36f, (t, norm) =>
-            {
-                float env = Mathf.Sin(norm * Mathf.PI);
-                float freq = Mathf.Lerp(260f, 110f, norm);
-                float noise = Mathf.Sin(t * 2410f) * Mathf.Cos(t * 3910f);
-                return (Mathf.Sin(t * freq * Mathf.PI * 2f) * 0.65f + noise * 0.45f) * env * 0.72f;
-            });
-
-            _clipSwordClash = CreateProceduralClip("SwordClashClang", sampleRate, 0.38f, (t, norm) =>
-            {
-                float env = Mathf.Exp(-norm * 6.5f);
-                float m1 = Mathf.Sin(t * 1480f * Mathf.PI * 2f + Mathf.Sin(t * 620f * Mathf.PI * 2f) * 2.2f);
-                float m2 = Mathf.Sin(t * 2390f * Mathf.PI * 2f) * 0.65f;
-                float m3 = Mathf.Sin(t * 3840f * Mathf.PI * 2f) * 0.40f;
-                float transient = norm < 0.04f ? Mathf.Sin(t * 6100f) * 0.8f : 0f;
-                return Mathf.Clamp((m1 + m2 + m3 + transient) * env * 0.45f, -0.95f, 0.95f);
-            });
-
-            _clipWallRicochet = CreateProceduralClip("WallRicochetClink", sampleRate, 0.26f, (t, norm) =>
-            {
-                float env = Mathf.Exp(-norm * 8.5f);
-                float scrape = Mathf.Sin(t * 980f * Mathf.PI * 2f + Mathf.Cos(t * 3100f) * 3.0f);
-                float ring = Mathf.Sin(t * 2860f * Mathf.PI * 2f) * 0.5f;
-                return Mathf.Clamp((scrape + ring) * env * 0.55f, -0.9f, 0.9f);
-            });
-
-            _clipFleshCleave = CreateProceduralClip("FleshCleaveHit", sampleRate, 0.24f, (t, norm) =>
-            {
-                float env = Mathf.Exp(-norm * 7.5f);
-                float thud = Mathf.Sin(t * Mathf.Lerp(155f, 52f, norm) * Mathf.PI * 2f) * 0.85f;
-                float rip = Mathf.Sin(t * 1850f) * Mathf.Cos(t * 4210f) * 0.55f;
-                return Mathf.Clamp((thud + rip) * env * 0.80f, -0.95f, 0.95f);
-            });
-
-            _clipDummyThud = CreateProceduralClip("DummyWoodThud", sampleRate, 0.22f, (t, norm) =>
-            {
-                float env = Mathf.Exp(-norm * 9.0f);
-                float wood = Mathf.Sin(t * Mathf.Lerp(210f, 88f, norm) * Mathf.PI * 2f) * 0.8f;
-                float clack = Mathf.Sin(t * 1120f * Mathf.PI * 2f) * 0.35f;
-                return Mathf.Clamp((wood + clack) * env * 0.75f, -0.9f, 0.9f);
-            });
+            const int sr = 22050;
+            _clipWhooshLight = CreateProceduralClip("WhooshLight", sr, 0.22f, (t, n) => (Mathf.Sin(t * Mathf.Lerp(520f, 240f, n) * Mathf.PI * 2f) * 0.45f + Mathf.Sin(t * 4890f) * Mathf.Cos(t * 7310f) * 0.55f) * Mathf.Sin(n * Mathf.PI) * 0.55f);
+            _clipWhooshHeavy = CreateProceduralClip("WhooshHeavy", sr, 0.36f, (t, n) => (Mathf.Sin(t * Mathf.Lerp(260f, 110f, n) * Mathf.PI * 2f) * 0.65f + Mathf.Sin(t * 2410f) * Mathf.Cos(t * 3910f) * 0.45f) * Mathf.Sin(n * Mathf.PI) * 0.72f);
+            _clipSwordClash = CreateProceduralClip("SwordClashClang", sr, 0.38f, (t, n) => Mathf.Clamp((Mathf.Sin(t * 1480f * Mathf.PI * 2f + Mathf.Sin(t * 620f * Mathf.PI * 2f) * 2.2f) + Mathf.Sin(t * 2390f * Mathf.PI * 2f) * 0.65f + Mathf.Sin(t * 3840f * Mathf.PI * 2f) * 0.40f + (n < 0.04f ? Mathf.Sin(t * 6100f) * 0.8f : 0f)) * Mathf.Exp(-n * 6.5f) * 0.45f, -0.95f, 0.95f));
+            _clipWallRicochet = CreateProceduralClip("WallRicochetClink", sr, 0.26f, (t, n) => Mathf.Clamp((Mathf.Sin(t * 980f * Mathf.PI * 2f + Mathf.Cos(t * 3100f) * 3.0f) + Mathf.Sin(t * 2860f * Mathf.PI * 2f) * 0.5f) * Mathf.Exp(-n * 8.5f) * 0.55f, -0.9f, 0.9f));
+            _clipFleshCleave = CreateProceduralClip("FleshCleaveHit", sr, 0.24f, (t, n) => Mathf.Clamp((Mathf.Sin(t * Mathf.Lerp(155f, 52f, n) * Mathf.PI * 2f) * 0.85f + Mathf.Sin(t * 1850f) * Mathf.Cos(t * 4210f) * 0.55f) * Mathf.Exp(-n * 7.5f) * 0.80f, -0.95f, 0.95f));
+            _clipDummyThud = CreateProceduralClip("DummyWoodThud", sr, 0.22f, (t, n) => Mathf.Clamp((Mathf.Sin(t * Mathf.Lerp(210f, 88f, n) * Mathf.PI * 2f) * 0.8f + Mathf.Sin(t * 1120f * Mathf.PI * 2f) * 0.35f) * Mathf.Exp(-n * 9.0f) * 0.75f, -0.9f, 0.9f));
         }
 
         private static AudioClip CreateProceduralClip(string name, int sampleRate, float durationSec, Func<float, float, float> generator)
         {
             int samples = Mathf.Max(256, Mathf.RoundToInt(sampleRate * durationSec));
             float[] data = new float[samples];
-            for (int i = 0; i < samples; i++)
-            {
-                float t = (float)i / sampleRate;
-                float norm = (float)i / samples;
-                data[i] = generator(t, norm);
-            }
+            for (int i = 0; i < samples; i++) data[i] = generator((float)i / sampleRate, (float)i / samples);
             AudioClip clip = AudioClip.Create(name, samples, 1, sampleRate, false);
             clip.SetData(data, 0);
             return clip;
@@ -1381,46 +988,11 @@ namespace Stratocraft.Character
             _audioSource.PlayOneShot(clip, isSpecial ? 0.85f : 0.62f);
         }
 
-        private void PlaySwordClashClang(float volume = 0.95f)
-        {
-            if (_audioSource == null || _clipSwordClash == null) return;
-            _audioSource.pitch = UnityEngine.Random.Range(0.92f, 1.08f);
-            _audioSource.PlayOneShot(_clipSwordClash, volume);
-        }
-
-        private void PlayWallRicochetClink()
-        {
-            if (_audioSource == null || _clipWallRicochet == null) return;
-            _audioSource.pitch = UnityEngine.Random.Range(0.90f, 1.12f);
-            _audioSource.PlayOneShot(_clipWallRicochet, 0.85f);
-        }
-
-        private void PlayFleshCleaveHit(bool heavySever)
-        {
-            if (_audioSource == null || _clipFleshCleave == null) return;
-            _audioSource.pitch = heavySever ? 0.85f : UnityEngine.Random.Range(0.95f, 1.08f);
-            _audioSource.PlayOneShot(_clipFleshCleave, 0.95f);
-        }
-
-        private void PlayDummyStrikeThud(bool guardCrushed)
-        {
-            if (_audioSource == null || _clipDummyThud == null) return;
-            _audioSource.pitch = guardCrushed ? 0.82f : UnityEngine.Random.Range(0.94f, 1.06f);
-            _audioSource.PlayOneShot(_clipDummyThud, 0.90f);
-            if (guardCrushed && _clipSwordClash != null)
-            {
-                _audioSource.PlayOneShot(_clipSwordClash, 0.65f);
-            }
-        }
-
-        private static float DistancePointToSegment(Vector3 p, Vector3 a, Vector3 b)
-        {
-            Vector3 ab = b - a;
-            float lenSq = ab.sqrMagnitude;
-            if (lenSq < 1e-6f) return Vector3.Distance(p, a);
-            float t = Mathf.Clamp01(Vector3.Dot(p - a, ab) / lenSq);
-            return Vector3.Distance(p, a + ab * t);
-        }
+        private void PlaySwordClashClang(float volume = 0.95f) { if (_audioSource != null && _clipSwordClash != null) { _audioSource.pitch = UnityEngine.Random.Range(0.92f, 1.08f); _audioSource.PlayOneShot(_clipSwordClash, volume); } }
+        private void PlayWallRicochetClink() { if (_audioSource != null && _clipWallRicochet != null) { _audioSource.pitch = UnityEngine.Random.Range(0.90f, 1.12f); _audioSource.PlayOneShot(_clipWallRicochet, 0.85f); } }
+        private void PlayFleshCleaveHit(bool heavySever) { if (_audioSource != null && _clipFleshCleave != null) { _audioSource.pitch = heavySever ? 0.85f : UnityEngine.Random.Range(0.95f, 1.08f); _audioSource.PlayOneShot(_clipFleshCleave, 0.95f); } }
+        private void PlayDummyStrikeThud(bool guardCrushed) { if (_audioSource != null && _clipDummyThud != null) { _audioSource.pitch = guardCrushed ? 0.82f : UnityEngine.Random.Range(0.94f, 1.06f); _audioSource.PlayOneShot(_clipDummyThud, 0.90f); if (guardCrushed && _clipSwordClash != null) _audioSource.PlayOneShot(_clipSwordClash, 0.65f); } }
+        private static float DistancePointToSegment(Vector3 p, Vector3 a, Vector3 b) { Vector3 ab = b - a; float lenSq = ab.sqrMagnitude; return lenSq < 1e-6f ? Vector3.Distance(p, a) : Vector3.Distance(p, a + ab * Mathf.Clamp01(Vector3.Dot(p - a, ab) / lenSq)); }
 
         private static float SampleGroundY(float worldX, float worldZ, float fallbackY, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
@@ -1428,13 +1000,8 @@ namespace Stratocraft.Character
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - cx * 16, lz = wz - cz * 16;
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
-            {
-                int topY = Stage1InteractivePlayController.MaxEditableVoxelY - 2;
-                for (int y = topY; y >= 1; y--)
-                {
+                for (int y = Stage1InteractivePlayController.MaxEditableVoxelY - 2; y >= 1; y--)
                     if (VoxelBitUtility.IsPhysicallySolid(chunk[(y << 8) | (lz << 4) | lx])) return y + 1.0f;
-                }
-            }
             return fallbackY;
         }
     }

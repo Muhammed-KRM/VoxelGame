@@ -1,8 +1,12 @@
+using System.Collections.Generic;
 using System.Numerics;
 using NUnit.Framework;
 using Stratocraft.Character;
+using Stratocraft.Character.Data;
+using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Math;
+using Stratocraft.CreaturesAI.Pathfinding;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
@@ -525,13 +529,81 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(holster.ActiveDrawnSlot, Is.EqualTo(HolsterSlotIndex.None));
 
             // Yuzen ada (lowestSolidY > 0, YMajorChunk) uzerinde 1 yuzey blogu kirildiginda adanin tamami YIKILMAMALIDIR!
-            voxels[(9 << 8) | (8 << 4) | 8] = 0u;
+            voxels[(96 << 8) | (8 << 4) | 8] = 0u;
             var collapseSys = new StructuralCollapseSystem();
             var islandClusters = new FallingStructureClusterComponent[GreedyBoxFractureJob.MaxCompoundBoxes];
             collapseSys.EvaluateAndFracture(
-                voxels, 16, 30, 16, supportFloorY: 0, Vector3.Zero, Vector3.Zero,
+                voxels, 16, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, 16, supportFloorY: 0, Vector3.Zero, Vector3.Zero,
                 islandClusters, out int islandCollapsed, VoxelGridMemoryLayout.YMajorChunk);
             Assert.That(islandCollapsed, Is.EqualTo(0), "Yuzen adada 1 blok kirildiginda adanin omurgasi cökmemelidir!");
+        }
+
+        [Test]
+        public void Devir025_Continent100x_Depth10x_12Biomes_GroundedAStar_AndOxygenTorch3x_OperateCorrectly()
+        {
+            // 1) 100x Kita Yari Capi (150.000m = 300km x 300km) ve 10x Yeralti Derinligi (160m tavan, 96m yuzey, 4m manto)
+            Assert.That(StratocraftFloatingIslandWorldGen.ContinentMaxRadiusMeters, Is.GreaterThanOrEqualTo(150000.0f));
+            Assert.That(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, Is.GreaterThanOrEqualTo(160));
+            Assert.That(StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY, Is.EqualTo(96));
+            Assert.That(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, Is.EqualTo(4));
+
+            float centerSurfY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(0f, 0f);
+            float crustThickness = centerSurfY - StratocraftFloatingIslandWorldGen.DeepMantleFloorY;
+            Assert.That(crustThickness, Is.GreaterThanOrEqualTo(85.0f),
+                "Kita dikey kabuk kalinligi en az 85m-100m (eski 8.5m kalinligin 10+ kati) olmalidir!");
+
+            // 2) 12 Biyom Cesitliligi (Biyom 0..11)
+            var discoveredBiomes = new HashSet<int>();
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(0f, 0f));            // 0: Zumrut Baslangic Vadisi
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(-96f, 96f));         // 1: Demir Agaci Ormani
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(96f, 96f));          // 2: Karstik Kirectasi Dudenleri
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(96f, -96f));         // 3: Zehirli Turba & Asit Batakligi
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(0f, 650f));          // 4: Kuzey Buzul Siradaglari
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(-96f, -96f));        // 5: Kristal Kanyon
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(-950f, -650f));      // 6: Kizil Kumtasi Kanyonu
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(1400f, -150f));      // 8: Volkanik Kaldera
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(-1200f, 700f));      // 10: Ucan Gokyuzu Adalari
+            discoveredBiomes.Add(StratocraftFloatingIslandWorldGen.GetBiomeId(148500f, 0f));       // 11: Astral Hiclik Ucurumu
+            Assert.That(discoveredBiomes.Count, Is.GreaterThanOrEqualTo(8));
+            Assert.That(discoveredBiomes.Contains(10), Is.True, "Biyom 10 (Ucan Gokyuzu Adalari) algilanmalidir!");
+            Assert.That(discoveredBiomes.Contains(11), Is.True, "148.5km yaricapta Biyom 11 (Astral Hiclik Siniri) algilanmalidir!");
+
+            // 3) Kapali Magara Oksijen BFS Hazirligi ve Mesale 3x Oksijen Tuketimi (Anayasa Bolum 6.5: 1 + 2 * N_fire = 3x)
+            var oxSys = new EnclosedOxygenFloodFillSystem();
+            var vitalsNoTorch = CharacterVitalsComponent.CreateDefault();
+            var vitalsWithTorch = CharacterVitalsComponent.CreateDefault();
+            oxSys.StepOxygen(ref vitalsNoTorch, connectedAirVoxels: 2, isHoldingLitTorch: false, deltaTime: 1.0f);
+            oxSys.StepOxygen(ref vitalsWithTorch, connectedAirVoxels: 2, isHoldingLitTorch: true, deltaTime: 1.0f);
+            float drainNoTorch = 100f - vitalsNoTorch.LungOxygenPercent;
+            float drainWithTorch = 100f - vitalsWithTorch.LungOxygenPercent;
+            Assert.That(drainWithTorch, Is.EqualTo(drainNoTorch * 3.0f).Within(0.01f),
+                "Yanan mesale kapali magarada oksijen tuketim hizini tam 3 katina (1 + 2*N_fire) cikarmalidir!");
+
+            // 4) Grounded Voxel A*: Ucamayan (canFly=false) yaratik boslukta (havada) yuruyemez; ucan (canFly=true) ucabilir
+            var navChunk = new VoxelChunkComponent(0, 0);
+            var floorStone = new VoxelCell(VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0));
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    navChunk.SetVoxel(x, 0, z, floorStone);
+                }
+            }
+            var groundWaypoints = new List<PathNodeCoord>();
+            DestructibleNavSpanAStar.FindPath(
+                navChunk, new PathNodeCoord(1, 1, 1), new PathNodeCoord(6, 5, 6),
+                moveSpeedMps: 4.5f, siegeDps: 50f, isSanctumBoss: false, outPath: groundWaypoints, canFly: false);
+            Assert.That(groundWaypoints.Count, Is.GreaterThan(0));
+            Assert.That(groundWaypoints[groundWaypoints.Count - 1].Y, Is.EqualTo(1),
+                "Ucamayan kara yaratigi (canFly=false) y=5 bosluguna havada yuruyerek tirmanamaz, y=1 zemininde kalir!");
+
+            var flyWaypoints = new List<PathNodeCoord>();
+            bool flyerCanReachMidAir = DestructibleNavSpanAStar.FindPath(
+                navChunk, new PathNodeCoord(1, 1, 1), new PathNodeCoord(6, 5, 6),
+                moveSpeedMps: 8.5f, siegeDps: 50f, isSanctumBoss: false, outPath: flyWaypoints, canFly: true);
+            Assert.That(flyerCanReachMidAir, Is.True);
+            Assert.That(flyWaypoints[flyWaypoints.Count - 1].Y, Is.EqualTo(5),
+                "Ucan yaratik (canFly=true) 3B boslukta y=5 noktasina dogrudan ucabilir!");
         }
     }
 }

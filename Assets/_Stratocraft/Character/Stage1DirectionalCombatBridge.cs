@@ -39,29 +39,24 @@ namespace Stratocraft.Character
     /// <summary>Oyuncunun sağ tık (RMB) bloğuna gelen bir saldırının fiziksel çözümleme sonucu.</summary>
     public enum ParryResolutionOutcome : byte
     {
-        SolidParry = 0,          // Standart başarılı blok (kıvılcım + Riposte penceresi)
-        MasterDeflect = 1,       // Son anda ters/çapraz yöne saptırma (Ağır saldırıyı bile sıfır hasarla yana saptırır + 2.1x Kontra!)
-        GuardCrushedByMass = 2,  // Saldırı gücü/ağırlığı sabit bloğu yardı! (Örn. Ağır kılıcı ince Rapier ile düz bloklamaya çalışmak)
-        MismatchedSelfRecoil = 3 // Tek el uyumsuz stilde ağır silah tutarken blok kırılması
+        SolidParry = 0,
+        MasterDeflect = 1,
+        GuardCrushedByMass = 2,
+        MismatchedSelfRecoil = 3
     }
 
     /// <summary>Oyuncunun kılıcı düşman bloğuna çarptığında oluşan fiziksel tepki tipi.</summary>
     public enum PlayerBlockedReactionType : byte
     {
-        CrushedEnemyBlock = 0,  // Oyuncunun ağır/ivmeli kılıcı düşmanın bloğunu YARDI! (Kılıç durmaz, kıvılcımla ezip geçer!)
-        GlancingDeflection = 1, // Oyuncunun kılıcı blok yüzeyinden YANA / AŞAĞI SAPTIRILDI (Yön sapması + omuz savrulması!)
-        HardReboundBounce = 2   // Oyuncunun kılıcı sert bloğa çarpıp GERİ SEKTİ (Ters yöne yaylanma + bilek sarsıntısı!)
+        CrushedEnemyBlock = 0,
+        GlancingDeflection = 1,
+        HardReboundBounce = 2
     }
 
     /// <summary>
-    /// Paket 6 &amp; 7 (%100 Fiziksel Guard-Konumlu Balistik Savurma + Silah x Dövüş Stili Matrisi + Zıpla-Vur):
-    /// <list type="bullet">
-    /// <item>Kılıç ortada ileri doğru durmaz; seçili Dojo stilinin doğal Guard duruşunda veya Sağ Tık (<c>RMB</c>) ile indirilen/kaldırılan Guard açısında tutulur.</item>
-    /// <item>Sağ Tık (<c>RMB</c>) + Fare ile kılıcın Guard konumu 360° (aşağı indirme dahil, ucu gerçekten aşağı döner!) ayarlanır ve fiziksel blok (<c>Parry</c>) tutulur.</item>
-    /// <item>Sağ Tık (<c>RMB</c>) ile kılıcı önceden kesik başlangıç yönüne (örn. aşağıya) indirip Sol Tık (<c>LMB</c>) ile yukarı kesik atmak <b>0 ms gecikme + 1.38x Ön-Kurumlu Hız Bonusu</b> verir!</item>
-    /// <item>Kesim sırasında kamera omuz dönüşüyle yalnızca doğal ve yumuşak (~4°-6°) takip eder; kesim bittiğinde asla ani kamera atlaması yapmaz.</item>
-    /// <item>Zıplayarak vurma (<c>Jump-Strike / Hava Darbesi</c>) sırasında vuruş düzlemi otomatik olarak yerdeki hedefe eğilir ve %40 ek darbe gücü uygular.</item>
-    /// </list>
+    /// Paket 6 &amp; 7 — 240 Hz Fiziksel Guard-Konumlu Balistik Savurma, Gerçek Ağız Hizalaması (Flat-Blade Slap),
+    /// Kamera Debriyajı (1-Euro Filter), Aldatma İptali (Feint [Q]), Saplama Morph ([ScrollUp]),
+    /// Fiziksel Tekme ([F]) / Kabza Darbesi ([RMB+F]), Parry Spam Sönümü ve Stamina Entegrasyonu.
     /// </summary>
     public sealed class Stage1DirectionalCombatBridge
     {
@@ -70,6 +65,7 @@ namespace Stratocraft.Character
         public const float DefaultHiltMassKg = 0.45f;
         public const float DefaultHiltRadiusMeters = 0.14f;
         public const int BladeSamplePointCount = 5;
+        public const float KickRangeMeters = 1.85f;
 
         public static float ComputeWeaponMomentOfInertia(
             float bladeMassKg = DefaultBladeMassKg,
@@ -98,55 +94,45 @@ namespace Stratocraft.Character
         private Vector2 _slashEndAnglesRad;
         private Vector2 _slashDirUnit;
         private BallisticSlashPhase _slashPhase = BallisticSlashPhase.IdleInGuard;
-        private float _rechamberTimer;
-        private float _rechamberDuration = 0.16f;
-        private float _slashProgress01;
-        private float _activeSlashDuration = 0.22f;
-        private float _cleaveDragTimer;
-        private float _overswingStaggerTimer;
-        private float _guardBreakTimer;
-        private float _edgeRollRad;
-        private float _edgeAlignment01 = 1.0f;
-        private float _thrustExtensionMeters;
-        private float _smoothedArmReachZ;
-        private float _wallRecoilCooldown;
+        private float _rechamberTimer, _rechamberDuration = 0.16f;
+        private float _slashProgress01, _activeSlashDuration = 0.22f;
+        private float _cleaveDragTimer, _overswingStaggerTimer, _guardBreakTimer;
+        private float _edgeRollRad, _edgeAlignment01 = 1.0f;
+        private float _thrustExtensionMeters, _smoothedArmReachZ, _wallRecoilCooldown;
         private float _lastStepDt = 0.016f;
-        private bool _isParryStance;
-        private bool _isThrustMode;
-        private float _prevClutchCamYawRad;
-        private float _prevClutchCamPitchRad;
-        private float _postSwingClutchGraceTimer;
+        private bool _isParryStance, _isThrustMode;
+        private float _prevClutchCamYawRad, _prevClutchCamPitchRad, _postSwingClutchGraceTimer;
         private float _preChamberWindowTimer;
-        private bool _lastSlashWasPreChambered;
-        private bool _isPlayerAirborne;
-        private float _playerVerticalVelocity;
+        private bool _lastSlashWasPreChambered, _isPlayerAirborne, _lastStepIsMismatched;
+        private float _playerVerticalVelocity, _lastCameraPitchDeg;
         private int _builtMeshArchetypeId = -1;
-        private float _postSwingRecoveryTimer;
-        private float _hitStopTimer;
-        private float _riposteWindowTimer;
+        private float _postSwingRecoveryTimer, _hitStopTimer, _riposteWindowTimer;
+        private float _postSlashHoldBeforeVerticalTimer;
         private int _momentumChainCount;
         private float _momentumChainWindowTimer;
         private float _iaidoSheatheCharge01 = 1.0f;
-        private bool _lastSlashWasIaidoCharged;
-        private bool _lastSlashWasRiposte;
+        private bool _lastSlashWasIaidoCharged, _lastSlashWasRiposte;
         private bool _hasPendingSwingWhoosh;
-        private float _pendingWhooshMassKg = 1.85f;
-        private float _pendingWhooshSpeedMult = 1.0f;
+        private float _pendingWhooshMassKg = 1.85f, _pendingWhooshSpeedMult = 1.0f;
         private bool _hasPendingWallRicochet;
         private Vector3 _pendingWallHitWorldPos;
         private byte _pendingWallHitMaterialId;
         private float _pendingWallImpactSpeedMps;
         private Vector3 _bodyMomentumLocalVel;
-        private float _deflectFlickTimer;
+        private float _deflectFlickTimer, _deflectFlickSpeed;
         private Vector2 _deflectFlickDirUnit;
-        private float _deflectFlickSpeed;
-        private Vector3 _wristRecoilOffset;
-        private Vector3 _wristRecoilVelocity;
+        private Vector3 _wristRecoilOffset, _wristRecoilVelocity;
         private Vector2 _cameraImpactKickDeg;
-        private float _gripBreathPhase;
-        private float _reboundTimer;
+        private float _gripBreathPhase, _reboundTimer;
         private Vector2 _reboundVelRad;
         private float _peakSlashMouseFlickMag;
+
+        // Parry Spam Sönümü (300ms * 0.5^N_spam) & Feint / Morph / Kick / Bash durumları
+        private bool _wasHoldingRmbLastStep;
+        private float _parrySpamDecayTimer;
+        private int _parrySpamCount;
+        private float _kickActiveTimer, _kickCooldownTimer;
+        private bool _isPommelBashActive;
 
         public CombatWeaponArchetype ActiveWeaponArchetype { get; private set; } = CombatWeaponArchetype.Longsword;
         public Vector3 PendingBodyMomentumLocalVel => _bodyMomentumLocalVel;
@@ -177,12 +163,9 @@ namespace Stratocraft.Character
         public bool IsAerialJumpStrike { get; private set; }
         public float StatusBannerHighlightTimer { get; private set; }
 
-        /// <summary>Fiziksel alet (Kazma/Balta) savurması sırasında bir voksel bloğa çarptı mı?</summary>
         public bool HasPendingToolVoxelHit { get; private set; }
         public Vector3Int PendingToolVoxelHitCoord { get; private set; }
         public float PendingToolImpactPower { get; private set; }
-
-        /// <summary>Uyumsuz stil x ağır silah blok kırılması sırasında oyuncunun kendi kendine aldığı geri tepme hasarı.</summary>
         public float PendingSelfRecoilDamage { get; private set; }
 
         public bool IsClutchEngaged { get; private set; }
@@ -196,6 +179,7 @@ namespace Stratocraft.Character
         public float CurrentThrustExtensionMeters => _thrustExtensionMeters;
         public float CurrentAngularSpeedRadPerSec => _angularVelocityRadPerSec.magnitude;
         public float EdgeAlignment01 => _edgeAlignment01;
+        public bool IsFlatBladeSlap => _edgeAlignment01 <= 0.45f;
         public Vector2 CurrentBladeAnglesRad => _currentBladeAnglesRad;
         public Vector2 AngularVelocityVec => _angularVelocityRadPerSec;
         public ReadOnlySpan<Vector3> PrevBladeWorldPoints => _prevBladeWorldPoints;
@@ -203,8 +187,23 @@ namespace Stratocraft.Character
         public bool AreBladePointsValid => _bladePointsInitialized;
         public CameraClutchController ClutchController => _clutch;
 
+        // Task 3: Feint [Q], Morph [ScrollUp], Kick [F], Pommel Bash [RMB+F], Parry Spam & Stamina
+        public bool IsFeintTriggeredLastFrame { get; private set; }
+        public bool IsMorphTriggeredLastFrame { get; private set; }
+        public bool IsCombatConsumingScrollOrQ => _slashPhase != BallisticSlashPhase.IdleInGuard || _isParryStance || _isThrustMode;
+        public bool IsKickActive => _kickActiveTimer > 0f && !_isPommelBashActive;
+        public bool IsPommelBashActive => _kickActiveTimer > 0f && _isPommelBashActive;
+        public bool IsKickOrBashActive => _kickActiveTimer > 0f;
+        public int CurrentKickOrBashId { get; private set; }
+        public int ParrySpamCount => _parrySpamCount;
+        public float CurrentDeflectWindowDuration =>
+            _parrySpamCount <= 0 ? 0.28f : Mathf.Clamp(0.30f * Mathf.Pow(0.5f, _parrySpamCount), 0.10f, 0.28f);
+        public float PendingStaminaCost { get; set; }
+        public bool IsPlayerExhaustedLock { get; set; }
+        public bool IsPlayerHypothermic { get; set; }
+
         public string LastCombatActionText { get; set; } =
-            "Guard Duruşu Hazır (RMB+Fare: Kılıcı Aşağı/Yukarı/Yana Konumla & Blok | LMB+Fare: Kesik | [1]/[F8]: Kılıç | [G]: Stil)";
+            "Guard Duruşu Hazır (RMB+Fare: Kılıcı Konumla & Blok | LMB+Fare: Kesik | [Q]: Feint | [ScrollUp]: Morph | [F]: Tekme)";
 
         public static void GetWeaponStats(
             CombatWeaponArchetype archetype,
@@ -217,27 +216,19 @@ namespace Stratocraft.Character
             {
                 case CombatWeaponArchetype.Greatsword:
                     displayName = "Ağır Kılıç (Zweihänder 5.6kg)";
-                    massKg = 5.60f;
-                    bladeLengthM = 1.42f;
-                    visualScale = new Vector3(1.38f, 1.44f, 1.32f);
+                    massKg = 5.60f; bladeLengthM = 1.42f; visualScale = new Vector3(1.38f, 1.44f, 1.32f);
                     break;
                 case CombatWeaponArchetype.Rapier:
                     displayName = "İnce Eskrim Kılıcı (Rapier 0.95kg)";
-                    massKg = 0.95f;
-                    bladeLengthM = 1.22f;
-                    visualScale = new Vector3(0.75f, 1.24f, 0.75f);
+                    massKg = 0.95f; bladeLengthM = 1.22f; visualScale = new Vector3(0.75f, 1.24f, 0.75f);
                     break;
                 case CombatWeaponArchetype.Katana:
                     displayName = "Katana (Kavisli Samuray 1.35kg)";
-                    massKg = 1.35f;
-                    bladeLengthM = 1.12f;
-                    visualScale = new Vector3(0.92f, 1.14f, 0.94f);
+                    massKg = 1.35f; bladeLengthM = 1.12f; visualScale = new Vector3(0.92f, 1.14f, 0.94f);
                     break;
                 default:
                     displayName = "Uzun Kılıç (Longsword 1.85kg)";
-                    massKg = 1.85f;
-                    bladeLengthM = 1.10f;
-                    visualScale = new Vector3(1.0f, 1.0f, 1.0f);
+                    massKg = 1.85f; bladeLengthM = 1.10f; visualScale = new Vector3(1.0f, 1.0f, 1.0f);
                     break;
             }
         }
@@ -255,8 +246,8 @@ namespace Stratocraft.Character
         {
             CombatMartialStance.HighGuard_VomTag => "YETENEK: Blok/Çarpışma sonrası 1.6sn KUSURSUZ KONTRA (Riposte: 0ms, 1.55x Hız, 1.85x Hasar)",
             CombatMartialStance.Iaido_QuickDraw => "YETENEK: Kında 0.6sn şarj -> IAIJUTSU ŞİMŞEK KESİĞİ (+0.55m Menzil, 1.75x Hız, 1.60x Kesik)",
-            CombatMartialStance.Fencing_Punta => "YETENEK: İĞNE HAMLESİ (LMB+İleri veya LMB+RMB: +0.82m Zırh Delici Saplama & Oto-Parry)",
-            CombatMartialStance.TwoHand_Juggernaut => "YETENEK: KASIRGA ZİNCİRİ (Arka arkaya ters kesikte 0sn bekleme, 3x Kombo) + BLOK YARMA (%60 Delme)",
+            CombatMartialStance.Fencing_Punta => "YETENEK: İĞNE HAMLESİ (LMB+İleri veya ScrollUp Morph: +0.82m Zırh Delici Saplama)",
+            CombatMartialStance.TwoHand_Juggernaut => "YETENEK: KASIRGA ZİNCİRİ (Arka arkaya ters kesikte 0sn bekleme, 3x Kombo) + BLOK YARMA",
             _ => string.Empty
         };
 
@@ -277,8 +268,7 @@ namespace Stratocraft.Character
             }
 
             Vector2 g = _currentBladeAnglesRad;
-            string vert = g.y < -0.22f ? "AŞAĞI (Alt Guard - Yukarı Hızlı Kesik Hazır)" :
-                          (g.y > 0.35f ? "YUKARI (Üst Guard - Aşağı Hızlı Kesik Hazır)" : "ORTA");
+            string vert = g.y < -0.22f ? "AŞAĞI (Alt Guard)" : (g.y > 0.35f ? "YUKARI (Üst Guard)" : "ORTA");
             string horiz = g.x < -0.25f ? "SOL" : (g.x > 0.25f ? "SAĞ" : "MERKEZ");
             string extra = _riposteWindowTimer > 0f
                 ? $" [⚡ RIPOSTE HAZIR: {_riposteWindowTimer:F1}s!]"
@@ -288,18 +278,13 @@ namespace Stratocraft.Character
 
         public static Vector2 GetDefaultStanceGuardAngles(CombatMartialStance stance) => stance switch
         {
-            CombatMartialStance.HighGuard_VomTag => new Vector2(0.24f, 0.88f),
+            CombatMartialStance.HighGuard_VomTag => new Vector2(0.16f, 0.96f),
             CombatMartialStance.Iaido_QuickDraw => new Vector2(-0.88f, -0.64f),
             CombatMartialStance.Fencing_Punta => new Vector2(0.08f, 0.14f),
-            // Juggernaut: Şövalye (HighGuard sağ-dik) ile asla karışmaması için Sol-Üst Baş Üstü (Zornhau) çapraz kurulum!
-            CombatMartialStance.TwoHand_Juggernaut => new Vector2(-0.84f, 0.74f),
-            _ => new Vector2(0.24f, 0.88f)
+            CombatMartialStance.TwoHand_Juggernaut => new Vector2(-0.18f, 0.96f),
+            _ => new Vector2(0.16f, 0.96f)
         };
 
-        /// <summary>
-        /// Silah x Stil uyumluluğunu, aşırı yük oranını (<c>overloadRatio</c>), yerçekimi uç sarkmasını (<c>tipDroopRad</c>)
-        /// ve hız/hasar çarpanlarını hesaplar.
-        /// </summary>
         public void EvaluateWeaponStanceCompatibility(
             bool playerMissingArm,
             out float speedMultiplier,
@@ -316,8 +301,6 @@ namespace Stratocraft.Character
 
             if (overload > 1.35f)
             {
-                // Ağır Kılıç + Eskrim/Iaido (veya tek kolu kopuk oyuncu):
-                // 1) Silahın ucu ağırlıktan aşağı sarkar, 2) Hazırlık/savurma 2.5x uzar, 3) Yeterli hız kazanamaz (%35 hasar).
                 isSeverelyMismatched = true;
                 speedMultiplier = Mathf.Clamp(1.0f / overload, 0.36f, 0.55f);
                 damageMultiplier = 0.35f;
@@ -331,96 +314,38 @@ namespace Stratocraft.Character
             switch (ActiveMartialStance)
             {
                 case CombatMartialStance.HighGuard_VomTag:
-                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword)
-                    {
-                        speedMultiplier = 1.22f;
-                        damageMultiplier = 1.28f;
-                    }
-                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword)
-                    {
-                        // 5.6kg Zweihänder dik şövalye siperinde hantal kalır; onun uzman stili Çift El Yarma (Juggernaut)!
-                        speedMultiplier = 0.74f;
-                        damageMultiplier = 0.88f;
-                        tipDroopRad = -0.18f;
-                    }
-                    else
-                    {
-                        speedMultiplier = 1.02f;
-                        damageMultiplier = 1.00f;
-                    }
+                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword) { speedMultiplier = 1.22f; damageMultiplier = 1.28f; }
+                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword) { speedMultiplier = 0.74f; damageMultiplier = 0.88f; tipDroopRad = -0.05f; }
+                    else { speedMultiplier = 1.02f; damageMultiplier = 1.00f; }
                     break;
-
                 case CombatMartialStance.Iaido_QuickDraw:
-                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Katana)
-                    {
-                        speedMultiplier = 1.68f;
-                        damageMultiplier = 1.48f;
-                    }
-                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword)
-                    {
-                        speedMultiplier = 0.92f;
-                        damageMultiplier = 0.90f;
-                    }
-                    else
-                    {
-                        speedMultiplier = 1.05f;
-                        damageMultiplier = 0.85f;
-                    }
+                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Katana) { speedMultiplier = 1.68f; damageMultiplier = 1.48f; }
+                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword) { speedMultiplier = 0.92f; damageMultiplier = 0.90f; }
+                    else { speedMultiplier = 1.05f; damageMultiplier = 0.85f; }
                     break;
-
                 case CombatMartialStance.Fencing_Punta:
-                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Rapier)
-                    {
-                        speedMultiplier = 1.52f;
-                        damageMultiplier = _isThrustMode ? 1.95f : 0.88f;
-                    }
-                    else
-                    {
-                        speedMultiplier = 0.88f;
-                        damageMultiplier = _isThrustMode ? 1.18f : 0.78f;
-                    }
+                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Rapier) { speedMultiplier = 1.52f; damageMultiplier = _isThrustMode ? 1.95f : 0.88f; }
+                    else { speedMultiplier = 0.88f; damageMultiplier = _isThrustMode ? 1.18f : 0.78f; }
                     break;
-
                 case CombatMartialStance.TwoHand_Juggernaut:
-                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword)
-                    {
-                        speedMultiplier = 1.25f;
-                        damageMultiplier = 1.75f;
-                    }
-                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword)
-                    {
-                        speedMultiplier = 1.12f;
-                        damageMultiplier = 1.32f;
-                    }
-                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Rapier)
-                    {
-                        // İncecik eskrim kılıcıyla iki el ağır yarma yapmaya çalışmak verimsizdir!
-                        speedMultiplier = 0.95f;
-                        damageMultiplier = 0.55f;
-                    }
-                    else
-                    {
-                        speedMultiplier = 1.08f;
-                        damageMultiplier = 1.18f;
-                    }
+                    if (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword) { speedMultiplier = 1.25f; damageMultiplier = 1.75f; }
+                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Longsword) { speedMultiplier = 1.12f; damageMultiplier = 1.32f; }
+                    else if (ActiveWeaponArchetype == CombatWeaponArchetype.Rapier) { speedMultiplier = 0.95f; damageMultiplier = 0.55f; }
+                    else { speedMultiplier = 1.08f; damageMultiplier = 1.18f; }
                     break;
-
                 default:
-                    speedMultiplier = 1.0f;
-                    damageMultiplier = 1.0f;
+                    speedMultiplier = 1.0f; damageMultiplier = 1.0f;
                     break;
             }
 
-            if (_riposteWindowTimer > 0f)
-            {
-                speedMultiplier *= 1.45f;
-                damageMultiplier *= 1.65f;
-            }
+            if (_riposteWindowTimer > 0f) { speedMultiplier *= 1.45f; damageMultiplier *= 1.65f; }
             if (_momentumChainCount > 0 && ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut)
             {
                 speedMultiplier *= (1.0f + 0.16f * _momentumChainCount);
                 damageMultiplier *= (1.0f + 0.22f * _momentumChainCount);
             }
+            if (IsPlayerHypothermic) speedMultiplier *= 0.80f;
+            if (IsPlayerExhaustedLock) speedMultiplier *= 0.55f;
         }
 
         public void CycleMartialStance()
@@ -428,7 +353,9 @@ namespace Stratocraft.Character
             ActiveMartialStance = (CombatMartialStance)(((int)ActiveMartialStance + 1) % 4);
             _guardAnglesRad = GetDefaultStanceGuardAngles(ActiveMartialStance);
             _targetWristAnglesRad = _guardAnglesRad;
-            _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _guardAnglesRad, 0.55f);
+            _currentBladeAnglesRad = _guardAnglesRad;
+            _postSlashHoldBeforeVerticalTimer = 0f;
+            _preChamberWindowTimer = 0f;
             _slashPhase = BallisticSlashPhase.IdleInGuard;
             _momentumChainCount = 0;
             _iaidoSheatheCharge01 = ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw ? 1.0f : 0f;
@@ -486,10 +413,6 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>
-        /// 4 Kılıç arketipi için birbirinden tamamen farklı, karakterin elinde anında ayırt edilen
-        /// prosedürel 3B namlu + balçak (crossguard / tsuba / cup-hilt) + kabza geometrisi üretir.
-        /// </summary>
         public static void RebuildWeaponArchetypeVisualMesh(Transform weaponPivot, CombatWeaponArchetype archetype)
         {
             MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
@@ -499,33 +422,23 @@ namespace Stratocraft.Character
             var colors = new List<Color32>(128);
             var tris = new List<int>(256);
 
-            static void AddBox(
-                List<Vector3> v, List<Color32> c, List<int> t,
-                Vector3 center, Vector3 halfExtents, Color32 bottomCol, Color32 topCol)
+            static void AddBox(List<Vector3> v, List<Color32> c, List<int> t, Vector3 center, Vector3 he, Color32 bCol, Color32 tCol)
             {
                 int b = v.Count;
-                Vector3 p000 = center + new Vector3(-halfExtents.x, -halfExtents.y, -halfExtents.z);
-                Vector3 p100 = center + new Vector3(halfExtents.x, -halfExtents.y, -halfExtents.z);
-                Vector3 p101 = center + new Vector3(halfExtents.x, -halfExtents.y, halfExtents.z);
-                Vector3 p001 = center + new Vector3(-halfExtents.x, -halfExtents.y, halfExtents.z);
-                Vector3 p010 = center + new Vector3(-halfExtents.x, halfExtents.y, -halfExtents.z);
-                Vector3 p110 = center + new Vector3(halfExtents.x, halfExtents.y, -halfExtents.z);
-                Vector3 p111 = center + new Vector3(halfExtents.x, halfExtents.y, halfExtents.z);
-                Vector3 p011 = center + new Vector3(-halfExtents.x, halfExtents.y, halfExtents.z);
-
-                v.Add(p000); v.Add(p100); v.Add(p101); v.Add(p001);
-                v.Add(p010); v.Add(p110); v.Add(p111); v.Add(p011);
-                for (int i = 0; i < 4; i++) c.Add(bottomCol);
-                for (int i = 0; i < 4; i++) c.Add(topCol);
-
-                int[] idx =
+                v.Add(center + new Vector3(-he.x, -he.y, -he.z));
+                v.Add(center + new Vector3(he.x, -he.y, -he.z));
+                v.Add(center + new Vector3(he.x, -he.y, he.z));
+                v.Add(center + new Vector3(-he.x, -he.y, he.z));
+                v.Add(center + new Vector3(-he.x, he.y, -he.z));
+                v.Add(center + new Vector3(he.x, he.y, -he.z));
+                v.Add(center + new Vector3(he.x, he.y, he.z));
+                v.Add(center + new Vector3(-he.x, he.y, he.z));
+                for (int i = 0; i < 4; i++) c.Add(bCol);
+                for (int i = 0; i < 4; i++) c.Add(tCol);
+                ReadOnlySpan<int> idx = stackalloc int[36]
                 {
-                    0,4,5, 0,5,1,
-                    1,5,6, 1,6,2,
-                    2,6,7, 2,7,3,
-                    3,7,4, 3,4,0,
-                    4,7,6, 4,6,5,
-                    3,0,1, 3,1,2
+                    0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3,
+                    3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2
                 };
                 for (int i = 0; i < idx.Length; i++) t.Add(b + idx[i]);
             }
@@ -534,119 +447,73 @@ namespace Stratocraft.Character
             {
                 case CombatWeaponArchetype.Greatsword:
                 {
-                    // ZWEIHÄNDER / AĞIR KILIÇ: Uzun çift el kabza, geniş kanatlı balçak, namlu üzerinde 2 adet "Parierdolche" (parrying hooks) ve kalın koyu çelik namlu
-                    Color32 gripCol = new Color32(75, 42, 24, 255);
-                    Color32 brassCol = new Color32(196, 158, 62, 255);
-                    Color32 darkSteel = new Color32(118, 126, 142, 255);
-                    Color32 brightEdge = new Color32(215, 224, 238, 255);
-
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.22f, 0f), new Vector3(0.036f, 0.036f, 0.036f), brassCol, brassCol); // Pommel
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.09f, 0f), new Vector3(0.022f, 0.11f, 0.022f), gripCol, gripCol);     // 2H Grip
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.03f, 0f), new Vector3(0.22f, 0.018f, 0.026f), brassCol, brassCol);    // Wide Crossguard
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.14f, 0f), new Vector3(0.036f, 0.09f, 0.014f), gripCol, darkSteel);    // Ricasso (deri sarılı)
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.24f, 0f), new Vector3(0.13f, 0.014f, 0.018f), brassCol, brassCol);    // Parrying Lugs (Parierdolche)
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.56f, 0f), new Vector3(0.044f, 0.31f, 0.012f), darkSteel, brightEdge); // Heavy Lower Blade
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.94f, 0f), new Vector3(0.030f, 0.12f, 0.009f), brightEdge, brightEdge);// Upper Tip
+                    Color32 gripCol = new(75, 42, 24, 255), brassCol = new(196, 158, 62, 255), darkSteel = new(118, 126, 142, 255), brightEdge = new(215, 224, 238, 255);
+                    AddBox(verts, colors, tris, new(0f, -0.22f, 0f), new(0.036f, 0.036f, 0.036f), brassCol, brassCol);
+                    AddBox(verts, colors, tris, new(0f, -0.09f, 0f), new(0.022f, 0.11f, 0.022f), gripCol, gripCol);
+                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.22f, 0.018f, 0.026f), brassCol, brassCol);
+                    AddBox(verts, colors, tris, new(0f, 0.14f, 0f), new(0.036f, 0.09f, 0.014f), gripCol, darkSteel);
+                    AddBox(verts, colors, tris, new(0f, 0.24f, 0f), new(0.13f, 0.014f, 0.018f), brassCol, brassCol);
+                    AddBox(verts, colors, tris, new(0f, 0.56f, 0f), new(0.044f, 0.31f, 0.012f), darkSteel, brightEdge);
+                    AddBox(verts, colors, tris, new(0f, 0.94f, 0f), new(0.030f, 0.12f, 0.009f), brightEdge, brightEdge);
                     break;
                 }
                 case CombatWeaponArchetype.Rapier:
                 {
-                    // RAPIER / ESKRİM KILICI: Çan/Kupa siperlik (Cup-Hilt), parmak koruma halkası (Knuckle-bow) ve iğne gibi ince parlak namlu
-                    Color32 gripCol = new Color32(115, 28, 36, 255);
-                    Color32 silverCup = new Color32(220, 228, 240, 255);
-                    Color32 goldTrim = new Color32(238, 196, 78, 255);
-                    Color32 needleBlade = new Color32(235, 244, 255, 255);
-
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.15f, 0f), new Vector3(0.026f, 0.026f, 0.026f), goldTrim, goldTrim);   // Pommel
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.05f, 0f), new Vector3(0.015f, 0.08f, 0.015f), gripCol, gripCol);      // Grip
-                    AddBox(verts, colors, tris, new Vector3(0.055f, -0.04f, 0f), new Vector3(0.010f, 0.08f, 0.012f), goldTrim, goldTrim);// Knuckle-bow
-                    // Cup-Hilt (Çan/Kupa Koruyucu)
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.05f, 0f), new Vector3(0.095f, 0.042f, 0.095f), goldTrim, silverCup);
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.03f, 0f), new Vector3(0.14f, 0.010f, 0.014f), goldTrim, goldTrim);     // Swept Quillons
-                    // İnce uzun elmas kesitli iğne namlu
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.56f, 0f), new Vector3(0.012f, 0.48f, 0.010f), silverCup, needleBlade);
+                    Color32 gripCol = new(115, 28, 36, 255), silverCup = new(220, 228, 240, 255), goldTrim = new(238, 196, 78, 255), needleBlade = new(235, 244, 255, 255);
+                    AddBox(verts, colors, tris, new(0f, -0.15f, 0f), new(0.026f, 0.026f, 0.026f), goldTrim, goldTrim);
+                    AddBox(verts, colors, tris, new(0f, -0.05f, 0f), new(0.015f, 0.08f, 0.015f), gripCol, gripCol);
+                    AddBox(verts, colors, tris, new(0.055f, -0.04f, 0f), new(0.010f, 0.08f, 0.012f), goldTrim, goldTrim);
+                    AddBox(verts, colors, tris, new(0f, 0.05f, 0f), new(0.095f, 0.042f, 0.095f), goldTrim, silverCup);
+                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.14f, 0.010f, 0.014f), goldTrim, goldTrim);
+                    AddBox(verts, colors, tris, new(0f, 0.56f, 0f), new(0.012f, 0.48f, 0.010f), silverCup, needleBlade);
                     break;
                 }
                 case CombatWeaponArchetype.Katana:
                 {
-                    // KATANA: Yuvarlak Tsuba (balçak), siyah-kırmızı Tsuka (kabza) ve kavisli (Sori) tek ağızlı parlak Hamon namlu!
-                    Color32 tsukaCol = new Color32(34, 30, 42, 255);
-                    Color32 wrapRed = new Color32(168, 36, 42, 255);
-                    Color32 tsubaGold = new Color32(188, 152, 64, 255);
-                    Color32 muneDark = new Color32(95, 106, 122, 255);
-                    Color32 hamonBright = new Color32(242, 248, 255, 255);
-
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.11f, 0f), new Vector3(0.018f, 0.11f, 0.022f), tsukaCol, wrapRed);     // Tsuka handle
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.02f, 0f), new Vector3(0.068f, 0.008f, 0.068f), tsubaGold, tsubaGold);  // Circular Tsuba disc
-
-                    // Kavisli (Sori) 5 segmentli namlu
-                    int segs = 5;
-                    float totalLen = 0.96f;
-                    float segLen = totalLen / segs;
+                    Color32 tsukaCol = new(34, 30, 42, 255), wrapRed = new(168, 36, 42, 255), tsubaGold = new(188, 152, 64, 255), muneDark = new(95, 106, 122, 255), hamonBright = new(242, 248, 255, 255);
+                    AddBox(verts, colors, tris, new(0f, -0.11f, 0f), new(0.018f, 0.11f, 0.022f), tsukaCol, wrapRed);
+                    AddBox(verts, colors, tris, new(0f, 0.02f, 0f), new(0.068f, 0.008f, 0.068f), tsubaGold, tsubaGold);
+                    const int segs = 5;
+                    float segLen = 0.96f / segs;
                     for (int s = 0; s < segs; s++)
                     {
                         float t01 = (s + 0.5f) / segs;
-                        float yCenter = 0.04f + (s + 0.5f) * segLen;
-                        // Kavis (Z ekseninde ileri/keskin tarafa doğru Sori eğimi)
-                        float curveZ = t01 * t01 * 0.075f;
-                        float halfW = Mathf.Lerp(0.014f, 0.008f, t01);
-                        float halfD = Mathf.Lerp(0.024f, 0.015f, t01);
                         AddBox(verts, colors, tris,
-                            new Vector3(0f, yCenter, curveZ),
-                            new Vector3(halfW, segLen * 0.52f, halfD),
+                            new(0f, 0.04f + (s + 0.5f) * segLen, t01 * t01 * 0.075f),
+                            new(Mathf.Lerp(0.014f, 0.008f, t01), segLen * 0.52f, Mathf.Lerp(0.024f, 0.015f, t01)),
                             muneDark, hamonBright);
                     }
                     break;
                 }
                 default:
                 {
-                    // LONGSWORD / UZUN ŞÖVALYE KILICI: Dengeli gümüş çelik çift ağızlı namlu, altın haç balçak ve yuvarlak pommel
-                    Color32 gripCol = new Color32(92, 54, 30, 255);
-                    Color32 goldGuard = new Color32(212, 174, 72, 255);
-                    Color32 steelBase = new Color32(175, 186, 204, 255);
-                    Color32 steelTip = new Color32(236, 242, 252, 255);
-
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.16f, 0f), new Vector3(0.030f, 0.028f, 0.030f), goldGuard, goldGuard); // Pommel
-                    AddBox(verts, colors, tris, new Vector3(0f, -0.06f, 0f), new Vector3(0.019f, 0.08f, 0.019f), gripCol, gripCol);      // Leather Grip
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.03f, 0f), new Vector3(0.15f, 0.015f, 0.022f), goldGuard, goldGuard);   // Crossguard
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.44f, 0f), new Vector3(0.032f, 0.39f, 0.010f), steelBase, steelTip);    // Main Blade
-                    AddBox(verts, colors, tris, new Vector3(0f, 0.90f, 0f), new Vector3(0.020f, 0.09f, 0.008f), steelTip, steelTip);     // Pointed Tip
+                    Color32 gripCol = new(92, 54, 30, 255), goldGuard = new(212, 174, 72, 255), steelBase = new(175, 186, 204, 255), steelTip = new(236, 242, 252, 255);
+                    AddBox(verts, colors, tris, new(0f, -0.16f, 0f), new(0.030f, 0.028f, 0.030f), goldGuard, goldGuard);
+                    AddBox(verts, colors, tris, new(0f, -0.06f, 0f), new(0.019f, 0.08f, 0.019f), gripCol, gripCol);
+                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.15f, 0.015f, 0.022f), goldGuard, goldGuard);
+                    AddBox(verts, colors, tris, new(0f, 0.44f, 0f), new(0.032f, 0.39f, 0.010f), steelBase, steelTip);
+                    AddBox(verts, colors, tris, new(0f, 0.90f, 0f), new(0.020f, 0.09f, 0.008f), steelTip, steelTip);
                     break;
                 }
             }
 
-            // =========================================================================================
-            // KABZAYI KAVRAYAN 3B ZIRHLI ELDİVENLER VE ÖN-KOL (GAUNTLETS & FOREARM BRACERS):
-            // Kılıcın FPS/TPS'de havada kendi kendine uçuyormuş gibi görünmesini tamamen bitirir;
-            // sağ başat el (ve çift elli/orta kılıçlarda sol yardımcı el) kabzayı fiziksel olarak kavrar!
-            // =========================================================================================
-            Color32 leatherGlove = new Color32(74, 46, 28, 255);
-            Color32 leatherDark = new Color32(48, 30, 18, 255);
-            Color32 gauntletSteel = new Color32(138, 148, 164, 255);
-            Color32 gauntletGold = new Color32(196, 158, 68, 255);
+            Color32 leatherGlove = new(74, 46, 28, 255), leatherDark = new(48, 30, 18, 255), gauntletSteel = new(138, 148, 164, 255), gauntletGold = new(196, 158, 68, 255);
+            AddBox(verts, colors, tris, new(0.022f, -0.042f, -0.006f), new(0.036f, 0.038f, 0.034f), leatherDark, gauntletSteel);
+            AddBox(verts, colors, tris, new(-0.015f, -0.040f, 0.018f), new(0.024f, 0.032f, 0.018f), leatherGlove, leatherDark);
+            AddBox(verts, colors, tris, new(0.008f, -0.008f, 0.024f), new(0.018f, 0.016f, 0.016f), gauntletGold, gauntletSteel);
+            AddBox(verts, colors, tris, new(0.040f, -0.076f, -0.036f), new(0.042f, 0.016f, 0.040f), gauntletGold, gauntletGold);
+            AddBox(verts, colors, tris, new(0.058f, -0.118f, -0.098f), new(0.040f, 0.048f, 0.095f), gauntletSteel, leatherDark);
+            AddBox(verts, colors, tris, new(0.092f, -0.175f, -0.215f), new(0.044f, 0.052f, 0.095f), leatherDark, gauntletSteel);
 
-            // 1) Sağ Başat El (Dominant Right Hand - Üst Kabza Kavraması + Parmak Boğumları + Başparmak Kilidi)
-            AddBox(verts, colors, tris, new Vector3(0.022f, -0.042f, -0.006f), new Vector3(0.036f, 0.038f, 0.034f), leatherDark, gauntletSteel);
-            AddBox(verts, colors, tris, new Vector3(-0.015f, -0.040f, 0.018f), new Vector3(0.024f, 0.032f, 0.018f), leatherGlove, leatherDark);
-            AddBox(verts, colors, tris, new Vector3(0.008f, -0.008f, 0.024f), new Vector3(0.018f, 0.016f, 0.016f), gauntletGold, gauntletSteel);
-            // Sağ Bilek Bileziği ve Ön-Kol Zırhı (Sağ alt ekran köşesine / omuza doğru uzanan zırhlı kol)
-            AddBox(verts, colors, tris, new Vector3(0.040f, -0.076f, -0.036f), new Vector3(0.042f, 0.016f, 0.040f), gauntletGold, gauntletGold);
-            AddBox(verts, colors, tris, new Vector3(0.058f, -0.118f, -0.098f), new Vector3(0.040f, 0.048f, 0.095f), gauntletSteel, leatherDark);
-            AddBox(verts, colors, tris, new Vector3(0.092f, -0.175f, -0.215f), new Vector3(0.044f, 0.052f, 0.095f), leatherDark, gauntletSteel);
-
-            // 2) Sol Yardımcı El (Off-Hand Gauntlet & Forearm - Rapier hariç tüm kılıçlarda alt kabzayı kavrar)
             if (archetype != CombatWeaponArchetype.Rapier)
             {
                 float leftHandY = archetype == CombatWeaponArchetype.Greatsword ? -0.155f : -0.125f;
-                AddBox(verts, colors, tris, new Vector3(-0.022f, leftHandY, -0.006f), new Vector3(0.035f, 0.036f, 0.033f), leatherDark, gauntletSteel);
-                AddBox(verts, colors, tris, new Vector3(0.015f, leftHandY, 0.016f), new Vector3(0.022f, 0.030f, 0.016f), leatherGlove, leatherDark);
-                AddBox(verts, colors, tris, new Vector3(-0.066f, leftHandY - 0.062f, -0.108f), new Vector3(0.038f, 0.046f, 0.092f), gauntletSteel, leatherDark);
+                AddBox(verts, colors, tris, new(-0.022f, leftHandY, -0.006f), new(0.035f, 0.036f, 0.033f), leatherDark, gauntletSteel);
+                AddBox(verts, colors, tris, new(0.015f, leftHandY, 0.016f), new(0.022f, 0.030f, 0.016f), leatherGlove, leatherDark);
+                AddBox(verts, colors, tris, new(-0.066f, leftHandY - 0.062f, -0.108f), new(0.038f, 0.046f, 0.092f), gauntletSteel, leatherDark);
             }
 
-            Mesh mesh = new Mesh
-            {
-                name = $"ProceduralSword_{archetype}"
-            };
+            Mesh mesh = new Mesh { name = $"ProceduralSword_{archetype}" };
             mesh.SetVertices(verts);
             mesh.SetColors(colors);
             mesh.SetTriangles(tris, 0);
@@ -657,12 +524,7 @@ namespace Stratocraft.Character
 
         public bool ConsumePendingToolVoxelHit(out Vector3Int voxelCoord, out float impactPower)
         {
-            if (!HasPendingToolVoxelHit)
-            {
-                voxelCoord = default;
-                impactPower = 0f;
-                return false;
-            }
+            if (!HasPendingToolVoxelHit) { voxelCoord = default; impactPower = 0f; return false; }
             HasPendingToolVoxelHit = false;
             voxelCoord = PendingToolVoxelHitCoord;
             impactPower = PendingToolImpactPower;
@@ -676,15 +538,16 @@ namespace Stratocraft.Character
             return d;
         }
 
+        public float ConsumePendingStaminaDrain()
+        {
+            float ep = PendingStaminaCost;
+            PendingStaminaCost = 0f;
+            return ep;
+        }
+
         public bool ConsumePendingSwingWhoosh(out float weaponMassKg, out float speedMult, out bool isPreChambered)
         {
-            if (!_hasPendingSwingWhoosh)
-            {
-                weaponMassKg = DefaultBladeMassKg;
-                speedMult = 1f;
-                isPreChambered = false;
-                return false;
-            }
+            if (!_hasPendingSwingWhoosh) { weaponMassKg = DefaultBladeMassKg; speedMult = 1f; isPreChambered = false; return false; }
             _hasPendingSwingWhoosh = false;
             weaponMassKg = _pendingWhooshMassKg;
             speedMult = _pendingWhooshSpeedMult;
@@ -694,13 +557,7 @@ namespace Stratocraft.Character
 
         public bool ConsumePendingWallRicochet(out Vector3 hitWorldPos, out byte materialId, out float impactSpeedMps)
         {
-            if (!_hasPendingWallRicochet)
-            {
-                hitWorldPos = default;
-                materialId = 0;
-                impactSpeedMps = 0f;
-                return false;
-            }
+            if (!_hasPendingWallRicochet) { hitWorldPos = default; materialId = 0; impactSpeedMps = 0f; return false; }
             _hasPendingWallRicochet = false;
             hitWorldPos = _pendingWallHitWorldPos;
             materialId = _pendingWallHitMaterialId;
@@ -708,16 +565,9 @@ namespace Stratocraft.Character
             return true;
         }
 
-        /// <summary>
-        /// Kılıcın ağırlığına göre savurma veya ağır siper taşıma sırasında oyuncunun gövdesini
-        /// savurma yönüne doğru çeken/savuran dünya uzayı yatay yer değiştirme vektörünü döndürür.
-        /// </summary>
         public Vector3 ConsumePendingBodyMomentumWorldDelta(Transform? playerTransform, float dt)
         {
-            if (playerTransform == null || _bodyMomentumLocalVel.sqrMagnitude < 0.0001f)
-            {
-                return Vector3.zero;
-            }
+            if (playerTransform == null || _bodyMomentumLocalVel.sqrMagnitude < 0.0001f) return Vector3.zero;
             Vector3 worldVel = playerTransform.TransformDirection(_bodyMomentumLocalVel);
             worldVel.y = 0f;
             return worldVel * Mathf.Clamp(dt, 0.0005f, 0.05f);
@@ -728,10 +578,63 @@ namespace Stratocraft.Character
             _hitStopTimer = Mathf.Max(_hitStopTimer, Mathf.Clamp(durationSeconds, 0.01f, 0.09f));
         }
 
-        /// <summary>
-        /// Oyuncunun mevcut kılıç savurmasının ağırlık (<c>kg</c>), fare çevirme ivmesi/hızı, anlık açısal momentum
-        /// ve stil çarpanından oluşan fiziksel darbe impulsunu (<c>N·s</c>) hesaplar.
-        /// </summary>
+        public bool TryTriggerFeint()
+        {
+            if (_slashPhase != BallisticSlashPhase.ReChamberingToStart &&
+                !(_slashPhase == BallisticSlashPhase.ActiveFullArcSwing && _slashProgress01 < 0.35f))
+            {
+                return false;
+            }
+            _slashPhase = BallisticSlashPhase.IdleInGuard;
+            IsActiveAttackSwing = false;
+            _slashProgress01 = 0f;
+            _rechamberTimer = 0f;
+            _postSwingRecoveryTimer = 0f;
+            _preChamberWindowTimer = 1.6f;
+            _angularVelocityRadPerSec *= 0.2f;
+            PendingStaminaCost += 14.0f;
+            IsFeintTriggeredLastFrame = true;
+            StatusBannerHighlightTimer = 2.2f;
+            LastCombatActionText = "🎭 ALDATMA İPTALİ (FEINT [Q] -14 EP)! Savurma ilk %35'te iptal edildi -> Yeni yönden kesik hazır!";
+            return true;
+        }
+
+        public bool TryTriggerThrustMorph()
+        {
+            if (_slashPhase != BallisticSlashPhase.ReChamberingToStart &&
+                !(_slashPhase == BallisticSlashPhase.ActiveFullArcSwing && _slashProgress01 < 0.35f))
+            {
+                return false;
+            }
+            _slashPhase = BallisticSlashPhase.IdleInGuard;
+            _isThrustMode = true;
+            _thrustExtensionMeters = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.68f : 0.44f;
+            CurrentSwingId++;
+            PendingStaminaCost += 10.0f;
+            IsMorphTriggeredLastFrame = true;
+            StatusBannerHighlightTimer = 2.2f;
+            LastCombatActionText = "🗡️ SAPLAMA MORPH ([ScrollUp] -10 EP)! Savurma başlangıcı doğrusal Zırh Delici Saplamaya dönüştü!";
+            return true;
+        }
+
+        public bool TryTriggerKickOrPommelBash(bool holdingRmb)
+        {
+            if (_kickCooldownTimer > 0f || IsPlayerExhaustedLock) return false;
+            _isPommelBashActive = holdingRmb;
+            _kickActiveTimer = holdingRmb ? 0.28f : 0.30f;
+            _kickCooldownTimer = holdingRmb ? 0.70f : 0.65f;
+            CurrentKickOrBashId++;
+            PendingStaminaCost += holdingRmb ? 18.0f : 15.0f;
+            _wristRecoilVelocity += new Vector3(0f, 0.45f, holdingRmb ? 2.65f : 1.35f);
+            _cameraImpactKickDeg += new Vector2(0f, holdingRmb ? 2.2f : 1.8f);
+            _bodyMomentumLocalVel = new Vector3(0f, 0f, holdingRmb ? 1.85f : 1.45f);
+            StatusBannerHighlightTimer = 2.2f;
+            LastCombatActionText = holdingRmb
+                ? "🔨 KABZA DARBESİ (POMMEL BASH [RMB+F] -18 EP)! Rakibin gardını kırar ve 0.8sn sersemletir!"
+                : "🦵 FİZİKSEL TEKME (KICK [F] -15 EP | 1.85m Menzil)! Rakibin bloğunu yarar ve geriye iter!";
+            return true;
+        }
+
         public float ComputeCurrentAttackImpulseNs(bool playerMissingArm = false)
         {
             GetWeaponStats(ActiveWeaponArchetype, out _, out float wMass, out float wLen, out _);
@@ -748,25 +651,12 @@ namespace Stratocraft.Character
             if (_lastSlashWasRiposte) bonusMult *= 1.42f;
             if (_lastSlashWasIaidoCharged) bonusMult *= 1.32f;
             if (IsAerialJumpStrike) bonusMult *= 1.35f;
-            if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut)
-            {
-                bonusMult *= 1.30f + 0.18f * _momentumChainCount;
-            }
+            if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut) bonusMult *= 1.30f + 0.18f * _momentumChainCount;
             if (mismatch) bonusMult *= 0.65f;
 
             return wMass * effectiveSpeedMps * flickAccelFactor * Mathf.Max(0.55f, stanceDmgMult) * bonusMult * 0.68f;
         }
 
-        /// <summary>
-        /// Gelen bir düşman darbesinin oyuncunun <c>RMB</c> bloğuna çarptığında ne olacağını fiziksel olarak çözer:
-        /// <list type="bullet">
-        /// <item>Eğer oyuncu son <c>0.28sn</c> içinde <c>RMB</c> basılıyken fareyi savurup yönlendirdiyse (<c>_deflectFlickTimer &gt; 0</c>),
-        /// en ağır <c>5.60kg Zweihänder</c> darbesini bile <c>0.95kg İnce Rapier</c> ile yana kaydırarak <b>SON ANDA SAPTIRMA (<c>MasterDeflect</c>)</b> yapar!</item>
-        /// <item>Eğer oyuncu kılıcını sabit tutuyorsa ve gelen darbenin kütle×hız impulsu oyuncunun kılıcının sabit blok kapasitesini aşıyorsa
-        /// (örn. ağır kılıcı ince kılıçla sabit bloklamaya çalışmak), <b>BLOK YARILIR (<c>GuardCrushedByMass</c>)</b> ve sızan hasar vurur!</item>
-        /// <item>Kapasite yeterliyse <b>TAM BLOK (<c>SolidParry</c>)</b> gerçekleşir.</item>
-        /// </list>
-        /// </summary>
         public ParryResolutionOutcome EvaluateIncomingStrikeAgainstPlayerGuard(
             float attackerWeaponMassKg,
             float attackerSwingSpeedMps,
@@ -785,6 +675,7 @@ namespace Stratocraft.Character
                 _angularVelocityRadPerSec = new Vector2(-11.5f, -9.5f);
                 bleedThroughDamage = Mathf.Max(9.0f, attackerWeaponMassKg * 3.2f);
                 PendingSelfRecoilDamage += bleedThroughDamage;
+                PendingStaminaCost += 18.0f;
                 _wristRecoilVelocity += new Vector3(0.9f, -1.6f, -2.8f);
                 _cameraImpactKickDeg += new Vector2(4.2f, -3.8f);
                 resolutionSummary =
@@ -794,15 +685,16 @@ namespace Stratocraft.Character
                 return ParryResolutionOutcome.MismatchedSelfRecoil;
             }
 
-            // 1) SON ANDA YÖNLÜ SAPTIRMA (ACTIVE DEFLECTION - RMB + Ters/Çapraz Yöne Fare Hareketi):
-            // İnce kılıç (0.95kg Rapier) bile doğru anda yapılan yönlü saptırma ile 5.60kg Ağır Kılıcı hasarsız saptırır!
             if (_deflectFlickTimer > 0f)
             {
                 bleedThroughDamage = 0f;
                 _deflectFlickTimer = 0f;
+                _parrySpamCount = 0;
+                _parrySpamDecayTimer = 0f;
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
                 IsActiveAttackSwing = false;
                 _postSwingRecoveryTimer = 0f;
+                PendingStaminaCost += 6.0f;
 
                 Vector2 deflectSlideDir = _deflectFlickDirUnit.sqrMagnitude > 0.01f
                     ? _deflectFlickDirUnit.normalized
@@ -824,7 +716,6 @@ namespace Stratocraft.Character
                 return ParryResolutionOutcome.MasterDeflect;
             }
 
-            // 2) SABİT BLOK KAPASİTESİ vs GELEN SALDIRI İMPULSU (Kütle × Hız × İvme):
             float stanceBraceMult = ActiveMartialStance == CombatMartialStance.HighGuard_VomTag
                 ? 1.28f
                 : (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut ? 1.22f : 0.90f);
@@ -833,9 +724,9 @@ namespace Stratocraft.Character
 
             if (incomingImpulseNs > staticBlockCapacityNs)
             {
-                // BLOK YARILDI (GUARD CRUSHED BY MASS/MOMENTUM)!
                 float excessImpulse = incomingImpulseNs - staticBlockCapacityNs;
                 bleedThroughDamage = Mathf.Clamp(4.5f + excessImpulse * 0.62f, 5.0f, 26.0f);
+                PendingStaminaCost += 16.0f;
                 _guardBreakTimer = 0.58f;
                 _postSwingRecoveryTimer = 0.42f;
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
@@ -851,14 +742,14 @@ namespace Stratocraft.Character
                 TriggerHitStop(0.068f);
 
                 resolutionSummary =
-                    $"💥 BLOK YARILDI (GUARD CRUSH)! {attackerWeaponMassKg:F1}kg ağır/hızlı darbe ({incomingImpulseNs:F1} N·s), [{playerWeaponName}] sabit blok direncini ({staticBlockCapacityNs:F1} N·s) ezdi (-{bleedThroughDamage:0} HP)! İpucu: Darbe gelirken RMB + Fareyi Çapraz/Ters Savurarak SAPTIR!";
+                    $"💥 BLOK YARILDI (GUARD CRUSH)! {attackerWeaponMassKg:F1}kg ağır/hızlı darbe ({incomingImpulseNs:F1} N·s), [{playerWeaponName}] sabit blok direncini ({staticBlockCapacityNs:F1} N·s) ezdi (-{bleedThroughDamage:0} HP)!";
                 LastCombatActionText = resolutionSummary;
                 StatusBannerHighlightTimer = 3.0f;
                 return ParryResolutionOutcome.GuardCrushedByMass;
             }
 
-            // 3) TAM SABİT BLOK (SOLID PARRY):
             bleedThroughDamage = 0f;
+            PendingStaminaCost += 10.0f;
             Vector2 bounceDir = new Vector2(-_currentBladeAnglesRad.x * 0.55f, 0.38f);
             NotifySuccessfulParryOrClash(bounceDir, openRiposteWindow: true);
             float impactRatio01 = Mathf.Clamp01(incomingImpulseNs / Mathf.Max(1f, staticBlockCapacityNs));
@@ -873,15 +764,6 @@ namespace Stratocraft.Character
             return ParryResolutionOutcome.SolidParry;
         }
 
-        /// <summary>
-        /// Oyuncunun saldırısı düşmanın bloğuna çarptığında, kılıcın ağırlığına, fare ivmesine ve çarpışma açısına göre
-        /// 3 farklı fiziksel tepkiden birini üretir:
-        /// <list type="number">
-        /// <item><b><c>CrushedEnemyBlock</c> (Blok Yarma):</b> Ağır/ivmeli kılıç düşman bloğunu ezip içinden geçer, kesim durmaz!</item>
-        /// <item><b><c>GlancingDeflection</c> (Yön Sapması):</b> Çapraz açılı darbe veya düşman saptırması kılıcı 90° yana/aşağı kaydırıp saptırır!</item>
-        /// <item><b><c>HardReboundBounce</c> (Sert Geri Sekme):</b> Kafa kafaya çarpışmada kılıç geldiği yöne fiziksel yay tepkisiyle geri seker!</item>
-        /// </list>
-        /// </summary>
         public PlayerBlockedReactionType ResolvePlayerAttackAgainstEnemyBlock(
             float defenderWeaponMassKg,
             Vector2 defenderGuardDirUnit,
@@ -893,10 +775,8 @@ namespace Stratocraft.Character
             float playerImpulseNs = ComputeCurrentAttackImpulseNs(playerMissingArm);
             float defenderCapacityNs = Mathf.Pow(Mathf.Max(0.8f, defenderWeaponMassKg), 1.32f) * 6.0f;
 
-            // 1) OYUNCU AĞIR/İVMELİ KILIÇLA DÜŞMAN BLOĞUNU YARIP GEÇTİ (CRUSHED ENEMY BLOCK):
             if (!defenderDidActiveDeflect && (IsGuardCrushActive || playerImpulseNs > defenderCapacityNs * 1.12f))
             {
-                // Kılıç durmaz! Ağır bir kırılma Hit-Stop'u ve bilek sarsıntısı ile bloğu yarıp kesmeye devam eder!
                 _cleaveDragTimer = 0.085f;
                 TriggerHitStop(0.064f);
                 _wristRecoilVelocity += new Vector3(_slashDirUnit.x * 1.1f, -1.35f, 1.45f);
@@ -908,16 +788,14 @@ namespace Stratocraft.Character
                 return PlayerBlockedReactionType.CrushedEnemyBlock;
             }
 
-            // 2) YÖN SAPMASI / ÇAPRAZ KAYMA (GLANCING DEFLECTION):
             float alignmentAbs = Mathf.Abs(Vector2.Dot(_slashDirUnit.normalized, defenderGuardDirUnit.normalized));
             if (defenderDidActiveDeflect || alignmentAbs < 0.72f)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
                 IsActiveAttackSwing = false;
 
-                // Kılıç durmak yerine 90° dik/çapraz yöne doğru fiziksel olarak sapar (Yön Sapması)!
                 Vector2 deflectedDir = new Vector2(_slashDirUnit.y, -_slashDirUnit.x).normalized;
-                if (deflectedDir.y > 0.25f) deflectedDir = -deflectedDir; // Doğal olarak aşağı-yana sapsın
+                if (deflectedDir.y > 0.25f) deflectedDir = -deflectedDir;
 
                 float deflectSpeed = Mathf.Lerp(11.8f, 6.8f, Mathf.Clamp01((wMass - 0.95f) / 4.65f));
                 _reboundTimer = 0.25f;
@@ -935,13 +813,12 @@ namespace Stratocraft.Character
                 _bodyMomentumLocalVel = new Vector3(deflectedDir.x * 1.15f, 0f, -0.35f);
 
                 reactionSummary =
-                    $"↩️ YÖN SAPMASI (GLANCING DEFLECT)! [{wName}] rakibin çapraz siperinden ({deflectedDir.x:+0.0;-0.0}, {deflectedDir.y:+0.0;-0.0}) yönüne kayarak saptı -> Yeni köşeden zincirleme kesik atabilirsin!";
+                    $"↩️ YÖN SAPMASI (GLANCING DEFLECT)! [{wName}] rakibin çapraz siperinden ({deflectedDir.x:+0.0;-0.0}, {deflectedDir.y:+0.0;-0.0}) yönüne kayarak saptı!";
                 LastCombatActionText = reactionSummary;
                 StatusBannerHighlightTimer = 2.3f;
                 return PlayerBlockedReactionType.GlancingDeflection;
             }
 
-            // 3) SERT GERİ SEKME (HARD REBOUND BOUNCE):
             _slashPhase = BallisticSlashPhase.IdleInGuard;
             IsActiveAttackSwing = false;
 
@@ -970,16 +847,13 @@ namespace Stratocraft.Character
             return PlayerBlockedReactionType.HardReboundBounce;
         }
 
-        /// <summary>
-        /// Düşman kılıcıyla çarpışma (<c>Sword Clash / Chamber</c>) veya yönlü blok (<c>Directional Parry</c>)
-        /// başarılı olduğunda çağrılır; Şövalye (<c>HighGuard_VomTag</c>) ve Eskrim (<c>Fencing_Punta</c>) stillerinde
-        /// 1.65 saniyelik Kusursuz Kontra (<c>Master Riposte</c>) penceresi açar!
-        /// </summary>
         public void NotifySuccessfulParryOrClash(Vector2 bounceDirRad, bool openRiposteWindow = true)
         {
             _slashPhase = BallisticSlashPhase.IdleInGuard;
             IsActiveAttackSwing = false;
             _postSwingRecoveryTimer = 0f;
+            _parrySpamCount = 0;
+            _parrySpamDecayTimer = 0f;
             Vector2 safeBounce = bounceDirRad.sqrMagnitude > 0.01f ? bounceDirRad.normalized : new Vector2(0.35f, 0.45f);
             _angularVelocityRadPerSec = safeBounce * 5.2f;
             _currentBladeAnglesRad = Vector2.ClampMagnitude(_currentBladeAnglesRad + safeBounce * 0.22f, 1.18f);
@@ -993,10 +867,6 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>
-        /// Düşman darbesi bloklandığında çağrılır; eğer uyumsuz tek-el stilde ağır silah tutuluyorsa
-        /// kılıç elden savrulur (<c>Guard Break</c>) ve oyuncunun kendisine çarpar!
-        /// </summary>
         public bool NotifyParryImpactAndCheckGuardBreak(bool playerMissingArm)
             => NotifyParryImpactAndCheckGuardBreak(12f, out _, playerMissingArm);
 
@@ -1021,23 +891,14 @@ namespace Stratocraft.Character
             return true;
         }
 
-        /// <summary>
-        /// Canlı eti keserken (<c>Cleave / Follow-Through</c>) çağrılır:
-        /// Kılıç hedefin içine gömülürken yoğun bir et direnci (<c>Meat-Bite Drag</c>) ve bilek çekişi hisseder, ardından eti yarıp hızlanarak çıkar!
-        /// </summary>
         public void NotifyBladeCleaveThroughFlesh()
         {
             _cleaveDragTimer = 0.115f;
             TriggerHitStop(0.052f);
-            // Kılıç ete saplandığında bilek ve kabza kesim yönüne doğru fiziksel bir "et ısırığı" (Meat-Bite Jolt) sarsıntısı yaşar:
             _wristRecoilVelocity += new Vector3(_slashDirUnit.x * 1.15f, _slashDirUnit.y * 0.85f - 0.65f, 1.85f);
             _cameraImpactKickDeg += new Vector2(_slashDirUnit.x * 1.65f, -_slashDirUnit.y * 1.35f);
         }
 
-        /// <summary>
-        /// Duvara veya aşırı yakın kabza mesafesinde (<c>u &lt;= 0.22</c>) bir hedefe çarptığında savurmayı fiziksel durdurur
-        /// ve kılıcı duvarın içinden dışarı (<c>_slashStartAnglesRad</c> yönüne) geri sektirir!
-        /// </summary>
         public void AbortSwingOnObstacle(float bounceRestitution = 0.35f)
         {
             _slashPhase = BallisticSlashPhase.IdleInGuard;
@@ -1046,7 +907,6 @@ namespace Stratocraft.Character
             _reboundTimer = 0.24f;
             _reboundVelRad = reboundDir * 9.5f;
             _angularVelocityRadPerSec = -_angularVelocityRadPerSec * bounceRestitution + reboundDir * 4.5f;
-            // Kılıcın duvarın içinde kalmaması için mevcut açıyı başlangıç köşesine doğru %45 geri çek!
             _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _slashStartAnglesRad, 0.45f);
             _guardAnglesRad = Vector2.ClampMagnitude(_currentBladeAnglesRad, 1.12f);
             _targetWristAnglesRad = _guardAnglesRad;
@@ -1059,11 +919,7 @@ namespace Stratocraft.Character
             TriggerHitStop(0.048f);
         }
 
-        /// <summary>Eski çağrı uyumluluğu için: Cleave modunda savurmayı durdurmaz, yalnızca et direnci uygular.</summary>
-        public void NotifyBladeHitRegistered()
-        {
-            NotifyBladeCleaveThroughFlesh();
-        }
+        public void NotifyBladeHitRegistered() => NotifyBladeCleaveThroughFlesh();
 
         public void StepCombatAndCameraInput(
             float rawMouseX,
@@ -1081,12 +937,17 @@ namespace Stratocraft.Character
             out float normalizedKineticPower01,
             bool playerMissingArm = false,
             bool isPlayerAirborne = false,
-            float playerVerticalVelocity = 0f)
+            float playerVerticalVelocity = 0f,
+            bool feintPressed = false,
+            bool morphScrollUp = false,
+            bool kickPressed = false)
         {
             float dt = Mathf.Clamp(deltaTime, 0.0005f, 0.05f);
             _lastStepDt = dt;
             _isPlayerAirborne = isPlayerAirborne;
             _playerVerticalVelocity = playerVerticalVelocity;
+            IsFeintTriggeredLastFrame = false;
+            IsMorphTriggeredLastFrame = false;
 
             if (_wallRecoilCooldown > 0f) _wallRecoilCooldown = Mathf.Max(0f, _wallRecoilCooldown - dt);
             if (_cleaveDragTimer > 0f) _cleaveDragTimer = Mathf.Max(0f, _cleaveDragTimer - dt);
@@ -1094,16 +955,53 @@ namespace Stratocraft.Character
             if (_guardBreakTimer > 0f) _guardBreakTimer = Mathf.Max(0f, _guardBreakTimer - dt);
             if (_preChamberWindowTimer > 0f) _preChamberWindowTimer = Mathf.Max(0f, _preChamberWindowTimer - dt);
             if (_postSwingRecoveryTimer > 0f) _postSwingRecoveryTimer = Mathf.Max(0f, _postSwingRecoveryTimer - dt);
+            if (_postSlashHoldBeforeVerticalTimer > 0f) _postSlashHoldBeforeVerticalTimer = Mathf.Max(0f, _postSlashHoldBeforeVerticalTimer - dt);
             if (_hitStopTimer > 0f) _hitStopTimer = Mathf.Max(0f, _hitStopTimer - dt);
             if (_riposteWindowTimer > 0f) _riposteWindowTimer = Mathf.Max(0f, _riposteWindowTimer - dt);
             if (_deflectFlickTimer > 0f) _deflectFlickTimer = Mathf.Max(0f, _deflectFlickTimer - dt);
             if (_reboundTimer > 0f) _reboundTimer = Mathf.Max(0f, _reboundTimer - dt);
+            if (_kickActiveTimer > 0f) _kickActiveTimer = Mathf.Max(0f, _kickActiveTimer - dt);
+            if (_kickCooldownTimer > 0f) _kickCooldownTimer = Mathf.Max(0f, _kickCooldownTimer - dt);
+            if (_parrySpamDecayTimer > 0f)
+            {
+                _parrySpamDecayTimer = Mathf.Max(0f, _parrySpamDecayTimer - dt);
+                if (_parrySpamDecayTimer <= 0f) _parrySpamCount = 0;
+            }
             if (_momentumChainWindowTimer > 0f)
             {
                 _momentumChainWindowTimer = Mathf.Max(0f, _momentumChainWindowTimer - dt);
                 if (_momentumChainWindowTimer <= 0f) _momentumChainCount = 0;
             }
             if (StatusBannerHighlightTimer > 0f) StatusBannerHighlightTimer = Mathf.Max(0f, StatusBannerHighlightTimer - dt);
+
+            // Parry Spam Sönümü: 0.8s içinde arka arkaya sağ tık (RMB) bas-çek yapılırsa saptırma penceresi 0.30s * 0.5^N_spam daralır!
+            if (holdingRmb && !_wasHoldingRmbLastStep)
+            {
+                if (_parrySpamDecayTimer > 0f) _parrySpamCount = Mathf.Min(4, _parrySpamCount + 1);
+                _parrySpamDecayTimer = 0.80f;
+            }
+            _wasHoldingRmbLastStep = holdingRmb;
+
+            // Canlı oyun modunda Feint [Q], Morph [ScrollUp] ve Tekme/Kabza [F / RMB+F] tuşlarını işle
+            if (canEngageCombat)
+            {
+                bool wantFeint = feintPressed || (Application.isPlaying && Input.GetKeyDown(KeyCode.Q));
+                bool wantMorph = morphScrollUp || (Application.isPlaying && Input.GetAxis("Mouse ScrollWheel") > 0.005f);
+                bool wantKick = kickPressed || (Application.isPlaying && Input.GetKeyDown(KeyCode.F));
+
+                if (wantFeint && TryTriggerFeint())
+                {
+                    holdingLmb = false;
+                }
+                else if (wantMorph && TryTriggerThrustMorph())
+                {
+                    holdingLmb = false;
+                }
+                if (wantKick)
+                {
+                    TryTriggerKickOrPommelBash(holdingRmb);
+                }
+            }
 
             if (ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw &&
                 _slashPhase == BallisticSlashPhase.IdleInGuard && !holdingLmb)
@@ -1113,6 +1011,7 @@ namespace Stratocraft.Character
 
             EvaluateWeaponStanceCompatibility(
                 playerMissingArm, out float stanceSpeedMult, out _, out float tipDroopRad, out bool isMismatched);
+            _lastStepIsMismatched = isMismatched;
 
             bool activeSwingOrChamber = _slashPhase != BallisticSlashPhase.IdleInGuard;
             if (canEngageCombat && (holdingLmb || holdingRmb || activeSwingOrChamber) && _guardBreakTimer <= 0f)
@@ -1124,16 +1023,18 @@ namespace Stratocraft.Character
                 _postSwingClutchGraceTimer = Mathf.Max(0f, _postSwingClutchGraceTimer - dt);
             }
 
-            // Kesim devam ederken veya kesim bittikten sonraki 110ms zarfında elin fare hareketi kamerayı aniden savurmasın!
             IsClutchEngaged = canEngageCombat &&
                               (holdingLmb || holdingRmb || activeSwingOrChamber || _postSwingClutchGraceTimer > 0f) &&
                               _guardBreakTimer <= 0f;
-            _isThrustMode = canEngageCombat && holdingLmb && holdingRmb && _guardBreakTimer <= 0f;
+            if (!IsMorphTriggeredLastFrame)
+            {
+                _isThrustMode = canEngageCombat && holdingLmb && holdingRmb && _guardBreakTimer <= 0f;
+            }
             _isParryStance = canEngageCombat && holdingRmb && !holdingLmb && _guardBreakTimer <= 0f;
 
+            // CameraClutchController (0.35 rad ölü bölge, 0.85 rad yumuşak takip, 1-Euro Filter 3B titreşim süzgeci)
             float rawYawRad = rawMouseX * 2.4f * Mathf.Deg2Rad;
             float rawPitchRad = -rawMouseY * 2.1f * Mathf.Deg2Rad;
-
             _clutch.StepAimInput(rawYawRad, rawPitchRad, IsClutchEngaged, dt);
             float clutchCamDeltaYawRad = _clutch.CameraYawRadians - _prevClutchCamYawRad;
             float clutchCamDeltaPitchRad = _clutch.CameraPitchRadians - _prevClutchCamPitchRad;
@@ -1152,23 +1053,29 @@ namespace Stratocraft.Character
                 {
                     _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw), dt * 6.5f);
                 }
+                else if (_slashPhase == BallisticSlashPhase.IdleInGuard &&
+                         _postSlashHoldBeforeVerticalTimer <= 0f &&
+                         _preChamberWindowTimer <= 0f)
+                {
+                    // Kesik bittikten ~1 saniye sonra yeni saldırı gelmezse kılıcı yumuşakça dikey varsayılan guard duruşuna döndür
+                    _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, GetDefaultStanceGuardAngles(ActiveMartialStance), dt * 4.5f);
+                }
             }
             else
             {
-                cameraYawDeg += clutchCamDeltaYawRad * Mathf.Rad2Deg;
+                float piecewiseBonusYaw = CameraClutchController.EvaluatePiecewiseClutchDelta(_clutch.WristYawRadians) * dt * 0.35f;
+                cameraYawDeg += (clutchCamDeltaYawRad + piecewiseBonusYaw) * Mathf.Rad2Deg;
                 cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + clutchCamDeltaPitchRad * Mathf.Rad2Deg, -84f, 84f);
             }
 
             Vector2 mouseFlickVec = new Vector2(rawMouseX, rawMouseY);
             float mouseFlickMag = mouseFlickVec.magnitude;
 
-            // 1) SAĞ TIK (RMB): Kılıcın Guard/Duruş Konumunu Kütlesine Göre Ayarla, Yan-Siper Blok Tut ve Son-Anda Saptırma (Deflect) Algıla
             if (_isParryStance)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
                 GetWeaponStats(ActiveWeaponArchetype, out _, out float parryWMass, out _, out _);
                 float effectiveParryMass = Mathf.Max(0.75f, parryWMass * Mathf.Clamp(weaponMassScale, 0.75f, 1.65f));
-                // Rapier (0.95kg) -> ~2.15x çevik | Longsword (1.85kg) -> 1.00x dengeli | Greatsword (5.60kg) -> ~0.28x ağır ve oturaklı!
                 float massHandlingFactor = Mathf.Pow(1.85f / effectiveParryMass, 1.15f);
                 float stanceGuardFactor = isMismatched ? 0.38f : Mathf.Clamp(stanceSpeedMult, 0.75f, 1.25f);
                 float recoveryGuardPenalty = _postSwingRecoveryTimer > 0f ? 0.42f : 1.0f;
@@ -1176,7 +1083,6 @@ namespace Stratocraft.Character
 
                 if (mouseFlickMag > 0.012f)
                 {
-                    // Kılıcın ağırlığına göre hem hassasiyet hem de saniyedeki maksimum açısal blok taşıma hızı sınırlandırılır:
                     Vector2 rawGuardDelta = mouseFlickVec * (0.148f * guardHandlingFactor);
                     float maxGuardRadPerSec = Mathf.Clamp(8.2f * guardHandlingFactor, 1.55f, 16.5f);
                     Vector2 clampedGuardDelta = Vector2.ClampMagnitude(rawGuardDelta, maxGuardRadPerSec * Mathf.Max(0.014f, dt));
@@ -1185,12 +1091,9 @@ namespace Stratocraft.Character
                     _guardAnglesRad.y = Mathf.Clamp(_guardAnglesRad.y, -1.18f, 1.18f);
                     _preChamberWindowTimer = 2.5f;
 
-                    // SON ANDA YÖNLÜ SAPTIRMA (ACTIVE DEFLECTION) PENCERESİ:
-                    // Oyuncu RMB basılıyken fareyi belirgin şekilde (mouseFlickMag >= 0.24f) yönlendirirse,
-                    // 0.28 saniyelik aktif saptırma penceresi açılır; bu sırada gelen en ağır kılıç darbesi bile yan-çapraz saptırılır!
                     if (mouseFlickMag >= 0.24f && !isMismatched)
                     {
-                        _deflectFlickTimer = 0.28f;
+                        _deflectFlickTimer = CurrentDeflectWindowDuration;
                         _deflectFlickDirUnit = mouseFlickVec.normalized;
                         _deflectFlickSpeed = mouseFlickMag / Mathf.Max(0.008f, dt);
                     }
@@ -1201,7 +1104,6 @@ namespace Stratocraft.Character
                 }
                 _thrustExtensionMeters = Mathf.MoveTowards(_thrustExtensionMeters, 0f, dt * 2.0f);
             }
-            // 2) LMB + RMB (veya Eskrim stilinde İğne Hamlesi): Fiziksel İleri Saplama (Thrust / Needle Lunge)
             else if (_isThrustMode)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
@@ -1211,16 +1113,15 @@ namespace Stratocraft.Character
                 _thrustExtensionMeters = Mathf.Clamp(_thrustExtensionMeters + thrustInput, 0f, maxReach);
                 CurrentSwingId++;
             }
-            // 3) SOL TIK (LMB): Fare Savurması ile Son Guard Konumundan Tam-Yay Balistik Kesik Başlat!
             else if (canEngageCombat && holdingLmb && _slashPhase == BallisticSlashPhase.IdleInGuard && _overswingStaggerTimer <= 0f)
             {
-                // Eskrim (Fencing_Punta) özel yeteneği: LMB basılıyken fareyi dikey ileri (+Y) hızlı itmek otomatik İğne Saplaması (Needle Lunge) tetikler!
                 if (ActiveMartialStance == CombatMartialStance.Fencing_Punta &&
                     ActiveWeaponArchetype == CombatWeaponArchetype.Rapier &&
                     rawMouseY > 0.45f && Mathf.Abs(rawMouseX) < 0.22f && _preChamberWindowTimer <= 0f)
                 {
                     _isThrustMode = true;
                     _thrustExtensionMeters = Mathf.Clamp(_thrustExtensionMeters + rawMouseY * 0.26f, 0.28f, 0.82f);
+                    PendingStaminaCost += 8.0f;
                     CurrentSwingId++;
                 }
                 else if (mouseFlickMag >= 0.24f)
@@ -1231,8 +1132,6 @@ namespace Stratocraft.Character
                         _momentumChainWindowTimer > 0f &&
                         Vector2.Dot(flickUnit, _slashDirUnit) < -0.15f;
 
-                    // Aşırı hızlı ağırlıksız sallamayı (spam) engelle:
-                    // Yalnızca _postSwingRecoveryTimer bittiğinde VEYA Riposte/Ön-Kurum/Juggernaut-Zinciri aktifken yeni kesik başlar!
                     if (_postSwingRecoveryTimer <= 0f || _riposteWindowTimer > 0f || _preChamberWindowTimer > 0f || isJuggernautChainReady)
                     {
                         TriggerBallisticSlashFromCurrentGuard(
@@ -1246,12 +1145,12 @@ namespace Stratocraft.Character
                 }
             }
 
-            // 4) Aktif Balistik Savurma Durum Makinesi + Kesim Sırasında Doğal Omuz Takibi (Bitişte Ani Atlama Yok!)
             StepBallisticSlashStateMachine(
                 dt, mouseFlickVec, weaponMassScale, stanceSpeedMult, tipDroopRad, isMismatched,
                 ref cameraYawDeg, ref cameraPitchDeg);
+            _lastCameraPitchDeg = cameraPitchDeg;
 
-            UpdateDynamicEdgeAlignment(dt);
+            UpdateDynamicEdgeAlignment(dt, mouseFlickVec);
 
             float omegaMag = _angularVelocityRadPerSec.magnitude;
             swingDirectionAngleRad = _slashPhase == BallisticSlashPhase.ActiveFullArcSwing
@@ -1268,10 +1167,7 @@ namespace Stratocraft.Character
             {
                 rotationalEnergyJoules *= 1.32f;
             }
-            if (IsAerialJumpStrike)
-            {
-                rotationalEnergyJoules *= 1.35f;
-            }
+            if (IsAerialJumpStrike) rotationalEnergyJoules *= 1.35f;
             normalizedKineticPower01 = Mathf.Clamp01(rotationalEnergyJoules / 15.0f);
 
             isBladeSwingingFast = canEngageCombat && _wallRecoilCooldown <= 0f && _guardBreakTimer <= 0f &&
@@ -1280,7 +1176,8 @@ namespace Stratocraft.Character
             IsActiveAttackSwing = isBladeSwingingFast;
             IsAerialJumpStrike = isBladeSwingingFast && _isPlayerAirborne;
 
-            if ((IsClutchEngaged || isBladeSwingingFast) && _wallRecoilCooldown <= 0f && _guardBreakTimer <= 0f)
+            if ((IsClutchEngaged || isBladeSwingingFast) && _wallRecoilCooldown <= 0f && _guardBreakTimer <= 0f &&
+                !IsFeintTriggeredLastFrame && !IsMorphTriggeredLastFrame && !IsKickOrBashActive)
             {
                 UpdateLiveStatusText(swingDirectionAngleRad * Mathf.Rad2Deg, omegaMag, isMismatched);
             }
@@ -1298,13 +1195,20 @@ namespace Stratocraft.Character
             _peakSlashMouseFlickMag = mouseFlickMag;
             Vector2 idealStartCorner = -slashDirUnit * 1.18f;
             Vector2 targetEndCorner = slashDirUnit * 1.22f;
+            if (slashDirUnit.y < -0.25f)
+            {
+                // Katman 2 (Overhead Ground Clearance Horizon): Yukarıdan aşağı kesiklerde bitiş açısını
+                // normal kılıçlarda -0.78 rad, ağır kılıçta (Greatsword / uyumsuz) -0.96 rad ile sınırla.
+                float minOverheadEndPitchRad = (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || isMismatched)
+                    ? -0.96f
+                    : -0.78f;
+                targetEndCorner.y = Mathf.Max(targetEndCorner.y, minOverheadEndPitchRad);
+            }
 
             Vector2 effectiveStartPose = _preChamberWindowTimer > 0f
                 ? Vector2.Lerp(_currentBladeAnglesRad, _guardAnglesRad, 0.85f)
                 : _currentBladeAnglesRad;
-            Vector2 curNorm = effectiveStartPose.sqrMagnitude > 0.02f
-                ? effectiveStartPose.normalized
-                : new Vector2(0f, 1f);
+            Vector2 curNorm = effectiveStartPose.sqrMagnitude > 0.02f ? effectiveStartPose.normalized : new Vector2(0f, 1f);
             float startAlignment = Vector2.Dot(curNorm, -slashDirUnit);
 
             bool hasPreChamberBonus = _preChamberWindowTimer > 0f && startAlignment >= 0.12f;
@@ -1317,20 +1221,15 @@ namespace Stratocraft.Character
             _lastSlashWasIaidoCharged = ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw && _iaidoSheatheCharge01 >= 0.55f;
             _iaidoSheatheCharge01 = 0f;
 
-            if (isJuggernautChainReady)
-            {
-                _momentumChainCount = Mathf.Min(3, _momentumChainCount + 1);
-            }
-            else if (ActiveMartialStance != CombatMartialStance.TwoHand_Juggernaut)
-            {
-                _momentumChainCount = 0;
-            }
+            if (isJuggernautChainReady) _momentumChainCount = Mathf.Min(3, _momentumChainCount + 1);
+            else if (ActiveMartialStance != CombatMartialStance.TwoHand_Juggernaut) _momentumChainCount = 0;
 
-            // SİLAHIN GERÇEK KÜTLESİNE GÖRE SAVURMA SÜRESİ (Ağır kılıçlar gerçekten ağır ve oturaklı savrulur!):
-            // Rapier (0.95kg) -> ~0.24s | Katana (1.35kg) -> ~0.28s | Longsword (1.85kg) -> ~0.34s | Greatsword (5.60kg) -> ~0.56s
             GetWeaponStats(ActiveWeaponArchetype, out _, out float wMass, out _, out _);
-            float archetypeMassFactor = Mathf.Pow(Mathf.Max(0.8f, wMass) / 1.55f, 0.62f);
+            // Savurma Stamina Tüketimi (6..18 EP silah ağırlığına göre ölçekli)
+            float swingStaminaEp = Mathf.Clamp(6.0f + (wMass - 0.95f) * 2.55f, 6.0f, 18.0f);
+            PendingStaminaCost += swingStaminaEp;
 
+            float archetypeMassFactor = Mathf.Pow(Mathf.Max(0.8f, wMass) / 1.55f, 0.62f);
             float flickSpeedBoost = Mathf.Clamp(1.0f + (mouseFlickMag - 0.35f) * 0.10f, 0.92f, 1.18f);
             float preChamberMult = hasPreChamberBonus ? 1.38f : 1.0f;
             float riposteMult = _lastSlashWasRiposte ? 1.35f : 1.0f;
@@ -1343,6 +1242,11 @@ namespace Stratocraft.Character
             _slashProgress01 = 0f;
             CurrentSwingId++;
 
+            // Başlangıç ağız hizalaması: temiz kurulumda namlu ağzı kesim düzlemiyle hizalanır;
+            // aşırı ters/uyumsuz bilek bükümünde ise başlangıç sapması oluşur.
+            float desiredCutAngle = Mathf.Atan2(slashDirUnit.y, slashDirUnit.x);
+            _edgeRollRad = isMismatched ? (desiredCutAngle + 1.15f) : desiredCutAngle;
+
             _hasPendingSwingWhoosh = true;
             _pendingWhooshMassKg = wMass;
             _pendingWhooshSpeedMult = effectiveSpeedMult;
@@ -1352,11 +1256,7 @@ namespace Stratocraft.Character
                 _lastSlashWasRiposte ||
                 isJuggernautChainReady)
             {
-                // Doğrudan bulunduğu gerçek konumdan (ışınlanmadan!) sıfır gecikmeyle tam-yay kesik başlar!
-                if (hasPreChamberBonus)
-                {
-                    _currentBladeAnglesRad = effectiveStartPose;
-                }
+                if (hasPreChamberBonus) _currentBladeAnglesRad = effectiveStartPose;
                 _slashStartAnglesRad = ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw
                     ? GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw)
                     : _currentBladeAnglesRad;
@@ -1369,7 +1269,6 @@ namespace Stratocraft.Character
             }
             else
             {
-                // Ters Duruş Hazırlığı (Re-Chambering): Kılıç önce kesim başlangıç köşesine iner, oradan savrulur!
                 _slashStartAnglesRad = idealStartCorner;
                 _slashEndAnglesRad = targetEndCorner;
                 _rechamberDuration = isMismatched ? 0.42f : Mathf.Clamp(0.20f * combinedMassFactor, 0.14f, 0.36f);
@@ -1390,8 +1289,6 @@ namespace Stratocraft.Character
         {
             float effectiveDt = _hitStopTimer > 0f ? (dt * 0.14f) : dt;
 
-            // 1) 2. Derece Sönümlü Bilek Geri Tepme Yayı (Wrist Recoil Spring) ve Kamera Çarpışma Sarsıntısı:
-            // Kılıç ete saplandığında, duvara çarptığında veya bloklandığında el ve kabza fiziksel olarak sarsılır!
             _gripBreathPhase += dt * (IsActiveAttackSwing ? 8.5f : 2.35f);
             Vector3 springAccel = (-_wristRecoilOffset * 165.0f) - (_wristRecoilVelocity * 19.5f);
             _wristRecoilVelocity += springAccel * dt;
@@ -1406,8 +1303,6 @@ namespace Stratocraft.Character
                 _cameraImpactKickDeg -= kickStep;
             }
 
-            // 2) Bloktan Geri Sekme veya Yön Sapması (Rebound / Glancing Deflection) Aktifse:
-            // Kılıç çarpışma sonrası fiziksel olarak ters/çapraz yöne savrulur!
             if (_reboundTimer > 0f)
             {
                 _currentBladeAnglesRad += _reboundVelRad * effectiveDt;
@@ -1422,7 +1317,6 @@ namespace Stratocraft.Character
             {
                 _rechamberTimer -= effectiveDt;
                 float t = 1.0f - Mathf.Clamp01(_rechamberTimer / Mathf.Max(0.01f, _rechamberDuration));
-                // Yumuşak omuz kurma eğrisi (Wind-up Coil)
                 float smoothCoil = t * t * (3f - 2f * t);
                 _targetWristAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _slashStartAnglesRad, smoothCoil);
                 if (_rechamberTimer <= 0f)
@@ -1434,43 +1328,37 @@ namespace Stratocraft.Character
             }
             else if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
-                // İKİ EVRELİ ET KESME DİRENCİ (Two-Phase Meat-Bite Cleave Drag):
-                // İlk 70ms boyunca kılıç etin/zırhın içine gömülürken yoğun dirençle yavaşlar (%24 hız),
-                // son 45ms'de ise eti yarıp dışarı çıkarken (%138 hızla) patlayıcı şekilde kurtulur!
-                float dragMult = _cleaveDragTimer > 0f
-                    ? (_cleaveDragTimer > 0.045f ? 0.24f : 1.38f)
-                    : 1.0f;
+                float dragMult = _cleaveDragTimer > 0f ? (_cleaveDragTimer > 0.045f ? 0.24f : 1.38f) : 1.0f;
                 float stepProgress = (effectiveDt / Mathf.Max(0.12f, _activeSlashDuration)) * dragMult;
                 _slashProgress01 += stepProgress;
 
-                // Kesim esnasında oyuncunun canlı fare kavis yönlendirmesi (hafif yay bükme)
                 if (liveMouseDelta.sqrMagnitude > 0.04f)
                 {
                     Vector2 steeredDir = (_slashDirUnit + liveMouseDelta.normalized * 0.14f).normalized;
                     _slashDirUnit = steeredDir;
                     _slashEndAnglesRad = steeredDir * 1.22f;
+                    if (_slashDirUnit.y < -0.25f)
+                    {
+                        float minOverheadEndPitchRad = (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || isMismatched)
+                            ? -0.96f
+                            : -0.78f;
+                        _slashEndAnglesRad.y = Mathf.Max(_slashEndAnglesRad.y, minOverheadEndPitchRad);
+                    }
                 }
 
                 float s = Mathf.Clamp01(_slashProgress01);
-
-                // 3 EVRELİ DOĞAL FİZİKSEL SAVURMA EĞRİSİ (Wind-up -> Circular Slash -> Follow-Through Overshoot):
-                // Dümdüz robotik çizgi yerine omuz ekleminden çıkan dairesel kavis + ağır kılıçlarda bitiş eylemsizlik taşması!
                 GetWeaponStats(ActiveWeaponArchetype, out _, out float wMass, out _, out _);
                 float massRatio = Mathf.Clamp(wMass / 1.85f, 0.5f, 2.8f);
                 float smoothS = s * s * (3f - 2f * s);
                 Vector2 baseArcPos = Vector2.Lerp(_slashStartAnglesRad, _slashEndAnglesRad, smoothS);
-
-                // Dairesel omuz kavisi (kesim düzlemine dik doğal kavis)
                 Vector2 perpArc = new Vector2(-_slashDirUnit.y, _slashDirUnit.x);
                 float circularBelly = Mathf.Sin(s * Mathf.PI) * 0.16f;
-                // Bitiş taşması (Follow-Through Overshoot): Ağır kılıçlar yayın sonunda eylemsizlikle hafifçe dışarı taşar
                 float followThroughOvershoot = s > 0.78f
                     ? Mathf.Sin(((s - 0.78f) / 0.22f) * Mathf.PI) * (0.06f * massRatio)
                     : 0f;
 
                 _targetWristAnglesRad = baseArcPos + perpArc * circularBelly + _slashDirUnit * followThroughOvershoot;
 
-                // 240 Hz PD çözücüyü kesim sırasında da çalıştırarak gerçek açısal hız ve eylemsizlik üret
                 float swingSubDt = effectiveDt * 0.25f;
                 float swingMass = Mathf.Max(0.55f, weaponMassScale) / Mathf.Max(0.35f, stanceSpeedMult);
                 for (int step = 0; step < 4; step++)
@@ -1479,11 +1367,6 @@ namespace Stratocraft.Character
                 }
                 _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, 0.65f);
 
-                // KILICIN AĞIRLIĞINA GÖRE OYUNCU GÖVDESİNİ VE KAMERAYI SAVURMA ETKİSİ (Mass-Scaled Momentum Pull):
-                // Rapier (0.95kg) -> ~0.40x (yalnızca hafif bilek hareketi, oyuncuyu neredeyse hiç savurmaz)
-                // Katana (1.35kg) -> ~0.65x (kontrollü omuz dönüşü)
-                // Longsword (1.85kg) -> 1.00x (dengeli şövalye omuz ve adım çekişi)
-                // Greatsword (5.60kg) -> ~4.61x (uyumsuz tek-elde ~7.60x: hem bakış açısını hem de oyuncu gövdesini savurma yönüne güçlüce çeker!)
                 float massPullFactor = Mathf.Pow(Mathf.Max(0.8f, wMass) / 1.85f, 1.38f) * (isMismatched ? 1.65f : 1.0f);
                 float bellWeight = Mathf.Sin(s * Mathf.PI);
                 float clampedTotalPullDeg = Mathf.Min(isMismatched ? 32.0f : 24.5f, 7.4f * massPullFactor);
@@ -1493,7 +1376,6 @@ namespace Stratocraft.Character
                 cameraYawDeg += Mathf.Clamp(yawFollowDeg, -2.4f, 2.4f);
                 cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + Mathf.Clamp(pitchFollowDeg, -1.5f, 1.5f), -84f, 84f);
 
-                // Kılıcın doğrusal/merkezkaç eylemsizliğinin oyuncu gövdesini savurma yönüne fiziksel çekişi:
                 float inertiaSurge = Mathf.Sin(Mathf.Pow(s, 0.85f) * Mathf.PI);
                 float lateralThrowSpeed = _slashDirUnit.x * (0.66f * massPullFactor) * inertiaSurge;
                 float forwardThrowSpeed = (0.38f + Mathf.Abs(_slashDirUnit.y) * 0.34f) * (0.55f * massPullFactor) * inertiaSurge;
@@ -1509,27 +1391,20 @@ namespace Stratocraft.Character
                     _guardAnglesRad = ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw
                         ? GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw)
                         : Vector2.ClampMagnitude(_currentBladeAnglesRad, 1.15f);
+                    // Kesik bittiğinde kılıç 1 saniye boyunca bitiş açısında kalır (hızlı kombo zinciri için), sonra dik konuma döner
+                    _postSlashHoldBeforeVerticalTimer = 1.05f;
                     _angularVelocityRadPerSec *= 0.25f;
 
-                    // Kesim sonunda kılıcın ağırlığından kaynaklanan doğal bilek frenleme çöküşü (Follow-Through Settle):
                     float settleWeight = Mathf.Clamp(wMass / 1.85f, 0.45f, 2.2f);
                     _wristRecoilVelocity += new Vector3(_slashDirUnit.x * 0.55f * settleWeight, _slashDirUnit.y * 0.45f * settleWeight - 0.35f, -0.45f * settleWeight);
-
-                    // Kesim sonrası gerçekçi ağırlık toparlanma süresi (Aşırı hızlı spam'i önler!):
-                    // Rapier: 0.08s | Katana: 0.11s | Longsword: 0.17s | Greatsword: 0.34s
                     _postSwingRecoveryTimer = Mathf.Clamp(0.09f * (wMass / 1.10f), 0.07f, 0.36f);
-                    if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut)
-                    {
-                        // Juggernaut stilinde 0.65sn içinde ters yöne kesik atılırsa Kasırga Zinciri (Whirlwind Chain) devreye girer!
-                        _momentumChainWindowTimer = 0.68f;
-                    }
+                    if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut) _momentumChainWindowTimer = 0.68f;
 
                     if (isMismatched)
                     {
                         _overswingStaggerTimer = 0.52f;
                         _postSwingRecoveryTimer = 0.52f;
-                        LastCombatActionText =
-                            "AĞIR SİLAH YORGUNLUĞU (Overswing Stagger)! Ağır kılıç bu tek-el stilde dengeni zorladı!";
+                        LastCombatActionText = "AĞIR SİLAH YORGUNLUĞU (Overswing Stagger)! Ağır kılıç bu tek-el stilde dengeni zorladı!";
                     }
                 }
                 return;
@@ -1539,7 +1414,6 @@ namespace Stratocraft.Character
                 _targetWristAnglesRad = _guardAnglesRad + new Vector2(0f, tipDroopRad);
             }
 
-            // Idle / Guard ve Re-Chambering modlarında 240 Hz (4x Sub-Step) Stable PD Kas Torku
             float subDt = effectiveDt * 0.25f;
             float clampedMass = Mathf.Max(0.6f, weaponMassScale) / Mathf.Max(0.35f, stanceSpeedMult);
             for (int step = 0; step < 4; step++)
@@ -1552,15 +1426,12 @@ namespace Stratocraft.Character
             {
                 if (!isMismatched)
                 {
-                    // Sağ tık (RMB) ile kılıcı konumlandırırken de kütleye bağlı takip hızı:
-                    // Hafif Rapier anında bileği takip ederken, 5.6kg Zweihänder kendi ağırlığıyla ağır ve oturaklı kayar!
                     float effIdleMass = Mathf.Max(0.75f, idleWMass * Mathf.Clamp(weaponMassScale, 0.75f, 1.65f));
                     float idleHandling = Mathf.Pow(1.85f / effIdleMass, 1.15f) * Mathf.Clamp(stanceSpeedMult, 0.75f, 1.25f);
                     float parryAssistRate = Mathf.Clamp(11.5f * idleHandling, 1.85f, 24.0f);
                     _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, Mathf.Clamp01(effectiveDt * parryAssistRate));
                 }
 
-                // Ağır bir kılıcı (örn. 5.6kg Zweihänder) sağ tık blokta sağa/sola taşırken bile eylemsizliği oyuncuyu hafifçe çeker:
                 if (idleWMass >= 2.2f)
                 {
                     float heavyGuardPull = Mathf.Clamp((idleWMass - 1.85f) / 3.75f, 0f, 1.35f) * (isMismatched ? 1.45f : 1.0f);
@@ -1589,7 +1460,7 @@ namespace Stratocraft.Character
                 ? 92.0f
                 : (_isParryStance ? 86.0f : (_slashPhase == BallisticSlashPhase.ReChamberingToStart ? 78.0f : 48.0f));
             float kdDamping = _isParryStance ? 9.5f : 7.0f;
-            float aeroDragCoeff = 0.14f;
+            const float aeroDragCoeff = 0.14f;
 
             Vector2 angleError = _targetWristAnglesRad - _currentBladeAnglesRad;
             Vector2 muscleTorque = angleError * kpMuscle;
@@ -1604,12 +1475,38 @@ namespace Stratocraft.Character
             _currentBladeAnglesRad.y = Mathf.Clamp(_currentBladeAnglesRad.y, -1.35f, 1.35f);
         }
 
-        private void UpdateDynamicEdgeAlignment(float dt)
+        /// <summary>
+        /// Gerçek Ağız Hizalaması ($\eta_{\text{edge}} = \cos(\beta_{\text{edge}})$):
+        /// Sabit 1.0f bypass kaldırıldı! Kılıcın kesim düzlemi (_edgeRollRad) ile anlık savurma yörüngesi
+        /// arasındaki açı > 55° saparsa (veya kesim ortasında ters yöne savrulursa) vuruş
+        /// <b>Yassı Namlu Şaplağı (Flat-Blade Slap: 0.35x künt hasar, 0 kanama, 0 uzuv kopması)</b> olur!
+        /// </summary>
+        private void UpdateDynamicEdgeAlignment(float dt, Vector2 liveMouseFlickVec)
         {
             if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
-                _edgeRollRad = Mathf.Atan2(_slashDirUnit.y, _slashDirUnit.x);
-                _edgeAlignment01 = 1.0f;
+                Vector2 trajectoryDir = _slashDirUnit.sqrMagnitude > 0.01f ? _slashDirUnit.normalized : new Vector2(1f, 0f);
+                if (liveMouseFlickVec.sqrMagnitude > 0.35f && Vector2.Dot(liveMouseFlickVec.normalized, trajectoryDir) < -0.35f)
+                {
+                    // Kesim ortasında ani ters fare kırması -> bilek kesim düzlemini kaybeder (Flat-Blade Slap)!
+                    _edgeRollRad += 1.25f;
+                }
+
+                float desiredCutRoll = Mathf.Atan2(trajectoryDir.y, trajectoryDir.x);
+                float maxWristRollRate = 14.0f;
+                float diffDeg = Mathf.DeltaAngle(_edgeRollRad * Mathf.Rad2Deg, desiredCutRoll * Mathf.Rad2Deg);
+                float betaRad = Mathf.Abs(diffDeg) * Mathf.Deg2Rad;
+                _edgeRollRad += Mathf.Clamp(diffDeg * Mathf.Deg2Rad, -maxWristRollRate * dt, maxWristRollRate * dt);
+
+                if (betaRad > 55.0f * Mathf.Deg2Rad)
+                {
+                    _edgeAlignment01 = 0.35f;
+                }
+                else
+                {
+                    float cosBeta = Mathf.Clamp01(Mathf.Cos(betaRad));
+                    _edgeAlignment01 = Mathf.Clamp(Mathf.Lerp(0.35f, 1.0f, cosBeta), 0.85f, 1.0f);
+                }
                 return;
             }
 
@@ -1621,12 +1518,10 @@ namespace Stratocraft.Character
             }
 
             float desiredEdgeRoll = Mathf.Atan2(_angularVelocityRadPerSec.y, _angularVelocityRadPerSec.x);
-            float maxWristRollSpeed = 18.0f;
             float angleDiff = Mathf.DeltaAngle(_edgeRollRad * Mathf.Rad2Deg, desiredEdgeRoll * Mathf.Rad2Deg) * Mathf.Deg2Rad;
-            _edgeRollRad += Mathf.Clamp(angleDiff, -maxWristRollSpeed * dt, maxWristRollSpeed * dt);
-
+            _edgeRollRad += Mathf.Clamp(angleDiff, -18.0f * dt, 18.0f * dt);
             float alignCos = Mathf.Abs(Mathf.Cos(angleDiff));
-            _edgeAlignment01 = Mathf.Lerp(0.35f, 1.0f, alignCos);
+            _edgeAlignment01 = Mathf.Abs(angleDiff) > 55.0f * Mathf.Deg2Rad ? 0.35f : Mathf.Lerp(0.35f, 1.0f, alignCos);
         }
 
         private void UpdateLiveStatusText(float angleDeg, float omega, bool isMismatched)
@@ -1634,25 +1529,31 @@ namespace Stratocraft.Character
             string mismatchTag = isMismatched ? " [UYUMSUZ STİL CEZASI]" : string.Empty;
             if (_isParryStance)
             {
+                string spamTag = _parrySpamCount > 0 ? $" [Spam Sönümü x{_parrySpamCount}: {CurrentDeflectWindowDuration * 1000f:F0}ms]" : string.Empty;
                 string deflectTag = _deflectFlickTimer > 0f
-                    ? $" [⚡ AKTİF YÖNLÜ SAPTIRMA PENCERESİ ({_deflectFlickTimer * 1000f:F0}ms) - AĞIR DARBEYİ BİLE SAPTIRIR!]"
-                    : " [Yan-Siper Bariyer | Ağır darbeyi saptırmak için darbe gelirken fareyi çapraz savur!]";
-                LastCombatActionText =
-                    $"SAĞ TIK YAN-SİPER BLOK ({GetGuardDirectionLabel()}){deflectTag}{mismatchTag}";
+                    ? $" [⚡ AKTİF YÖNLÜ SAPTIRMA ({_deflectFlickTimer * 1000f:F0}ms)]{spamTag}"
+                    : $" [Yan-Siper Bariyer | Darbe gelirken fareyi çapraz savur!]{spamTag}";
+                LastCombatActionText = $"SAĞ TIK YAN-SİPER BLOK ({GetGuardDirectionLabel()}){deflectTag}{mismatchTag}";
             }
             else if (_isThrustMode)
             {
-                string lungeTag = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? " [İĞNE HAMLESİ 2.0x DELİCİ & OTO-PARRY!]" : string.Empty;
+                string lungeTag = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? " [İĞNE HAMLESİ 2.0x DELİCİ!]" : string.Empty;
                 LastCombatActionText =
                     $"İLERİ SAPLAMA (Thrust){lungeTag} | Uzanma={_thrustExtensionMeters * 100f:F0}cm | Stil={GetStanceDisplayName(ActiveMartialStance)}{mismatchTag}";
             }
             else if (_slashPhase == BallisticSlashPhase.ReChamberingToStart)
             {
                 LastCombatActionText =
-                    $"OMUZ KURULUMU / RE-CHAMBER ({_rechamberTimer * 1000f:F0}ms) -> Kılıç başlangıç köşesine kuruluyor (RMB ile önceden indirirsen 0ms!){mismatchTag}";
+                    $"OMUZ KURULUMU ({_rechamberTimer * 1000f:F0}ms) -> [Q] İle Aldatma İptali (Feint) veya [ScrollUp] İle Saplama Morph!{mismatchTag}";
             }
             else if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
+                if (IsFlatBladeSlap)
+                {
+                    LastCombatActionText =
+                        "⚠️ YASSI NAMLU ŞAPLAĞI (Flat-Blade Slap)! Bilek açısı kesim yönüyle >55° uyumsuz -> %35 Künt Hasar, 0 Kanama, 0 Uzuv Kopması!";
+                    return;
+                }
                 string bonusTag = _lastSlashWasRiposte
                     ? " [⚡ KUSURSUZ KONTRA / RIPOSTE 1.85x!]"
                     : (_lastSlashWasIaidoCharged
@@ -1661,15 +1562,37 @@ namespace Stratocraft.Character
                 string chainTag = _momentumChainCount > 0 ? $" [🔥 KASIRGA ZİNCİRİ x{_momentumChainCount + 1}!]" : string.Empty;
                 string jumpTag = IsAerialJumpStrike ? " [ZIPLA-VUR HAVA DARBESİ 1.40x!]" : string.Empty;
                 LastCombatActionText =
-                    $"TAM-YAY BALİSTİK KESİK (%{(_slashProgress01 * 100f):F0}){bonusTag}{chainTag}{jumpTag} | Yön={angleDeg:F0}° | ω={omega:F1} rad/s{mismatchTag}";
+                    $"TAM-YAY BALİSTİK KESİK (%{(_slashProgress01 * 100f):F0} | Ağız=%{(_edgeAlignment01 * 100f):F0}){bonusTag}{chainTag}{jumpTag} | Yön={angleDeg:F0}°{mismatchTag}";
             }
         }
 
-        /// <summary>
-        /// Silah/alet pivotunu 4 Dojo stiline ve 360° Guard açısına (aşağı indiğinde namlu ucu gerçekten aşağı bakacak,
-        /// sağ tık <c>RMB</c> blokta ise ucunu ileri dürtmek yerine gelen saldırı yönüne dik <b>Yan / Çapraz Siper Bariyeri</b> kuracak şekilde!)
-        /// kesintisiz olarak konumlandırır.
-        /// </summary>
+        private float ResolveCameraPitchDownDegrees(UnityEngine.Camera? playerCamera)
+        {
+            float camFwdDownDeg = 0f;
+            if (playerCamera != null)
+            {
+                camFwdDownDeg = Mathf.Max(0f, Mathf.Asin(Mathf.Clamp(-playerCamera.transform.forward.y, -1f, 1f)) * Mathf.Rad2Deg);
+            }
+            return Mathf.Max(camFwdDownDeg, Mathf.Max(0f, _lastCameraPitchDeg));
+        }
+
+        public static float SampleExactVoxelSurfaceY(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            int wx,
+            int wy,
+            int wz,
+            uint raw,
+            out bool isFloorOrSlope)
+        {
+            uint rawAbove = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy + 1, wz);
+            isFloorOrSlope = !VoxelBitUtility.IsPhysicallySolid(rawAbove);
+            if (isFloorOrSlope && VoxelBitUtility.GetShapeId(raw) == 0)
+            {
+                return wy + Mathf.Clamp(((VoxelBitUtility.GetDensityOrLiquid(raw) - 64f) / 63f) * 0.55f + 0.15f, 0.12f, 0.72f);
+            }
+            return wy + 1.0f;
+        }
+
         public void ApplyInertialWeaponTransform(
             Transform? weaponPivot,
             UnityEngine.Camera? playerCamera,
@@ -1680,30 +1603,51 @@ namespace Stratocraft.Character
             int activeHolsterSlot = 1)
         {
             if (weaponPivot == null) return;
-
-            if (activeHolsterSlot == 1)
-            {
-                ApplyWeaponArchetypeScale(weaponPivot);
-            }
+            if (activeHolsterSlot == 1) ApplyWeaponArchetypeScale(weaponPivot);
 
             float gx = _currentBladeAnglesRad.x;
             float gy = _currentBladeAnglesRad.y;
+            float camPitchDownDeg = ResolveCameraPitchDownDegrees(playerCamera);
+            bool isHeavyBlade = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || _lastStepIsMismatched;
 
-            // Zıplayarak vururken (Airborne Jump-Strike) kol ve namlu yerdeki yaratığa doğru aşağı eğilir
+            // Katman 2: Kamera aşağı eğildiğinde (camPitchDownDeg > 12°) IdleInGuard, Parry ve ReChambering
+            // durumlarında bilek açısını otomatik dengele; aşağı bakınca veya yokuş çıkarken kılıç yere gömülmesin.
+            float pitchLiftRad = 0f;
+            if (camPitchDownDeg > 12f && _slashPhase != BallisticSlashPhase.ActiveFullArcSwing && !_isThrustMode)
+            {
+                pitchLiftRad = Mathf.Clamp((camPitchDownDeg - 12f) * Mathf.Deg2Rad * 0.68f, 0f, 0.88f);
+                gy = Mathf.Max(gy + pitchLiftRad, -0.16f);
+            }
+            else if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing && _slashDirUnit.y < -0.25f && !_isPlayerAirborne)
+            {
+                // Normal yukarıdan-aşağı vuruşta (Overhead Ground Clearance Horizon) kesik yayının sonunu
+                // bel/uyluk ufkunda süzerek kendi ayaklarının dibindeki toprağa saplanmasını önle.
+                float intentionalGroundPitchThreshold = isHeavyBlade ? 32f : 52f;
+                if (camPitchDownDeg < intentionalGroundPitchThreshold && _slashProgress01 > 0.42f)
+                {
+                    float horizonBlend = Mathf.Clamp01((_slashProgress01 - 0.42f) / 0.58f);
+                    float minHorizonGy = isHeavyBlade ? -0.82f : -0.64f;
+                    gy = Mathf.Lerp(gy, Mathf.Max(gy, minHorizonGy), horizonBlend * 0.85f);
+                }
+            }
+
             float aerialPitchBias = (_isPlayerAirborne && _slashPhase == BallisticSlashPhase.ActiveFullArcSwing) ? -0.38f : 0f;
-
             float armArcX = Mathf.Clamp(gx * 0.56f, -0.78f, 0.78f);
             float armArcY = Mathf.Clamp((gy + aerialPitchBias) * 0.46f, -0.64f, 0.62f);
+            if (pitchLiftRad > 0f)
+            {
+                armArcY = Mathf.Max(armArcY, -0.10f + pitchLiftRad * 0.24f);
+            }
 
             float swingArcReach = 0f;
             if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
-                // Kesim yayının ortasında (s=0.5) omuz ve kol ileri doğru doğal uzanır, başında ve sonunda ise toplanır!
                 float arcBell = Mathf.Sin(Mathf.Clamp01(_slashProgress01) * Mathf.PI);
                 float iaidoBonusReach = _lastSlashWasIaidoCharged ? 0.24f : 0f;
                 swingArcReach = (_isPlayerAirborne ? 0.58f : 0.46f) * (0.45f + 0.55f * arcBell) + iaidoBonusReach;
             }
             float targetReachZ = _thrustExtensionMeters +
+                                 (IsPommelBashActive ? 0.35f : 0f) +
                                  (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing
                                      ? swingArcReach
                                      : (_isParryStance ? 0.12f : 0.04f));
@@ -1714,41 +1658,20 @@ namespace Stratocraft.Character
 
             if (_isThrustMode)
             {
-                // İleri Saplama: Namlu ucu tam ileri (+Z) uzanır
-                bladeTipDirLocal = new Vector3(
-                    gx * 0.32f,
-                    (gy + aerialPitchBias) * 0.32f - 0.02f,
-                    0.96f).normalized;
+                bladeTipDirLocal = new Vector3(gx * 0.32f, (gy + aerialPitchBias) * 0.32f - 0.02f, 0.96f).normalized;
                 edgeNormalLocal = Vector3.up;
             }
             else if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
-                // Aktif Tam-Yay Savurma: Kılıç başlangıç köşesinden bitiş köşesine dairesel yay çizerken
-                // ucu ileri kesme düzlemine (+Z) uzanır ve keskin ağzı savurma vektörüne kilitlenir!
                 float midSlashForward = 0.72f + 0.22f * Mathf.Sin(Mathf.Clamp01(_slashProgress01) * Mathf.PI);
-                bladeTipDirLocal = new Vector3(
-                    gx * 1.08f,
-                    (gy + aerialPitchBias * 1.35f) * 1.02f,
-                    midSlashForward).normalized;
-                edgeNormalLocal = new Vector3(
-                    -Mathf.Sin(_edgeRollRad),
-                    Mathf.Cos(_edgeRollRad),
-                    0.24f).normalized;
+                bladeTipDirLocal = new Vector3(gx * 1.08f, (gy + aerialPitchBias * 1.35f) * 1.02f, midSlashForward).normalized;
+                edgeNormalLocal = new Vector3(-Mathf.Sin(_edgeRollRad), Mathf.Cos(_edgeRollRad), 0.24f).normalized;
             }
             else if (_isParryStance)
             {
-                // =========================================================================================
-                // SAĞ TIK (RMB) YAN / ÇAPRAZ SİPER BARİYERİ (CROSSWISE PARRY BARRIER):
-                // Kılıç blok yaparken ucunu ileri (+Z) düşmana doğru dürtmez!
-                // Gelen darbenin yönünde tutulduğunda namlu gövdenin önünde YAN / ÇAPRAZ DİK BARİYER
-                // (tipZ <= 0.10f) kurar ve keskin ağzı (edgeNormalLocal) dışarıya, gelen kılıca döner!
-                // =========================================================================================
                 float sideSign = Mathf.Abs(gx) > 0.08f ? Mathf.Sign(gx) : 1.0f;
-
                 if (gy > 0.32f && Mathf.Abs(gx) < 0.52f)
                 {
-                    // ÜST BLOK (High Roof Guard / Yatay Çatı Siperi):
-                    // Eller baş-omuz hizasına kalkar, namlu başın önünde YATAY YANLAMASINA çatı bariyeri kurar!
                     armArcX = Mathf.Clamp(gx * 0.38f + sideSign * 0.22f, -0.52f, 0.52f);
                     armArcY = Mathf.Clamp(0.22f + gy * 0.22f, 0.20f, 0.46f);
                     bladeTipDirLocal = new Vector3(-sideSign * 0.95f, 0.28f, 0.08f).normalized;
@@ -1756,8 +1679,6 @@ namespace Stratocraft.Character
                 }
                 else if (gy < -0.26f)
                 {
-                    // ALT BLOK (Hanging Low Barrier / Aşağı-Çapraz Asılı Siper):
-                    // Namlu ucu ileri bakmak yerine aşağı-yana çapraz inerek bel/bacak bölgesini örter!
                     armArcX = Mathf.Clamp(gx * 0.52f, -0.62f, 0.62f);
                     armArcY = Mathf.Clamp(gy * 0.36f + 0.04f, -0.44f, 0.12f);
                     bladeTipDirLocal = new Vector3(-sideSign * 0.46f, -0.88f, 0.09f).normalized;
@@ -1765,8 +1686,6 @@ namespace Stratocraft.Character
                 }
                 else
                 {
-                    // SAĞ / SOL YAN BLOK (Crosswise Lateral Guard Barrier):
-                    // Kol tutulan tarafa geçer, namlu ise gövdeyi çapraz/dik kesen YAN SİPER DUVARI oluşturur!
                     armArcX = Mathf.Clamp(gx * 0.60f, -0.66f, 0.66f);
                     armArcY = Mathf.Clamp(gy * 0.40f - 0.04f, -0.38f, 0.40f);
                     float crossTiltX = -sideSign * Mathf.Lerp(0.34f, 0.52f, Mathf.Clamp01(Mathf.Abs(gx)));
@@ -1780,57 +1699,43 @@ namespace Stratocraft.Character
                      _slashPhase == BallisticSlashPhase.IdleInGuard &&
                      _preChamberWindowTimer <= 0f)
             {
-                // IAIDO / BATTOJUTSU DURUŞU:
-                // Kılıç sol bel kınında, FPS kamerasının sol-alt kadranında GÖRÜNÜR şekilde tutulur (kamera arkasına saklanmaz!)
-                armArcX = -0.58f;
-                armArcY = -0.14f;
-                _smoothedArmReachZ = 0.02f;
-                bladeTipDirLocal = new Vector3(0.42f, 0.18f, 0.88f).normalized;
+                armArcX = -0.58f; armArcY = -0.14f + pitchLiftRad * 0.20f; _smoothedArmReachZ = 0.02f;
+                bladeTipDirLocal = new Vector3(0.42f, 0.18f + pitchLiftRad * 0.45f, 0.88f).normalized;
                 edgeNormalLocal = new Vector3(0.15f, 0.95f, -0.22f).normalized;
             }
-            else if (ActiveMartialStance == CombatMartialStance.Fencing_Punta &&
-                     activeHolsterSlot == 1)
+            else if (ActiveMartialStance == CombatMartialStance.Fencing_Punta && activeHolsterSlot == 1)
             {
-                // ESKRİM / DÜELLO DURUŞU: Kılıç ekran ortasında önde, ucu doğrudan nişangaha (+Z) uzanmış düello duruşu!
                 armArcX = Mathf.Clamp(gx * 0.32f - 0.08f, -0.45f, 0.45f);
                 armArcY = Mathf.Clamp(gy * 0.32f - 0.05f, -0.42f, 0.42f);
-                bladeTipDirLocal = new Vector3(
-                    gx * 0.45f,
-                    gy * 0.52f + 0.06f,
-                    0.92f).normalized;
+                bladeTipDirLocal = new Vector3(gx * 0.45f, gy * 0.52f + 0.06f, 0.92f).normalized;
                 edgeNormalLocal = Vector3.right;
             }
             else if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut &&
-                     activeHolsterSlot == 1 &&
-                     _preChamberWindowTimer <= 0f)
+                     activeHolsterSlot == 1 && _preChamberWindowTimer <= 0f)
             {
-                // JUGGERNAUT / ÇİFT EL BAŞ ÜSTÜ YARMA DURUŞU (Zornhau):
-                // Şövalye (HighGuard sağ-dik) ile asla aynı görünmemesi için SOL-ÜST omuzda yatay/çapraz ağır iki-el duruşu!
-                armArcX = Mathf.Clamp(gx * 0.48f - 0.18f, -0.76f, 0.64f);
-                armArcY = Mathf.Clamp(gy * 0.42f + 0.16f, -0.52f, 0.66f);
-                bladeTipDirLocal = new Vector3(
-                    0.68f + gx * 0.25f,
-                    0.46f + gy * 0.35f,
-                    0.52f).normalized;
-                edgeNormalLocal = new Vector3(0.45f, -0.65f, 0.60f).normalized;
+                // Çift El Yarma (TwoHand_Juggernaut) ve Şövalye Duruşunda kılıç dikey (yukarı bakar) tutulur;
+                // kesik sonrası 1.0sn bekleme süresinde kesik bitiş açısını korur ve ardından dikey duruşa döner.
+                armArcX = Mathf.Clamp(gx * 0.42f - 0.14f, -0.68f, 0.64f);
+                armArcY = Mathf.Clamp(gy * 0.34f - 0.04f, -0.52f, 0.56f);
+                float tipX = gx * 0.62f;
+                float tipY = Mathf.Clamp(gy * 0.98f, -0.86f, 0.98f);
+                float tipZ = Mathf.Lerp(0.14f, 0.52f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.82f));
+                bladeTipDirLocal = new Vector3(tipX, tipY, tipZ).normalized;
+                edgeNormalLocal = new Vector3(0.78f, -0.22f, 0.58f).normalized;
             }
             else
             {
-                // BİRLEŞİK (UNIFIED) ŞÖVALYE GUARD DURUŞU:
-                // gx ve gy açısı neyse namlu ucu GERÇEKTEN o yöne döner!
-                float tipX = gx * 0.78f;
-                float tipY = Mathf.Clamp(gy * 0.96f, -0.88f, 0.98f);
-                float tipZ = Mathf.Lerp(0.32f, 0.72f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.65f)) +
-                             (gy < 0f ? (-gy * 0.28f) : 0f);
-
+                // Şövalye Duruşu (HighGuard_VomTag) ve varsayılan dikey guard:
+                // gy yüksekken (~0.96 rad) namlu tam yukarı (tipY ~ 0.96, tipZ ~ 0.14) bakar; ileri uzatılmaz!
+                float tipX = gx * 0.65f;
+                float tipY = Mathf.Clamp(gy * 0.98f, -0.88f, 0.98f);
+                float tipZ = Mathf.Lerp(0.14f, 0.54f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.82f)) + (gy < 0f ? (-gy * 0.22f) : 0f);
                 bladeTipDirLocal = new Vector3(tipX, tipY, tipZ).normalized;
-
                 Vector3 guardEdgeDir = new Vector3(-gy, gx, 0.35f);
                 if (guardEdgeDir.sqrMagnitude < 0.01f) guardEdgeDir = new Vector3(0.85f, -0.15f, 0.50f);
                 edgeNormalLocal = guardEdgeDir.normalized;
             }
 
-            // LookRotation güvenli ortogonalizasyon
             Vector3 orthoForward = edgeNormalLocal - Vector3.Dot(edgeNormalLocal, bladeTipDirLocal) * bladeTipDirLocal;
             if (orthoForward.sqrMagnitude < 0.001f)
             {
@@ -1839,20 +1744,13 @@ namespace Stratocraft.Character
             }
             Quaternion swingRot = Quaternion.LookRotation(orthoForward.normalized, bladeTipDirLocal);
 
-            // Canlı el/bilek soluma salınımı + 2. derece fiziksel çarpışma geri tepmesi (_wristRecoilOffset):
             GetWeaponStats(ActiveWeaponArchetype, out _, out float gripWMass, out _, out _);
             float breathAmp = Mathf.Lerp(0.0045f, 0.011f, Mathf.Clamp01((gripWMass - 0.95f) / 4.65f));
-            Vector3 organicGripSway = new Vector3(
-                Mathf.Cos(_gripBreathPhase * 0.5f) * breathAmp,
-                Mathf.Sin(_gripBreathPhase) * breathAmp,
-                0f);
+            Vector3 organicGripSway = new Vector3(Mathf.Cos(_gripBreathPhase * 0.5f) * breathAmp, Mathf.Sin(_gripBreathPhase) * breathAmp, 0f);
 
             if (isFirstPersonMode && playerCamera != null)
             {
-                Vector3 fpsShoulderPos = new Vector3(
-                    0.28f + armArcX,
-                    -0.24f + armArcY,
-                    0.58f + _smoothedArmReachZ) + _wristRecoilOffset + organicGripSway;
+                Vector3 fpsShoulderPos = new Vector3(0.28f + armArcX, -0.24f + armArcY, 0.58f + _smoothedArmReachZ) + _wristRecoilOffset + organicGripSway;
                 weaponPivot.position = playerCamera.transform.TransformPoint(fpsShoulderPos);
                 weaponPivot.rotation = playerCamera.transform.rotation * swingRot;
             }
@@ -1888,17 +1786,13 @@ namespace Stratocraft.Character
                 Vector3 localPt = localRef != null ? localRef.InverseTransformPoint(pt) : pt;
                 if (!_bladePointsInitialized)
                 {
-                    _prevBladeWorldPoints[i] = pt;
-                    _currBladeWorldPoints[i] = pt;
-                    _prevBladeLocalPoints[i] = localPt;
-                    _currBladeLocalPoints[i] = localPt;
+                    _prevBladeWorldPoints[i] = pt; _currBladeWorldPoints[i] = pt;
+                    _prevBladeLocalPoints[i] = localPt; _currBladeLocalPoints[i] = localPt;
                 }
                 else
                 {
-                    _prevBladeWorldPoints[i] = _currBladeWorldPoints[i];
-                    _currBladeWorldPoints[i] = pt;
-                    _prevBladeLocalPoints[i] = _currBladeLocalPoints[i];
-                    _currBladeLocalPoints[i] = localPt;
+                    _prevBladeWorldPoints[i] = _currBladeWorldPoints[i]; _currBladeWorldPoints[i] = pt;
+                    _prevBladeLocalPoints[i] = _currBladeLocalPoints[i]; _currBladeLocalPoints[i] = localPt;
                     float ptLocalSpeed = (localPt - _prevBladeLocalPoints[i]).magnitude / Mathf.Max(0.001f, _lastStepDt);
                     if (ptLocalSpeed > maxLocalSpeed) maxLocalSpeed = ptLocalSpeed;
                 }
@@ -1906,76 +1800,162 @@ namespace Stratocraft.Character
             _bladePointsInitialized = true;
             BladeLocalSwingSpeedMetersPerSec = maxLocalSpeed;
 
-            if (worldChunks == null)
-            {
-                return;
-            }
+            if (worldChunks == null) return;
 
-            // 1) AKTİF KESİK SIRASINDA DUVAR/BLOK ÇARPIŞMASI VE GERİ SEKME (Ricochet)
+            float camPitchDownDeg = ResolveCameraPitchDownDegrees(playerCamera);
+            bool isHeavyBlade = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || _lastStepIsMismatched;
+
             if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing && _wallRecoilCooldown <= 0f)
             {
                 for (int i = BladeSamplePointCount - 1; i >= 0; i--)
                 {
                     Vector3 p = _currBladeWorldPoints[i];
-                    int wx = Mathf.FloorToInt(p.x);
-                    int wy = Mathf.FloorToInt(p.y);
-                    int wz = Mathf.FloorToInt(p.z);
+                    int wx = Mathf.FloorToInt(p.x), wy = Mathf.FloorToInt(p.y), wz = Mathf.FloorToInt(p.z);
                     uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
-                    if (VoxelBitUtility.IsPhysicallySolid(raw))
+                    if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                    // Katman 1: Üst komşu (wy + 1) kontrolü ile Zemin/Yokuş vs. Dik Duvar ayrımı ve gerçek SDF yüzey yüksekliği
+                    float surfaceY = SampleExactVoxelSurfaceY(worldChunks, wx, wy, wz, raw, out bool isFloorOrSlope);
+                    if (isFloorOrSlope && p.y > surfaceY)
                     {
-                        byte matId = VoxelBitUtility.GetMaterialId(raw);
-                        float uHit = (i + 1) * 0.20f;
+                        // Görsel SDF zemininin üstündeki hava boşluğu kesinlikle katı engel sayılmaz!
+                        continue;
+                    }
 
-                        if (activeHolsterSlot == 2 || activeHolsterSlot == 3)
-                        {
-                            HasPendingToolVoxelHit = true;
-                            PendingToolVoxelHitCoord = new Vector3Int(wx, wy, wz);
-                            PendingToolImpactPower = Mathf.Clamp(BladeLocalSwingSpeedMetersPerSec * 0.28f, 0.85f, 2.25f);
-                            AbortSwingOnObstacle(0.32f);
-                            break;
-                        }
+                    byte matId = VoxelBitUtility.GetMaterialId(raw);
+                    float uHit = (i + 1) * 0.20f;
 
-                        if (_isPlayerAirborne && i >= 3)
-                        {
-                            continue;
-                        }
-
-                        float restitution = matId == MaterialIdCatalog.Dirt || matId == MaterialIdCatalog.OakWood ? 0.26f : 0.52f;
-                        _hasPendingWallRicochet = true;
-                        _pendingWallHitWorldPos = p;
-                        _pendingWallHitMaterialId = matId;
-                        _pendingWallImpactSpeedMps = Mathf.Max(2.5f, BladeLocalSwingSpeedMetersPerSec);
-                        AbortSwingOnObstacle(restitution);
-                        LastCombatActionText =
-                            $"💥 DUVAR SEKMESİ (u={uHit:F2}) | Kılıç {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} bloğuna çarpıp kıvılcımla sekti!";
+                    if (activeHolsterSlot == 2 || activeHolsterSlot == 3)
+                    {
+                        HasPendingToolVoxelHit = true;
+                        PendingToolVoxelHitCoord = new Vector3Int(wx, wy, wz);
+                        PendingToolImpactPower = Mathf.Clamp(BladeLocalSwingSpeedMetersPerSec * 0.28f, 0.85f, 2.25f);
+                        AbortSwingOnObstacle(0.32f);
                         break;
                     }
+                    if (_isPlayerAirborne && i >= 3) continue;
+
+                    // Katman 4: Silah Boyuna (Greatsword 5.6kg vs. Normal Kılıçlar) Göre Akıllı Zemin/Duvar Çarpma Kuralı
+                    if (!isFloorOrSlope)
+                    {
+                        // Dik Duvar veya Sütun (wy + 1 dolu): Namlu gövdesi (i <= 3) çarptığında gerçek duvar sekmesi çalışır.
+                        if (i > 3) continue;
+                    }
+                    else
+                    {
+                        // Zemin veya Yokuş (isFloorOrSlope == true):
+                        if (isHeavyBlade)
+                        {
+                            // Çok Büyük / Ağır Kılıç (Greatsword 5.6kg veya uyumsuz tek-el):
+                            // Yokuş çıkarken veya karşıya/yatay/hafif eğimli vuruşlarda (camPitchDownDeg < 30° veya _slashProgress01 < 0.55)
+                            // yere takılmaz; ancak aşağı doğru (camPitchDownDeg >= 32° ve _slashDirUnit.y < -0.45) ağır dikey darbe
+                            // indirildiğinde savurmanın son fazında (_slashProgress01 >= 0.55) p.y < surfaceY - 0.06m ise yere çarpar!
+                            bool heavyGroundSlam = !_isPlayerAirborne &&
+                                                   camPitchDownDeg >= 32f &&
+                                                   _slashDirUnit.y < -0.45f &&
+                                                   _slashProgress01 >= 0.55f &&
+                                                   p.y < (surfaceY - 0.06f);
+                            if (!heavyGroundSlam) continue;
+                        }
+                        else
+                        {
+                            // Normal Kılıçlar (Rapier, Katana, Longsword):
+                            // Normal yukarıdan-aşağı vuruşlarda ve yokuşlarda zemin teması teğetsel sıyrılır (vuruş kesilmez!).
+                            // Yalnızca oyuncu kasıtlı olarak dik açıyla doğrudan yere bakıp (camPitchDownDeg >= 52°)
+                            // iç namlu (i <= 2) ile p.y < surfaceY - 0.14m kadar yere gömülürse çarpar.
+                            bool intentionalGroundStrike = !_isPlayerAirborne &&
+                                                           camPitchDownDeg >= 52f &&
+                                                           _slashDirUnit.y < -0.45f &&
+                                                           i <= 2 &&
+                                                           p.y < (surfaceY - 0.14f);
+                            if (!intentionalGroundStrike) continue;
+                        }
+                    }
+
+                    float restitution = matId == MaterialIdCatalog.Dirt || matId == MaterialIdCatalog.OakWood ? 0.26f : 0.52f;
+                    _hasPendingWallRicochet = true;
+                    _pendingWallHitWorldPos = p;
+                    _pendingWallHitMaterialId = matId;
+                    _pendingWallImpactSpeedMps = Mathf.Max(2.5f, BladeLocalSwingSpeedMetersPerSec);
+                    AbortSwingOnObstacle(restitution);
+                    LastCombatActionText = isFloorOrSlope
+                        ? $"💥 ZEMİN ÇARPMASI (u={uHit:F2}) | Ağır/Dik vuruş {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} zeminine çarpıp kıvılcımla sekti!"
+                        : $"💥 DUVAR SEKMESİ (u={uHit:F2}) | Kılıç {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} bloğuna çarpıp kıvılcımla sekti!";
+                    break;
                 }
             }
 
-            // 2) TÜM MODLARDA (Idle, RMB Guard, Saplama, Savurma) SÜREKLİ 3B DUVAR DIŞARI İTME (Depenetration):
-            // Oyuncu duvara yanaşıp kılıcı zorlasa bile namlu ASLA duvarın içinden geçmez; duvara dayanıp geri çekilir!
-            bool anyPointPenetrating = false;
+            // Katman 3: Yokuş Çıkarken ve IdleInGuard Durumunda Sessiz Teğetsel Sıyırma (Silent Slope Skimming)
+            bool anyWallPenetrating = false;
+            bool anyFloorSkimming = false;
+            float maxFloorLiftNeeded = 0f;
             Vector3 wallBlockCenterWorld = Vector3.zero;
             byte penetratingMatId = 0;
+
             for (int i = 0; i < BladeSamplePointCount; i++)
             {
                 Vector3 p = _currBladeWorldPoints[i];
-                int wx = Mathf.FloorToInt(p.x);
-                int wy = Mathf.FloorToInt(p.y);
-                int wz = Mathf.FloorToInt(p.z);
+                int wx = Mathf.FloorToInt(p.x), wy = Mathf.FloorToInt(p.y), wz = Mathf.FloorToInt(p.z);
                 uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
-                if (VoxelBitUtility.IsPhysicallySolid(raw))
+                if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+                if (_isPlayerAirborne && i >= 3) continue;
+
+                float surfaceY = SampleExactVoxelSurfaceY(worldChunks, wx, wy, wz, raw, out bool isFloorOrSlope);
+                if (isFloorOrSlope)
                 {
-                    if (_isPlayerAirborne && i >= 3) continue;
-                    anyPointPenetrating = true;
+                    if (p.y > surfaceY) continue;
+                    anyFloorSkimming = true;
+                    float depth = (surfaceY + 0.06f) - p.y;
+                    if (depth > maxFloorLiftNeeded) maxFloorLiftNeeded = depth;
+                    continue;
+                }
+
+                // Dik duvar/sütun (wy + 1 dolu): uç nokta (i == 4) hariç gövde girerse duvar itmesi uygula
+                if (i <= 3)
+                {
+                    anyWallPenetrating = true;
                     wallBlockCenterWorld = new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f);
                     penetratingMatId = VoxelBitUtility.GetMaterialId(raw);
                     break;
                 }
             }
 
-            if (anyPointPenetrating && localRef != null)
+            if (anyFloorSkimming && !anyWallPenetrating)
+            {
+                // Sessiz Teğetsel Yokuş/Zemin Sıyırma: ASLA _hasPendingWallRicochet (kıvılcım/sekme) üretmez!
+                // Kılıç ucunu yokuş eğimi boyunca yumuşakça yukarı kaldırır.
+                float gentleLiftRad = Mathf.Clamp(maxFloorLiftNeeded * 0.55f, 0.04f, 0.32f);
+                _currentBladeAnglesRad.y = Mathf.Clamp(
+                    Mathf.MoveTowards(_currentBladeAnglesRad.y, Mathf.Max(_currentBladeAnglesRad.y, 0.18f), gentleLiftRad),
+                    -0.65f, 1.25f);
+                if (_slashPhase == BallisticSlashPhase.IdleInGuard)
+                {
+                    _guardAnglesRad.y = Mathf.Max(_guardAnglesRad.y, -0.18f);
+                }
+
+                float gx = _currentBladeAnglesRad.x, gy = _currentBladeAnglesRad.y;
+                float armArcX = Mathf.Clamp(gx * 0.52f, -0.72f, 0.72f);
+                float armArcY = Mathf.Clamp(gy * 0.44f + Mathf.Min(0.22f, maxFloorLiftNeeded * 0.45f), -0.22f, 0.62f);
+                Vector3 skimmedTipDir = new Vector3(gx * 0.68f, Mathf.Clamp(gy * 0.88f + 0.22f, 0.05f, 0.96f), 0.72f).normalized;
+                Quaternion skimmedRot = Quaternion.LookRotation(Vector3.forward, skimmedTipDir);
+                if (isFirstPersonMode && playerCamera != null)
+                {
+                    weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.28f + armArcX, -0.22f + armArcY, 0.54f + _smoothedArmReachZ));
+                    weaponPivot.rotation = playerCamera.transform.rotation * skimmedRot;
+                }
+                else
+                {
+                    weaponPivot.localPosition = baseLocalPos + new Vector3(armArcX * 0.90f, armArcY * 0.85f, _smoothedArmReachZ);
+                    weaponPivot.localRotation = skimmedRot;
+                }
+
+                Vector3 newHilt = weaponPivot.position, newDir = weaponPivot.up.normalized;
+                for (int i = 0; i < BladeSamplePointCount; i++)
+                {
+                    _currBladeWorldPoints[i] = newHilt + newDir * (effectiveLen * ((i + 1) * 0.20f));
+                }
+            }
+            else if (anyWallPenetrating && localRef != null)
             {
                 Vector3 localWallPos = localRef.InverseTransformPoint(wallBlockCenterWorld);
                 Vector2 pushAwayAngles = new Vector2(
@@ -1989,7 +1969,9 @@ namespace Stratocraft.Character
                 _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, _currentBladeAnglesRad, 0.75f);
                 _angularVelocityRadPerSec *= 0.15f;
 
-                if (_wallRecoilCooldown <= 0f && maxLocalSpeed > 2.2f && activeHolsterSlot == 1)
+                // Katman 3: Aktif savurma (ActiveFullArcSwing) dışındaki durumlarda ASLA _hasPendingWallRicochet üretme!
+                if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
+                    _wallRecoilCooldown <= 0f && maxLocalSpeed > 2.2f && activeHolsterSlot == 1)
                 {
                     _hasPendingWallRicochet = true;
                     _pendingWallHitWorldPos = Vector3.Lerp(weaponPivot.position, wallBlockCenterWorld, 0.65f);
@@ -1998,17 +1980,13 @@ namespace Stratocraft.Character
                     _wallRecoilCooldown = 0.25f;
                 }
 
-                // Silah transformunu ve 5 namlu noktasını duvarın dışına çıkmış haliyle anında güncelle!
-                float gx = _currentBladeAnglesRad.x;
-                float gy = _currentBladeAnglesRad.y;
-                float armArcX = Mathf.Clamp(gx * 0.45f, -0.62f, 0.62f);
-                float armArcY = Mathf.Clamp(gy * 0.40f, -0.52f, 0.52f);
+                float gx = _currentBladeAnglesRad.x, gy = _currentBladeAnglesRad.y;
+                float armArcX = Mathf.Clamp(gx * 0.45f, -0.62f, 0.62f), armArcY = Mathf.Clamp(gy * 0.40f, -0.52f, 0.52f);
                 Vector3 retractedTipDir = new Vector3(gx * 0.55f, Mathf.Clamp(gy * 0.85f + 0.25f, -0.65f, 0.95f), 0.35f).normalized;
                 Quaternion safeRot = Quaternion.LookRotation(Vector3.forward, retractedTipDir);
                 if (isFirstPersonMode && playerCamera != null)
                 {
-                    Vector3 fpsShoulderPos = new Vector3(0.26f + armArcX, -0.24f + armArcY, 0.42f + _smoothedArmReachZ);
-                    weaponPivot.position = playerCamera.transform.TransformPoint(fpsShoulderPos);
+                    weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.26f + armArcX, -0.24f + armArcY, 0.42f + _smoothedArmReachZ));
                     weaponPivot.rotation = playerCamera.transform.rotation * safeRot;
                 }
                 else
@@ -2017,22 +1995,17 @@ namespace Stratocraft.Character
                     weaponPivot.localRotation = safeRot;
                 }
 
-                Vector3 newHilt = weaponPivot.position;
-                Vector3 newDir = weaponPivot.up.normalized;
+                Vector3 newHilt = weaponPivot.position, newDir = weaponPivot.up.normalized;
                 for (int i = 0; i < BladeSamplePointCount; i++)
                 {
-                    float u = (i + 1) * 0.20f;
-                    _currBladeWorldPoints[i] = newHilt + newDir * (effectiveLen * u);
+                    _currBladeWorldPoints[i] = newHilt + newDir * (effectiveLen * ((i + 1) * 0.20f));
                 }
             }
 
-            // 3) Kazma [2] / Balta [3] savurmasında yayın tepe noktasından (s in 0.42..0.78) geçerken
-            // kameranın baktığı yakın bloğa (<= 2.65m) aletin başı ulaşmışsa fiziksel darbe kaydı oluştur
             if (!HasPendingToolVoxelHit && (activeHolsterSlot == 2 || activeHolsterSlot == 3) &&
                 _slashProgress01 >= 0.42f && _slashProgress01 <= 0.78f && playerCamera != null)
             {
-                Vector3 origin = playerCamera.transform.position;
-                Vector3 fwd = playerCamera.transform.forward;
+                Vector3 origin = playerCamera.transform.position, fwd = playerCamera.transform.forward;
                 for (float d = 0.75f; d <= 2.65f; d += 0.22f)
                 {
                     Vector3 probe = origin + fwd * d;

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Math;
+using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
 namespace Stratocraft.Character.Systems
@@ -34,6 +35,32 @@ namespace Stratocraft.Character.Systems
 
         public int LastNearbyGlowingMossCount { get; private set; }
         public int LastNearbyCampfireCount { get; private set; }
+        public bool LastTorchExtinguishedByHypoxia { get; private set; }
+
+        /// <summary>
+        /// Scratch chunk'in hem voksel hem akiskan dizilerini kopyalar ve 16x16 SkyOcclusionY
+        /// haritasini bastan insa ederek yeralti magaralarinda sahte acik-gokyuzu hatasini onler.
+        /// </summary>
+        public static void PrepareScratchChunkForOxygenBfs(
+            VoxelChunkComponent scratch,
+            uint[] rawVoxels,
+            ushort[]? rawFluids = null)
+        {
+            if (scratch == null) throw new ArgumentNullException(nameof(scratch));
+            if (rawVoxels == null) throw new ArgumentNullException(nameof(rawVoxels));
+
+            Array.Copy(rawVoxels, scratch.Voxels, Math.Min(rawVoxels.Length, scratch.Voxels.Length));
+            if (rawFluids != null)
+            {
+                Array.Copy(rawFluids, scratch.Fluids, Math.Min(rawFluids.Length, scratch.Fluids.Length));
+            }
+            else
+            {
+                Array.Clear(scratch.Fluids, 0, scratch.Fluids.Length);
+            }
+
+            scratch.SkyOcclusionMap.RebuildAllColumns(scratch.Voxels);
+        }
 
         /// <summary>Tek chunk uzerinde geriye donuk uyumlu, sifir-GC bagli hava hacmi olcumu.</summary>
         public int MeasureConnectedAirVolume(
@@ -87,6 +114,12 @@ namespace Stratocraft.Character.Systems
                 startChunk == null)
             {
                 return 0;
+            }
+
+            // Eger scratch chunk dogrudan Array.Copy ile doldurulduysa SkyOcclusionMap'i senkronize et
+            if (startChunk.SkyOcclusionMap.GetMaxOccluderY(sLx, sLz) == 0)
+            {
+                startChunk.SkyOcclusionMap.RebuildAllColumns(startChunk.Voxels);
             }
 
             if (!IsBreathableAirCell(startChunk, sLx, startY, sLz, out bool startHasSky))
@@ -188,6 +221,22 @@ namespace Stratocraft.Character.Systems
             bool isHoldingLitTorch,
             float deltaTime)
         {
+            StepOxygen(ref vitals, connectedAirVoxels, isHoldingLitTorch, deltaTime, out _);
+        }
+
+        /// <summary>
+        /// Bagli hava hacmine, yanan mesale/kamp atesine (1 + 2 * N_fire = 3.0x tuketim ve 0 O2'de sonme!),
+        /// fotosentetik yosuna ve sualti derinligine gore karakterin LungOxygenPercent ve CurrentHp degerlerini gunceller.
+        /// </summary>
+        public void StepOxygen(
+            ref CharacterVitalsComponent vitals,
+            int connectedAirVoxels,
+            bool isHoldingLitTorch,
+            float deltaTime,
+            out bool torchExtinguishedByHypoxia)
+        {
+            torchExtinguishedByHypoxia = false;
+
             if (connectedAirVoxels <= 0)
             {
                 // Sualti veya gocuk altinda nefes tutma: Boyle-Mariotte derinlik carpani (1 + 0.05 * d_water)
@@ -215,9 +264,10 @@ namespace Stratocraft.Character.Systems
                 // Kapali hacim: 2 vokselde (1x1x2) tam 30.0 sn -> drainRate = (100 / 30) * (2 / connectedAirVoxels)
                 float volumeScale = ReferenceSealedBoxVolumeVoxels / MathF.Max(1.0f, connectedAirVoxels);
                 float baseDrainPerSec = (100.0f / ReferenceSealedDepletionSeconds) * volumeScale;
-                if (isHoldingLitTorch)
+                if (isHoldingLitTorch && vitals.LungOxygenPercent > 0.01f)
                 {
-                    baseDrainPerSec *= 2.5f;
+                    // GAME LOGIC BIBLE §3.2.C / §3.5.A.2: Yanan mesale O2 tuketimini (1 + 2 * N_fire) = 3.0x hizlandirir!
+                    baseDrainPerSec *= 3.0f;
                 }
 
                 // Kamp atesi bloklari O2 tuketimini artirir, Parlayan Yosun fotosentezle O2 yeniler!
@@ -235,6 +285,12 @@ namespace Stratocraft.Character.Systems
                 // Acik atmosfer: Saniyede %25 hizla yenilenir
                 vitals.LungOxygenPercent = MathF.Min(100.0f, vitals.LungOxygenPercent + 25.0f * deltaTime);
             }
+
+            if (isHoldingLitTorch && (vitals.LungOxygenPercent <= 0.01f || connectedAirVoxels <= 0))
+            {
+                torchExtinguishedByHypoxia = true;
+            }
+            LastTorchExtinguishedByHypoxia = torchExtinguishedByHypoxia;
 
             // Hipoksi bayragi ve bogulma hasari
             if (vitals.LungOxygenPercent < 25.0f)
@@ -262,8 +318,11 @@ namespace Stratocraft.Character.Systems
             reachesOpenSky = false;
             int flatIdx = VoxelChunkComponent.GetFlatIndex(lx, y, lz);
 
-            // Yuksek doluluklu (> 192) sivi hucresinde nefes alinamaz
-            if ((chunk.Fluids[flatIdx] & 0xFF) > 192)
+            ushort rawFluid = chunk.Fluids[flatIdx];
+            FluidCell16 fluidCell = new FluidCell16(rawFluid);
+            // Su, Lav veya Korrozyon Asidi ile dolu hucrelerde (veya >192 ham kutlede) nefes alinamaz!
+            if ((rawFluid & 0xFF) > 192 ||
+                ((fluidCell.Type == FluidType.Water || fluidCell.Type == FluidType.Lava || fluidCell.Type == FluidType.Acid) && fluidCell.Mass >= 96))
             {
                 return false;
             }

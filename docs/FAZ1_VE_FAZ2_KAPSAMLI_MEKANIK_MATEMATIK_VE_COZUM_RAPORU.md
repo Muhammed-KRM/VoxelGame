@@ -1,35 +1,35 @@
-# STRATOCRAFT (VOXELGAME) — FAZ 1 VE FAZ 2 KAPSAMLI MEKANİK, MATEMATİK, ENDÜSTRİ ARAŞTIRMASI VE BİRLEŞİK ÇÖZÜM ANLATIM DOKÜMANI
+﻿# STRATOCRAFT (VOXELGAME) — FAZ 1 VE FAZ 2 KAPSAMLI MEKANİK, MATEMATİK, ENDÜSTRİ ARAŞTIRMASI VE BİRLEŞİK ÇÖZÜM ANLATIM DOKÜMANI
 
 **Üst Mimari Otorite:**
-1. [STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md](file:///D:/Oyunum/oyun/STRATOCRAFT_%20EVRENSEL%20OYUN%20TASARIM%20VE%20MANTIK%20ANAYASASI%20%28GAME%20LOGIC%20BIBLE%29%20%282%29.md) (**Mutlak Anayasa Otoritesi — `v7.0`**)
-2. [STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md](file:///D:/Oyunum/oyun/STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md) (**Destekleyici Matematiksel Otorite**)
+1. [STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md](STRATOCRAFT_%20EVRENSEL%20OYUN%20TASARIM%20VE%20MANTIK%20ANAYASASI%20%28GAME%20LOGIC%20BIBLE%29%20%282%29.md) (**Mutlak Anayasa Otoritesi — `v7.0`**)
+2. [STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md](STRATOCRAFT_ARKA_PLAN_MATEMATIKSEL_SIMULASYON_VE_VOXEL_ALGORITMALARI_RAPORU.md) (**Destekleyici Matematiksel Otorite**)
 
 **Denetlenen Diğer Proje Belgeleri:**
-- [STRATOCRAFT_GELISTIRICI_DOKUMANI.md](file:///D:/Oyunum/oyun/STRATOCRAFT_GELISTIRICI_DOKUMANI.md)
-- [DURUM_VE_DEVIR.md](file:///D:/Oyunum/oyun/DURUM_VE_DEVIR.md)
-- [README.md](file:///D:/Oyunum/oyun/README.md)
+- [STRATOCRAFT_GELISTIRICI_DOKUMANI.md](STRATOCRAFT_GELISTIRICI_DOKUMANI.md)
+- [DURUM_VE_DEVIR.md](DURUM_VE_DEVIR.md)
+- [README.md](README.md)
 
 **Uzman Alt Ajanlar Tarafından Üretilen 8 Detaylı Mekanik Mühendislik Raporu (`docs/faz1_faz2_mekanikler/`):**
-1. **M01 — Hibrit Voxel, Bit-Packing, `MicroVoxelPool4096` ve Çift Kanallı Meshing:** [01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md)
-2. **M02 — C++20 SIMD Dünya Üretimi, Halkalar, Streaming, `.sregion` Kayıt ve Floating Origin:** [02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md)
-3. **M03 — İki Aşamalı Domino Yıkım, Kemer/Kilit Taşı ve Terzaghi Mağara Göçüğü:** [03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md)
-4. **M04 — 16-Bit Sonlu Akışkanlar, U-Borusu Basınç, SDF Kıyı Eteği ve Stokiyometrik Obsidyen:** [04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md)
-5. **M05 — Fiziksel Karakter, Parkur, Kapalı Alan Oksijen BFS ve Termal/Islaklık ODE:** [05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md)
-6. **M06 — Madde Kristali SDF CSG, 3B Fiziksel Kumaş Çanta, Kılıflar ve 3B CAS Sandık:** [06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md)
-7. **M07 — Kanonik 21 Yaratık, Multi-Span `NavSpan`, 4-Katmanlı Hibrit LoD AI ve `< 16 MB` VAT/BAT:** [07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md)
-8. **M08 — UV-Free `StratocraftUberShader` ve Otonom Headless Blender 4.2 3B Varlık Fabrikası:** [08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md)
+1. **M01 — Hibrit Voxel, Bit-Packing, `MicroVoxelPool4096` ve Çift Kanallı Meshing:** [01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md](docs/faz1_faz2_mekanikler/01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md)
+2. **M02 — C++20 SIMD Dünya Üretimi, Halkalar, Streaming, `.sregion` Kayıt ve Floating Origin:** [02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md](docs/faz1_faz2_mekanikler/02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md)
+3. **M03 — İki Aşamalı Domino Yıkım, Kemer/Kilit Taşı ve Terzaghi Mağara Göçüğü:** [03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md](docs/faz1_faz2_mekanikler/03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md)
+4. **M04 — 16-Bit Sonlu Akışkanlar, U-Borusu Basınç, SDF Kıyı Eteği ve Stokiyometrik Obsidyen:** [04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md](docs/faz1_faz2_mekanikler/04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md)
+5. **M05 — Fiziksel Karakter, Parkur, Kapalı Alan Oksijen BFS ve Termal/Islaklık ODE:** [05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md](docs/faz1_faz2_mekanikler/05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md)
+6. **M06 — Madde Kristali SDF CSG, 3B Fiziksel Kumaş Çanta, Kılıflar ve 3B CAS Sandık:** [06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md](docs/faz1_faz2_mekanikler/06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md)
+7. **M07 — Kanonik 21 Yaratık, Multi-Span `NavSpan`, 4-Katmanlı Hibrit LoD AI ve `< 16 MB` VAT/BAT:** [07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md](docs/faz1_faz2_mekanikler/07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md)
+8. **M08 — UV-Free `StratocraftUberShader` ve Otonom Headless Blender 4.2 3B Varlık Fabrikası:** [08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md](docs/faz1_faz2_mekanikler/08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md)
 
 ---
 
 ## BÖLÜM 1 — EN SON NE YAPIYORDUK? YARIDA KALAN İŞLERİN ADLİ TESPİTİ ("ÇİFT BEYİN / SPLIT-BRAIN" KOPUKLUĞU) VE ANAYASA ÇELİŞKİ ÇÖZÜM MATRİSİ
 
 ### 1.1. Önceki Bilgisayarda Yarıda Kalan İşlerin Kök Nedeni
-[DURUM_VE_DEVIR.md](file:///D:/Oyunum/oyun/DURUM_VE_DEVIR.md) ve kod tabanının tamamı (`84` C#/HLSL dosyası, C++20 `StratocraftNative`, Python `AutonomousAssetFactory` ve NUnit testleri) çapraz denetlendiğinde, projenin önceki bilgisayarda tam olarak hangi noktada kaldığı netleşmiştir:
+[DURUM_VE_DEVIR.md](DURUM_VE_DEVIR.md) ve kod tabanının tamamı (`84` C#/HLSL dosyası, C++20 `StratocraftNative`, Python `AutonomousAssetFactory` ve NUnit testleri) çapraz denetlendiğinde, projenin önceki bilgisayarda tam olarak hangi noktada kaldığı netleşmiştir:
 
 1. **Tamamlanmış ve Sağlam Temeller:**
    - **Faz 0 Otonom Altyapı (`%100` Çalışır):** C++20 AVX2 + Zstd + XXH64 `StratocraftNative.dll` derleme hattı (`6/6 ctest`), Python 3.11 + Headless Blender 4.2 LTS varlık fabrikası (`9/9 pytest`, `0` ruff hatası, `27` `.glb` model + `3.13 MB` küresel doku seti), UV-Free `StratocraftUberShader.shader` (URP 17 Forward+, SSAO, 4-kaskad gölge, SRP Batcher) ve Unity 6 (`6000.6.7f1`) `StratocraftStage1Showcase.unity` vitrin sahnesi çalışır durumdadır.
 2. **Yarıda Kalan Ana Sorun — "Çift Beyin (`Split-Brain`)" Mimarisi:**
-   - Faz 1 ve Faz 2'nin alt sistem sınıfları (`ChunkStreamingSystem`, `RegionFileStore`, `StructuralCollapseSystem`, `FluidSimulationSystem`, `PhysicalCharacterControllerSystem`, `EnclosedOxygenFloodFillSystem`, `ThermalAndBiologySystem`, `MatterCrystalVacuumSystem`, `TacticalClothBackpackSystem`, `BodyHolsterStateMachine`, `VisualChestCasSystem`, `Creature21BehaviorSystem`, `HybridAiLodPromotionSystem`) **birim testleri geçecek seviyede ayrı C# sınıfları olarak yazılmış**, **ANCAK** canlı sahneyi yöneten [StratocraftStage1SceneBuilder.cs](file:///D:/Oyunum/oyun/Assets/_Stratocraft/Editor/StratocraftStage1SceneBuilder.cs) ve [Stage1InteractivePlayController.cs](file:///D:/Oyunum/oyun/Assets/_Stratocraft/Character/Stage1InteractivePlayController.cs) bu sistemlerin büyük bölümünü çağırmak yerine kendi içinde **geçici prototip (`stub`) mantığı** çalıştırmaktadır:
+   - Faz 1 ve Faz 2'nin alt sistem sınıfları (`ChunkStreamingSystem`, `RegionFileStore`, `StructuralCollapseSystem`, `FluidSimulationSystem`, `PhysicalCharacterControllerSystem`, `EnclosedOxygenFloodFillSystem`, `ThermalAndBiologySystem`, `MatterCrystalVacuumSystem`, `TacticalClothBackpackSystem`, `BodyHolsterStateMachine`, `VisualChestCasSystem`, `Creature21BehaviorSystem`, `HybridAiLodPromotionSystem`) **birim testleri geçecek seviyede ayrı C# sınıfları olarak yazılmış**, **ANCAK** canlı sahneyi yöneten [StratocraftStage1SceneBuilder.cs](Assets/_Stratocraft/Editor/StratocraftStage1SceneBuilder.cs) ve [Stage1InteractivePlayController.cs](Assets/_Stratocraft/Character/Stage1InteractivePlayController.cs) bu sistemlerin büyük bölümünü çağırmak yerine kendi içinde **geçici prototip (`stub`) mantığı** çalıştırmaktadır:
      - **Canlı sahnede C++20 SIMD dünya üretimi ve `.sregion` kayıt bağlı değil:** Sahne `Mathf.Sin/Cos` ile statik `4×4` chunk ada pişiriyor; çünkü `simd_world_noise.cpp` yüzeyde sürekli `7-bit SDF` (`0..127`) yerine ikili `Density = 127` basıyordu ve `ChunkStreamingSystem` aldığı `_persistence` servisini hiçbir satırda çağırmıyordu.
      - **Canlı sahnede su ve lav akışkan değil, katı beton mesh:** `StratocraftStage1SceneBuilder` su havuzunu (`MatID=12`) ve lav kalderasını (`MatID=13`) `ushort[] Fluids` katmanı yerine katı `uint[] voxels` dizisine (`MeshCollider` ile!) gömmüş; oyuncu suyun içine girmek yerine üstünde yürüyor ve kıyı kazıldığında su akmıyor.
      - **Canlı sahnede Domino Yıkımı ve Mağara Göçüğü devre dışı/bozuk:** `GeodesicSupportDijkstraJob.Index3D` `Z-Major` iken sahne `Y-Major` dizi gönderdiği için eksenler bellekte karışıyor, `MaxDialBuckets = 32` yüzünden `32m` üstü kuleler kendiliğinden kopuyor, `TributaryLoadDagJob` yalnızca `X` ekseninde mağara tarayıp `+X/-X` konsol asimetrisi üretiyor, mağara içi `Density = 14 (< 64)` SDF havası katı kaya sanılıyor ve üretilen `FallingBlockCluster` dizisiyle sahnede ne `Compound BoxCollider` ne `1.5 sn` çatırdama uyarısı ne de `LooseRubble` yeniden voxelleşmesi çalıştırılıyor.
@@ -39,7 +39,7 @@
 
 ### 1.2. Dokümanlar Arası Kritik Çelişkiler ve Anayasa (`GAME LOGIC BIBLE v7.0`) Kesin Karar Tablosu
 
-[STRATOCRAFT_GELISTIRICI_DOKUMANI.md](file:///D:/Oyunum/oyun/STRATOCRAFT_GELISTIRICI_DOKUMANI.md) içinde erken taslaklardan kalan bazı tablolar [GAME LOGIC BIBLE v7.0](file:///D:/Oyunum/oyun/STRATOCRAFT_%20EVRENSEL%20OYUN%20TASARIM%20VE%20MANTIK%20ANAYASASI%20%28GAME%20LOGIC%20BIBLE%29%20%282%29.md) ile çelişmektedir. Mutlak otorite kuralı gereği tüm çelişkiler aşağıdaki kanonik standartta birleştirilmiştir:
+[STRATOCRAFT_GELISTIRICI_DOKUMANI.md](STRATOCRAFT_GELISTIRICI_DOKUMANI.md) içinde erken taslaklardan kalan bazı tablolar [GAME LOGIC BIBLE v7.0](STRATOCRAFT_%20EVRENSEL%20OYUN%20TASARIM%20VE%20MANTIK%20ANAYASASI%20%28GAME%20LOGIC%20BIBLE%29%20%282%29.md) ile çelişmektedir. Mutlak otorite kuralı gereği tüm çelişkiler aşağıdaki kanonik standartta birleştirilmiştir:
 
 | # | Çelişki Başlığı | `GELİŞTİRİCİ DOKÜMANI` / Eski Kod | Mutlak Otorite (`GAME LOGIC BIBLE v7.0` + `MATEMATİKSEL RAPOR`) | Uygulanan Kesin Mühendislik Kararı |
 | :-: | :--- | :--- | :--- | :--- |
@@ -59,7 +59,7 @@
 ## BÖLÜM 2 — FAZ 1 MEKANİKLERİ: TASARIM MANTIĞI, MATEMATİK, YETERLİLİK KARARI, OYUN ARAŞTIRMASI VE ÇÖZÜM MİMARİSİ
 
 ### 2.1. Mekanik 1 (`M01`): 32-Bit Bağlama Duyarlı Voxel, `MicroVoxelPool4096` ve Çift Kanallı Hibrit Yüzey Örme
-*(Tam detay raporu: [01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md))*
+*(Tam detay raporu: [01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md](docs/faz1_faz2_mekanikler/01_faz1_voksel_bitpacking_mikropool_ve_hibrit_meshing.md))*
 
 1. **Anayasa'daki Tasarım ve Matematik:**
    - Her `1m³` hücre tek bir **`32-bit uint VoxelCell`** içinde bağlama duyarlı (*context-sensitive*) bit-packing ile saklanır:
@@ -84,7 +84,7 @@
 ---
 
 ### 2.2. Mekanik 2 (`M02`): C++20 SIMD Dünya Üretimi, Halkalar, `0-Bit Uniform` Streaming, `.sregion v2` Kayıt ve `±256m` Chunk-Snapped Floating Origin
-*(Tam detay raporu: [02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md))*
+*(Tam detay raporu: [02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md](docs/faz1_faz2_mekanikler/02_faz1_cpp20_simd_dunya_uretimi_halkalar_streaming_ve_kayit.md))*
 
 1. **Anayasa'daki Tasarım ve Matematik:**
    - Merkez `(0, 0)` güvenli tapınağından (`0–200m`) başlayıp `18.000m` Boyutsal Kırılma sınırına uzanan **6 Eş-Merkezli Halka + Abisal Anomali Kuşağı (`15.000–18.000m`)**, dikeyde `worldY ∈ [-112m, +143m]` (`<= -105m` Kırılamaz Manto, `[-100m, -80m]` Kesintisiz Lav Denizi, `0m` Deniz Seviyesi), **14 Rezonans-Bağışık Metal Cevheri + 11 Yakıt/Mücevher Damarı**, `%5` `SplitMix64` **4 Odalı Antik Zindanlar** (`Solo 1.30x` Boss HP tavanı) ve **3 Adımlı Jeolojik Fiziksel Mağaralar** (`Parabolik Katenary Kubbe SDF + >12m Voronoi Stalagnate Sütunlar + <0.2ms Pre-Settling`).
@@ -102,7 +102,7 @@
 ---
 
 ### 2.3. Mekanik 3 (`M03`): İki Aşamalı Domino Yapısal Bütünlük, Kemer/Kilit Taşı, Terzaghi Mağara Göçüğü, `1.5 sn` Çatırdama ve `LooseRubble` Moloz Döngüsü
-*(Tam detay raporu: [03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md))*
+*(Tam detay raporu: [03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md](docs/faz1_faz2_mekanikler/03_faz1_iki_asamali_domino_yikim_kemer_ve_terzaghi_gocugu.md))*
 
 1. **Anayasa'daki Tasarım ve Matematik:**
    - **Sıfır Muafiyet:** Doğal arazi/Madde Kristali (`OriginState = 0`), oyuncu yapı bloğu (`1`) ve batarya kaleleri (`2`) aynı fizik yasasına tabidir. Toprak temel (`C_comp = 80`) üstüne ağır taş kale (`m = 40/blok`) çıkılamaz; temel ezilir!
@@ -119,7 +119,7 @@
    - Kanonik `8 Byte VoxelMaterialSpec` + `4 Byte StructuralVoxelState` + sıfır-GC `TwoPhaseStructuralCollapseSolver` (`Y-Major`, `2-deep Triaxial`, `Keystone`, `Terzaghi De-Confinement`, `Top Halo`, `(y<<6)|d_sup` Radix DAG, çok-adımlı Domino), `6-CCL` ayrık `Compound BoxCollider` kırıcı, `< 20 ns` $O(1)$ 4-renkli (`Yeşil/Sarı/Turuncu/Kırmızı`) hayalet inşa önizlemesi, `1.5 sn` çatırdama uyarısı ve `1.5 sn` uyku sonrası `LooseRubble (15)` yeniden voxelleşmesi hem çekirdeğe hem canlı sahneye bağlanır.
 
 
-### 2.4. M04 — `16-Bit` Sonlu Akışkan, U-Borusu Hidrostatik Basınç, SDF Kıyı Eteği ve Obsidyen Kimyası ([Rapor 04](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md))
+### 2.4. M04 — `16-Bit` Sonlu Akışkan, U-Borusu Hidrostatik Basınç, SDF Kıyı Eteği ve Obsidyen Kimyası ([Rapor 04](docs/faz1_faz2_mekanikler/04_faz1_sonlu_akiskan_basinc_sdf_kiyi_ve_obsidyen_kimyasi.md))
 - **Anayasa Tasarım Vizyonu ve Denklemler (`Bölüm 2.7.D` & Matematiksel Rapor `Bölüm 5.4`):**
   - Minecraft tarzı sonsuz su (`2×2` kuyu) ve sonsuz taş jeneratörü **kesin olarak yasaktır**. Her sıvı hücresi `2 Byte ushort` şemasındadır: `Bits[0..7]` Seviye ($0\dots 255$), `Bits[8..9]` Tip (`None, Water, Lava, Acid`), `Bit[10]` `IsSettled` (`1 = %0 CPU` uyku), `Bits[11..15]` `5-bit PressureHead` ($H_p \in [0\dots 31]$).
   - Pürüzsüz SDF kıyılarında hücrenin sıvı kapasitesi gözeneklilikle ölçeklenir:
@@ -141,7 +141,7 @@ $$
 
 ## 3. Faz 2 Mekanikleri: Matematiksel Yeterlilik Hükümleri ve Nihai Mühendislik Çözümleri (`M05 – M08`)
 
-### 3.1. M05 — Fiziksel Karakter, Parkur, `SkyOcclusionY` Oksijen BFS ve Termal/Islaklık ODE ([Rapor 05](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md))
+### 3.1. M05 — Fiziksel Karakter, Parkur, `SkyOcclusionY` Oksijen BFS ve Termal/Islaklık ODE ([Rapor 05](docs/faz1_faz2_mekanikler/05_faz2_fiziksel_karakter_parkur_oksijen_bfs_ve_termal_ode.md))
 - **Anayasa Tasarım Vizyonu ve Denklemler (`Bölüm 2.7.E, 2.7.F, 2.7.G, 3.0, 9.0`):**
   - Hitbox küçülmesi sahte değil gerçektir: Ayakta `1.80m` ($4.0\text{ m/s}$, koşu $7.0\text{ m/s}$), Çömelme `0.90m` ($2.0\text{ m/s}$, `1×1m` maden tüneli), Sürünme `0.45m` ($1.0\text{ m/s}$, `0.5m` havalandırma yarığı), çanta açıkken `1.2 m/s`.
   - Parkur: Koşarken `C` $\to$ `15 EP` harcayıp $3.5\text{ m}$ kayma (`Slide`); tutunma (`Mantle`): `3-SphereCast` (`Göğüs Dolu + Baş Boş + Üst Düz`) ile `0.55 sn` tırmanma; dayanıklılık `0`'a vurursa `%15`'e dolana dek koşu/zıplama kilitlenir (`Exhaustion Lock`).
@@ -156,7 +156,7 @@ $$
 
 ---
 
-### 3.2. M06 — Madde Kristali CSG, `264B/16B/128B` Unmanaged Envanter, 3B Kumaş Çanta, Kılıflar ve 3B CAS Sandık ([Rapor 06](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md))
+### 3.2. M06 — Madde Kristali CSG, `264B/16B/128B` Unmanaged Envanter, 3B Kumaş Çanta, Kılıflar ve 3B CAS Sandık ([Rapor 06](docs/faz1_faz2_mekanikler/06_faz2_madde_kristali_csg_3b_kumas_canta_kilif_ve_cas_sandik.md))
 - **Anayasa Tasarım Vizyonu ve Denklemler (`Bölüm 2.7.A, 4.0, 5.0` & Matematiksel Rapor `Bölüm 4.1–4.3`):**
   - `Tab` tuşuyla açılan 2B Excel envanter tablosu **kesin olarak yasaktır**. Oyuncunun üzerinde iki ayrı fiziksel katman vardır:
     1. **Madde Kristali (`CrystalMassStorageData = 264 Byte unmanaged`):** Yalnızca ham arazi bloklarını (`Toprak, Taş, Kum, Doğal Obsidyen [Seviye 4 Kristal]`) `Q24.8` (`uint`, `1 blok = 256 birim`) hassasiyetle vakumlar; **Kömür (`44`) dahil hiçbir maden cevheri ve değerli taş kristale giremez** (`ERR_ORE_RESONANCE_IMMUNE`); inşa edilen her blok **daima `OriginState = 0` (`Doğal Kütle`)** olarak yazılır.
@@ -171,7 +171,7 @@ $$
 
 ---
 
-### 3.3. M07 — Kanonik 21 Yaratık, Çok Katmanlı `NavSpan`, 4 Kademeli Hibrit LOD AI, Kırılabilir A* ve `< 16 MB` VAT ([Rapor 07](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md))
+### 3.3. M07 — Kanonik 21 Yaratık, Çok Katmanlı `NavSpan`, 4 Kademeli Hibrit LOD AI, Kırılabilir A* ve `< 16 MB` VAT ([Rapor 07](docs/faz1_faz2_mekanikler/07_faz2_21_yaratik_navspan_hibrit_lod_ai_kirilabilir_astar_ve_vat.md))
 - **Anayasa Tasarım Vizyonu ve Denklemler (`Bölüm 11.4, 13.0, 14.0` & Matematiksel Rapor `Bölüm 4.4, 4.5, 5.5`):**
   - Faz 2 kadrosu Anayasa `Bölüm 13.0`'da tam **21 kanonik yaratık** olarak tanımlanmıştır: 5 İnsansı (*Goblin İşçi, Ork Savaşçısı, İskelet Okçu, Kobold Madenci, Kertenkele Adam*), 5 Vahşi Hayvan (*Yaban Kurdu, Mağara Ayısı, Yaban Domuzu, Dev Örümcek, Kaya Akrebi*), 5 Büyülü Yaratık (*Taş Golemi, Ateş Elementali, Buz Ruhu, Gölge Avcısı, Kristal Böceği*), 4 Uçan (*Dev Yarasa, Harpi, Şimşek Kuşu, Gargoyle*) ve 2 Elit/Mini-Boss (*Trol, Hiçlik Avcısı*) — `120–12.000 HP`.
   - Unity `NavMesh` yasaktır; `64-bit NavSpan` + 4 kademeli Hibrit AI (`0–64m` Aktif, `64–128m` Sürü, `128–512m` `2 Hz` `NavSpan`, `> 512m` `0 Hz` Olay-Güdümlü DES + Lanchester denklemi + CAS uyanışı), duvar kırma maliyetli A* ($C_{\text{move}} = D_{\text{mesafe}} + \frac{\text{HP}_{\text{blok}}}{\text{DPS}_{\text{mob}}\cdot v_{\text{mob}}}$), kolon hedefleme (`TARGET_SUPPORT_PILLARS`), Kutsal Alan Boss'larının yalnızca `OriginState == 0` blokları kırması (`OriginState == 2` zindan duvarı dokunulmaz!) ve `< 16 MB` VRAM dostu `FP16` VAT/BAT uzuv koparma sistemi zorunludur.
@@ -185,7 +185,7 @@ $$
 
 ---
 
-### 3.4. M08 — `< 16 MB` VRAM UV-Free Biplanar UberShader ve Otonom Blender 4.2 + Python 3B Varlık Fabrikası ([Rapor 08](file:///D:/Oyunum/oyun/docs/faz1_faz2_mekanikler/08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md))
+### 3.4. M08 — `< 16 MB` VRAM UV-Free Biplanar UberShader ve Otonom Blender 4.2 + Python 3B Varlık Fabrikası ([Rapor 08](docs/faz1_faz2_mekanikler/08_faz1_faz2_uvfree_ubershader_ve_otonom_blender_3b_fabrikasi.md))
 - **Anayasa Tasarım Vizyonu ve Denklemler (`Bölüm 7.2, 8.2, 16.0` & Matematiksel Rapor `Bölüm 2.2`):**
   - `< 16.0 MB` toplam doku VRAM sınırı altında `0` geleneksel `.png/.tga` UV dokusu kullanılır: tüm arazi, mimari bloklar, maden damarları, kılıçlar, zırhlar ve yaratıklar `256×16 RGBA32 Uncompressed` (`16 KB`) `MaterialPaletteLUT` + `16×512×512 BC5` (`~3.56 MB`) `MicroDetailNormalRoughArray` + `64×64×64` (`0.25 MB`) 3B prosedürel gürültü hacmi ile **UV-Free Biplanar + Prosedürel Şam Çeliği / Ahşap Damarı / Kristal** matematiksel gölgelendiricisi üzerinden çizilir; `GPU Resident Drawer` ve otonom `Blender 4.2 LTS + meshoptimizer` (`0` dış insan müdahalesi, `%100` kemik/LOD kapısı) zorunludur.
 - **Yeterlilik Kararı (`YETERLİ Mİ?`):** **Mimari Çok Sağlam (`4.14 MB / 16.0 MB` VRAM Başarılı) Ama 5 Görsel/Teknik Kusur Düzeltilmelidir:**

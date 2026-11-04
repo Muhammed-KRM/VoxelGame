@@ -13,6 +13,8 @@ namespace Stratocraft.Voxel.Jobs
     /// Sonlu Akiskan (Su, Lav, Asit) Sürekli Yuzey Orme ve +0.35m SDF Kiyi Etegi (Shoreline Skirt) motoru.
     /// Kati MeshCollider'dan tamamen bagimsiz gorsel sivi yuzeyi uretir; komsu egimli SDF arazinin
     /// +grad_xz(rho) / ||grad_xz(rho)|| yonunde 0.35m altina uzanarak kiyi merdiven bosluklarini %100 kapatir!
+    /// Komsu chunk sinirlarindaki (nx &lt; 0, nx &gt;= 16, nz &lt; 0, nz &gt;= 16) akiskan ve kati hucreleri
+    /// 3x3 komsuluk onbellegiyle sorgulayarak chunk sinirlarinda kesintisiz sivi yuzeyi uretir.
     /// </summary>
     public static class FluidSurfaceSkirtMesher
     {
@@ -42,11 +44,29 @@ namespace Stratocraft.Voxel.Jobs
                 return;
             }
 
-            maxY = Math.Clamp(maxY, 2, StratocraftConstants.ChunkSizeY);
+            int maxBufferY = Math.Min(centerFluids.Length >> 8, centerSolids.Length >> 8);
+            maxY = Math.Clamp(maxY, 2, Math.Min(StratocraftConstants.ChunkSizeY, maxBufferY));
 
             for (int y = 0; y < maxY; y++)
             {
                 int yOffset = y << 8;
+
+                // Y-dilimi erken cikis: 16x16 katmanda hic sivi yoksa 160m yukseklikte bos katmanlari aninda atla!
+                bool sliceHasFluid = false;
+                for (int i = 0; i < 256; i++)
+                {
+                    if ((centerFluids[yOffset | i] & 0xFFu) != 0u)
+                    {
+                        sliceHasFluid = true;
+                        break;
+                    }
+                }
+
+                if (!sliceHasFluid)
+                {
+                    continue;
+                }
+
                 for (int lz = 0; lz < 16; lz++)
                 {
                     int rowOffset = yOffset | (lz << 4);
@@ -61,7 +81,7 @@ namespace Stratocraft.Voxel.Jobs
                         }
 
                         // Ust hucre ayni tip sivi iceriyorsa ust serbest yuzey degildir
-                        ushort aboveFluid = (y + 1 < StratocraftConstants.ChunkSizeY)
+                        ushort aboveFluid = (y + 1 < maxBufferY)
                             ? centerFluids[((y + 1) << 8) | (lz << 4) | lx]
                             : (ushort)0;
                         bool hasFreeTopSurface = ((aboveFluid & 0xFFu) == 0u) || (((aboveFluid >> 8) & 0x03u) != fType);
@@ -96,22 +116,22 @@ namespace Stratocraft.Voxel.Jobs
                                 p00, p11, p10, renderMat, temp, 198, packedAo, outFluidTriangles);
                         }
 
-                        // Acik kenar / selale yan yuzleri (+X, -X, +Z, -Z)
+                        // Acik kenar / selale yan yuzleri (+X, -X, +Z, -Z) — komsu chunk sinirlari (nx < 0, nx >= 16, nz < 0, nz >= 16) dahil!
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 1, dirZ: 0, fType, renderMat, temp, packedAo,
-                            new Vector3(lx + 1, y, lz), new Vector3(lx + 1, h10, lz), new Vector3(lx + 1, h11, lz + 1), new Vector3(lx + 1, y, lz + 1),
+                            new Vector3(p10.X, y, p10.Z), p10, p11, new Vector3(p11.X, y, p11.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: -1, dirZ: 0, fType, renderMat, temp, packedAo,
-                            new Vector3(lx, y, lz + 1), new Vector3(lx, h01, lz + 1), new Vector3(lx, h00, lz), new Vector3(lx, y, lz),
+                            new Vector3(p01.X, y, p01.Z), p01, p00, new Vector3(p00.X, y, p00.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 0, dirZ: 1, fType, renderMat, temp, packedAo,
-                            new Vector3(lx + 1, y, lz + 1), new Vector3(lx + 1, h11, lz + 1), new Vector3(lx, h01, lz + 1), new Vector3(lx, y, lz + 1),
+                            new Vector3(p11.X, y, p11.Z), p11, p01, new Vector3(p01.X, y, p01.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 0, dirZ: -1, fType, renderMat, temp, packedAo,
-                            new Vector3(lx, y, lz), new Vector3(lx, h00, lz), new Vector3(lx + 1, h10, lz), new Vector3(lx + 1, y, lz),
+                            new Vector3(p00.X, y, p00.Z), p00, p10, new Vector3(p10.X, y, p10.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                     }
                 }
@@ -266,8 +286,8 @@ namespace Stratocraft.Voxel.Jobs
             int nlz = wz - ncz * 16;
             int nIdx = (y << 8) | (nlz << 4) | nlx;
 
-            solidRaw = solidChunks.TryGetValue((ncx, ncz), out uint[]? ns) && ns != null ? ns[nIdx] : 0u;
-            fluidRaw = fluidChunks.TryGetValue((ncx, ncz), out ushort[]? nf) && nf != null ? nf[nIdx] : (ushort)0;
+            solidRaw = solidChunks.TryGetValue((ncx, ncz), out uint[]? ns) && ns != null && (uint)nIdx < (uint)ns.Length ? ns[nIdx] : 0u;
+            fluidRaw = fluidChunks.TryGetValue((ncx, ncz), out ushort[]? nf) && nf != null && (uint)nIdx < (uint)nf.Length ? nf[nIdx] : (ushort)0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -29,6 +29,7 @@ namespace Stratocraft.CreaturesAI.Pathfinding
     /// - MaxExpandedNodes = 320 sabit dugum tavani (&lt; 0.055 ms / arama).
     /// - eps = 1.25 agirlikli sezgisel mesafe (Weighted A*: hizli acgozlu yakinsama).
     /// - Hedefe ulasilamazsa en kucuk h(n) degerine sahip bestPartialNode yolunu donduren Fallback.
+    /// - Kara yaratiklari (!canFly) icin 3B havada yurume (air-walk) engeli + 0-GC yeniden kullanilabilir dugum tamponlari.
     /// - Boss Dinamik Arena Kurali: Sanctum Boss'lar icin OriginState == DogalKutle bloklar kirilmaz (maliyet = sonsuz);
     ///   yalnizca oyuncu item/yapi bloklari (OriginState == 1/2) yikilabilir rotaya dahil edilir!
     /// </summary>
@@ -37,7 +38,7 @@ namespace Stratocraft.CreaturesAI.Pathfinding
         public const int MaxExpandedNodes = 320;
         public const float HeuristicWeightEpsilon = 1.25f;
 
-        private sealed class PriorityQueueNode : IComparable<PriorityQueueNode>
+        private struct PriorityQueueNode : IComparable<PriorityQueueNode>
         {
             public PathNodeCoord Coord;
             public float G;
@@ -55,11 +56,21 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                 IsBreachRequired = isBreachRequired;
             }
 
-            public int CompareTo(PriorityQueueNode? other)
+            public int CompareTo(PriorityQueueNode other) => F.CompareTo(other.F);
+        }
+
+        [ThreadStatic] private static List<PriorityQueueNode>? _openList;
+        [ThreadStatic] private static Dictionary<PathNodeCoord, PriorityQueueNode>? _allNodes;
+
+        private static bool IsEmptyCell(VoxelChunkComponent chunk, int x, int y, int z)
+        {
+            if (x < 0 || x >= StratocraftConstants.ChunkSizeX ||
+                y < 0 || y >= StratocraftConstants.ChunkSizeY ||
+                z < 0 || z >= StratocraftConstants.ChunkSizeZ)
             {
-                if (other == null) return -1;
-                return F.CompareTo(other.F);
+                return true;
             }
+            return !chunk.GetVoxel(x, y, z).IsSolid;
         }
 
         public static bool FindPath(
@@ -69,7 +80,8 @@ namespace Stratocraft.CreaturesAI.Pathfinding
             float moveSpeedMps,
             float siegeDps,
             bool isSanctumBoss,
-            List<PathNodeCoord> outPath)
+            List<PathNodeCoord> outPath,
+            bool canFly = false)
         {
             if (chunk == null) throw new ArgumentNullException(nameof(chunk));
             if (outPath == null) throw new ArgumentNullException(nameof(outPath));
@@ -81,9 +93,12 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                 return true;
             }
 
-            var openSet = new List<PriorityQueueNode>(64);
-            var closedSet = new Dictionary<PathNodeCoord, PriorityQueueNode>();
+            List<PriorityQueueNode> openSet = _openList ??= new List<PriorityQueueNode>(128);
+            Dictionary<PathNodeCoord, PriorityQueueNode> closedSet = _allNodes ??= new Dictionary<PathNodeCoord, PriorityQueueNode>(384);
+            openSet.Clear();
+            closedSet.Clear();
 
+            bool startHasFloor = start.Y == 0 || !IsEmptyCell(chunk, start.X, start.Y - 1, start.Z);
             float startH = OctileDistance(start, goal);
             var startNode = new PriorityQueueNode(start, 0f, startH, start, false);
             openSet.Add(startNode);
@@ -96,7 +111,6 @@ namespace Stratocraft.CreaturesAI.Pathfinding
 
             while (openSet.Count > 0 && expandedCount < MaxExpandedNodes)
             {
-                // En kucuk F degerine sahip dugumu sec (kucuk kuyruk icin dogrusal tarama son derece hizlidir)
                 int bestIdx = 0;
                 float minF = openSet[0].F;
                 for (int i = 1; i < openSet.Count; i++)
@@ -120,7 +134,6 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                     bestPartial = current;
                 }
 
-                // Hedefe ulasildi mi?
                 if (current.Coord.Equals(goal))
                 {
                     ReconstructPath(current, closedSet, outPath);
@@ -143,6 +156,16 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                         continue;
                     }
 
+                    // Kara yaratiklari (!canFly) boslukta (startLx, startY + 1, startLz) havaya tirmanamaz!
+                    if (!canFly)
+                    {
+                        bool hasSolidBelow = nCoord.Y == 0 || !IsEmptyCell(chunk, nCoord.X, nCoord.Y - 1, nCoord.Z);
+                        if (!hasSolidBelow && (startHasFloor || nCoord.Y != start.Y))
+                        {
+                            continue;
+                        }
+                    }
+
                     VoxelCell targetCell = chunk.GetVoxel(nCoord.X, nCoord.Y, nCoord.Z);
                     bool requiresBreach = false;
                     float breachTime = 0f;
@@ -152,14 +175,11 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                         if (targetCell.MaterialId == MaterialIdCatalog.Bedrock ||
                             targetCell.MaterialId >= MaterialIdCatalog.DungeonSanctumImmuneStart)
                         {
-                            // Asla gecilemez/kirilamaz
                             continue;
                         }
 
-                        // Boss Dinamik Arena Kurali:
                         if (isSanctumBoss && targetCell.OriginState == BlokKokenDurumu.DogalKutle)
                         {
-                            // Dogal tapinak bloklari Boss tarafindan kirilamaz!
                             continue;
                         }
 
@@ -168,7 +188,7 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                         breachTime = siegeDps > 0.01f ? (blockHp / siegeDps) : 1000f;
                     }
 
-                    float moveTime = (1.0f / MathF.Max(0.1f, moveSpeedMps));
+                    float moveTime = 1.0f / MathF.Max(0.1f, moveSpeedMps);
                     float tentativeG = current.G + moveTime + breachTime;
 
                     int existingOpenIdx = -1;
@@ -185,9 +205,11 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                     {
                         if (tentativeG < openSet[existingOpenIdx].G)
                         {
-                            openSet[existingOpenIdx].G = tentativeG;
-                            openSet[existingOpenIdx].Parent = current.Coord;
-                            openSet[existingOpenIdx].IsBreachRequired = requiresBreach;
+                            PriorityQueueNode updated = openSet[existingOpenIdx];
+                            updated.G = tentativeG;
+                            updated.Parent = current.Coord;
+                            updated.IsBreachRequired = requiresBreach;
+                            openSet[existingOpenIdx] = updated;
                         }
                     }
                     else
@@ -198,8 +220,7 @@ namespace Stratocraft.CreaturesAI.Pathfinding
                 }
             }
 
-            // 320 dugum sinirinda hedefe varilamadiysa en iyi kismen dugumu dondur (Partial Path Fallback)
-            if (bestPartial != null && !bestPartial.Coord.Equals(start))
+            if (!bestPartial.Coord.Equals(start))
             {
                 ReconstructPath(bestPartial, closedSet, outPath);
                 return true;

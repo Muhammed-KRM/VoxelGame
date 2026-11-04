@@ -9,12 +9,15 @@ using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
+using Stratocraft.WorldGen;
+using Stratocraft.WorldGen.Generators;
 using UnityEngine;
 
 namespace Stratocraft.Character
 {
     /// <summary>
-    /// Paket 2 — Domino Yapisal Cokus, 64-Yuvali Dusen Kume Ring Buffer, Alt Kat Delme (Pancake Collapse),
+    /// Paket 2 — Domino Yapisal Cokus, 1.5sn Catirdama/Toz Uyari Fazi, Gercek Voksel Kume Meshi,
+    /// 64-Yuvali Dusen Kume Ring Buffer, Alt Kat Delme (Pancake Collapse),
     /// 18 KB PrebakedFracturePatternLut Carpma Parcalanmasi ve Surge Mode (Suru Modu) Koprusu.
     /// Hem blok kirildiginda hem de yeni blok insa edildiginde otomatik tetiklenir; hicbir blok havada asili kalamaz.
     /// </summary>
@@ -22,31 +25,39 @@ namespace Stratocraft.Character
     {
         public const int MaxRingBufferSlots = 64;
         public const int SurgeModeActiveClusterLimit = 16;
+        public const float PreCollapseWarningDurationSeconds = 1.5f;
         private const float GravityAcceleration = 9.81f;
+        private const int MaxMeshVoxelsPerFallingProxy = 512;
 
         private struct ActiveFallingClusterSlot
         {
             public bool IsActive;
             public FallingStructureClusterComponent Cluster;
             public int ChunkX, ChunkZ;
+            public float WarningTimer;
             public float DropStartHeightY, CurrentCenterY, VerticalVelocity;
+            public Vector3 BaseWorldCenter;
             public Vector3 AngularVelocityDeg;
             public GameObject? VisualProxy;
+            public Transform? DustPuffGroup;
         }
 
         private readonly StructuralCollapseSystem _collapseSystem = new();
         private readonly FallingStructureClusterComponent[] _evalBuffer = new FallingStructureClusterComponent[16];
         private readonly ActiveFallingClusterSlot[] _ringBuffer = new ActiveFallingClusterSlot[MaxRingBufferSlots];
-        private readonly List<FacetedVoxelTriangle> _proxyTris = new(64);
+        private readonly List<FacetedVoxelTriangle> _proxyTris = new(256);
         private uint[]? _scratchSlice;
+        private uint[]? _detachedSnapshot;
         private int _ringWriteCursor;
         private int _activeClusterCount;
+        private bool _isEvaluatingCascade;
 
         public Material? DefaultVoxelMaterial { get; set; }
         public Stage1MatterCrystalAndMiningController? MiningControllerForItemDrops { get; set; }
         public int ActiveFallingClusterCount => _activeClusterCount;
         public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
         public float LastImpactFractureRatio { get; private set; }
+        public int LastPancakeBreachedBlocksCount { get; private set; }
 
         public int EvaluateCollapseAroundSeed(
             Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirtyChunks,
@@ -56,8 +67,9 @@ namespace Stratocraft.Character
             int cz = seedWorldVoxel.z >= 0 ? (seedWorldVoxel.z >> 4) : -(((-seedWorldVoxel.z) + 15) >> 4);
             rubbledCount = 0;
             if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunkVoxels)) return 0;
+            int maxEditableY = Mathf.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, chunkVoxels.Length >> 8);
             int collapsed = EvaluateChunkStability(
-                cx, cz, chunkVoxels, Stage1InteractivePlayController.MaxEditableVoxelY,
+                cx, cz, chunkVoxels, maxEditableY,
                 new Vector3(seedWorldVoxel.x + 0.5f, seedWorldVoxel.y + 0.5f, seedWorldVoxel.z + 0.5f),
                 DefaultVoxelMaterial, dirtyChunks, out _);
             rubbledCount = collapsed;
@@ -69,19 +81,37 @@ namespace Stratocraft.Character
             Material? sharedVoxelMaterial, HashSet<(int cx, int cz)> dirtyChunks, out string feedbackText)
         {
             if (sharedVoxelMaterial != null) DefaultVoxelMaterial = sharedVoxelMaterial;
+            maxEditableY = Mathf.Clamp(maxEditableY, 8, Mathf.Min(StratocraftConstants.ChunkSizeY, chunkVoxels.Length >> 8));
             int sliceVolume = 16 * maxEditableY * 16;
+
             if (_scratchSlice == null || _scratchSlice.Length < sliceVolume) _scratchSlice = new uint[sliceVolume];
+            if (_detachedSnapshot == null || _detachedSnapshot.Length < sliceVolume) _detachedSnapshot = new uint[sliceVolume];
+
             PrepareLocalSolveScratch(cx, cz, chunkVoxels, _scratchSlice, maxEditableY, pivotWorld);
 
             int clusterCount = _collapseSystem.EvaluateAndFracture(
-                _scratchSlice.AsSpan(0, sliceVolume), 16, maxEditableY, 16, supportFloorY: 4,
+                _scratchSlice.AsSpan(0, sliceVolume), 16, maxEditableY, 16,
+                supportFloorY: StratocraftFloatingIslandWorldGen.DeepMantleFloorY,
                 worldOriginOffset: new System.Numerics.Vector3(cx * 16f, 0f, cz * 16f),
                 anchorPivotWorld: new System.Numerics.Vector3(pivotWorld.x, pivotWorld.y, pivotWorld.z),
                 outClusters: _evalBuffer, out int collapsedVoxels, layout: VoxelGridMemoryLayout.YMajorChunk);
 
-            if (collapsedVoxels <= 0) { feedbackText = string.Empty; return 0; }
+            if (collapsedVoxels <= 0)
+            {
+                feedbackText = string.Empty;
+                return 0;
+            }
+
+            // Kopan bloklarin gercek 32-bit voksel verisini (sekil, yon, malzeme, hasar) sifirlamadan once anlik goruntuye kaydet!
+            Array.Clear(_detachedSnapshot, 0, sliceVolume);
             for (int i = 0; i < sliceVolume; i++)
-                if (_scratchSlice[i] == 0u && chunkVoxels[i] != 0u) chunkVoxels[i] = 0u;
+            {
+                if (_scratchSlice[i] == 0u && chunkVoxels[i] != 0u)
+                {
+                    _detachedSnapshot[i] = chunkVoxels[i];
+                    chunkVoxels[i] = 0u;
+                }
+            }
 
             dirtyChunks.Add((cx, cz));
             int spawnedDynamic = 0, surgeBaked = 0;
@@ -89,12 +119,21 @@ namespace Stratocraft.Character
             for (int i = 0; i < clusterCount; i++)
             {
                 FallingStructureClusterComponent c = _evalBuffer[i];
-                if (_activeClusterCount >= SurgeModeActiveClusterLimit) { BakeClusterDirectlyInSurgeMode(in c, chunkVoxels, maxEditableY); surgeBaked++; }
-                else { SpawnFallingClusterIntoRingBuffer(c, cx, cz, chunkVoxels, matToUse); spawnedDynamic++; }
+                if (_activeClusterCount >= SurgeModeActiveClusterLimit)
+                {
+                    BakeClusterDirectlyInSurgeMode(in c, chunkVoxels, maxEditableY);
+                    surgeBaked++;
+                }
+                else
+                {
+                    SpawnFallingClusterIntoRingBuffer(c, cx, cz, _detachedSnapshot, maxEditableY, matToUse);
+                    spawnedDynamic++;
+                }
             }
+
             feedbackText = surgeBaked > 0
                 ? $"DOMINO + SURGE MODE! {collapsedVoxels} blok ({spawnedDynamic} dinamik, {surgeBaked} aninda moloz) [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]"
-                : $"DOMINO COKUS! {collapsedVoxels} blok ({clusterCount} kume) yercekimine kapildi [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]";
+                : $"DOMINO COKUS UYARISI (1.5sn Catirdama & Toz)! {collapsedVoxels} blok ({clusterCount} gercek voksel kumesi) kopuyor [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]";
             return collapsedVoxels;
         }
 
@@ -104,7 +143,7 @@ namespace Stratocraft.Character
             int sliceVolume = 16 * maxY * 16;
             Array.Copy(src, dst, sliceVolume);
             int baseWx = cx * 16, baseWz = cz * 16;
-            int minY = Mathf.Max(4, Mathf.FloorToInt(pivotWorld.y) - 3);
+            int minY = Mathf.Max(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, Mathf.FloorToInt(pivotWorld.y) - 4);
 
             for (int y = 1; y < maxY; y++)
             for (int lz = 0; lz < 16; lz++)
@@ -115,9 +154,20 @@ namespace Stratocraft.Character
                 if (!VoxelBitUtility.IsPhysicallySolid(raw) ||
                     VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle) continue;
 
+                byte mat = VoxelBitUtility.GetMaterialId(raw);
+                bool isTreeFlora = mat == MaterialIdCatalog.OakWood ||
+                                   mat == MaterialIdCatalog.Ironwood ||
+                                   mat == MaterialIdCatalog.Grass;
+
+                // Dogal agac govdesi ve yapraklari (DogalKutle) asla havada sabitlenmez; koku kesildiginde tum agac devrilir!
+                if (isTreeFlora && y >= minY)
+                {
+                    continue;
+                }
+
                 float dx = (baseWx + lx + 0.5f) - pivotWorld.x;
                 float dz = (baseWz + lz + 0.5f) - pivotWorld.z;
-                bool outsideLocalEdit = (dx * dx + dz * dz) > 20.25f || y < minY;
+                bool outsideLocalEdit = (dx * dx + dz * dz) > 25.0f || y < minY;
                 if (outsideLocalEdit)
                 {
                     dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
@@ -125,7 +175,7 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>Havada dusen yapi kumelerini yercekimiyle ilerletir ve carpma parcalanmasini uygular.</summary>
+        /// <summary>Havada dusen yapi kumelerini 1.5sn catirdama/toz uyari fazindan gecirip yercekimiyle ilerletir ve Pancake alt kat delmeyi uygular.</summary>
         public void StepFallingClusters(
             float dt, int maxEditableY, Dictionary<(int cx, int cz), uint[]> worldChunks,
             HashSet<(int cx, int cz)> dirtyChunks, Transform playerTransform,
@@ -134,7 +184,7 @@ namespace Stratocraft.Character
             impactNotification = null;
             if (_activeClusterCount <= 0) return;
 
-            Vector3 playerPos = playerTransform.position;
+            Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
             for (int i = 0; i < MaxRingBufferSlots; i++)
             {
                 if (!_ringBuffer[i].IsActive) continue;
@@ -145,7 +195,8 @@ namespace Stratocraft.Character
         }
 
         private void SpawnFallingClusterIntoRingBuffer(
-            FallingStructureClusterComponent cluster, int cx, int cz, uint[] chunkVoxels, Material? sharedMat)
+            FallingStructureClusterComponent cluster, int cx, int cz,
+            uint[] detachedSnapshot, int maxEditableY, Material? sharedMat)
         {
             int slotIdx = _ringWriteCursor;
             _ringWriteCursor = (_ringWriteCursor + 1) % MaxRingBufferSlots;
@@ -157,26 +208,68 @@ namespace Stratocraft.Character
             }
 
             _proxyTris.Clear();
-            byte domMat = cluster.DominantMaterialId == 0 ? MaterialIdCatalog.Stone : cluster.DominantMaterialId;
-            int minLx = Mathf.Clamp(cluster.MinBounds.X, 0, 15), maxLx = Mathf.Clamp(cluster.MaxBounds.X, 0, 15);
-            int minLy = Mathf.Clamp(cluster.MinBounds.Y, 1, 28), maxLy = Mathf.Clamp(cluster.MaxBounds.Y, 1, 28);
-            int minLz = Mathf.Clamp(cluster.MinBounds.Z, 0, 15), maxLz = Mathf.Clamp(cluster.MaxBounds.Z, 0, 15);
-            float centerLx = (minLx + maxLx + 1) * 0.5f, centerLy = (minLy + maxLy + 1) * 0.5f, centerLz = (minLz + maxLz + 1) * 0.5f;
+            byte fallbackMat = cluster.DominantMaterialId == 0 ? MaterialIdCatalog.Stone : cluster.DominantMaterialId;
+            int minLx = Mathf.Clamp(cluster.MinBounds.X, 0, 15);
+            int maxLx = Mathf.Clamp(cluster.MaxBounds.X, 0, 15);
+            int minLy = Mathf.Clamp(cluster.MinBounds.Y, 1, maxEditableY - 1);
+            int maxLy = Mathf.Clamp(cluster.MaxBounds.Y, 1, maxEditableY - 1);
+            int minLz = Mathf.Clamp(cluster.MinBounds.Z, 0, 15);
+            int maxLz = Mathf.Clamp(cluster.MaxBounds.Z, 0, 15);
+
+            float comLocalX = cluster.CenterOfMass.X - (cx * 16f);
+            float comLocalY = cluster.CenterOfMass.Y;
+            float comLocalZ = cluster.CenterOfMass.Z - (cz * 16f);
 
             int emittedBlocks = 0;
-            for (int ly = minLy; ly <= maxLy && emittedBlocks < 24; ly++)
-            for (int lz = minLz; lz <= maxLz && emittedBlocks < 24; lz++)
-            for (int lx = minLx; lx <= maxLx && emittedBlocks < 24; lx++)
+            for (int ly = minLy; ly <= maxLy && emittedBlocks < MaxMeshVoxelsPerFallingProxy; ly++)
             {
-                var relOrigin = new System.Numerics.Vector3(lx - centerLx, ly - centerLy, lz - centerLz);
-                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(relOrigin, domMat, 1, 0, 6, _proxyTris);
-                emittedBlocks++;
+                for (int lz = minLz; lz <= maxLz && emittedBlocks < MaxMeshVoxelsPerFallingProxy; lz++)
+                {
+                    for (int lx = minLx; lx <= maxLx && emittedBlocks < MaxMeshVoxelsPerFallingProxy; lx++)
+                    {
+                        int idx = (ly << 8) | (lz << 4) | lx;
+                        uint raw = (uint)idx < (uint)detachedSnapshot.Length ? detachedSnapshot[idx] : 0u;
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw))
+                        {
+                            continue;
+                        }
+
+                        // Bu voksel bu kumeye tuketildikten sonra sifirlanir ki ayni chunk'taki diger kumelerle karismasin
+                        byte matId = VoxelBitUtility.GetMaterialId(raw);
+                        if (matId == 0) matId = fallbackMat;
+                        byte shapeId = VoxelBitUtility.GetShapeId(raw);
+                        byte rot = VoxelBitUtility.GetRotationState(raw);
+                        byte dmg = (byte)Math.Max((int)VoxelBitUtility.GetDamageState(raw), 4);
+                        byte occludedMask = ComputeDetachedClusterInternalMask(detachedSnapshot, lx, ly, lz, maxEditableY);
+
+                        var relOrigin = new System.Numerics.Vector3(lx - comLocalX, ly - comLocalY, lz - comLocalZ);
+
+                        if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+                        {
+                            byte packedAo = HybridSurfaceNetsAndShapeMesher.PackAoAndWear(210, dmg);
+                            HybridSurfaceNetsAndShapeMesher.EmitMicroVoxel4x4x4FromMask(
+                                relOrigin, matId, 0xFFFF_FFFF_FFFF_FFFFUL, packedAo, occludedMask, _proxyTris);
+                        }
+                        else
+                        {
+                            byte renderShape = shapeId == 0 ? ArchitecturalShapeCatalog.FullMasonryCube : shapeId;
+                            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                                relOrigin, matId, renderShape, rot, dmg, _proxyTris,
+                                extendFoundationSkirt: false, occludedFaceMask: occludedMask);
+                        }
+
+                        emittedBlocks++;
+                    }
+                }
             }
+
             if (emittedBlocks == 0)
             {
                 HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), domMat, 1, 0, 6, _proxyTris);
+                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
+                    fallbackMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 6, _proxyTris);
             }
+
             Mesh coloredMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_FallingCluster_{slotIdx}");
 
             GameObject proxy = new GameObject($"FallingCluster_{cx}_{cz}_{slotIdx}");
@@ -184,8 +277,11 @@ namespace Stratocraft.Character
             MeshRenderer mr = proxy.AddComponent<MeshRenderer>();
             if (sharedMat != null) mr.sharedMaterial = sharedMat;
 
-            proxy.transform.position = new Vector3(cluster.CenterOfMass.X, cluster.CenterOfMass.Y, cluster.CenterOfMass.Z);
+            Vector3 basePos = new Vector3(cluster.CenterOfMass.X, cluster.CenterOfMass.Y, cluster.CenterOfMass.Z);
+            proxy.transform.position = basePos;
             proxy.transform.localScale = Vector3.one;
+
+            Transform dustGroup = CreateWarningDustPuffGroup(proxy.transform, minLy - comLocalY, sharedMat);
 
             Vector3 torqueVec = new Vector3(
                 cluster.OverturningTorqueNm.X, cluster.OverturningTorqueNm.Y, cluster.OverturningTorqueNm.Z);
@@ -194,11 +290,67 @@ namespace Stratocraft.Character
 
             _ringBuffer[slotIdx] = new ActiveFallingClusterSlot
             {
-                IsActive = true, Cluster = cluster, ChunkX = cx, ChunkZ = cz,
-                DropStartHeightY = cluster.CenterOfMass.Y, CurrentCenterY = cluster.CenterOfMass.Y, VerticalVelocity = -1.2f,
-                AngularVelocityDeg = angVel, VisualProxy = proxy
+                IsActive = true,
+                Cluster = cluster,
+                ChunkX = cx,
+                ChunkZ = cz,
+                WarningTimer = PreCollapseWarningDurationSeconds,
+                DropStartHeightY = cluster.CenterOfMass.Y,
+                CurrentCenterY = cluster.CenterOfMass.Y,
+                VerticalVelocity = -0.35f,
+                BaseWorldCenter = basePos,
+                AngularVelocityDeg = angVel,
+                VisualProxy = proxy,
+                DustPuffGroup = dustGroup
             };
             _activeClusterCount++;
+        }
+
+        private static byte ComputeDetachedClusterInternalMask(uint[] snapshot, int lx, int ly, int lz, int maxEditableY)
+        {
+            byte mask = 0;
+            if (lx < 15 && IsFullSolidInSnapshot(snapshot, lx + 1, ly, lz)) mask |= ArchitecturalShapeCatalog.FacePosX;
+            if (lx > 0 && IsFullSolidInSnapshot(snapshot, lx - 1, ly, lz)) mask |= ArchitecturalShapeCatalog.FaceNegX;
+            if (ly + 1 < maxEditableY && IsFullSolidInSnapshot(snapshot, lx, ly + 1, lz)) mask |= ArchitecturalShapeCatalog.FacePosY;
+            if (ly > 0 && IsFullSolidInSnapshot(snapshot, lx, ly - 1, lz)) mask |= ArchitecturalShapeCatalog.FaceNegY;
+            if (lz < 15 && IsFullSolidInSnapshot(snapshot, lx, ly, lz + 1)) mask |= ArchitecturalShapeCatalog.FacePosZ;
+            if (lz > 0 && IsFullSolidInSnapshot(snapshot, lx, ly, lz - 1)) mask |= ArchitecturalShapeCatalog.FaceNegZ;
+            return mask;
+        }
+
+        private static bool IsFullSolidInSnapshot(uint[] snapshot, int lx, int ly, int lz)
+        {
+            int idx = (ly << 8) | (lz << 4) | lx;
+            if ((uint)idx >= (uint)snapshot.Length) return false;
+            uint raw = snapshot[idx];
+            if (!VoxelBitUtility.IsPhysicallySolid(raw)) return false;
+            byte shape = VoxelBitUtility.GetShapeId(raw);
+            return shape == 0 || shape == ArchitecturalShapeCatalog.FullMasonryCube;
+        }
+
+        private static Transform CreateWarningDustPuffGroup(Transform parentProxy, float relBottomY, Material? sharedMat)
+        {
+            GameObject groupObj = new GameObject("CollapseCreakDustPuffs");
+            groupObj.transform.SetParent(parentProxy, false);
+            groupObj.transform.localPosition = new Vector3(0f, relBottomY, 0f);
+
+            for (int i = 0; i < 4; i++)
+            {
+                float angle = i * (Mathf.PI * 0.5f) + 0.35f;
+                GameObject puff = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                puff.name = $"DustSpeck_{i}";
+                UnityEngine.Object.Destroy(puff.GetComponent<Collider>());
+                puff.transform.SetParent(groupObj.transform, false);
+                puff.transform.localPosition = new Vector3(Mathf.Cos(angle) * 0.45f, -0.08f * i, Mathf.Sin(angle) * 0.45f);
+                puff.transform.localScale = new Vector3(0.18f, 0.14f, 0.18f);
+                puff.transform.localRotation = Quaternion.Euler(22f * i, 37f * i, 15f * i);
+                if (sharedMat != null && puff.TryGetComponent(out MeshRenderer mr))
+                {
+                    mr.sharedMaterial = sharedMat;
+                }
+            }
+
+            return groupObj.transform;
         }
 
         private void StepSingleFallingSlot(
@@ -206,13 +358,47 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirtyChunks,
             Vector3 playerPos, ref CharacterVitalsComponent playerVitals, ref string? impactNotification)
         {
-            slot.VerticalVelocity -= GravityAcceleration * dt;
-            slot.CurrentCenterY += slot.VerticalVelocity * dt;
+            // 1. Faz: 1.5 Saniyelik Yapısal Çatırdama (Creak), Titreme ve Toz Dökülme Uyarı Fazı
+            float fallDt = dt;
+            if (slot.WarningTimer > 0f)
+            {
+                float consumedWarning = Mathf.Min(slot.WarningTimer, dt);
+                slot.WarningTimer -= consumedWarning;
+                fallDt = dt - consumedWarning;
+
+                float elapsedWarning = PreCollapseWarningDurationSeconds - slot.WarningTimer;
+                float intensity = Mathf.Clamp01(elapsedWarning / PreCollapseWarningDurationSeconds);
+
+                if (slot.VisualProxy != null)
+                {
+                    float jitterX = Mathf.Sin(elapsedWarning * 48f) * (0.025f + 0.045f * intensity);
+                    float jitterZ = Mathf.Cos(elapsedWarning * 53f) * (0.025f + 0.045f * intensity);
+                    float sagY = -0.08f * intensity;
+                    slot.VisualProxy.transform.position = slot.BaseWorldCenter + new Vector3(jitterX, sagY, jitterZ);
+                    slot.VisualProxy.transform.Rotate(slot.AngularVelocityDeg * (0.08f * consumedWarning), Space.Self);
+                }
+
+                if (slot.DustPuffGroup != null)
+                {
+                    slot.DustPuffGroup.localPosition += new Vector3(0f, -0.65f * consumedWarning, 0f);
+                    slot.DustPuffGroup.Rotate(new Vector3(45f, 110f, 35f) * consumedWarning, Space.Self);
+                }
+
+                impactNotification ??= $"YAPI CATIRDIYOR & TOZ DOKULUYOR! ({Mathf.Max(0.1f, slot.WarningTimer):0.1}sn icinde cokecek!)";
+                if (fallDt <= 0.0001f)
+                {
+                    return;
+                }
+            }
+
+            // 2. Faz: Serbest Düşüş + Dinamik Pancake Alt Kat Delme
+            slot.VerticalVelocity -= GravityAcceleration * fallDt;
+            slot.CurrentCenterY += slot.VerticalVelocity * fallDt;
 
             if (slot.VisualProxy != null)
             {
                 slot.VisualProxy.transform.position = new Vector3(slot.Cluster.CenterOfMass.X, slot.CurrentCenterY, slot.Cluster.CenterOfMass.Z);
-                slot.VisualProxy.transform.Rotate(slot.AngularVelocityDeg * dt, Space.Self);
+                slot.VisualProxy.transform.Rotate(slot.AngularVelocityDeg * fallDt, Space.Self);
             }
 
             float halfHeight = Mathf.Max(0.5f, (slot.Cluster.MaxBounds.Y - slot.Cluster.MinBounds.Y + 1) * 0.5f);
@@ -241,39 +427,93 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (hitMat != MaterialIdCatalog.Air && probeY > 2)
+            int mantleStopY = StratocraftFloatingIslandWorldGen.DeepMantleFloorY + 1;
+            if (hitMat != MaterialIdCatalog.Air && probeY > mantleStopY)
             {
                 float dropHeight = Mathf.Max(0.5f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = Mathf.Max(Mathf.Abs(slot.VerticalVelocity), PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight));
 
-                if (probeY > 5 && StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, hitMat))
+                // Pancake Collapse: Düşen kümenin kütlesi ve çarpma hızı alt kattaki döşeme bloklarını deliyor mu?
+                int breachedBlocks = 0;
+                float addedMassKg = 0f;
+                byte lastBreachedMat = hitMat;
+
+                for (int lz = minLz; lz <= maxLz; lz++)
                 {
-                    for (int lz = minLz; lz <= maxLz; lz++)
                     for (int lx = minLx; lx <= maxLx; lx++)
                     {
                         int bIdx = (probeY << 8) | (lz << 4) | lx;
-                        byte bm = VoxelBitUtility.GetMaterialId(chunkVoxels[bIdx]);
-                        if (bm != MaterialIdCatalog.Air && bm != MaterialIdCatalog.Bedrock &&
-                            StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, bm))
+                        uint bRaw = chunkVoxels[bIdx];
+                        if (!VoxelBitUtility.IsPhysicallySolid(bRaw)) continue;
+
+                        byte bm = VoxelBitUtility.GetMaterialId(bRaw);
+                        if (bm == MaterialIdCatalog.Air || bm == MaterialIdCatalog.Bedrock) continue;
+
+                        if (StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, bm))
                         {
                             chunkVoxels[bIdx] = 0u;
+                            breachedBlocks++;
+                            lastBreachedMat = bm;
+                            addedMassKg += StructuralMaterialProps.GetForMaterial(bm).MassKg;
                         }
                     }
+                }
+
+                if (breachedBlocks > 0)
+                {
+                    LastPancakeBreachedBlocksCount = breachedBlocks;
+                    slot.Cluster.VoxelCount += breachedBlocks;
+                    slot.Cluster.TotalMassKg += addedMassKg;
                     dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
-                    slot.VerticalVelocity *= 0.65f;
-                    impactNotification = $"PANCAKE ALT KAT DELINDI! (Hiz={vHit:0.1} m/s -> Kat y={probeY} coktu)";
+
+                    if (MiningControllerForItemDrops != null)
+                    {
+                        int dropCount = Mathf.Clamp(breachedBlocks, 1, 4);
+                        Vector3 breachPos = new Vector3(slot.ChunkX * 16 + centerLx + 0.5f, probeY + 0.5f, slot.ChunkZ * 16 + centerLz + 0.5f);
+                        for (int d = 0; d < dropCount; d++)
+                        {
+                            Vector3 offset = new Vector3((d - 1.5f) * 0.35f, 0.2f, ((d & 1) - 0.5f) * 0.35f);
+                            MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                                breachPos + offset, lastBreachedMat, shape: 1, count: 1, DefaultVoxelMaterial);
+                        }
+                    }
+
+                    // Alt kat döşemesi delindiğinde, o kattaki komşu kiriş ve bloklar için zincirleme (Pancake) çöküş tetikle!
+                    if (!_isEvaluatingCascade)
+                    {
+                        _isEvaluatingCascade = true;
+                        try
+                        {
+                            Vector3 lowerFloorPivot = new Vector3(
+                                slot.ChunkX * 16 + centerLx + 0.5f, probeY + 0.5f, slot.ChunkZ * 16 + centerLz + 0.5f);
+                            EvaluateChunkStability(
+                                slot.ChunkX, slot.ChunkZ, chunkVoxels, maxEditableY,
+                                lowerFloorPivot, DefaultVoxelMaterial, dirtyChunks, out _);
+                        }
+                        finally
+                        {
+                            _isEvaluatingCascade = false;
+                        }
+                    }
+
+                    slot.VerticalVelocity = Mathf.Min(-2.2f, slot.VerticalVelocity * 0.70f);
+                    impactNotification = $"PANCAKE ALT KAT DELINDI! ({breachedBlocks} taban blogu kirildi, Hiz={vHit:0.1} m/s -> Kat y={probeY} zincirleme coktu!)";
                     return;
                 }
 
-                FinalizeClusterImpact(ref slot, chunkVoxels, maxEditableY, centerLx, probeY + 1, centerLz, dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
+                FinalizeClusterImpact(
+                    ref slot, chunkVoxels, maxEditableY, centerLx, probeY + 1, centerLz,
+                    dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
                 dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
                 ReleaseClusterSlot(ref slot);
             }
-            else if (slot.CurrentCenterY <= 3.5f)
+            else if (slot.CurrentCenterY <= mantleStopY + 0.5f)
             {
                 float dropHeight = Mathf.Max(1.0f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight);
-                FinalizeClusterImpact(ref slot, chunkVoxels, maxEditableY, centerLx, 9, centerLz, dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
+                FinalizeClusterImpact(
+                    ref slot, chunkVoxels, maxEditableY, centerLx, mantleStopY + 1, centerLz,
+                    dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
                 dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
                 ReleaseClusterSlot(ref slot);
             }
@@ -337,7 +577,12 @@ namespace Stratocraft.Character
 
         private void ReleaseClusterSlot(ref ActiveFallingClusterSlot slot)
         {
-            if (slot.VisualProxy != null) { UnityEngine.Object.Destroy(slot.VisualProxy); slot.VisualProxy = null; }
+            if (slot.VisualProxy != null)
+            {
+                UnityEngine.Object.Destroy(slot.VisualProxy);
+                slot.VisualProxy = null;
+            }
+            slot.DustPuffGroup = null;
             slot.IsActive = false;
             _activeClusterCount = Mathf.Max(0, _activeClusterCount - 1);
         }
