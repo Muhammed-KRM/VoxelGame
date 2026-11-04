@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Core.Constants;
 using Stratocraft.CreaturesAI.CreaturesAndBosses;
+using Stratocraft.CreaturesAI.Pathfinding;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen.Generators;
@@ -41,13 +42,18 @@ namespace Stratocraft.Character
             public Transform Root = null!;
             public Vector3 AnchorPos, BaseScale;
             public float BaseYaw, PhaseOffset, MaxHp, CurrentHp, BaseSpeed, SpeedMultiplier = 1.0f, AttackCooldown, DamageMultiplier = 1.0f;
-            public float EmberEggTimer;
+            public float EmberEggTimer, HitFlinchTimer;
             public int LastHitSwingId = -1;
             public int WoundScarCount;
-            public bool IsFlyingBoss, LegSevered, ArmSevered, WingSevered, HasRebornFromEgg;
+            public bool IsFlyingBoss, LegSevered, ArmSevered, WingSevered, HasRebornFromEgg, LimbsBuilt;
             public string DisplayName = string.Empty;
             public AnatomyCapabilityFlags Capabilities;
             public CreatureAiState State = CreatureAiState.Patrol;
+            public Transform? BodyTorsoPivot;
+            public Transform? FrontLeftLeg, FrontRightLeg, HindLeftLeg, HindRightLeg;
+            public Transform? FrontLeftLower, FrontRightLower, HindLeftLower, HindRightLower;
+            public Transform? WingLeftInner, WingLeftOuter, WingRightInner, WingRightOuter;
+            public Transform? HeadPivot, JawPivot, TailPivot;
         }
 
         private sealed class ThrownLimbDebris
@@ -61,6 +67,9 @@ namespace Stratocraft.Character
         private readonly List<LiveCreatureAgent> _agents = new(8);
         private readonly List<ThrownLimbDebris> _activeLimbDebris = new(16);
         private readonly List<FacetedVoxelTriangle> _limbMeshTris = new(64);
+        private readonly List<PathNodeCoord> _astarPathBuffer = new(64);
+        private VoxelChunkComponent? _navChunkBuffer;
+        private bool _outerContinentCreaturesSpawned;
 
         /// <summary>Kayitli canli ajan sayisi.</summary>
         public int AgentCount => _agents.Count;
@@ -73,12 +82,11 @@ namespace Stratocraft.Character
         public string NearestCreatureHudSummary { get; private set; } = "Yakin Canli: Yok";
 
         /// <summary>Sahnedeki bir yaratigi canli AI, HP ve Anatomik Yetenek Matrisi ile kaydeder.</summary>
-        public void RegisterCreature(Transform creatureRoot, Vector3 anchorPos, float phaseOffset, bool isFlyingBoss = false)
+        public void RegisterCreature(Transform creatureRoot, Vector3 anchorPos, float phaseOffset, bool isFlyingBoss = false, byte customArchetypeId = 0)
         {
             if (creatureRoot == null) return;
-            CreatureArchetypeDefinition def = isFlyingBoss
-                ? Creature21BehaviorSystem.GetById(16)
-                : Creature21BehaviorSystem.GetById(4);
+            byte archId = customArchetypeId != 0 ? customArchetypeId : (byte)(isFlyingBoss ? 16 : 4);
+            CreatureArchetypeDefinition def = Creature21BehaviorSystem.GetById(archId);
 
             _agents.Add(new LiveCreatureAgent
             {
@@ -87,23 +95,56 @@ namespace Stratocraft.Character
                 BaseScale = creatureRoot.localScale,
                 BaseYaw = creatureRoot.eulerAngles.y,
                 PhaseOffset = phaseOffset,
-                IsFlyingBoss = isFlyingBoss,
-                DisplayName = isFlyingBoss ? "Anka Kor Avatar (Boss)" : $"Ash Stalker #{_agents.Count + 1}",
-                MaxHp = isFlyingBoss ? 680f : 240f,
-                CurrentHp = isFlyingBoss ? 680f : 240f,
-                BaseSpeed = isFlyingBoss ? 5.2f : 3.8f,
+                IsFlyingBoss = isFlyingBoss || (def.InitialCapabilities & AnatomyCapabilityFlags.WingedFlight) != 0,
+                DisplayName = customArchetypeId != 0
+                    ? def.DisplayName
+                    : (isFlyingBoss ? "Anka Kor Avatar (Boss)" : $"Ash Stalker #{_agents.Count + 1}"),
+                MaxHp = customArchetypeId != 0 ? Mathf.Min(def.BaseMaxHp, 480f) : (isFlyingBoss ? 680f : 240f),
+                CurrentHp = customArchetypeId != 0 ? Mathf.Min(def.BaseMaxHp, 480f) : (isFlyingBoss ? 680f : 240f),
+                BaseSpeed = isFlyingBoss ? 5.2f : Mathf.Clamp(def.BaseMoveSpeed * 0.72f, 3.2f, 5.4f),
                 SpeedMultiplier = 1.0f,
                 Capabilities = def.InitialCapabilities | AnatomyCapabilityFlags.VoxelSiegeBreaker
             });
         }
 
-        /// <summary>Tum canlilarin AI durum makinesini, Kor Yumurta sayacini ve kopan uzuv fizigini ilerletir.</summary>
+        /// <summary>Dis kita chunk'lari yuklendiginde Faz 2 katalogundan ek canli turlerini olusturur.</summary>
+        public void EnsureOuterContinentCreaturesSpawned(
+            Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            if (_outerContinentCreaturesSpawned || _agents.Count == 0) return;
+            if (!worldChunks.ContainsKey((1, 0)) && !worldChunks.ContainsKey((-2, -1))) return;
+            _outerContinentCreaturesSpawned = true;
+
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(24.5f, 11f, 5.5f), 1.4f, 3, MaterialIdCatalog.Marble);
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(-26.5f, 10f, -12.5f), 2.8f, 8, MaterialIdCatalog.NaturalObsidian);
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(12.5f, 14f, 22.5f), 4.1f, 14, MaterialIdCatalog.Bronze);
+        }
+
+        private void SpawnProceduralContinentCreature(
+            Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 worldPos, float phaseOffset, byte archetypeId, byte bodyMatId)
+        {
+            float groundY = SampleVoxelOrTerrainHeight(worldPos.x, worldPos.z, worldPos.y, worldChunks);
+            worldPos.y = groundY + 0.1f;
+
+            GameObject mobRoot = new GameObject($"ContinentCreature_Arch{archetypeId}");
+            if (worldParent != null) mobRoot.transform.SetParent(worldParent, true);
+            mobRoot.transform.position = worldPos;
+            mobRoot.transform.localScale = archetypeId == 8 ? new Vector3(1.18f, 1.05f, 1.32f) : Vector3.one;
+
+            RegisterCreature(mobRoot.transform, worldPos, phaseOffset, isFlyingBoss: archetypeId == 14, customArchetypeId: archetypeId);
+        }
+
+        /// <summary>Tum canlilarin AI durum makinesini, Kor Yumurta sayacini, artikule uzuv animasyonlarini ve kopan uzuv fizigini ilerletir.</summary>
         public void StepCreaturesAi(
             Vector3 playerPos, bool isPlayerParrying, ref CharacterVitalsComponent playerVitals,
             Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirtyChunks,
             Stage1StructuralCollapseBridge collapseBridge, float time, float deltaTime,
-            Stage1DirectionalCombatBridge? combatBridge = null)
+            Stage1DirectionalCombatBridge? combatBridge = null,
+            Material? sharedVoxelMat = null,
+            Transform? worldParent = null)
         {
+            EnsureOuterContinentCreaturesSpawned(worldParent, sharedVoxelMat, worldChunks);
             StepThrownLimbDebris(deltaTime, worldChunks);
 
             float nearestDist = float.MaxValue;
@@ -113,7 +154,9 @@ namespace Stratocraft.Character
                 LiveCreatureAgent a = _agents[i];
                 if (a.Root == null || a.State == CreatureAiState.Dead) continue;
 
+                EnsureCreatureArticulatedLimbs(a, sharedVoxelMat);
                 a.AttackCooldown = Mathf.Max(0f, a.AttackCooldown - deltaTime);
+                a.HitFlinchTimer = Mathf.Max(0f, a.HitFlinchTimer - deltaTime);
                 Vector3 toPlayer = playerPos - a.Root.position;
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
                 if (horizDist < nearestDist) { nearestDist = horizDist; nearest = a; }
@@ -133,6 +176,8 @@ namespace Stratocraft.Character
                 {
                     StepPatrolAgent(a, time, worldChunks);
                 }
+
+                StepCreatureArticulatedAnimation(a, time);
             }
 
             if (nearest != null)
@@ -244,8 +289,8 @@ namespace Stratocraft.Character
                             a.AttackCooldown = 0.85f;
                             ExecuteSupportPillarSiegeStrike(a, nextPos, worldChunks, dirtyChunks, collapseBridge);
                         }
-                        Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
-                        Vector3 detourPos = pos + tangent * (a.BaseSpeed * a.SpeedMultiplier * deltaTime * 0.75f);
+                        Vector3 detourDir = TryComputeAStarDetourDirection(a, pos, playerPos, worldChunks, flatDir);
+                        Vector3 detourPos = pos + detourDir * (a.BaseSpeed * a.SpeedMultiplier * deltaTime * 0.80f);
                         detourPos.y = SampleVoxelOrTerrainHeight(detourPos.x, detourPos.z, pos.y, worldChunks);
                         pos = detourPos;
                     }
@@ -444,6 +489,7 @@ namespace Stratocraft.Character
                 float damage = Mathf.Lerp(26f, 96f, speedFactor01)
                     * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
+                a.HitFlinchTimer = 0.25f;
 
                 // Kilic canli etine/uzvuna vurdugunda DURMAZ; etin icinden keserek gecer (Cleave) ve yayini tamamlar!
                 combatBridge.NotifyBladeCleaveThroughFlesh();
@@ -722,6 +768,269 @@ namespace Stratocraft.Character
             }
         }
 
+        private Vector3 TryComputeAStarDetourDirection(
+            LiveCreatureAgent a,
+            Vector3 currentPos,
+            Vector3 goalPos,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 fallbackFlatDir)
+        {
+            int wx = Mathf.FloorToInt(currentPos.x), wz = Mathf.FloorToInt(currentPos.z);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? rawChunk) || rawChunk == null)
+            {
+                return new Vector3(-fallbackFlatDir.z, 0f, fallbackFlatDir.x);
+            }
+
+            _navChunkBuffer ??= new VoxelChunkComponent(cx, cz);
+            Array.Copy(rawChunk, _navChunkBuffer.Voxels, Mathf.Min(rawChunk.Length, _navChunkBuffer.Voxels.Length));
+
+            int startLx = Mathf.Clamp(wx - cx * 16, 0, 15);
+            int startLz = Mathf.Clamp(wz - cz * 16, 0, 15);
+            int startY = Mathf.Clamp(Mathf.FloorToInt(currentPos.y) + 1, 1, 30);
+
+            int goalWx = Mathf.FloorToInt(goalPos.x), goalWz = Mathf.FloorToInt(goalPos.z);
+            int goalLx = Mathf.Clamp(goalWx - cx * 16, 0, 15);
+            int goalLz = Mathf.Clamp(goalWz - cz * 16, 0, 15);
+            int goalY = Mathf.Clamp(Mathf.FloorToInt(goalPos.y) + 1, 1, 30);
+
+            bool found = DestructibleNavSpanAStar.FindPath(
+                _navChunkBuffer,
+                new PathNodeCoord(startLx, startY, startLz),
+                new PathNodeCoord(goalLx, goalY, goalLz),
+                a.BaseSpeed,
+                55f,
+                a.IsFlyingBoss,
+                _astarPathBuffer);
+
+            if (found && _astarPathBuffer.Count >= 2)
+            {
+                PathNodeCoord step = _astarPathBuffer[1];
+                Vector3 stepWorld = new Vector3(cx * 16 + step.X + 0.5f, currentPos.y, cz * 16 + step.Z + 0.5f);
+                Vector3 dir = stepWorld - currentPos;
+                dir.y = 0f;
+                if (dir.sqrMagnitude > 0.001f) return dir.normalized;
+            }
+
+            return new Vector3(-fallbackFlatDir.z, 0f, fallbackFlatDir.x);
+        }
+
+        private void EnsureCreatureArticulatedLimbs(LiveCreatureAgent a, Material? sharedMat)
+        {
+            if (a.LimbsBuilt || a.Root == null) return;
+            a.LimbsBuilt = true;
+
+            // KRITIK DUZELTME: Kokteki birlesik statik heykel mesh'i (CombinedMesh) devre disi birakilir;
+            // boylece yaratik ve boss modellerinde "iki model ic ice / donuk bacak-kanat" hatasi %100 kalkar!
+            if (a.Root.TryGetComponent<MeshRenderer>(out MeshRenderer staticRootMr))
+            {
+                staticRootMr.enabled = false;
+            }
+
+            for (int i = a.Root.childCount - 1; i >= 0; i--)
+            {
+                Transform ch = a.Root.GetChild(i);
+                if (ch.name.StartsWith("Articulated_", StringComparison.Ordinal))
+                {
+                    ch.SetParent(null, false);
+                    UnityEngine.Object.Destroy(ch.gameObject);
+                }
+            }
+
+            bool isWolf = a.DisplayName.IndexOf("Kurt", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isBrute = a.DisplayName.IndexOf("Yıkıcı", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                           a.DisplayName.IndexOf("Yikici", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            _limbMeshTris.Clear();
+            byte primaryMat = a.IsFlyingBoss
+                ? MaterialIdCatalog.Bronze
+                : (isWolf ? MaterialIdCatalog.Marble : (isBrute ? MaterialIdCatalog.NaturalObsidian : MaterialIdCatalog.CreatureFurAsh));
+            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), primaryMat, 7, 0, 8, _limbMeshTris);
+            Mesh bodyMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_limbMeshTris, "Mesh_CreatureBody_" + a.DisplayName);
+
+            _limbMeshTris.Clear();
+            byte accentMat = a.IsFlyingBoss
+                ? (byte)245
+                : (isWolf ? MaterialIdCatalog.Steel : MaterialIdCatalog.CopperOre);
+            byte glowTemp = a.IsFlyingBoss ? (byte)220 : (byte)85;
+            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), accentMat, 6, glowTemp, 0, _limbMeshTris);
+            Mesh accentMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_limbMeshTris, "Mesh_CreatureAccent_" + a.DisplayName);
+
+            if (a.IsFlyingBoss)
+            {
+                // Kanatli Boss (Anka Kor Avatar / Gok Golgesi): Anatomik Kus Gogsu + Cift Eklemli Genis Kanatlar + Pence + Kuyruk
+                a.BodyTorsoPivot = CreateCreatureJoint(a.Root, "Articulated_BossTorso", new Vector3(0f, 0.88f, 0f), bodyMesh, new Vector3(0.46f, 0.36f, 0.72f), Vector3.zero, sharedMat);
+                CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossEmberBreast", new Vector3(0f, -0.04f, 0.14f), accentMesh, new Vector3(0.36f, 0.26f, 0.48f), Vector3.zero, sharedMat);
+                CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossDorsalRidge", new Vector3(0f, 0.20f, -0.05f), accentMesh, new Vector3(0.14f, 0.14f, 0.56f), Vector3.zero, sharedMat);
+
+                a.WingLeftInner = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f), bodyMesh, new Vector3(0.68f, 0.09f, 0.42f), new Vector3(-0.32f, 0f, 0f), sharedMat);
+                a.WingLeftOuter = CreateCreatureJoint(a.WingLeftInner, "Articulated_WingLeftOuter", new Vector3(-0.62f, 0f, -0.02f), accentMesh, new Vector3(0.78f, 0.06f, 0.34f), new Vector3(-0.36f, 0f, -0.04f), sharedMat);
+
+                a.WingRightInner = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f), bodyMesh, new Vector3(0.68f, 0.09f, 0.42f), new Vector3(0.32f, 0f, 0f), sharedMat);
+                a.WingRightOuter = CreateCreatureJoint(a.WingRightInner, "Articulated_WingRightOuter", new Vector3(0.62f, 0f, -0.02f), accentMesh, new Vector3(0.78f, 0.06f, 0.34f), new Vector3(0.36f, 0f, -0.04f), sharedMat);
+
+                a.HeadPivot = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossHead", new Vector3(0f, 0.22f, 0.36f), bodyMesh, new Vector3(0.26f, 0.24f, 0.32f), new Vector3(0f, 0.04f, 0.10f), sharedMat);
+                CreateCreatureJoint(a.HeadPivot, "Articulated_BossCrown", new Vector3(0f, 0.16f, 0.02f), accentMesh, new Vector3(0.18f, 0.12f, 0.28f), Vector3.zero, sharedMat);
+                a.JawPivot = CreateCreatureJoint(a.HeadPivot, "Articulated_BossBeak", new Vector3(0f, -0.04f, 0.18f), accentMesh, new Vector3(0.14f, 0.08f, 0.24f), new Vector3(0f, 0f, 0.08f), sharedMat);
+
+                a.TailPivot = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossTailPlume", new Vector3(0f, -0.04f, -0.34f), accentMesh, new Vector3(0.38f, 0.08f, 0.68f), new Vector3(0f, 0f, -0.30f), sharedMat);
+                a.HindLeftLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossTalonL", new Vector3(-0.16f, -0.18f, 0.04f), bodyMesh, new Vector3(0.13f, 0.28f, 0.13f), new Vector3(0f, -0.13f, 0f), sharedMat);
+                a.HindLeftLower = CreateCreatureJoint(a.HindLeftLeg, "Articulated_BossClawL", new Vector3(0f, -0.26f, 0.02f), accentMesh, new Vector3(0.14f, 0.18f, 0.22f), new Vector3(0f, -0.08f, 0.05f), sharedMat);
+                a.HindRightLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_BossTalonR", new Vector3(0.16f, -0.18f, 0.04f), bodyMesh, new Vector3(0.13f, 0.28f, 0.13f), new Vector3(0f, -0.13f, 0f), sharedMat);
+                a.HindRightLower = CreateCreatureJoint(a.HindRightLeg, "Articulated_BossClawR", new Vector3(0f, -0.26f, 0.02f), accentMesh, new Vector3(0.14f, 0.18f, 0.22f), new Vector3(0f, -0.08f, 0.05f), sharedMat);
+            }
+            else
+            {
+                // Kara Yaratigi (Ash Stalker / Ulu Kurt / Vahsi Yikici):
+                // Omurga govdesi + Sirt dikenleri + Cift eklemli (Ust Bacak -> Alt Pence) 4 Bacak + Kafa/Cene + Kuyruk
+                Vector3 torsoDim = isBrute ? new Vector3(0.54f, 0.44f, 0.72f) : (isWolf ? new Vector3(0.38f, 0.34f, 0.78f) : new Vector3(0.44f, 0.36f, 0.72f));
+                a.BodyTorsoPivot = CreateCreatureJoint(a.Root, "Articulated_CreatureTorso", new Vector3(0f, 0.68f, 0f), bodyMesh, torsoDim, Vector3.zero, sharedMat);
+                CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_ShoulderMane", new Vector3(0f, 0.08f, 0.16f), bodyMesh, new Vector3(torsoDim.x * 1.12f, torsoDim.y * 0.95f, 0.34f), Vector3.zero, sharedMat);
+                CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_DorsalSpines", new Vector3(0f, torsoDim.y * 0.56f, -0.02f), accentMesh, new Vector3(0.10f, 0.14f, 0.54f), Vector3.zero, sharedMat);
+
+                a.FrontLeftLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-torsoDim.x * 0.52f, -0.04f, 0.24f), bodyMesh, new Vector3(0.15f, 0.34f, 0.15f), new Vector3(0f, -0.16f, 0f), sharedMat);
+                a.FrontLeftLower = CreateCreatureJoint(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.32f, 0f), accentMesh, new Vector3(0.13f, 0.32f, 0.16f), new Vector3(0f, -0.15f, 0.03f), sharedMat);
+
+                a.FrontRightLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(torsoDim.x * 0.52f, -0.04f, 0.24f), bodyMesh, new Vector3(0.15f, 0.34f, 0.15f), new Vector3(0f, -0.16f, 0f), sharedMat);
+                a.FrontRightLower = CreateCreatureJoint(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.32f, 0f), accentMesh, new Vector3(0.13f, 0.32f, 0.16f), new Vector3(0f, -0.15f, 0.03f), sharedMat);
+
+                a.HindLeftLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-torsoDim.x * 0.50f, -0.06f, -0.24f), bodyMesh, new Vector3(0.16f, 0.34f, 0.17f), new Vector3(0f, -0.16f, 0f), sharedMat);
+                a.HindLeftLower = CreateCreatureJoint(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.31f, 0f), accentMesh, new Vector3(0.13f, 0.31f, 0.16f), new Vector3(0f, -0.14f, 0.03f), sharedMat);
+
+                a.HindRightLeg = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(torsoDim.x * 0.50f, -0.06f, -0.24f), bodyMesh, new Vector3(0.16f, 0.34f, 0.17f), new Vector3(0f, -0.16f, 0f), sharedMat);
+                a.HindRightLower = CreateCreatureJoint(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.31f, 0f), accentMesh, new Vector3(0.13f, 0.31f, 0.16f), new Vector3(0f, -0.14f, 0.03f), sharedMat);
+
+                a.HeadPivot = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.14f, 0.36f), bodyMesh, new Vector3(0.28f, 0.24f, 0.34f), new Vector3(0f, 0.03f, 0.12f), sharedMat);
+                CreateCreatureJoint(a.HeadPivot, "Articulated_HeadEarsHorns", new Vector3(0f, 0.15f, 0.02f), accentMesh, new Vector3(0.26f, 0.12f, 0.10f), Vector3.zero, sharedMat);
+                a.JawPivot = CreateCreatureJoint(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.06f, 0.14f), accentMesh, new Vector3(0.20f, 0.08f, 0.26f), new Vector3(0f, 0f, 0.09f), sharedMat);
+                a.TailPivot = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.36f), accentMesh, new Vector3(0.12f, 0.12f, 0.56f), new Vector3(0f, 0f, -0.25f), sharedMat);
+            }
+        }
+
+        private static Transform CreateCreatureJoint(
+            Transform parent, string name, Vector3 localPivotPos, Mesh mesh, Vector3 visScale, Vector3 visLocalOffset, Material? sharedMat)
+        {
+            Transform? existing = parent.Find(name);
+            GameObject pivot = existing != null ? existing.gameObject : new GameObject(name);
+            pivot.transform.SetParent(parent, false);
+            pivot.transform.localPosition = localPivotPos;
+
+            string visName = name + "_Vis";
+            Transform? existingVis = pivot.transform.Find(visName);
+            GameObject vis = existingVis != null ? existingVis.gameObject : new GameObject(visName);
+            vis.transform.SetParent(pivot.transform, false);
+            vis.transform.localPosition = visLocalOffset;
+            vis.transform.localScale = visScale;
+            if (!vis.TryGetComponent<MeshFilter>(out MeshFilter mf))
+            {
+                mf = vis.AddComponent<MeshFilter>();
+            }
+            mf.sharedMesh = mesh;
+            if (!vis.TryGetComponent<MeshRenderer>(out MeshRenderer mr))
+            {
+                mr = vis.AddComponent<MeshRenderer>();
+            }
+            if (sharedMat != null) mr.sharedMaterial = sharedMat;
+
+            return pivot.transform;
+        }
+
+        private static void StepCreatureArticulatedAnimation(LiveCreatureAgent a, float time)
+        {
+            float cycleSpeed = a.State == CreatureAiState.Patrol ? 4.4f : 8.8f;
+            float phase = time * cycleSpeed + a.PhaseOffset;
+            bool isAttacking = (a.State == CreatureAiState.MeleeAttack || a.State == CreatureAiState.SupportPillarSiege) && a.AttackCooldown > 0.65f;
+            float flinchPitch = a.HitFlinchTimer > 0f ? Mathf.Sin(a.HitFlinchTimer * 45f) * 22f - 16f : 0f;
+
+            if (a.BodyTorsoPivot != null)
+            {
+                float breathBob = Mathf.Sin(phase * 2f) * 0.025f;
+                float torsoPitch = (isAttacking ? -14f : Mathf.Sin(phase) * 3.5f) + flinchPitch * 0.4f;
+                float torsoRoll = Mathf.Cos(phase) * 3.0f;
+                float baseTorsoY = a.IsFlyingBoss ? 0.88f : 0.68f;
+                a.BodyTorsoPivot.localPosition = new Vector3(0f, baseTorsoY + breathBob, 0f);
+                a.BodyTorsoPivot.localRotation = Quaternion.Euler(torsoPitch, 0f, torsoRoll);
+            }
+
+            if (a.IsFlyingBoss)
+            {
+                bool canFly = (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0 && !a.WingSevered;
+                float wingFlapDeg = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset) * 38f : -42f;
+                float outerLagDeg = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset - 0.75f) * 30f : -25f;
+
+                if (a.WingLeftInner != null)
+                {
+                    if (a.WingLeftInner.gameObject.activeSelf == a.WingSevered)
+                        a.WingLeftInner.gameObject.SetActive(!a.WingSevered);
+                    a.WingLeftInner.localRotation = Quaternion.Euler(isAttacking ? 22f : 6f, 0f, wingFlapDeg);
+                }
+                if (a.WingLeftOuter != null) a.WingLeftOuter.localRotation = Quaternion.Euler(0f, 0f, outerLagDeg);
+                if (a.WingRightInner != null) a.WingRightInner.localRotation = Quaternion.Euler(isAttacking ? 22f : 6f, 0f, -wingFlapDeg);
+                if (a.WingRightOuter != null) a.WingRightOuter.localRotation = Quaternion.Euler(0f, 0f, -outerLagDeg);
+
+                if (a.HindLeftLeg != null) a.HindLeftLeg.localRotation = Quaternion.Euler(isAttacking ? -52f : 22f + Mathf.Sin(phase) * 14f, 0f, 0f);
+                if (a.HindLeftLower != null) a.HindLeftLower.localRotation = Quaternion.Euler(isAttacking ? 36f : 18f, 0f, 0f);
+                if (a.HindRightLeg != null) a.HindRightLeg.localRotation = Quaternion.Euler(isAttacking ? -52f : 22f - Mathf.Sin(phase) * 14f, 0f, 0f);
+                if (a.HindRightLower != null) a.HindRightLower.localRotation = Quaternion.Euler(isAttacking ? 36f : 18f, 0f, 0f);
+            }
+            else
+            {
+                float legSwing = Mathf.Sin(phase) * 32f * a.SpeedMultiplier;
+                float kneeFlexL = Mathf.Max(0f, -Mathf.Sin(phase)) * 36f + 12f;
+                float kneeFlexR = Mathf.Max(0f, Mathf.Sin(phase)) * 36f + 12f;
+                float attackSlash = isAttacking ? -58f : 0f;
+
+                if (a.FrontLeftLeg != null)
+                    a.FrontLeftLeg.localRotation = Quaternion.Euler(legSwing + attackSlash * 0.6f, 0f, 0f);
+                if (a.FrontLeftLower != null)
+                    a.FrontLeftLower.localRotation = Quaternion.Euler(isAttacking ? -35f : -kneeFlexL * 0.7f, 0f, 0f);
+
+                if (a.FrontRightLeg != null)
+                {
+                    if (a.FrontRightLeg.gameObject.activeSelf == a.ArmSevered)
+                        a.FrontRightLeg.gameObject.SetActive(!a.ArmSevered);
+                    a.FrontRightLeg.localRotation = Quaternion.Euler(-legSwing + attackSlash, 0f, 0f);
+                }
+                if (a.FrontRightLower != null)
+                    a.FrontRightLower.localRotation = Quaternion.Euler(isAttacking ? -42f : -kneeFlexR * 0.7f, 0f, 0f);
+
+                if (a.HindLeftLeg != null)
+                {
+                    if (a.HindLeftLeg.gameObject.activeSelf == a.LegSevered)
+                        a.HindLeftLeg.gameObject.SetActive(!a.LegSevered);
+                    a.HindLeftLeg.localRotation = Quaternion.Euler(-legSwing * 0.9f, 0f, 0f);
+                }
+                if (a.HindLeftLower != null)
+                    a.HindLeftLower.localRotation = Quaternion.Euler(kneeFlexR * 0.85f, 0f, 0f);
+
+                if (a.HindRightLeg != null)
+                    a.HindRightLeg.localRotation = Quaternion.Euler(legSwing * 0.9f, 0f, 0f);
+                if (a.HindRightLower != null)
+                    a.HindRightLower.localRotation = Quaternion.Euler(kneeFlexL * 0.85f, 0f, 0f);
+            }
+
+            if (a.HeadPivot != null)
+            {
+                float headPitch = (isAttacking ? 24f : Mathf.Sin(phase * 0.5f) * 8f) + flinchPitch;
+                float headYaw = Mathf.Cos(phase * 0.5f) * 10f;
+                a.HeadPivot.localRotation = Quaternion.Euler(headPitch, headYaw, 0f);
+            }
+            if (a.JawPivot != null)
+            {
+                float jawOpenDeg = isAttacking ? 36f : (10f + Mathf.Abs(Mathf.Sin(phase * 0.5f)) * 8f);
+                a.JawPivot.localRotation = Quaternion.Euler(jawOpenDeg, 0f, 0f);
+            }
+            if (a.TailPivot != null)
+            {
+                float tailWagYaw = Mathf.Sin(phase * 0.85f) * 26f;
+                float tailPitch = isAttacking ? 18f : -8f + Mathf.Cos(phase * 0.85f) * 8f;
+                a.TailPivot.localRotation = Quaternion.Euler(tailPitch, tailWagYaw, 0f);
+            }
+        }
+
         private static float DistancePointToSegment(Vector3 p, Vector3 a, Vector3 b)
         {
             Vector3 ab = b - a;
@@ -738,15 +1047,28 @@ namespace Stratocraft.Character
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - cx * 16, lz = wz - cz * 16;
 
+            float voxelY = -30f;
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
             {
                 int topY = Stage1InteractivePlayController.MaxEditableVoxelY - 2;
                 for (int y = topY; y >= 1; y--)
                 {
-                    if (VoxelBitUtility.IsPhysicallySolid(chunk[(y << 8) | (lz << 4) | lx])) return y + 1.0f;
+                    uint raw = chunk[(y << 8) | (lz << 4) | lx];
+                    if (VoxelBitUtility.IsPhysicallySolid(raw))
+                    {
+                        voxelY = VoxelBitUtility.GetShapeId(raw) == 0
+                            ? y + Mathf.Clamp(VoxelBitUtility.GetDensityOrLiquid(raw) / 127f, 0.35f, 0.92f)
+                            : y + 1.0f;
+                        break;
+                    }
                 }
             }
-            return StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
+            if (UnityEngine.Physics.Raycast(new Vector3(worldX, Mathf.Max(currentY + 3f, 34f), worldZ), Vector3.down,
+                out RaycastHit hit, 42f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+            {
+                return voxelY > -20f ? Mathf.Max(hit.point.y, voxelY - 0.35f) : hit.point.y;
+            }
+            return voxelY > -20f ? voxelY : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
         }
     }
 }

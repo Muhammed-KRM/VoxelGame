@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#023` (3B Zırhlı Eldiven/Bilek Kavraması & Et Yarma/Geri Tepme Yay Fiziği + Sağ Tık `RMB` Yan-Siper Çapraz Blok Duruşu + Kütle/İvme Blok Yarma `GuardCrushedByMass` vs Son Anda Yönlü Saptırma `MasterDeflect` + Bloklanan Kılıcın 3 Fiziksel Tepkisi `CrushedEnemyBlock / GlancingDeflection / HardReboundBounce`) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T15:19:00+03:00` |
+| **Devir Numarası** | `#024` (Paket 1: Minecraft/ARK Kare Slot Bar `[1..9]` + Sürükle-Bırak Envanter `[I]` + 16-Slot Sandık `[E]` + `[5]` Mikro-Keski + `[6]` Sıvı Matarası \| Paket 2: `15.000m` 6 Biyomlu Kıta, `8x8` (`128m`) Sahne Önizlemesi & 3 Katmanlı Mağara Sistemi + `[F12]` Işınlanma \| Paket 3: Çok-Eklemli Prosedürel 3B Şövalye/Yaratık Rig & Foot-IK \| Paket 4: Canlı `ThermalAndBiologySystem` + `[F11]` Üşüme/Isı Testi, `DestructibleNavSpanAStar` & 3 Dış Kıta Yaratığı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T17:55:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Kılıç Kavrama/Et Yarma Hissiyatı, Yan-Siper Blok, Blok Yarma & Son Anda Saptırma Sistemi (Devir #023) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da Test Etmesi` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Eksik Kalan Tüm Sistemlerin (Görsel Slot Bar, Sürükle-Bırak Envanter, 15.000m 6 Biyomlu Kıta & 3 Katmanlı Mağara Streaming, Çok-Eklemli Prosedürel 3B Şövalye/Yaratık Rig, Mikro-Keski, Sıvı Matarası, Termal/Biyoloji [F11] ve Voxel A*) Canlı Sahneye Entegrasyonu Tamamlandı (Devir #024)` |
 | **Aktif Test Durumu** | `34/34 Unity EditMode PASS`, `8/8 Unity PlayMode PASS` (`Toplam 42/42 Unity Test PASS`), `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -155,13 +155,28 @@
      1. **`CrushedEnemyBlock` (Blok Yarma):** Ağır/ivmeli kılıç düşmanın hafif bloğunu ezip içinden geçer, kesim durmaz ve `%55` sızan hasar vurur.
      2. **`GlancingDeflection` (Yön Sapması):** Çapraz açılı darbe veya düşmanın son anda saptırması kılıcı `90°` yana/aşağı kaydırarak saptırır ve omuzu savurur.
      3. **`HardReboundBounce` (Sert Geri Sekme):** Kafa kafaya sağlam bloğa çarpan kılıç `-_slashDirUnit` yönünde fiziksel yay tepkisiyle geriye seker (`_reboundTimer`).
+8. **Devir `#024` — Faz 1 & Faz 2 Eksik Sistemlerin Tamamlama Paketi (Paket 1–4):**
+   - **Paket 1 — Minecraft/ARK Tarzı Kare Slot Bar (`1..9` + `[0]` Boş El), Sürükle-Bırak Envanter (`[I]` / `Tab`), 16-Slotlu Sandık (`[E]`), `[5]` Mikro-Keski (`Chisel`) ve `[6]` Sıvı Matarası (`FluidFlask`):**
+     - [`Stage1VisualHotbarAndInventoryUi.cs`](Assets/_Stratocraft/Character/Stage1VisualHotbarAndInventoryUi.cs) oluşturuldu: Ekranın alt-ortasında `9` kare slot + `[0]` Boş El bulunan, her eşyanın prosedürel `48x48` 2B/izometrik ikonunu (`Texture2D`), sağ-alt köşesinde gerçek **Adet/Miktar (`x64`, `14.2B`)** sayısını ve altında **Dayanıklılık/Doluluk Çubuğunu** gösteren görsel Hotbar eklendi. Fare tekerleği (`ScrollWheel`) veya `1..9` tuşlarıyla anında slot değiştirilir.
+     - **`[I]` veya `Tab` İnteraktif Çanta (`4x6 = 24` Kare Slot) & `[E]` Sandık (`4x4 = 16` Kare Slot):** Sol tıkla **Sürükle-Bırak (`Drag & Drop`)** ile slot değiştirme, Sağ tıkla **Yarıya Bölme (`Split Half`)**, `Shift + Sol Tık` ile **Hotbar <-> Çanta <-> Sandık Hızlı Transfer** ve Madde Kristali (`Q24.8` kütlesi) ile çift yönlü canlı senkronizasyon (`SyncWithCrystalStorage`) eklendi.
+     - **`[5]` 4x4x4 Mikro-Keski (`Chisel`) & `[6]` Sıvı Matarası (`FluidFlask`):** Slot `5` seçiliyken `LMB` vokselleri `4x4x4` alt-voksel (`MicroVoxelPool4096`) hassasiyetinde yontar, `RMB` mikro-voksel ekler. Slot `6` seçiliyken göletten veya lav kalderasından `LMB` ile sıvı (`Su` / `Lav`) doldurulur, `RMB` ile dünyaya dökülür (`Su + Lav >= 128` temasında anında `Doğal Obsidyen` üretir).
+   - **Paket 2 — Büyük Kıta Üretimi (`8x8 = 64` Chunk, `128m x 128m`) ve Dinamik Chunk Streaming:**
+     - [`StratocraftFloatingIslandWorldGen.cs`](Assets/_Stratocraft/WorldGen/StratocraftFloatingIslandWorldGen.cs) içinde kıta yarıçapı `28.5m` ufak adadan **`54.5m` (`~110m–128m` çaplı çok-biyomlu ana kıtaya)** genişletildi (`ContinentChunkMin = -4`, `ContinentChunkMax = 3`). Doğu Sıradağları (`worldX > 18m`), dış harabe/obelisk kalıntıları ve dış chunk'larda deterministik Meşe / Demir Ağacı (`Ironwood`) ormanları eklendi.
+     - [`Stage1InteractivePlayController.cs`](Assets/_Stratocraft/Character/Stage1InteractivePlayController.cs) içine `StepDynamicContinentChunkStreaming` eklendi: Oyuncu yürüdükçe çevresindeki `8x8` kıta chunk'ları (`48` dış chunk) kare başına en fazla `2` chunk bütçesiyle takılmasız (`SeamlessSurfaceNetsMesher`) üretilip sahneye eklenir.
+   - **Paket 3 — Çok-Eklemli Karakter, Alet ve Yaratık Animasyonları & Ground Raycast Foot-IK:**
+     - [`Stage1ArticulatedRigAnimator.cs`](Assets/_Stratocraft/Character/Stage1ArticulatedRigAnimator.cs) güncellendi: Oyuncu karakterine 3-segmentli bacak (`Üst Bacak -> Diz -> Alt Bacak -> Bot/Ayak Bileği`), 3-segmentli kol (`Omuz -> Dirsek -> Ön Kol -> Zırhlı Eldiven`), miğfer vizörü ve her iki ayak için **Ground Raycast Foot-IK (`SampleGroundFootStepLift`)** eklendi.
+     - [`Stage1HolsterAndBackpackController.cs`](Assets/_Stratocraft/Character/Stage1HolsterAndBackpackController.cs) içinde Kazma (`[2]`), Balta (`[3]`) ve İnşa Bloğu (`[4]`) modellerine 3B sağ eldiven/bilek kavraması (`EnsureToolHandGauntlet`) ve kılıftan çekme/sokma yay animasyonu eklendi.
+     - [`Stage1CreatureSimulationBridge.cs`](Assets/_Stratocraft/Character/Stage1CreatureSimulationBridge.cs) içinde tüm canlılara ve bosslara çok-eklemli uzuvlar (`EnsureCreatureArticulatedLimbs` + `StepCreatureArticulatedAnimation`: uçan canlılarda 2-eklemli çırpılan iç/dış kanatlar, pençeler, gaga/kafa ve kuyruk; kara canlılarında 4 eklemli pençeli bacak, açılıp kapanan alt çene/dişler, nefes alan göğüs kafesi ve sallanan kuyruk) eklendi.
+   - **Paket 4 — Bağlı Olmayan Faz 1–2 Alt Sistemlerinin Canlı Sahneye Bağlanması:**
+     - [`ThermalAndBiologySystem.cs`](Assets/_Stratocraft/Character/Systems/ThermalAndBiologySystem.cs) canlı oyuncu döngüsüne bağlandı (`37.0°C` çekirdek vücut ısısı, lav kalderası yakınında hipertermi terleme/su kaybı, yüksek irtifada hipotermi ve Hotbar üstünde canlı `°C` / `Besin` / `Su` / `O2` göstergeleri).
+     - [`DestructibleNavSpanAStar.cs`](Assets/_Stratocraft/CreaturesAI/Pathfinding/DestructibleNavSpanAStar.cs) canlı yaratık hareketine (`TryComputeAStarDetourDirection`) bağlandı ve dış kıta biyomlarına 3 yeni Faz 2 yaratığı (**`Ulu Kurt #3`**, **`Vahşi Yıkıcı #8`**, **`Griffin #14`**) eklendi.
 
 ---
 
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar (Sonraki Oturuma Devredenler)
 
-1. **Kullanıcının Devir `#021` Kılıç Çarpışma, Geri Bildirim ve `[F10]` Düellocu NPC & Eğitim Kuklası Paketini Play Mode'da Test Etmesi (Öncelik #1):**
-   - Kullanıcı Play Mode'a girip yanında hazır doğan (veya `[F10]` ile çağrılan) **Kılıç Ustası Düellocu NPC** ve **Mekanik Eğitim Kuklası** üzerinde ağırlık ölçekli kılıç hızlarını, duvar sekmesini, ses/kıvılcım/hasar yazılarını, 4 Dojo stilinin özel yeteneklerini ve kılıç çarpıştırma/blok mekaniklerini test edecek.
+1. **Kullanıcının Devir `#024` (Görsel Kare Hotbar & Sürükle-Bırak Envanter, `128m` Büyük Kıta Streaming, Çok-Eklemli Animasyonlar, `[5]` Mikro-Keski ve `[6]` Sıvı Matarası) Paketini Play Mode'da Test Etmesi (Öncelik #1):**
+   - Kullanıcı Play Mode'a girip alt-ortadaki **9'lu Kare Slot Barı (`1..9` + Fare Tekerleği)**, **`[I]` / `Tab` Sürükle-Bırak Çanta ve `[E]` Sandık Arayüzünü**, **`[5]` Mikro-Keski & `[6]` Sıvı Matarasını**, yürürken dinamik açılan **`128m` Büyük Kıta ve Dış Kıta Yaratıklarını (`Ulu Kurt`, `Vahşi Yıkıcı`, `Griffin`)** ve çok-eklemli karakter/yaratık animasyonlarını test edecek.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
@@ -172,16 +187,19 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
+| **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
+| **`[I]` veya `Tab` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Yarıya Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
+| **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** + Kırılan bloklardan yere düşen **3B Fiziksel Itemları** toplar | ✅ Aktif |
+| **`[5]` Mikro-Keski (`Chisel`)** | `LMB`: Vokseli `4x4x4` alt-voksel hassasiyetinde yontar \| `RMB`: Mikro-voksel ekler | ✅ Aktif |
+| **`[6]` Sıvı Matarası (`Flask`)** | `LMB`: Göletten Su / Kalderadan Lav doldurur \| `RMB`: Sıvıyı dünyaya döker (`Su + Lav` -> `Obsidyen`) | ✅ Aktif |
 | **`[F10]` Tuşu** | **Kılıç Ustası Düellocu NPC & Eğitim Kuklasını** oyuncunun önüne çağırır ve NPC modunu değiştirir (`Aktif Düello` / `Sadece Blok` / `Sadece Saldırı`) | ✅ Aktif |
-| **`RMB` (Sağ Tık) + Fare** | Kılıcın **Guard / Blok (Parry)** yönünü ayarlar (aşağı çekince ucu aşağı döner ve **`1.38x` Ön-Kurumlu Hız Bonusu** hazırlar) | ✅ Aktif |
+| **`RMB` (Sağ Tık) + Fare** | Kılıcın **Yan-Siper (`Crosswise`) Blok / Guard** yönünü ayarlar (son anda ters yöne savurursan **`MasterDeflect` Saptırma** yapar) | ✅ Aktif |
 | **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Dairesel** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
 | **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`Şövalye: Usta Kontra 1.85x`, `Iaido: Şimşek Kesiği 1.60x`, `Eskrim: İğne Hamlesi 2.0x`, `Juggernaut: Kasırga Zinciri & Guard Crush`) | ✅ Aktif |
 | **`[1]` (Tekrar Basış) veya `[F8]`** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg` — gerçek kütle ölçekli hız!) | ✅ Aktif |
 | **`[F9]` Tuşu** | **Oyuncu Uzuv Kopması Canlı Testi** (`1: Sol Kol Kopar` -> `2: Sağ Bacak Kopar` -> `3: İyileşir`) \| `Shift+F9`: `.sregion` Yükle | ✅ Aktif |
-| **`[F7]` Tuşu** | **Rastgele Harita Tohumu (`Seed`) Üretimi** (7 Ağaç + Kule + Tapınak + Kemer yeniden üretilir) | ✅ Aktif |
-| **`[1] / [2] / [3] / [4] / [0]`** | `1`: Kılıç (tekrar basınca kılıç değiştirir), `2`: Fiziksel Kazma, `3`: Fiziksel Balta, `4`: İnşa Bloğu, `0/H/Q`: Kılıfa Sok | ✅ Aktif |
+| **`[F7]` Tuşu** | **Rastgele Harita Tohumu (`Seed`) Üretimi** (`8x8` Büyük Kıta + Ağaçlar + Kule + Tapınak + Kemer yeniden üretilir) | ✅ Aktif |
 | **`[X]` veya `[Shift+G]`** | Eldeki silahı/aleti `0.0s` sürede fiziksel olarak yere atar (`Quick-Drop`) | ✅ Aktif |
-| **`[E]` veya Yürüyerek Yaklaşma** | Kırılan bloklardan yere düşen **3B Fiziksel Itemları** toplar / Sandık açar / Örs geri dönüşümü yapar | ✅ Aktif |
 | **`[C]` Tuşu** | Sol Bilek **Madde Kristali** modunu açar/kapatır (uzaktan helisel vakum ışınıyla çeker) | ✅ Aktif |
 | **`[F5]` / `[F6]`** | `F5`: FPS / TPS Kamera Değiştir \| `F6`: `.sregion` Kaydet | ✅ Aktif |
 

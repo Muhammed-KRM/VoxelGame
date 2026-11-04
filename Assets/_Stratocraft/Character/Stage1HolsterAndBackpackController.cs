@@ -13,10 +13,10 @@ using UnityEngine;
 namespace Stratocraft.Character
 {
     /// <summary>
-    /// Paket 4 — Fiziksel Govde Kiliflari (0: Bos El, 1: Kilic, 2: Demir Kazma, 3: Demir Balta, 4: Elde 3B Insa Blogu &amp; Moloz),
+    /// Paket 4 — Fiziksel Govde Kiliflari + 9 Kare Slotlu Görsel Hotbar (0: Bos El, 1..9: Silah/Alet/Keski/Matara/Blok),
     /// G Tusu 0.0s Kalici Silah Birakma Havuzu (<c>_droppedWorldItems</c> — ASLA eski esyayi yok etmez!) + E ile Geri Alma,
-    /// I Tusu 3B Kumas Canta Ortusu (Gercek esya ve materyal secimi / 3.0s kanal transferi),
-    /// VisualChestCasSystem 110° Kapak Yayi ve Ors Basinda 4x Tas Moloz -&gt; 1x Ham Tas Geri Donusum Kontrolcusu.
+    /// I / Tab Tusu 24-Slot Surukle-Birak Canta Izgarasi + 3B Kumas Canta Ortusu,
+    /// VisualChestCasSystem 110° Kapak Yayi + 16-Slot Görsel Sandik Penceresi ve Ors Basinda 4x Tas Moloz -&gt; 1x Ham Tas Geri Donusum Kontrolcusu.
     /// </summary>
     public sealed class Stage1HolsterAndBackpackController
     {
@@ -31,12 +31,17 @@ namespace Stratocraft.Character
         public readonly BodyHolsterStateMachine HolsterMachine = new();
         public readonly TacticalClothBackpackSystem BackpackSystem = new();
         public readonly VisualChestCasSystem ChestCasSystem = new(slotCount: 16);
+        public readonly Stage1VisualHotbarAndInventoryUi InventoryUi = new();
 
         private readonly List<FacetedVoxelTriangle> _heldBlockTris = new(64);
         private readonly List<DroppedWorldItemRecord> _droppedWorldItems = new(16);
         private GameObject? _heldMaterialBlockGo;
         private MeshFilter? _heldMaterialBlockMf;
+        private GameObject? _heldBlockHandGloveGo;
+        private GameObject? _pickaxeHandGloveGo;
+        private GameObject? _axeHandGloveGo;
         private byte _lastHeldBlockMat;
+        private int _lastHeldVisualMode;
 
         private GameObject? _holsteredBeltSwordProxy;
         private GameObject? _holsteredBeltPickaxeProxy;
@@ -46,9 +51,10 @@ namespace Stratocraft.Character
         private int _pendingBackpackSlotTarget;
         private byte _pendingBackpackMaterialId;
 
-        /// <summary>0 = Bos El, 1 = Kilic, 2 = Kazma, 3 = Balta, 4 = Elde 3B Insa Blogu.</summary>
+        /// <summary>0 = Bos El, 1 = Kilic, 2 = Kazma, 3 = Balta, 4 = Elde 3B Insa Blogu, 5 = 4x4x4 Mikro-Keski, 6 = Sivi Matarasi.</summary>
         public int ActiveHolsterSlot { get; private set; } = 0;
         public bool IsBackpackOpen => BackpackSystem.IsBackpackOpen;
+        public bool IsChestOpen => InventoryUi.IsChestWindowOpen;
         public float HolsterTransitionRemaining => HolsterMachine.RemainingTransitionSeconds;
         public float BackpackTransferRemainingSec => _backpackTransferRemainingSec;
         public int DroppedWorldItemCount => _droppedWorldItems.Count;
@@ -66,13 +72,14 @@ namespace Stratocraft.Character
             HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.BackRight_Slot4, new UniqueEquipmentInstance { InstanceGuid = 1004UL, ArchetypeItemId = 104, MassKg = 0.90f, SharpnessOrHardness01 = 0.80f });
             // Oyuncu oyuna Bos El (Slot 0) ile baslar; aletler bel/sirt kilifinda asilidir!
             ActiveHolsterSlot = 0;
+            InventoryUi.SelectHotbarSlot(-1);
 
             ChestCasSystem.InitializeSlot(0, itemId: 201, count: 8);
             ChestCasSystem.InitializeSlot(1, itemId: 202, count: 6);
             ChestCasSystem.InitializeSlot(2, itemId: 203, count: 4);
         }
 
-        /// <summary>0-4 kilif gecisi, G 0.0s Kalici Quick-Drop, I 3B Kumas Canta ve E dunya etkilesimini yurutur.</summary>
+        /// <summary>0-9 kare slot gecisi, G 0.0s Kalici Quick-Drop, I/Tab 24-Slot Canta ve E dunya etkilesimini yurutur.</summary>
         public void StepHolsterBackpackAndWorldInteraction(
             float dt, Transform playerTransform, GameObject? playerBodyRoot, UnityEngine.Camera? playerCamera,
             Transform? backpackMatRoot, Transform? chestLidTransform, Transform? anvilTransform,
@@ -82,16 +89,13 @@ namespace Stratocraft.Character
             Stage1DirectionalCombatBridge? combatBridge = null)
         {
             HolsterMachine.StepHolster(dt);
-            if (!HolsterMachine.IsTransitioning)
-            {
-                ActiveHolsterSlot = (int)HolsterMachine.ActiveDrawnSlot;
-            }
 
             float lidAngle = ChestCasSystem.StepLidSpring(dt);
             if (chestLidTransform != null) chestLidTransform.localRotation = Quaternion.Euler(-lidAngle, 0f, 0f);
 
-            if (Input.GetKeyDown(KeyCode.I))
+            if (Input.GetKeyDown(KeyCode.I) || Input.GetKeyDown(KeyCode.Tab))
             {
+                InventoryUi.IsChestWindowOpen = false;
                 ToggleBackpackMat(playerTransform, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack);
             }
             if (BackpackSystem.IsBackpackOpen)
@@ -100,9 +104,110 @@ namespace Stratocraft.Character
                 StepPendingBackpackChannel(dt, playerTransform, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack, miningCtrl);
                 UpdateBackpackMatClickInteraction(playerCamera, backpackMatRoot, miningCtrl);
             }
+            else
+            {
+                HandleHotbarScrollWheel(miningCtrl, combatBridge);
+            }
+
             HandleHolsterSlotHotkeys(miningCtrl, combatBridge, swordVisual != null ? swordVisual.transform : null);
-            HandleQuickDropAndInteractHotkeys(playerTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl);
-            SyncHandAndBodyHolsterVisuals(playerBodyRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl.SelectedMaterialId, miningCtrl.IsCrystalActive);
+            HandleQuickDropAndInteractHotkeys(
+                playerTransform, backpackMatRoot, anvilTransform, swordVisual, pickaxeVisual, axeVisual,
+                sharedVoxelMat, ref movementState, ref cameraPitch, ref pitchBeforeBackpack, miningCtrl);
+            SyncHandAndBodyHolsterVisuals(
+                playerBodyRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat,
+                miningCtrl.SelectedMaterialId, miningCtrl.IsCrystalActive);
+        }
+
+        private void HandleHotbarScrollWheel(
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge)
+        {
+            if (miningCtrl.IsCrystalActive) return;
+            float scroll = Input.GetAxis("Mouse ScrollWheel");
+            if (Mathf.Abs(scroll) <= 0.001f) return;
+
+            int dir = scroll > 0f ? -1 : 1;
+            int cur = InventoryUi.SelectedHotbarIndex < 0 ? 0 : InventoryUi.SelectedHotbarIndex;
+            int next = (cur + dir + Stage1VisualHotbarAndInventoryUi.HotbarSlotCount) % Stage1VisualHotbarAndInventoryUi.HotbarSlotCount;
+            InventoryUi.SelectHotbarSlot(next);
+            ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+        }
+
+        /// <summary>Gorsel Hotbar'da secilen kare slota (0..8) gore eldeki aktif alet/silah/blok durumunu gunceller.</summary>
+        public void ApplySelectedInventoryHotbarSlot(
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            if (InventoryUi.SelectedHotbarIndex < 0)
+            {
+                HolsterMachine.RequestSheatheToEmptyHands();
+                ActiveHolsterSlot = 0;
+                miningCtrl.IsCrystalActive = false;
+                return;
+            }
+
+            VisualInventorySlot slot = InventoryUi.GetActiveHotbarSlot();
+            miningCtrl.IsCrystalActive = false;
+            if (slot.IsEmpty)
+            {
+                HolsterMachine.RequestSheatheToEmptyHands();
+                ActiveHolsterSlot = 0;
+                miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}] Bos — [I] Canta acarak bu slota esya surukleyin.";
+                return;
+            }
+
+            switch (slot.Kind)
+            {
+                case InventoryItemKind.WeaponSword:
+                    if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
+                    {
+                        miningCtrl.LastFeedbackText = "Kilic yere atilmis! [E] ile yerden geri alin.";
+                        ActiveHolsterSlot = 0;
+                        return;
+                    }
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
+                    ActiveHolsterSlot = 1;
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: {(combatBridge != null ? combatBridge.GetWeaponDisplayName() : "Kilic")} cekildi.";
+                    break;
+
+                case InventoryItemKind.ToolPickaxe:
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistRight_Slot2);
+                    ActiveHolsterSlot = 2;
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: Demir Kazma cekildi ([Sol Tik+Fare] Kaya & Cevher Kirma).";
+                    break;
+
+                case InventoryItemKind.ToolAxe:
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackLeft_Slot3);
+                    ActiveHolsterSlot = 3;
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: Demir Balta cekildi ([Sol Tik+Fare] Agac Devirme & Odun Kirma).";
+                    break;
+
+                case InventoryItemKind.ToolMicroChisel:
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
+                    ActiveHolsterSlot = 5;
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: 4x4x4 Mimari Mikro-Keski Elde ([Sol Tik] Mikro-Kup Yont | [Sag Tik] Mikro-Kup Ekle).";
+                    break;
+
+                case InventoryItemKind.ToolFluidFlask:
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
+                    ActiveHolsterSlot = 6;
+                    string flaskType = slot.SubId == 1 ? "Su Dolu" : (slot.SubId == 2 ? "Lav Dolu" : "Bos");
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: Kristal Sivi Matarasi ({flaskType} x{slot.Count}) — [Sol Tik] Sivi Cek | [Sag Tik] Sivi Dok.";
+                    break;
+
+                case InventoryItemKind.VoxelBlock:
+                case InventoryItemKind.OreChunk:
+                case InventoryItemKind.MetalIngot:
+                    HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
+                    ActiveHolsterSlot = 4;
+                    if (slot.Kind == InventoryItemKind.VoxelBlock)
+                    {
+                        miningCtrl.SelectMaterial(slot.SubId);
+                    }
+                    string matLabel = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId);
+                    miningCtrl.LastFeedbackText = $"Slot [{InventoryUi.SelectedHotbarIndex + 1}]: {matLabel} (x{slot.Count}) Elde — [Sag Tik] Dunyaya Koy | [V] Sekil Degistir.";
+                    break;
+            }
         }
 
         /// <summary>Oyuncu hasar aldiginda 3B canta icindeki kanal transferini aninda iptal eder.</summary>
@@ -148,6 +253,7 @@ namespace Stratocraft.Character
             }
             else
             {
+                InventoryUi.IsChestWindowOpen = false;
                 cameraPitch = pitchBeforeBackpack;
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
@@ -165,27 +271,50 @@ namespace Stratocraft.Character
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
+                InventoryUi.SelectHotbarSlot(-1);
                 miningCtrl.IsCrystalActive = false;
-                miningCtrl.LastFeedbackText = $"El Bosaltildi -> [0: Bos El] (Kilifa koyma: {sheatheSec:0.2}s). [1..4] ile kiliftan silah/alet cekin.";
+                miningCtrl.LastFeedbackText = $"El Bosaltildi -> [0: Bos El] (Kilifa koyma: {sheatheSec:0.2}s). [1..9 / Tekerlek] ile slot secin.";
                 return;
             }
-            if (Input.GetKeyDown(KeyCode.B) && ActiveHolsterSlot != 4)
+            if (Input.GetKeyDown(KeyCode.B))
             {
+                // B tusu: Hotbar'daki blok slotuna gecis yapar
+                for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
+                {
+                    if (InventoryUi.HotbarSlots[i].Kind == InventoryItemKind.VoxelBlock &&
+                        InventoryUi.HotbarSlots[i].SubId == miningCtrl.SelectedMaterialId)
+                    {
+                        InventoryUi.SelectHotbarSlot(i);
+                        ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                        return;
+                    }
+                }
                 HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
                 ActiveHolsterSlot = 4;
                 miningCtrl.IsCrystalActive = false;
                 return;
             }
 
-            HolsterSlotIndex req = HolsterSlotIndex.None;
-            if (Input.GetKeyDown(KeyCode.Alpha1)) req = HolsterSlotIndex.WaistLeft_Slot1;
-            else if (Input.GetKeyDown(KeyCode.Alpha2)) req = HolsterSlotIndex.WaistRight_Slot2;
-            else if (Input.GetKeyDown(KeyCode.Alpha3)) req = HolsterSlotIndex.BackLeft_Slot3;
-            else if (Input.GetKeyDown(KeyCode.Alpha4)) req = HolsterSlotIndex.BackRight_Slot4;
-            if (req == HolsterSlotIndex.None) return;
+            int pressedSlotIdx = -1;
+            if (Input.GetKeyDown(KeyCode.Alpha1)) pressedSlotIdx = 0;
+            else if (Input.GetKeyDown(KeyCode.Alpha2)) pressedSlotIdx = 1;
+            else if (Input.GetKeyDown(KeyCode.Alpha3)) pressedSlotIdx = 2;
+            else if (Input.GetKeyDown(KeyCode.Alpha4)) pressedSlotIdx = 3;
+            else if (Input.GetKeyDown(KeyCode.Alpha5)) pressedSlotIdx = 4;
+            else if (Input.GetKeyDown(KeyCode.Alpha6)) pressedSlotIdx = 5;
+            else if (Input.GetKeyDown(KeyCode.Alpha7)) pressedSlotIdx = 6;
+            else if (Input.GetKeyDown(KeyCode.Alpha8)) pressedSlotIdx = 7;
+            else if (Input.GetKeyDown(KeyCode.Alpha9)) pressedSlotIdx = 8;
 
-            // Kilic zaten eldeyken tekrar [1]'e basilirsa 4 farkli kilic arketipi arasinda gecis yapar (Longsword -> Zweihander -> Rapier -> Katana)!
-            if (ActiveHolsterSlot == 1 && req == HolsterSlotIndex.WaistLeft_Slot1 && combatBridge != null)
+            if (pressedSlotIdx < 0) return;
+
+            VisualInventorySlot targetSlot = InventoryUi.HotbarSlots[pressedSlotIdx];
+
+            // Kilic zaten eldeyken tekrar ayni Kilic slotuna basilirsa 4 kilic arketipi arasinda gecis yapar!
+            if (InventoryUi.SelectedHotbarIndex == pressedSlotIdx &&
+                ActiveHolsterSlot == 1 &&
+                targetSlot.Kind == InventoryItemKind.WeaponSword &&
+                combatBridge != null)
             {
                 combatBridge.CycleWeaponArchetype(swordPivot);
                 miningCtrl.IsCrystalActive = false;
@@ -193,33 +322,19 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // Diger slotlarda (2, 3, 4) ayni slota tekrar basilirsa silahi kilifina geri koyup Bos El'e (Slot 0) gecer!
-            if (ActiveHolsterSlot == (int)req)
+            // Ayni slota tekrar basilirsa silahi/aleti kilifina geri koyup Bos El'e (Slot 0) gecer!
+            if (InventoryUi.SelectedHotbarIndex == pressedSlotIdx && ActiveHolsterSlot != 0)
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
+                InventoryUi.SelectHotbarSlot(-1);
                 miningCtrl.IsCrystalActive = false;
-                miningCtrl.LastFeedbackText = $"{GetActiveSlotWeaponName((int)req)} kilifina geri konuldu ({sheatheSec:0.2}s) -> [0: Bos El]";
+                miningCtrl.LastFeedbackText = $"Slot [{pressedSlotIdx + 1}] kilifina geri konuldu ({sheatheSec:0.2}s) -> [0: Bos El]";
                 return;
             }
 
-            if (req != HolsterSlotIndex.BackRight_Slot4 && HolsterMachine.GetHolsteredWeapon(req).InstanceGuid == 0UL)
-            {
-                miningCtrl.LastFeedbackText = $"Kilif {(int)req} BOS! (G ile yere atilmis olabilir; [E] ile yerden geri alin).";
-                return;
-            }
-
-            float dur = HolsterMachine.RequestDrawSlot(req);
-            if (dur < 0f)
-            {
-                miningCtrl.LastFeedbackText = "SIRT KILIFI KILITLI: Sirtta agir batarya varken Sirt Slotlari (3-4) cekilemez!";
-                return;
-            }
-            ActiveHolsterSlot = (int)req;
-            miningCtrl.IsCrystalActive = false;
-            miningCtrl.LastFeedbackText = ActiveHolsterSlot == 4
-                ? "El Slotu 4: Insa Malzemesi Elde ([Sag Tik] Koy | [V] Dogal/Sekil | [B] Malzeme | [0/Q] Bos El)"
-                : $"El Slotu {(int)req}: {GetActiveSlotWeaponName(ActiveHolsterSlot)} cekiliyor ({dur:0.2}s)";
+            InventoryUi.SelectHotbarSlot(pressedSlotIdx);
+            ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
         }
 
         public void ForceDrawSwordSlot1(Stage1MatterCrystalAndMiningController miningCtrl)
@@ -231,13 +346,15 @@ namespace Stratocraft.Character
                     new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f });
             }
             HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
+            InventoryUi.SelectSwordSlotOrFirst();
             ActiveHolsterSlot = 1;
             miningCtrl.IsCrystalActive = false;
         }
 
         private void HandleQuickDropAndInteractHotkeys(
-            Transform playerTransform, Transform? anvilTransform, GameObject? swordVisual,
+            Transform playerTransform, Transform? backpackMatRoot, Transform? anvilTransform, GameObject? swordVisual,
             GameObject? pickaxeVisual, GameObject? axeVisual, Material? sharedVoxelMat,
+            ref CharacterMovementState movementState, ref float cameraPitch, ref float pitchBeforeBackpack,
             Stage1MatterCrystalAndMiningController miningCtrl)
         {
             bool quickDropPressed = Input.GetKeyDown(KeyCode.X) ||
@@ -251,6 +368,7 @@ namespace Stratocraft.Character
                     dropped = new UniqueEquipmentInstance { InstanceGuid = (ulong)(1000 + prevSlot), ArchetypeItemId = (ushort)(100 + prevSlot), MassKg = 1.5f, SharpnessOrHardness01 = 0.9f };
                 }
                 ActiveHolsterSlot = 0;
+                InventoryUi.SelectHotbarSlot(-1);
 
                 string weaponName = GetActiveSlotWeaponName(prevSlot);
                 GameObject droppedGo = new GameObject($"Dropped_{weaponName}_Slot{prevSlot}_{_droppedWorldItems.Count}");
@@ -264,8 +382,7 @@ namespace Stratocraft.Character
                     1 => swordVisual != null ? swordVisual.GetComponentInChildren<MeshFilter>() : null,
                     2 => pickaxeVisual != null ? pickaxeVisual.GetComponentInChildren<MeshFilter>() : null,
                     3 => axeVisual != null ? axeVisual.GetComponentInChildren<MeshFilter>() : null,
-                    4 => _heldMaterialBlockMf,
-                    _ => null
+                    _ => _heldMaterialBlockMf
                 };
 
                 if (sourceMf != null && sourceMf.sharedMesh != null)
@@ -286,7 +403,6 @@ namespace Stratocraft.Character
                     if (sharedVoxelMat != null && fallback.TryGetComponent<Renderer>(out var r)) r.sharedMaterial = sharedVoxelMat;
                 }
 
-                // KALICI DUNYA HAVUZU: Onceki atilan esyalari ASLA yok etmez!
                 _droppedWorldItems.Add(new DroppedWorldItemRecord
                 {
                     VisualObject = droppedGo,
@@ -295,7 +411,7 @@ namespace Stratocraft.Character
                     DisplayName = weaponName
                 });
 
-                miningCtrl.LastFeedbackText = $"G Tusu (0.0s Quick-Drop): {weaponName} yere atildi! (Yerdeki Kalici Esya: {_droppedWorldItems.Count}) [E] ile geri alin.";
+                miningCtrl.LastFeedbackText = $"0.0s Quick-Drop: {weaponName} yere atildi! (Yerdeki Kalici Esya: {_droppedWorldItems.Count}) [E] ile geri alin.";
             }
 
             if (!Input.GetKeyDown(KeyCode.E)) return;
@@ -328,25 +444,46 @@ namespace Stratocraft.Character
                 HolsterMachine.AssignHolsterSlot(slotEnum, rec.Equipment);
                 HolsterMachine.RequestDrawSlot(slotEnum);
                 ActiveHolsterSlot = restoreSlot;
+                InventoryUi.SelectHotbarSlot(restoreSlot - 1);
                 miningCtrl.LastFeedbackText = $"Yerdeki {rec.DisplayName} geri alindi (Slot {restoreSlot} | Kalan Yerdeki Esya: {_droppedWorldItems.Count})!";
                 return;
             }
 
-            bool nearAnvil = anvilTransform == null || Vector3.Distance(playerTransform.position, anvilTransform.position) <= 5.5f;
+            bool nearAnvil = anvilTransform != null && Vector3.Distance(playerTransform.position, anvilTransform.position) <= 3.8f;
             if (nearAnvil && miningCtrl.LooseRubbleShardCount >= 4)
             {
                 miningCtrl.LooseRubbleShardCount -= 4;
                 miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Stone, CrystalMassStorageData.OneBlockQ24_8);
+                InventoryUi.SyncWithCrystalStorage(miningCtrl);
                 miningCtrl.LastFeedbackText = $"ORS GERI DONUSUMU (4:1 Kutle Korunumu): 4x Tas Moloz -> +1 Ham Tas! (Kalan Moloz: {miningCtrl.LooseRubbleShardCount})";
                 return;
             }
-            ChestCasSystem.SetLidOpen(!ChestCasSystem.IsLidOpen);
-            if (ChestCasSystem.IsLidOpen && ChestCasSystem.TryWithdrawAtomic(0, 1, out ushort itemId, out uint newVer))
+
+            // Sandik Acma / Kapatma + 16-Slot Görsel Sandik Penceresi
+            bool openNext = !ChestCasSystem.IsLidOpen;
+            ChestCasSystem.SetLidOpen(openNext);
+            InventoryUi.IsChestWindowOpen = openNext;
+            if (openNext && !BackpackSystem.IsBackpackOpen)
+            {
+                ToggleBackpackMat(playerTransform, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack);
+                InventoryUi.IsChestWindowOpen = true;
+            }
+            else if (!openNext && BackpackSystem.IsBackpackOpen)
+            {
+                ToggleBackpackMat(playerTransform, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack);
+            }
+
+            if (openNext && ChestCasSystem.TryWithdrawAtomic(0, 1, out ushort itemId, out uint newVer))
             {
                 IronIngotCount++;
-                miningCtrl.LastFeedbackText = $"CAS Sandik Acildi (110° Yay): +1 Kulce Cikarildi (CAS Ver={newVer}, Item={itemId})";
+                miningCtrl.LastFeedbackText = $"CAS Sandik Acildi (16 Slot Gorsel Pencere | 110° Yay | CAS Ver={newVer}, Item={itemId})";
             }
-            else miningCtrl.LastFeedbackText = ChestCasSystem.IsLidOpen ? "CAS Sandik Kapagi Acildi (110° Harmonik Yay)" : "CAS Sandik Kapagi Kapatildi";
+            else
+            {
+                miningCtrl.LastFeedbackText = openNext
+                    ? "CAS Sandik & Envanter Penceresi Acildi (16 Slot Surukle-Birak Aktif!)"
+                    : "CAS Sandik Kapagi Kapatildi";
+            }
         }
 
         private void StepPendingBackpackChannel(
@@ -366,6 +503,7 @@ namespace Stratocraft.Character
             if (targetSlot == 2)
             {
                 ActiveHolsterSlot = 2;
+                InventoryUi.SelectHotbarSlot(1);
                 HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistRight_Slot2);
                 miningCtrl.IsCrystalActive = false;
                 miningCtrl.LastFeedbackText = "Cantadan [2] Demir Kazma kusandi! SOL TIK ile cevher/kaya kirin.";
@@ -373,6 +511,7 @@ namespace Stratocraft.Character
             else if (targetSlot == 3)
             {
                 ActiveHolsterSlot = 3;
+                InventoryUi.SelectHotbarSlot(2);
                 HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackLeft_Slot3);
                 miningCtrl.IsCrystalActive = false;
                 miningCtrl.LastFeedbackText = "Cantadan [3] Demir Balta kusandi! SOL TIK ile odun/ahsap kirin.";
@@ -400,37 +539,19 @@ namespace Stratocraft.Character
             Vector3 local = matRoot.InverseTransformPoint(ray.GetPoint(enter));
             if (Mathf.Abs(local.x) > 0.78f || Mathf.Abs(local.z) > 0.58f)
             {
-                HoveredBackpackTooltip = "3B Kumas Canta Ortusu: Kusanmak istedigin alete veya insa bloguna SOL TIKLA";
+                HoveredBackpackTooltip = string.Empty;
                 return;
             }
 
             int zone = local.z > 0.12f ? (local.x <= 0f ? 3 : 4) : (local.x < -0.18f ? 0 : (local.x <= 0.18f ? 1 : 2));
             HoveredBackpackTooltip = zone switch
             {
-                0 => $"Ham Tas ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Stone)} Blok) | Bakir Kulce ({CopperIngotCount}) — SOL TIK: 1.5s Kanal ile Eline Al",
-                1 => $"Bazalt ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Basalt)} Blok) | Demir Kulce ({IronIngotCount}) — SOL TIK: 1.5s Kanal ile Eline Al",
-                2 => $"Kiriktas ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Cobblestone)} Blok) | Mithril ({MithrilIngotCount}) — SOL TIK: 1.5s Kanal ile Eline Al",
-                3 => "3B Demir Kazma (2.40 kg) — SOL TIK: 3.0s Fiziksel Kanal ile Kusan (Kaya & Cevher Kirma)",
-                _ => "3B Demir Balta (2.10 kg) — SOL TIK: 3.0s Fiziksel Kanal ile Kusan (Odun & Yapi Kirma)"
+                0 => $"3B Kumas Canta: Ham Tas ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Stone)} Blok)",
+                1 => $"3B Kumas Canta: Bazalt ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Basalt)} Blok)",
+                2 => $"3B Kumas Canta: Kiriktas ({miningCtrl.CrystalStorage.GetCount(MaterialIdCatalog.Cobblestone)} Blok)",
+                3 => "3B Demir Kazma (2.40 kg)",
+                _ => "3B Demir Balta (2.10 kg)"
             };
-
-            if (!Input.GetMouseButtonDown(0)) return;
-            if (zone == 3)
-            {
-                _pendingBackpackSlotTarget = 2;
-                _backpackTransferRemainingSec = 3.0f;
-            }
-            else if (zone == 4)
-            {
-                _pendingBackpackSlotTarget = 3;
-                _backpackTransferRemainingSec = 3.0f;
-            }
-            else
-            {
-                _pendingBackpackMaterialId = zone == 0 ? MaterialIdCatalog.Stone : (zone == 1 ? MaterialIdCatalog.Basalt : MaterialIdCatalog.Cobblestone);
-                _pendingBackpackSlotTarget = 4;
-                _backpackTransferRemainingSec = 1.5f;
-            }
         }
 
         private void SyncHandAndBodyHolsterVisuals(
@@ -438,13 +559,36 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat, byte selectedMat, bool crystalActive)
         {
             int shownSlot = crystalActive ? 0 : ActiveHolsterSlot;
-            if (swordVisual != null) swordVisual.SetActive(shownSlot == 1);
-            if (pickaxeVisual != null) pickaxeVisual.SetActive(shownSlot == 2);
-            if (axeVisual != null) axeVisual.SetActive(shownSlot == 3);
+            float drawProgress01 = 1f - Mathf.Clamp01(HolsterTransitionRemaining / 0.45f);
+            float drawDropY = (1f - drawProgress01) * -0.28f;
+            float drawPitchAdd = (1f - drawProgress01) * 42f;
+
+            if (swordVisual != null)
+            {
+                swordVisual.SetActive(shownSlot == 1);
+            }
+            if (pickaxeVisual != null)
+            {
+                pickaxeVisual.SetActive(shownSlot == 2);
+                if (shownSlot == 2)
+                {
+                    EnsureToolHandGauntlet(pickaxeVisual.transform, ref _pickaxeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
+                    pickaxeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                }
+            }
+            if (axeVisual != null)
+            {
+                axeVisual.SetActive(shownSlot == 3);
+                if (shownSlot == 3)
+                {
+                    EnsureToolHandGauntlet(axeVisual.transform, ref _axeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
+                    axeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                }
+            }
 
             UpdateBodyHolsteredWeaponProxies(playerBodyRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, shownSlot);
 
-            if (shownSlot != 4)
+            if (shownSlot != 4 && shownSlot != 5 && shownSlot != 6)
             {
                 if (_heldMaterialBlockGo != null) _heldMaterialBlockGo.SetActive(false);
                 return;
@@ -455,21 +599,72 @@ namespace Stratocraft.Character
             {
                 _heldMaterialBlockGo = new GameObject("HeldMaterialBlock_Slot4");
                 _heldMaterialBlockGo.transform.SetParent(handParent, false);
-                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.22f, 0.54f);
-                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f, 32f, -8f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.26f, 0.26f, 0.26f);
                 _heldMaterialBlockMf = _heldMaterialBlockGo.AddComponent<MeshFilter>();
                 var mr = _heldMaterialBlockGo.AddComponent<MeshRenderer>();
                 if (sharedVoxelMat != null) mr.sharedMaterial = sharedVoxelMat;
             }
             _heldMaterialBlockGo.SetActive(true);
-            if (_heldMaterialBlockMf != null && (_lastHeldBlockMat != selectedMat || _heldMaterialBlockMf.sharedMesh == null))
+            EnsureToolHandGauntlet(_heldMaterialBlockGo.transform, ref _heldBlockHandGloveGo, sharedVoxelMat, new Vector3(0.08f, -0.35f, -0.22f));
+
+            VisualInventorySlot activeUiSlot = InventoryUi.GetActiveHotbarSlot();
+            byte displayMat = shownSlot == 5
+                ? MaterialIdCatalog.Steel
+                : (shownSlot == 6
+                    ? (activeUiSlot.SubId == 2 ? MaterialIdCatalog.MagmaBlock : (activeUiSlot.SubId == 1 ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.Marble))
+                    : selectedMat);
+            byte displayShape = shownSlot == 5 ? (byte)7 : (shownSlot == 6 ? (byte)6 : (byte)1);
+
+            if (shownSlot == 5)
             {
-                _lastHeldBlockMat = selectedMat;
-                _heldBlockTris.Clear();
-                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), selectedMat, 1, 0, 0, _heldBlockTris);
-                _heldMaterialBlockMf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_heldBlockTris, "Mesh_HeldMaterialBlock", _heldMaterialBlockMf.sharedMesh);
+                // 4x4x4 Mimari Mikro-Keski tutusu
+                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.28f, -0.20f + drawDropY, 0.56f);
+                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(55f + drawPitchAdd, -12f, 8f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.09f, 0.36f, 0.09f);
             }
+            else if (shownSlot == 6)
+            {
+                // Kristal Sivi Matarasi tutusu
+                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
+                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(12f + drawPitchAdd, 24f, -6f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.22f, 0.30f, 0.22f);
+            }
+            else
+            {
+                // 3B Insa Blogu tutusu
+                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.22f + drawDropY, 0.54f);
+                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 32f, -8f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.26f, 0.26f, 0.26f);
+            }
+
+            if (_heldMaterialBlockMf != null && (_lastHeldBlockMat != displayMat || _lastHeldVisualMode != shownSlot || _heldMaterialBlockMf.sharedMesh == null))
+            {
+                _lastHeldBlockMat = displayMat;
+                _lastHeldVisualMode = shownSlot;
+                _heldBlockTris.Clear();
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), displayMat, displayShape, 0, 0, _heldBlockTris);
+                Mesh? existing = _heldMaterialBlockMf.sharedMesh != null &&
+                                 _heldMaterialBlockMf.sharedMesh.name.StartsWith("Mesh_HeldMaterialBlock", StringComparison.Ordinal)
+                    ? _heldMaterialBlockMf.sharedMesh
+                    : null;
+                _heldMaterialBlockMf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_heldBlockTris, "Mesh_HeldMaterialBlock", existing);
+            }
+        }
+
+        private void EnsureToolHandGauntlet(Transform toolParent, ref GameObject? gloveGo, Material? sharedMat, Vector3 localOffset)
+        {
+            if (gloveGo != null) return;
+            gloveGo = new GameObject("ToolRightHandGauntlet");
+            gloveGo.transform.SetParent(toolParent, false);
+            gloveGo.transform.localPosition = localOffset;
+            gloveGo.transform.localRotation = Quaternion.Euler(15f, 0f, 0f);
+            gloveGo.transform.localScale = new Vector3(0.14f, 0.22f, 0.16f);
+
+            _heldBlockTris.Clear();
+            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.Ironwood, 7, 0, 0, _heldBlockTris);
+            gloveGo.AddComponent<MeshFilter>().sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_heldBlockTris, "Mesh_ToolHandGauntlet");
+            var mr = gloveGo.AddComponent<MeshRenderer>();
+            if (sharedMat != null) mr.sharedMaterial = sharedMat;
         }
 
         private void UpdateBodyHolsteredWeaponProxies(
@@ -523,10 +718,12 @@ namespace Stratocraft.Character
             2 => "2: Demir Kazma (2.40 kg)",
             3 => "3: Demir Balta (2.10 kg)",
             4 => "4: Elde 3B Insa Blogu / Moloz",
+            5 => "5: 4x4x4 Mimari Mikro-Keski",
+            6 => "6: Kristal Sivi Matarasi",
             _ => "0: Bos El (Atik Hareket)"
         };
 
-        /// <summary>Ekran altindaki fiziksel Kemer/Sirt Kilifi (0..4) Hotbar HUD metnini uretir.</summary>
+        /// <summary>Ekran altindaki fiziksel Kemer/Sirt Kilifi Hotbar HUD metnini uretir.</summary>
         public string FormatHolsterBarSummary(Stage1MatterCrystalAndMiningController miningCtrl)
         {
             string s0 = ActiveHolsterSlot == 0 ? ">>[0: BOS EL]<<" : "[0: Bos El]";
@@ -540,7 +737,7 @@ namespace Stratocraft.Character
                 ? "[3: (Yerde)]"
                 : (ActiveHolsterSlot == 3 ? ">>[3: BALTA]<<" : "[3: Balta]");
             string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId);
-            string s4 = ActiveHolsterSlot == 4 ? $">>[4: {matName}]<<" : $"[4: {matName}]";
+            string s4 = ActiveHolsterSlot == 4 ? $">>[6-9: {matName}]<<" : $"[4: Keski] [5: Matara] [6-9: {matName}]";
             string drawInfo = HolsterTransitionRemaining > 0.01f ? $" (Cekiliyor: {HolsterTransitionRemaining:0.1}s)" : string.Empty;
             return $"{s0}  {s1}  {s2}  {s3}  {s4}{drawInfo}";
         }

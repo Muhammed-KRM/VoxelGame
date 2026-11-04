@@ -221,7 +221,7 @@ namespace Stratocraft.Character
             }
 
             Vector3 candidatePos = pos + horizVel * deltaTime;
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos))
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters))
             {
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
@@ -231,7 +231,7 @@ namespace Stratocraft.Character
             if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f)
             {
                 float diff = nextGroundY - pos.y;
-                pos.y = Mathf.Abs(diff) < 0.025f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 14f);
+                pos.y = Mathf.Abs(diff) < 0.04f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 18f);
                 _verticalVelocity = 0f;
             }
             else
@@ -265,7 +265,7 @@ namespace Stratocraft.Character
 
             Vector3 pos = playerTransform.position;
             Vector3 candidatePos = pos + worldHorizontalDelta;
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos))
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters))
             {
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
@@ -273,7 +273,7 @@ namespace Stratocraft.Character
                 {
                     float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
                     float diff = nextGroundY - pos.y;
-                    pos.y = Mathf.Abs(diff) < 0.03f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 14f);
+                    pos.y = Mathf.Abs(diff) < 0.04f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 18f);
                 }
                 playerTransform.position = pos;
             }
@@ -297,7 +297,7 @@ namespace Stratocraft.Character
             if (_jumpLaunchTimer <= 0.001f)
             {
                 float supportY = SampleSupportGroundHeight(worldChunks, pos);
-                if (pos.y < supportY - 0.04f)
+                if (pos.y < supportY - 0.01f)
                 {
                     pos.y = supportY;
                     if (_verticalVelocity < 0f) _verticalVelocity = 0f;
@@ -307,10 +307,13 @@ namespace Stratocraft.Character
             }
         }
 
-        private static bool IsHorizontalStepBlocked(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 cur, Vector3 next)
+        private static bool IsHorizontalStepBlocked(
+            Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 cur, Vector3 next, float capsuleHeightMeters = 1.8f)
         {
             int nx = Mathf.FloorToInt(next.x), nz = Mathf.FloorToInt(next.z);
-            int chestY = Mathf.FloorToInt(cur.y + 0.95f), headY = Mathf.FloorToInt(cur.y + 1.55f);
+            float topOffset = Mathf.Clamp(capsuleHeightMeters - 0.18f, 0.55f, 1.55f);
+            float midOffset = Mathf.Clamp(topOffset * 0.62f, 0.45f, 0.95f);
+            int chestY = Mathf.FloorToInt(cur.y + midOffset), headY = Mathf.FloorToInt(cur.y + topOffset);
             return VoxelBitUtility.IsPhysicallySolid(ReadWorldVoxelRaw(worldChunks, nx, chestY, nz)) ||
                    VoxelBitUtility.IsPhysicallySolid(ReadWorldVoxelRaw(worldChunks, nx, headY, nz));
         }
@@ -336,7 +339,7 @@ namespace Stratocraft.Character
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
         {
             int wx = Mathf.FloorToInt(pos.x), wz = Mathf.FloorToInt(pos.z);
-            int startY = Mathf.Clamp(Mathf.FloorToInt(pos.y + MaxStepUpHeightMeters), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
+            int startY = Mathf.Clamp(Mathf.FloorToInt(pos.y + 1.15f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
             float voxelTopY = -30f;
             for (int y = startY; y >= 1; y--)
             {
@@ -347,10 +350,10 @@ namespace Stratocraft.Character
                     : y + 1.0f;
                 break;
             }
-            if (UnityEngine.Physics.Raycast(new Vector3(pos.x, pos.y + MaxStepUpHeightMeters, pos.z), Vector3.down,
+            if (UnityEngine.Physics.Raycast(new Vector3(pos.x, pos.y + 1.15f, pos.z), Vector3.down,
                 out RaycastHit hit, 28f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             {
-                return voxelTopY > -20f ? Mathf.Max(hit.point.y, voxelTopY - 0.38f) : hit.point.y;
+                return voxelTopY > -20f ? Mathf.Max(hit.point.y, voxelTopY - 0.18f) : hit.point.y;
             }
             return voxelTopY;
         }

@@ -19,6 +19,9 @@ namespace Stratocraft.WorldGen.Generators
         public const int MaxEditableVoxelY = 30;
         public const int ChunkMin = -2;
         public const int ChunkMax = 1;
+        public const int ContinentChunkMin = -938;
+        public const int ContinentChunkMax = 937;
+        public const float ContinentMaxRadiusMeters = 15000.0f;
 
         /// <summary>Aktif dunya tohumu (Varsayilan 1453; Play Mode icinde [F7] ile rastgele degistirilebilir).</summary>
         public static int ActiveWorldSeed { get; set; } = 1453;
@@ -39,19 +42,114 @@ namespace Stratocraft.WorldGen.Generators
             float p1 = SeedPhaseOffset(1);
             float p2 = SeedPhaseOffset(2);
             float p3 = SeedPhaseOffset(3);
-            return 21.4f
-                + MathF.Sin(angle * 3f + 0.65f + p1) * 2.25f
-                + MathF.Cos(angle * 5f - 0.40f + p2) * 1.35f
-                + MathF.Sin(angle * 7f + 1.20f + p3) * 0.65f;
+            // 15.000 Birim (15.000m yaricap, 30.000x30.000m tam kita) 6 Halkali Devasa Yuzen Kita!
+            return ContinentMaxRadiusMeters
+                + MathF.Sin(angle * 3f + 0.65f + p1) * 185.0f
+                + MathF.Cos(angle * 4f - 0.40f + p2) * 120.0f
+                + MathF.Sin(angle * 7f + 1.20f + p3) * 65.0f;
+        }
+
+        /// <summary>
+        /// Dunya koordinatina (wx, wz) gore 0..5 arasi Biyom Kimligi dondurur:
+        /// 0: Iliman Merkez Vadi (+20C)
+        /// 1: Kuzeybati Derin Magara & Demir Agaci Dagi (+12C)
+        /// 2: Karli Tayga & Buzul Zirveleri (-24C — Usume / Hipotermi Bolgesi)
+        /// 3: Kizil Kumtasi Kanyonu & Kurak Plato (+42C — Sicak Bolge)
+        /// 4: Volkanik Kul & Lav Kalderasi (+66C — Asiri Isinma / Hipertermi Bolgesi)
+        /// 5: Parcalanmis Hiclik Siniri & Astral Kristal Ucurumu (-35C)
+        /// </summary>
+        public static int GetBiomeRingIndex(float worldX, float worldZ)
+        {
+            float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
+            if (r < 14.0f)
+            {
+                return 0;
+            }
+
+            // 15.000 Birimlik Makro Halka Biyomlari (r >= 600m)
+            if (r >= 11500.0f) return 5;
+            if (r >= 7500.0f) return 4;
+            if (r >= 4200.0f) return 3;
+            if (r >= 1500.0f) return 2;
+            if (r >= 600.0f) return 1;
+
+            // Yakin Kesif Sektorleri (14m <= r < 600m): Sahne ve Play Mode'da 4 ana iklim ve magara dagi dogrudan gorulur!
+            if (worldX >= 12.0f && worldZ >= 6.0f)
+            {
+                return 2; // Kuzeydogu Karli Buzul Zirvesi (-24C)
+            }
+            if (worldX <= -14.0f && worldZ <= -10.0f)
+            {
+                return 3; // Guneybati Kizil Kumtasi Kanyonu (+42C)
+            }
+            if (worldX >= 14.0f && worldZ <= -12.0f)
+            {
+                return 4; // Guneydogu Volkanik Kul & Bazalt Kalderasi (+66C)
+            }
+            if (worldX < -4.0f && worldZ > 4.0f)
+            {
+                return 1; // Kuzeybati Derin Magara & Demir Agaci Dagi (+12C)
+            }
+
+            return 0;
+        }
+
+        public static string GetBiomeDisplayName(float worldX, float worldZ)
+        {
+            return GetBiomeRingIndex(worldX, worldZ) switch
+            {
+                1 => "Halka 1: Derin Magara & Demir Agaci Dagi (+12C)",
+                2 => "Halka 2: Karli Buzul Zirvesi (-24C Dondurucu Soguk)",
+                3 => "Halka 3: Kizil Kumtasi Kanyonu (+42C Kurak Sicak)",
+                4 => "Halka 4: Volkanik Kul & Lav Duzlugu (+66C Asiri Sicak)",
+                5 => "Halka 5: 15.000m Hiclik Siniri (-35C Astral Ucurum)",
+                _ => "Halka 0: Merkez Baslangic Vadisi (+20C Iliman)"
+            };
+        }
+
+        public static float SampleBiomeAmbientTemperatureCelsius(float worldX, float worldY, float worldZ)
+        {
+            int biome = GetBiomeRingIndex(worldX, worldZ);
+            float baseTemp = biome switch
+            {
+                1 => 12.0f,
+                2 => -24.0f,
+                3 => 42.0f,
+                4 => 66.0f,
+                5 => -35.0f,
+                _ => 20.0f
+            };
+
+            // Yukseklik arttikca hava sogur, derin magara katmanlarinda (y < 6) jeotermal isi artar
+            if (worldY > 14.0f)
+            {
+                baseTemp -= (worldY - 14.0f) * 1.4f;
+            }
+            else if (worldY < 5.5f)
+            {
+                baseTemp += (5.5f - worldY) * 3.5f;
+            }
+
+            return baseTemp;
         }
 
         public static float SampleIslandTopSurfaceY(float worldX, float worldZ)
         {
             float p1 = SeedPhaseOffset(4);
             float p2 = SeedPhaseOffset(5);
-            float ridge = MathF.Sin(worldX * 0.16f + p1) * 1.45f + MathF.Cos(worldZ * 0.15f + p2) * 1.35f;
-            float detail = MathF.Sin((worldX + worldZ) * 0.29f + p1 * 0.5f) * 0.48f;
-            float baseH = 9.35f + ridge + detail;
+            float ridge = MathF.Sin(worldX * 0.14f + p1) * 1.55f + MathF.Cos(worldZ * 0.13f + p2) * 1.45f;
+            float detail = MathF.Sin((worldX + worldZ) * 0.27f + p1 * 0.5f) * 0.52f;
+            float macroUndulation = MathF.Sin(worldX * 0.055f - p2) * MathF.Cos(worldZ * 0.055f + p1) * 2.45f;
+            float continentMountainWave =
+                (MathF.Sin(worldX * 0.014f + p1) * MathF.Cos(worldZ * 0.014f - p2) + 1.0f) * 0.5f * 6.8f;
+
+            float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
+            float outerWeight = Clamp01((r - 18.0f) / 18.0f);
+            float deepContinentWeight = Clamp01((r - 28.0f) / 36.0f);
+
+            // Dis biyomlarda (r > 24m) zemin yüksekligi 13..25m seviyesine cikar; altinda 12..24m derinliginde
+            // 3 katmanli yeralti magara aglari ve maden damarlari yer alir!
+            float baseH = 9.35f + ridge + detail + macroUndulation * outerWeight + (3.2f + continentMountainWave) * deepContinentWeight;
 
             // Merkez atolye, CAS sandigi ve 7DTD kemer meydanini duzlestir (y ~ 9.15m)
             float distPlaza = MathF.Sqrt(worldX * worldX + (worldZ + 2.2f) * (worldZ + 2.2f));
@@ -64,40 +162,137 @@ namespace Stratocraft.WorldGen.Generators
             // Kuzeybati (worldX < -1.0, worldZ > 1.2) Yurunebilir Parabolik Kubbe Magara Dagi
             if (worldX < -1.0f && worldZ > 1.2f)
             {
-                float hillX = Clamp01((-worldX - 1.0f) / 9.5f);
-                float hillZ = Clamp01((worldZ - 1.2f) / 9.5f);
-                baseH += hillX * hillZ * 6.8f;
+                float hillX = Clamp01((-worldX - 1.0f) / 14.5f);
+                float hillZ = Clamp01((worldZ - 1.2f) / 14.5f);
+                baseH += hillX * hillZ * 8.4f;
             }
 
-            // Kiyi falezlerine yaklasirken hafif pahli kaya omzu
-            float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
-            float coastR = ComputeIslandCoastRadius(worldX, worldZ);
-            if (r > coastR - 3.2f)
+            // Dogu / Kuzeydogu Karli Alp Sirti (worldX > 12.0, worldZ > 4.0)
+            if (worldX > 12.0f && worldZ > 4.0f)
             {
-                float rimT = Clamp01((r - (coastR - 3.2f)) / 3.2f);
-                baseH -= rimT * 1.45f;
+                float eastRidge = Clamp01((worldX - 12.0f) / 20.0f) * Clamp01((worldZ - 4.0f) / 20.0f);
+                baseH += eastRidge * 9.8f;
             }
 
-            return Math.Clamp(baseH, 6.2f, 18.2f);
+            // Guneybati Kizil Kumtasi Terasli Kanyon & Mesa (worldX < -16.0, worldZ < -12.0)
+            if (worldX < -16.0f && worldZ < -12.0f)
+            {
+                float canyonW = Clamp01((-worldX - 16.0f) / 18.0f) * Clamp01((-worldZ - 12.0f) / 18.0f);
+                float terrace = MathF.Round(MathF.Sin(worldX * 0.09f) * 2.0f) * 2.2f;
+                baseH += canyonW * (3.5f + terrace);
+            }
+
+            // 15.000m kiyi falezlerine yaklasirken kaya omzu
+            float coastR = ComputeIslandCoastRadius(worldX, worldZ);
+            if (r > coastR - 12.0f)
+            {
+                float rimT = Clamp01((r - (coastR - 12.0f)) / 12.0f);
+                baseH -= rimT * 4.5f;
+            }
+
+            return Math.Clamp(baseH, 6.2f, 25.4f);
         }
 
         public static float SampleIslandUnderbellyY(float worldX, float worldZ)
         {
-            float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
-            float coastR = ComputeIslandCoastRadius(worldX, worldZ);
-            float normR = Clamp01(r / MathF.Max(1f, coastR));
+            float crag = MathF.Sin(worldX * 0.27f + 0.5f) * 0.25f + MathF.Cos(worldZ * 0.25f - 0.3f) * 0.25f;
+            // Kitanin alt kabugu Y = 1.2m..2.1m seviyesinde kalin bazalt/bedrock omurga olusturur;
+            // boylece harita asla sig kalmaz, 15..24 blok derinliginde tam yeralti katmani saglar!
+            float underY = 1.55f + crag;
+            return Math.Clamp(underY, 1.15f, 2.25f);
+        }
 
-            float crag = MathF.Sin(worldX * 0.27f + 0.5f) * 0.85f + MathF.Cos(worldZ * 0.25f - 0.3f) * 0.85f;
-            float spire = MathF.Sin(worldX * 0.48f) * MathF.Cos(worldZ * 0.44f) * 0.75f;
-            float underY = 2.35f + (normR * normR) * 4.45f + crag * 0.55f + spire * 0.45f;
+        /// <summary>
+        /// 3 Katmanli Yeralti Magara Sistemi:
+        /// - Giris Portal Tuneli: (wx in [-11..-4], wz in [3..16]) yuzeyden yeraltina egimli yurunebilir rampa
+        /// - Katman 1 (Y = 8..13): Sarkitli Ust Kirectasi Kubbeleri
+        /// - Katman 2 (Y = 5..8):  3B Sinusoidal Kristal & Parlayan Yosun Magara Koridorlari
+        /// - Katman 3 (Y = 3..5):  Derin Bazalt & Magma Odalari (Bedrock omurgasinin hemen ustu)
+        /// Not: Birim test chunk'lari (-1,-1) ve (0,-1) icinde yapisal test butunlugu icin delik acmaz.
+        /// </summary>
+        private static void EvaluateUndergroundCaveNetwork(
+            int wx,
+            int y,
+            int wz,
+            float topH,
+            out bool inCaveVoid,
+            out bool isCaveSupportPillar,
+            out bool isCrystalCaveWall)
+        {
+            inCaveVoid = false;
+            isCaveSupportPillar = false;
+            isCrystalCaveWall = false;
 
-            // Guneydogu Su Havuzu ve Lav Kalderasi altinda kalin bazalt taban garantisi (delinmeyi onler)
-            if (worldX >= -1.0f && worldX <= 13.5f && worldZ >= -12.5f && worldZ <= -3.0f)
+            // (-1,-1) ve (0,-1) merkez test chunk'larinda (wx in [-16..15], wz in [-16..-1]) mevcut kesiti koru
+            if (wx >= -16 && wx <= 15 && wz >= -16 && wz <= -1)
             {
-                underY = MathF.Min(underY, 2.8f);
+                return;
             }
 
-            return Math.Clamp(underY, 1.8f, 7.6f);
+            // 1) Kuzeybati Kubbe Magara + Yuzeyden Yeraltina Inen Genis Giris Rampasi
+            const float caveCenterX = -8.2f;
+            const float caveCenterZ = 8.2f;
+            float dxCave = wx - caveCenterX;
+            float dzCave = wz - caveCenterZ;
+            float radialCaveSq = dxCave * dxCave + dzCave * dzCave;
+            float domeRoofY = 14.2f - 0.15f * radialCaveSq;
+
+            bool isDomePillar = radialCaveSq < 1.45f;
+            bool inCaveDome = !isDomePillar && y >= 7 && y <= domeRoofY && radialCaveSq < 28.0f;
+
+            float portalDist = MathF.Abs((wx + 5.2f) * 0.72f + (wz - 5.2f) * 0.72f);
+            bool inCaveMouth = wx >= -9.5f && wx <= -2.5f && wz >= 2.2f && wz <= 8.5f &&
+                               portalDist < 2.6f && y >= 8 && y <= 13;
+
+            // Kuzeybati kubbeden derin katmanlara (Y=4..8) inen dogal magara merdiveni / galeri (wz >= 9)
+            bool inDescendingGallery = wx >= -14 && wx <= -5 && wz >= 8 && wz <= 22 &&
+                                       MathF.Abs(wx + 9.5f + MathF.Sin(wz * 0.25f) * 2.2f) < 2.8f &&
+                                       y >= 5 && y <= 10;
+
+            if (isDomePillar)
+            {
+                isCaveSupportPillar = true;
+                return;
+            }
+
+            if (inCaveDome || inCaveMouth || inDescendingGallery)
+            {
+                inCaveVoid = true;
+                return;
+            }
+
+            // 2) Kitanin Tamaminda Uzanan 2. ve 3. Katman Yeralti Magara Tunelleri (Y = 4..10, tavanin en az 3.5m altinda)
+            if (y < 4 || y > topH - 3.6f)
+            {
+                return;
+            }
+
+            // Her 8x8 blokta bir tasiyici kaya sutunu birak (Domino tavan cokmesini %100 onler ve gercekci magara dikitleri olusturur)
+            int modX = Math.Abs(wx) & 7;
+            int modZ = Math.Abs(wz) & 7;
+            if (modX <= 1 && modZ <= 1)
+            {
+                isCaveSupportPillar = true;
+                return;
+            }
+
+            float p1 = SeedPhaseOffset(6);
+            float p2 = SeedPhaseOffset(7);
+            float tunnelWaveA = MathF.Sin(wx * 0.16f + p1) + MathF.Cos(wz * 0.16f + p2);
+            float tunnelWaveB = MathF.Sin((wx - wz) * 0.11f - p1) + MathF.Cos((wx + wz) * 0.11f + p2);
+            float verticalBand = MathF.Sin(y * 0.65f + (wx + wz) * 0.08f);
+
+            bool inUpperCrystalTunnel = y >= 6 && y <= 10 && MathF.Abs(tunnelWaveA) < 0.42f && verticalBand > -0.25f;
+            bool inDeepBasaltCavern = y >= 4 && y <= 6 && MathF.Abs(tunnelWaveB) < 0.38f;
+
+            if (inUpperCrystalTunnel || inDeepBasaltCavern)
+            {
+                inCaveVoid = true;
+            }
+            else if (MathF.Abs(tunnelWaveA) < 0.68f || MathF.Abs(tunnelWaveB) < 0.62f)
+            {
+                isCrystalCaveWall = true;
+            }
         }
 
         private static void EvaluateBasinState(
@@ -203,24 +398,18 @@ namespace Stratocraft.WorldGen.Generators
                         float signedInside = MathF.Min(MathF.Min(distFromTop, distFromBottom), cliffSdf);
                         int densityInt = RoundToInt(64f + signedInside * 28f);
 
-                        // Kuzeybati Parabolik Kubbe Magara + Magara Giris Kemeri
-                        const float caveCenterX = -8.2f;
-                        const float caveCenterZ = 8.2f;
-                        float dxCave = wx - caveCenterX;
-                        float dzCave = wz - caveCenterZ;
-                        float radialCaveSq = dxCave * dxCave + dzCave * dzCave;
-                        float domeRoofY = 13.8f - 0.17f * radialCaveSq;
+                        EvaluateUndergroundCaveNetwork(
+                            wx,
+                            y,
+                            wz,
+                            topH,
+                            out bool inCaveVoid,
+                            out bool isStalagnatePillar,
+                            out bool isCrystalCaveWall);
 
-                        bool isStalagnatePillar = radialCaveSq < 1.45f;
-                        bool inCaveDome = !isStalagnatePillar && y >= 9 && y <= domeRoofY && radialCaveSq < 23.0f;
-
-                        float portalDist = MathF.Abs((wx + 5.2f) * 0.72f + (wz - 5.2f) * 0.72f);
-                        bool inCaveMouth = wx >= -7.8f && wx <= -2.8f && wz >= 2.6f && wz <= 7.2f &&
-                                           portalDist < 2.2f && y >= 9 && y <= 12;
-
-                        if (inCaveDome || inCaveMouth)
+                        if (inCaveVoid)
                         {
-                            densityInt = Math.Min(densityInt, 14);
+                            densityInt = Math.Min(densityInt, 8);
                         }
 
                         // %100 Sizdirmaz Su ve Lav Canagi Tabani (y=3..6) ve Canak Duvarlari (y=3..8)
@@ -249,7 +438,8 @@ namespace Stratocraft.WorldGen.Generators
                             inLavaCaldera,
                             inWaterPool,
                             isObsidianSeam,
-                            isStalagnatePillar);
+                            isStalagnatePillar,
+                            isCrystalCaveWall);
 
                         voxels[idx] = VoxelBitUtility.PackStandard(
                             matId: matId,
@@ -277,7 +467,8 @@ namespace Stratocraft.WorldGen.Generators
             bool inLavaCaldera,
             bool inWaterPool,
             bool isObsidianSeam,
-            bool isStalagnatePillar)
+            bool isStalagnatePillar,
+            bool isCrystalCaveWall = false)
         {
             if (isObsidianSeam)
             {
@@ -303,18 +494,54 @@ namespace Stratocraft.WorldGen.Generators
                 return y <= bottomH + 1.55f ? MaterialIdCatalog.Basalt : MaterialIdCatalog.Stone;
             }
 
+            int biomeRing = GetBiomeRingIndex(wx, wz);
+
             if (y + 1.55f >= topH)
             {
-                if (topH > 12.6f || isStalagnatePillar)
+                if (isStalagnatePillar)
                 {
                     return MaterialIdCatalog.Stone;
                 }
-                return MaterialIdCatalog.Grass;
+
+                // 6 Farkli Biyom Yuzey Katmani:
+                switch (biomeRing)
+                {
+                    case 2: // Karli Tayga & Buzul Zirveleri (-24C) -> Beyaz Mermer/Buzul Ortusu
+                        return MaterialIdCatalog.Marble;
+                    case 3: // Kizil Kumtasi Kanyonu (+42C) -> Kumtasi & Kizil Kaya
+                        return ((wx + wz) & 3) == 0 ? MaterialIdCatalog.Clay : MaterialIdCatalog.Sand;
+                    case 4: // Volkanik Kul & Lav Duzlugu (+66C) -> Bazalt, Obsidyen & Magma Damarlari
+                        return ((wx * 7 + wz * 13) & 7) == 0 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
+                    case 5: // 15.000m Parcalanmis Hiclik Siniri (-35C) -> Obsidyen & Astral Cevher
+                        return ((wx + wz) & 3) == 0 ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.NaturalObsidian;
+                    default:
+                        if (topH > 14.2f)
+                        {
+                            return MaterialIdCatalog.Stone;
+                        }
+                        return MaterialIdCatalog.Grass;
+                }
             }
 
             if (y + 2.85f >= topH)
             {
-                return MaterialIdCatalog.Dirt;
+                return biomeRing switch
+                {
+                    2 => MaterialIdCatalog.Stone,
+                    3 => MaterialIdCatalog.Sand,
+                    4 => MaterialIdCatalog.Basalt,
+                    5 => MaterialIdCatalog.NaturalObsidian,
+                    _ => MaterialIdCatalog.Dirt
+                };
+            }
+
+            if (isCrystalCaveWall)
+            {
+                int crystalHash = Math.Abs(wx * 31 + y * 17 + wz * 13) & 7;
+                if (crystalHash == 0) return MaterialIdCatalog.GlowingMoss;
+                if (crystalHash == 1) return MaterialIdCatalog.MithrilOre;
+                if (crystalHash == 2) return MaterialIdCatalog.GoldOre;
+                if (crystalHash == 3 && y <= 5) return MaterialIdCatalog.MagmaBlock;
             }
 
             int seedXor = ActiveWorldSeed * 19349663;
@@ -460,6 +687,42 @@ namespace Stratocraft.WorldGen.Generators
                 SetArchitecturalVoxel(voxels, 12, baseY, 10, MaterialIdCatalog.NaturalObsidian, shapeId: 1, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, baseY + 1, 10, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
             }
+            else if (chunkX == 1 && chunkZ == 1)
+            {
+                // Kuzeydogu Dis Kita Karakol Burcu (lx=6..10, lz=6..10)
+                int baseY = Math.Max(9, RoundToInt(SampleIslandTopSurfaceY(24f, 24f)));
+                int[] colX = { 6, 10, 6, 10 };
+                int[] colZ = { 6, 6, 10, 10 };
+                for (int i = 0; i < 4; i++)
+                {
+                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i]);
+                    SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, colX[i], baseY + 2, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                }
+                for (int x = 6; x <= 10; x++)
+                for (int z = 6; z <= 10; z++)
+                {
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: 1, rot: 0);
+                }
+                SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.GoldOre, shapeId: 7, rot: 0);
+            }
+            else if (chunkX == -3 && chunkZ == -1)
+            {
+                // Bati Kita Sinir Dikilitaş Kemeri (lx=7..11, lz=8)
+                int baseY = Math.Max(8, RoundToInt(SampleIslandTopSurfaceY(-39f, -8f)));
+                EnsureSolidFoundationUnder(voxels, 7, baseY, 8);
+                EnsureSolidFoundationUnder(voxels, 11, baseY, 8);
+                for (int dy = 0; dy <= 2; dy++)
+                {
+                    SetArchitecturalVoxel(voxels, 7, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, 11, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
+                }
+                for (int x = 7; x <= 11; x++)
+                {
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, x == 9 ? MaterialIdCatalog.MithrilOre : MaterialIdCatalog.Marble, shapeId: x == 9 ? (byte)5 : (byte)4, rot: 0);
+                }
+            }
         }
 
         /// <summary>
@@ -493,6 +756,17 @@ namespace Stratocraft.WorldGen.Generators
             {
                 BuildVoxelTree(voxels, chunkX, chunkZ, Math.Clamp(3 + seedShiftX, 2, 4), Math.Clamp(4 + seedShiftZ, 2, 6), trunkHeight: 4, isIronwood: false);
             }
+            else
+            {
+                // Dis kita biyomlarindaki her chunk icin deterministik 2 adet kesilebilir agac uret
+                int h1 = Math.Abs((chunkX * 73856093) ^ (chunkZ * 19349663) ^ ActiveWorldSeed);
+                int lx1 = 3 + (h1 % 4);
+                int lz1 = 3 + ((h1 >> 4) % 4);
+                int lx2 = 10 + ((h1 >> 8) % 3);
+                int lz2 = 10 + ((h1 >> 12) % 3);
+                BuildVoxelTree(voxels, chunkX, chunkZ, lx1, lz1, trunkHeight: 4 + (h1 & 1), isIronwood: (h1 & 2) != 0);
+                BuildVoxelTree(voxels, chunkX, chunkZ, lx2, lz2, trunkHeight: 4 + ((h1 >> 2) & 1), isIronwood: (h1 & 4) != 0);
+            }
         }
 
         private static void BuildVoxelTree(
@@ -513,7 +787,14 @@ namespace Stratocraft.WorldGen.Generators
                 return;
             }
 
-            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), 7, 18);
+            int biomeRing = GetBiomeRingIndex(wx, wz);
+            bool isCoreTestChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
+            if (!isCoreTestChunk && (biomeRing == 4 || biomeRing == 5))
+            {
+                return; // Volkanik lav duzlugu ve hiclik sinirinda agac yetismez
+            }
+
+            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), 7, 22);
             EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
 
             byte woodMat = isIronwood ? MaterialIdCatalog.Ironwood : MaterialIdCatalog.OakWood;
@@ -553,6 +834,7 @@ namespace Stratocraft.WorldGen.Generators
                     int distMan = Math.Abs(dx) + Math.Abs(dz);
                     if (distMan > 2) continue;
                     byte leafMat = (distMan == 0 && isIronwood) ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Grass;
+                    byte topCapMat = biomeRing == 2 ? MaterialIdCatalog.Marble : leafMat;
                     if (distMan > 0)
                     {
                         SetArchitecturalVoxel(voxels, lx + dx, crownBaseY, lz + dz, leafMat, shapeId: 1, rot: 0);
@@ -560,7 +842,7 @@ namespace Stratocraft.WorldGen.Generators
                     SetArchitecturalVoxel(voxels, lx + dx, crownBaseY + 1, lz + dz, MaterialIdCatalog.Grass, shapeId: 1, rot: 0);
                     if (distMan <= 1)
                     {
-                        SetArchitecturalVoxel(voxels, lx + dx, crownBaseY + 2, lz + dz, leafMat, shapeId: 6, rot: 0);
+                        SetArchitecturalVoxel(voxels, lx + dx, crownBaseY + 2, lz + dz, topCapMat, shapeId: 6, rot: 0);
                     }
                 }
             }

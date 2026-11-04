@@ -35,8 +35,8 @@ namespace Stratocraft.EditorTools
     {
         private const string SceneAssetPath = "Assets/Scenes/StratocraftStage1Showcase.unity";
         private const string GeneratedAssetsFolder = "Assets/Art/GeneratedSceneAssets";
-        private const int ChunkMin = -2;
-        private const int ChunkMax = 1; // [-2, -1, 0, 1] -> [-32m .. +32m] simetrik 4x4 chunk
+        private const int ChunkMin = -4;
+        private const int ChunkMax = 3; // [-4..3] -> [-64m .. +64m] 8x8 = 64 chunk (128x128m baslangic kitasi, Play Mode'da 15.000m kesintisiz)
 
         [MenuItem("Stratocraft/Asama 1 - Canli Dunya ve 3B Varlik Sahnesini Kur")]
         public static void BuildStage1ShowcaseScene()
@@ -52,8 +52,8 @@ namespace Stratocraft.EditorTools
             Material? uberMat = StratocraftProjectSettingsEnforcer.EnsureSharedUberMaterial();
             if (uberMat == null)
             {
-                Shader fallbackShader = Shader.Find("Stratocraft/UberShader_UVFree")
-                    ?? Shader.Find("Universal Render Pipeline/Lit")!;
+                Shader? uberShader = Shader.Find("Stratocraft/UberShader_UVFree");
+                Shader fallbackShader = uberShader != null ? uberShader : Shader.Find("Universal Render Pipeline/Lit")!;
                 uberMat = new Material(fallbackShader) { name = "M_Stratocraft_UberMaterial_Fallback" };
             }
 
@@ -63,7 +63,7 @@ namespace Stratocraft.EditorTools
             // 1. URP 17 Forward+ Isiklandirma, Global Post-Processing Volume ve Noktasal Atmosfer Isiklari
             SetupUrpLightingAndPostProcessVolume();
 
-            // 2. Faz 1: 4x4 Chunk 3B Hacimsel Yuzen Ada + 0.000m Dikissiz Padded Surface Nets + 7DTD Mimari Sekiller
+            // 2. Faz 1: 8x8 Chunk (128x128m) 5 Biyomlu Kita + 3 Katmanli Magara + 0.000m Dikissiz Padded Surface Nets
             GameObject voxelWorldRoot = new GameObject("01_Faz1_VoxelTerrain_And_DominoWorld");
             int voxelLayer = LayerMask.NameToLayer("VoxelTerrain");
             if (voxelLayer < 0)
@@ -71,9 +71,9 @@ namespace Stratocraft.EditorTools
                 voxelLayer = 0;
             }
 
-            // Once TUM 16 chunk voksel ve sonlu akiskan verisini uret ki komsu apronlari (18x(maxY+2)x18) birbirini eksiksiz okusun!
-            var worldChunks = new Dictionary<(int cx, int cz), uint[]>(16);
-            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(16);
+            // Once TUM 64 chunk voksel ve sonlu akiskan verisini uret ki komsu apronlari (18x(maxY+2)x18) birbirini eksiksiz okusun!
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>(64);
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(64);
             for (int cz = ChunkMin; cz <= ChunkMax; cz++)
             {
                 for (int cx = ChunkMin; cx <= ChunkMax; cx++)
@@ -99,7 +99,7 @@ namespace Stratocraft.EditorTools
                 EditorUtility.SetDirty(fluidMat);
             }
 
-            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(16);
+            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(64);
             var reusableTris = new List<FacetedVoxelTriangle>(12288);
             var reusableFluidTris = new List<FacetedVoxelTriangle>(4096);
 
@@ -117,7 +117,10 @@ namespace Stratocraft.EditorTools
                         reusableTris);
 
                     string meshName = $"Mesh_SeamlessIslandChunk_{cx}_{cz}";
-                    Mesh chunkMesh = SaveZeroGcMeshAsset(meshName, reusableTris);
+                    bool isCoreAssetChunk = cx >= -2 && cx <= 1 && cz >= -2 && cz <= 1;
+                    Mesh chunkMesh = isCoreAssetChunk
+                        ? SaveZeroGcMeshAsset(meshName, reusableTris)
+                        : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(reusableTris, meshName);
 
                     Vector3 chunkWorldPos = new Vector3(cx * 16f, 0f, cz * 16f);
                     string chunkGoName = $"VoxelChunk_{cx}_{cz}_Seamless3DIsland";
@@ -153,7 +156,9 @@ namespace Stratocraft.EditorTools
                     if (reusableFluidTris.Count > 0)
                     {
                         string fluidMeshName = $"Mesh_FluidSurfaceChunk_{cx}_{cz}";
-                        Mesh fluidMesh = SaveZeroGcMeshAsset(fluidMeshName, reusableFluidTris);
+                        Mesh fluidMesh = isCoreAssetChunk
+                            ? SaveZeroGcMeshAsset(fluidMeshName, reusableFluidTris)
+                            : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(reusableFluidTris, fluidMeshName);
 
                         GameObject fluidGo = CreateMeshObject(
                             $"FluidSurface_{cx}_{cz}",
@@ -544,7 +549,8 @@ namespace Stratocraft.EditorTools
 
             if (swordGo != null)
             {
-                Transform bladeParent = swordGo.transform.Find("Socket_VoxelBlade") ?? swordGo.transform;
+                Transform? socketBlade = swordGo.transform.Find("Socket_VoxelBlade");
+                Transform bladeParent = socketBlade != null ? socketBlade : swordGo.transform;
                 Mesh forgedBladeMesh = BuildForgedSurfaceNetsBladeMesh();
                 CreateMeshObject(
                     "Forged16x32x4_DamascusSteelBlade",
@@ -608,7 +614,11 @@ namespace Stratocraft.EditorTools
                 addCollider: false);
             if (axeGo != null) axeGo.SetActive(false);
 
-            UnityEngine.Camera? sceneCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
+            UnityEngine.Camera? sceneCam = UnityEngine.Camera.main;
+            if (sceneCam == null)
+            {
+                sceneCam = UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
+            }
             if (sceneCam == null)
             {
                 GameObject camGo = new GameObject("Main Camera");
@@ -787,12 +797,16 @@ namespace Stratocraft.EditorTools
 
         private static void PositionMainCameraAndSceneView(Transform playerTarget)
         {
-            // Hem yuzen adanin 3B dik falez duvarlarini & alt bazalt govdesini hem de ustteki atolye/kaldera/kemer/yaratiklari gosteren panoramik aci
-            Vector3 camPos = new Vector3(-14.5f, 20.5f, -25.5f);
-            Vector3 lookTarget = new Vector3(0.8f, 8.4f, -1.5f);
+            // 128x128m 5 biyomlu baslangic kitasini (Karli Zirve, Magara Dagi, Kumtasi Kanyonu, Volkanik Kaldera, Merkez Vadi) gosteren panoramik aci
+            Vector3 camPos = new Vector3(-22.5f, 28.5f, -34.5f);
+            Vector3 lookTarget = new Vector3(0.8f, 9.2f, 2.5f);
             Quaternion camRot = Quaternion.LookRotation((lookTarget - camPos).normalized, Vector3.up);
 
-            UnityEngine.Camera? mainCam = UnityEngine.Camera.main ?? UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
+            UnityEngine.Camera? mainCam = UnityEngine.Camera.main;
+            if (mainCam == null)
+            {
+                mainCam = UnityEngine.Object.FindAnyObjectByType<UnityEngine.Camera>(FindObjectsInactive.Exclude);
+            }
             if (mainCam == null)
             {
                 GameObject camGo = new GameObject("Main Camera");
@@ -816,16 +830,18 @@ namespace Stratocraft.EditorTools
             mainCam.clearFlags = CameraClearFlags.SolidColor;
             mainCam.backgroundColor = new Color(0.13f, 0.19f, 0.29f, 1.0f);
 
-                UniversalAdditionalCameraData camData = mainCam.GetComponent<UniversalAdditionalCameraData>()
-                    ?? mainCam.gameObject.AddComponent<UniversalAdditionalCameraData>();
-                camData.renderPostProcessing = true;
-                camData.renderShadows = true;
-                camData.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
+            if (!mainCam.TryGetComponent<UniversalAdditionalCameraData>(out var camData))
+            {
+                camData = mainCam.gameObject.AddComponent<UniversalAdditionalCameraData>();
+            }
+            camData.renderPostProcessing = true;
+            camData.renderShadows = true;
+            camData.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
 
             if (SceneView.lastActiveSceneView != null)
             {
                 SceneView sv = SceneView.lastActiveSceneView;
-                sv.LookAt(lookTarget, camRot, 27.5f, false, true);
+                sv.LookAt(lookTarget, camRot, 56.0f, false, true);
                 sv.Repaint();
             }
 

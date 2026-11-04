@@ -26,7 +26,8 @@ namespace Stratocraft.Character
         private static readonly byte[] BuildableMaterials =
         {
             MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Sand, MaterialIdCatalog.Basalt,
-            MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.Cobblestone, MaterialIdCatalog.OakWood, MaterialIdCatalog.LooseRubble
+            MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.Cobblestone, MaterialIdCatalog.OakWood, MaterialIdCatalog.LooseRubble,
+            MaterialIdCatalog.Marble, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.Ironwood, MaterialIdCatalog.WoodPlank
         };
         private static readonly byte[] ShapeWheelCycle = { 0, 1, 2, 3, 4, 5, 6, 7, 63 };
         private static readonly float[] RayMarchOffsets = { 0.15f, 0.38f, 0.62f, 0.88f, 1.15f };
@@ -91,6 +92,10 @@ namespace Stratocraft.Character
             CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Cobblestone, 8u * b);
             CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.OakWood, 8u * b);
             CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.LooseRubble, 8u * b);
+            CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Marble, 12u * b);
+            CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.StoneBrick, 12u * b);
+            CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Ironwood, 8u * b);
+            CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.WoodPlank, 8u * b);
         }
 
         public void SelectMaterial(byte materialId) => _materialIdx = Mathf.Max(0, Array.IndexOf(BuildableMaterials, materialId));
@@ -114,12 +119,12 @@ namespace Stratocraft.Character
                     _materialIdx = (_materialIdx + 1) % BuildableMaterials.Length;
                     byte mat = SelectedMaterialId;
                     int cnt = mat == MaterialIdCatalog.LooseRubble ? LooseRubbleShardCount : CrystalStorage.GetCount(mat);
-                    LastFeedbackText = $"Secili Malzeme: {GetMaterialDisplayName(mat)} (Stok: {cnt}) -> [4] Elinde Tut / [0/Q] Birak";
+                    LastFeedbackText = $"Secili Malzeme: {GetMaterialDisplayName(mat)} (Stok: {cnt}) -> [6..9] Kare Hotbar / [0/Q] Birak";
                 }
                 float scroll = Input.GetAxis("Mouse ScrollWheel");
-                if (Mathf.Abs(scroll) > 0.001f || Input.GetKeyDown(KeyCode.T))
+                if ((IsCrystalActive && Mathf.Abs(scroll) > 0.001f) || Input.GetKeyDown(KeyCode.T))
                 {
-                    int delta = Mathf.Abs(scroll) > 0.001f ? (scroll > 0f ? 1 : -1) : 1;
+                    int delta = (IsCrystalActive && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
                     _brushRadiusIdx = (_brushRadiusIdx + delta + BrushRadiusSteps.Length) % BrushRadiusSteps.Length;
                     LastFeedbackText = $"Kristal Vakum Alani [Tekerlek/T]: {BrushAreaLabel} (Yaricap: {BrushRadiusMeters:0.1}m)";
                 }
@@ -135,7 +140,8 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null,
             HashSet<(int cx, int cz)>? dirtyFluidChunks = null,
             Transform? wristCrystalTransform = null,
-            Stage1DirectionalCombatBridge? combatBridge = null)
+            Stage1DirectionalCombatBridge? combatBridge = null,
+            Stage1HolsterAndBackpackController? holsterCtrl = null)
         {
             bool lmb = !backpackOpen && Input.GetMouseButton(0);
             UpdateVacuumBeamVisual(IsCrystalActive && lmb && HasAimHit && AimHit.distance <= 9.5f, wristCrystalTransform, sharedMat);
@@ -171,6 +177,37 @@ namespace Stratocraft.Character
             }
 
             if (!HasAimHit || _actionCooldown > 0f || AimHit.distance > 9.5f) return;
+
+            // [Slot 4 / activeHolsterSlot == 5] 4x4x4 Mikro-Keski (Chisel): LMB oyar, RMB mikro-blok yerlestirir
+            if (!IsCrystalActive && activeHolsterSlot == 5 && AimHit.distance <= 4.8f)
+            {
+                bool chiselLmb = Input.GetMouseButtonDown(0) || Input.GetMouseButton(0);
+                bool chiselRmb = Input.GetMouseButtonDown(1);
+                if (chiselLmb || chiselRmb)
+                {
+                    _actionCooldown = 0.14f;
+                    ExecuteMicroChiselAction(
+                        carveMode: chiselLmb, maxEditableY, playerPosition, playerCapsuleHeight,
+                        worldChunks, dirtyChunks, collapseBridge, sharedMat, fluidChunks, dirtyFluidChunks);
+                    return;
+                }
+            }
+
+            // [Slot 5 / activeHolsterSlot == 6] Sivi Matarasi (FluidFlask): LMB Su/Lav doldurur, RMB doker
+            if (!IsCrystalActive && activeHolsterSlot == 6 && AimHit.distance <= 5.5f)
+            {
+                bool flaskLmb = Input.GetMouseButtonDown(0);
+                bool flaskRmb = Input.GetMouseButtonDown(1);
+                if (flaskLmb || flaskRmb)
+                {
+                    _actionCooldown = 0.16f;
+                    ExecuteFluidFlaskAction(
+                        scoopMode: flaskLmb, maxEditableY, worldChunks, dirtyChunks,
+                        fluidChunks, dirtyFluidChunks, holsterCtrl);
+                    return;
+                }
+            }
+
             bool rmb = Input.GetMouseButtonDown(1) || (IsCrystalActive && Input.GetMouseButton(1));
             if (rmb && (activeHolsterSlot == 4 || IsCrystalActive))
             {
@@ -198,6 +235,137 @@ namespace Stratocraft.Character
                      (combatBridge == null || combatBridge.SlashPhase == BallisticSlashPhase.IdleInGuard))
             {
                 LastFeedbackText = "FIZIKSEL VURUS GEREKLI: Aleti savurmak icin [LMB] basili tutarak fareyi savurun! (Uzaktan cekim icin [C] Kristal)";
+            }
+        }
+
+        private void ExecuteMicroChiselAction(
+            bool carveMode, int maxY, Vector3 playerPos, float capsuleH,
+            Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirty,
+            Stage1StructuralCollapseBridge collapseBridge, Material? sharedMat,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks)
+        {
+            if (carveMode)
+            {
+                int wx = AimVoxelCoord.x, wy = Mathf.Clamp(AimVoxelCoord.y, 1, maxY - 2), wz = AimVoxelCoord.z;
+                int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+                if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels)) return;
+                int idx = (wy << 8) | (lz << 4) | lx;
+                uint raw = voxels[idx];
+                byte mat = VoxelBitUtility.GetMaterialId(raw);
+                if (mat == MaterialIdCatalog.Air || mat == MaterialIdCatalog.Bedrock) return;
+
+                byte curShape = VoxelBitUtility.GetShapeId(raw);
+                if (curShape != VoxelBitUtility.ChiseledMicroVoxelShapeId)
+                {
+                    byte poolIdx = (byte)(32 + ((wx * 19 + wy * 37 + wz * 11) & 0x7F));
+                    voxels[idx] = VoxelBitUtility.PackChiseled(
+                        mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat,
+                        poolIdx, BlokKokenDurumu.OyuncuItemBlogu, VoxelBitUtility.GetDamageState(raw));
+                    LooseRubbleShardCount++;
+                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                    LastFeedbackText = $"MIKRO-KESKI [Slot 4]: {GetMaterialDisplayName(mat)} 4x4x4 Mikro-Blok (Shape=63) Olarak Yontuldu! (+1 Tas Moloz)";
+                }
+                else
+                {
+                    voxels[idx] = 0u;
+                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                    WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                    SpawnDroppedWorldItem(new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), mat, VoxelBitUtility.ChiseledMicroVoxelShapeId, 1, sharedMat);
+                    collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out _);
+                    LastFeedbackText = $"MIKRO-KESKI [Slot 4]: {GetMaterialDisplayName(mat)} Mikro-Blok sokuldu ve yere dustu!";
+                }
+            }
+            else
+            {
+                int wx = PlacementVoxelCoord.x, wy = Mathf.Clamp(PlacementVoxelCoord.y, 1, maxY - 2), wz = PlacementVoxelCoord.z;
+                if (!Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(wx, wy, wz, playerPos, capsuleH))
+                {
+                    LastFeedbackText = "ANTI-GOMULME KORUMASI: Oyuncu kapsulu icine mikro-blok konulamaz!";
+                    return;
+                }
+                int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+                if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels)) return;
+                byte mat = SelectedMaterialId;
+                if (LooseRubbleShardCount <= 0 && !CrystalStorage.TryWithdrawNaturalBlock(mat, out _))
+                {
+                    LastFeedbackText = "Stokta mikro-blok icin Tas Moloz veya secili malzeme yok!";
+                    return;
+                }
+                if (LooseRubbleShardCount > 0) LooseRubbleShardCount--;
+                byte poolIdx = (byte)(64 + ((wx * 17 + wy * 31 + wz * 13) & 0x7F));
+                voxels[(wy << 8) | (lz << 4) | lx] = VoxelBitUtility.PackChiseled(
+                    mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat,
+                    poolIdx, BlokKokenDurumu.OyuncuItemBlogu, 0);
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                LastFeedbackText = $"MIKRO-KESKI [RMB]: {GetMaterialDisplayName(mat)} 4x4x4 Mikro-Blok (Shape=63) Yerlestirildi!";
+            }
+        }
+
+        private void ExecuteFluidFlaskAction(
+            bool scoopMode, int maxY,
+            Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirty,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            Stage1HolsterAndBackpackController? holsterCtrl)
+        {
+            if (fluidChunks == null) return;
+            byte currentFlaskFluid = holsterCtrl != null ? holsterCtrl.InventoryUi.GetSelectedFlaskFluidType() : (byte)1;
+
+            if (scoopMode)
+            {
+                // AimVoxelCoord ve etrafindaki 3x3x3 komsulukta Su veya Lav ara
+                for (int dy = 1; dy >= -1; dy--)
+                for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int wx = AimVoxelCoord.x + dx, wy = Mathf.Clamp(AimVoxelCoord.y + dy, 1, maxY - 2), wz = AimVoxelCoord.z + dz;
+                    int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+                    if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) continue;
+                    int idx = (wy << 8) | (lz << 4) | lx;
+                    FluidCell16 cell = new FluidCell16(fluids[idx]);
+                    if (cell.Type != FluidType.None && cell.Mass >= 32)
+                    {
+                        byte pickedType = (byte)cell.Type;
+                        fluids[idx] = 0;
+                        WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                        holsterCtrl?.InventoryUi.SetSelectedFlaskFluidType(pickedType);
+                        string fName = cell.Type == FluidType.Lava ? "Lav (Magma)" : "Su";
+                        LastFeedbackText = $"SIVI MATARASI [LMB]: Havzadan {fName} dolduruldu! ([RMB] ile istediginiz yere dokebilirsiniz)";
+                        return;
+                    }
+                }
+                // Eger su/lav bulunamadiysa Su <-> Lav modunu degistir (hizli test kolayligi)
+                byte nextFluid = currentFlaskFluid == 1 ? (byte)2 : (byte)1;
+                holsterCtrl?.InventoryUi.SetSelectedFlaskFluidType(nextFluid);
+                LastFeedbackText = $"SIVI MATARASI [LMB]: Matara icerigi {(nextFluid == 2 ? "Lav (Magma)" : "Su")} olarak ayarlandi! ([RMB] ile dokun)";
+            }
+            else
+            {
+                FluidType pourType = currentFlaskFluid == 2 ? FluidType.Lava : FluidType.Water;
+                int wx = PlacementVoxelCoord.x, wy = Mathf.Clamp(PlacementVoxelCoord.y, 1, maxY - 2), wz = PlacementVoxelCoord.z;
+                int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+                if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) return;
+                int idx = (wy << 8) | (lz << 4) | lx;
+
+                // Eger hedef hucrede karsi tip akiskan varsa aninda stokiyometrik Obsidyen veya Buhar reaksiyonunu tetikle
+                FluidCell16 existing = new FluidCell16(fluids[idx]);
+                if (existing.Type != FluidType.None && existing.Type != pourType && worldChunks.TryGetValue((cx, cz), out uint[]? voxels))
+                {
+                    if (existing.Mass >= 128)
+                    {
+                        fluids[idx] = 0;
+                        voxels[idx] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.NaturalObsidian, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+                        MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                        WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                        LastFeedbackText = "STOKIYOMETRIK REAKSIYON: Matara ile Su + Lav (>=128) birlesti -> Dogal Obsidyen Blogu olustu!";
+                        return;
+                    }
+                }
+
+                fluids[idx] = FluidCell16.Pack(pourType, 255, isSettled: false, pressureHead: 2).RawValue;
+                WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                string fName = pourType == FluidType.Lava ? "Lav (Magma)" : "Su";
+                LastFeedbackText = $"SIVI MATARASI [RMB]: ({wx},{wy},{wz}) noktasina 255 birim {fName} dokuldu! (Akiskan fizigi aktif)";
             }
         }
 
@@ -648,8 +816,8 @@ namespace Stratocraft.Character
 
         private void UpdatePlacementGhostVisual(bool canShow, int activeSlot, Dictionary<(int cx, int cz), uint[]> chunks, Material? sharedMat)
         {
-            bool showBuild = canShow && (activeSlot == 4 || (IsCrystalActive && Input.GetMouseButton(1)));
-            bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || IsCrystalActive);
+            bool showBuild = canShow && (activeSlot == 4 || activeSlot == 6 || (IsCrystalActive && Input.GetMouseButton(1)));
+            bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || activeSlot == 5 || IsCrystalActive);
             if (!showBuild && !showMineFrame) { if (_placementGhostGo != null) _placementGhostGo.SetActive(false); return; }
             if (_placementGhostGo == null)
             {
