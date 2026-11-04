@@ -104,6 +104,8 @@ namespace Stratocraft.Character
         private float _duelistSlashProgress01;
         private int _duelistLastPlayerSwingId = -1;
         private bool _duelistStrikeResolvedThisSwing;
+        private int _duelistStrikeCounter;
+        private bool _duelistCurrentStrikeIsHeavySmash;
         private Vector2 _duelistCurrentBladeRad = new(0.2f, 0.8f);
         private Vector2 _duelistTargetBladeRad = new(0.2f, 0.8f);
         private GUIStyle? _popupStyle;
@@ -507,26 +509,39 @@ namespace Stratocraft.Character
                     else
                     {
                         _duelistAttackDir = _duelistGuardDir;
+                        _duelistStrikeCounter++;
+                        _duelistCurrentStrikeIsHeavySmash = (_duelistStrikeCounter % 3) == 0;
                         _duelistPhase = 1;
-                        _duelistStateTimer = 0.62f;
+                        _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.78f : 0.60f;
                         _duelistStrikeResolvedThisSwing = false;
+
+                        if (_duelistCurrentStrikeIsHeavySmash)
+                        {
+                            SpawnFloatingPopup(
+                                _duelistRoot.position + Vector3.up * 2.15f,
+                                $"⚠️ AĞIR YARMA DARBESİ GELİYOR ({GetDirectionLabel(_duelistAttackDir)} 5.4kg)! [Sabit Blok YARILIR -> RMB + Fare İle SAPTIR!]",
+                                new Color(1f, 0.55f, 0.12f),
+                                1.65f,
+                                15);
+                        }
                     }
                 }
             }
             else if (_duelistPhase == 1)
             {
                 // Telegraph / Wind-up: Kılıcı saldırı yönünün gerisine çekerek oyuncuya hangi yönden vuracağını net gösterir!
-                _duelistTargetBladeRad = GetQuadrantAngles(_duelistAttackDir) * 1.25f;
+                _duelistTargetBladeRad = GetQuadrantAngles(_duelistAttackDir) * (_duelistCurrentStrikeIsHeavySmash ? 1.38f : 1.25f);
                 if (_duelistStateTimer <= 0f)
                 {
                     _duelistPhase = 2;
                     _duelistSlashProgress01 = 0f;
-                    _duelistStateTimer = 0.36f;
+                    _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.44f : 0.36f;
                 }
             }
             else if (_duelistPhase == 2)
             {
-                _duelistSlashProgress01 = Mathf.Clamp01(_duelistSlashProgress01 + dt / 0.34f);
+                float slashDur = _duelistCurrentStrikeIsHeavySmash ? 0.42f : 0.34f;
+                _duelistSlashProgress01 = Mathf.Clamp01(_duelistSlashProgress01 + dt / slashDur);
                 Vector2 startRad = GetQuadrantAngles(_duelistAttackDir) * 1.22f;
                 Vector2 endRad = -startRad * 0.95f;
                 _duelistTargetBladeRad = Vector2.Lerp(startRad, endRad, _duelistSlashProgress01);
@@ -551,17 +566,32 @@ namespace Stratocraft.Character
             float bladeLerpSpeed = _duelistPhase == 2 ? 22f : 10f;
             _duelistCurrentBladeRad = Vector2.Lerp(_duelistCurrentBladeRad, _duelistTargetBladeRad, Mathf.Clamp01(dt * bladeLerpSpeed));
 
-            // Düellocunun kılıcını 3B uzayda konumlandır ve 5 namlu noktasını hesapla
+            // Düellocunun kılıcını 3B uzayda konumlandır ve 5 namlu noktasını hesapla:
+            // Phase 0 (Guard/Blok) sırasında NPC de kılıcını ucunu ileri dürtmek yerine YAN-SİPER BARİYERİ (npcTipDir.z = 0.12f) olarak tutar!
             Vector3 shoulderLocal = new Vector3(
                 0.34f - _duelistCurrentBladeRad.x * 0.32f,
                 1.22f + _duelistCurrentBladeRad.y * 0.28f,
                 0.42f + (_duelistPhase == 2 ? Mathf.Sin(_duelistSlashProgress01 * Mathf.PI) * 0.45f : 0.12f));
             _duelistSwordPivot.localPosition = shoulderLocal;
 
-            Vector3 npcTipDir = new Vector3(
-                -_duelistCurrentBladeRad.x * 0.75f,
-                _duelistCurrentBladeRad.y * 0.85f,
-                0.65f).normalized;
+            Vector3 npcTipDir;
+            if (_duelistPhase == 0)
+            {
+                // NPC Yan-Siper Blok Duruşu (ucunu ileri değil, gövde önünde yan/çapraz bariyer olarak tutar!)
+                float sideSign = Mathf.Abs(_duelistCurrentBladeRad.x) > 0.1f ? Mathf.Sign(_duelistCurrentBladeRad.x) : 1.0f;
+                npcTipDir = _duelistGuardDir == CombatDirectionQuadrant.Overhead
+                    ? new Vector3(0.92f, 0.32f, 0.10f).normalized
+                    : (_duelistGuardDir == CombatDirectionQuadrant.Lower
+                        ? new Vector3(sideSign * 0.48f, -0.86f, 0.10f).normalized
+                        : new Vector3(sideSign * 0.42f, 0.89f, 0.10f).normalized);
+            }
+            else
+            {
+                npcTipDir = new Vector3(
+                    -_duelistCurrentBladeRad.x * 0.75f,
+                    _duelistCurrentBladeRad.y * 0.85f,
+                    0.65f).normalized;
+            }
             _duelistSwordPivot.localRotation = Quaternion.LookRotation(Vector3.forward, npcTipDir);
 
             Vector3 npcHiltWorld = _duelistSwordPivot.position;
@@ -589,8 +619,8 @@ namespace Stratocraft.Character
             ReadOnlySpan<Vector3> pCurr = combatBridge.CurrBladeWorldPoints;
 
             // A) DÜELLOCU SALDIRIRKEN:
-            // 1) Oyuncu da kılıç savuruyorsa (veya Eskrim İğne Hamlesi yapıyorsa) -> HAVADA 3B KILIÇ ÇARPIŞMASI (SWORD CLASH / CHAMBER)!
-            // 2) Oyuncu Sağ Tık (RMB) ile doğru yönde Guard tutuyorsa -> FİZİKSEL PARRY & RIPOSTE AÇILIŞI!
+            // 1) Oyuncu da kılıç savuruyorsa -> HAVADA 3B KILIÇ ÇARPIŞMASI (SWORD CLASH / CHAMBER)!
+            // 2) Oyuncu Sağ Tık (RMB) ile doğru yönde Guard tutuyorsa -> FİZİKSEL BLOK, AĞIR DARBEDE BLOK YARILMASI VEYA SON-ANDA YÖNLÜ SAPTIRMA (DEFLECT)!
             if ((_duelistPhase == 1 && _duelistStateTimer < 0.24f) || _duelistPhase == 2)
             {
                 bool bladesIntersect = TryFindBladeVsBladeIntersection(pPrev, pCurr, out Vector3 clashWorldPos);
@@ -622,47 +652,79 @@ namespace Stratocraft.Character
                 {
                     _duelistStrikeResolvedThisSwing = true;
                     bool playerParryingDirection = combatBridge.IsParryStance &&
-                                                   (bladesIntersect || DoesPlayerGuardCoverAttack(_duelistAttackDir, combatBridge.CurrentBladeAnglesRad));
+                                                   (bladesIntersect ||
+                                                    combatBridge.IsActiveDeflectWindow ||
+                                                    DoesPlayerGuardCoverAttack(_duelistAttackDir, combatBridge.CurrentBladeAnglesRad));
 
                     if (playerParryingDirection)
                     {
-                        if (combatBridge.NotifyParryImpactAndCheckGuardBreak(16f, out float selfDmg, playerMissingArm))
+                        float npcStrikeMass = _duelistCurrentStrikeIsHeavySmash ? 5.40f : 1.85f;
+                        float npcStrikeSpeed = _duelistCurrentStrikeIsHeavySmash ? 7.6f : 5.1f;
+                        Vector2 incomingAttackDir = -GetQuadrantAngles(_duelistAttackDir).normalized;
+
+                        ParryResolutionOutcome parryOutcome = combatBridge.EvaluateIncomingStrikeAgainstPlayerGuard(
+                            npcStrikeMass, npcStrikeSpeed, incomingAttackDir, playerMissingArm,
+                            out float bleedThroughDmg, out string resSummary);
+
+                        Vector3 parryPos = bladesIntersect ? clashWorldPos : pCurr[2];
+
+                        if (parryOutcome == ParryResolutionOutcome.MasterDeflect)
                         {
-                            playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - selfDmg);
-                            PlaySwordClashClang(0.75f);
+                            _duelistPhase = 3;
+                            _duelistStateTimer = 2.15f;
+                            PlaySwordClashClang(1.12f);
+                            SpawnImpactBurst(parryPos, isSparks: true, count: 22, speed: 7.4f);
                             SpawnFloatingPopup(
-                                playerTransform.position + Vector3.up * 1.5f,
-                                $"⚠️ GUARD BREAK! (-{selfDmg:F0} HP Ağır Silah Cezası!)",
-                                new Color(1f, 0.3f, 0.3f),
-                                1.8f,
-                                15);
+                                parryPos + Vector3.up * 0.30f,
+                                $"⚡ SON ANDA YÖNLÜ SAPTIRMA (MASTER DEFLECT)! [{npcStrikeMass:F1}kg Darbe Saptırıldı -> 2.1x KONTRA!]",
+                                new Color(0.25f, 1f, 0.92f),
+                                2.1f,
+                                16);
+                            TriggerHitMarker(new Color(0.25f, 1f, 0.92f), "⚡ SAPTIRMA -> 2.1x KONTRA!");
                             return;
                         }
 
-                        _duelistPhase = 3;
-                        _duelistStateTimer = 1.75f;
-                        Vector3 parryPos = bladesIntersect ? clashWorldPos : pCurr[2];
-                        PlaySwordClashClang(0.95f);
-                        SpawnImpactBurst(parryPos, isSparks: true, count: 16, speed: 6.2f);
+                        if (parryOutcome == ParryResolutionOutcome.SolidParry)
+                        {
+                            _duelistPhase = 3;
+                            _duelistStateTimer = 1.65f;
+                            PlaySwordClashClang(0.95f);
+                            SpawnImpactBurst(parryPos, isSparks: true, count: 16, speed: 6.2f);
+                            SpawnFloatingPopup(
+                                parryPos + Vector3.up * 0.25f,
+                                "🛡️ SAĞLAM YAN-SİPER BLOK! (⚡ 1.8s RIPOSTE AÇILDI!)",
+                                new Color(0.45f, 1f, 0.65f),
+                                1.85f,
+                                16);
+                            TriggerHitMarker(new Color(0.45f, 1f, 0.65f), "🛡️ BLOK -> RIPOSTE!");
+                            return;
+                        }
+
+                        // GuardCrushedByMass veya MismatchedSelfRecoil:
+                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - bleedThroughDmg);
+                        PlaySwordClashClang(0.78f);
+                        PlayFleshCleaveHit(false);
+                        SpawnImpactBurst(parryPos, isSparks: true, count: 14, speed: 5.5f);
                         SpawnFloatingPopup(
-                            parryPos + Vector3.up * 0.25f,
-                            "🛡️ KUSURSUZ BLOK / PARRY! (⚡ 1.8s RIPOSTE AÇILDI!)",
-                            new Color(0.45f, 1f, 0.65f),
-                            1.85f,
-                            16);
-                        TriggerHitMarker(new Color(0.45f, 1f, 0.65f), "🛡️ PARRY -> RIPOSTE!");
-                        combatBridge.LastCombatActionText =
-                            $"🛡️ YÖNLÜ BLOK BAŞARILI ({GetDirectionLabel(_duelistAttackDir)})! Düellocu tökezledi -> Şimdi LMB ile 1.85x RIPOSTE vur!";
+                            playerTransform.position + Vector3.up * 1.55f,
+                            parryOutcome == ParryResolutionOutcome.GuardCrushedByMass
+                                ? $"💥 BLOK YARILDI (GUARD CRUSH)! -{bleedThroughDmg:F0} HP ({npcStrikeMass:F1}kg Darbeyi İnce Kılıçla Sabit Tutma -> RMB+Fare SAPTIR!)"
+                                : $"⚠️ UYUMSUZ SİLAH GUARD BREAK! (-{bleedThroughDmg:F0} HP)",
+                            new Color(1f, 0.42f, 0.18f),
+                            2.15f,
+                            15);
+                        TriggerHitMarker(new Color(1f, 0.42f, 0.18f), $"💥 BLOK YARILDI -{bleedThroughDmg:F0}");
                         return;
                     }
                     else if (distToPlayer <= 2.85f)
                     {
-                        float npcDmg = combatBridge.IsParryStance ? 5f : 12f;
+                        float baseNpcDmg = _duelistCurrentStrikeIsHeavySmash ? 19f : 12f;
+                        float npcDmg = combatBridge.IsParryStance ? (baseNpcDmg * 0.55f) : baseNpcDmg;
                         playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - npcDmg);
                         PlayFleshCleaveHit(false);
                         string blockHint = combatBridge.IsParryStance
-                            ? $"Yanlış Guard Yönü! ({GetDirectionLabel(_duelistAttackDir)} yönüne RMB tutmalıydın)"
-                            : $"RMB ile {GetDirectionLabel(_duelistAttackDir)} yönünde blok tut veya LMB ile kılıç çarpıştır!";
+                            ? $"Yanlış Guard Yönü! ({GetDirectionLabel(_duelistAttackDir)} yönüne RMB tut veya RMB+Fare ile SAPTIR!)"
+                            : $"RMB ile {GetDirectionLabel(_duelistAttackDir)} yönünde blok tut veya RMB+Fare ile SAPTIR!";
                         SpawnFloatingPopup(
                             _duelistRoot.position + Vector3.up * 1.85f,
                             $"❗ DÜELLOCU VURDU: -{npcDmg:F0} HP ({blockHint})",
@@ -695,35 +757,65 @@ namespace Stratocraft.Character
             _duelistLastPlayerSwingId = combatBridge.CurrentSwingId;
             CombatDirectionQuadrant playerAttackQuad = ClassifyPlayerSlashQuadrant(combatBridge.CurrentSlashDirUnit);
 
-            // Düellocu sersemlememişse (Phase != 3) ve oyuncunun saldırdığı yönü koruyorsa (veya genel blok şansı) -> DÜELLOCU BLOKLAR!
+            // Düellocu sersemlememişse (Phase != 3) ve oyuncunun saldırdığı yönü koruyorsa -> FİZİKSEL BLOK ETKİLEŞİMİ!
             bool npcCanBlock = _duelistPhase == 0 &&
                                !combatBridge.WasLastSlashRiposte &&
                                !combatBridge.WasLastSlashIaidoCharged &&
                                combatBridge.CurrentThrustExtensionMeters < 0.35f &&
                                (playerAttackQuad == _duelistGuardDir || _duelistMode == DuelistNpcMode.BlockPracticeOnly);
 
-            if (npcCanBlock && !combatBridge.IsGuardCrushActive)
+            bool wasGuardCrushed = false;
+            if (npcCanBlock)
             {
-                // NPC oyuncunun kılıcını kendi kılıcıyla bloklar!
                 _duelistCurrentBladeRad = GetQuadrantAngles(playerAttackQuad);
-                combatBridge.NotifySuccessfulParryOrClash(-combatBridge.CurrentSlashDirUnit, openRiposteWindow: false);
-                PlaySwordClashClang(0.92f);
-                SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 14, speed: 5.8f);
-                _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
-                SpawnFloatingPopup(
-                    pCurr[hitPt] + Vector3.up * 0.3f,
-                    $"🛡️ DÜELLOCU BLOKLADI! ({GetDirectionLabel(playerAttackQuad)} Kapalıydı -> Açık Yöne Vur veya [G] Juggernaut ile Blok Yar!)",
-                    new Color(0.85f, 0.9f, 1f),
-                    1.75f,
-                    14);
-                TriggerHitMarker(new Color(0.85f, 0.9f, 1f), "🛡️ NPC BLOKLADI");
-                combatBridge.LastCombatActionText =
-                    "🛡️ DÜELLOCU KILICINI BLOKLADI! (Açık bıraktığı yöne savur, saldırısını Parry yapıp Riposte vur veya [G] Çift El Yarma kullan!)";
-                return;
-            }
+                Vector2 npcGuardUnit = _duelistCurrentBladeRad.normalized;
+                bool npcDidDeflect = ((_duelistStrikeCounter % 2) == 1) &&
+                                     combatBridge.ActiveWeaponArchetype != CombatWeaponArchetype.Greatsword &&
+                                     !combatBridge.IsGuardCrushActive;
 
-            // İSABET VEYA JUGGERNAUT BLOK YARMA (GUARD CRUSH)!
-            bool wasGuardCrushed = npcCanBlock && combatBridge.IsGuardCrushActive;
+                PlayerBlockedReactionType blockedReaction = combatBridge.ResolvePlayerAttackAgainstEnemyBlock(
+                    defenderWeaponMassKg: 1.85f,
+                    defenderGuardDirUnit: npcGuardUnit,
+                    defenderDidActiveDeflect: npcDidDeflect,
+                    playerMissingArm: playerMissingArm,
+                    out _);
+
+                if (blockedReaction == PlayerBlockedReactionType.CrushedEnemyBlock)
+                {
+                    // Oyuncunun ağır/ivmeli kılıcı (örn. Zweihänder 5.6kg veya hızlı kurulmuş darbe) NPC bloğunu YARIP GEÇTİ!
+                    wasGuardCrushed = true;
+                }
+                else if (blockedReaction == PlayerBlockedReactionType.GlancingDeflection)
+                {
+                    // YÖN SAPMASI (GLANCING DEFLECTION): Oyuncunun kılıcı 90° çapraz yöne kayarak saptı!
+                    PlaySwordClashClang(1.04f);
+                    SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 16, speed: 6.4f);
+                    _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
+                    SpawnFloatingPopup(
+                        pCurr[hitPt] + Vector3.up * 0.32f,
+                        "↩️ YÖN SAPMASI (GLANCING DEFLECT)! Kılıcın Rakibin Çapraz Siperinden Yana Kaydı!",
+                        new Color(0.55f, 0.92f, 1f),
+                        1.85f,
+                        15);
+                    TriggerHitMarker(new Color(0.55f, 0.92f, 1f), "↩️ YÖN SAPMASI!");
+                    return;
+                }
+                else
+                {
+                    // SERT GERİ SEKME (HARD REBOUND BOUNCE): Kılıç geldiği yöne fiziksel yay tepkisiyle geri sekti!
+                    PlaySwordClashClang(0.92f);
+                    SpawnImpactBurst(pCurr[hitPt], isSparks: true, count: 15, speed: 5.9f);
+                    _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
+                    SpawnFloatingPopup(
+                        pCurr[hitPt] + Vector3.up * 0.32f,
+                        $"🛡️ SERT GERİ SEKME (REBOUND)! ({GetDirectionLabel(playerAttackQuad)} Kapalıydı -> Açık Yöne Vur veya Ağır Kılıçla Bloğu Yar!)",
+                        new Color(0.88f, 0.90f, 1f),
+                        1.85f,
+                        14);
+                    TriggerHitMarker(new Color(0.88f, 0.90f, 1f), "🛡️ GERİ SEKME (REBOUND)");
+                    return;
+                }
+            }
             float uHit = (hitPt + 1) * 0.20f;
             string zoneName = uHit >= 0.65f ? "Foible (Uç)" : (uHit <= 0.35f ? "Forte" : "Mesne");
             float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);

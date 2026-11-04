@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#022` (Sağ Tık `RMB` Blokta Kütle Ölçekli Ağırlık/Hız Kısıtı + Kılıcın Ağırlığına Göre Oyuncu Gövdesini ve Kamerayı Savurma/Çekme Eylemsizliği `PendingBodyMomentumLocalVel` + `[F10]` Düellocu NPC & Eğitim Kuklası) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T14:19:00+03:00` |
+| **Devir Numarası** | `#023` (3B Zırhlı Eldiven/Bilek Kavraması & Et Yarma/Geri Tepme Yay Fiziği + Sağ Tık `RMB` Yan-Siper Çapraz Blok Duruşu + Kütle/İvme Blok Yarma `GuardCrushedByMass` vs Son Anda Yönlü Saptırma `MasterDeflect` + Bloklanan Kılıcın 3 Fiziksel Tepkisi `CrushedEnemyBlock / GlancingDeflection / HardReboundBounce`) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T15:19:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Kılıç Ağırlık/Blok ve Oyuncu Savurma Eylemsizliği (Devir #022) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da Test Etmesi` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Kılıç Kavrama/Et Yarma Hissiyatı, Yan-Siper Blok, Blok Yarma & Son Anda Saptırma Sistemi (Devir #023) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da Test Etmesi` |
 | **Aktif Test Durumu** | `34/34 Unity EditMode PASS`, `8/8 Unity PlayMode PASS` (`Toplam 42/42 Unity Test PASS`), `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -147,6 +147,14 @@
 6. **Sağ Tık (`RMB`) Blokta Kütle Ölçekli Ağırlık & Kılıcın Oyuncuyu Savurma Eylemsizliği (Devir `#022`):**
    - **Sağ Tık (`RMB`) Blok Taşıma Hızı Silah Kütlesine Bağlandı (`guardHandlingFactor`):** Önceden `RMB` basılıyken sabit `0.24f` çarpanı ve `dt * 26f` anlık açı kilitlemesi nedeniyle `5.60 kg` Zweihänder bile `0.95 kg` Rapier kadar hızlı sallanabiliyordu. Artık `RMB` blokta hem fare hassasiyeti hem saniyedeki maksimum açısal hız sınırı (`maxGuardRadPerSec`) hem de PD bilek takip oranı `(1.85 / massKg)^1.15` ile ölçekleniyor; `0.95 kg` Rapier anında bilekten dönerken `5.60 kg` Ağır Kılıç sağ tık blokta da gerçekten ağır, oturaklı ve eylemsizlikli hareket ediyor.
    - **Kılıcın Ağırlığına Göre Oyuncu Gövdesini ve Kamerayı Savurma/Çekme (`PendingBodyMomentumLocalVel` & `ApplyWeaponMomentumHorizontalStep`):** Savurma esnasında oluşan doğrusal/merkezkaç momentum ve omuz dönüşü `(massKg / 1.85)^1.38` ile ölçeklenerek hem kamerayı yumuşakça savurma yönüne çekiyor (`Rapier ~2.9°` vs `Zweihänder ~24°`) hem de `Stage1PlayerMovementBridge.ApplyWeaponMomentumHorizontalStep` üzerinden oyuncu karakterinin ayaklarını/gövdesini voksel çarpışma korumalı olarak savurma yönüne fiziksel olarak çekiyor (`Rapier ~0.27 m/s` neredeyse sabit vs `Zweihänder ~3.1 m/s` güçlü savrulma!).
+7. **Devir `#023` — 3B Zırhlı Eldiven/Bilek Kavraması, Et Yarma/Geri Tepme Hissiyatı, Yan-Siper (`Crosswise`) `RMB` Blok, Blok Yarma (`GuardCrushedByMass`) vs Son Anda Yönlü Saptırma (`MasterDeflect`) ve Bloklanan Kılıcın 3 Fiziksel Tepkisi:**
+   - **Eldiven & Ön-Kol Kavraması + 2. Derece Bilek Geri Tepme Yayı + 2-Fazlı Et Yarma (`Meat-Bite Drag -> Exit Burst`):** Kılıç kabzasının havada boşlukta uçuyormuş gibi görünmesini engellemek için kabzayı saran 3B zırhlı sağ/sol eldiven, parmak boğumları, başparmak kilidi ve ön-kol zırhı (`RebuildWeaponArchetypeVisualMesh`), organik nefes/bilek salınımı (`_gripBreathPhase`), 2. derece sönümlü bilek geri tepme yayı (`_wristRecoilOffset`) ve kamera darbe sarsıntısı (`_cameraImpactKickDeg`) eklendi. Kılıç hedefi kestiğinde ilk `%65`'lik fazda kemiğe/ete saplanma direnciyle `%24` hıza düşer, son `%35`'lik fazda `%138` hız patlamasıyla eti yarıp çıkar.
+   - **Sağ Tık (`RMB`) Blokta Yan/Çapraz Siper Duruşu (`Crosswise Barrier`, `tipZ <= 0.09f`):** `RMB` blokta kılıç artık ucunu mantıksızca ileri (`+Z`) uzatmaz; gelen saldırı düzlemine **dik/çapraz (`Yan Siper Bariyeri`)** olarak tutulur (üst blokta yatay çatı siperi `Ochs`, alt blokta çapraz asılı bariyer `Pflug/Alber`, sağ/sol blokta dikey-çapraz yan duvar ve keskin ağız dışarı dönük).
+   - **Kütle/İvme ile Blok Yarılması (`GuardCrushedByMass`) vs Son Anda Yönlü Saptırma (`MasterDeflect`):** Blok artık sınırsız bir koruma değildir; gelen darbenin impulsu ($J = m \cdot v \cdot \text{İvme} \cdot \text{StilGücü}$) savunan kılıcın sabit blok kapasitesini ($C \propto m_{\text{savunan}}^{1.35}$) aşarsa (örn. `5.40 kg` ağır darbeyi `0.95 kg` ince Rapier ile sabit bloklamaya çalışmak) **Blok Yarılır (`GuardCrushedByMass`)**, kılıç geriye savrulur ve sızan hasar vurur. Ancak oyuncu darbe tam gelirken (`0.28 sn` penceresinde) **`RMB` basılıyken fareyi ters/çapraz bir yöne savurursa (`IsActiveDeflectWindow`)**, `0.95 kg` Rapier ile bile `5.60 kg` Zweihänder darbesini **hasarsız yana saptırır (`MasterDeflect`)** ve `2.1x` Kontra penceresi açar.
+   - **Oyuncunun Kılıcı Bloklandığında 3 Farklı Fiziksel Tepki (`ResolvePlayerAttackAgainstEnemyBlock`):**
+     1. **`CrushedEnemyBlock` (Blok Yarma):** Ağır/ivmeli kılıç düşmanın hafif bloğunu ezip içinden geçer, kesim durmaz ve `%55` sızan hasar vurur.
+     2. **`GlancingDeflection` (Yön Sapması):** Çapraz açılı darbe veya düşmanın son anda saptırması kılıcı `90°` yana/aşağı kaydırarak saptırır ve omuzu savurur.
+     3. **`HardReboundBounce` (Sert Geri Sekme):** Kafa kafaya sağlam bloğa çarpan kılıç `-_slashDirUnit` yönünde fiziksel yay tepkisiyle geriye seker (`_reboundTimer`).
 
 ---
 

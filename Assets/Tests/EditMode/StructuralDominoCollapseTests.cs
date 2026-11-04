@@ -366,6 +366,123 @@ namespace Stratocraft.Tests.EditMode
                 "5.6kg Agir Kilic savruldugunda oyuncunun govdesini 0.95kg Rapier'den en az 2.5 kat daha guclu savurmalidir!");
             Assert.That(System.Math.Abs(heavyYawEnd - heavyYawStart), Is.GreaterThan(System.Math.Abs(rapierYawEnd - rapierYawStart) * 2.0f),
                 "5.6kg Agir Kilic savruldugunda oyuncunun omuz/bakis acisini hafif kilictan cok daha fazla cekmelidir!");
+
+            // 7) Sag Tik (RMB) Blok Yonu: Kilic ucu ileri (+Z) degil, gelen saldiri duzlemine DIK/YAN (Crosswise Barrier) tutulmalidir!
+            var dummyCamGo = new UnityEngine.GameObject("TestCombatCam");
+            var dummyCam = dummyCamGo.AddComponent<UnityEngine.Camera>();
+            var dummyPivotGo = new UnityEngine.GameObject("TestWeaponPivot");
+            dummyPivotGo.transform.SetParent(dummyCamGo.transform, worldPositionStays: false);
+            try
+            {
+                var parryOrientCombat = new Stage1DirectionalCombatBridge();
+                parryOrientCombat.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Longsword, CombatMartialStance.HighGuard_VomTag);
+                float pYaw = 0f, pPitch = 0f;
+                for (int f = 0; f < 10; f++)
+                {
+                    parryOrientCombat.StepCombatAndCameraInput(
+                        -0.8f, 0.2f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                        canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                        ref pYaw, ref pPitch, out _, out _, out _);
+                    parryOrientCombat.ApplyInertialWeaponTransform(
+                        dummyPivotGo.transform, dummyCam, UnityEngine.Vector3.zero, UnityEngine.Quaternion.identity, isFirstPersonMode: true);
+                }
+                float forwardDot = UnityEngine.Mathf.Abs(UnityEngine.Vector3.Dot(dummyPivotGo.transform.up, dummyCamGo.transform.forward));
+                Assert.That(forwardDot, Is.LessThan(0.25f),
+                    "RMB blok sirasinda kilic ucu ileriye (+Z) degil, saldiri yonune dik/capraz yan siper bariyeri olarak tutulmalidir!");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(dummyPivotGo);
+                UnityEngine.Object.DestroyImmediate(dummyCamGo);
+            }
+
+            // 8) Kutle & Momentum Blok Yarilmasi (GuardCrushedByMass) vs. Son Anda Saptirma (MasterDeflect):
+            var lightDefender = new Stage1DirectionalCombatBridge();
+            lightDefender.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Rapier, CombatMartialStance.HighGuard_VomTag);
+            float ldYaw = 0f, ldPitch = 0f;
+            // Sabit (statik) RMB blok: fare son anda saptirma yapmiyor (mx=0, my=0)
+            for (int f = 0; f < 25; f++)
+            {
+                lightDefender.StepCombatAndCameraInput(
+                    0f, 0f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref ldYaw, ref ldPitch, out _, out _, out _);
+            }
+            Assert.That(lightDefender.IsActiveDeflectWindow, Is.False);
+            UnityEngine.Vector2 guardDir = lightDefender.CurrentBladeAnglesRad.normalized;
+            ParryResolutionOutcome crushOutcome = lightDefender.EvaluateIncomingStrikeAgainstPlayerGuard(
+                attackerWeaponMassKg: 5.40f, attackerSwingSpeedMps: 7.2f,
+                incomingAttackDirUnit: guardDir, playerMissingArm: false,
+                out float crushBleedDamage, out _);
+            Assert.That(crushOutcome, Is.EqualTo(ParryResolutionOutcome.GuardCrushedByMass),
+                "0.95kg Ince Kilic (Rapier) ile 5.40kg Agir Kilic darbesini sabit (statik) bloklamak imkansiz olmali ve blok yarilmalidir!");
+            Assert.That(crushBleedDamage, Is.GreaterThan(5f),
+                "Blok yarildiginda (GuardCrushedByMass) oyuncuya sizan darbe hasari uygulanmalidir!");
+
+            // Simdi son anda RMB basiliyken ters/capraz yone hizli fare hareketi (Active Deflect Flick) yapalim:
+            var lightDeflectDefender = new Stage1DirectionalCombatBridge();
+            lightDeflectDefender.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Rapier, CombatMartialStance.HighGuard_VomTag);
+            lightDeflectDefender.StepCombatAndCameraInput(
+                -1.35f, 0.65f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                ref ldYaw, ref ldPitch, out _, out _, out _);
+            Assert.That(lightDeflectDefender.IsActiveDeflectWindow, Is.True,
+                "RMB basiliyken son anda yapilan hizli yonlendirme (flick) Saptirma (Active Deflect) penceresini acmalidir!");
+            ParryResolutionOutcome deflectOutcome = lightDeflectDefender.EvaluateIncomingStrikeAgainstPlayerGuard(
+                attackerWeaponMassKg: 5.40f, attackerSwingSpeedMps: 7.2f,
+                incomingAttackDirUnit: guardDir, playerMissingArm: false,
+                out float deflectBleedDamage, out _);
+            Assert.That(deflectOutcome, Is.EqualTo(ParryResolutionOutcome.MasterDeflect),
+                "Son anda yapilan Saptirma (MasterDeflect) ile 0.95kg Rapier bile 5.40kg Agir Kilic darbesinin yonunu saptirabilmelidir!");
+            Assert.That(deflectBleedDamage, Is.EqualTo(0f));
+            Assert.That(lightDeflectDefender.RiposteWindowTimer, Is.GreaterThan(1.5f));
+
+            // 9) Oyuncunun Kilici Bloklandiginda Fiziksel Tepkiler (CrushedEnemyBlock, GlancingDeflection, HardReboundBounce):
+            var heavyAttacker = new Stage1DirectionalCombatBridge();
+            heavyAttacker.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Greatsword, CombatMartialStance.TwoHand_Juggernaut);
+            float haYaw = 0f, haPitch = 0f;
+            for (int f = 0; f < 8; f++)
+            {
+                heavyAttacker.StepCombatAndCameraInput(
+                    f == 0 ? 1.8f : 0.4f, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref haYaw, ref haPitch, out _, out _, out _);
+            }
+            PlayerBlockedReactionType heavyVsLightReaction = heavyAttacker.ResolvePlayerAttackAgainstEnemyBlock(
+                defenderWeaponMassKg: 1.40f, defenderGuardDirUnit: new UnityEngine.Vector2(1f, 0f),
+                defenderDidActiveDeflect: false, playerMissingArm: false, out _);
+            Assert.That(heavyVsLightReaction, Is.EqualTo(PlayerBlockedReactionType.CrushedEnemyBlock),
+                "5.60kg Agir Kilic hizla savruldugunda hafif dusman blogunu yarip gecmelidir (CrushedEnemyBlock)!");
+
+            var lightAttacker = new Stage1DirectionalCombatBridge();
+            lightAttacker.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Rapier, CombatMartialStance.Fencing_Punta);
+            for (int f = 0; f < 6; f++)
+            {
+                lightAttacker.StepCombatAndCameraInput(
+                    f == 0 ? 1.2f : 0f, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref haYaw, ref haPitch, out _, out _, out _);
+            }
+            PlayerBlockedReactionType deflectReaction = lightAttacker.ResolvePlayerAttackAgainstEnemyBlock(
+                defenderWeaponMassKg: 1.85f, defenderGuardDirUnit: new UnityEngine.Vector2(0f, 1f),
+                defenderDidActiveDeflect: true, playerMissingArm: false, out _);
+            Assert.That(deflectReaction, Is.EqualTo(PlayerBlockedReactionType.GlancingDeflection),
+                "Dusman saptirma yaptiginda veya egik aciyla carpildiginda oyuncunun kilici yana kaymalidir (GlancingDeflection)!");
+            Assert.That(lightAttacker.ReboundTimer, Is.GreaterThan(0.10f));
+
+            for (int f = 0; f < 6; f++)
+            {
+                lightAttacker.StepCombatAndCameraInput(
+                    f == 0 ? 1.2f : 0f, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref haYaw, ref haPitch, out _, out _, out _);
+            }
+            PlayerBlockedReactionType bounceReaction = lightAttacker.ResolvePlayerAttackAgainstEnemyBlock(
+                defenderWeaponMassKg: 2.80f, defenderGuardDirUnit: lightAttacker.CurrentSlashDirUnit,
+                defenderDidActiveDeflect: false, playerMissingArm: false, out _);
+            Assert.That(bounceReaction, Is.EqualTo(PlayerBlockedReactionType.HardReboundBounce),
+                "Hafif kilic saglam bir bloga dik carptiginda geriye dogru sert sekmelidir (HardReboundBounce)!");
+            Assert.That(lightAttacker.ReboundTimer, Is.GreaterThan(0.15f));
 #endif
 
             var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);
