@@ -232,6 +232,11 @@ namespace Stratocraft.Character
                 out _, out _, out _, _rigAnimator.PlayerLeftArmSevered,
                 isPlayerAirborne, _movementBridge.VerticalVelocity);
             transform.rotation = Quaternion.Euler(0f, _cameraYaw, 0f);
+            Vector3 weaponMomentumDelta = _combatBridge.ConsumePendingBodyMomentumWorldDelta(transform, dt);
+            if (weaponMomentumDelta.sqrMagnitude > 0.000001f)
+            {
+                _movementBridge.ApplyWeaponMomentumHorizontalStep(transform, _worldChunks, weaponMomentumDelta, dt);
+            }
 
             Transform? activeTool = slot == 2 && PickaxeVisualRoot != null
                 ? PickaxeVisualRoot.transform

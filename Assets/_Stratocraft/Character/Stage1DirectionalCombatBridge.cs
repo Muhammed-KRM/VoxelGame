@@ -119,8 +119,10 @@ namespace Stratocraft.Character
         private Vector3 _pendingWallHitWorldPos;
         private byte _pendingWallHitMaterialId;
         private float _pendingWallImpactSpeedMps;
+        private Vector3 _bodyMomentumLocalVel;
 
         public CombatWeaponArchetype ActiveWeaponArchetype { get; private set; } = CombatWeaponArchetype.Longsword;
+        public Vector3 PendingBodyMomentumLocalVel => _bodyMomentumLocalVel;
         public CombatMartialStance ActiveMartialStance { get; private set; } = CombatMartialStance.HighGuard_VomTag;
         public bool AllDojoStancesUnlocked { get; set; } = true;
         public float StanceMastery01 { get; set; } = 0.65f;
@@ -409,6 +411,25 @@ namespace Stratocraft.Character
             LastCombatActionText = $"DÖVÜŞ STİLİ DEĞİŞTİ [G]: {GetStanceDisplayName(ActiveMartialStance)} + {wName}{warn}";
         }
 
+        public void SetWeaponArchetypeAndStance(
+            CombatWeaponArchetype archetype,
+            CombatMartialStance stance,
+            Transform? weaponPivot = null)
+        {
+            ActiveWeaponArchetype = archetype;
+            ActiveMartialStance = stance;
+            _guardAnglesRad = GetDefaultStanceGuardAngles(stance);
+            _targetWristAnglesRad = _guardAnglesRad;
+            _currentBladeAnglesRad = _guardAnglesRad;
+            _angularVelocityRadPerSec = Vector2.zero;
+            _bodyMomentumLocalVel = Vector3.zero;
+            _slashPhase = BallisticSlashPhase.IdleInGuard;
+            _postSwingRecoveryTimer = 0f;
+            _overswingStaggerTimer = 0f;
+            _builtMeshArchetypeId = -1;
+            ApplyWeaponArchetypeScale(weaponPivot);
+        }
+
         public void CycleWeaponArchetype(Transform? weaponPivot)
         {
             ActiveWeaponArchetype = (CombatWeaponArchetype)(((int)ActiveWeaponArchetype + 1) % 4);
@@ -629,6 +650,21 @@ namespace Stratocraft.Character
             return true;
         }
 
+        /// <summary>
+        /// Kılıcın ağırlığına göre savurma veya ağır siper taşıma sırasında oyuncunun gövdesini
+        /// savurma yönüne doğru çeken/savuran dünya uzayı yatay yer değiştirme vektörünü döndürür.
+        /// </summary>
+        public Vector3 ConsumePendingBodyMomentumWorldDelta(Transform? playerTransform, float dt)
+        {
+            if (playerTransform == null || _bodyMomentumLocalVel.sqrMagnitude < 0.0001f)
+            {
+                return Vector3.zero;
+            }
+            Vector3 worldVel = playerTransform.TransformDirection(_bodyMomentumLocalVel);
+            worldVel.y = 0f;
+            return worldVel * Mathf.Clamp(dt, 0.0005f, 0.05f);
+        }
+
         public void TriggerHitStop(float durationSeconds = 0.042f)
         {
             _hitStopTimer = Mathf.Max(_hitStopTimer, Mathf.Clamp(durationSeconds, 0.01f, 0.09f));
@@ -815,15 +851,25 @@ namespace Stratocraft.Character
             Vector2 mouseFlickVec = new Vector2(rawMouseX, rawMouseY);
             float mouseFlickMag = mouseFlickVec.magnitude;
 
-            // 1) SAĞ TIK (RMB): Kılıcın Guard/Duruş Konumunu Serbestçe Ayarla (Aşağı İndirme Dahil!) ve Fiziksel Blok Tut
+            // 1) SAĞ TIK (RMB): Kılıcın Guard/Duruş Konumunu Kütlesine Göre Ayarla (Aşağı İndirme Dahil!) ve Fiziksel Blok Tut
             if (_isParryStance)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
-                _postSwingRecoveryTimer = 0f;
+                GetWeaponStats(ActiveWeaponArchetype, out _, out float parryWMass, out _, out _);
+                float effectiveParryMass = Mathf.Max(0.75f, parryWMass * Mathf.Clamp(weaponMassScale, 0.75f, 1.65f));
+                // Rapier (0.95kg) -> ~2.15x çevik | Longsword (1.85kg) -> 1.00x dengeli | Greatsword (5.60kg) -> ~0.28x ağır ve oturaklı!
+                float massHandlingFactor = Mathf.Pow(1.85f / effectiveParryMass, 1.15f);
+                float stanceGuardFactor = isMismatched ? 0.38f : Mathf.Clamp(stanceSpeedMult, 0.75f, 1.25f);
+                float recoveryGuardPenalty = _postSwingRecoveryTimer > 0f ? 0.42f : 1.0f;
+                float guardHandlingFactor = Mathf.Clamp(massHandlingFactor * stanceGuardFactor * recoveryGuardPenalty, 0.14f, 2.35f);
+
                 if (mouseFlickMag > 0.012f)
                 {
-                    // İç ölü bölge engeli kaldırıldı: fareyi aşağı çektiğinde kılıç kesintisiz, hızlı ve net biçimde aşağı iner ve ucu aşağı döner!
-                    _guardAnglesRad += mouseFlickVec * 0.24f;
+                    // Kılıcın ağırlığına göre hem hassasiyet hem de saniyedeki maksimum açısal blok taşıma hızı sınırlandırılır:
+                    Vector2 rawGuardDelta = mouseFlickVec * (0.148f * guardHandlingFactor);
+                    float maxGuardRadPerSec = Mathf.Clamp(8.2f * guardHandlingFactor, 1.55f, 16.5f);
+                    Vector2 clampedGuardDelta = Vector2.ClampMagnitude(rawGuardDelta, maxGuardRadPerSec * Mathf.Max(0.014f, dt));
+                    _guardAnglesRad += clampedGuardDelta;
                     _guardAnglesRad.x = Mathf.Clamp(_guardAnglesRad.x, -1.25f, 1.25f);
                     _guardAnglesRad.y = Mathf.Clamp(_guardAnglesRad.y, -1.18f, 1.18f);
                     _preChamberWindowTimer = 2.5f;
@@ -1078,13 +1124,29 @@ namespace Stratocraft.Character
                 }
                 _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, 0.65f);
 
-                // KESİM SIRASINDA DOĞAL VE YUMUŞAK OMUZ TAKİBİ (Kesim bittikten sonra ani atlama ASLA yapmaz!):
-                float shoulderFollowGain = isMismatched ? 0.10f : (0.036f * Mathf.Clamp(massRatio, 0.75f, 1.45f));
+                // KILICIN AĞIRLIĞINA GÖRE OYUNCU GÖVDESİNİ VE KAMERAYI SAVURMA ETKİSİ (Mass-Scaled Momentum Pull):
+                // Rapier (0.95kg) -> ~0.40x (yalnızca hafif bilek hareketi, oyuncuyu neredeyse hiç savurmaz)
+                // Katana (1.35kg) -> ~0.65x (kontrollü omuz dönüşü)
+                // Longsword (1.85kg) -> 1.00x (dengeli şövalye omuz ve adım çekişi)
+                // Greatsword (5.60kg) -> ~4.61x (uyumsuz tek-elde ~7.60x: hem bakış açısını hem de oyuncu gövdesini savurma yönüne güçlüce çeker!)
+                float massPullFactor = Mathf.Pow(Mathf.Max(0.8f, wMass) / 1.85f, 1.38f) * (isMismatched ? 1.65f : 1.0f);
                 float bellWeight = Mathf.Sin(s * Mathf.PI);
-                float yawFollowDeg = _angularVelocityRadPerSec.x * effectiveDt * Mathf.Rad2Deg * shoulderFollowGain * bellWeight;
-                float pitchFollowDeg = -_angularVelocityRadPerSec.y * effectiveDt * Mathf.Rad2Deg * (shoulderFollowGain * 0.55f) * bellWeight;
-                cameraYawDeg += Mathf.Clamp(yawFollowDeg, -1.8f, 1.8f);
-                cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + Mathf.Clamp(pitchFollowDeg, -1.1f, 1.1f), -84f, 84f);
+                float clampedTotalPullDeg = Mathf.Min(isMismatched ? 32.0f : 24.5f, 7.4f * massPullFactor);
+                float instantArcRate = stepProgress * (Mathf.PI * 0.5f) * bellWeight;
+                float yawFollowDeg = _slashDirUnit.x * clampedTotalPullDeg * instantArcRate;
+                float pitchFollowDeg = -_slashDirUnit.y * (clampedTotalPullDeg * 0.58f) * instantArcRate;
+                cameraYawDeg += Mathf.Clamp(yawFollowDeg, -2.4f, 2.4f);
+                cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + Mathf.Clamp(pitchFollowDeg, -1.5f, 1.5f), -84f, 84f);
+
+                // Kılıcın doğrusal/merkezkaç eylemsizliğinin oyuncu gövdesini savurma yönüne fiziksel çekişi:
+                float inertiaSurge = Mathf.Sin(Mathf.Pow(s, 0.85f) * Mathf.PI);
+                float lateralThrowSpeed = _slashDirUnit.x * (0.66f * massPullFactor) * inertiaSurge;
+                float forwardThrowSpeed = (0.38f + Mathf.Abs(_slashDirUnit.y) * 0.34f) * (0.55f * massPullFactor) * inertiaSurge;
+                Vector3 targetThrowLocalVel = new Vector3(
+                    Mathf.Clamp(lateralThrowSpeed, -3.2f, 3.2f),
+                    0f,
+                    Mathf.Clamp(forwardThrowSpeed, -1.2f, 2.8f));
+                _bodyMomentumLocalVel = Vector3.Lerp(_bodyMomentumLocalVel, targetThrowLocalVel, Mathf.Clamp01(effectiveDt * 18f));
 
                 if (_slashProgress01 >= 1.0f)
                 {
@@ -1125,11 +1187,39 @@ namespace Stratocraft.Character
             {
                 StepSecondOrderRotationalInertia(subDt, clampedMass);
             }
-            if (_isParryStance && !isMismatched)
+
+            GetWeaponStats(ActiveWeaponArchetype, out _, out float idleWMass, out _, out _);
+            if (_isParryStance)
             {
-                // Sağ tık (RMB) ile kılıcı konumlandırırken gecikmesiz, net el takibi
-                _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, Mathf.Clamp01(dt * 26f));
+                if (!isMismatched)
+                {
+                    // Sağ tık (RMB) ile kılıcı konumlandırırken de kütleye bağlı takip hızı:
+                    // Hafif Rapier anında bileği takip ederken, 5.6kg Zweihänder kendi ağırlığıyla ağır ve oturaklı kayar!
+                    float effIdleMass = Mathf.Max(0.75f, idleWMass * Mathf.Clamp(weaponMassScale, 0.75f, 1.65f));
+                    float idleHandling = Mathf.Pow(1.85f / effIdleMass, 1.15f) * Mathf.Clamp(stanceSpeedMult, 0.75f, 1.25f);
+                    float parryAssistRate = Mathf.Clamp(11.5f * idleHandling, 1.85f, 24.0f);
+                    _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, Mathf.Clamp01(effectiveDt * parryAssistRate));
+                }
+
+                // Ağır bir kılıcı (örn. 5.6kg Zweihänder) sağ tık blokta sağa/sola taşırken bile eylemsizliği oyuncuyu hafifçe çeker:
+                if (idleWMass >= 2.2f)
+                {
+                    float heavyGuardPull = Mathf.Clamp((idleWMass - 1.85f) / 3.75f, 0f, 1.35f) * (isMismatched ? 1.45f : 1.0f);
+                    cameraYawDeg += Mathf.Clamp(_angularVelocityRadPerSec.x * effectiveDt * Mathf.Rad2Deg * 0.085f * heavyGuardPull, -0.85f, 0.85f);
+                    cameraPitchDeg = Mathf.Clamp(
+                        cameraPitchDeg + Mathf.Clamp(-_angularVelocityRadPerSec.y * effectiveDt * Mathf.Rad2Deg * 0.055f * heavyGuardPull, -0.55f, 0.55f),
+                        -84f, 84f);
+                    Vector3 guardHeaveVel = new Vector3(
+                        Mathf.Clamp(_angularVelocityRadPerSec.x * 0.16f * heavyGuardPull, -0.95f, 0.95f),
+                        0f,
+                        Mathf.Clamp(-_angularVelocityRadPerSec.y * 0.09f * heavyGuardPull, -0.55f, 0.55f));
+                    _bodyMomentumLocalVel = Vector3.Lerp(_bodyMomentumLocalVel, guardHeaveVel, Mathf.Clamp01(effectiveDt * 10f));
+                    return;
+                }
             }
+
+            float frictionDecay = Mathf.Lerp(14.5f, 6.2f, Mathf.Clamp01((idleWMass - 0.95f) / 4.65f));
+            _bodyMomentumLocalVel = Vector3.MoveTowards(_bodyMomentumLocalVel, Vector3.zero, effectiveDt * frictionDecay);
         }
 
         private void StepSecondOrderRotationalInertia(float subDt, float massScale)
@@ -1138,8 +1228,8 @@ namespace Stratocraft.Character
             float inertia = ComputeWeaponMomentOfInertia(wMass * massScale, wLen);
             float kpMuscle = _slashPhase == BallisticSlashPhase.ActiveFullArcSwing
                 ? 92.0f
-                : (_isParryStance ? 128.0f : (_slashPhase == BallisticSlashPhase.ReChamberingToStart ? 78.0f : 48.0f));
-            float kdDamping = _isParryStance ? 8.0f : 7.0f;
+                : (_isParryStance ? 86.0f : (_slashPhase == BallisticSlashPhase.ReChamberingToStart ? 78.0f : 48.0f));
+            float kdDamping = _isParryStance ? 9.5f : 7.0f;
             float aeroDragCoeff = 0.14f;
 
             Vector2 angleError = _targetWristAnglesRad - _currentBladeAnglesRad;

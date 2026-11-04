@@ -313,6 +313,59 @@ namespace Stratocraft.Tests.EditMode
             combat.NotifySuccessfulParryOrClash(new UnityEngine.Vector2(0.3f, 0.4f), openRiposteWindow: true);
             Assert.That(combat.RiposteWindowTimer, Is.GreaterThan(1.0f),
                 "Basarili blok veya kilic carpismasi sonrasi Usta Kontra (Riposte) penceresi acilmalidir!");
+
+            // 5) Sag Tik (RMB) Blok Tasima Hizi ve Savurma Eylemsizligi Silah Agirligina Gore Degismelidir!
+            var rapierCombat = new Stage1DirectionalCombatBridge();
+            rapierCombat.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Rapier, CombatMartialStance.HighGuard_VomTag);
+            UnityEngine.Vector2 rapierStartBlade = rapierCombat.CurrentBladeAnglesRad;
+            float rYaw = 0f, rPitch = 0f;
+            for (int f = 0; f < 5; f++)
+            {
+                rapierCombat.StepCombatAndCameraInput(
+                    -1.4f, -1.4f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref rYaw, ref rPitch, out _, out _, out _);
+            }
+            float rapierGuardShift = UnityEngine.Vector2.Distance(rapierStartBlade, rapierCombat.CurrentBladeAnglesRad);
+
+            var heavyCombat = new Stage1DirectionalCombatBridge();
+            heavyCombat.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Greatsword, CombatMartialStance.HighGuard_VomTag);
+            UnityEngine.Vector2 heavyStartBlade = heavyCombat.CurrentBladeAnglesRad;
+            float hYaw = 0f, hPitch = 0f;
+            for (int f = 0; f < 5; f++)
+            {
+                heavyCombat.StepCombatAndCameraInput(
+                    -1.4f, -1.4f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref hYaw, ref hPitch, out _, out _, out _);
+            }
+            float heavyGuardShift = UnityEngine.Vector2.Distance(heavyStartBlade, heavyCombat.CurrentBladeAnglesRad);
+            Assert.That(heavyGuardShift, Is.LessThan(rapierGuardShift * 0.45f),
+                "Sag tik (RMB) blok yaparken 5.6kg Agir Kilic (Greatsword), 0.95kg Rapier'e gore cok daha yavas ve agir hareket etmelidir!");
+
+            // 6) Kilicin agirligina gore oyuncuyu savurma (PendingBodyMomentumLocalVel & Kamera cekisi) orani:
+            rapierCombat.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Rapier, CombatMartialStance.HighGuard_VomTag);
+            heavyCombat.SetWeaponArchetypeAndStance(CombatWeaponArchetype.Greatsword, CombatMartialStance.TwoHand_Juggernaut);
+            float rapierPeakBodyPull = 0f, heavyPeakBodyPull = 0f;
+            float rapierYawStart = 0f, rapierYawEnd = 0f, heavyYawStart = 0f, heavyYawEnd = 0f;
+            for (int f = 0; f < 22; f++)
+            {
+                float mx = f == 0 ? 1.8f : 0f;
+                rapierCombat.StepCombatAndCameraInput(
+                    mx, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref rapierYawEnd, ref rPitch, out _, out _, out _);
+                heavyCombat.StepCombatAndCameraInput(
+                    mx, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref heavyYawEnd, ref hPitch, out _, out _, out _);
+                rapierPeakBodyPull = System.Math.Max(rapierPeakBodyPull, rapierCombat.PendingBodyMomentumLocalVel.magnitude);
+                heavyPeakBodyPull = System.Math.Max(heavyPeakBodyPull, heavyCombat.PendingBodyMomentumLocalVel.magnitude);
+            }
+            Assert.That(heavyPeakBodyPull, Is.GreaterThan(rapierPeakBodyPull * 2.5f),
+                "5.6kg Agir Kilic savruldugunda oyuncunun govdesini 0.95kg Rapier'den en az 2.5 kat daha guclu savurmalidir!");
+            Assert.That(System.Math.Abs(heavyYawEnd - heavyYawStart), Is.GreaterThan(System.Math.Abs(rapierYawEnd - rapierYawStart) * 2.0f),
+                "5.6kg Agir Kilic savruldugunda oyuncunun omuz/bakis acisini hafif kilictan cok daha fazla cekmelidir!");
 #endif
 
             var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);

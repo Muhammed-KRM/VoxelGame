@@ -249,6 +249,36 @@ namespace Stratocraft.Character
             playerTransform.position = pos;
         }
 
+        /// <summary>
+        /// Kılıcın ağırlığına göre savurma veya ağır siper taşıma sırasında oluşan yatay eylemsizlik çekişini
+        /// voksel duvar ve zemin çarpışması korumalı olarak oyuncu gövdesine uygular.
+        /// </summary>
+        public void ApplyWeaponMomentumHorizontalStep(
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 worldHorizontalDelta,
+            float deltaTime)
+        {
+            if (playerTransform == null) return;
+            worldHorizontalDelta.y = 0f;
+            if (worldHorizontalDelta.sqrMagnitude < 0.000001f) return;
+
+            Vector3 pos = playerTransform.position;
+            Vector3 candidatePos = pos + worldHorizontalDelta;
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos))
+            {
+                pos.x = candidatePos.x;
+                pos.z = candidatePos.z;
+                if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f)
+                {
+                    float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
+                    float diff = nextGroundY - pos.y;
+                    pos.y = Mathf.Abs(diff) < 0.03f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 14f);
+                }
+                playerTransform.position = pos;
+            }
+        }
+
         /// <summary>Oyuncu kapsulunun kati voksel icine girmesini tespit edip guvenli ust yuzeye cikarir (ziplama titremesi yapmaz).</summary>
         public void ResolveVoxelAndColliderDepenetration(Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
