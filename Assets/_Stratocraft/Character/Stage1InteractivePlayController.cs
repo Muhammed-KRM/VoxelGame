@@ -454,7 +454,12 @@ namespace Stratocraft.Character
                 if (!_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) || mf == null) continue;
                 _reusableTris.Clear();
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris);
-                Mesh updated = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_reusableTris, $"DynamicSeamlessChunk_{key.cx}_{key.cz}", mf.sharedMesh);
+                Mesh? existingDynamicMesh = mf.sharedMesh != null &&
+                                            mf.sharedMesh.name.StartsWith("DynamicSeamlessChunk_", StringComparison.Ordinal)
+                    ? mf.sharedMesh
+                    : null;
+                Mesh updated = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
+                    _reusableTris, $"DynamicSeamlessChunk_{key.cx}_{key.cz}", existingDynamicMesh);
                 mf.sharedMesh = updated;
                 if (_chunkColliders.TryGetValue(key, out MeshCollider? mc) && mc != null)
                 {
@@ -471,8 +476,12 @@ namespace Stratocraft.Character
                     _reusableFluidTris.Clear();
                     FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
                         key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris);
+                    Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
+                                                     fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
+                        ? fmf.sharedMesh
+                        : null;
                     fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
-                        _reusableFluidTris, $"DynamicFluidSurface_{key.cx}_{key.cz}", fmf.sharedMesh);
+                        _reusableFluidTris, $"DynamicFluidSurface_{key.cx}_{key.cz}", existingFluidDynamicMesh);
                 }
                 _dirtyFluidChunks.Clear();
             }
