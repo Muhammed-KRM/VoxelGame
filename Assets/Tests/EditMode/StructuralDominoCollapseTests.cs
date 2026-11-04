@@ -253,6 +253,49 @@ namespace Stratocraft.Tests.EditMode
             float inertia = Stage1DirectionalCombatBridge.ComputeWeaponMomentOfInertia(1.65f, 0.88f, 0.45f, 0.14f);
             Assert.That(inertia, Is.InRange(0.40f, 0.50f));
 
+#if UNITY_5_3_OR_NEWER
+            var combat = new Stage1DirectionalCombatBridge();
+            float camYaw = 0f, camPitch = 0f;
+
+            // 1) Sag Tik (RMB) + Fare Asagi -> Kilic Guard acisi asagiya (-Y) iner (ic olu bolge engeli yok!)
+            for (int f = 0; f < 12; f++)
+            {
+                combat.StepCombatAndCameraInput(
+                    0f, -1.2f, holdingLmb: false, holdingRmb: true, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref camYaw, ref camPitch, out _, out _, out _);
+            }
+            Assert.That(combat.CurrentGuardAnglesRad.y, Is.LessThan(-0.45f),
+                "Sag tik (RMB) ile fare asagi cekildiginde kilic Guard konumu gercekten asagi inmelidir!");
+            Assert.That(combat.IsPreChamberedReady, Is.True);
+
+            // 2) Asagi indirilmis Guard konumundan Yukari (+Y) LMB kesik -> 0ms gecikme + On-Kurumlu (Pre-Chambered) Hiz Bonusu!
+            combat.StepCombatAndCameraInput(
+                0f, 1.8f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                ref camYaw, ref camPitch, out bool swingingFast, out _, out _,
+                playerMissingArm: false, isPlayerAirborne: true, playerVerticalVelocity: 3.5f);
+            Assert.That(combat.SlashPhase, Is.EqualTo(BallisticSlashPhase.ActiveFullArcSwing),
+                "RMB ile onceden asagi indirilmis kilicla yukari kesik atildiginda 0ms gecikmeyle aninda ActiveFullArcSwing baslamalidir!");
+            Assert.That(combat.WasLastSlashPreChambered, Is.True);
+            Assert.That(combat.IsAerialJumpStrike, Is.True, "Havada (isPlayerAirborne=true) savurus Zipla-Vur (IsAerialJumpStrike) olmalidir!");
+            Assert.That(swingingFast, Is.True);
+
+            // 3) Kesim sirasinda ve bitisinde kamera acisi asla tek karede 26 derece ziplayamaz!
+            float prevYaw = camYaw;
+            for (int f = 0; f < 25; f++)
+            {
+                combat.StepCombatAndCameraInput(
+                    1.5f, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
+                    canEngageCombat: true, weaponMassScale: 1.0f, deltaTime: 0.016f,
+                    ref camYaw, ref camPitch, out _, out _, out _);
+                float singleFrameYawJump = System.Math.Abs(camYaw - prevYaw);
+                Assert.That(singleFrameYawJump, Is.LessThan(4.0f),
+                    "Kesim sirasinda veya bitisinde kamera tek karede ani sicrama yapmamalidir!");
+                prevYaw = camYaw;
+            }
+#endif
+
             var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);
             int oreVoxels = 0;
             int bedrockCoreVoxels = 0;

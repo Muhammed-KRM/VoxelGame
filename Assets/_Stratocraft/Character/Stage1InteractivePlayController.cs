@@ -207,7 +207,7 @@ namespace Stratocraft.Character
             _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                 dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
                 swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
-                ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl);
+                ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge);
             _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, _holsterCtrl.IsBackpackOpen, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial);
             _miningCtrl.ExecuteMiningOrBuilding(
                 dt, _holsterCtrl.ActiveHolsterSlot, _holsterCtrl.IsBackpackOpen, MaxEditableVoxelY,
@@ -223,11 +223,13 @@ namespace Stratocraft.Character
             bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
             float massScale = slot == 2 ? 1.45f : (slot == 3 ? 1.25f : 1.0f);
+            bool isPlayerAirborne = _movementBridge.MovementState.IsGrounded == 0 || Mathf.Abs(_movementBridge.VerticalVelocity) > 1.2f;
             _combatBridge.StepCombatAndCameraInput(
                 Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y"),
                 Input.GetMouseButton(0), Input.GetMouseButton(1), Input.GetMouseButtonUp(0),
                 canCombat, massScale, dt, ref _cameraYaw, ref _cameraPitch,
-                out _, out _, out _, _rigAnimator.PlayerLeftArmSevered);
+                out _, out _, out _, _rigAnimator.PlayerLeftArmSevered,
+                isPlayerAirborne, _movementBridge.VerticalVelocity);
             transform.rotation = Quaternion.Euler(0f, _cameraYaw, 0f);
 
             Transform? activeTool = slot == 2 && PickaxeVisualRoot != null
@@ -281,6 +283,10 @@ namespace Stratocraft.Character
             }
             if (Input.GetKeyDown(KeyCode.G) && !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
             {
+                if (_holsterCtrl.ActiveHolsterSlot != 1)
+                {
+                    _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
+                }
                 _combatBridge.CycleMartialStance();
                 _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
             }
@@ -555,6 +561,21 @@ namespace Stratocraft.Character
             }
 
             GUI.Box(new Rect(cx - 390f, Screen.height - 46f, 780f, 34f), _holsterCtrl.FormatHolsterBarSummary(_miningCtrl), _hotbarStyle);
+
+            if (_holsterCtrl.ActiveHolsterSlot == 1 || _combatBridge.StatusBannerHighlightTimer > 0f)
+            {
+                int wIdx = (int)_combatBridge.ActiveWeaponArchetype + 1;
+                int sIdx = (int)_combatBridge.ActiveMartialStance + 1;
+                _combatBridge.EvaluateWeaponStanceCompatibility(
+                    _rigAnimator.PlayerLeftArmSevered, out float spdM, out float dmgM, out _, out bool misM);
+                string compatStr = misM
+                    ? "UYUMSUZ (Agir Silah Cezasi!)"
+                    : $"Hiz {spdM:0.00}x | Hasar {dmgM:0.00}x";
+                string swordBanner =
+                    $"[1 veya F8] KILIC ({wIdx}/4): {_combatBridge.GetWeaponDisplayName()}   |   [G] DOJO STILI ({sIdx}/4): {_combatBridge.GetStanceDisplayName()} ({compatStr})\n" +
+                    $"[Sag Tik + Fare] Guard Konumu: {_combatBridge.GetGuardDirectionLabel()}   |   [Sol Tik + Fare] Kesik   |   [Space + Sol Tik] Zipla-Vur (1.40x)";
+                GUI.Box(new Rect(cx - 455f, Screen.height - 96f, 910f, 44f), swordBanner, _tooltipStyle);
+            }
 
             ref var st = ref _movementBridge.MovementState;
             ref var vt = ref _movementBridge.Vitals;

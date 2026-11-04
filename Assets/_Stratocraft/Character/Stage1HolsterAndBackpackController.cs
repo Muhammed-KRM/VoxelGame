@@ -78,7 +78,8 @@ namespace Stratocraft.Character
             Transform? backpackMatRoot, Transform? chestLidTransform, Transform? anvilTransform,
             GameObject? swordVisual, GameObject? pickaxeVisual, GameObject? axeVisual, Material? sharedVoxelMat,
             ref CharacterMovementState movementState, ref float cameraPitch, ref float pitchBeforeBackpack,
-            Stage1MatterCrystalAndMiningController miningCtrl)
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
         {
             HolsterMachine.StepHolster(dt);
             if (!HolsterMachine.IsTransitioning)
@@ -99,7 +100,7 @@ namespace Stratocraft.Character
                 StepPendingBackpackChannel(dt, playerTransform, backpackMatRoot, ref movementState, ref cameraPitch, ref pitchBeforeBackpack, miningCtrl);
                 UpdateBackpackMatClickInteraction(playerCamera, backpackMatRoot, miningCtrl);
             }
-            HandleHolsterSlotHotkeys(miningCtrl);
+            HandleHolsterSlotHotkeys(miningCtrl, combatBridge, swordVisual != null ? swordVisual.transform : null);
             HandleQuickDropAndInteractHotkeys(playerTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl);
             SyncHandAndBodyHolsterVisuals(playerBodyRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, miningCtrl.SelectedMaterialId, miningCtrl.IsCrystalActive);
         }
@@ -154,7 +155,10 @@ namespace Stratocraft.Character
             }
         }
 
-        private void HandleHolsterSlotHotkeys(Stage1MatterCrystalAndMiningController miningCtrl)
+        private void HandleHolsterSlotHotkeys(
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null,
+            Transform? swordPivot = null)
         {
             if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.H) ||
                 (Input.GetKeyDown(KeyCode.Q) && (ActiveHolsterSlot != 0 || miningCtrl.IsCrystalActive)))
@@ -180,7 +184,16 @@ namespace Stratocraft.Character
             else if (Input.GetKeyDown(KeyCode.Alpha4)) req = HolsterSlotIndex.BackRight_Slot4;
             if (req == HolsterSlotIndex.None) return;
 
-            // Ayni slota tekrar basilirsa silahi kilifina geri koyup Bos El'e (Slot 0) gecer!
+            // Kilic zaten eldeyken tekrar [1]'e basilirsa 4 farkli kilic arketipi arasinda gecis yapar (Longsword -> Zweihander -> Rapier -> Katana)!
+            if (ActiveHolsterSlot == 1 && req == HolsterSlotIndex.WaistLeft_Slot1 && combatBridge != null)
+            {
+                combatBridge.CycleWeaponArchetype(swordPivot);
+                miningCtrl.IsCrystalActive = false;
+                miningCtrl.LastFeedbackText = combatBridge.LastCombatActionText;
+                return;
+            }
+
+            // Diger slotlarda (2, 3, 4) ayni slota tekrar basilirsa silahi kilifina geri koyup Bos El'e (Slot 0) gecer!
             if (ActiveHolsterSlot == (int)req)
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();

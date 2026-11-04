@@ -218,7 +218,7 @@ namespace Stratocraft.Character
                 return;
             }
 
-            if (horizDist > 2.15f)
+            if (horizDist > 1.70f)
             {
                 a.State = CreatureAiState.AggroChase;
                 bool flying = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
@@ -392,22 +392,23 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                // 2) 5 Namlu Noktasinin 3 Anatomik Uzuv Kapsuluyle Gercek 3B Kesisimi
-                if (!TryFindBestBladeSegmentHit(a, prevPts, currPts, localBladeSpeed, out int bestPtIdx, out float hitSpeedMps, out AnatomicalHitRegion region))
+                // 2) 5 Namlu Noktasinin 3 Anatomik Uzuv Kapsuluyle Gercek 3B Kesisimi (Zipla-Vur Hava Darbesi destekli)
+                bool isJumpStrike = combatBridge.IsAerialJumpStrike;
+                if (!TryFindBestBladeSegmentHit(a, prevPts, currPts, localBladeSpeed, isJumpStrike, out int bestPtIdx, out float hitSpeedMps, out AnatomicalHitRegion region))
                 {
                     continue;
                 }
 
-                // Yavas dokunma (< 2.0 m/s ve saplama degilse) kesmez, sadece fiziksel iter
-                if (hitSpeedMps < 2.0f && combatBridge.CurrentThrustExtensionMeters < 0.14f)
+                // Yavas dokunma (< 1.8 m/s ve saplama degilse) kesmez, sadece fiziksel iter
+                if (hitSpeedMps < 1.8f && combatBridge.CurrentThrustExtensionMeters < 0.12f)
                 {
                     continue;
                 }
 
                 float uHit = (bestPtIdx + 1) * 0.20f;
 
-                // Kabza / Balcak Bolgesi (u <= 0.22): Yaratigin dibine girilmisse namlu kesemez, kabza carpar ve savurus durur!
-                if (uHit <= 0.22f && combatBridge.CurrentThrustExtensionMeters < 0.14f)
+                // Kabza / Balcak Bolgesi (u <= 0.20): Yaratigin dibine girilmisse namlu kesemez, kabza carpar ve savurus durur!
+                if (uHit <= 0.20f && combatBridge.CurrentThrustExtensionMeters < 0.12f && !isJumpStrike)
                 {
                     a.LastHitSwingId = combatBridge.CurrentSwingId;
                     float bashDamage = 14f;
@@ -423,14 +424,16 @@ namespace Stratocraft.Character
 
                 a.LastHitSwingId = combatBridge.CurrentSwingId;
                 string bladeZone = uHit <= 0.35f ? "Forte" : (uHit <= 0.65f ? "Mesne" : "Foible");
-                float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.75f : 1.0f);
+                float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
                 float edgeMult = combatBridge.EdgeAlignment01;
-                float speedFactor01 = Mathf.Clamp01((hitSpeedMps - 1.8f) / 11.5f);
+                float speedFactor01 = Mathf.Clamp01((hitSpeedMps - 1.6f) / 11.0f);
 
                 combatBridge.EvaluateWeaponStanceCompatibility(
                     playerMissingArm: false, out _, out float stanceDamageMult, out _, out _);
 
-                float damage = Mathf.Lerp(24f, 94f, speedFactor01) * zoneMult * edgeMult * stanceDamageMult;
+                float preChamberMult = combatBridge.WasLastSlashPreChambered ? 1.28f : 1.0f;
+                float jumpStrikeMult = isJumpStrike ? 1.40f : 1.0f;
+                float damage = Mathf.Lerp(26f, 96f, speedFactor01) * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
 
                 // Kilic canli etine/uzvuna vurdugunda DURMAZ; etin icinden keserek gecer (Cleave) ve yayini tamamlar!
@@ -439,12 +442,17 @@ namespace Stratocraft.Character
                 Vector3 slashVelocity = (currPts[bestPtIdx] - prevPts[bestPtIdx]) / dt;
                 AttachSlashWoundScar(a, currPts[bestPtIdx], slashVelocity, sharedMat);
 
+                float severPower = speedFactor01 * edgeMult * (isJumpStrike ? 1.35f : 1.0f) * (combatBridge.WasLastSlashPreChambered ? 1.20f : 1.0f);
                 string severNote = a.State != CreatureAiState.EmberEgg
-                    ? TrySeverRegionalLimb(a, region, speedFactor01 * edgeMult, slashVelocity, sharedMat)
+                    ? TrySeverRegionalLimb(a, region, severPower, slashVelocity, sharedMat)
                     : string.Empty;
 
+                string bonusLabel = string.Empty;
+                if (isJumpStrike) bonusLabel += " [ZIPLA-VUR 1.40x!]";
+                if (combatBridge.WasLastSlashPreChambered) bonusLabel += " [ON-KURUMLU 1.28x!]";
+
                 combatBridge.LastCombatActionText =
-                    $"ET KESIMI / CLEAVE ({bladeZone} u={uHit:F2}) | v={hitSpeedMps:F1}m/s | Agiz=%{edgeMult * 100f:F0} | Hasar={damage:F0}{severNote}";
+                    $"ET KESIMI / CLEAVE ({bladeZone} u={uHit:F2}){bonusLabel} | v={hitSpeedMps:F1}m/s | Hasar={damage:F0}{severNote}";
 
                 if (a.CurrentHp <= 0f)
                 {
@@ -453,7 +461,7 @@ namespace Stratocraft.Character
                 else
                 {
                     LastCreatureEventText =
-                        $"{a.DisplayName} [{region}] YARILDI (-{damage:F0} HP | u={uHit:F2} {bladeZone} | Kalan: {a.CurrentHp:F0}/{a.MaxHp:F0}){severNote}";
+                        $"{a.DisplayName} [{region}] YARILDI{bonusLabel} (-{damage:F0} HP | u={uHit:F2} {bladeZone} | Kalan: {a.CurrentHp:F0}/{a.MaxHp:F0}){severNote}";
                 }
                 return true;
             }
@@ -462,6 +470,7 @@ namespace Stratocraft.Character
 
         private static bool TryFindBestBladeSegmentHit(
             LiveCreatureAgent a, ReadOnlySpan<Vector3> prevPts, ReadOnlySpan<Vector3> currPts, float localBladeSpeedMps,
+            bool isAerialJumpStrike,
             out int bestPtIdx, out float bestSpeedMps, out AnatomicalHitRegion bestRegion)
         {
             bestPtIdx = -1;
@@ -475,7 +484,15 @@ namespace Stratocraft.Character
                 for (int k = Stage1DirectionalCombatBridge.BladeSamplePointCount - 1; k >= 0; k--)
                 {
                     float uFactor = 0.45f + (k + 1) * 0.11f;
-                    if (DistancePointToSegment(eggCenter, prevPts[k], currPts[k]) <= 0.48f)
+                    Vector3 p0 = prevPts[k];
+                    Vector3 p1 = currPts[k];
+                    if (isAerialJumpStrike)
+                    {
+                        float dropY = Mathf.Clamp(eggCenter.y - p1.y, -1.45f, 0f);
+                        p0.y += dropY;
+                        p1.y += dropY;
+                    }
+                    if (DistancePointToSegment(eggCenter, p0, p1) <= 0.56f)
                     {
                         bestPtIdx = k;
                         bestSpeedMps = localBladeSpeedMps * uFactor;
@@ -486,30 +503,43 @@ namespace Stratocraft.Character
                 return false;
             }
 
-            float bodyScale = a.IsFlyingBoss ? 1.25f : 1.0f;
-            Vector3 legsCenter = rootPos + Vector3.up * 0.35f;
-            Vector3 torsoCenter = rootPos + Vector3.up * 0.92f;
-            Vector3 headCenter = rootPos + a.Root.forward * 0.38f + Vector3.up * 1.15f;
-            Vector3 rightLimbCenter = rootPos + a.Root.right * 0.44f + Vector3.up * 0.88f;
-            Vector3 leftLimbCenter = rootPos - a.Root.right * 0.44f + Vector3.up * 0.88f;
+            float bodyScale = (a.IsFlyingBoss ? 1.25f : 1.0f) * (isAerialJumpStrike ? 1.26f : 1.08f);
+            Vector3 legsCenter = rootPos + Vector3.up * 0.38f;
+            Vector3 torsoCenter = rootPos + Vector3.up * 0.94f;
+            Vector3 headCenter = rootPos + a.Root.forward * 0.36f + Vector3.up * 1.18f;
+            Vector3 rightLimbCenter = rootPos + a.Root.right * 0.44f + Vector3.up * 0.90f;
+            Vector3 leftLimbCenter = rootPos - a.Root.right * 0.44f + Vector3.up * 0.90f;
 
             for (int k = Stage1DirectionalCombatBridge.BladeSamplePointCount - 1; k >= 0; k--)
             {
-                float uFactor = 0.45f + (k + 1) * 0.11f;
+                float uFactor = 0.48f + (k + 1) * 0.11f;
                 float speed = localBladeSpeedMps * uFactor;
-                if (DistancePointToSegment(rightLimbCenter, prevPts[k], currPts[k]) <= 0.34f * bodyScale ||
-                    DistancePointToSegment(leftLimbCenter, prevPts[k], currPts[k]) <= 0.34f * bodyScale)
+                Vector3 p0 = prevPts[k];
+                Vector3 p1 = currPts[k];
+
+                // Ziplayarak vururken (Airborne Jump-Strike) oyuncunun yuksekligi +1.3m arttigi icin
+                // yukaridan asagiya inen darbe sutununu yerdeki yaratigin kafa/omuz/govde yuksekligine izdusur!
+                if (isAerialJumpStrike)
+                {
+                    float targetBodyY = headCenter.y;
+                    float verticalDrop = Mathf.Clamp(targetBodyY - p1.y, -1.45f, 0f);
+                    p0.y += verticalDrop * 0.85f;
+                    p1.y += verticalDrop * 0.85f;
+                }
+
+                if (DistancePointToSegment(rightLimbCenter, p0, p1) <= 0.42f * bodyScale ||
+                    DistancePointToSegment(leftLimbCenter, p0, p1) <= 0.42f * bodyScale)
                 {
                     bestPtIdx = k; bestSpeedMps = speed; bestRegion = AnatomicalHitRegion.ArmsOrWings;
                     return true;
                 }
-                if (DistancePointToSegment(legsCenter, prevPts[k], currPts[k]) <= 0.36f * bodyScale)
+                if (!isAerialJumpStrike && DistancePointToSegment(legsCenter, p0, p1) <= 0.42f * bodyScale)
                 {
                     bestPtIdx = k; bestSpeedMps = speed; bestRegion = AnatomicalHitRegion.Legs;
                     return true;
                 }
-                if (DistancePointToSegment(headCenter, prevPts[k], currPts[k]) <= 0.34f * bodyScale ||
-                    DistancePointToSegment(torsoCenter, prevPts[k], currPts[k]) <= 0.42f * bodyScale)
+                if (DistancePointToSegment(headCenter, p0, p1) <= 0.44f * bodyScale ||
+                    DistancePointToSegment(torsoCenter, p0, p1) <= 0.48f * bodyScale)
                 {
                     bestPtIdx = k; bestSpeedMps = speed; bestRegion = AnatomicalHitRegion.HeadOrTorso;
                     return true;

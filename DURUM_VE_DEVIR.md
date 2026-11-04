@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#019` (Guard-Konumlu Tam-Yay Balistik Kılıç, 4 Silah × 4 Dojo Stili Matrisi, Fiziksel Balta/Kazma Savuruşu, Yere Düşen 3B Itemlar, Maddeye Özel Moloz ve `[F9]` Oyuncu Uzuv Kopması) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-03T17:43:00+03:00` |
+| **Devir Numarası** | `#020` (Kılıç İnce Ayar & Hissiyat Paketi: Kesim Sonu Ani Kamera Zıplamasının Kaldırılması, `RMB` Aşağı Guard & Ucu Aşağı Dönen Namlu, `1.38x` Ön-Kurumlu Hızlı Yukarı Kesik, Havada `Zıpla-Vur` Menzil/Hasar Desteği ve `[1]/[F8]` 4 Farklı 3B Kılıç Modeli + `[G]` Görünür Dojo Stili HUD Banner) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T12:40:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Simülasyon ve Dövüş/Madencilik Revizyonu Kodlandı -> Sıradaki: Kullanıcının Son Paketi Play Mode'da Test Etmesi ve İnce Ayar / Faz 3 Geçişi` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Simülasyon ve Kılıç İnce Ayar Revizyonu (Devir #020) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da Yeni Kılıç Hissiyatını Test Etmesi ve Faz 3 Geçişi` |
 | **Aktif Test Durumu** | `34/34 Unity EditMode PASS`, `8/8 Unity PlayMode PASS` (`Toplam 42/42 Unity Test PASS`), `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -108,16 +108,32 @@
 4. **Balta/Kazma ve Item Düşmesi (`Ek Soru A -> A1`):** Balta (`[3]`) ve Kazma (`[2]`) zamanlayıcıyla değil, `%100` kılıç gibi fareyi fiziksel savurarak ağaca/kayaya vurulduğunda kırar ve kırılan her blok yere 3B fiziksel item (`DroppedWorldItem`) olarak düşer. Madde Kristali (`[C]`) ise uzaktan vakumlayarak çeker.
 5. **Canlı Eti Yarma (`Ek Soru B -> B2 Cleave`):** Kılıç canlıya normal bıçak mesafesinde (`u > 0.22`) değdiğinde durmaz; eti yararak (`Cleave`) içinden geçer, 3B yara izi açar / uzuv koparır ve savurma yayını tamamlar. Yalnızca kabza dibinde (`u <= 0.22`) çarparsa durur.
 
+### 2.9. Devir `#020` — Kullanıcının Kılıç Testi Geri Bildirimleriyle Çözülen 5 Kritik Sorun
+1. **Kesim Sonu Ani Kamera Zıplamasının Kaldırılması (`Stage1DirectionalCombatBridge.cs`, `CameraClutchController.cs`):**
+   - Savurma bittiği anda (`_slashProgress01 >= 1.0f`) tek karede uygulanan `cameraYawDeg += _slashDirUnit.x * 26.0f;` satırı tamamen kaldırıldı.
+   - Savurma biterken elin devam eden fare hareketinin kamerayı aniden fırlatmasını önlemek için `0.11 sn` (`_postSwingClutchGraceTimer`) yumuşak debriyaj geçişi eklendi.
+   - Karakterin omuz/gövde dönüşü artık kesim bittikten sonra değil, **kesim devam ederken** çan eğrisi (`Mathf.Sin(s * Mathf.PI)`) boyunca yumuşakça (`~4.5°–6°`) gerçekleşir.
+2. **Sağ Tık (`RMB`) ile Kılıcı Aşağı İndirme, Namlunun Aşağı Dönmesi ve `1.38x` Ön-Kurumlu Hızlı Yukarı Kesik:**
+   - `_isParryStance` içindeki `if (_guardAnglesRad.magnitude < 0.55f)` iç itme halkası kaldırıldı; `RMB` basılı tutarak fareyi aşağı çektiğinde kılıç kesintisiz en alt Guard konumuna (`y = -1.18`) iner.
+   - `ApplyBladeTransformAndSamplePoints` içindeki çelişkili rotasyon blokları birleştirildi: kılıç aşağı indirildiğinde (`pitchNorm < 0`) namlu artık dik (`+Y`) kalmaz, **gerçekten ucu aşağı (`-Y`) bakacak şekilde döner**.
+   - `RMB` ile kılıcı aşağı indirip ardından `LMB` ile yukarı kesik atıldığında `0 ms` gecikmeyle anında tam-yay kesik başlar ve **`1.38x` Ön-Kurumlu Hız Bonusu + `1.28x` Hasar Bonusu** (`WasLastSlashPreChambered`) verir.
+3. **Havada `Zıpla + Vur` (`IsAerialJumpStrike`) Düzeltmesi (`Stage1CreatureSimulationBridge.cs`, `Stage1DirectionalCombatBridge.cs`):**
+   - Oyuncu havadayken (`Space`) savurma yaptığında kılıç açısı otomatik olarak yerdeki hedefe doğru eğilir (`pitchNorm - 0.38f`), dikey kesim menzili aşağı doğru genişletilir ve **`1.40x` Zıpla-Vur (Jump-Strike)** hasar/uzuv koparma bonusu uygulanır.
+4. **4 Kılıcın Görsel Olarak Birbirinden Ayırt Edilmesi & `[1]` / `[F8]` Kısayolu:**
+   - `RebuildWeaponArchetypeVisualMesh` ile 4 kılıç için farklı 3B prosedürel modeller üretildi: `Longsword` (klasik haç balçak), `Greatsword / Zweihänder` (çift el kabza + namlu üstü `Parierdolche` kancaları), `Rapier` (gümüş/altın çan siperlik `Cup-Hilt` + iğne namlu), `Katana` (yuvarlak altın `Tsuba` + 5 segmentli kavisli `Sori` namlu).
+   - Kılıç zaten elindeyken **`[1]` tuşuna tekrar basmak** (veya **`[F8]`** tuşu) 4 kılıç arasında anında geçiş yapar.
+5. **4 Dojo Stilinin (`[G]`) Görünür Duruşları ve Alt-Orta HUD Banner (`Stage1InteractivePlayController.cs`):**
+   - `Iaido` stilinde kılıç artık FPS kamerasının arkasında kaybolmaz; ekranın sol-alt köşesinde beldeki kında yatay ve net görünür. El boşken **`[G]`** tuşuna basılırsa kılıç otomatik çekilir ve ekranın alt-ortasında büyük **Kılıç & Dojo Stili HUD Banner** gösterilir.
+
 ---
 
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar (Sonraki Oturuma Devredenler)
 
-1. **Kullanıcının Son Paketi Play Mode'da Canlı Test Etmesi (Öncelik #1):**
-   - Kullanıcı ilk düzeltme paketini test etmiş (kazma ve sıvıların düzeldiğini onaylamış), ancak konuşarak birlikte tasarladığımız **ikinci paketi** (`Guard-Konumlu Tam-Yay Kılıç`, `[G] 4 Dojo Stili × [F8] 4 Silah Arketipi`, `Fiziksel Balta/Kazma Savurma + Yere Düşen 3B Itemlar`, `Her Maddenin Kendi Molozu`, `[F9] Oyuncu Uzuv Kopması` ve daha önce test etmeye fırsat bulamadığı `[F7] Rastgele Harita`) henüz bizzat Play Mode'da oynayarak test etmedi.
-   - Yeni oturumda kullanıcı Play Mode'da bu mekanikleri denedikten sonra **hissiyat ve ince ayar (tuning)** geri bildirimleri (ör. savurma ivme eşiği, `150–200 ms` Re-Chambering hızı, balta/kazma vuruş yarıçapı, Dojo duruş açıları) alınacak.
+1. **Kullanıcının Devir `#020` Kılıç İnce Ayar Paketini Play Mode'da Test Etmesi (Öncelik #1):**
+   - Kullanıcı `Devir #020` ile çözülen 5 kılıç maddesini (kesim sonu ani kamera kaymasının kalkması, `RMB` ile aşağı indirip ucu aşağı dönen namlu + `1.38x` hızlı yukarı kesik, `Zıpla-Vur`, `[1]`/`[F8]` 4 farklı kılıç modeli ve `[G]` 4 Dojo stili + alt HUD banner) Play Mode'da test edecek.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
-   - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
+   - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
 
 ---
 
@@ -125,13 +141,13 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`RMB` (Sağ Tık) + Fare** | Kılıcın **Guard / Blok (Parry)** yönünü çember üzerinde ayarlar ve orada tutar | ✅ Aktif |
-| **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Balistik** savurur | ✅ Aktif |
-| **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`High Guard`, `Iaido`, `Eskrim`, `Juggernaut`) | ✅ Aktif |
-| **`[F8]` Tuşu** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg`) | ✅ Aktif |
+| **`RMB` (Sağ Tık) + Fare** | Kılıcın **Guard / Blok (Parry)** yönünü ayarlar (aşağı çekince ucu aşağı döner ve **`1.38x` Ön-Kurumlu Hız Bonusu** hazırlar) | ✅ Aktif |
+| **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Balistik** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
+| **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`High Guard`, `Iaido`, `Eskrim`, `Juggernaut` — el boşsa kılıcı otomatik çeker) | ✅ Aktif |
+| **`[1]` (Tekrar Basış) veya `[F8]`** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg`) | ✅ Aktif |
 | **`[F9]` Tuşu** | **Oyuncu Uzuv Kopması Canlı Testi** (`1: Sol Kol Kopar` -> `2: Sağ Bacak Kopar` -> `3: İyileşir`) \| `Shift+F9`: `.sregion` Yükle | ✅ Aktif |
 | **`[F7]` Tuşu** | **Rastgele Harita Tohumu (`Seed`) Üretimi** (7 Ağaç + Kule + Tapınak + Kemer yeniden üretilir) | ✅ Aktif |
-| **`[1] / [2] / [3] / [4] / [0]`** | `1`: Kılıç, `2`: Fiziksel Kazma, `3`: Fiziksel Balta, `4`: İnşa Bloğu, `0/H/Q`: Kılıfa Sok (`Boş El`) | ✅ Aktif |
+| **`[1] / [2] / [3] / [4] / [0]`** | `1`: Kılıç (tekrar basınca kılıç değiştirir), `2`: Fiziksel Kazma, `3`: Fiziksel Balta, `4`: İnşa Bloğu, `0/H/Q`: Kılıfa Sok | ✅ Aktif |
 | **`[X]` veya `[Shift+G]`** | Eldeki silahı/aleti `0.0s` sürede fiziksel olarak yere atar (`Quick-Drop`) | ✅ Aktif |
 | **`[E]` veya Yürüyerek Yaklaşma** | Kırılan bloklardan yere düşen **3B Fiziksel Itemları** toplar / Sandık açar / Örs geri dönüşümü yapar | ✅ Aktif |
 | **`[C]` Tuşu** | Sol Bilek **Madde Kristali** modunu açar/kapatır (uzaktan helisel vakum ışınıyla çeker) | ✅ Aktif |
