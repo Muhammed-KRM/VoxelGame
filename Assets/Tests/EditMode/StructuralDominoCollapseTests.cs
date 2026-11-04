@@ -283,7 +283,8 @@ namespace Stratocraft.Tests.EditMode
 
             // 3) Kesim sirasinda ve bitisinde kamera acisi asla tek karede 26 derece ziplayamaz!
             float prevYaw = camYaw;
-            for (int f = 0; f < 25; f++)
+            float maxObservedRecoveryTimer = 0f;
+            for (int f = 0; f < 30; f++)
             {
                 combat.StepCombatAndCameraInput(
                     1.5f, 0f, holdingLmb: true, holdingRmb: false, releasedLmb: false,
@@ -292,8 +293,26 @@ namespace Stratocraft.Tests.EditMode
                 float singleFrameYawJump = System.Math.Abs(camYaw - prevYaw);
                 Assert.That(singleFrameYawJump, Is.LessThan(4.0f),
                     "Kesim sirasinda veya bitisinde kamera tek karede ani sicrama yapmamalidir!");
+                if (combat.PostSwingRecoveryTimer > maxObservedRecoveryTimer)
+                {
+                    maxObservedRecoveryTimer = combat.PostSwingRecoveryTimer;
+                }
                 prevYaw = camYaw;
             }
+            Assert.That(maxObservedRecoveryTimer, Is.GreaterThan(0.05f),
+                "Savurus tamamlandiktan sonra agirlik hissi icin Post-Swing Recovery bekleme suresi aktif olmalidir!");
+
+            // 4) Sovalye (HighGuard_VomTag) ile Cift El Yikici (TwoHand_Juggernaut) stilleri net olarak farklidir!
+            UnityEngine.Vector2 knightGuard = Stage1DirectionalCombatBridge.GetDefaultStanceGuardAngles(
+                CombatMartialStance.HighGuard_VomTag);
+            UnityEngine.Vector2 juggernautGuard = Stage1DirectionalCombatBridge.GetDefaultStanceGuardAngles(
+                CombatMartialStance.TwoHand_Juggernaut);
+            Assert.That(UnityEngine.Vector2.Distance(knightGuard, juggernautGuard), Is.GreaterThan(0.85f),
+                "HighGuard_VomTag (Sag-On Dik Guard) ile TwoHand_Juggernaut (Sol-Ust Bas Ustu Zornhau) duruslari birbirinden tamamen farkli olmalidir!");
+
+            combat.NotifySuccessfulParryOrClash(new UnityEngine.Vector2(0.3f, 0.4f), openRiposteWindow: true);
+            Assert.That(combat.RiposteWindowTimer, Is.GreaterThan(1.0f),
+                "Basarili blok veya kilic carpismasi sonrasi Usta Kontra (Riposte) penceresi acilmalidir!");
 #endif
 
             var (voxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-1, -1);

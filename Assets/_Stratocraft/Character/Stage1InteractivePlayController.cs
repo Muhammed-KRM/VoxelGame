@@ -57,6 +57,7 @@ namespace Stratocraft.Character
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
+        private readonly Stage1CombatFeedbackAndArenaBridge _feedbackArenaBridge = new();
         private readonly EnclosedOxygenFloodFillSystem _oxygenSystem = new();
         private readonly ChunkSnappedFloatingOriginSystem _floatingOriginSystem = new();
         private RegionFileStore? _regionStore;
@@ -244,7 +245,7 @@ namespace Stratocraft.Character
 
             if (canCombat)
             {
-                _creatureBridge.EvaluateSweptBladeCombat(_combatBridge, dt, SharedVoxelMaterial);
+                _creatureBridge.EvaluateSweptBladeCombat(_combatBridge, dt, SharedVoxelMaterial, _feedbackArenaBridge);
             }
 
             bool isParrying = canCombat && _combatBridge.IsParrying;
@@ -252,6 +253,9 @@ namespace Stratocraft.Character
             _creatureBridge.StepCreaturesAi(
                 transform.position, isParrying, ref _movementBridge.Vitals,
                 _worldChunks, _dirtyChunks, _collapseBridge, Time.time, dt, _combatBridge);
+            _feedbackArenaBridge.StepFeedbackAndArena(
+                dt, transform, _combatBridge, ref _movementBridge.Vitals,
+                SharedVoxelMaterial, _worldChunks, _rigAnimator.PlayerLeftArmSevered);
             if (_movementBridge.Vitals.CurrentHp < hpBeforeAi - 0.1f)
             {
                 _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
@@ -295,6 +299,12 @@ namespace Stratocraft.Character
                 _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
                 _combatBridge.CycleWeaponArchetype(WeaponPivot);
                 _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+            }
+            if (Input.GetKeyDown(KeyCode.F10))
+            {
+                _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
+                _feedbackArenaBridge.CycleDuelistModeAndSummonArena(transform, SharedVoxelMaterial, _worldChunks);
+                _miningCtrl.LastFeedbackText = _feedbackArenaBridge.ArenaStatusSummary;
             }
             if (Input.GetKeyDown(KeyCode.F6)) SaveAllChunksToRegionStore();
             if (Input.GetKeyDown(KeyCode.F9))
@@ -561,6 +571,7 @@ namespace Stratocraft.Character
             }
 
             GUI.Box(new Rect(cx - 390f, Screen.height - 46f, 780f, 34f), _holsterCtrl.FormatHolsterBarSummary(_miningCtrl), _hotbarStyle);
+            _feedbackArenaBridge.DrawCombatFeedbackAndArenaHud(PlayerCamera);
 
             if (_holsterCtrl.ActiveHolsterSlot == 1 || _combatBridge.StatusBannerHighlightTimer > 0f)
             {
@@ -571,10 +582,14 @@ namespace Stratocraft.Character
                 string compatStr = misM
                     ? "UYUMSUZ (Agir Silah Cezasi!)"
                     : $"Hiz {spdM:0.00}x | Hasar {dmgM:0.00}x";
+                string specialSummary = Stage1DirectionalCombatBridge.GetStanceSpecialAbilitySummary(_combatBridge.ActiveMartialStance);
+                string riposteTag = _combatBridge.RiposteWindowTimer > 0f ? " | [★ RIPOSTE HAZIR 1.85x! ★]" : string.Empty;
+                string chainTag = _combatBridge.MomentumChainCount > 0 ? $" | [KASIRGA ZINCIRI x{_combatBridge.MomentumChainCount}]" : string.Empty;
                 string swordBanner =
-                    $"[1 veya F8] KILIC ({wIdx}/4): {_combatBridge.GetWeaponDisplayName()}   |   [G] DOJO STILI ({sIdx}/4): {_combatBridge.GetStanceDisplayName()} ({compatStr})\n" +
-                    $"[Sag Tik + Fare] Guard Konumu: {_combatBridge.GetGuardDirectionLabel()}   |   [Sol Tik + Fare] Kesik   |   [Space + Sol Tik] Zipla-Vur (1.40x)";
-                GUI.Box(new Rect(cx - 455f, Screen.height - 96f, 910f, 44f), swordBanner, _tooltipStyle);
+                    $"[1/F8] KILIC ({wIdx}/4): {_combatBridge.GetWeaponDisplayName()} | [G] STIL ({sIdx}/4): {_combatBridge.GetStanceDisplayName()} ({compatStr}){riposteTag}{chainTag}\n" +
+                    $"Ozel Yetenek: {specialSummary}\n" +
+                    $"[Sag Tik+Fare] Guard: {_combatBridge.GetGuardDirectionLabel()} | [Sol Tik+Fare] Kesik | [Space+Sol Tik] Zipla-Vur | [F10] Duellocu NPC & Kukla Modu";
+                GUI.Box(new Rect(cx - 485f, Screen.height - 114f, 970f, 62f), swordBanner, _tooltipStyle);
             }
 
             ref var st = ref _movementBridge.MovementState;
@@ -583,13 +598,13 @@ namespace Stratocraft.Character
                 ? $"KOPUK ({(_rigAnimator.PlayerLeftArmSevered ? "SolKol " : "")}{(_rigAnimator.PlayerRightLegSevered ? "SagBacak" : "")})"
                 : "Saglam";
             string hud =
-                $"=== STRATOCRAFT FAZ 1 & FAZ 2 FIZIKSEL SIMULASYON KONTROLCUSU (Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed} | [F7] Rastgele Harita) ===\n" +
+                $"=== STRATOCRAFT FAZ 1 & FAZ 2 FIZIKSEL SIMULASYON KONTROLCUSU (Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed} | [F7] Rastgele Harita | [F10] Duellocu NPC & Kukla) ===\n" +
                 $"[Durus: {st.Stance}] Hiz: {st.CurrentSpeedMetersPerSec:0.0} m/s | HP: {vt.CurrentHp:0}/{vt.MaxHp:0} | EP: %{vt.Stamina:0} | O2: %{vt.LungOxygenPercent:0} | [F5] {(_isFirstPersonMode ? "FPS" : "TPS")} | [F9] Uzuv Testi: {limbHud}\n" +
                 $"[C] Kristal: {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | [Tekerlek/T] Alan: {_miningCtrl.BrushAreaLabel} | [B] Malzeme: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)} | [V] {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(_miningCtrl.SelectedShapeId)} | Yerdeki Item: {_miningCtrl.ActiveDroppedItemCount}\n" +
                 $"   Depo (264B Q24.8): {_miningCtrl.FormatCrystalStockHudLine()} | Domino Kume: {_collapseBridge.ActiveFallingClusterCount}/64 (Phi={_collapseBridge.LastImpactFractureRatio:0.00})\n" +
                 $"[I] 3B Canta: {(_holsterCtrl.IsBackpackOpen ? "ACIK" : "KAPALI")} | {_holsterCtrl.FormatHolsterBarSummary(_miningCtrl)} | [0/H/Q] Kilif | [X] 0.0s Silah At | [E] Sandik/Ors/Al\n" +
                 $"[F8 Silah: {_combatBridge.GetWeaponDisplayName()}] x [G Dojo Stili: {_combatBridge.GetStanceDisplayName()}] | {_combatBridge.LastCombatActionText}\n" +
-                $"[Canli AI & Durum] {_creatureBridge.NearestCreatureHudSummary} | {_miningCtrl.LastFeedbackText}";
+                $"[Arena & Canli AI] {_feedbackArenaBridge.ArenaStatusSummary} | {_creatureBridge.NearestCreatureHudSummary}";
             GUI.Box(new Rect(12f, 12f, 980f, 162f), hud, _hudBoxStyle);
         }
     }

@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#020` (Kılıç İnce Ayar & Hissiyat Paketi: Kesim Sonu Ani Kamera Zıplamasının Kaldırılması, `RMB` Aşağı Guard & Ucu Aşağı Dönen Namlu, `1.38x` Ön-Kurumlu Hızlı Yukarı Kesik, Havada `Zıpla-Vur` Menzil/Hasar Desteği ve `[1]/[F8]` 4 Farklı 3B Kılıç Modeli + `[G]` Görünür Dojo Stili HUD Banner) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T12:40:00+03:00` |
+| **Devir Numarası** | `#021` (Fiziksel Kılıç Hissiyatı, Ağırlık & Duvar Depenetrasyonu, Prosedürel Ses/Kıvılcım/Kan/Hit-Stop/Hasar Sayıları, 4 Dojo Stilinin Özel Yetenekleri ve `[F10]` Kılıç Ustası Düellocu NPC + Mekanik Eğitim Kuklası Arenası) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-04T13:45:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Simülasyon ve Kılıç İnce Ayar Revizyonu (Devir #020) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da Yeni Kılıç Hissiyatını Test Etmesi ve Faz 3 Geçişi` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Fiziksel Simülasyon ve Kılıç Çarpışma/Geri Bildirim/Eğitim Arenası Paketi (Devir #021) Kodlandı -> Sıradaki: Kullanıcının Play Mode'da [F10] Düellocu NPC & Eğitim Kuklası ile Test Etmesi` |
 | **Aktif Test Durumu** | `34/34 Unity EditMode PASS`, `8/8 Unity PlayMode PASS` (`Toplam 42/42 Unity Test PASS`), `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -125,12 +125,32 @@
 5. **4 Dojo Stilinin (`[G]`) Görünür Duruşları ve Alt-Orta HUD Banner (`Stage1InteractivePlayController.cs`):**
    - `Iaido` stilinde kılıç artık FPS kamerasının arkasında kaybolmaz; ekranın sol-alt köşesinde beldeki kında yatay ve net görünür. El boşken **`[G]`** tuşuna basılırsa kılıç otomatik çekilir ve ekranın alt-ortasında büyük **Kılıç & Dojo Stili HUD Banner** gösterilir.
 
+### 2.10. Devir `#021` — Ağırlık Ölçekli Doğal Kılıç Yayları, Sürekli Duvar Depenetrasyonu, Sesli/Görsel Darbe Geri Bildirimi, 4 Dojo Stilinin Özel Yetenekleri ve `[F10]` Düellocu NPC + Eğitim Kuklası (`Stage1DirectionalCombatBridge.cs`, `Stage1CombatFeedbackAndArenaBridge.cs`)
+1. **Silah Kütlesine Göre Gerçekçi Savurma Hızı, Post-Swing Recovery ve 3-Fazlı Dairesel Savurma Yayı:**
+   - Eskiden savurma süresi silahın gerçek kütlesinden (`0.95kg`..`5.60kg`) bağımsız hesaplanıyor ve savurma biter bitmez `0.00s` bekleme ile saniyede 4-5 kez ağırlıksız sallanabiliyordu.
+   - Artık `archetypeMassFactor = Mathf.Pow(wMass / 1.55f, 0.62f)` ile **Rapier (`0.95kg`)** çevik (`~0.22s`), **Katana (`1.35kg`)** akıcı (`~0.28s`), **Longsword (`1.85kg`)** dengeli (`~0.34s`), **Zweihänder (`5.60kg`)** ise oturaklı ve ağır (`~0.58s`) savrulur; her savurma sonunda silah kütlesine göre **`0.07s – 0.36s` Post-Swing Recovery** (`_postSwingRecoveryTimer`) uygulanır.
+   - Savurma düz çizgi (`Vector2.Lerp`) yerine **3-Fazlı Dairesel Omuz Yayı** (`Wind-up` -> `Circular Belly Arc` + ileri kol uzanması -> `Follow-Through Overshoot`) izler.
+2. **Sürekli 3B Duvar Çarpışması & Geri Sekme (`Continuous Blade-Wall Depenetration`):**
+   - Eskiden duvar kontrolü yalnızca `ActiveFullArcSwing` içinde çalışıyor ve açıları eski konuma bıraktığı için duvara yaklaşıp zorlayınca kılıç duvarın içinden geçiyordu.
+   - Artık `UpdateAndResolveBladeWorldPoints` **tüm durumlarda** (`IdleInGuard`, `Parry`, `Thrust`, `ReChamberingToStart`, `ActiveFullArcSwing`) 5 namlu noktasını voksel dünyayla kontrol eder; duvara çarpan kılıcı başlangıç köşesine doğru fiziksel olarak geri sektirir (`_slashStartAnglesRad` yönüne bounce) ve duvara sokulmaya çalışıldığında namluyu duvarın dışına iter (`pushAwayAngles` + geri çekilme).
+3. **Tam Sesli ve Görsel Vuruş Geri Bildirimi (`Stage1CombatFeedbackAndArenaBridge.cs`):**
+   - **Prosedürel PCM Ses Sentezi (Sıfır Dış Asset):** Hafif/ağır kılıç savurma rüzgarı (`WhooshLight` / `WhooshHeavy`), metalik kılıç çarpışması (`SwordClashClang`), taş/duvar sekme çınlaması (`WallRicochetClink`), et kesme (`FleshCleaveHit`) ve ahşap kukla darbesi (`DummyWoodThud`) sesleri çalışma anında üretilip çalınır.
+   - **3B Kılıç İz Şeridi (`BladeSwingTrailRibbon`), 3B Kıvılcım/Kan Parçacıkları, `38–55 ms` Hit-Stop ve 3B Yüzen Hasar/Blok Yazıları:** Kılıcın havada çizdiği yay görünür, çarptığı noktadan 3B kıvılcım veya kan fırlar, nişangah ortasında `✕` Hit-Marker yanar ve vuruş noktasının üzerinde **`-68 HP [Foible] (9.4 m/s)`**, **`⚔ KILIÇ ÇARPIŞMASI! (RIPOSTE HAZIR 1.85x!)`** veya **`DUVAR SEKMESİ (Taş)`** yazıları yükselir.
+4. **4 Dojo Stilinin (`[G]`) Birbirinden Tamamen Ayrılan Duruşları ve Özel Yetenekleri:**
+   - **1) Yüksek Şövalye (`HighGuard_VomTag`):** Sağ-ön dik muhafız duruşu (`(0.24, 0.88)`). **Özel Yetenek — Usta Kontra (`Master Riposte`):** Başarılı blok (`RMB`) veya havada kılıç çarpışması sonrası `1.85 sn` boyunca bir sonraki kesik **`0 ms` gecikmeyle, `1.35x` hızlı ve `1.85x` hasarlı** (`[⚡ KUSURSUZ KONTRA / RIPOSTE 1.85x!]`) çıkar.
+   - **2) Çift El Yıkıcı (`TwoHand_Juggernaut`):** Sol-üst baş üstü çapraz Zornhau duruşu (`(-0.84, 0.74)` — Şövalye duruşundan tamamen farklı). **Özel Yetenek — Kasırga Momentum Zinciri & Guard Crush:** Bir kesiğin son `%30`'unda ters yöne `LMB` basılırsa durmadan **Kasırga Zinciri (`Whirlwind Chain x2 / x3`)** bağlanır ve düşmanın bloğunu deler (**`GUARD CRUSH`**).
+   - **3) Iaido (`Iaido_QuickDraw`):** Sol beldeki kında yatay duruş (`(-0.98, -0.78)`). **Özel Yetenek — Iaijutsu Şimşek Kesiği:** Kında `0.5s` bekledikten sonra ilk kesik **`0 ms` gecikme, `+24 cm` ileri adım uzanması ve `1.60x` hasarla** çıkar.
+   - **4) Eskrim (`Fencing_Punta`):** Merkez-ileri iğne duruşu (`(0.05, 0.08)`). **Özel Yetenek — İğne Hamlesi (`Needle Lunge`) & Otomatik Deflect:** `LMB+RMB` ileri saplamada **`+52 cm` menzil, `2.0x` delici hasar** ve saplama sırasında karşıdan gelen darbeyi otomatik saptırma (**Auto-Deflect**).
+5. **Oyuncunun Yanında İki Canlı Test Hedefi (`[F10]` — Düellocu NPC & Mekanik Eğitim Kuklası):**
+   - **Mekanik Eğitim Kuklası & Darbe Ölçer (`TrainingAutomaton`):** Oyuncunun sol-önünde durur; yaylı gövdesi darbe aldığında sarsılır, yatay **döner kılıç kolu** ile oyuncunun `RMB` blok ve kılıç çarpıştırma zamanlamasını test eder, üzerindeki 3B tabelada son darbenin **Hasar, Hız (`m/s`), Bölge (`Forte/Mesne/Foible`), Ağız Hizası (`%`) ve DPS** değerlerini canlı gösterir.
+   - **Kılıç Ustası Düellocu NPC (`MasterSwordDuelist`):** Oyuncunun sağ-önünde duran eklemli şövalye; elindeki gerçek 5-noktalı 3B kılıçla **4 yönden (`Üstten`, `Soldan`, `Sağdan`, `Alttan`) hazırlanarak (`Wind-up`) saldırır** ve oyuncunun kesiğine karşı yönlü **Guard/Blok** tutar. Oyuncu NPC'nin kılıcına ters vuruşla **Havada Kılıç Çarpıştırma (`Sword Clash`)** veya `RMB` ile **Yönlü Blok (`Parry`)** yapabilir; **`[F10]`** tuşuyla NPC'yi yanına çağırabilir ve modunu (`Aktif Düello` -> `Sadece Blok` -> `Sadece Saldırı`) değiştirebilir.
+
 ---
 
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar (Sonraki Oturuma Devredenler)
 
-1. **Kullanıcının Devir `#020` Kılıç İnce Ayar Paketini Play Mode'da Test Etmesi (Öncelik #1):**
-   - Kullanıcı `Devir #020` ile çözülen 5 kılıç maddesini (kesim sonu ani kamera kaymasının kalkması, `RMB` ile aşağı indirip ucu aşağı dönen namlu + `1.38x` hızlı yukarı kesik, `Zıpla-Vur`, `[1]`/`[F8]` 4 farklı kılıç modeli ve `[G]` 4 Dojo stili + alt HUD banner) Play Mode'da test edecek.
+1. **Kullanıcının Devir `#021` Kılıç Çarpışma, Geri Bildirim ve `[F10]` Düellocu NPC & Eğitim Kuklası Paketini Play Mode'da Test Etmesi (Öncelik #1):**
+   - Kullanıcı Play Mode'a girip yanında hazır doğan (veya `[F10]` ile çağrılan) **Kılıç Ustası Düellocu NPC** ve **Mekanik Eğitim Kuklası** üzerinde ağırlık ölçekli kılıç hızlarını, duvar sekmesini, ses/kıvılcım/hasar yazılarını, 4 Dojo stilinin özel yeteneklerini ve kılıç çarpıştırma/blok mekaniklerini test edecek.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
@@ -141,10 +161,11 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
+| **`[F10]` Tuşu** | **Kılıç Ustası Düellocu NPC & Eğitim Kuklasını** oyuncunun önüne çağırır ve NPC modunu değiştirir (`Aktif Düello` / `Sadece Blok` / `Sadece Saldırı`) | ✅ Aktif |
 | **`RMB` (Sağ Tık) + Fare** | Kılıcın **Guard / Blok (Parry)** yönünü ayarlar (aşağı çekince ucu aşağı döner ve **`1.38x` Ön-Kurumlu Hız Bonusu** hazırlar) | ✅ Aktif |
-| **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Balistik** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
-| **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`High Guard`, `Iaido`, `Eskrim`, `Juggernaut` — el boşsa kılıcı otomatik çeker) | ✅ Aktif |
-| **`[1]` (Tekrar Basış) veya `[F8]`** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg`) | ✅ Aktif |
+| **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Dairesel** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
+| **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`Şövalye: Usta Kontra 1.85x`, `Iaido: Şimşek Kesiği 1.60x`, `Eskrim: İğne Hamlesi 2.0x`, `Juggernaut: Kasırga Zinciri & Guard Crush`) | ✅ Aktif |
+| **`[1]` (Tekrar Basış) veya `[F8]`** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg` — gerçek kütle ölçekli hız!) | ✅ Aktif |
 | **`[F9]` Tuşu** | **Oyuncu Uzuv Kopması Canlı Testi** (`1: Sol Kol Kopar` -> `2: Sağ Bacak Kopar` -> `3: İyileşir`) \| `Shift+F9`: `.sregion` Yükle | ✅ Aktif |
 | **`[F7]` Tuşu** | **Rastgele Harita Tohumu (`Seed`) Üretimi** (7 Ağaç + Kule + Tapınak + Kemer yeniden üretilir) | ✅ Aktif |
 | **`[1] / [2] / [3] / [4] / [0]`** | `1`: Kılıç (tekrar basınca kılıç değiştirir), `2`: Fiziksel Kazma, `3`: Fiziksel Balta, `4`: İnşa Bloğu, `0/H/Q`: Kılıfa Sok | ✅ Aktif |

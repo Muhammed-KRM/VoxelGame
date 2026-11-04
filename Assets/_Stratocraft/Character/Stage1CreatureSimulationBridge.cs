@@ -346,7 +346,8 @@ namespace Stratocraft.Character
         public bool EvaluateSweptBladeCombat(
             Stage1DirectionalCombatBridge combatBridge,
             float deltaTime,
-            Material? sharedMat)
+            Material? sharedMat,
+            Stage1CombatFeedbackAndArenaBridge? feedbackBridge = null)
         {
             if (!combatBridge.AreBladePointsValid) return false;
             if (!combatBridge.IsActiveAttackSwing && !combatBridge.IsParryStance) return false;
@@ -373,9 +374,12 @@ namespace Stratocraft.Character
                             string zone = uClash <= 0.40f ? "Forte" : "Mesne/Foible";
                             a.AttackCooldown = 1.65f; // Yaratik sersemler (Stagger)
                             combatBridge.NotifyBladeHitRegistered();
+                            combatBridge.NotifySuccessfulParryOrClash(new Vector2(-0.35f, 0.38f), openRiposteWindow: true);
                             combatBridge.LastCombatActionText =
                                 $"KILIC-PENCE CARPISMASI ({zone} u={uClash:F2}) | {a.DisplayName} saldirisi havada saptirildi!";
                             LastCreatureEventText = combatBridge.LastCombatActionText;
+                            feedbackBridge?.NotifyCreatureStruckFeedback(
+                                clawWorld, 0f, localBladeSpeed, zone, string.Empty, string.Empty, isClawClash: true);
                             return true;
                         }
                     }
@@ -418,6 +422,8 @@ namespace Stratocraft.Character
                     combatBridge.LastCombatActionText =
                         $"KABZA CARPMASI (Hilt Bash u={uHit:F2}) | Cok yakinsin, namlu kesemedi (-{bashDamage:F0} Kut HP)!";
                     LastCreatureEventText = combatBridge.LastCombatActionText;
+                    feedbackBridge?.NotifyCreatureStruckFeedback(
+                        currPts[bestPtIdx], bashDamage, hitSpeedMps, "HiltBash", " [KABZA]", string.Empty, isClawClash: false);
                     if (a.CurrentHp <= 0f) HandleCreatureZeroHp(a);
                     return true;
                 }
@@ -433,7 +439,10 @@ namespace Stratocraft.Character
 
                 float preChamberMult = combatBridge.WasLastSlashPreChambered ? 1.28f : 1.0f;
                 float jumpStrikeMult = isJumpStrike ? 1.40f : 1.0f;
-                float damage = Mathf.Lerp(26f, 96f, speedFactor01) * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult;
+                float riposteMult = combatBridge.WasLastSlashRiposte ? 1.85f : 1.0f;
+                float iaidoMult = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
+                float damage = Mathf.Lerp(26f, 96f, speedFactor01)
+                    * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
 
                 // Kilic canli etine/uzvuna vurdugunda DURMAZ; etin icinden keserek gecer (Cleave) ve yayini tamamlar!
@@ -442,17 +451,25 @@ namespace Stratocraft.Character
                 Vector3 slashVelocity = (currPts[bestPtIdx] - prevPts[bestPtIdx]) / dt;
                 AttachSlashWoundScar(a, currPts[bestPtIdx], slashVelocity, sharedMat);
 
-                float severPower = speedFactor01 * edgeMult * (isJumpStrike ? 1.35f : 1.0f) * (combatBridge.WasLastSlashPreChambered ? 1.20f : 1.0f);
+                float severPower = speedFactor01 * edgeMult
+                    * (isJumpStrike ? 1.35f : 1.0f)
+                    * (combatBridge.WasLastSlashPreChambered ? 1.20f : 1.0f)
+                    * (combatBridge.WasLastSlashRiposte ? 1.35f : 1.0f);
                 string severNote = a.State != CreatureAiState.EmberEgg
                     ? TrySeverRegionalLimb(a, region, severPower, slashVelocity, sharedMat)
                     : string.Empty;
 
                 string bonusLabel = string.Empty;
+                if (combatBridge.WasLastSlashRiposte) bonusLabel += " [USTA RIPOSTE 1.85x!]";
+                if (combatBridge.WasLastSlashIaidoCharged) bonusLabel += " [IAIDO SIMSEK 1.60x!]";
                 if (isJumpStrike) bonusLabel += " [ZIPLA-VUR 1.40x!]";
                 if (combatBridge.WasLastSlashPreChambered) bonusLabel += " [ON-KURUMLU 1.28x!]";
 
                 combatBridge.LastCombatActionText =
                     $"ET KESIMI / CLEAVE ({bladeZone} u={uHit:F2}){bonusLabel} | v={hitSpeedMps:F1}m/s | Hasar={damage:F0}{severNote}";
+
+                feedbackBridge?.NotifyCreatureStruckFeedback(
+                    currPts[bestPtIdx], damage, hitSpeedMps, bladeZone, bonusLabel, severNote, isClawClash: false);
 
                 if (a.CurrentHp <= 0f)
                 {
