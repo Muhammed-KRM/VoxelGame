@@ -139,6 +139,8 @@ namespace Stratocraft.Character
                 caps |= AnatomyCapabilityFlags.VoxelSiegeBreaker;
             }
 
+            float hpMult = Mathf.Max(0.25f, Stage1GameSettings.CreatureHealthMultiplier);
+            float scaledHp = canonicalHp * hpMult;
             _agents.Add(new LiveCreatureAgent
             {
                 Root = creatureRoot,
@@ -155,8 +157,8 @@ namespace Stratocraft.Character
                     ? def.DisplayName
                     : (isStarterPhoenix ? "Anka Kor Avatar (Boss)" : $"Ash Stalker #{_agents.Count + 1}"),
                 OriginalMaxHp = canonicalHp,
-                MaxHp = canonicalHp,
-                CurrentHp = canonicalHp,
+                MaxHp = scaledHp,
+                CurrentHp = scaledHp,
                 BaseSpeed = isStarterPhoenix ? 5.2f : Mathf.Clamp(def.BaseMoveSpeed * 0.76f, 3.0f, 7.8f),
                 VoxelSiegeDps = def.VoxelSiegeDps > 0f ? def.VoxelSiegeDps : (isStarterPhoenix ? 110f : 45f),
                 SpeedMultiplier = 1.0f,
@@ -164,30 +166,46 @@ namespace Stratocraft.Character
             });
         }
 
+        public void ApplyLiveDifficultyMultipliers()
+        {
+            float hpMult = Mathf.Max(0.25f, Stage1GameSettings.CreatureHealthMultiplier);
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.State == CreatureAiState.Dead || a.State == CreatureAiState.EmberEgg) continue;
+                float prevMax = Mathf.Max(1f, a.MaxHp);
+                float ratio = Mathf.Clamp01(a.CurrentHp / prevMax);
+                float baseHp = a.OriginalMaxHp > 0f ? a.OriginalMaxHp : 240f;
+                a.MaxHp = baseHp * hpMult;
+                a.CurrentHp = Mathf.Max(1f, a.MaxHp * ratio);
+            }
+        }
+
         public void EnsureOuterContinentCreaturesSpawned(
             Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
-            if (_outerContinentCreaturesSpawned || _agents.Count == 0) return;
+            if (_outerContinentCreaturesSpawned) return;
             if (!worldChunks.ContainsKey((1, 0)) && !worldChunks.ContainsKey((-2, -1))) return;
             _outerContinentCreaturesSpawned = true;
 
-            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(22.5f, 11f, 5.5f), 1.1f, 3);   // Direwolf #3
-            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(18.5f, 11f, -14.5f), 1.9f, 5); // Warhorse #5
-            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(-24.5f, 10f, 14.5f), 2.4f, 6); // Orc #6 (Biped)
-            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(-26.5f, 10f, -12.5f), 2.8f, 8);// Wild Charger #8
-            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(12.5f, 14f, 22.5f), 4.1f, 14); // Griffin #14
+            // Merkez Baslangic Vadisinde (r < 75m) egitmen botu disinda hicbir canli olmasin; tum canlilar dis biyomlarda dogar
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(82.5f, 96f, 44.5f), 1.1f, 3);   // Direwolf #3
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(76.5f, 96f, -56.5f), 1.9f, 5); // Warhorse #5
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(-86.5f, 96f, 54.5f), 2.4f, 6); // Orc #6 (Biped)
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(-88.5f, 96f, -52.5f), 2.8f, 8);// Wild Charger #8
+            SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(72.5f, 102f, 78.5f), 4.1f, 14); // Griffin #14
         }
 
         public void SpawnBiomeCreaturesNearPosition(
             Vector3 playerPos, Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             float distFromOrigin = new Vector2(playerPos.x, playerPos.z).magnitude;
-            byte ring = distFromOrigin < 60f ? (byte)1
-                : (distFromOrigin < 120f ? (byte)2
+            // Merkez Zumrut Baslangic Vadisinde (r < 75m) egitmen botu ve mekanik kukla disinda hicbir vahsi canli dogmaz!
+            if (distFromOrigin < 75.0f) return;
+
+            byte ring = distFromOrigin < 120f ? (byte)2
                 : (distFromOrigin < 1800f ? (byte)3
-                : (distFromOrigin < 9000f ? (byte)4 : (byte)5)));
-            if (playerPos.x > 25f && playerPos.z > 20f && distFromOrigin < 120f) ring = 3; // Kuzeydogu Buzul Zirvesi
-            else if (playerPos.x < -25f && playerPos.z < -20f && distFromOrigin < 120f) ring = 2; // Guneybati Kanyonu
+                : (distFromOrigin < 9000f ? (byte)4 : (byte)5));
 
             int activeTier0Count = 0;
             int nearbyCount = 0;
@@ -204,7 +222,7 @@ namespace Stratocraft.Character
                 {
                     activeTier0Count++;
                 }
-                if (a.State != CreatureAiState.Dead && d <= 48f)
+                if (a.State != CreatureAiState.Dead && d <= 56f)
                 {
                     nearbyCount++;
                 }
@@ -212,14 +230,15 @@ namespace Stratocraft.Character
 
             if (_agents.Count >= 48) return;
             int toSpawn = Mathf.Min(2, MaxActiveTier0Entities - activeTier0Count);
-            if (nearbyCount >= 6 || toSpawn <= 0) return;
+            if (nearbyCount >= 5 || toSpawn <= 0) return;
 
             for (int s = 0; s < toSpawn; s++)
             {
                 byte archId = Creature21BehaviorSystem.SelectArchetypeForRingAndIndex(ring, _dynamicSpawnCounter++);
                 float ang = (_dynamicSpawnCounter * 1.85f) % (Mathf.PI * 2f);
-                float rad = 14f + (s * 5.5f);
-                Vector3 spawnPos = new Vector3(playerPos.x + Mathf.Cos(ang) * rad, playerPos.y + 2f, playerPos.z + Mathf.Sin(ang) * rad);
+                float rad = 28f + (s * 7.5f);
+                Vector3 spawnPos = new Vector3(playerPos.x + Mathf.Cos(ang) * rad, playerPos.y + 1f, playerPos.z + Mathf.Sin(ang) * rad);
+                if (new Vector2(spawnPos.x, spawnPos.z).magnitude < 75.0f) continue;
                 SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, spawnPos, _dynamicSpawnCounter * 0.9f, archId);
             }
         }
@@ -315,18 +334,11 @@ namespace Stratocraft.Character
                     var (ax, ay, az) = a.OffScreenRecord.EvaluatePositionAtTime(nowSec);
                     float analHorizDist = Vector2.Distance(new Vector2(playerPos.x, playerPos.z), new Vector2(ax, az));
 
-                    bool shouldPromoteTo3D = analHorizDist <= 12.0f;
-                    if (!shouldPromoteTo3D && analHorizDist <= 60.0f)
+                    bool shouldPromoteTo3D = analHorizDist <= 88.0f;
+                    if (!shouldPromoteTo3D && analHorizDist <= 125.0f && hasFrustum)
                     {
-                        if (!hasFrustum)
-                        {
-                            shouldPromoteTo3D = true;
-                        }
-                        else
-                        {
-                            Bounds analBounds = new Bounds(new Vector3(ax, ay + 0.9f, az), new Vector3(3.2f, 3.2f, 3.2f));
-                            shouldPromoteTo3D = GeometryUtility.TestPlanesAABB(_cameraFrustumPlanes, analBounds);
-                        }
+                        Bounds analBounds = new Bounds(new Vector3(ax, ay + 0.9f, az), new Vector3(4.5f, 4.5f, 4.5f));
+                        shouldPromoteTo3D = GeometryUtility.TestPlanesAABB(_cameraFrustumPlanes, analBounds);
                     }
 
                     if (!shouldPromoteTo3D)
@@ -341,16 +353,9 @@ namespace Stratocraft.Character
                 Vector3 toPlayer = playerPos - a.Root.position;
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
 
-                bool inCameraFrustum = true;
-                if (hasFrustum && horizDist > 12.0f && a.State != CreatureAiState.EmberEgg)
-                {
-                    Bounds creatureBounds = new Bounds(a.Root.position + Vector3.up * 0.9f, new Vector3(3.2f, 3.2f, 3.2f));
-                    inCameraFrustum = GeometryUtility.TestPlanesAABB(_cameraFrustumPlanes, creatureBounds);
-                }
-
-                // 2) Canli kamera frustum'unun disina ciktiysa (> 12m uzaktayken) veya > 60m uzaklastiysa:
-                //    3B modelini ve 12 eklem animasyonunu kapatip OffScreenEntityRecord ("Excel Tablosu") moduna gecir!
-                if ((!inCameraFrustum && horizDist > 12.0f && !a.IsTamed) || horizDist > 60.0f)
+                // 2) Yalnizca oyuncudan > 96m uzakta olan canlilari OffScreenEntityRecord ("Excel Tablosu") moduna gecir;
+                //    gorus ve savas menzilindeki (<= 96m) hicbir canliyi kamera dondu diye kaybetme / isinlama!
+                if (horizDist > 96.0f && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
                 {
                     DemoteAgentToOffScreenSpreadsheet(a, i, nowSec);
                     offScreenCount++;
@@ -376,8 +381,9 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                float aggroRange = a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 7.0f);
-                if (horizDist <= aggroRange)
+                float aggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
+                float aggroRange = (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 7.0f)) * aggroMult;
+                if (aggroMult > 0.02f && horizDist <= aggroRange)
                 {
                     StepAggroAgent(
                         a, i, playerPos, horizDist, toPlayer.y, isPlayerParrying, ref playerVitals,
@@ -421,6 +427,7 @@ namespace Stratocraft.Character
             if (a.Root.gameObject.activeSelf) a.Root.gameObject.SetActive(false);
 
             Vector3 startPos = a.Root.position;
+            a.AnchorPos = startPos;
             float patrolAngle = (float)(nowSec * 0.45 + a.PhaseOffset + agentIndex * 1.15);
             float radiusX = (a.IsFlyingBoss ? 6.5f : 4.2f) * Mathf.Max(0.4f, a.SpeedMultiplier);
             float radiusZ = (a.IsFlyingBoss ? 5.5f : 3.6f) * Mathf.Max(0.4f, a.SpeedMultiplier);
@@ -575,7 +582,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (!Input.GetKeyDown(KeyCode.E)) return;
+            if (!Input.GetKeyDown(Stage1GameSettings.KeyInteract) && !Input.GetKeyDown(KeyCode.E)) return;
 
             if (MountedCreatureAgent != null)
             {
@@ -680,7 +687,9 @@ namespace Stratocraft.Character
                 {
                     a.State = CreatureAiState.AggroChase;
                     Vector3 next = a.Root.position + flatDir * (a.BaseSpeed * a.SpeedMultiplier * dt);
-                    next.y = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
+                    float targetY = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
+                    if (targetY - a.Root.position.y > 1.25f) targetY = a.Root.position.y;
+                    next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 8.5f);
                     a.Root.position = next;
                 }
                 else if (a.AttackCooldown <= 0f)
@@ -700,7 +709,9 @@ namespace Stratocraft.Character
             {
                 Vector3 toP = new Vector3(playerPos.x - a.Root.position.x, 0f, playerPos.z - a.Root.position.z).normalized;
                 Vector3 next = a.Root.position + toP * (a.BaseSpeed * a.SpeedMultiplier * dt);
-                next.y = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
+                float targetY = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
+                if (targetY - a.Root.position.y > 1.25f) targetY = a.Root.position.y;
+                next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 8.5f);
                 a.Root.position = next;
                 a.Root.rotation = Quaternion.Euler(0f, Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg, 0f);
             }
@@ -749,8 +760,11 @@ namespace Stratocraft.Character
 
             float radiusX = 2.4f * a.SpeedMultiplier;
             float radiusZ = 2.0f * a.SpeedMultiplier;
+            float curY = a.Root.position.y;
             Vector3 nextPos = a.AnchorPos + new Vector3(Mathf.Sin(t) * radiusX, 0f, Mathf.Cos(t) * radiusZ);
-            nextPos.y = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks);
+            float patrolTargetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, curY, worldChunks);
+            if (patrolTargetY - curY > 1.25f) patrolTargetY = curY;
+            nextPos.y = Mathf.MoveTowards(curY, patrolTargetY, 0.12f);
             a.Root.position = nextPos;
 
             Vector3 moveDir = new Vector3(Mathf.Cos(t) * radiusX, 0f, -Mathf.Sin(t) * radiusZ);
@@ -793,7 +807,17 @@ namespace Stratocraft.Character
                     2.15f);
 
                 Vector3 fleePos = pos - flatDir * (woundedFleeSpeed * deltaTime);
-                fleePos.y = SampleStandableHeight(a, fleePos.x, fleePos.z, pos.y, worldChunks, out _);
+                float fleeTargetY = SampleStandableHeight(a, fleePos.x, fleePos.z, pos.y, worldChunks, out _);
+                if (fleeTargetY - pos.y <= 1.25f)
+                {
+                    fleePos.y = Mathf.MoveTowards(pos.y, fleeTargetY, deltaTime * 8.5f);
+                }
+                else
+                {
+                    fleePos = pos + new Vector3(-flatDir.z, 0f, flatDir.x) * (woundedFleeSpeed * deltaTime);
+                    float sideTargetY = SampleStandableHeight(a, fleePos.x, fleePos.z, pos.y, worldChunks, out _);
+                    fleePos.y = sideTargetY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, sideTargetY, deltaTime * 8.5f) : pos.y;
+                }
                 a.Root.position = fleePos;
                 float fleeYaw = Mathf.Atan2(-flatDir.x, -flatDir.z) * Mathf.Rad2Deg;
                 float limpRoll = Mathf.Sin(time * 5.5f + a.PhaseOffset) * (a.LegSevered ? 18f : 10f);
@@ -812,7 +836,9 @@ namespace Stratocraft.Character
             {
                 a.State = CreatureAiState.AggroChase;
                 bool flying = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
-                Vector3 nextPos = pos + boidsSep * (a.BaseSpeed * a.SpeedMultiplier * deltaTime);
+                float aggroSpeedScale = Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01(Stage1GameSettings.CreatureAggressionMultiplier * 0.5f));
+                float chaseStep = a.BaseSpeed * a.SpeedMultiplier * aggroSpeedScale * deltaTime;
+                Vector3 nextPos = pos + boidsSep * chaseStep;
                 if (flying)
                 {
                     nextPos.y = Mathf.Lerp(pos.y, playerPos.y + 1.25f, deltaTime * 3.0f);
@@ -824,7 +850,7 @@ namespace Stratocraft.Character
                     if (isHazard)
                     {
                         Vector3 sideStep = new Vector3(-boidsSep.z, 0f, boidsSep.x);
-                        nextPos = pos + sideStep * (a.BaseSpeed * a.SpeedMultiplier * deltaTime);
+                        nextPos = pos + sideStep * chaseStep;
                         targetY = SampleStandableHeight(a, nextPos.x, nextPos.z, pos.y, worldChunks, out _);
                     }
 
@@ -841,8 +867,9 @@ namespace Stratocraft.Character
                             ExecuteSupportPillarSiegeStrike(a, nextPos, worldChunks, dirtyChunks, collapseBridge);
                         }
                         Vector3 detourDir = TryComputeAStarDetourDirection(a, pos, playerPos, worldChunks, boidsSep);
-                        Vector3 detourPos = pos + detourDir * (a.BaseSpeed * a.SpeedMultiplier * deltaTime * 0.85f);
-                        detourPos.y = SampleStandableHeight(a, detourPos.x, detourPos.z, pos.y, worldChunks, out _);
+                        Vector3 detourPos = pos + detourDir * (chaseStep * 0.85f);
+                        float detourY = SampleStandableHeight(a, detourPos.x, detourPos.z, pos.y, worldChunks, out _);
+                        detourPos.y = detourY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, detourY, deltaTime * 6.5f) : pos.y;
                         pos = detourPos;
                     }
                 }
@@ -882,18 +909,25 @@ namespace Stratocraft.Character
                     meleePos -= flatDir * (1.45f * deltaTime);
                 }
 
-                meleePos.y = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0
-                    ? Mathf.Lerp(pos.y, playerPos.y + 0.95f, deltaTime * 4f)
-                    : SampleStandableHeight(a, meleePos.x, meleePos.z, pos.y, worldChunks, out _);
+                if (a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0)
+                {
+                    meleePos.y = Mathf.Lerp(pos.y, playerPos.y + 0.95f, deltaTime * 4f);
+                }
+                else
+                {
+                    float meleeTargetY = SampleStandableHeight(a, meleePos.x, meleePos.z, pos.y, worldChunks, out _);
+                    meleePos.y = meleeTargetY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 8.5f) : pos.y;
+                }
                 a.Root.position = meleePos;
 
                 if (a.AttackCooldown <= 0f)
                 {
-                    a.AttackCooldown = 1.30f;
+                    float aggroRate = Mathf.Clamp(Stage1GameSettings.CreatureAggressionMultiplier, 0.5f, 2.5f);
+                    a.AttackCooldown = 1.30f / Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01((aggroRate - 0.5f) / 2.0f));
                     string attackMoveLabel = GetSpeciesAttackDescription(a);
                     float armPenalty = (a.LeftArmSevered && a.RightArmSevered) ? 0.25f : (a.ArmSevered ? 0.45f : 1.0f);
                     float jawPenalty = a.HeadSevered ? 0.65f : 1.0f;
-                    float rawDmg = (a.IsFlyingBoss ? 18f : 11f) * a.DamageMultiplier * armPenalty * jawPenalty;
+                    float rawDmg = (a.IsFlyingBoss ? 18f : 11f) * a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier * armPenalty * jawPenalty;
                     if (isPlayerParrying && combatBridge != null &&
                         combatBridge.NotifyParryImpactAndCheckGuardBreak(rawDmg, out float selfHitRecoilDamage))
                     {
@@ -984,13 +1018,14 @@ namespace Stratocraft.Character
             a.SolarFlareTimer = 0f;
             a.SolarFlareWarningEmitted = false;
             Vector3 bossPos = a.Root.position;
+            if (new Vector2(bossPos.x, bossPos.z).magnitude < 75.0f) return;
             int bx = Mathf.FloorToInt(bossPos.x), bz = Mathf.FloorToInt(bossPos.z);
             int scorchedBlocks = 0;
 
-            for (int dz = -8; dz <= 8; dz++)
-            for (int dx = -8; dx <= 8; dx++)
+            for (int dz = -6; dz <= 6; dz++)
+            for (int dx = -6; dx <= 6; dx++)
             {
-                if (dx * dx + dz * dz > 64) continue;
+                if (dx * dx + dz * dz > 36) continue;
                 if (((dx + dz) & 1) != 0) continue;
                 int wx = bx + dx, wz = bz + dz;
                 int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
@@ -998,19 +1033,19 @@ namespace Stratocraft.Character
                 if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunk) || chunk == null) continue;
                 int lx = wx - cx * 16, lz = wz - cz * 16;
 
-                for (int y = Stage1InteractivePlayController.MaxEditableVoxelY - 3; y >= 4; y--)
+                int startY = Mathf.Clamp(Mathf.FloorToInt(bossPos.y + 4f), 4, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+                for (int y = startY; y >= 4; y--)
                 {
                     int idx = (y << 8) | (lz << 4) | lx;
                     uint raw = chunk[idx];
                     if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
-                    // Boss Dinamik Arena Kurali: Oyuncu yapisi bloklar (OyuncuItemBlogu) gunes kavurmasina siper olur, dogal bloklar kavrulur!
+                    // Boss Dinamik Arena Kurali: Oyuncu yapisi bloklar (OyuncuItemBlogu) gunes kavurmasina siper olur, dogal bloklar bazalta donusur!
                     if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
                     {
                         byte curMat = VoxelBitUtility.GetMaterialId(raw);
                         if (curMat == MaterialIdCatalog.Grass || curMat == MaterialIdCatalog.Dirt || curMat == MaterialIdCatalog.Stone || curMat == MaterialIdCatalog.Sand)
                         {
-                            byte scorchMat = ((dx * 7 + dz * 13) & 3) == 0 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
-                            chunk[idx] = (raw & ~0xFFu) | scorchMat;
+                            chunk[idx] = (raw & ~0xFFu) | MaterialIdCatalog.Basalt;
                             dirtyChunks.Add((cx, cz));
                             scorchedBlocks++;
                         }
@@ -1027,7 +1062,7 @@ namespace Stratocraft.Character
                     UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
                 if (!blockedByCover)
                 {
-                    float flareDmg = 16f * a.DamageMultiplier;
+                    float flareDmg = 16f * a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier;
                     playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - flareDmg);
                     LastCreatureEventText = $"ANKA GUNES PATLAMASI! Acikta yakalandiniz (-{flareDmg:F0} HP | {scorchedBlocks} dogal blok kavruldu)!";
                 }
@@ -1144,7 +1179,7 @@ namespace Stratocraft.Character
                 if (uHit <= 0.20f && combatBridge.CurrentThrustExtensionMeters < 0.12f && !isJumpStrike)
                 {
                     a.LastHitSwingId = combatBridge.CurrentSwingId;
-                    float bashDamage = 14f;
+                    float bashDamage = 14f * Stage1GameSettings.PlayerCombatDamageMultiplier;
                     a.CurrentHp = Mathf.Max(0f, a.CurrentHp - bashDamage);
                     a.AttackCooldown = Mathf.Max(a.AttackCooldown, 0.95f);
                     combatBridge.AbortSwingOnObstacle(0.32f);
@@ -1174,7 +1209,8 @@ namespace Stratocraft.Character
                 float weakPointMult = isWeakPointCrit ? Creature21BehaviorSystem.PhoenixWeakPointCriticalMultiplier : 1.0f;
 
                 float damage = Mathf.Lerp(26f, 96f, speedFactor01)
-                    * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult * weakPointMult;
+                    * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult * weakPointMult
+                    * Stage1GameSettings.PlayerCombatDamageMultiplier;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
                 a.HitFlinchTimer = 0.25f;
 
@@ -1963,11 +1999,14 @@ namespace Stratocraft.Character
 
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
             {
-                int topY = Stage1InteractivePlayController.MaxEditableVoxelY - 2;
+                int topY = currentY > 1f
+                    ? Mathf.Clamp(Mathf.FloorToInt(currentY + 1.65f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2)
+                    : Stage1InteractivePlayController.MaxEditableVoxelY - 2;
                 for (int y = topY; y >= 1; y--)
                 {
                     uint raw = chunk[(y << 8) | (lz << 4) | lx];
                     byte mat = VoxelBitUtility.GetMaterialId(raw);
+                    if (mat == MaterialIdCatalog.GlowingMoss) continue;
                     if (mat == MaterialIdCatalog.FiniteLavaSurface || mat == MaterialIdCatalog.FiniteAcidSurface || mat == MaterialIdCatalog.MagmaBlock)
                     {
                         if ((a.Capabilities & AnatomyCapabilityFlags.CapLavaImmunity) == 0) isHazard = true;
@@ -1988,10 +2027,14 @@ namespace Stratocraft.Character
             float voxelY = -30f;
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
             {
-                int topY = Stage1InteractivePlayController.MaxEditableVoxelY - 2;
+                int topY = currentY > 1f
+                    ? Mathf.Clamp(Mathf.FloorToInt(currentY + 1.65f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2)
+                    : Stage1InteractivePlayController.MaxEditableVoxelY - 2;
                 for (int y = topY; y >= 1; y--)
                 {
                     uint raw = chunk[(y << 8) | (lz << 4) | lx];
+                    byte mat = VoxelBitUtility.GetMaterialId(raw);
+                    if (mat == MaterialIdCatalog.GlowingMoss) continue;
                     if (VoxelBitUtility.IsPhysicallySolid(raw))
                     {
                         voxelY = VoxelBitUtility.GetShapeId(raw) == 0
@@ -2001,11 +2044,19 @@ namespace Stratocraft.Character
                     }
                 }
             }
-            float rayOriginY = Mathf.Max(currentY + 8f, StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY + 36f);
-            if (UnityEngine.Physics.Raycast(new Vector3(worldX, rayOriginY, worldZ), Vector3.down,
-                out RaycastHit hit, 140f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+
+            int terrainMask = LayerMask.GetMask("VoxelTerrain");
+            if (terrainMask != 0 && voxelY > -20f)
             {
-                return voxelY > -20f ? Mathf.Max(hit.point.y, voxelY - 0.35f) : hit.point.y;
+                float rayOriginY = voxelY + 1.15f;
+                if (UnityEngine.Physics.Raycast(new Vector3(worldX, rayOriginY, worldZ), Vector3.down,
+                    out RaycastHit hit, 2.5f, terrainMask, QueryTriggerInteraction.Ignore))
+                {
+                    if (Mathf.Abs(hit.point.y - voxelY) <= 0.85f)
+                    {
+                        return Mathf.Max(hit.point.y, voxelY - 0.32f);
+                    }
+                }
             }
             return voxelY > -20f ? voxelY : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
         }

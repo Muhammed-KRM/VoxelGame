@@ -142,7 +142,9 @@ namespace Stratocraft.Character
         public CombatMartialStance ActiveMartialStance { get; private set; } = CombatMartialStance.HighGuard_VomTag;
         public bool AllDojoStancesUnlocked { get; set; } = true;
         public float StanceMastery01 { get; set; } = 0.65f;
-        public int CurrentSwingId { get; private set; } = 1;
+        public int CurrentSwingId { get; private set; }
+        private int _lastToolVoxelHitSwingId;
+        private int _lastActiveHolsterSlot = -1;
         public BallisticSlashPhase CurrentSlashPhase => _slashPhase;
         public BallisticSlashPhase SlashPhase => _slashPhase;
         public float SlashProgress01 => _slashProgress01;
@@ -902,6 +904,7 @@ namespace Stratocraft.Character
         public void AbortSwingOnObstacle(float bounceRestitution = 0.35f)
         {
             _slashPhase = BallisticSlashPhase.IdleInGuard;
+            _slashProgress01 = 0f;
             IsActiveAttackSwing = false;
             Vector2 reboundDir = -_slashDirUnit.normalized;
             _reboundTimer = 0.24f;
@@ -985,9 +988,9 @@ namespace Stratocraft.Character
             // Canlı oyun modunda Feint [Q], Morph [ScrollUp] ve Tekme/Kabza [F / RMB+F] tuşlarını işle
             if (canEngageCombat)
             {
-                bool wantFeint = feintPressed || (Application.isPlaying && Input.GetKeyDown(KeyCode.Q));
+                bool wantFeint = feintPressed || (Application.isPlaying && (Input.GetKeyDown(Stage1GameSettings.KeyFeintOrSheathe) || Input.GetKeyDown(KeyCode.Q)));
                 bool wantMorph = morphScrollUp || (Application.isPlaying && Input.GetAxis("Mouse ScrollWheel") > 0.005f);
-                bool wantKick = kickPressed || (Application.isPlaying && Input.GetKeyDown(KeyCode.F));
+                bool wantKick = kickPressed || (Application.isPlaying && (Input.GetKeyDown(Stage1GameSettings.KeyKickOrBash) || Input.GetKeyDown(KeyCode.F)));
 
                 if (wantFeint && TryTriggerFeint())
                 {
@@ -1074,6 +1077,8 @@ namespace Stratocraft.Character
             if (_isParryStance)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
+                _slashProgress01 = 0f;
+                HasPendingToolVoxelHit = false;
                 GetWeaponStats(ActiveWeaponArchetype, out _, out float parryWMass, out _, out _);
                 float effectiveParryMass = Mathf.Max(0.75f, parryWMass * Mathf.Clamp(weaponMassScale, 0.75f, 1.65f));
                 float massHandlingFactor = Mathf.Pow(1.85f / effectiveParryMass, 1.15f);
@@ -1107,6 +1112,8 @@ namespace Stratocraft.Character
             else if (_isThrustMode)
             {
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
+                _slashProgress01 = 0f;
+                HasPendingToolVoxelHit = false;
                 float thrustSpeed = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.20f : 0.11f;
                 float thrustInput = Mathf.Max(0.025f, rawMouseY * thrustSpeed);
                 float maxReach = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.82f : 0.48f;
@@ -1388,6 +1395,7 @@ namespace Stratocraft.Character
                 if (_slashProgress01 >= 1.0f)
                 {
                     _slashPhase = BallisticSlashPhase.IdleInGuard;
+                    _slashProgress01 = 0f;
                     _guardAnglesRad = ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw
                         ? GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw)
                         : Vector2.ClampMagnitude(_currentBladeAnglesRad, 1.15f);
@@ -1771,6 +1779,20 @@ namespace Stratocraft.Character
             bool isFirstPersonMode,
             Vector3 baseLocalPos)
         {
+            if (activeHolsterSlot != _lastActiveHolsterSlot)
+            {
+                _lastActiveHolsterSlot = activeHolsterSlot;
+                HasPendingToolVoxelHit = false;
+                _slashPhase = BallisticSlashPhase.IdleInGuard;
+                _slashProgress01 = 0f;
+                _lastToolVoxelHitSwingId = CurrentSwingId;
+            }
+            else if (_slashPhase != BallisticSlashPhase.ActiveFullArcSwing)
+            {
+                _slashProgress01 = 0f;
+                HasPendingToolVoxelHit = false;
+            }
+
             Vector3 hiltWorld = weaponPivot.position;
             Vector3 bladeDir = weaponPivot.up.normalized;
             Transform? localRef = playerCamera != null ? playerCamera.transform : weaponPivot.parent;
@@ -1827,10 +1849,14 @@ namespace Stratocraft.Character
 
                     if (activeHolsterSlot == 2 || activeHolsterSlot == 3)
                     {
-                        HasPendingToolVoxelHit = true;
-                        PendingToolVoxelHitCoord = new Vector3Int(wx, wy, wz);
-                        PendingToolImpactPower = Mathf.Clamp(BladeLocalSwingSpeedMetersPerSec * 0.28f, 0.85f, 2.25f);
-                        AbortSwingOnObstacle(0.32f);
+                        if (_slashProgress01 >= 0.26f && CurrentSwingId > 0 && _lastToolVoxelHitSwingId != CurrentSwingId)
+                        {
+                            _lastToolVoxelHitSwingId = CurrentSwingId;
+                            HasPendingToolVoxelHit = true;
+                            PendingToolVoxelHitCoord = new Vector3Int(wx, wy, wz);
+                            PendingToolImpactPower = Mathf.Clamp(BladeLocalSwingSpeedMetersPerSec * 0.28f, 0.85f, 2.25f);
+                            AbortSwingOnObstacle(0.32f);
+                        }
                         break;
                     }
                     if (_isPlayerAirborne && i >= 3) continue;
@@ -2002,7 +2028,11 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (!HasPendingToolVoxelHit && (activeHolsterSlot == 2 || activeHolsterSlot == 3) &&
+            if (!HasPendingToolVoxelHit &&
+                _slashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
+                CurrentSwingId > 0 &&
+                _lastToolVoxelHitSwingId != CurrentSwingId &&
+                (activeHolsterSlot == 2 || activeHolsterSlot == 3) &&
                 _slashProgress01 >= 0.42f && _slashProgress01 <= 0.78f && playerCamera != null)
             {
                 Vector3 origin = playerCamera.transform.position, fwd = playerCamera.transform.forward;
@@ -2013,6 +2043,7 @@ namespace Stratocraft.Character
                     uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
                     if (VoxelBitUtility.IsPhysicallySolid(raw))
                     {
+                        _lastToolVoxelHitSwingId = CurrentSwingId;
                         HasPendingToolVoxelHit = true;
                         PendingToolVoxelHitCoord = new Vector3Int(wx, wy, wz);
                         PendingToolImpactPower = Mathf.Clamp(BladeLocalSwingSpeedMetersPerSec * 0.28f, 1.0f, 2.25f);

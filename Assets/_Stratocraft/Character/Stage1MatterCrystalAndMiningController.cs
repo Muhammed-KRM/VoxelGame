@@ -49,7 +49,8 @@ namespace Stratocraft.Character
         private byte _lastGhostMat, _lastGhostShape, _lastGhostColorCode, _lastGhostRot;
         private int _brushRadiusIdx, _materialIdx, _shapeIdx = 1;
         private float _actionCooldown, _miningDamageAccumulator;
-        private int _lastToolSwingId = -1;
+        private int _lastToolSwingId;
+        private int _lastActiveToolHolsterSlot = -1;
         private Vector3Int _lastMinedVoxelCoord = new(int.MinValue, int.MinValue, int.MinValue);
 
         public struct DroppedWorldItem
@@ -190,7 +191,7 @@ namespace Stratocraft.Character
             if (_actionCooldown > 0f) _actionCooldown = Mathf.Max(0f, _actionCooldown - dt);
             if (!backpackOpen)
             {
-                if (Input.GetKeyDown(KeyCode.C)) IsCrystalActive = !IsCrystalActive;
+                if (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C)) IsCrystalActive = !IsCrystalActive;
                 if (Input.GetKeyDown(KeyCode.V))
                 {
                     _shapeIdx = (_shapeIdx + 1) % ShapeWheelCycle.Length;
@@ -261,16 +262,27 @@ namespace Stratocraft.Character
                 }
             }
 
+            if (activeHolsterSlot != _lastActiveToolHolsterSlot)
+            {
+                _lastActiveToolHolsterSlot = activeHolsterSlot;
+                if (combatBridge != null)
+                {
+                    combatBridge.ConsumePendingToolVoxelHit(out _, out _);
+                    _lastToolSwingId = combatBridge.CurrentSwingId;
+                }
+            }
+
             if (!IsCrystalActive && (activeHolsterSlot == 2 || activeHolsterSlot == 3) && combatBridge != null)
             {
                 bool hasBladeVoxelHit = combatBridge.ConsumePendingToolVoxelHit(out Vector3Int bladeHitCoord, out float bladeImpactPower);
+                bool isNewIntentionalSwing = combatBridge.CurrentSwingId > 0 && _lastToolSwingId != combatBridge.CurrentSwingId;
                 bool hasCloseSwingStrike = !hasBladeVoxelHit &&
+                                           isNewIntentionalSwing &&
                                            combatBridge.SlashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
                                            combatBridge.SlashProgress01 >= 0.30f &&
-                                           _lastToolSwingId != combatBridge.CurrentSwingId &&
                                            HasAimHit && AimHit.distance <= 3.85f;
 
-                if (hasBladeVoxelHit || hasCloseSwingStrike)
+                if (isNewIntentionalSwing && (hasBladeVoxelHit || hasCloseSwingStrike))
                 {
                     _lastToolSwingId = combatBridge.CurrentSwingId;
                     Vector3Int targetCoord = (HasAimHit && AimHit.distance <= 3.85f &&
@@ -333,7 +345,7 @@ namespace Stratocraft.Character
 
             if (IsCrystalActive)
             {
-                _actionCooldown = 0.09f;
+                _actionCooldown = 0.09f / Mathf.Clamp(Stage1GameSettings.MiningSpeedMultiplier, 0.5f, 4.0f);
                 ExecuteCrystalVacuumBrush(maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat, fluidChunks, dirtyFluidChunks, holsterCtrl);
             }
             else if (activeHolsterSlot == 0 && AimHit.distance <= 3.5f)
@@ -561,13 +573,13 @@ namespace Stratocraft.Character
 
             if (slot == 2 || slot == 3)
             {
-                CurrentToolDurability = Mathf.Max(0f, CurrentToolDurability - 0.5f);
+                CurrentToolDurability = Mathf.Max(0f, CurrentToolDurability - 0.5f * Stage1GameSettings.ToolDurabilityLossMultiplier);
                 holsterCtrl?.InventoryUi.UpdateSelectedToolDurability(ToolDurability01);
             }
 
-            float strikeGain = slot == 0
+            float strikeGain = (slot == 0
                 ? (toolPower / hardness) * 0.14f
-                : (toolPower / hardness) * 0.34f * Mathf.Max(0.75f, impactMultiplier);
+                : (toolPower / hardness) * 0.34f * Mathf.Max(0.75f, impactMultiplier)) * Stage1GameSettings.MiningSpeedMultiplier;
             _miningDamageAccumulator += strikeGain;
             int dmgStep = Mathf.FloorToInt(_miningDamageAccumulator);
             if (dmgStep <= 0)
@@ -729,7 +741,7 @@ namespace Stratocraft.Character
         {
             if (_droppedWorldItems.Count == 0) return;
             Vector3 magnetTarget = playerPos + new Vector3(0f, 0.92f, 0f);
-            bool manualPickupKey = Input.GetKey(KeyCode.E);
+            bool manualPickupKey = Input.GetKey(Stage1GameSettings.KeyInteract) || Input.GetKey(KeyCode.E);
 
             for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
             {

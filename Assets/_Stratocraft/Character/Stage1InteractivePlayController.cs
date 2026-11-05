@@ -87,6 +87,7 @@ namespace Stratocraft.Character
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
         private readonly Stage1CombatFeedbackAndArenaBridge _feedbackArenaBridge = new();
+        private readonly Stage1EscapeMenuAndSettingsController _escapeMenuCtrl = new();
         private readonly EnclosedOxygenFloodFillSystem _oxygenSystem = new();
         private readonly ThermalAndBiologySystem _thermalSystem = new();
         private readonly SeasonAndWeatherSystem _seasonWeatherSystem = new();
@@ -95,6 +96,7 @@ namespace Stratocraft.Character
         private SqliteTelemetryLogger? _telemetryLogger;
         private VoxelChunkComponent? _oxygenScratchChunk;
         private Transform? _chunkContainerParent;
+        private Material? _sharedFluidMaterial;
         private bool _isFirstPersonMode = true;
         private bool _isUserProneToggled;
         private bool _showDebugHudText = true;
@@ -326,7 +328,7 @@ namespace Stratocraft.Character
             }
 
             // 2. Kare butcesini korumak icin kirli kuyruk doluyken yeni chunk uretme; kamera bakis konisine oncelik ver
-            if (_dirtyChunks.Count >= 4) return;
+            if (_dirtyChunks.Count >= 8) return;
 
             Vector2 camFwd2D = Vector2.up;
             if (PlayerCamera != null)
@@ -337,6 +339,7 @@ namespace Stratocraft.Character
             }
 
             bool infinite = StratocraftFloatingIslandWorldGen.InfiniteProceduralWorldMode;
+            int spawnedThisFrame = 0;
             for (int pass = 0; pass < 2; pass++)
             {
                 for (int r = 0; r <= ActiveChunkRadius; r++)
@@ -361,11 +364,24 @@ namespace Stratocraft.Character
                             }
 
                             CreateAndRegisterDynamicContinentChunk(cx, cz);
-                            return;
+                            spawnedThisFrame++;
+                            if (spawnedThisFrame >= 2 || _dirtyChunks.Count >= 10) return;
                         }
                     }
                 }
             }
+        }
+
+        private Material? ResolveFluidSurfaceMaterial()
+        {
+            if (_sharedFluidMaterial != null) return _sharedFluidMaterial;
+            Shader? fluidShader = Shader.Find("Stratocraft/FluidSurface");
+            if (fluidShader != null)
+            {
+                _sharedFluidMaterial = new Material(fluidShader) { name = "Mat_Stratocraft_FluidSurface_Runtime" };
+                return _sharedFluidMaterial;
+            }
+            return SharedVoxelMaterial;
         }
 
         private void CreateAndRegisterDynamicContinentChunk(int cx, int cz)
@@ -383,6 +399,7 @@ namespace Stratocraft.Character
             int pCx = Mathf.FloorToInt(transform.position.x / 16f);
             int pCz = Mathf.FloorToInt(transform.position.z / 16f);
             bool inNearPhysics = Mathf.Abs(cx - pCx) <= NearPhysicsColliderRadius && Mathf.Abs(cz - pCz) <= NearPhysicsColliderRadius;
+            Material? fluidMat = ResolveFluidSurfaceMaterial();
 
             if (_chunkPool.Count > 0)
             {
@@ -391,6 +408,7 @@ namespace Stratocraft.Character
                 slot.ChunkGo.name = $"VoxelChunk_{cx}_{cz}";
                 slot.ChunkGo.transform.position = new Vector3(cx * 16f, 0f, cz * 16f);
                 slot.FluidGo.name = $"FluidSurface_{cx}_{cz}";
+                if (fluidMat != null) slot.FluidMr.sharedMaterial = fluidMat;
                 slot.SolidMc.enabled = inNearPhysics;
                 slot.ChunkGo.SetActive(true);
 
@@ -414,7 +432,7 @@ namespace Stratocraft.Character
                 fluidGo.transform.localPosition = Vector3.zero;
                 MeshFilter fluidMf = fluidGo.AddComponent<MeshFilter>();
                 MeshRenderer fluidMr = fluidGo.AddComponent<MeshRenderer>();
-                if (SharedVoxelMaterial != null) fluidMr.sharedMaterial = SharedVoxelMaterial;
+                if (fluidMat != null) fluidMr.sharedMaterial = fluidMat;
 
                 RegisterEditableChunk(new Vector2Int(cx, cz), voxels, mf, mc, fluids, fluidMf);
             }
@@ -426,14 +444,11 @@ namespace Stratocraft.Character
             _dirtyChunks.Add((cx, cz));
             _dirtyFluidChunks.Add((cx, cz));
 
-            // Yalnizca oyuncuya yakin (cheb <= 2) dikişlerde komsu chunk'lari yeniden or; uzaktaki halkalarda 5x rebuild carpimini onle
-            if (Mathf.Abs(cx - pCx) <= 2 && Mathf.Abs(cz - pCz) <= 2)
-            {
-                if (_worldChunks.ContainsKey((cx - 1, cz))) _dirtyChunks.Add((cx - 1, cz));
-                if (_worldChunks.ContainsKey((cx + 1, cz))) _dirtyChunks.Add((cx + 1, cz));
-                if (_worldChunks.ContainsKey((cx, cz - 1))) _dirtyChunks.Add((cx, cz - 1));
-                if (_worldChunks.ContainsKey((cx, cz + 1))) _dirtyChunks.Add((cx, cz + 1));
-            }
+            // Yeni bir kita chunk'i olustugunda 4 komsusunu daima kirli isaretle ki dis sinir perdesi 0.000m dikisle kaynasin!
+            if (_worldChunks.ContainsKey((cx - 1, cz))) _dirtyChunks.Add((cx - 1, cz));
+            if (_worldChunks.ContainsKey((cx + 1, cz))) _dirtyChunks.Add((cx + 1, cz));
+            if (_worldChunks.ContainsKey((cx, cz - 1))) _dirtyChunks.Add((cx, cz - 1));
+            if (_worldChunks.ContainsKey((cx, cz + 1))) _dirtyChunks.Add((cx, cz + 1));
         }
 
         private void StepFluidSimulation(float dt)
@@ -515,13 +530,15 @@ namespace Stratocraft.Character
 
         private void StepMovementAndOxygen(float dt)
         {
-            Vector2 moveInput = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
-            bool wantSprint = Input.GetKey(KeyCode.LeftShift), wantCrouch = Input.GetKey(KeyCode.LeftControl);
-            if (Input.GetKeyDown(KeyCode.Z))
+            bool menuOpen = _escapeMenuCtrl.IsMenuOpen;
+            Vector2 moveInput = menuOpen ? Vector2.zero : new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
+            bool wantSprint = !menuOpen && Input.GetKey(KeyCode.LeftShift);
+            bool wantCrouch = !menuOpen && Input.GetKey(KeyCode.LeftControl);
+            if (!menuOpen && (Input.GetKeyDown(Stage1GameSettings.KeyProne) || Input.GetKeyDown(KeyCode.Z)))
             {
                 _isUserProneToggled = !_isUserProneToggled;
             }
-            if (wantSprint || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.LeftControl))
+            if (wantSprint || (!menuOpen && Input.GetKeyDown(KeyCode.Space)) || (!menuOpen && Input.GetKeyDown(KeyCode.LeftControl)))
             {
                 _isUserProneToggled = false;
             }
@@ -533,29 +550,39 @@ namespace Stratocraft.Character
             float backpackMass = _holsterCtrl.BackpackSystem.StoredEquipment.Count * 2.5f;
             float wetMult = 1.0f + _movementBridge.Vitals.Wetness01 * 0.10f;
             float equippedMass = (activeHandheldMass + holsteredMass * 0.55f + backpackMass * 0.65f) * wetMult;
+
+            // Henuz oyuncu icin aktif aclik/susuzluk tuketim mekanigi olmadigindan sabit tut; can/hiz dusurmesin
+            _movementBridge.Vitals.HungerKcal = 2000f;
+            _movementBridge.Vitals.ThirstHydration = 100f;
+
             float hpBefore = _movementBridge.Vitals.CurrentHp;
             _movementBridge.StepCharacterPhysics(
                 transform, _worldChunks, moveInput, wantSprint, wantCrouch, wantProne,
-                Input.GetKeyDown(KeyCode.Space), _holsterCtrl.IsBackpackOpen, equippedMass, dt, out string moveFeedback, _fluidChunks);
+                !menuOpen && Input.GetKeyDown(KeyCode.Space), _holsterCtrl.IsBackpackOpen || menuOpen, equippedMass, dt, out string moveFeedback, _fluidChunks);
             if (!string.IsNullOrEmpty(moveFeedback)) _miningCtrl.LastFeedbackText = moveFeedback;
             _collapseBridge.StepFallingClusters(
                 dt, MaxEditableVoxelY, _worldChunks, _dirtyChunks, transform, ref _movementBridge.Vitals, out string? collapseNote);
             if (!string.IsNullOrEmpty(collapseNote)) _miningCtrl.LastFeedbackText = collapseNote!;
+            _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
             if (_movementBridge.Vitals.CurrentHp < hpBefore - 0.1f) _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
             UpdateOxygenAndFloatingOrigin(dt);
         }
 
         private void StepHolsterBackpackAndMining(float dt)
         {
+            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen;
             GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
-            _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
-                dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
-                swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
-                ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge);
+            if (!_escapeMenuCtrl.IsMenuOpen)
+            {
+                _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
+                    dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
+                    swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
+                    ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge);
+            }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
-            _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, _holsterCtrl.IsBackpackOpen, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial);
+            _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial);
             _miningCtrl.ExecuteMiningOrBuilding(
-                dt, _holsterCtrl.ActiveHolsterSlot, _holsterCtrl.IsBackpackOpen, MaxEditableVoxelY,
+                dt, _holsterCtrl.ActiveHolsterSlot, uiBlocked, MaxEditableVoxelY,
                 transform.position, _movementBridge.MovementState.CapsuleHeightMeters,
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
                 _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl);
@@ -564,23 +591,31 @@ namespace Stratocraft.Character
 
         private void StepCombatCreaturesAndRig(float dt)
         {
+            if (PlayerCamera != null && Mathf.Abs(PlayerCamera.fieldOfView - Stage1GameSettings.CameraFieldOfView) > 0.1f)
+            {
+                PlayerCamera.fieldOfView = Stage1GameSettings.CameraFieldOfView;
+            }
+
             int slot = _holsterCtrl.ActiveHolsterSlot;
-            bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen &&
+            bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
             float massScale = slot == 2 ? 1.45f : (slot == 3 ? 1.25f : 1.0f);
             bool isPlayerAirborne = _movementBridge.MovementState.IsGrounded == 0 || Mathf.Abs(_movementBridge.VerticalVelocity) > 1.2f;
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
-            _combatBridge.IsPlayerHypothermic = _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen;
-            float mouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X");
-            float mouseY = lockCamForUi ? 0f : Input.GetAxis("Mouse Y");
+            _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
+                                                _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
+            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen;
+            float sens = Stage1GameSettings.MouseSensitivity;
+            float ySign = Stage1GameSettings.InvertMouseY ? -1.0f : 1.0f;
+            float mouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X") * sens;
+            float mouseY = lockCamForUi ? 0f : Input.GetAxis("Mouse Y") * sens * ySign;
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
-                Input.GetMouseButton(0), Input.GetMouseButton(1), Input.GetMouseButtonUp(0),
+                !lockCamForUi && Input.GetMouseButton(0), !lockCamForUi && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
                 canCombat, massScale, dt, ref _cameraYaw, ref _cameraPitch,
                 out _, out _, out _, _rigAnimator.PlayerLeftArmSevered,
                 isPlayerAirborne, _movementBridge.VerticalVelocity);
-            float combatStaminaDrain = _combatBridge.ConsumePendingStaminaDrain();
+            float combatStaminaDrain = _combatBridge.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
             if (combatStaminaDrain > 0f)
             {
                 _movementBridge.Vitals.Stamina = Mathf.Max(0f, _movementBridge.Vitals.Stamina - combatStaminaDrain);
@@ -621,6 +656,7 @@ namespace Stratocraft.Character
             _feedbackArenaBridge.StepFeedbackAndArena(
                 dt, transform, _combatBridge, ref _movementBridge.Vitals,
                 SharedVoxelMaterial, _worldChunks, _rigAnimator.PlayerLeftArmSevered);
+            _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
             if (_movementBridge.Vitals.CurrentHp < hpBeforeAi - 0.1f)
             {
                 _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
@@ -655,6 +691,20 @@ namespace Stratocraft.Character
 
         private void HandleCameraModeAndPersistenceHotkeys()
         {
+            bool isBagOpen = _holsterCtrl.IsBackpackOpen;
+            _escapeMenuCtrl.StepEscapeKeyAndRebind(
+                ref isBagOpen,
+                () =>
+                {
+                    GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
+                    _holsterCtrl.ToggleBackpackMat(
+                        transform, TacticalBackpackMatRoot, swordGo, PickaxeVisualRoot, AxeVisualRoot,
+                        SharedVoxelMaterial, ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl);
+                },
+                _creatureBridge,
+                PlayerCamera);
+            if (_escapeMenuCtrl.IsWaitingForKeyRebind) return;
+
             if (Input.GetKeyDown(KeyCode.F1))
             {
                 _showAllHud = !_showAllHud;
@@ -665,13 +715,19 @@ namespace Stratocraft.Character
                 _showDebugHudText = !_showDebugHudText;
                 _miningCtrl.LastFeedbackText = _showDebugHudText ? "[F3] Gelistirici & Simulasyon Bilgi Yazilari Acildi" : "[F3] Ekran Bilgi Yazilari Gizlendi (Temiz Ekran)";
             }
-            if (Input.GetKeyDown(KeyCode.F5)) { _isFirstPersonMode = !_isFirstPersonMode; ApplyFirstPersonVisibility(); }
-            if (Input.GetKeyDown(KeyCode.Escape)) { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; }
-            else if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && Cursor.lockState != CursorLockMode.Locked)
+            if (Input.GetKeyDown(Stage1GameSettings.KeyCameraToggle) || Input.GetKeyDown(KeyCode.F5))
+            {
+                _isFirstPersonMode = !_isFirstPersonMode;
+                ApplyFirstPersonVisibility();
+            }
+            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && Cursor.lockState != CursorLockMode.Locked)
             {
                 Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             }
-            if (Input.GetKeyDown(KeyCode.G) && !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
+            if (_escapeMenuCtrl.IsMenuOpen) return;
+
+            if ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
+                !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
             {
                 if (_holsterCtrl.ActiveHolsterSlot != 1) _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
                 _combatBridge.CycleMartialStance();
@@ -904,6 +960,17 @@ namespace Stratocraft.Character
                         if (mf != null) mf.transform.position += shift;
                 }
             }
+
+            if (!Stage1GameSettings.EnableEnvironmentalEffects)
+            {
+                _movementBridge.Vitals.CoreBodyTempCelsius = 37.0f;
+                _movementBridge.Vitals.Wetness01 = 0f;
+                _movementBridge.Vitals.LungOxygenPercent = 100f;
+                _movementBridge.Vitals.ActiveDiseaseFlags = 0;
+                _ambientTempCelsius = 21.0f;
+                return;
+            }
+
             bool holdingTorch = _holsterCtrl.ActiveHolsterSlot == 4 && !_miningCtrl.IsCrystalActive;
             int effectiveAir = _movementBridge.Vitals.SubmergedDepthMeters > 0.1f ? 0 : _lastConnectedAirVoxels;
             _oxygenSystem.StepOxygen(ref _movementBridge.Vitals, effectiveAir, holdingTorch, dt);
@@ -938,12 +1005,17 @@ namespace Stratocraft.Character
                     nearbyHeatSourceBonusCelsius: heatBonus);
             }
 
+            _movementBridge.Vitals.HungerKcal = 2000f;
+            _movementBridge.Vitals.ThirstHydration = 100f;
             _thermalSystem.StepBiology(
                 ref _movementBridge.Vitals,
                 ambientTempCelsius: _ambientTempCelsius,
                 armorThermalInsulation01: 0.35f,
                 isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f,
                 deltaTime: dt);
+
+            // Usume veya sicaklama yuzunden karakterin HP'si 0'a inip yere dusmesi (BleedOutCrawl) ve bir daha kalkamamasi engellenir!
+            _movementBridge.Vitals.CurrentHp = Mathf.Max(20.0f, _movementBridge.Vitals.CurrentHp);
         }
 
         private void UpdateNearPlayerColliderRing(int pCx, int pCz)
@@ -983,8 +1055,6 @@ namespace Stratocraft.Character
         /// </summary>
         private void UpdateFrustumVisibility()
         {
-            if (PlayerCamera == null) return;
-            GeometryUtility.CalculateFrustumPlanes(PlayerCamera, _frustumPlanes);
             int pCx = Mathf.FloorToInt(transform.position.x / 16f);
             int pCz = Mathf.FloorToInt(transform.position.z / 16f);
             int visCount = 0;
@@ -994,18 +1064,9 @@ namespace Stratocraft.Character
                 MeshRenderer? mr = kv.Value;
                 if (mr == null) continue;
                 int cx = kv.Key.cx, cz = kv.Key.cz;
-                bool visible;
-                if (Mathf.Abs(cx - pCx) <= 1 && Mathf.Abs(cz - pCz) <= 1)
-                {
-                    visible = true;
-                }
-                else
-                {
-                    Bounds chunkBounds = new Bounds(
-                        new Vector3(cx * 16f + 8f, MaxEditableVoxelY * 0.5f, cz * 16f + 8f),
-                        new Vector3(18f, MaxEditableVoxelY, 18f));
-                    visible = GeometryUtility.TestPlanesAABB(_frustumPlanes, chunkBounds);
-                }
+                // Aktif yaricap icindeki tum chunk'lari acik tut (Unity URP Forward+ yerel C++ kamera frustum ayiklamasini yapar;
+                // boylece ekran kenarlarinda veya SceneView'da harita parcalari asla kaybolmaz!)
+                bool visible = Mathf.Abs(cx - pCx) <= ActiveChunkRadius + 1 && Mathf.Abs(cz - pCz) <= ActiveChunkRadius + 1;
 
                 if (mr.enabled != visible) mr.enabled = visible;
                 if (_fluidMeshRenderers.TryGetValue(kv.Key, out MeshRenderer? fmr) && fmr != null && fmr.enabled != visible)
@@ -1049,7 +1110,7 @@ namespace Stratocraft.Character
                     return dotB.CompareTo(dotA);
                 });
 
-                int maxSolidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 2;
+                int maxSolidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 4;
                 int processedSolid = 0;
 
                 for (int i = 0; i < _sortedDirtyChunks.Count; i++)
@@ -1059,12 +1120,7 @@ namespace Stratocraft.Character
 
                     if (!_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) || mf == null) continue;
                     _reusableTris.Clear();
-                    // Minecraft 16x16x16 Dikey Sub-Chunk Optimizasyonu:
-                    // Oyuncu yuzeydeyken (Y >= 78m), oyuncunun altindaki 3x3 chunk disindaki uzak yuzey chunk'larinda
-                    // kapali derin magara katmanlarini (Y = 0..63) bosuna ucgenleme!
-                    int meshMinY = (transform.position.y < 78f || (Mathf.Abs(key.cx - pCx) <= 1 && Mathf.Abs(key.cz - pCz) <= 1))
-                        ? 0
-                        : 64;
+                    const int meshMinY = 0;
                     HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                         key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris, minY: meshMinY);
                     Mesh? existingDynamicMesh = mf.sharedMesh != null &&
@@ -1093,18 +1149,18 @@ namespace Stratocraft.Character
                     }
 
                     processedSolid++;
-                    if (!forceImmediateAll && (processedSolid >= maxSolidPerFrame || _meshRebuildStopwatch.Elapsed.TotalMilliseconds >= 1.8))
+                    if (!forceImmediateAll && (processedSolid >= maxSolidPerFrame || _meshRebuildStopwatch.Elapsed.TotalMilliseconds >= 3.2))
                     {
                         break;
                     }
                 }
             }
 
-            if (_dirtyFluidChunks.Count > 0 && (forceImmediateAll || _meshRebuildStopwatch.Elapsed.TotalMilliseconds < 2.2))
+            if (_dirtyFluidChunks.Count > 0 && (forceImmediateAll || _meshRebuildStopwatch.Elapsed.TotalMilliseconds < 3.8))
             {
                 _sortedDirtyChunks.Clear();
                 foreach (var k in _dirtyFluidChunks) _sortedDirtyChunks.Add(k);
-                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 2;
+                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 4;
                 int processedFluid = 0;
 
                 for (int i = 0; i < _sortedDirtyChunks.Count; i++)
@@ -1114,8 +1170,9 @@ namespace Stratocraft.Character
 
                     if (!_fluidMeshFilters.TryGetValue(key, out MeshFilter? fmf) || fmf == null) continue;
                     _reusableFluidTris.Clear();
+                    const int fluidMinY = 0;
                     FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
-                        key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris);
+                        key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris, minY: fluidMinY);
                     Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
                                                      fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
                         ? fmf.sharedMesh
@@ -1168,13 +1225,15 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Tum 400 (20x20) 3B VoxelChunk (16x16x160m) voksel ve akiskan dizilerini tum CPU cekirdeklerinde PARALEL uret!
+            // Tum sahne VoxelChunk (16x16x160m) voksel ve akiskan dizilerini tum CPU cekirdeklerinde PARALEL uret!
             var popResults = new (uint[] voxels, ushort[] fluids)[chunkEntries.Count];
             System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, idx =>
             {
                 var entry = chunkEntries[idx];
                 popResults[idx] = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(entry.cx, entry.cz);
             });
+
+            bool isSmallLegacyScene = chunkEntries.Count <= 25;
 
             for (int idx = 0; idx < chunkEntries.Count; idx++)
             {
@@ -1202,6 +1261,10 @@ namespace Stratocraft.Character
                     if (childMf[c] != mf && childMf[c].gameObject.name.StartsWith("FluidSurface_", StringComparison.Ordinal))
                     {
                         fluidMf = childMf[c];
+                        if (_sharedFluidMaterial == null && fluidMf.TryGetComponent<MeshRenderer>(out var fmr) && fmr.sharedMaterial != null && fmr.sharedMaterial != SharedVoxelMaterial)
+                        {
+                            _sharedFluidMaterial = fmr.sharedMaterial;
+                        }
                         break;
                     }
                 }
@@ -1212,8 +1275,8 @@ namespace Stratocraft.Character
                     _activeFluidChunks.Add((cx, cz));
                 }
 
-                // Baslangic Donmasini Onle: Sahnedeki chunk'in sharedMesh'i zaten doluysa ilk karede yeniden orme!
-                if (!hasExistingMesh)
+                // Eger sahne eski 4x4 (16 chunk) kayitliysa kenar chunk'larini da yeniden or ki yeralti magaralari acikta kalmasin
+                if (!hasExistingMesh || isSmallLegacyScene)
                 {
                     _dirtyChunks.Add((cx, cz));
                     _dirtyFluidChunks.Add((cx, cz));
@@ -1223,6 +1286,21 @@ namespace Stratocraft.Character
                 chunkComp.VisualWorldPosition = (cx * 16f, 0f, cz * 16f);
                 _floatingOriginChunks.Add(chunkComp);
             }
+
+            if (isSmallLegacyScene)
+            {
+                for (int cz = -4; cz <= 3; cz++)
+                {
+                    for (int cx = -4; cx <= 3; cx++)
+                    {
+                        if (!_worldChunks.ContainsKey((cx, cz)))
+                        {
+                            CreateAndRegisterDynamicContinentChunk(cx, cz);
+                        }
+                    }
+                }
+            }
+
             _lastColliderRingPlayerCx = pCx;
             _lastColliderRingPlayerCz = pCz;
         }
@@ -1234,13 +1312,38 @@ namespace Stratocraft.Character
             if (creaturesParent != null)
             {
                 float phase = 0f;
+                int relocatedCreatureIdx = 0;
                 foreach (Transform child in creaturesParent.transform)
                 {
                     bool isBoss = child.name.StartsWith("Boss_", StringComparison.OrdinalIgnoreCase);
                     bool isCreature = child.name.StartsWith("Creature_", StringComparison.OrdinalIgnoreCase);
-                    if (isBoss || isCreature)
+                    if (isBoss)
                     {
-                        RegisterPatrollingCreature(child, child.position, phase, isBoss);
+                        // Ucan Anka Boss oyun basinda merkezde oyuncunun yaninda olmasin; uzaktaki volkanik bolgeye tasi ve pasif tut!
+                        Vector3 farBossPos = new Vector3(
+                            128.0f,
+                            StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(128.0f, -118.0f) + 2.8f,
+                            -118.0f);
+                        child.position = farBossPos;
+                        child.gameObject.SetActive(false);
+                        continue;
+                    }
+                    if (isCreature)
+                    {
+                        Vector3 pos = child.position;
+                        if (new Vector2(pos.x, pos.z).magnitude < 75.0f)
+                        {
+                            // Merkezde egitmen botu (MasterSwordDuelist_NPC) disinda hicbir canli olmasin; dis biyoma tasi!
+                            float targetX = -92.0f - relocatedCreatureIdx * 5.5f;
+                            float targetZ = -78.0f - relocatedCreatureIdx * 4.5f;
+                            pos = new Vector3(
+                                targetX,
+                                StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(targetX, targetZ),
+                                targetZ);
+                            child.position = pos;
+                            relocatedCreatureIdx++;
+                        }
+                        RegisterPatrollingCreature(child, pos, phase, isFlyingBoss: false);
                         phase += 1.35f;
                     }
                 }
@@ -1256,7 +1359,11 @@ namespace Stratocraft.Character
 
         private void OnGUI()
         {
-            if (!_showAllHud) return;
+            if (!_showAllHud)
+            {
+                _escapeMenuCtrl.DrawEscapeMenuOnGui(_creatureBridge, _miningCtrl, SaveAllChunksToRegionStore, LoadAllChunksFromRegionStore);
+                return;
+            }
 
             _hudBoxStyle ??= new GUIStyle(GUI.skin.box) { fontSize = 12, alignment = TextAnchor.UpperLeft, normal = { textColor = Color.white } };
             _crosshairStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 18, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.9f, 0.95f, 1f, 0.9f) } };
@@ -1264,7 +1371,7 @@ namespace Stratocraft.Character
             _hotbarStyle ??= new GUIStyle(GUI.skin.box) { fontSize = 13, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.75f, 1f, 0.85f, 1f) } };
 
             float cx = Screen.width * 0.5f, cy = Screen.height * 0.5f;
-            if (!_holsterCtrl.IsBackpackOpen)
+            if (!_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen)
             {
                 string reticle = _miningCtrl.IsCrystalActive
                     ? "◎"
@@ -1313,8 +1420,8 @@ namespace Stratocraft.Character
             ref var vt = ref _movementBridge.Vitals;
 
             // Usume (Hipotermi < 36.2C veya Ortam < 0C) ve Asiri Isinma (Hipertermi > 37.8C veya Ortam > 38C) Gorsel Uyari Cizimi
-            bool isFreezingAlert = vt.CoreBodyTempCelsius < 36.2f || _ambientTempCelsius <= 0.0f;
-            bool isOverheatAlert = vt.CoreBodyTempCelsius > 37.8f || _ambientTempCelsius >= 38.0f;
+            bool isFreezingAlert = Stage1GameSettings.EnableEnvironmentalEffects && (vt.CoreBodyTempCelsius < 36.2f || _ambientTempCelsius <= 0.0f);
+            bool isOverheatAlert = Stage1GameSettings.EnableEnvironmentalEffects && (vt.CoreBodyTempCelsius > 37.8f || _ambientTempCelsius >= 38.0f);
             if (_showDebugHudText && (isFreezingAlert || isOverheatAlert))
             {
                 _thermalAlertStyle ??= new GUIStyle(GUI.skin.box)
@@ -1335,7 +1442,7 @@ namespace Stratocraft.Character
                     _thermalAlertStyle.normal.textColor = new Color(0.75f, 0.96f, 1.0f, 1.0f);
                     string freezeMsg =
                         $"❄ USUME / HIPOTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.1}°C | Ortam: {_ambientTempCelsius:0.1}°C | Dayaniklilik Tuketimi Artiyor!\n" +
-                        $"Lav Kalderasina (Guneydogu) Yaklasin veya [F11] Tusuyla Iklim Test Modunu Degistirin!";
+                        $"[ESC] Menuden Cevre Etkilerini kapatabilir veya [F11] Tusuyla Iklim Test Modunu Degistirebilirsiniz!";
                     GUI.Box(new Rect(cx - 420f, 182f, 840f, 44f), freezeMsg, _thermalAlertStyle);
                 }
                 else
@@ -1349,27 +1456,31 @@ namespace Stratocraft.Character
                     _thermalAlertStyle.normal.textColor = new Color(1.0f, 0.85f, 0.45f, 1.0f);
                     string heatMsg =
                         $"🔥 ASIRI ISINMA / HIPERTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.1}°C | Ortam: {_ambientTempCelsius:0.1}°C\n" +
-                        $"Su Havuzuna Girin, [5] Su Matarasini Icin veya [F11] Tusuyla Iklim Test Modunu Degistirin!";
+                        $"Su Havuzuna Girin, [5] Su Matarasini Icin veya [ESC] Menuden Cevre Etkilerini kapatin!";
                     GUI.Box(new Rect(cx - 420f, 182f, 840f, 44f), heatMsg, _thermalAlertStyle);
                 }
                 GUI.color = prevColor;
             }
 
-            if (!_showDebugHudText) return;
+            if (_showDebugHudText)
+            {
+                string limbHud = (_rigAnimator.PlayerLeftArmSevered || _rigAnimator.PlayerRightLegSevered)
+                    ? $"KOPUK ({(_rigAnimator.PlayerLeftArmSevered ? "SolKol " : "")}{(_rigAnimator.PlayerRightLegSevered ? "SagBacak" : "")})"
+                    : "Saglam";
+                string biomeLabel = StratocraftFloatingIslandWorldGen.GetBiomeDisplayName(transform.position.x, transform.position.z);
+                string envLabel = Stage1GameSettings.EnableEnvironmentalEffects ? $"{vt.CoreBodyTempCelsius:0.1}°C (Ortam:{_ambientTempCelsius:0.1}°C)" : "KAPALI (37.0°C)";
+                string hud =
+                    $"=== STRATOCRAFT FAZ 1 & FAZ 2 FIZIKSEL SIMULASYON (Seed:{StratocraftFloatingIslandWorldGen.ActiveWorldSeed} | Zorluk: {Stage1GameSettings.GetDifficultyDisplayName(Stage1GameSettings.DifficultyPreset)} | [ESC] Menu & Ayarlar | [F3] Yazilari Gizle | [F1] Sinematik) ===\n" +
+                    $"[Durus: {st.Stance}] Hiz: {st.CurrentSpeedMetersPerSec:0.0} m/s ([Alt] Dodge) | HP: {vt.CurrentHp:0}/{vt.MaxHp:0} | EP: %{vt.Stamina:0} | O2: %{vt.LungOxygenPercent:0} | Isi: {envLabel} | [F5] {(_isFirstPersonMode ? "FPS (Ana)" : "Omuz TPS")} | [F9] Uzuv: {limbHud}\n" +
+                    $"[Konum: X={transform.position.x:0}m Y={transform.position.y:0.0}m Z={transform.position.z:0}m | {biomeLabel}] | [C] Kristal(T{_miningCtrl.CurrentCrystalTier}): {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | [R] 24-Yon:{_miningCtrl.SelectedRotation} | [B] {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)}\n" +
+                    $"   Depo (264B Q24.8): {_miningCtrl.FormatCrystalStockHudLine()} | Alet(T{_miningCtrl.CurrentToolTier}) Dayaniklilik:%{_miningCtrl.ToolDurability01 * 100f:0} | Domino: {_collapseBridge.ActiveFallingClusterCount}/64 | Item: {_miningCtrl.ActiveDroppedItemCount}\n" +
+                    $"[I] Canta: {(_holsterCtrl.IsBackpackOpen ? "ACIK" : "KAPALI")} | {_holsterCtrl.FormatHolsterBarSummary(_miningCtrl)} | [Q] Feint/BosEl | [ScrollUp] Morph | [F] Tekme | [E] Sandik/Ors/Evcillestir\n" +
+                    $"[F8 Silah: {_combatBridge.GetWeaponDisplayName()}] x [G Dojo Stili: {_combatBridge.GetStanceDisplayName()}] | {_miningCtrl.LastFeedbackText}\n" +
+                    $"[Arena & Canli AI] {_feedbackArenaBridge.ArenaStatusSummary} | {_creatureBridge.NearestCreatureHudSummary}";
+                GUI.Box(new Rect(12f, 12f, 1060f, 164f), hud, _hudBoxStyle);
+            }
 
-            string limbHud = (_rigAnimator.PlayerLeftArmSevered || _rigAnimator.PlayerRightLegSevered)
-                ? $"KOPUK ({(_rigAnimator.PlayerLeftArmSevered ? "SolKol " : "")}{(_rigAnimator.PlayerRightLegSevered ? "SagBacak" : "")})"
-                : "Saglam";
-            string biomeLabel = StratocraftFloatingIslandWorldGen.GetBiomeDisplayName(transform.position.x, transform.position.z);
-            string hud =
-                $"=== STRATOCRAFT FAZ 1 & FAZ 2 FIZIKSEL SIMULASYON (Seed:{StratocraftFloatingIslandWorldGen.ActiveWorldSeed} | 300km Kita & 160m Derinlik ({_worldChunks.Count} Chunk) | [F3] Yazilari Gizle | [F1] Sinematik) ===\n" +
-                $"[Durus: {st.Stance}] Hiz: {st.CurrentSpeedMetersPerSec:0.0} m/s ([Alt] Dodge) | HP: {vt.CurrentHp:0}/{vt.MaxHp:0} | EP: %{vt.Stamina:0} | O2: %{vt.LungOxygenPercent:0} | Isi: {vt.CoreBodyTempCelsius:0.1}°C (Ortam:{_ambientTempCelsius:0.1}°C) | [F5] {(_isFirstPersonMode ? "FPS (Ana)" : "Omuz TPS")} | [F9] Uzuv: {limbHud}\n" +
-                $"[Konum: X={transform.position.x:0}m Y={transform.position.y:0.0}m Z={transform.position.z:0}m | {biomeLabel}] | [C] Kristal(T{_miningCtrl.CurrentCrystalTier}): {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | [R] 24-Yon:{_miningCtrl.SelectedRotation} | [B] {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)}\n" +
-                $"   Depo (264B Q24.8): {_miningCtrl.FormatCrystalStockHudLine()} | Alet(T{_miningCtrl.CurrentToolTier}) Dayaniklilik:%{_miningCtrl.ToolDurability01 * 100f:0} | Domino: {_collapseBridge.ActiveFallingClusterCount}/64 | Item: {_miningCtrl.ActiveDroppedItemCount}\n" +
-                $"[I] Canta: {(_holsterCtrl.IsBackpackOpen ? "ACIK" : "KAPALI")} | {_holsterCtrl.FormatHolsterBarSummary(_miningCtrl)} | [Q] Feint/BosEl | [ScrollUp] Morph | [F] Tekme | [E] Sandik/Ors/Evcillestir\n" +
-                $"[F8 Silah: {_combatBridge.GetWeaponDisplayName()}] x [G Dojo Stili: {_combatBridge.GetStanceDisplayName()}] | {_miningCtrl.LastFeedbackText}\n" +
-                $"[Arena & Canli AI] {_feedbackArenaBridge.ArenaStatusSummary} | {_creatureBridge.NearestCreatureHudSummary}";
-            GUI.Box(new Rect(12f, 12f, 1060f, 164f), hud, _hudBoxStyle);
+            _escapeMenuCtrl.DrawEscapeMenuOnGui(_creatureBridge, _miningCtrl, SaveAllChunksToRegionStore, LoadAllChunksFromRegionStore);
         }
     }
 }

@@ -105,11 +105,8 @@ namespace Stratocraft.Voxel.Jobs
             bool[] sliceHasShape = _tsSliceHasShape ??= new bool[MaxPadY];
 
             int lowerClearPy = startPy - 1;
-            Array.Clear(padded, lowerClearPy * padSliceStride, padSliceStride);
             Array.Clear(padded, (padY - 1) * padSliceStride, padSliceStride);
-            Array.Clear(channel1Sdf, lowerClearPy * padSliceStride, padSliceStride);
             Array.Clear(channel1Sdf, (padY - 1) * padSliceStride, padSliceStride);
-            sliceHasSolid[lowerClearPy] = sliceAllSolid[lowerClearPy] = sliceHasShape[lowerClearPy] = false;
             sliceHasSolid[padY - 1] = sliceAllSolid[padY - 1] = sliceHasShape[padY - 1] = false;
 
             MicroVoxelPool4096?[]? centerMicroPools = null;
@@ -124,6 +121,71 @@ namespace Stratocraft.Voxel.Jobs
             worldChunks.TryGetValue((chunkX - 1, chunkZ + 1), out uint[]? chunkNW);
             worldChunks.TryGetValue((chunkX + 1, chunkZ + 1), out uint[]? chunkNE);
 
+            bool isSurfaceOverworldSlice = minY >= 68 && maxY > 32;
+            bool clampUnloadedContinentEdges = maxY > 32 && worldChunks.Count > 4;
+            uint sealedCliffRockRaw = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            if (isSurfaceOverworldSlice)
+            {
+                int lowerBase = lowerClearPy * padSliceStride;
+                Array.Fill(padded, sealedCliffRockRaw, lowerBase, padSliceStride);
+                Array.Fill(channel1Sdf, sealedCliffRockRaw, lowerBase, padSliceStride);
+                sliceHasSolid[lowerClearPy] = true;
+                sliceAllSolid[lowerClearPy] = true;
+                sliceHasShape[lowerClearPy] = false;
+            }
+            else
+            {
+                Array.Clear(padded, lowerClearPy * padSliceStride, padSliceStride);
+                Array.Clear(channel1Sdf, lowerClearPy * padSliceStride, padSliceStride);
+                sliceHasSolid[lowerClearPy] = sliceAllSolid[lowerClearPy] = sliceHasShape[lowerClearPy] = false;
+            }
+
+            Span<int> colGroundSealY = stackalloc int[padX * padZ];
+            if (isSurfaceOverworldSlice)
+            {
+                int scanTopY = Math.Min(maxY - 1, 128);
+                for (int pz = 0; pz < padZ; pz++)
+                {
+                    int lz = pz - 1;
+                    int wz = chunkWorldOffsetZ + lz;
+                    for (int px = 0; px < padX; px++)
+                    {
+                        int lx = px - 1;
+                        int wx = chunkWorldOffsetX + lx;
+                        // Kuzeybati yuzey magara giris rampasini acik birak
+                        if (wx >= -16 && wx <= -2 && wz >= 2 && wz <= 28)
+                        {
+                            colGroundSealY[pz * padX + px] = -1;
+                            continue;
+                        }
+
+                        uint[]? colChunk = ResolvePaddedColumnChunk(
+                            lx, lz, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
+                            clampUnloadedContinentEdges, out int cLx, out int cLz);
+                        int sealY = -1;
+                        if (colChunk != null)
+                        {
+                            int colIdx = (cLz << 4) | cLx;
+                            for (int sy = scanTopY; sy >= minY + 1; sy--)
+                            {
+                                uint r0 = colChunk[(sy << 8) | colIdx];
+                                uint r1 = colChunk[((sy - 1) << 8) | colIdx];
+                                byte m0 = VoxelBitUtility.GetMaterialId(r0);
+                                byte m1 = VoxelBitUtility.GetMaterialId(r1);
+                                if (m0 != 0 && m0 != MaterialIdCatalog.GlowingMoss && VoxelBitUtility.GetShapeId(r0) == 0 && VoxelBitUtility.GetDensityOrLiquid(r0) >= IsoLevel &&
+                                    m1 != 0 && m1 != MaterialIdCatalog.GlowingMoss && VoxelBitUtility.GetShapeId(r1) == 0 && VoxelBitUtility.GetDensityOrLiquid(r1) >= IsoLevel)
+                                {
+                                    sealY = sy - 2;
+                                    break;
+                                }
+                            }
+                        }
+                        colGroundSealY[pz * padX + px] = sealY;
+                    }
+                }
+            }
+
             // 1. Komsu Apron Doldurma + Y-Dilimi (0x00 / 0xFF / Shape) Analizi
             for (int py = startPy; py <= endPy; py++)
             {
@@ -136,22 +198,19 @@ namespace Stratocraft.Voxel.Jobs
                     for (int px = 0; px < padX; px++)
                     {
                         int lx = px - 1;
-                        uint raw;
-                        if ((uint)lx < 16u && (uint)lz < 16u) raw = centerChunk[yShift | (lz << 4) | lx];
-                        else if (lx < 0)
+                        uint[]? srcChunk = ResolvePaddedColumnChunk(
+                            lx, lz, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
+                            clampUnloadedContinentEdges, out int cLx, out int cLz);
+                        uint raw = srcChunk != null ? srcChunk[yShift | (cLz << 4) | cLx] : 0u;
+
+                        if (isSurfaceOverworldSlice && wy <= colGroundSealY[pz * padX + px])
                         {
-                            if (lz < 0) raw = chunkSW != null ? chunkSW[yShift | (15 << 4) | 15] : 0u;
-                            else if (lz >= 16) raw = chunkNW != null ? chunkNW[yShift | (0 << 4) | 15] : 0u;
-                            else raw = chunkW != null ? chunkW[yShift | (lz << 4) | 15] : 0u;
+                            byte rMat = VoxelBitUtility.GetMaterialId(raw);
+                            if (rMat == 0 || VoxelBitUtility.GetShapeId(raw) != 0 || VoxelBitUtility.GetDensityOrLiquid(raw) < IsoLevel)
+                            {
+                                raw = sealedCliffRockRaw;
+                            }
                         }
-                        else if (lx >= 16)
-                        {
-                            if (lz < 0) raw = chunkSE != null ? chunkSE[yShift | (15 << 4) | 0] : 0u;
-                            else if (lz >= 16) raw = chunkNE != null ? chunkNE[yShift | (0 << 4) | 0] : 0u;
-                            else raw = chunkE != null ? chunkE[yShift | (lz << 4) | 0] : 0u;
-                        }
-                        else if (lz < 0) raw = chunkS != null ? chunkS[yShift | (15 << 4) | lx] : 0u;
-                        else raw = chunkN != null ? chunkN[yShift | (0 << 4) | lx] : 0u;
 
                         padded[pRow + px] = raw;
 
@@ -278,8 +337,10 @@ namespace Stratocraft.Voxel.Jobs
             }
 
             // 3. KANAL 1 TEK-SAHIPLI KENAR UCGENLEMESI (Single-Owner Edge Quad Emission)
-            int startPxForXEdges = chunkW != null ? 1 : 0;
-            int startPzForZEdges = chunkS != null ? 1 : 0;
+            int startPxForXEdges = (chunkW != null || !clampUnloadedContinentEdges) ? (chunkW != null ? 1 : 0) : 1;
+            int endPxForXEdges = (chunkE != null || !clampUnloadedContinentEdges) ? 16 : 15;
+            int startPzForZEdges = (chunkS != null || !clampUnloadedContinentEdges) ? (chunkS != null ? 1 : 0) : 1;
+            int endPzForZEdges = (chunkN != null || !clampUnloadedContinentEdges) ? 16 : 15;
 
             for (int py = minY + 1; py <= maxY; py++)
             {
@@ -289,7 +350,7 @@ namespace Stratocraft.Voxel.Jobs
                 for (int pz = 1; pz <= 16; pz++)
                 {
                     int wz = chunkWorldOffsetZ + pz - 1;
-                    for (int px = startPxForXEdges; px <= 16; px++)
+                    for (int px = startPxForXEdges; px <= endPxForXEdges; px++)
                     {
                         bool c0 = IsChannel1Solid(channel1Sdf, padX, padZ, px, py, pz), c1 = IsChannel1Solid(channel1Sdf, padX, padZ, px + 1, py, pz);
                         if (c0 != c1)
@@ -301,7 +362,7 @@ namespace Stratocraft.Voxel.Jobs
                     }
                 }
 
-                for (int pz = startPzForZEdges; pz <= 16; pz++)
+                for (int pz = startPzForZEdges; pz <= endPzForZEdges; pz++)
                 {
                     int wz = chunkWorldOffsetZ + pz - 1;
                     for (int px = 1; px <= 16; px++)
@@ -317,8 +378,9 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
+            int startYEdgePy = isSurfaceOverworldSlice ? minY + 1 : Math.Max(0, minY);
             int endYEdgePy = maxY < chunkMaxCapacityY ? maxY - 1 : maxY;
-            for (int py = Math.Max(0, minY); py <= endYEdgePy; py++)
+            for (int py = startYEdgePy; py <= endYEdgePy; py++)
             {
                 if ((!sliceHasSolid[py] && !sliceHasSolid[py + 1]) || (sliceAllSolid[py] && sliceAllSolid[py + 1])) continue;
                 int wy = py - 1;
@@ -386,6 +448,43 @@ namespace Stratocraft.Voxel.Jobs
                     }
                 }
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint[]? ResolvePaddedColumnChunk(
+            int lx, int lz, uint[] centerChunk,
+            uint[]? chunkW, uint[]? chunkE, uint[]? chunkS, uint[]? chunkN,
+            uint[]? chunkSW, uint[]? chunkSE, uint[]? chunkNW, uint[]? chunkNE,
+            bool clampUnloadedContinentEdges, out int outLx, out int outLz)
+        {
+            if ((uint)lx < 16u && (uint)lz < 16u)
+            {
+                outLx = lx; outLz = lz;
+                return centerChunk;
+            }
+            uint[]? target = null;
+            outLx = lx & 15;
+            outLz = lz & 15;
+            if (lx < 0)
+            {
+                target = lz < 0 ? chunkSW : (lz >= 16 ? chunkNW : chunkW);
+            }
+            else if (lx >= 16)
+            {
+                target = lz < 0 ? chunkSE : (lz >= 16 ? chunkNE : chunkE);
+            }
+            else
+            {
+                target = lz < 0 ? chunkS : chunkN;
+            }
+            if (target != null) return target;
+            if (clampUnloadedContinentEdges)
+            {
+                outLx = Math.Clamp(lx, 0, 15);
+                outLz = Math.Clamp(lz, 0, 15);
+                return centerChunk;
+            }
+            return null;
         }
 
         public static void GenerateSeamlessHybridChunkMesh(
@@ -535,7 +634,7 @@ namespace Stratocraft.Voxel.Jobs
             Vector3 v0 = dualVertices[i0], v1 = dualVertices[i1], v2 = dualVertices[i2], v3 = dualVertices[i3];
             byte matA = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i2]);
             byte matB = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);
-            byte tempA = Math.Max(dualTemps[i0], Math.Max(dualTemps[i1], dualTemps[i2])), tempB = Math.Max(dualTemps[i0], Math.Max(dualTemps[i2], dualTemps[i3]));
+            byte tempA = ResolveMaterialDefaultTemperature(matA), tempB = ResolveMaterialDefaultTemperature(matB);
             byte aoA = AveragePackedAoWear(dualAo[i0], dualAo[i1], dualAo[i2]), aoB = AveragePackedAoWear(dualAo[i0], dualAo[i2], dualAo[i3]);
             byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245), shadeB = (byte)Math.Clamp(120 + (int)((seedHash >> 7) & 0x7Fu) - 36, 72, 245);
 
@@ -908,6 +1007,8 @@ namespace Stratocraft.Voxel.Jobs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte SelectDominantMaterial(byte m0, byte m1, byte m2)
         {
+            if (m0 != 0 && (m0 == m1 || m0 == m2)) return m0;
+            if (m1 != 0 && m1 == m2) return m1;
             byte best = m0 != 0 ? m0 : MaterialIdCatalog.Stone, bestPrio = GetMaterialVisualPriority(best);
             byte p1 = GetMaterialVisualPriority(m1); if (m1 != 0 && p1 > bestPrio) { best = m1; bestPrio = p1; }
             byte p2 = GetMaterialVisualPriority(m2); if (m2 != 0 && p2 > bestPrio) { best = m2; }
@@ -928,12 +1029,12 @@ namespace Stratocraft.Voxel.Jobs
                 (matId >= MaterialIdCatalog.SulfurOre && matId <= MaterialIdCatalog.RedDiamondGem)) return 52;
             return matId switch
             {
-                MaterialIdCatalog.Air => 0, MaterialIdCatalog.Basalt => 10, MaterialIdCatalog.Stone => 12,
+                MaterialIdCatalog.Air => 0, MaterialIdCatalog.Stone => 12,
                 MaterialIdCatalog.Stalagnate => 14, MaterialIdCatalog.Dirt => 16, MaterialIdCatalog.Clay => 17,
-                MaterialIdCatalog.LooseRubble => 18, MaterialIdCatalog.Sand => 20, MaterialIdCatalog.Grass => 26,
+                MaterialIdCatalog.LooseRubble => 18, MaterialIdCatalog.Sand => 20, MaterialIdCatalog.MagmaBlock => 24,
+                MaterialIdCatalog.Grass => 26, MaterialIdCatalog.Basalt => 28,
                 MaterialIdCatalog.FiniteWaterSurface => 34, MaterialIdCatalog.PackedIce => 36,
-                MaterialIdCatalog.NaturalObsidian => 56, MaterialIdCatalog.MagmaBlock => 58,
-                MaterialIdCatalog.FiniteLavaSurface => 64, _ => 22
+                MaterialIdCatalog.NaturalObsidian => 56, MaterialIdCatalog.FiniteLavaSurface => 64, _ => 22
             };
         }
 

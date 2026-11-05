@@ -60,6 +60,7 @@ namespace Stratocraft.Character
         private float _dodgeRemainingSec;
         private float _dodgeCooldownSec;
         private Vector3 _dodgeDirectionWorld;
+        private float _lowCeilingDebounceSec;
 
         /// <summary>Anlik fiziksel karakter hareket durumu (Stance, Hiz, Kapsul Boyutu, Stamina Kilidi).</summary>
         public ref CharacterMovementState MovementState => ref _movementState;
@@ -114,6 +115,15 @@ namespace Stratocraft.Character
             statusFeedback = string.Empty;
             _movementState.EquippedMassKg = equippedMassKg;
             _movementState.IsBackpackOverlayOpen = isBackpackOpen ? (byte)1 : (byte)0;
+
+            // Usume, sicaklama veya aclik/susuzluk nedeniyle karakterin 0 HP'ye inip yere dusmesi (BleedOutCrawl) ve kalkamamasi engellenir!
+            _vitals.CurrentHp = Mathf.Max(1.0f, _vitals.CurrentHp);
+            _vitals.HungerKcal = 2000f;
+            _vitals.ThirstHydration = 100f;
+            if (_movementState.Stance == CharacterStance.BleedOutCrawl)
+            {
+                _movementState.Stance = CharacterStance.Standing;
+            }
 
             Vector3 pos = playerTransform.position;
             if (pos.y < VoidRescueThresholdY)
@@ -170,8 +180,21 @@ namespace Stratocraft.Character
             if (!prevSliding && wantSprint && wantCrouch && wishDir.sqrMagnitude > 0.04f)
                 PhysicalCharacterControllerSystem.TryInitiateSlide(ref _movementState, ref _vitals, (wishDir.x, wishDir.z));
 
-            // Gercek voksel tavan yuksekligi (Headroom Clearance) kontrolu: zemin yuksekligini (groundY) baz alarak olc
-            MeasureHeadroomClearance(worldChunks, pos, groundY, out bool canCrouch115, out bool canStand180);
+            // Gercek voksel tavan yuksekligi (Headroom Clearance) kontrolu: egimli zemini tavan sanmamak icin acik hava boslugunu olc
+            MeasureHeadroomClearance(worldChunks, pos, groundY, out bool rawCanCrouch115, out bool rawCanStand180);
+            bool alreadyLowStance = _movementState.Stance == CharacterStance.Crouching || _movementState.Stance == CharacterStance.ProneCrawling;
+            if (!rawCanCrouch115 || !rawCanStand180)
+            {
+                _lowCeilingDebounceSec = Mathf.Min(0.25f, _lowCeilingDebounceSec + deltaTime);
+            }
+            else
+            {
+                _lowCeilingDebounceSec = 0f;
+            }
+
+            bool enforceCeilingLock = alreadyLowStance || _lowCeilingDebounceSec >= 0.08f;
+            bool canCrouch115 = !enforceCeilingLock || rawCanCrouch115;
+            bool canStand180 = !enforceCeilingLock || rawCanStand180;
 
             CharacterStance reqStance = _movementState.Stance == CharacterStance.Sliding
                 ? CharacterStance.Sliding
@@ -206,12 +229,29 @@ namespace Stratocraft.Character
                 headroomBlocks = 3;
             }
 
+            float staminaBeforeMove = _vitals.Stamina;
             _controllerSystem.StepMovement(ref _movementState, ref _vitals, reqStance, (wishDir.x, wishDir.z), headroomBlocks, deltaTime);
+            float staminaDrainMult = Stage1GameSettings.StaminaDrainMultiplier;
+            if (staminaDrainMult <= 0.01f)
+            {
+                _vitals.Stamina = _vitals.MaxStamina;
+                _movementState.IsExhaustedStaminaLock = 0;
+            }
+            else if (_vitals.Stamina < staminaBeforeMove && Mathf.Abs(staminaDrainMult - 1.0f) > 0.01f)
+            {
+                float lost = staminaBeforeMove - _vitals.Stamina;
+                _vitals.Stamina = Mathf.Clamp(staminaBeforeMove - lost * staminaDrainMult, 0f, _vitals.MaxStamina);
+                if (_vitals.Stamina > 0.05f && staminaBeforeMove > 0.05f) _movementState.IsExhaustedStaminaLock = 0;
+            }
             if (!prevSliding && _movementState.Stance == CharacterStance.Sliding)
                 statusFeedback = "Kayma (Slide) Basladi (-15 EP -> 3.58m)";
 
             // Fiziksel Yan-Adim / Dodge Kacisi (LeftAlt veya Mouse3/Mouse4: 18 EP, 0.26sn 6.8 m/s patlama, i-frame yok!)
-            bool dodgeTriggered = Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.Mouse3) || Input.GetKeyDown(KeyCode.Mouse4);
+            float effectiveDodgeCost = DodgeStaminaCostEp * staminaDrainMult;
+            bool dodgeTriggered = Input.GetKeyDown(Stage1GameSettings.KeyDodge) ||
+                                  Input.GetKeyDown(KeyCode.LeftAlt) ||
+                                  Input.GetKeyDown(KeyCode.Mouse3) ||
+                                  Input.GetKeyDown(KeyCode.Mouse4);
             if (dodgeTriggered &&
                 _dodgeRemainingSec <= 0f &&
                 _dodgeCooldownSec <= 0f &&
@@ -220,10 +260,10 @@ namespace Stratocraft.Character
                 _movementState.IsBackpackOverlayOpen == 0 &&
                 _movementState.IsExhaustedStaminaLock == 0 &&
                 canCrouch115 &&
-                _vitals.Stamina >= DodgeStaminaCostEp)
+                _vitals.Stamina >= effectiveDodgeCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - DodgeStaminaCostEp);
-                if (_vitals.Stamina <= 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - effectiveDodgeCost);
+                if (_vitals.Stamina <= 0.01f && staminaDrainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
                 _dodgeDirectionWorld = wishDir.sqrMagnitude > 0.01f ? wishDir.normalized : -forwardFlat;
                 _dodgeRemainingSec = DodgeDurationSeconds;
                 _dodgeCooldownSec = DodgeCooldownSeconds;
@@ -236,10 +276,11 @@ namespace Stratocraft.Character
 
             if (_dodgeRemainingSec > 0f)
             {
+                float dodgeSpd = DodgeSpeedMetersPerSec * Stage1GameSettings.PlayerMoveSpeedMultiplier;
                 _dodgeRemainingSec = Mathf.Max(0f, _dodgeRemainingSec - deltaTime);
-                _movementState.CurrentSpeedMetersPerSec = DodgeSpeedMetersPerSec;
-                _movementState.VelocityX = _dodgeDirectionWorld.x * DodgeSpeedMetersPerSec;
-                _movementState.VelocityZ = _dodgeDirectionWorld.z * DodgeSpeedMetersPerSec;
+                _movementState.CurrentSpeedMetersPerSec = dodgeSpd;
+                _movementState.VelocityX = _dodgeDirectionWorld.x * dodgeSpd;
+                _movementState.VelocityZ = _dodgeDirectionWorld.z * dodgeSpd;
             }
 
             ApplyJumpOrMantleVerticalImpulse(
@@ -265,13 +306,27 @@ namespace Stratocraft.Character
         {
             int wx = Mathf.FloorToInt(feetPos.x);
             int wz = Mathf.FloorToInt(feetPos.z);
-            // Smooth SDF egimli arazide veya kilic savurma adiminda ayak koordinati (feetPos.y)
-            // egimli zemin vokselinin altinda kalabilir; zemin vokselini veya agac yapraklarini ASLA tavan sanmamak icin
-            // daima max(feetPos.y, supportGroundY) + 0.72m seviyesini taban al!
             float refFeetY = supportGroundY > -20f ? Mathf.Max(feetPos.y, supportGroundY) : feetPos.y;
-            int groundWy = Mathf.FloorToInt(refFeetY + 0.72f);
-            bool blockedCrouchHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, groundWy + 1, wz));
-            bool blockedStandHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, groundWy + 2, wz));
+            int airBaseWy = Mathf.FloorToInt(refFeetY + 0.25f);
+
+            // Smooth SurfaceNets egimli arazide zemin kolonu (wx, wz) kesirli refFeetY'den 1-2 voksel yukari uzanabilir;
+            // alttaki kesintisiz zemin bloklarini gecerek oyuncunun ayak/govdesinin bulundugu GERCEK HAVA hucresini bul!
+            int maxGroundSkipWy = Mathf.FloorToInt(refFeetY) + 2;
+            while (airBaseWy <= maxGroundSkipWy && IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy, wz)))
+            {
+                airBaseWy++;
+            }
+
+            // Eger ayak hizasinda acik hava hucresi bulunamadiysa (gomulme cozumu devredeyse) sahte tavan kilidi uygulama
+            if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy, wz)))
+            {
+                canCrouch115 = true;
+                canStand180 = true;
+                return;
+            }
+
+            bool blockedCrouchHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy + 1, wz));
+            bool blockedStandHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy + 2, wz));
 
             canCrouch115 = !blockedCrouchHead;
             canStand180 = canCrouch115 && !blockedStandHead;
@@ -291,7 +346,8 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (_vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius)
+            if (Stage1GameSettings.EnableEnvironmentalEffects &&
+                _vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius)
             {
                 speed *= 0.80f; // Hipotermi: -%20 hareket hizi cezasi
             }
@@ -301,6 +357,7 @@ namespace Stratocraft.Character
                 speed *= 0.85f; // Agir aclik veya susuzluk: -%15 hareket hizi cezasi
             }
 
+            speed *= Stage1GameSettings.PlayerMoveSpeedMultiplier;
             _movementState.CurrentSpeedMetersPerSec = speed;
             Vector2 horiz = new Vector2(_movementState.VelocityX, _movementState.VelocityZ);
             if (horiz.sqrMagnitude > 0.0001f)
@@ -367,15 +424,21 @@ namespace Stratocraft.Character
             if (inLava)
             {
                 _movementState.CurrentSpeedMetersPerSec *= 0.42f;
-                _vitals.CurrentHp = Mathf.Max(1f, _vitals.CurrentHp - 18.0f * dt);
-                _vitals.CoreBodyTempCelsius = Mathf.Min(43.0f, _vitals.CoreBodyTempCelsius + 4.0f * dt);
-                statusFeedback = "VOLKANIK LAV YANIGI! (-18 HP/s) Hemen lav kalderasindan cikin!";
+                if (Stage1GameSettings.EnableEnvironmentalEffects)
+                {
+                    _vitals.CurrentHp = Mathf.Max(20f, _vitals.CurrentHp - 18.0f * dt);
+                    _vitals.CoreBodyTempCelsius = Mathf.Min(43.0f, _vitals.CoreBodyTempCelsius + 4.0f * dt);
+                    statusFeedback = "VOLKANIK LAV YANIGI! (-18 HP/s) Hemen lav kalderasindan cikin!";
+                }
             }
             else if (inAcid)
             {
                 _movementState.CurrentSpeedMetersPerSec *= 0.52f;
-                _vitals.CurrentHp = Mathf.Max(1f, _vitals.CurrentHp - 12.0f * dt);
-                statusFeedback = "KORROZYON ASIDI YANIGI! (-12 HP/s) Kimyasal asit havuzundan hemen cikin!";
+                if (Stage1GameSettings.EnableEnvironmentalEffects)
+                {
+                    _vitals.CurrentHp = Mathf.Max(20f, _vitals.CurrentHp - 12.0f * dt);
+                    statusFeedback = "KORROZYON ASIDI YANIGI! (-12 HP/s) Kimyasal asit havuzundan hemen cikin!";
+                }
             }
             else if (inWater)
             {
@@ -415,10 +478,12 @@ namespace Stratocraft.Character
                 return;
             }
 
-            if (hasLedgeAhead && !_isMantling && _vitals.Stamina >= 15.0f)
+            float drainMult = Stage1GameSettings.StaminaDrainMultiplier;
+            float mantleCost = 15.0f * drainMult;
+            if (hasLedgeAhead && !_isMantling && _vitals.Stamina >= mantleCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - 15.0f);
-                if (_vitals.Stamina <= 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - mantleCost);
+                if (_vitals.Stamina <= 0.01f && drainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
 
                 Vector3 pos = playerTransform.position;
                 Vector3 targetPos = pos + forwardFlat * 0.68f;
@@ -437,11 +502,12 @@ namespace Stratocraft.Character
                 return;
             }
 
-            if (canJumpFromGround && _vitals.Stamina >= 6.0f)
+            float jumpCost = 6.0f * drainMult;
+            if (canJumpFromGround && _vitals.Stamina >= jumpCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - 6.0f);
-                if (_vitals.Stamina <= 0.01f) _movementState.IsExhaustedStaminaLock = 1;
-                _verticalVelocity = 6.45f;
+                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - jumpCost);
+                if (_vitals.Stamina <= 0.01f && drainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                _verticalVelocity = 6.45f * Stage1GameSettings.PlayerJumpMultiplier;
                 _jumpLaunchTimer = 0.20f;
                 _coyoteGroundedTimer = 0f;
                 _movementState.IsGrounded = 0;
@@ -492,8 +558,8 @@ namespace Stratocraft.Character
             bool stickToSlope = _jumpLaunchTimer <= 0.001f &&
                                 (_movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f) &&
                                 _verticalVelocity <= 0.10f &&
-                                (nextGroundY - pos.y) <= 1.25f &&
-                                (pos.y - nextGroundY) <= 0.85f;
+                                (nextGroundY - pos.y) <= 1.45f &&
+                                (pos.y - nextGroundY) <= 1.15f;
             if (stickToSlope)
             {
                 float diff = nextGroundY - pos.y;
@@ -574,23 +640,26 @@ namespace Stratocraft.Character
         private static bool IsHorizontalStepBlocked(
             Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 cur, Vector3 next, float capsuleHeightMeters = 1.8f)
         {
-            int nx = Mathf.FloorToInt(next.x), nz = Mathf.FloorToInt(next.z);
-            int maxScanY = Mathf.Clamp(Mathf.FloorToInt(cur.y + 2.25f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
-            float nextColGroundY = SampleSingleColumnGroundY(worldChunks, nx, nz, maxScanY);
+            Vector2 step2D = new Vector2(next.x - cur.x, next.z - cur.z);
+            if (step2D.sqrMagnitude < 1e-7f) return false;
+            Vector2 dir2D = step2D.normalized;
 
-            // 1.25m'den yuksek dikey basamaklar (2 blokluk duvar) yatay yurumeyi engeller; <=1.25m egimler puruzsuz cikilir!
-            if (nextColGroundY - cur.y > 1.25f)
-            {
-                return true;
-            }
+            int curWx = Mathf.FloorToInt(cur.x), curWz = Mathf.FloorToInt(cur.z);
+            int probeWx = Mathf.FloorToInt(next.x + dir2D.x * 0.28f);
+            int probeWz = Mathf.FloorToInt(next.z + dir2D.y * 0.28f);
 
-            float stepFeetY = nextColGroundY > -20f ? Mathf.Max(cur.y, nextColGroundY) : cur.y;
-            float topOffset = Mathf.Clamp(capsuleHeightMeters - 0.15f, 0.60f, 1.65f);
-            float midOffset = Mathf.Clamp(topOffset * 0.65f, 0.55f, 1.05f);
-            int chestY = Mathf.FloorToInt(stepFeetY + midOffset);
-            int headY = Mathf.FloorToInt(stepFeetY + topOffset);
-            return IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, nx, chestY, nz)) ||
-                   IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, nx, headY, nz));
+            // Oyuncunun halihazirda icinde bulundugu voksel kolonunda hareketi ASLA kilitleme (sikismayi %100 onler)
+            if (probeWx == curWx && probeWz == curWz) return false;
+
+            float topOffset = Mathf.Clamp(capsuleHeightMeters - 0.15f, 0.58f, 1.65f);
+            float waistOffset = Mathf.Clamp(topOffset * 0.78f, 0.52f, 1.28f);
+            int waistY = Mathf.FloorToInt(cur.y + waistOffset);
+            int headY = Mathf.FloorToInt(cur.y + topOffset);
+
+            // <= 1.25m egimler ve basamaklar bel/bas hizasinin (waistY / headY) altinda kaldigi icin puruzsuz cikilir;
+            // >= 1.30m dik duvarlar, agac govdeleri ve alcak kirisler bel/bas hizasinda kati voksel barindirir ve engellenir.
+            return IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, probeWx, waistY, probeWz)) ||
+                   IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, probeWx, headY, probeWz));
         }
 
         private static bool DetectClimbableLedgeAhead(

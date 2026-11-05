@@ -31,12 +31,148 @@ namespace Stratocraft.EditorTools
     ///   Runik Payandalar (ShapeID=63), 3B Kapakli Fiziksel CAS Sandigi, The Forest 3B Kumas Canta Ortusu ve
     ///   Headless Blender 4.2 ile yontulmus .glb 3B modeller (GlbHierarchyLoader + Socket_* hiyerarsisi).
     /// </summary>
+    [InitializeOnLoad]
     public static class StratocraftStage1SceneBuilder
     {
         private const string SceneAssetPath = "Assets/Scenes/StratocraftStage1Showcase.unity";
         private const string GeneratedAssetsFolder = "Assets/Art/GeneratedSceneAssets";
         private const int ChunkMin = -10;
         private const int ChunkMax = 9; // [-10..9] -> [-160m .. +160m] 20x20 = 400 Gercek 3B Hacimsel (16x16x160m) VoxelChunk (5 Yeralti Katmani + Magaralar + 12 Biyom)
+        private static bool _autoSyncInProgress;
+
+        static StratocraftStage1SceneBuilder()
+        {
+            EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
+            EditorSceneManager.sceneOpened += (_, _) => EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
+        }
+
+        private static void EnsureEditorSceneContinentUpToDate()
+        {
+            if (_autoSyncInProgress || Application.isBatchMode || EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
+            {
+                return;
+            }
+
+            Scene activeScene = SceneManager.GetActiveScene();
+            if (!activeScene.IsValid() || !activeScene.isLoaded) return;
+            if (!string.Equals(activeScene.name, "StratocraftStage1Showcase", StringComparison.OrdinalIgnoreCase)) return;
+
+            var filters = UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsInactive.Exclude);
+            int totalVoxelChunkObjects = 0;
+            int validVoxelChunkMeshes = 0;
+            for (int i = 0; i < filters.Length; i++)
+            {
+                if (filters[i].gameObject.name.StartsWith("VoxelChunk_", StringComparison.Ordinal))
+                {
+                    totalVoxelChunkObjects++;
+                    if (filters[i].sharedMesh != null && filters[i].sharedMesh.vertexCount >= 3)
+                    {
+                        validVoxelChunkMeshes++;
+                    }
+                }
+            }
+
+            bool hasCentralPhoenix = false;
+            GameObject? phoenixGo = GameObject.Find("Boss_Phoenix_Ember_Avatar");
+            if (phoenixGo != null && phoenixGo.activeInHierarchy && new Vector2(phoenixGo.transform.position.x, phoenixGo.transform.position.z).magnitude < 75.0f)
+            {
+                hasCentralPhoenix = true;
+            }
+
+            if (totalVoxelChunkObjects < 200 || hasCentralPhoenix)
+            {
+                _autoSyncInProgress = true;
+                try
+                {
+                    BuildStage1ShowcaseScene();
+                }
+                finally
+                {
+                    _autoSyncInProgress = false;
+                }
+            }
+            else if (validVoxelChunkMeshes < 200)
+            {
+                _autoSyncInProgress = true;
+                try
+                {
+                    PopulateInMemoryEditorMeshesForOuterChunks(filters);
+                }
+                finally
+                {
+                    _autoSyncInProgress = false;
+                }
+            }
+        }
+
+        private static void PopulateInMemoryEditorMeshesForOuterChunks(MeshFilter[] filters)
+        {
+            var chunkEntries = new List<(int cx, int cz, MeshFilter mf)>(400);
+            for (int i = 0; i < filters.Length; i++)
+            {
+                string n = filters[i].gameObject.name;
+                if (!n.StartsWith("VoxelChunk_", StringComparison.Ordinal)) continue;
+                string[] p = n.Split('_');
+                if (p.Length >= 3 && int.TryParse(p[1], out int cx) && int.TryParse(p[2], out int cz))
+                {
+                    chunkEntries.Add((cx, cz, filters[i]));
+                }
+            }
+            if (chunkEntries.Count == 0) return;
+
+            var popArr = new (uint[] voxels, ushort[] fluids)[chunkEntries.Count];
+            System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, i =>
+            {
+                popArr[i] = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(chunkEntries[i].cx, chunkEntries[i].cz);
+            });
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>(chunkEntries.Count);
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(chunkEntries.Count);
+            for (int i = 0; i < chunkEntries.Count; i++)
+            {
+                var key = (chunkEntries[i].cx, chunkEntries[i].cz);
+                worldChunks[key] = popArr[i].voxels;
+                fluidChunks[key] = popArr[i].fluids;
+            }
+
+            int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
+            var solidTriLists = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
+            var fluidTriLists = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
+            System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, i =>
+            {
+                var (cx, cz, mf) = chunkEntries[i];
+                if (mf.sharedMesh != null && mf.sharedMesh.vertexCount >= 3) return;
+                var sTris = new List<FacetedVoxelTriangle>(8192);
+                var fTris = new List<FacetedVoxelTriangle>(1024);
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(cx, cz, maxEditableY, worldChunks, sTris, minY: 0);
+                FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(cx, cz, maxEditableY, worldChunks, fluidChunks, fTris, minY: 0);
+                solidTriLists[i] = sTris;
+                fluidTriLists[i] = fTris;
+            });
+
+            for (int i = 0; i < chunkEntries.Count; i++)
+            {
+                var sTris = solidTriLists[i];
+                if (sTris == null) continue;
+                var (cx, cz, mf) = chunkEntries[i];
+                Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_{cx}_{cz}");
+                m.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                mf.sharedMesh = m;
+
+                var fTris = fluidTriLists[i];
+                if (fTris != null && fTris.Count > 0)
+                {
+                    Transform? fTr = mf.transform.Find($"FluidSurface_{cx}_{cz}");
+                    if (fTr != null && fTr.TryGetComponent<MeshFilter>(out var fMf))
+                    {
+                        Mesh fm = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, $"Mesh_FluidSurfaceChunk_{cx}_{cz}");
+                        fm.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                        fMf.sharedMesh = fm;
+                    }
+                }
+            }
+            SceneView.RepaintAll();
+        }
 
         [MenuItem("Stratocraft/Asama 1 - Canli Dunya ve 3B Varlik Sahnesini Kur")]
         public static void BuildStage1ShowcaseScene()
@@ -122,13 +258,12 @@ namespace Stratocraft.EditorTools
                 var sTris = new List<FacetedVoxelTriangle>(8192);
                 var fTris = new List<FacetedVoxelTriangle>(1024);
 
-                bool isOuterBoundary = cx == ChunkMin || cx == ChunkMax || cz == ChunkMin || cz == ChunkMax;
-                bool isCenterCaveZone = cx >= -2 && cx <= 2 && cz >= -2 && cz <= 2;
-                int meshMinY = (isOuterBoundary || isCenterCaveZone) ? 0 : 64;
+                // Edit Mode (Scene View) icinde tum 5 yeralti magara katmanini, zindanlari ve magma denizini (minY = 0) tam derinlikte or!
+                const int meshMinY = 0;
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                     cx, cz, maxEditableY, worldChunks, sTris, minY: meshMinY);
                 FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
-                    cx, cz, maxEditableY, worldChunks, fluidChunks, fTris);
+                    cx, cz, maxEditableY, worldChunks, fluidChunks, fTris, minY: meshMinY);
 
                 solidTriLists[idx] = sTris;
                 fluidTriLists[idx] = fTris;
@@ -149,6 +284,10 @@ namespace Stratocraft.EditorTools
                 Mesh chunkMesh = isCoreAssetChunk
                     ? SaveZeroGcMeshAsset(meshName, sTris)
                     : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, meshName);
+                if (!isCoreAssetChunk)
+                {
+                    chunkMesh.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                }
 
                 Vector3 chunkWorldPos = new Vector3(cx * 16f, 0f, cz * 16f);
                 string chunkGoName = $"VoxelChunk_{cx}_{cz}_Seamless3DIsland";
@@ -178,6 +317,10 @@ namespace Stratocraft.EditorTools
                     Mesh fluidMesh = isCoreAssetChunk
                         ? SaveZeroGcMeshAsset(fluidMeshName, fTris)
                         : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, fluidMeshName);
+                    if (!isCoreAssetChunk)
+                    {
+                        fluidMesh.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                    }
 
                     CreateMeshObject(
                         $"FluidSurface_{cx}_{cz}",
@@ -274,10 +417,10 @@ namespace Stratocraft.EditorTools
                 new Vector3(-12.2f, SampleIslandTopSurfaceY(-12.2f, -2.4f), -2.4f),
                 uberMat);
 
-            // 6. Faz 2: Blender 4.2 Yontulmus Iki Ayakli (Digitigrade) Ash Stalker Surusu, Mancinik ve Anka Boss
+            // 6. Faz 2: Merkezde egitmen botu disinda hicbir vahsi canli olmasin; Ash Stalker surusu dis kanyonda (-92m, -78m) devriye gezer
             GameObject creaturesRoot = new GameObject("04_Faz2_Creatures_VAT_Siege_And_PhoenixBoss");
 
-            Vector3 alphaPos = new Vector3(4.6f, SampleIslandTopSurfaceY(4.6f, -3.2f), -3.2f);
+            Vector3 alphaPos = new Vector3(-92.0f, SampleIslandTopSurfaceY(-92.0f, -78.0f), -78.0f);
             GameObject? alphaGo = PlaceGlbModel(
                 "mob_ash_stalker_vat500.glb",
                 "Creature_AshStalker_PackAlpha_VAT",
@@ -290,7 +433,7 @@ namespace Stratocraft.EditorTools
                 playController.RegisterPatrollingCreature(alphaGo.transform, alphaPos, phaseOffset: 0.0f);
             }
 
-            Vector3 flanker1Pos = new Vector3(7.0f, SampleIslandTopSurfaceY(7.0f, -1.6f), -1.6f);
+            Vector3 flanker1Pos = new Vector3(-96.5f, SampleIslandTopSurfaceY(-96.5f, -74.0f), -74.0f);
             GameObject? flanker1Go = PlaceGlbModel(
                 "mob_ash_stalker_vat500.glb",
                 "Creature_AshStalker_Flanker01_VAT",
@@ -303,7 +446,7 @@ namespace Stratocraft.EditorTools
                 playController.RegisterPatrollingCreature(flanker1Go.transform, flanker1Pos, phaseOffset: 1.7f);
             }
 
-            Vector3 flanker2Pos = new Vector3(3.8f, SampleIslandTopSurfaceY(3.8f, 0.4f), 0.4f);
+            Vector3 flanker2Pos = new Vector3(-88.0f, SampleIslandTopSurfaceY(-88.0f, -82.5f), -82.5f);
             GameObject? flanker2Go = PlaceGlbModel(
                 "mob_ash_stalker_vat500.glb",
                 "Creature_AshStalker_Flanker02_VAT",
@@ -316,7 +459,8 @@ namespace Stratocraft.EditorTools
                 playController.RegisterPatrollingCreature(flanker2Go.transform, flanker2Pos, phaseOffset: 3.3f);
             }
 
-            Vector3 phoenixPos = new Vector3(8.2f, SampleIslandTopSurfaceY(8.2f, 6.2f) + 1.15f, 6.2f);
+            // Ucan Anka Boss oyun basinda olmasin (uzak volkanik kalderada pasif olarak tutulsun)
+            Vector3 phoenixPos = new Vector3(128.0f, SampleIslandTopSurfaceY(128.0f, -118.0f) + 2.8f, -118.0f);
             GameObject? phoenixGo = PlaceGlbModel(
                 "boss_phoenix_ember_avatar.glb",
                 "Boss_Phoenix_Ember_Avatar",
@@ -326,7 +470,7 @@ namespace Stratocraft.EditorTools
                 uberMat);
             if (phoenixGo != null)
             {
-                playController.RegisterPatrollingCreature(phoenixGo.transform, phoenixPos, phaseOffset: 0.8f, isFlyingBoss: true);
+                phoenixGo.SetActive(false);
             }
 
             PlaceGlbModel(
@@ -860,12 +1004,15 @@ namespace Stratocraft.EditorTools
             camData.renderShadows = true;
             camData.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
 
-            if (SceneView.lastActiveSceneView != null)
+            Quaternion svRot = Quaternion.Euler(24.0f, 36.0f, 0.0f);
+            Vector3 svPivot = new Vector3(0.0f, baseSurfY - 22.0f, 0.0f);
+            foreach (object obj in SceneView.sceneViews)
             {
-                SceneView sv = SceneView.lastActiveSceneView;
-                Quaternion svRot = Quaternion.Euler(36.0f, 36.0f, 0.0f);
-                sv.LookAt(new Vector3(0.0f, baseSurfY - 12.0f, 0.0f), svRot, 340.0f, false, true);
-                sv.Repaint();
+                if (obj is SceneView sv && sv != null)
+                {
+                    sv.LookAtDirect(svPivot, svRot, 185.0f);
+                    sv.Repaint();
+                }
             }
 
             UnityEditorInternal.InternalEditorUtility.RepaintAllViews();

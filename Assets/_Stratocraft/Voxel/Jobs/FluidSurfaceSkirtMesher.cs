@@ -31,7 +31,8 @@ namespace Stratocraft.Voxel.Jobs
             int maxY,
             IReadOnlyDictionary<(int cx, int cz), uint[]> solidChunks,
             IReadOnlyDictionary<(int cx, int cz), ushort[]> fluidChunks,
-            List<FacetedVoxelTriangle> outFluidTriangles)
+            List<FacetedVoxelTriangle> outFluidTriangles,
+            int minY = 0)
         {
             if (solidChunks == null) throw new ArgumentNullException(nameof(solidChunks));
             if (fluidChunks == null) throw new ArgumentNullException(nameof(fluidChunks));
@@ -46,8 +47,10 @@ namespace Stratocraft.Voxel.Jobs
 
             int maxBufferY = Math.Min(centerFluids.Length >> 8, centerSolids.Length >> 8);
             maxY = Math.Clamp(maxY, 2, Math.Min(StratocraftConstants.ChunkSizeY, maxBufferY));
+            int startY = Math.Clamp(minY, 0, maxY - 1);
+            bool suppressUndergroundCaveFluids = minY >= 68;
 
-            for (int y = 0; y < maxY; y++)
+            for (int y = startY; y < maxY; y++)
             {
                 int yOffset = y << 8;
 
@@ -78,6 +81,22 @@ namespace Stratocraft.Voxel.Jobs
                         if (level == 0 || fType == 0)
                         {
                             continue;
+                        }
+
+                        if (suppressUndergroundCaveFluids && y < 88)
+                        {
+                            bool hasCaveCeilingAbove = false;
+                            int checkTopY = Math.Min(maxBufferY - 1, y + 18);
+                            for (int sy = y + 2; sy <= checkTopY; sy++)
+                            {
+                                uint aboveRaw = centerSolids[(sy << 8) | (lz << 4) | lx];
+                                if (VoxelBitUtility.IsPhysicallySolid(aboveRaw) && VoxelBitUtility.GetShapeId(aboveRaw) == 0)
+                                {
+                                    hasCaveCeilingAbove = true;
+                                    break;
+                                }
+                            }
+                            if (hasCaveCeilingAbove) continue;
                         }
 
                         // Ust hucre ayni tip sivi iceriyorsa ust serbest yuzey degildir
@@ -286,8 +305,23 @@ namespace Stratocraft.Voxel.Jobs
             int nlz = wz - ncz * 16;
             int nIdx = (y << 8) | (nlz << 4) | nlx;
 
-            solidRaw = solidChunks.TryGetValue((ncx, ncz), out uint[]? ns) && ns != null && (uint)nIdx < (uint)ns.Length ? ns[nIdx] : 0u;
-            fluidRaw = fluidChunks.TryGetValue((ncx, ncz), out ushort[]? nf) && nf != null && (uint)nIdx < (uint)nf.Length ? nf[nIdx] : (ushort)0;
+            if (solidChunks.TryGetValue((ncx, ncz), out uint[]? ns) && ns != null && (uint)nIdx < (uint)ns.Length)
+            {
+                solidRaw = ns[nIdx];
+                fluidRaw = fluidChunks.TryGetValue((ncx, ncz), out ushort[]? nf) && nf != null && (uint)nIdx < (uint)nf.Length ? nf[nIdx] : (ushort)0;
+                return;
+            }
+
+            if (solidChunks.Count > 4)
+            {
+                int cIdx = (y << 8) | (Math.Clamp(lz, 0, 15) << 4) | Math.Clamp(lx, 0, 15);
+                solidRaw = centerSolids[cIdx];
+                fluidRaw = centerFluids[cIdx];
+                return;
+            }
+
+            solidRaw = 0u;
+            fluidRaw = 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

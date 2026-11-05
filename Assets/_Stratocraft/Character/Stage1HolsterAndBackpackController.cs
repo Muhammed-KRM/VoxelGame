@@ -138,8 +138,8 @@ namespace Stratocraft.Character
             float lidAngle = ChestCasSystem.StepLidSpring(dt);
             if (chestLidTransform != null) chestLidTransform.localRotation = Quaternion.Euler(-lidAngle, 0f, 0f);
 
-            // Anayasa §3.1: Yalnizca [I] tusu 3B Kumas Canta Ortusunu acar/kapatir (Tek envanter tusu [I]'dir!).
-            if (Input.GetKeyDown(KeyCode.I))
+            // Anayasa §3.1: Yalnizca [I] tusu (veya atanmis Canta tusu) 3B Kumas Canta Ortusunu acar/kapatir.
+            if (Input.GetKeyDown(Stage1GameSettings.KeyBackpack) || Input.GetKeyDown(KeyCode.I))
             {
                 InventoryUi.IsChestWindowOpen = false;
                 ToggleBackpackMat(
@@ -292,7 +292,7 @@ namespace Stratocraft.Character
             }
         }
 
-        private void ToggleBackpackMat(
+        public void ToggleBackpackMat(
             Transform playerTransform, Transform? backpackMatRoot,
             GameObject? swordVisual, GameObject? pickaxeVisual, GameObject? axeVisual, Material? sharedVoxelMat,
             ref CharacterMovementState movementState, ref float cameraPitch, ref float pitchBeforeBackpack,
@@ -1066,8 +1066,9 @@ namespace Stratocraft.Character
             Transform? swordPivot = null)
         {
             bool combatConsumingQ = combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ;
+            bool sheatheKey = Input.GetKeyDown(Stage1GameSettings.KeyFeintOrSheathe) || Input.GetKeyDown(KeyCode.Q);
             if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.H) ||
-                (!combatConsumingQ && Input.GetKeyDown(KeyCode.Q) && (ActiveHolsterSlot != 0 || miningCtrl.IsCrystalActive)))
+                (!combatConsumingQ && sheatheKey && (ActiveHolsterSlot != 0 || miningCtrl.IsCrystalActive)))
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
@@ -1139,8 +1140,10 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge)
         {
-            bool quickDropPressed = Input.GetKeyDown(KeyCode.X) ||
-                                    (Input.GetKeyDown(KeyCode.G) && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)));
+            bool quickDropPressed = Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop) ||
+                                    Input.GetKeyDown(KeyCode.X) ||
+                                    ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
+                                     (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)));
             if (quickDropPressed && ActiveHolsterSlot != 0)
             {
                 int prevSlot = ActiveHolsterSlot;
@@ -1196,7 +1199,7 @@ namespace Stratocraft.Character
                 miningCtrl.LastFeedbackText = $"0.0s Quick-Drop: {weaponName} yere atildi! (Yerdeki Kalici Esya: {_droppedWorldItems.Count}) [E] ile geri alin.";
             }
 
-            if (!Input.GetKeyDown(KeyCode.E)) return;
+            if (!Input.GetKeyDown(Stage1GameSettings.KeyInteract) && !Input.GetKeyDown(KeyCode.E)) return;
 
             // [E] ONCELIK 1: Yerdeki fiziksel silah/aleti geri alma (<= 3.2m)
             int nearestIdx = -1;

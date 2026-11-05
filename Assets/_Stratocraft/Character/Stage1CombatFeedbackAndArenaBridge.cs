@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
+using Stratocraft.Core.Constants;
 using Stratocraft.Voxel.Data;
 using UnityEngine;
 
@@ -168,17 +169,21 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]> worldChunks, bool playerMissingArm)
         {
             EnsureInitialized(playerTransform, sharedMat, worldChunks);
+            if (_audioSource != null)
+            {
+                _audioSource.volume = 0.88f * Stage1GameSettings.CombatSfxVolume;
+            }
 
-            combatBridge.IsPlayerHypothermic = playerVitals.CoreBodyTempCelsius < 35.0f;
-            float pendingStamina = combatBridge.ConsumePendingStaminaDrain();
+            combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects && playerVitals.CoreBodyTempCelsius < 35.0f;
+            float pendingStamina = combatBridge.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
             if (pendingStamina > 0f)
             {
                 playerVitals.Stamina = Mathf.Max(0f, playerVitals.Stamina - pendingStamina);
-                if (playerVitals.Stamina <= 0.05f) combatBridge.IsPlayerExhaustedLock = true;
+                if (playerVitals.Stamina <= 0.05f && Stage1GameSettings.StaminaDrainMultiplier > 0.01f) combatBridge.IsPlayerExhaustedLock = true;
             }
-            if (combatBridge.IsPlayerExhaustedLock && playerVitals.Stamina >= playerVitals.MaxStamina * 0.15f)
+            if (combatBridge.IsPlayerExhaustedLock && (playerVitals.Stamina >= playerVitals.MaxStamina * 0.15f || Stage1GameSettings.StaminaDrainMultiplier <= 0.01f))
                 combatBridge.IsPlayerExhaustedLock = false;
-            else if (playerVitals.Stamina <= 0.05f)
+            else if (playerVitals.Stamina <= 0.05f && Stage1GameSettings.StaminaDrainMultiplier > 0.01f)
                 combatBridge.IsPlayerExhaustedLock = true;
 
             if (combatBridge.IsFeintTriggeredLastFrame) TriggerHitMarker(new Color(0.55f, 0.95f, 1f), "🎭 ALDATMA (FEINT)!");
@@ -321,7 +326,8 @@ namespace Stratocraft.Character
             float iaidoMult = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
             float jumpMult = combatBridge.IsAerialJumpStrike ? 1.40f : 1.0f;
             float dmg = Mathf.Lerp(24f, 92f, Mathf.Clamp01((localSpd - 1.5f) / 10.5f)) *
-                        zoneMult * combatBridge.EdgeAlignment01 * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult;
+                        zoneMult * combatBridge.EdgeAlignment01 * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult *
+                        Stage1GameSettings.PlayerCombatDamageMultiplier;
 
             _automatonLastDamage = dmg;
             _automatonLastSpeedMps = localSpd;
@@ -560,7 +566,7 @@ namespace Stratocraft.Character
                     }
                     else if (distToPlayer <= 2.85f)
                     {
-                        float baseNpcDmg = _duelistCurrentStrikeIsHeavySmash ? 19f : 12f;
+                        float baseNpcDmg = (_duelistCurrentStrikeIsHeavySmash ? 19f : 12f) * Stage1GameSettings.CreatureDamageMultiplier;
                         float npcDmg = combatBridge.IsParryStance ? (baseNpcDmg * 0.55f) : baseNpcDmg;
                         playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - npcDmg);
                         ThermalAndBiologySystem.ApplyRegionalBleeding(ref playerVitals, 1.5f);
@@ -634,7 +640,8 @@ namespace Stratocraft.Character
             float preBonus = combatBridge.WasLastSlashPreChambered ? 1.38f : 1.0f;
             float crushMult = wasGuardCrushed ? 0.68f : 1.0f;
             float rawDamage = Mathf.Lerp(28f, 95f, Mathf.Clamp01((hitSpeed - 1.5f) / 10f)) *
-                              zoneMult * combatBridge.EdgeAlignment01 * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult;
+                              zoneMult * combatBridge.EdgeAlignment01 * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult *
+                              Stage1GameSettings.PlayerCombatDamageMultiplier;
 
             _duelistHp -= rawDamage;
             if (_duelistHp <= 0f)
@@ -1000,8 +1007,22 @@ namespace Stratocraft.Character
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - cx * 16, lz = wz - cz * 16;
             if (worldChunks.TryGetValue((cx, cz), out uint[]? chunk) && chunk != null)
-                for (int y = Stage1InteractivePlayController.MaxEditableVoxelY - 2; y >= 1; y--)
-                    if (VoxelBitUtility.IsPhysicallySolid(chunk[(y << 8) | (lz << 4) | lx])) return y + 1.0f;
+            {
+                int topY = fallbackY > 1f
+                    ? Mathf.Clamp(Mathf.FloorToInt(fallbackY + 1.65f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2)
+                    : Stage1InteractivePlayController.MaxEditableVoxelY - 2;
+                for (int y = topY; y >= 1; y--)
+                {
+                    uint raw = chunk[(y << 8) | (lz << 4) | lx];
+                    if (VoxelBitUtility.GetMaterialId(raw) == MaterialIdCatalog.GlowingMoss) continue;
+                    if (VoxelBitUtility.IsPhysicallySolid(raw))
+                    {
+                        return VoxelBitUtility.GetShapeId(raw) == 0
+                            ? y + Mathf.Clamp(VoxelBitUtility.GetDensityOrLiquid(raw) / 127f, 0.35f, 0.92f)
+                            : y + 1.0f;
+                    }
+                }
+            }
             return fallbackY;
         }
     }
