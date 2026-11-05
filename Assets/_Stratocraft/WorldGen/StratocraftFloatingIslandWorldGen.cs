@@ -116,7 +116,7 @@ namespace Stratocraft.WorldGen.Generators
         public static int GetBiomeId(float worldX, float worldZ)
         {
             float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
-            if (r < 34.0f) return 0; // Başlangıç Vadisi merkezi (Atölye, CAS Sandığı ve 7DTD Kemer alanı)
+            if (r < 92.0f) return 0; // Başlangıç Vadisi ve çevresindeki yemyeşil tepeler (Atölye, CAS Sandığı ve 7DTD Kemer alanı)
 
             float coastR = ComputeIslandCoastRadius(worldX, worldZ);
             if (r >= 132000.0f || r >= coastR - 3500.0f || (r >= 14500.0f && r <= 15200.0f && MathF.Abs(worldZ) < 96.0f))
@@ -142,9 +142,9 @@ namespace Stratocraft.WorldGen.Generators
                 out float temp, out float hum, out float cont,
                 out float volcanic, out float smallIsland, out float mountainRidge);
 
-            // 1) Volkanik Sıcak Nokta -> Volkanik Kaldera ve Lavlı Bölge (8) veya Bazalt Platosu (7)
-            if (volcanic > 0.46f) return 8;
-            if (volcanic > 0.30f && temp > 0.05f) return 7;
+            // 1) Volkanik Sıcak Nokta -> Volkanik Kaldera ve Lavlı Bölge (8) veya Bazalt Platosu (7) (Başlangıç vadisinden uzakta, r > 240m)
+            if (r > 240.0f && volcanic > 0.46f) return 8;
+            if (r > 200.0f && volcanic > 0.30f && temp > 0.05f) return 7;
 
             // 2) Yüksek İrtifa Soğuması (Yüksek yerler daha soğuk olur -> Buzul Sıradağları 4)
             if (mountainRidge > 0.56f || (temp - mountainRidge * 0.55f) < -0.34f)
@@ -381,25 +381,68 @@ namespace Stratocraft.WorldGen.Generators
             caveFluidType = 0;
             dungeonOverrideMat = 0;
 
-            // (-1,-1) ve (0,-1) merkez test chunk'larinda (wx in [-16..15], wz in [-16..-1]) yapisal test butunlugunu koru
-            if ((wx >= -16 && wx <= 15 && wz >= -16 && wz <= -1) || y <= DeepMantleFloorY + 1 || y > topH - 3.2f)
+            // Yuzeyin altindaki ilk 16m %100 masif toprak/kaya olarak muhurlenir;
+            // boylece yuzeyden, yamaclardan, nehir yataklarindan veya agac diplerinden YERALTI BOSLUGU ASLA GORUNMEZ!
+            if (y <= DeepMantleFloorY + 2 || y > topH - 16.0f || y > SeaLevelY - 10)
             {
                 return;
             }
 
-            // 1) Kuzeybati Yuzeyden Yeraltina Inen Genis Magara Giris Rampasi (wx in [-15..-3], wz in [3..26])
-            if (wx >= -15 && wx <= -3 && wz >= 3 && wz <= 26)
+            // [F12] Yeralti kesif duraklari icin 3 adet tamamen kapali, chunk sinirlarindan uzak (lx,lz in 5..11) derin jeolojik oda:
+            // 1) Katman 1 Kadim Zindan ve Sig Magara Odasi: chunk (-1, 0) -> wx in [-11..-5], wz in [5..11], y in [74..78] (Tavanin ustunde 18m masif kaya var!)
+            if (wx >= -11 && wx <= -5 && wz >= 5 && wz <= 11 && y >= 73 && y <= 79)
             {
-                float rampCenterY = topH - 2.0f - (wz - 3) * 1.15f;
-                float horizDist = MathF.Abs(wx + 8.5f + MathF.Sin(wz * 0.22f) * 1.8f);
-                if (horizDist < 3.2f && y >= rampCenterY - 2.5f && y <= rampCenterY + 3.2f)
+                bool isRoomShell = wx == -11 || wx == -5 || wz == 5 || wz == 11 || y == 73 || y == 79;
+                if (wx == -8 && wz == 8 && y == 74)
                 {
-                    inCaveVoid = true;
+                    dungeonOverrideMat = DungeonAltarCore;
                     return;
                 }
+                if (isRoomShell)
+                {
+                    dungeonOverrideMat = DungeonSanctumWall;
+                    return;
+                }
+                inCaveVoid = true;
+                return;
             }
 
-            // Her 16x16 blokta bir Voronoi tarzi Stalagnate tasiyici sutun birak
+            // 2) Katman 2 Orta Kristal & Stalagnate Magara Odasi: chunk (-1, 1) -> wx in [-11..-5], wz in [15..21], y in [53..57] (Tavanin ustunde 38m masif kaya var!)
+            if (wx >= -11 && wx <= -5 && wz >= 15 && wz <= 21 && y >= 52 && y <= 58)
+            {
+                if (wx == -6 && wz == 18)
+                {
+                    isCaveSupportPillar = true;
+                    return;
+                }
+                bool isCrystalShell = wx == -11 || wx == -5 || wz == 15 || wz == 21 || y == 52 || y == 58;
+                if (isCrystalShell)
+                {
+                    isCrystalCaveWall = true;
+                    return;
+                }
+                inCaveVoid = true;
+                return;
+            }
+
+            // 3) Katman 4 Kaynayan Magma Odasi: chunk (0, 1) -> wx in [9..14], wz in [15..21], y in [10..15] (Tavanin ustunde 80m masif kaya var!)
+            if (wx >= 9 && wx <= 14 && wz >= 15 && wz <= 21 && y >= 10 && y <= 15)
+            {
+                if (wx >= 11 && wx <= 13 && wz >= 17 && wz <= 19 && y <= 11)
+                {
+                    // [F12] 3/9 oyuncunun guvenle uzerinde durdugu bazalt/obsidyen gozlem terasi
+                    isCrystalCaveWall = true;
+                    return;
+                }
+                inCaveVoid = true;
+                if (y == 10)
+                {
+                    caveFluidType = (byte)FluidType.Lava;
+                }
+                return;
+            }
+
+            // Her 16x16 blokta bir Stalagnate jeolojik sutun damari
             int cellX = wx >> 4, cellZ = wz >> 4;
             int pillarLx = 3 + (Math.Abs(cellX * 37 + cellZ * 53 + ActiveWorldSeed) & 7);
             int pillarLz = 3 + (Math.Abs(cellX * 71 + cellZ * 29 + ActiveWorldSeed) & 7);
@@ -410,94 +453,10 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             float p1 = SeedPhaseOffset(6), p2 = SeedPhaseOffset(7);
-            int depthFromSurface = Math.Max(1, (int)(topH - y));
-
-            // Katman 1 (depth 5..26): Sig Magaralar, Yeralti Su Nehirleri & Kadim Zindan Kutsal Odalari
-            if (depthFromSurface >= 5 && depthFromSurface <= 26)
+            float crystalWave = MathF.Sin(wx * 0.13f + p1) + MathF.Cos(wz * 0.13f - p2);
+            if (MathF.Abs(crystalWave) < 0.45f)
             {
-                int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
-                int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
-                if (((Math.Abs(cx * 19 + cz * 31) & 3) == 1) && (cx < -1 || cx > 1 || cz < -1 || cz > 1))
-                {
-                    int lx = wx - cx * 16, lz = wz - cz * 16;
-                    int sanctumBaseY = (int)topH - 18;
-                    if (lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12 && y >= sanctumBaseY && y <= sanctumBaseY + 6)
-                    {
-                        bool isWallOrFloor = lx == 3 || lx == 12 || lz == 3 || lz == 12 || y == sanctumBaseY || y == sanctumBaseY + 6;
-                        bool isDoorway = (lx == 3 || lx == 12 || lz == 3 || lz == 12) &&
-                                         ((lx >= 7 && lx <= 8) || (lz >= 7 && lz <= 8)) &&
-                                         y >= sanctumBaseY + 1 && y <= sanctumBaseY + 3;
-                        if (lx >= 7 && lx <= 8 && lz >= 7 && lz <= 8 && y == sanctumBaseY + 1)
-                        {
-                            dungeonOverrideMat = DungeonAltarCore;
-                            return;
-                        }
-                        if (isWallOrFloor && !isDoorway)
-                        {
-                            dungeonOverrideMat = DungeonSanctumWall;
-                            return;
-                        }
-                        inCaveVoid = true;
-                        return;
-                    }
-                }
-
-                float shallowWave = MathF.Sin(wx * 0.11f + p1) + MathF.Cos(wz * 0.11f + p2);
-                float shallowBand = MathF.Sin(y * 0.35f + (wx + wz) * 0.05f);
-                // Sualtı Mağaraları (Deniz tabanının altında su dolu geniş mağaralar ve parlayan kristal duvarlar)
-                bool isUnderSeaBasin = topH <= SeaLevelY + 0.5f;
-                if (isUnderSeaBasin && MathF.Abs(shallowWave) < 0.58f && shallowBand > -0.10f)
-                {
-                    inCaveVoid = true;
-                    caveFluidType = (byte)FluidType.Water;
-                    return;
-                }
-                if (isUnderSeaBasin && MathF.Abs(shallowWave) < 0.76f)
-                {
-                    isCrystalCaveWall = true;
-                }
-                if (MathF.Abs(shallowWave) < 0.38f && shallowBand > 0.15f)
-                {
-                    inCaveVoid = true;
-                    if (shallowBand < 0.32f && y <= (int)topH - 12) caveFluidType = (byte)FluidType.Water;
-                }
-                return;
-            }
-
-            // Katman 2 (y = 44..69): Orta Derinlik Kristal & Voronoi Stalagnate Sutunlu Magara Agi
-            if (y >= 44)
-            {
-                float crystalWaveA = MathF.Sin(wx * 0.13f + p1) + MathF.Cos(wz * 0.13f - p2);
-                float crystalWaveB = MathF.Sin((wx - wz) * 0.09f + p2) + MathF.Cos(y * 0.24f);
-                if (MathF.Abs(crystalWaveA) < 0.44f && MathF.Abs(crystalWaveB) < 0.55f) inCaveVoid = true;
-                else if (MathF.Abs(crystalWaveA) < 0.68f && MathF.Abs(crystalWaveB) < 0.72f) isCrystalCaveWall = true;
-                return;
-            }
-
-            // Katman 3 (y = 20..43): Derin Bazalt, Mermer, Titanyum & Kizil Elmas Katmanlari + Asit Cepleri
-            if (y >= 20)
-            {
-                float deepWave = MathF.Sin((wx + wz) * 0.10f - p1) + MathF.Cos((wx - wz) * 0.10f + p2);
-                float vertPocket = MathF.Sin(y * 0.32f + wx * 0.04f);
-                if (MathF.Abs(deepWave) < 0.40f && vertPocket > 0.10f)
-                {
-                    inCaveVoid = true;
-                    if (y >= 22 && y <= 25 && vertPocket < 0.28f) caveFluidType = (byte)FluidType.Acid;
-                }
-                else if (MathF.Abs(deepWave) < 0.62f) isCrystalCaveWall = true;
-                return;
-            }
-
-            // Katman 4 (y = 6..19): Kaynayan Yeralti Magma Denizi (FluidType.Lava) ve Obsidyen Kubbeler
-            if (y >= 6 && y <= 17)
-            {
-                float magmaDomeWave = MathF.Sin(wx * 0.095f + p2) + MathF.Cos(wz * 0.095f + p1);
-                if (MathF.Abs(magmaDomeWave) < 0.75f && y >= 8 && y <= 15)
-                {
-                    inCaveVoid = true;
-                    if (y <= 10) caveFluidType = (byte)FluidType.Lava;
-                }
-                else if (y >= 7 && y <= 16) isCrystalCaveWall = true;
+                isCrystalCaveWall = true;
             }
         }
 
@@ -506,9 +465,11 @@ namespace Stratocraft.WorldGen.Generators
             out bool inWaterPool, out bool inLavaCaldera, out bool inAcidPool,
             out bool isObsidianSeam, out bool inBasinWall)
         {
+            _ = biomeId;
             inAcidPool = false;
 
-            // 1) Baslangic Vadisi ikonik Su + Lav + Obsidyen test ve vitrin havzasi (chunk (0,-1))
+            // Baslangic Vadisi ikonik Su + Lav + Obsidyen test ve vitrin havzasi (chunk (0,-1))
+            // Sabit yatay su/lav duzlemi (fluidSurfaceY = DefaultSurfaceBaseY - 1 = 95) kullanir; yamaclara asla tirmanmaz!
             isObsidianSeam = radialMargin > 1.2f && wx >= 5 && wx <= 6 && wz >= -10 && wz <= -4;
 
             float calderaDx = wx - 8.5f, calderaDz = wz - (-7.2f);
@@ -521,36 +482,7 @@ namespace Stratocraft.WorldGen.Generators
 
             bool nearStarterWater = wx >= 0 && wx <= 5 && wz >= -11 && wz <= -3 && waterPoolDist < 3.65f;
             bool nearStarterLava = wx >= 6 && wx <= 13 && wz >= -11 && wz <= -3 && calderaDist < 4.55f;
-            if (inWaterPool || inLavaCaldera || isObsidianSeam || nearStarterWater || nearStarterLava)
-            {
-                inBasinWall = !inWaterPool && !inLavaCaldera;
-                return;
-            }
-
-            inBasinWall = false;
-            float r = MathF.Sqrt(wx * wx + wz * wz);
-            if (r < 22.0f || radialMargin < 16.0f) return;
-
-            // 2) Kita Geneli Dogal Nehirler, Göller, Bataklik Asit Havuzlari ve Volkanik Lav Nehirleri
-            float p1 = SeedPhaseOffset(14), p2 = SeedPhaseOffset(15);
-            float riverMeander = MathF.Abs(MathF.Sin(wx * 0.024f + MathF.Cos(wz * 0.019f + p1) * 1.8f));
-            float lakeField = MathF.Sin(wx * 0.031f + p1) * MathF.Cos(wz * 0.031f - p2);
-
-            if (biomeId == 3) // Zehirli Turba Bataklığı ve Asit Gölleri
-            {
-                if (lakeField > 0.42f || riverMeander < 0.09f) inAcidPool = true;
-                else if (lakeField > 0.26f || riverMeander < 0.15f) inBasinWall = true;
-            }
-            else if (biomeId == 8 || biomeId == 9) // Volkanik Kaldera ve Lav Nehirleri
-            {
-                if (lakeField > 0.46f || riverMeander < 0.085f) inLavaCaldera = true;
-                else if (lakeField > 0.30f || riverMeander < 0.145f) inBasinWall = true;
-            }
-            else if (biomeId == 0 || biomeId == 1 || biomeId == 2 || biomeId == 5)
-            {
-                if (lakeField > 0.52f || riverMeander < 0.075f) inWaterPool = true;
-                else if (lakeField > 0.36f || riverMeander < 0.135f) inBasinWall = true;
-            }
+            inBasinWall = (isObsidianSeam || nearStarterWater || nearStarterLava) && !inWaterPool && !inLavaCaldera;
         }
 
         public static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
@@ -592,19 +524,21 @@ namespace Stratocraft.WorldGen.Generators
                         out bool inWaterPool, out bool inLavaCaldera, out bool inAcidPool,
                         out bool isObsidianSeam, out bool inBasinWall);
 
-                    // Denizler ve Denizde Ufak Adalar: topH < SeaLevelY (90m) olan doğal deniz çanakları SeaLevelY'ye kadar Su ile dolar!
-                    bool isNaturalSea = r > 36.0f && topH < SeaLevelY - 0.35f && !inLavaCaldera && !inAcidPool;
+                    // Dogal Denizler, Goller ve Kaldera Canaklari: YALNIZCA topH < SeaLevelY (90.0m) olan dogal cukurlar
+                    // sabit yatay SeaLevelY (90m) duzlemine kadar sivi ile dolar (sivilar ASLA tepelere/yamaclara tirmanmaz!).
+                    bool isNaturalSea = r > 28.0f && topH < SeaLevelY && !inWaterPool && !inLavaCaldera && !inAcidPool && !inBasinWall;
                     if (isNaturalSea)
                     {
-                        inWaterPool = true;
+                        if (biomeId == 8) inLavaCaldera = true;
+                        else if (biomeId == 3) inAcidPool = true;
+                        else inWaterPool = true;
                     }
 
                     bool inAnyFluidBasin = inWaterPool || inLavaCaldera || inAcidPool;
-                    int fluidSurfaceY = isNaturalSea ? SeaLevelY : (RoundToInt(topH) - 1);
+                    int fluidSurfaceY = isNaturalSea ? SeaLevelY : (DefaultSurfaceBaseY - 1);
 
                     if (inAnyFluidBasin && !isNaturalSea)
                     {
-                        fluidSurfaceY = Math.Max(12, RoundToInt(topH) - 1);
                         topH = fluidSurfaceY - 2.25f;
                         bottomH = MathF.Min(bottomH, 2.2f);
                     }
@@ -622,8 +556,9 @@ namespace Stratocraft.WorldGen.Generators
 
                         if (isNaturalSea && y > (int)MathF.Floor(topH) && y <= SeaLevelY)
                         {
+                            FluidType seaFluidType = inLavaCaldera ? FluidType.Lava : (inAcidPool ? FluidType.Acid : FluidType.Water);
                             byte head = y < SeaLevelY ? (byte)Math.Min(15, SeaLevelY - y) : (byte)0;
-                            fluids[idx] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: head).RawValue;
+                            fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: true, pressureHead: head).RawValue;
                             continue;
                         }
 
@@ -651,7 +586,7 @@ namespace Stratocraft.WorldGen.Generators
                         {
                             voxels[idx] = VoxelBitUtility.PackStandard(
                                 dungeonOverrideMat, VoxelBitUtility.FullDensity,
-                                dungeonOverrideMat == DungeonAltarCore ? (byte)7 : (byte)1,
+                                dungeonOverrideMat == DungeonAltarCore ? (byte)7 : (byte)0,
                                 0, BlokKokenDurumu.KaliciYapi, 0);
                             continue;
                         }
@@ -665,9 +600,19 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        // %100 Sizdirmaz Su, Lav ve Asit Canagi Tabani ve Canak Duvarlari
-                        if ((inAnyFluidBasin && y >= fluidSurfaceY - 5 && y <= fluidSurfaceY - 2) ||
-                            (inBasinWall && y >= fluidSurfaceY - 5 && y <= fluidSurfaceY))
+                        // %100 Sizdirmaz Yuzey Kabugu ve Akiskan Canak Tabani:
+                        // topH altindaki tum katmanlar masif kaya/toprak olarak doldurulur (hicbir yamacta catlak/delik olusamaz!)
+                        int solidFloorY = (int)MathF.Floor(topH);
+                        if (y <= solidFloorY - 1 && y >= 2)
+                        {
+                            densityInt = VoxelBitUtility.FullDensity;
+                        }
+                        else if (y == solidFloorY)
+                        {
+                            densityInt = Math.Max(densityInt, 72);
+                        }
+                        if ((inAnyFluidBasin && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY - 2) ||
+                            (inBasinWall && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY))
                         {
                             densityInt = VoxelBitUtility.FullDensity;
                         }
@@ -1058,10 +1003,13 @@ namespace Stratocraft.WorldGen.Generators
                 for (int x = 6; x <= 10; x++)
                 {
                     EnsureSolidFoundationUnder(voxels, x, baseY, z);
-                    // İç mekanı temizle
-                    for (int clearY = baseY + 1; clearY <= baseY + 5 && clearY < MaxEditableVoxelY - 1; clearY++)
+                    // Yalnizca duvarlarin icindeki 3x3 odanin (7..9) ic mekanini temizle ki dis yamaclarda kesik olusmasin
+                    if (x >= 7 && x <= 9 && z >= 7 && z <= 9)
                     {
-                        voxels[(clearY << 8) | (z << 4) | x] = 0u;
+                        for (int clearY = baseY + 1; clearY <= baseY + 3 && clearY < MaxEditableVoxelY - 1; clearY++)
+                        {
+                            voxels[(clearY << 8) | (z << 4) | x] = 0u;
+                        }
                     }
                 }
             }
@@ -1203,27 +1151,26 @@ namespace Stratocraft.WorldGen.Generators
             EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
             if (inWater || inLava || inAcid || inWall) return;
 
-            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), 12, MaxEditableVoxelY - 18);
-            EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
+            float surfTopY = SampleIslandTopSurfaceY(wx, wz);
+            if (r > 24.0f && surfTopY < SeaLevelY + 1.2f) return;
+
+            int baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 18);
+            for (int fz = -1; fz <= 1; fz++)
+            {
+                for (int fx = -1; fx <= 1; fx++)
+                {
+                    int nTopY = fx == 0 && fz == 0
+                        ? baseY
+                        : Math.Clamp((int)MathF.Floor(SampleIslandTopSurfaceY(wx + fx, wz + fz)), 12, baseY);
+                    EnsureSolidFoundationUnder(voxels, lx + fx, nTopY, lz + fz);
+                }
+            }
 
             bool isPine = biomeId == 4 || biomeId == 5;
             bool isSwampWillow = biomeId == 3;
             byte woodMat = (isIronwood || biomeId == 1)
                 ? MaterialIdCatalog.Ironwood
                 : (isSwampWillow ? MaterialIdCatalog.SpiritWood : MaterialIdCatalog.OakWood);
-
-            // Govdenin alt bogumlarinin (dy=1..3) yan arazi egimlerine yapisip havada asili kalmamasi icin temizle
-            for (int dy = 1; dy <= 3; dy++)
-            {
-                int cy = baseY + dy;
-                if (cy > 0 && cy < MaxEditableVoxelY)
-                {
-                    voxels[(cy << 8) | (lz << 4) | (lx - 1)] = 0u;
-                    voxels[(cy << 8) | (lz << 4) | (lx + 1)] = 0u;
-                    voxels[(cy << 8) | ((lz - 1) << 4) | lx] = 0u;
-                    voxels[(cy << 8) | ((lz + 1) << 4) | lx] = 0u;
-                }
-            }
 
             int effectiveTrunkH = Math.Clamp(trunkHeight, 5, 10);
             for (int dy = 0; dy <= effectiveTrunkH; dy++)
@@ -1262,14 +1209,19 @@ namespace Stratocraft.WorldGen.Generators
         private static void EnsureSolidFoundationUnder(uint[] voxels, int lx, int baseY, int lz)
         {
             if (lx < 0 || lx >= 16 || lz < 0 || lz >= 16) return;
-            for (int y = Math.Max(2, baseY - 3); y < baseY && y < 256; y++)
+            for (int y = Math.Max(2, baseY - 8); y <= baseY && y < 256; y++)
             {
                 int idx = (y << 8) | (lz << 4) | lx;
                 uint cur = voxels[idx];
                 if (VoxelBitUtility.GetMaterialId(cur) == MaterialIdCatalog.Air)
-                    voxels[idx] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                {
+                    byte fillMat = y >= baseY - 1 ? MaterialIdCatalog.Grass : MaterialIdCatalog.Stone;
+                    voxels[idx] = VoxelBitUtility.PackStandard(fillMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
                 else if (VoxelBitUtility.GetShapeId(cur) == 0 && VoxelBitUtility.GetDensityOrLiquid(cur) < VoxelBitUtility.FullDensity)
+                {
                     voxels[idx] = VoxelBitUtility.WithDensityOrLiquid(cur, VoxelBitUtility.FullDensity);
+                }
             }
         }
 

@@ -38,6 +38,13 @@ namespace Stratocraft.Character
         public static float StaminaDrainMultiplier = 1.00f;
         public static float ToolDurabilityLossMultiplier = 1.00f;
 
+        // 4B) Performans, Chunk LOD (Distant Horizons) & Sürü Optimizasyon Ayarları (Varsayılan: Tümü AÇIK)
+        public static bool EnableSubChunkPartialMeshing = true;
+        public static bool EnableUndergroundCaveCulling = true;
+        public static bool EnableDistantHorizonLod = true;
+        public static bool EnableBurstAndAsyncBakeMesh = true;
+        public static bool EnableFlowFieldAndSpatialBoids = true;
+
         // 5) Değiştirilebilir Kontrol Tuşları
         public static KeyCode KeyBackpack = KeyCode.I;
         public static KeyCode KeyMatterCrystal = KeyCode.C;
@@ -632,8 +639,37 @@ namespace Stratocraft.Character
                 Stage1GameSettings.AmbientVolume, 0.0f, 1.0f,
                 $"%{Mathf.RoundToInt(Stage1GameSettings.AmbientVolume * 100f)}");
 
-            cy += 14f;
-            if (GUI.Button(new Rect(area.x, cy, 280f, 34f), "↺ Fare & Ses Ayarlarını Sıfırla", _buttonStyle!))
+            cy += 8f;
+            GUI.Label(new Rect(area.x, cy, area.width, 22f), "🚀 PERFORMANS, CHUNK LOD & SÜRÜ OPTİMİZASYON SİSTEMLERİ", _subHeaderStyle!);
+            cy += 26f;
+
+            Stage1GameSettings.EnableSubChunkPartialMeshing = GUI.Toggle(
+                new Rect(area.x, cy, 400f, 22f),
+                Stage1GameSettings.EnableSubChunkPartialMeshing,
+                "  16x16x16 Kübik Alt-Chunk Kısmi Örme (10x Hızlı Kazı)");
+            Stage1GameSettings.EnableUndergroundCaveCulling = GUI.Toggle(
+                new Rect(area.x + 410f, cy, 400f, 22f),
+                Stage1GameSettings.EnableUndergroundCaveCulling,
+                "  Yeraltı Mağara Gizleme (Yüzeydeyken Uzak Mağaraları Gizle)");
+            cy += 24f;
+
+            Stage1GameSettings.EnableDistantHorizonLod = GUI.Toggle(
+                new Rect(area.x, cy, 400f, 22f),
+                Stage1GameSettings.EnableDistantHorizonLod,
+                "  Uzak Kıta LOD Kabuğu (Distant Horizons 64-Bit Sütun Özeti)");
+            Stage1GameSettings.EnableBurstAndAsyncBakeMesh = GUI.Toggle(
+                new Rect(area.x + 410f, cy, 400f, 22f),
+                Stage1GameSettings.EnableBurstAndAsyncBakeMesh,
+                "  Burst SIMD + PhysX BakeMesh & İndeksli Köşe Paylaşımı");
+            cy += 24f;
+
+            Stage1GameSettings.EnableFlowFieldAndSpatialBoids = GUI.Toggle(
+                new Rect(area.x, cy, 520f, 22f),
+                Stage1GameSettings.EnableFlowFieldAndSpatialBoids,
+                "  Paylaşımlı 3B Akış Alanı (Flow Field) & O(1) Spatial Hash Sürü AI");
+            cy += 28f;
+
+            if (GUI.Button(new Rect(area.x, cy, 280f, 32f), "↺ Fare, Ses & Performans Sıfırla", _buttonStyle!))
             {
                 Stage1GameSettings.MouseSensitivity = 1.00f;
                 Stage1GameSettings.InvertMouseY = false;
@@ -641,6 +677,11 @@ namespace Stratocraft.Character
                 Stage1GameSettings.MasterVolume = 0.85f;
                 Stage1GameSettings.CombatSfxVolume = 0.90f;
                 Stage1GameSettings.AmbientVolume = 0.75f;
+                Stage1GameSettings.EnableSubChunkPartialMeshing = true;
+                Stage1GameSettings.EnableUndergroundCaveCulling = true;
+                Stage1GameSettings.EnableDistantHorizonLod = true;
+                Stage1GameSettings.EnableBurstAndAsyncBakeMesh = true;
+                Stage1GameSettings.EnableFlowFieldAndSpatialBoids = true;
                 AudioListener.volume = Stage1GameSettings.MasterVolume;
                 Stage1GameSettings.SaveToPrefs();
             }

@@ -8,6 +8,7 @@ using Stratocraft.Editor;
 using Stratocraft.Physics.Data;
 using Stratocraft.Rendering;
 using Stratocraft.Voxel.Data;
+using Stratocraft.Voxel.Systems;
 using Stratocraft.WorldGen.Generators;
 using Stratocraft.Voxel.Jobs;
 using UnityEditor;
@@ -44,6 +45,13 @@ namespace Stratocraft.EditorTools
         {
             EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
             EditorSceneManager.sceneOpened += (_, _) => EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
+            EditorApplication.playModeStateChanged += state =>
+            {
+                if (state == PlayModeStateChange.EnteredEditMode)
+                {
+                    EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
+                }
+            };
         }
 
         private static void EnsureEditorSceneContinentUpToDate()
@@ -60,15 +68,21 @@ namespace Stratocraft.EditorTools
             var filters = UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsInactive.Exclude);
             int totalVoxelChunkObjects = 0;
             int validVoxelChunkMeshes = 0;
+            bool hasLegacyMismatchedShells = false;
             for (int i = 0; i < filters.Length; i++)
             {
-                if (filters[i].gameObject.name.StartsWith("VoxelChunk_", StringComparison.Ordinal))
+                string n = filters[i].gameObject.name;
+                if (n.StartsWith("VoxelChunk_", StringComparison.Ordinal))
                 {
                     totalVoxelChunkObjects++;
                     if (filters[i].sharedMesh != null && filters[i].sharedMesh.vertexCount >= 3)
                     {
                         validVoxelChunkMeshes++;
                     }
+                }
+                else if (n.StartsWith("DistantHorizon", StringComparison.Ordinal))
+                {
+                    hasLegacyMismatchedShells = true;
                 }
             }
 
@@ -79,7 +93,7 @@ namespace Stratocraft.EditorTools
                 hasCentralPhoenix = true;
             }
 
-            if (totalVoxelChunkObjects < 200 || hasCentralPhoenix)
+            if (totalVoxelChunkObjects < 200 || hasCentralPhoenix || hasLegacyMismatchedShells)
             {
                 _autoSyncInProgress = true;
                 try
@@ -138,10 +152,11 @@ namespace Stratocraft.EditorTools
             int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
             var solidTriLists = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
             var fluidTriLists = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
+            // DIKKAT: Parallel.For icinde ASLA Unity Component (mf.sharedMesh vb.) cagrilmaz (Main Thread kurali)!
+            // Tum 400 chunk ayni worldChunks sozluguyle paralel orulur ki [-2..1] merkez sinirinda da 0.000m dikis garantilensin!
             System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, i =>
             {
-                var (cx, cz, mf) = chunkEntries[i];
-                if (mf.sharedMesh != null && mf.sharedMesh.vertexCount >= 3) return;
+                var (cx, cz, _) = chunkEntries[i];
                 var sTris = new List<FacetedVoxelTriangle>(8192);
                 var fTris = new List<FacetedVoxelTriangle>(1024);
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(cx, cz, maxEditableY, worldChunks, sTris, minY: 0);
@@ -158,6 +173,10 @@ namespace Stratocraft.EditorTools
                 Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_{cx}_{cz}");
                 m.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
                 mf.sharedMesh = m;
+                if (mf.TryGetComponent<MeshCollider>(out var mc) && mc != null && mc.enabled && sTris.Count >= 1)
+                {
+                    mc.sharedMesh = m;
+                }
 
                 var fTris = fluidTriLists[i];
                 if (fTris != null && fTris.Count > 0)
@@ -171,6 +190,7 @@ namespace Stratocraft.EditorTools
                     }
                 }
             }
+
             SceneView.RepaintAll();
         }
 
@@ -244,8 +264,12 @@ namespace Stratocraft.EditorTools
             else if (fluidShader != null && fluidMat.shader != fluidShader)
             {
                 fluidMat.shader = fluidShader;
-                EditorUtility.SetDirty(fluidMat);
             }
+            if (fluidMat.HasProperty("_WaterColorShallow")) fluidMat.SetColor("_WaterColorShallow", new Color(0.22f, 0.72f, 0.96f, 0.72f));
+            if (fluidMat.HasProperty("_WaterColorDeep")) fluidMat.SetColor("_WaterColorDeep", new Color(0.10f, 0.42f, 0.78f, 0.88f));
+            if (fluidMat.HasProperty("_LavaCrustColor")) fluidMat.SetColor("_LavaCrustColor", new Color(0.32f, 0.14f, 0.08f, 1.0f));
+            if (fluidMat.HasProperty("_LavaCoreColor")) fluidMat.SetColor("_LavaCoreColor", new Color(1.0f, 0.42f, 0.10f, 1.0f));
+            EditorUtility.SetDirty(fluidMat);
 
             // 2. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk'in Kati (SurfaceNets + 5 Yeralti Katmani + 7DTD) ve Akiskan ucgenlerini PARALEL or!
             int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
@@ -1193,7 +1217,8 @@ namespace Stratocraft.EditorTools
                     name.StartsWith("02_Faz", StringComparison.Ordinal) ||
                     name.StartsWith("03_Faz", StringComparison.Ordinal) ||
                     name.StartsWith("04_Faz", StringComparison.Ordinal) ||
-                    name.StartsWith("05_Faz", StringComparison.Ordinal))
+                    name.StartsWith("05_Faz", StringComparison.Ordinal) ||
+                    name.StartsWith("DistantHorizon", StringComparison.Ordinal))
                 {
                     UnityEngine.Object.DestroyImmediate(roots[i]);
                 }

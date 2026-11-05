@@ -2,21 +2,21 @@ Shader "Stratocraft/FluidSurface"
 {
     Properties
     {
-        _WaterColorShallow ("Water Shallow Color", Color) = (0.16, 0.58, 0.92, 0.55)
-        _WaterColorDeep ("Water Deep (Abyssal) Color", Color) = (0.02, 0.12, 0.32, 0.95)
-        _WaterExtinction ("Water Extinction (RGB Sigma)", Vector) = (0.45, 0.14, 0.06, 0.0)
+        _WaterColorShallow ("Water Shallow Color", Color) = (0.22, 0.72, 0.96, 0.72)
+        _WaterColorDeep ("Water Deep (Abyssal) Color", Color) = (0.10, 0.42, 0.78, 0.88)
+        _WaterExtinction ("Water Extinction (RGB Sigma)", Vector) = (0.22, 0.08, 0.03, 0.0)
         _WaterWaveSpeed ("Wave Speed", Float) = 1.2
         _WaterWaveFrequency ("Wave Frequency", Float) = 0.8
         _WaterWaveAmplitude ("Wave Amplitude", Float) = 0.04
         _ShorelineFoamDistance ("Foam Band Distance (Meters)", Float) = 0.32
         
-        _LavaCrustColor ("Lava Basaltic Crust Color", Color) = (0.12, 0.08, 0.08, 1.0)
-        _LavaCoreColor ("Lava Core Glow Color", Color) = (1.0, 0.36, 0.08, 1.0)
+        _LavaCrustColor ("Lava Basaltic Crust Color", Color) = (0.32, 0.14, 0.08, 1.0)
+        _LavaCoreColor ("Lava Core Glow Color", Color) = (1.0, 0.42, 0.10, 1.0)
         _LavaEmissionMultiplier ("Lava T^4 Emission Multiplier", Float) = 4.5
         _LavaCrustSpeed ("Lava Flow Speed", Float) = 0.25
         
-        _AcidColorShallow ("Acid Shallow Color", Color) = (0.24, 0.86, 0.16, 0.70)
-        _AcidColorDeep ("Acid Deep Color", Color) = (0.08, 0.42, 0.04, 0.98)
+        _AcidColorShallow ("Acid Shallow Color", Color) = (0.28, 0.88, 0.20, 0.75)
+        _AcidColorDeep ("Acid Deep Color", Color) = (0.14, 0.56, 0.10, 0.92)
     }
 
     SubShader
@@ -172,55 +172,62 @@ Shader "Stratocraft/FluidSurface"
                 float NdotV = max(0.0, dot(normalWS, viewDirWS));
 
                 // Derinlik tamponundan optik yol uzunlugu (d_optic)
+                // SceneView veya derinlik dokusu aktif olmayan kameralarda rawDepth 0 (uzak duzlem) dondugunde
+                // opticalDepth'in 4300m olup suyu simsiyah (0,0,0) yapmasini engellemek icin 1.4m varsayilana sabitle!
                 float2 screenUV = input.screenPos.xy / max(1e-5, input.screenPos.w);
                 #if UNITY_REVERSED_Z
                 float rawDepth = SampleSceneDepth(screenUV);
+                bool validDepth = (rawDepth > 1e-4) && (rawDepth < 0.9999);
                 #else
-                float rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1.0, SampleSceneDepth(screenUV));
+                float rawSample = SampleSceneDepth(screenUV);
+                bool validDepth = (rawSample > 1e-4) && (rawSample < 0.9999);
+                float rawDepth = lerp(UNITY_NEAR_CLIP_VALUE, 1.0, rawSample);
                 #endif
                 float sceneDepthWS = LinearEyeDepth(rawDepth, _ZBufferParams);
                 float surfaceDepthWS = LinearEyeDepth(input.positionCS.z, _ZBufferParams);
-                float opticalDepth = max(0.0, sceneDepthWS - surfaceDepthWS);
+                float rawDiff = sceneDepthWS - surfaceDepthWS;
+                float opticalDepth = (validDepth && rawDiff >= 0.0 && rawDiff < 24.0) ? rawDiff : 1.4;
 
                 // Ana Isik
                 Light mainLight = GetMainLight();
                 float NdotL = max(0.0, dot(normalWS, mainLight.direction));
-                float3 lightCol = mainLight.color * (NdotL * 0.75 + 0.25);
+                float3 lightCol = max(float3(0.45, 0.48, 0.52), mainLight.color * (NdotL * 0.75 + 0.35));
 
                 // ==================== 1. SU (FluidType == 1) ====================
                 if (input.fluidType == 1)
                 {
                     // Beer-Lambert Derinlik Sogurmasi
                     float3 extinction = _WaterExtinction.rgb;
-                    float3 absorb = exp(-extinction * opticalDepth);
+                    float3 absorb = exp(-extinction * clamp(opticalDepth, 0.1, 6.0));
                     float3 waterColor = lerp(_WaterColorDeep.rgb, _WaterColorShallow.rgb, absorb);
 
                     // Schlick Fresnel
-                    float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
-                    float3 skyReflection = lightCol * 1.25;
-                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * 0.65);
+                    float fresnel = 0.06 + 0.94 * pow(1.0 - NdotV, 4.0);
+                    float3 skyReflection = float3(0.42, 0.68, 0.95) * lightCol * 1.15;
+                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * 0.55);
 
                     // Shoreline Foam Band (Kiyi Etegi Kopugu)
                     float foamFactor = saturate(1.0 - (opticalDepth / max(0.05, _ShorelineFoamDistance)));
                     float foamNoise = Hash21(input.positionWS.xz * 6.0 + _Time.y * 0.4);
                     float foam = step(0.45, foamFactor * foamNoise);
-                    finalColor = lerp(finalColor, float3(0.95, 0.98, 1.0) * lightCol * 1.4, foam * 0.85);
+                    finalColor = lerp(finalColor, float3(0.95, 0.98, 1.0) * lightCol * 1.3, foam * 0.80);
 
-                    float alpha = saturate(_WaterColorShallow.a + (opticalDepth * 0.15) + (foam * 0.35));
+                    float alpha = saturate(_WaterColorShallow.a + (clamp(opticalDepth, 0.0, 4.0) * 0.06) + (foam * 0.25));
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 
                 // ==================== 2. LAV (FluidType == 2) ====================
                 if (input.fluidType == 2)
                 {
-                    // Voronoi bazaltik kabuk ve catlaklar
-                    float2 lavaUV = input.positionWS.xz * 0.35 + input.fluxVelocity * (_Time.y * _LavaCrustSpeed);
+                    // 3B dunya koordinatli Voronoi bazaltik kabuk ve catlaklar (dikey yuzeylerde cizgi uzamasi yapmaz)
+                    float2 lavaUV = (input.positionWS.xz + float2(input.positionWS.y * 0.55, -input.positionWS.y * 0.45)) * 0.35
+                                  + input.fluxVelocity * (_Time.y * _LavaCrustSpeed);
                     float vDist = Voronoi2D(lavaUV);
-                    float crackMask = 1.0 - smoothstep(0.05, 0.28, vDist);
+                    float crackMask = 1.0 - smoothstep(0.06, 0.34, vDist);
 
                     // Stefan-Boltzmann T^4 akkor turuncu-sari emisyon
                     float3 lavaGlow = _LavaCoreColor.rgb * _LavaEmissionMultiplier;
-                    float3 crust = _LavaCrustColor.rgb * lightCol;
+                    float3 crust = max(float3(0.28, 0.11, 0.06), _LavaCrustColor.rgb * lightCol);
                     float3 finalColor = lerp(crust, lavaGlow, crackMask);
 
                     return float4(MixFog(finalColor, input.fogFactor), 1.0);

@@ -9,6 +9,7 @@ using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.Data;
 using Stratocraft.CreaturesAI.HybridLod;
 using Stratocraft.CreaturesAI.Pathfinding;
+using Stratocraft.Networking;
 using Stratocraft.Voxel.Data;
 
 namespace Stratocraft.Tests.EditMode
@@ -206,6 +207,49 @@ namespace Stratocraft.Tests.EditMode
                     }
                 }
             }
+        }
+
+        [Test]
+        public void Shared3DFlowField_SpatialBoids_AndSwarmNetPacket_OperateInO1ZeroGc()
+        {
+            var world = new Dictionary<(int cx, int cz), uint[]>
+            {
+                [(0, 0)] = new uint[16 * 16 * 160],
+                [(-1, 0)] = new uint[16 * 16 * 160]
+            };
+
+            var flowSys = new Shared3DFlowFieldSystem();
+            flowSys.EnsureFlowFieldUpToDate(4, 92, 4, currentTime: 10.0f, world, maxEditableY: 160);
+
+            bool sampled = flowSys.TrySampleFlowDirection(14.0f, 4.0f, out float dirX, out float dirZ, out bool breachWall);
+            Assert.That(sampled, Is.True, "33x33 Dijkstra 3B Akis Alani oyuncu merkezine dogru O(1) vektor dondurmelidir!");
+            Assert.That(dirX, Is.LessThan(-0.5f), "X=14m'deki ajan X=4m'deki oyuncuya (-X yonune) yonlendirilmelidir!");
+            Assert.That(breachWall, Is.False);
+
+            // Spatial Hash Boids O(1) kova testi
+            Span<System.Numerics.Vector2> positionsXZ = stackalloc System.Numerics.Vector2[]
+            {
+                new(2.0f, 2.0f),
+                new(2.3f, 2.2f),
+                new(80.0f, 80.0f)
+            };
+            flowSys.RebuildSpatialBoidsHash(positionsXZ, agentCount: 3);
+
+            int head = flowSys.GetSpatialBucketHead((int)MathF.Floor(2.2f * 0.4f), (int)MathF.Floor(2.2f * 0.4f));
+            Assert.That(head, Is.GreaterThanOrEqualTo(0), "Ayni 2.5x2.5m kovadaki ajanlar O(1) bagli listede bulunmalidir!");
+
+            // Faz P5: 16-Byte SwarmAnchorNetPacket + 64-Bit Zirh/Ekipman Maskesi + Frekans Olceklemeli AOI
+            Assert.That(Marshal.SizeOf<SwarmAnchorNetPacket>(), Is.EqualTo(16));
+            Assert.That(SpatialAoiAndSwarmNetSystem.ShouldReplicateAtTick(10f * 10f, serverTick60Hz: 1u, entityNetworkId: 1u), Is.True);
+            Assert.That(SpatialAoiAndSwarmNetSystem.ShouldReplicateAtTick(200f * 200f, serverTick60Hz: 1u, entityNetworkId: 1u), Is.False);
+
+            Span<byte> armor15 = stackalloc byte[15];
+            armor15[0] = 5;
+            armor15[11] = 9;
+            ulong mask64 = SpatialAoiAndSwarmNetSystem.PackVisualEquipmentMask64(
+                armor15, activeWeaponArchetype: 3, activeMartialStance: 2, severedLimbFlags: 1);
+            Assert.That((byte)(mask64 & 0x0FUL), Is.EqualTo(5));
+            Assert.That((byte)((mask64 >> 44) & 0x0FUL), Is.EqualTo(9));
         }
     }
 }

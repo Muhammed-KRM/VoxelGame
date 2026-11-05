@@ -103,6 +103,7 @@ namespace Stratocraft.Character
             if (lx >= 14 && worldChunks.ContainsKey((cx + 1, cz))) dirtyChunks.Add((cx + 1, cz));
             if (lz <= 1 && worldChunks.ContainsKey((cx, cz - 1))) dirtyChunks.Add((cx, cz - 1));
             if (lz >= 14 && worldChunks.ContainsKey((cx, cz + 1))) dirtyChunks.Add((cx, cz + 1));
+            Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
         }
 
         /// <summary>WASD, kosu, kayma, surunme, 2.2m mantle, ziplama, sivi kaldirma/lav hasari ve kapsul-arazi depenetration cozumunu ilerletir.</summary>

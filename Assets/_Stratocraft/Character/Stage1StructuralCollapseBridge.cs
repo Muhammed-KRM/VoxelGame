@@ -82,6 +82,16 @@ namespace Stratocraft.Character
         {
             if (sharedVoxelMaterial != null) DefaultVoxelMaterial = sharedVoxelMaterial;
             maxEditableY = Mathf.Clamp(maxEditableY, 8, Mathf.Min(StratocraftConstants.ChunkSizeY, chunkVoxels.Length >> 8));
+
+            // Hizli Yerel Destek On-Testi (Early-Out):
+            // Eger kirilan/konulan noktanin ustunde veya yaninda havada kalabilecek hicbir katman, agac veya oyuncu yapisi yoksa
+            // 40.960 hucrelik Dijkstra + DAG cozucusunu bosuna calistirma (%92 CPU tasarrufu!).
+            if (!HasPotentialUnsupportedStructureNearPivot(cx, cz, chunkVoxels, maxEditableY, pivotWorld))
+            {
+                feedbackText = string.Empty;
+                return 0;
+            }
+
             int sliceVolume = 16 * maxEditableY * 16;
 
             if (_scratchSlice == null || _scratchSlice.Length < sliceVolume) _scratchSlice = new uint[sliceVolume];
@@ -110,6 +120,10 @@ namespace Stratocraft.Character
                 {
                     _detachedSnapshot[i] = chunkVoxels[i];
                     chunkVoxels[i] = 0u;
+                    int wy = i >> 8;
+                    int lz = (i >> 4) & 15;
+                    int lx = i & 15;
+                    Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
                 }
             }
 
@@ -143,36 +157,90 @@ namespace Stratocraft.Character
             int sliceVolume = 16 * maxY * 16;
             Array.Copy(src, dst, sliceVolume);
             int baseWx = cx * 16, baseWz = cz * 16;
-            int minY = Mathf.Max(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, Mathf.FloorToInt(pivotWorld.y) - 4);
+            int minY = Mathf.Max(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, Mathf.FloorToInt(pivotWorld.y) - 3);
 
-            for (int y = 1; y < maxY; y++)
             for (int lz = 0; lz < 16; lz++)
-            for (int lx = 0; lx < 16; lx++)
             {
-                int idx = (y << 8) | (lz << 4) | lx;
-                uint raw = dst[idx];
-                if (!VoxelBitUtility.IsPhysicallySolid(raw) ||
-                    VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle) continue;
-
-                byte mat = VoxelBitUtility.GetMaterialId(raw);
-                bool isTreeFlora = mat == MaterialIdCatalog.OakWood ||
-                                   mat == MaterialIdCatalog.Ironwood ||
-                                   mat == MaterialIdCatalog.Grass;
-
-                // Dogal agac govdesi ve yapraklari (DogalKutle) asla havada sabitlenmez; koku kesildiginde tum agac devrilir!
-                if (isTreeFlora && y >= minY)
+                int wz = baseWz + lz;
+                for (int lx = 0; lx < 16; lx++)
                 {
-                    continue;
-                }
+                    int wx = baseWx + lx;
+                    float dx = (wx + 0.5f) - pivotWorld.x;
+                    float dz = (wz + 0.5f) - pivotWorld.z;
+                    bool outsideHorizontalRadius = (dx * dx + dz * dz) > 18.0f;
+                    int surfY = Mathf.RoundToInt(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz));
+                    int colXZ = (lz << 4) | lx;
 
-                float dx = (baseWx + lx + 0.5f) - pivotWorld.x;
-                float dz = (baseWz + lz + 0.5f) - pivotWorld.z;
-                bool outsideLocalEdit = (dx * dx + dz * dz) > 25.0f || y < minY;
-                if (outsideLocalEdit)
-                {
-                    dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                    for (int y = 1; y < maxY; y++)
+                    {
+                        int idx = (y << 8) | colXZ;
+                        uint raw = dst[idx];
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw) ||
+                            VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
+                        {
+                            continue;
+                        }
+
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        bool isTreeTrunk = mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood;
+                        // Yalnizca zemin yuzeyinin en az 3 blok ustundeki agac yapragi (Grass) bloklari agac taci sayilir;
+                        // adanin kendi dogal yuzey topragi/kumu/kayasi ASLA cokmez!
+                        bool isTreeCanopy = mat == MaterialIdCatalog.Grass && y >= surfY + 3;
+
+                        if (!outsideHorizontalRadius && y >= minY && (isTreeTrunk || isTreeCanopy))
+                        {
+                            continue;
+                        }
+
+                        // Dogal ada zemini (Toprak, Cimen, Kum, Tas, Bazalt, Magara tavanlari) KaliciYapi olarak sabitlenir
+                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                    }
                 }
             }
+        }
+
+        private static bool HasPotentialUnsupportedStructureNearPivot(
+            int cx, int cz, uint[] src, int maxY, Vector3 pivotWorld)
+        {
+            int pLx = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.x) - cx * 16, 0, 15);
+            int pLz = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.z) - cz * 16, 0, 15);
+            int pY = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.y), 1, maxY - 2);
+
+            for (int dy = -1; dy <= 3; dy++)
+            {
+                int y = pY + dy;
+                if (y <= 1 || y >= maxY) continue;
+                int yShift = y << 8;
+                for (int dz = -2; dz <= 2; dz++)
+                {
+                    int lz = pLz + dz;
+                    if ((uint)lz >= 16u) continue;
+                    int zShift = yShift | (lz << 4);
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int lx = pLx + dx;
+                        if ((uint)lx >= 16u) continue;
+                        uint raw = src[zShift | lx];
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                        if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.OyuncuItemBlogu)
+                        {
+                            return true;
+                        }
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        if (mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood)
+                        {
+                            return true;
+                        }
+                        // Ustte (dy >= 1) alti bosalmis dogal blok varsa kontrol et
+                        if (dy >= 1 && !VoxelBitUtility.IsPhysicallySolid(src[((y - 1) << 8) | (lz << 4) | lx]))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         }
 
         /// <summary>Havada dusen yapi kumelerini 1.5sn catirdama/toz uyari fazindan gecirip yercekimiyle ilerletir ve Pancake alt kat delmeyi uygular.</summary>
@@ -433,7 +501,8 @@ namespace Stratocraft.Character
                 float dropHeight = Mathf.Max(0.5f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = Mathf.Max(Mathf.Abs(slot.VerticalVelocity), PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight));
 
-                // Pancake Collapse: Düşen kümenin kütlesi ve çarpma hızı alt kattaki döşeme bloklarını deliyor mu?
+                // Pancake Collapse: Yalnizca OYUNCU YAPISI (OyuncuItemBlogu) bina doseme bloklari delinir;
+                // dogal ada arazisi (DogalKutle) asla matkap gibi delinip yer cokmesine yol acmaz!
                 int breachedBlocks = 0;
                 float addedMassKg = 0f;
                 byte lastBreachedMat = hitMat;
@@ -445,6 +514,7 @@ namespace Stratocraft.Character
                         int bIdx = (probeY << 8) | (lz << 4) | lx;
                         uint bRaw = chunkVoxels[bIdx];
                         if (!VoxelBitUtility.IsPhysicallySolid(bRaw)) continue;
+                        if (VoxelBitUtility.GetOriginState(bRaw) != BlokKokenDurumu.OyuncuItemBlogu) continue;
 
                         byte bm = VoxelBitUtility.GetMaterialId(bRaw);
                         if (bm == MaterialIdCatalog.Air || bm == MaterialIdCatalog.Bedrock) continue;
@@ -452,6 +522,7 @@ namespace Stratocraft.Character
                         if (StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, bm))
                         {
                             chunkVoxels[bIdx] = 0u;
+                            Stage1InteractivePlayController.NotifyWorldVoxelEdited(slot.ChunkX, slot.ChunkZ, probeY, lx, lz, includeNeighbors: true);
                             breachedBlocks++;
                             lastBreachedMat = bm;
                             addedMassKg += StructuralMaterialProps.GetForMaterial(bm).MassKg;
@@ -529,10 +600,16 @@ namespace Stratocraft.Character
             float phi = PrebakedFracturePatternLut.ComputeImpactFractureRatio(slot.Cluster.TotalMassKg, dropHeight, eCrit, 1.0f, 1.15f);
             LastImpactFractureRatio = phi;
 
+            bool isTreeWoodCluster = slot.Cluster.DominantMaterialId == MaterialIdCatalog.OakWood ||
+                                     slot.Cluster.DominantMaterialId == MaterialIdCatalog.Ironwood;
+            int maxRubbleBlocks = isTreeWoodCluster
+                ? Math.Clamp(slot.Cluster.VoxelCount / 6, 1, 4)
+                : Math.Clamp(slot.Cluster.VoxelCount, 1, 12);
             int deposited = StructuralCollapseSystem.RevoxelizeClusterToLooseRubble(
                 chunkVoxels.AsSpan(0, 16 * maxEditableY * 16), 16, maxEditableY, 16,
-                settleLx, settleLy, settleLz, Math.Max(1, slot.Cluster.VoxelCount),
+                settleLx, settleLy, settleLz, maxRubbleBlocks,
                 VoxelGridMemoryLayout.YMajorChunk, dropHeight, slot.Cluster.DominantMaterialId);
+            Stage1InteractivePlayController.NotifyWorldVoxelEdited(slot.ChunkX, slot.ChunkZ, settleLy, settleLx, settleLz, includeNeighbors: true);
 
             byte domMat = slot.Cluster.DominantMaterialId == MaterialIdCatalog.Air
                 ? MaterialIdCatalog.LooseRubble

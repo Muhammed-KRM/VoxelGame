@@ -5,6 +5,7 @@ using NUnit.Framework;
 using Stratocraft.Core.Constants;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
+using Stratocraft.Voxel.Systems;
 
 namespace Stratocraft.Tests.EditMode
 {
@@ -125,6 +126,54 @@ namespace Stratocraft.Tests.EditMode
             }
 
             Assert.That(matchedSeamVertices, Is.GreaterThan(20));
+        }
+
+        [Test]
+        public void SubChunk16x16x16PartialMeshing_MatchesFullChunkMesh_AndDistantHorizonLod64Is8Bytes()
+        {
+            var world = new Dictionary<(int cx, int cz), uint[]>
+            {
+                [(0, 0)] = new uint[16 * 16 * 64]
+            };
+
+            uint[] chunk = world[(0, 0)];
+            for (int y = 4; y < 44; y++)
+            {
+                for (int lz = 2; lz <= 13; lz++)
+                {
+                    for (int lx = 2; lx <= 13; lx++)
+                    {
+                        byte mat = y >= 40 ? MaterialIdCatalog.Grass : MaterialIdCatalog.Stone;
+                        chunk[(y << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                            mat, 108, shapeId: 0, rot24: 0, BlokKokenDurumu.DogalKutle, dmg4: 0);
+                    }
+                }
+            }
+
+            var fullTris = new List<FacetedVoxelTriangle>(4096);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(0, 0, 64, world, fullTris, minY: 0);
+
+            var subTris = new List<FacetedVoxelTriangle>(4096);
+            var scratch = new List<FacetedVoxelTriangle>(1024);
+            for (int subY = 0; subY < 4; subY++)
+            {
+                scratch.Clear();
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    0, 0, (subY + 1) * 16, world, scratch, minY: subY * 16);
+                subTris.AddRange(scratch);
+            }
+
+            Assert.That(subTris.Count, Is.EqualTo(fullTris.Count), "16x16x16 Sub-Chunk parcali orme tam chunk ormesiyle birebir ayni sayida ucgen uretmelidir!");
+
+            // DistantHorizonLodSystem ColumnLod64 (8 Byte) ve 64m x 64m kabuk testi
+            ColumnLod64 col = DistantHorizonLodSystem.SampleAnalyticalColumnLod64(0f, 0f);
+            Assert.That(col.IsValidLand, Is.True);
+            Assert.That(col.TopY, Is.GreaterThan(80f));
+
+            var lodSys = new DistantHorizonLodSystem();
+            var shellTris = new List<FacetedVoxelTriangle>(1024);
+            lodSys.BuildMacroTileHorizonShellMesh(0, 0, shellTris);
+            Assert.That(shellTris.Count, Is.GreaterThan(100), "64m x 64m Distant Horizon kabuk mesh'i ucgen uretmelidir!");
         }
     }
 }

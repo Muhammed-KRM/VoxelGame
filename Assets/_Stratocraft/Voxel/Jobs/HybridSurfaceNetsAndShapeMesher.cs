@@ -90,8 +90,8 @@ namespace Stratocraft.Voxel.Jobs
             int chunkMaxCapacityY = Math.Max(2, centerChunk.Length >> 8);
             maxY = Math.Clamp(maxY, 2, Math.Min(256, chunkMaxCapacityY));
             minY = Math.Clamp(minY, 0, maxY - 2);
-            int startPy = Math.Max(1, minY);
-            int endPy = Math.Min(chunkMaxCapacityY, maxY + (maxY < chunkMaxCapacityY ? 1 : 0));
+            int startPy = Math.Max(1, minY - 2);
+            int endPy = Math.Min(chunkMaxCapacityY, maxY + (maxY < chunkMaxCapacityY ? 2 : 0));
             int chunkWorldOffsetX = chunkX * 16;
             int chunkWorldOffsetZ = chunkZ * 16;
 
@@ -105,6 +105,10 @@ namespace Stratocraft.Voxel.Jobs
             bool[] sliceHasShape = _tsSliceHasShape ??= new bool[MaxPadY];
 
             int lowerClearPy = startPy - 1;
+            Array.Clear(padded, lowerClearPy * padSliceStride, padSliceStride);
+            Array.Clear(channel1Sdf, lowerClearPy * padSliceStride, padSliceStride);
+            sliceHasSolid[lowerClearPy] = sliceAllSolid[lowerClearPy] = sliceHasShape[lowerClearPy] = false;
+
             Array.Clear(padded, (padY - 1) * padSliceStride, padSliceStride);
             Array.Clear(channel1Sdf, (padY - 1) * padSliceStride, padSliceStride);
             sliceHasSolid[padY - 1] = sliceAllSolid[padY - 1] = sliceHasShape[padY - 1] = false;
@@ -121,70 +125,7 @@ namespace Stratocraft.Voxel.Jobs
             worldChunks.TryGetValue((chunkX - 1, chunkZ + 1), out uint[]? chunkNW);
             worldChunks.TryGetValue((chunkX + 1, chunkZ + 1), out uint[]? chunkNE);
 
-            bool isSurfaceOverworldSlice = minY >= 68 && maxY > 32;
-            bool clampUnloadedContinentEdges = maxY > 32 && worldChunks.Count > 4;
-            uint sealedCliffRockRaw = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
-
-            if (isSurfaceOverworldSlice)
-            {
-                int lowerBase = lowerClearPy * padSliceStride;
-                Array.Fill(padded, sealedCliffRockRaw, lowerBase, padSliceStride);
-                Array.Fill(channel1Sdf, sealedCliffRockRaw, lowerBase, padSliceStride);
-                sliceHasSolid[lowerClearPy] = true;
-                sliceAllSolid[lowerClearPy] = true;
-                sliceHasShape[lowerClearPy] = false;
-            }
-            else
-            {
-                Array.Clear(padded, lowerClearPy * padSliceStride, padSliceStride);
-                Array.Clear(channel1Sdf, lowerClearPy * padSliceStride, padSliceStride);
-                sliceHasSolid[lowerClearPy] = sliceAllSolid[lowerClearPy] = sliceHasShape[lowerClearPy] = false;
-            }
-
-            Span<int> colGroundSealY = stackalloc int[padX * padZ];
-            if (isSurfaceOverworldSlice)
-            {
-                int scanTopY = Math.Min(maxY - 1, 128);
-                for (int pz = 0; pz < padZ; pz++)
-                {
-                    int lz = pz - 1;
-                    int wz = chunkWorldOffsetZ + lz;
-                    for (int px = 0; px < padX; px++)
-                    {
-                        int lx = px - 1;
-                        int wx = chunkWorldOffsetX + lx;
-                        // Kuzeybati yuzey magara giris rampasini acik birak
-                        if (wx >= -16 && wx <= -2 && wz >= 2 && wz <= 28)
-                        {
-                            colGroundSealY[pz * padX + px] = -1;
-                            continue;
-                        }
-
-                        uint[]? colChunk = ResolvePaddedColumnChunk(
-                            lx, lz, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
-                            clampUnloadedContinentEdges, out int cLx, out int cLz);
-                        int sealY = -1;
-                        if (colChunk != null)
-                        {
-                            int colIdx = (cLz << 4) | cLx;
-                            for (int sy = scanTopY; sy >= minY + 1; sy--)
-                            {
-                                uint r0 = colChunk[(sy << 8) | colIdx];
-                                uint r1 = colChunk[((sy - 1) << 8) | colIdx];
-                                byte m0 = VoxelBitUtility.GetMaterialId(r0);
-                                byte m1 = VoxelBitUtility.GetMaterialId(r1);
-                                if (m0 != 0 && m0 != MaterialIdCatalog.GlowingMoss && VoxelBitUtility.GetShapeId(r0) == 0 && VoxelBitUtility.GetDensityOrLiquid(r0) >= IsoLevel &&
-                                    m1 != 0 && m1 != MaterialIdCatalog.GlowingMoss && VoxelBitUtility.GetShapeId(r1) == 0 && VoxelBitUtility.GetDensityOrLiquid(r1) >= IsoLevel)
-                                {
-                                    sealY = sy - 2;
-                                    break;
-                                }
-                            }
-                        }
-                        colGroundSealY[pz * padX + px] = sealY;
-                    }
-                }
-            }
+            bool clampUnloadedContinentEdges = chunkMaxCapacityY > 16 && worldChunks.Count > 4;
 
             // 1. Komsu Apron Doldurma + Y-Dilimi (0x00 / 0xFF / Shape) Analizi
             for (int py = startPy; py <= endPy; py++)
@@ -202,16 +143,6 @@ namespace Stratocraft.Voxel.Jobs
                             lx, lz, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
                             clampUnloadedContinentEdges, out int cLx, out int cLz);
                         uint raw = srcChunk != null ? srcChunk[yShift | (cLz << 4) | cLx] : 0u;
-
-                        if (isSurfaceOverworldSlice && wy <= colGroundSealY[pz * padX + px])
-                        {
-                            byte rMat = VoxelBitUtility.GetMaterialId(raw);
-                            if (rMat == 0 || VoxelBitUtility.GetShapeId(raw) != 0 || VoxelBitUtility.GetDensityOrLiquid(raw) < IsoLevel)
-                            {
-                                raw = sealedCliffRockRaw;
-                            }
-                        }
-
                         padded[pRow + px] = raw;
 
                         byte mat = VoxelBitUtility.GetMaterialId(raw);
@@ -378,8 +309,8 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            int startYEdgePy = isSurfaceOverworldSlice ? minY + 1 : Math.Max(0, minY);
-            int endYEdgePy = maxY < chunkMaxCapacityY ? maxY - 1 : maxY;
+            int startYEdgePy = minY == 0 ? 0 : minY + 1;
+            int endYEdgePy = maxY;
             for (int py = startYEdgePy; py <= endYEdgePy; py++)
             {
                 if ((!sliceHasSolid[py] && !sliceHasSolid[py + 1]) || (sliceAllSolid[py] && sliceAllSolid[py + 1])) continue;
@@ -518,7 +449,6 @@ namespace Stratocraft.Voxel.Jobs
             for (int py = startPy; py < padY - 1; py++)
             {
                 int sliceOffset = py * sliceStride;
-                if (!sliceHasSolid[py]) { Array.Clear(outChannel1Sdf, sliceOffset, sliceStride); continue; }
                 if (!sliceHasShape[py]) { Array.Copy(paddedRaw, sliceOffset, outChannel1Sdf, sliceOffset, sliceStride); continue; }
 
                 bool anySolidAfterPin = false, allSolidAfterPin = true;
@@ -1054,35 +984,289 @@ namespace Stratocraft.Voxel.Jobs
             if (targetMesh != null) targetMesh.Clear();
             UnityEngine.Mesh mesh = targetMesh != null ? targetMesh : new UnityEngine.Mesh();
             mesh.name = meshName;
-            int triCount = tris.Count, vertCount = triCount * 3;
+            int triCount = tris.Count;
+            if (triCount == 0)
+            {
+                mesh.bounds = new UnityEngine.Bounds(UnityEngine.Vector3.zero, UnityEngine.Vector3.one);
+                return mesh;
+            }
+
+            // Quad kose paylasimi (Indexed Quad Sharing): Ardisik iki ucgen ayni duzlemdeyse (V0 ve V2 ortaksa)
+            // 6 kose yerine 4 kose + 6 indeks yazarak GPU Vertex Shader yukunu %33 azaltir!
+            int vertCount = 0;
+            for (int i = 0; i < triCount; i++)
+            {
+                if (i + 1 < triCount && CanShareQuadVertices(in tris, i))
+                {
+                    vertCount += 4;
+                    i++;
+                }
+                else
+                {
+                    vertCount += 3;
+                }
+            }
+
+            int indexCount = triCount * 3;
             UnityEngine.Mesh.MeshDataArray dataArray = UnityEngine.Mesh.AllocateWritableMeshData(1);
             UnityEngine.Mesh.MeshData data = dataArray[0];
             data.SetVertexBufferParams(vertCount, UberVertexLayout);
             IndexFormat idxFormat = vertCount > 65532 ? IndexFormat.UInt32 : IndexFormat.UInt16;
-            data.SetIndexBufferParams(vertCount, idxFormat);
+            data.SetIndexBufferParams(indexCount, idxFormat);
             NativeArray<UberMeshVertex> vBuf = data.GetVertexData<UberMeshVertex>(0);
-            float3 bMin = new float3(float.MaxValue, float.MaxValue, float.MaxValue), bMax = new float3(float.MinValue, float.MinValue, float.MinValue);
+            float3 bMin = new float3(float.MaxValue, float.MaxValue, float.MaxValue);
+            float3 bMax = new float3(float.MinValue, float.MinValue, float.MinValue);
 
-            for (int i = 0; i < triCount; i++)
+            int vCursor = 0;
+            int iCursor = 0;
+            if (idxFormat == IndexFormat.UInt32)
             {
-                FacetedVoxelTriangle t = tris[i]; int b = i * 3;
-                float3 p0 = new float3(t.V0.X, t.V0.Y, t.V0.Z), p1 = new float3(t.V1.X, t.V1.Y, t.V1.Z), p2 = new float3(t.V2.X, t.V2.Y, t.V2.Z);
-                float3 n = new float3(t.Normal.X, t.Normal.Y, t.Normal.Z);
-                bMin = math.min(bMin, math.min(p0, math.min(p1, p2))); bMax = math.max(bMax, math.max(p0, math.max(p1, p2)));
-                vBuf[b] = new UberMeshVertex { Position = p0, Normal = n, MatId = t.MaterialId, Temp = t.Temperature, Sharp = t.FacetShade, Ao = t.AmbientOcclusion };
-                vBuf[b + 1] = new UberMeshVertex { Position = p1, Normal = n, MatId = t.MaterialId, Temp = t.Temperature, Sharp = t.FacetShade, Ao = t.AmbientOcclusion };
-                vBuf[b + 2] = new UberMeshVertex { Position = p2, Normal = n, MatId = t.MaterialId, Temp = t.Temperature, Sharp = t.FacetShade, Ao = t.AmbientOcclusion };
+                NativeArray<uint> iBuf = data.GetIndexData<uint>();
+                WriteIndexedTriangleList(tris, ref vBuf, ref iBuf, ref vCursor, ref iCursor, ref bMin, ref bMax);
+            }
+            else
+            {
+                NativeArray<ushort> iBuf = data.GetIndexData<ushort>();
+                WriteIndexedTriangleList16(tris, ref vBuf, ref iBuf, ref vCursor, ref iCursor, ref bMin, ref bMax);
             }
 
-            if (idxFormat == IndexFormat.UInt32) { NativeArray<uint> iBuf = data.GetIndexData<uint>(); for (int i = 0; i < vertCount; i++) iBuf[i] = (uint)i; }
-            else { NativeArray<ushort> iBuf = data.GetIndexData<ushort>(); for (int i = 0; i < vertCount; i++) iBuf[i] = (ushort)i; }
-
-            UnityEngine.Bounds bounds = triCount > 0 ? new UnityEngine.Bounds((bMin + bMax) * 0.5f, bMax - bMin) : new UnityEngine.Bounds(UnityEngine.Vector3.zero, UnityEngine.Vector3.one);
+            UnityEngine.Bounds bounds = new UnityEngine.Bounds((bMin + bMax) * 0.5f, bMax - bMin);
             data.subMeshCount = 1;
-            data.SetSubMesh(0, new SubMeshDescriptor(0, vertCount, UnityEngine.MeshTopology.Triangles) { bounds = bounds, vertexCount = vertCount }, MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
+            data.SetSubMesh(0, new SubMeshDescriptor(0, indexCount, UnityEngine.MeshTopology.Triangles) { bounds = bounds, vertexCount = vertCount }, MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
             UnityEngine.Mesh.ApplyAndDisposeWritableMeshData(dataArray, mesh, MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
             mesh.bounds = bounds;
             return mesh;
+        }
+
+        /// <summary>
+        /// 16x16x16 Kubik Alt-Chunk (Sub-Chunk) ucgen listelerinden YALNIZCA gorunur olanlari (<paramref name="visibleSubChunkMask"/>)
+        /// indeksli kose paylasimiyla tek bir GPU Mesh tamponunda birlestirir.
+        /// </summary>
+        public static UnityEngine.Mesh BuildUnityMeshFromSubChunksZeroGc(
+            List<FacetedVoxelTriangle>[] subChunkTris,
+            ushort visibleSubChunkMask,
+            string meshName,
+            UnityEngine.Mesh? targetMesh,
+            out int outTriangleCount,
+            out int outVertexCount)
+        {
+            if (targetMesh != null) targetMesh.Clear();
+            UnityEngine.Mesh mesh = targetMesh != null ? targetMesh : new UnityEngine.Mesh();
+            mesh.name = meshName;
+
+            int totalTriCount = 0;
+            int totalVertCount = 0;
+            int subCount = subChunkTris.Length;
+            for (int s = 0; s < subCount; s++)
+            {
+                if ((visibleSubChunkMask & (1 << s)) == 0) continue;
+                List<FacetedVoxelTriangle>? list = subChunkTris[s];
+                if (list == null || list.Count == 0) continue;
+                int c = list.Count;
+                totalTriCount += c;
+                for (int i = 0; i < c; i++)
+                {
+                    if (i + 1 < c && CanShareQuadVertices(in list, i))
+                    {
+                        totalVertCount += 4;
+                        i++;
+                    }
+                    else
+                    {
+                        totalVertCount += 3;
+                    }
+                }
+            }
+
+            outTriangleCount = totalTriCount;
+            outVertexCount = totalVertCount;
+            if (totalTriCount == 0)
+            {
+                mesh.bounds = new UnityEngine.Bounds(UnityEngine.Vector3.zero, UnityEngine.Vector3.one);
+                return mesh;
+            }
+
+            int indexCount = totalTriCount * 3;
+            UnityEngine.Mesh.MeshDataArray dataArray = UnityEngine.Mesh.AllocateWritableMeshData(1);
+            UnityEngine.Mesh.MeshData data = dataArray[0];
+            data.SetVertexBufferParams(totalVertCount, UberVertexLayout);
+            IndexFormat idxFormat = totalVertCount > 65532 ? IndexFormat.UInt32 : IndexFormat.UInt16;
+            data.SetIndexBufferParams(indexCount, idxFormat);
+            NativeArray<UberMeshVertex> vBuf = data.GetVertexData<UberMeshVertex>(0);
+            float3 bMin = new float3(float.MaxValue, float.MaxValue, float.MaxValue);
+            float3 bMax = new float3(float.MinValue, float.MinValue, float.MinValue);
+
+            int vCursor = 0;
+            int iCursor = 0;
+            if (idxFormat == IndexFormat.UInt32)
+            {
+                NativeArray<uint> iBuf = data.GetIndexData<uint>();
+                for (int s = 0; s < subCount; s++)
+                {
+                    if ((visibleSubChunkMask & (1 << s)) == 0) continue;
+                    List<FacetedVoxelTriangle>? list = subChunkTris[s];
+                    if (list == null || list.Count == 0) continue;
+                    WriteIndexedTriangleList(list, ref vBuf, ref iBuf, ref vCursor, ref iCursor, ref bMin, ref bMax);
+                }
+            }
+            else
+            {
+                NativeArray<ushort> iBuf = data.GetIndexData<ushort>();
+                for (int s = 0; s < subCount; s++)
+                {
+                    if ((visibleSubChunkMask & (1 << s)) == 0) continue;
+                    List<FacetedVoxelTriangle>? list = subChunkTris[s];
+                    if (list == null || list.Count == 0) continue;
+                    WriteIndexedTriangleList16(list, ref vBuf, ref iBuf, ref vCursor, ref iCursor, ref bMin, ref bMax);
+                }
+            }
+
+            UnityEngine.Bounds bounds = new UnityEngine.Bounds((bMin + bMax) * 0.5f, bMax - bMin);
+            data.subMeshCount = 1;
+            data.SetSubMesh(0, new SubMeshDescriptor(0, indexCount, UnityEngine.MeshTopology.Triangles) { bounds = bounds, vertexCount = totalVertCount }, MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
+            UnityEngine.Mesh.ApplyAndDisposeWritableMeshData(dataArray, mesh, MeshUpdateFlags.DontRecalculateBounds | MeshUpdateFlags.DontValidateIndices);
+            mesh.bounds = bounds;
+            return mesh;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool CanShareQuadVertices(in List<FacetedVoxelTriangle> tris, int idx)
+        {
+            FacetedVoxelTriangle a = tris[idx];
+            FacetedVoxelTriangle b = tris[idx + 1];
+            if (a.MaterialId != b.MaterialId || a.Temperature != b.Temperature || a.AmbientOcclusion != b.AmbientOcclusion)
+            {
+                return false;
+            }
+            if (Math.Abs(a.FacetShade - b.FacetShade) > 18) return false;
+            if (Vector3.DistanceSquared(a.Normal, b.Normal) > 0.002f) return false;
+            return Vector3.DistanceSquared(a.V0, b.V0) < 1e-6f && Vector3.DistanceSquared(a.V2, b.V1) < 1e-6f;
+        }
+
+        private static void WriteIndexedTriangleList(
+            List<FacetedVoxelTriangle> tris,
+            ref NativeArray<UberMeshVertex> vBuf,
+            ref NativeArray<uint> iBuf,
+            ref int vCursor,
+            ref int iCursor,
+            ref float3 bMin,
+            ref float3 bMax)
+        {
+            int count = tris.Count;
+            for (int i = 0; i < count; i++)
+            {
+                FacetedVoxelTriangle t0 = tris[i];
+                float3 p0 = new float3(t0.V0.X, t0.V0.Y, t0.V0.Z);
+                float3 p1 = new float3(t0.V1.X, t0.V1.Y, t0.V1.Z);
+                float3 p2 = new float3(t0.V2.X, t0.V2.Y, t0.V2.Z);
+                float3 n = new float3(t0.Normal.X, t0.Normal.Y, t0.Normal.Z);
+                bMin = math.min(bMin, math.min(p0, math.min(p1, p2)));
+                bMax = math.max(bMax, math.max(p0, math.max(p1, p2)));
+
+                if (i + 1 < count && CanShareQuadVertices(in tris, i))
+                {
+                    FacetedVoxelTriangle t1 = tris[i + 1];
+                    float3 p3 = new float3(t1.V2.X, t1.V2.Y, t1.V2.Z);
+                    bMin = math.min(bMin, p3);
+                    bMax = math.max(bMax, p3);
+                    uint baseV = (uint)vCursor;
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p0, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p1, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p2, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p3, Normal = n, MatId = t1.MaterialId, Temp = t1.Temperature, Sharp = t1.FacetShade, Ao = t1.AmbientOcclusion };
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = baseV + 1u;
+                    iBuf[iCursor++] = baseV + 2u;
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = baseV + 2u;
+                    iBuf[iCursor++] = baseV + 3u;
+                    i++;
+                }
+                else
+                {
+                    uint baseV = (uint)vCursor;
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p0, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p1, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p2, Normal = n, MatId = t0.MaterialId, Temp = t0.FacetShade == 0 ? t0.Temperature : t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = baseV + 1u;
+                    iBuf[iCursor++] = baseV + 2u;
+                }
+            }
+        }
+
+        private static void WriteIndexedTriangleList16(
+            List<FacetedVoxelTriangle> tris,
+            ref NativeArray<UberMeshVertex> vBuf,
+            ref NativeArray<ushort> iBuf,
+            ref int vCursor,
+            ref int iCursor,
+            ref float3 bMin,
+            ref float3 bMax)
+        {
+            int count = tris.Count;
+            for (int i = 0; i < count; i++)
+            {
+                FacetedVoxelTriangle t0 = tris[i];
+                float3 p0 = new float3(t0.V0.X, t0.V0.Y, t0.V0.Z);
+                float3 p1 = new float3(t0.V1.X, t0.V1.Y, t0.V1.Z);
+                float3 p2 = new float3(t0.V2.X, t0.V2.Y, t0.V2.Z);
+                float3 n = new float3(t0.Normal.X, t0.Normal.Y, t0.Normal.Z);
+                bMin = math.min(bMin, math.min(p0, math.min(p1, p2)));
+                bMax = math.max(bMax, math.max(p0, math.max(p1, p2)));
+
+                if (i + 1 < count && CanShareQuadVertices(in tris, i))
+                {
+                    FacetedVoxelTriangle t1 = tris[i + 1];
+                    float3 p3 = new float3(t1.V2.X, t1.V2.Y, t1.V2.Z);
+                    bMin = math.min(bMin, p3);
+                    bMax = math.max(bMax, p3);
+                    ushort baseV = (ushort)vCursor;
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p0, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p1, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p2, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p3, Normal = n, MatId = t1.MaterialId, Temp = t1.Temperature, Sharp = t1.FacetShade, Ao = t1.AmbientOcclusion };
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = (ushort)(baseV + 1);
+                    iBuf[iCursor++] = (ushort)(baseV + 2);
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = (ushort)(baseV + 2);
+                    iBuf[iCursor++] = (ushort)(baseV + 3);
+                    i++;
+                }
+                else
+                {
+                    ushort baseV = (ushort)vCursor;
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p0, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p1, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    vBuf[vCursor++] = new UberMeshVertex { Position = p2, Normal = n, MatId = t0.MaterialId, Temp = t0.Temperature, Sharp = t0.FacetShade, Ao = t0.AmbientOcclusion };
+                    iBuf[iCursor++] = baseV;
+                    iBuf[iCursor++] = (ushort)(baseV + 1);
+                    iBuf[iCursor++] = (ushort)(baseV + 2);
+                }
+            }
+        }
+
+        [BurstCompile(FloatPrecision.Standard, FloatMode.Fast, CompileSynchronously = true)]
+        public struct BakeMeshColliderBurstJob : IJob
+        {
+            public UnityEngine.EntityId MeshEntityId;
+
+            public void Execute()
+            {
+                UnityEngine.Physics.BakeMesh(MeshEntityId, false);
+            }
+        }
+
+        /// <summary>
+        /// Unity 6 Burst + PhysX BakeMesh API kullanarak MeshCollider BVH agacini onceden pisirir;
+        /// boylece mc.sharedMesh atamasi Ana Thread'de takilma (spike) yaratmaz.
+        /// </summary>
+        public static JobHandle ScheduleAsyncColliderBake(UnityEngine.Mesh mesh)
+        {
+            if (mesh == null || mesh.vertexCount < 3) return default;
+            var job = new BakeMeshColliderBurstJob { MeshEntityId = mesh.GetEntityId() };
+            return job.Schedule();
         }
 
         [BurstCompile(FloatPrecision.Standard, FloatMode.Fast, CompileSynchronously = true)]

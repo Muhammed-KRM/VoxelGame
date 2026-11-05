@@ -34,10 +34,10 @@ Material:
     m_Colors:
     - _AcidColorDeep: {r: 0.079999976, g: 0.41999996, b: 0.04, a: 0.98}
     - _AcidColorShallow: {r: 0.23999995, g: 0.86, b: 0.15999997, a: 0.7}
-    - _LavaCoreColor: {r: 1, g: 0.35999998, b: 0.079999976, a: 1}
-    - _LavaCrustColor: {r: 0.11999995, g: 0.079999976, b: 0.079999976, a: 1}
-    - _WaterColorDeep: {r: 0.02, g: 0.11999995, b: 0.31999996, a: 0.95}
-    - _WaterColorShallow: {r: 0.15999997, g: 0.58, b: 0.92, a: 0.55}
+    - _LavaCoreColor: {r: 1, g: 0.42, b: 0.1, a: 1}
+    - _LavaCrustColor: {r: 0.32, g: 0.14, b: 0.08, a: 1}
+    - _WaterColorDeep: {r: 0.1, g: 0.42, b: 0.78, a: 0.88}
+    - _WaterColorShallow: {r: 0.22, g: 0.72, b: 0.96, a: 0.72}
     - _WaterExtinction: {r: 0.45, g: 0.14, b: 0.06, a: 0}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

@@ -106,6 +106,9 @@ namespace Stratocraft.Character
         private int _lastAStarFrame = -1;
         private readonly Plane[] _cameraFrustumPlanes = new Plane[6];
         private VoxelChunkComponent? _navChunkBuffer;
+        private readonly Shared3DFlowFieldSystem _sharedFlowField = new();
+        private System.Numerics.Vector2[] _boidsPositionsScratch = new System.Numerics.Vector2[64];
+        private float _nextHudSummaryUpdateTime;
         private Transform? _cachedPlayerTransform;
         private Vector3 _lastBiomeSpawnCheckPos = new(float.MinValue, 0f, float.MinValue);
         private int _dynamicSpawnCounter;
@@ -302,6 +305,37 @@ namespace Stratocraft.Character
             float nearestDist = float.MaxValue;
             LiveCreatureAgent? nearest = null;
 
+            if (Stage1GameSettings.EnableFlowFieldAndSpatialBoids && _agents.Count > 0)
+            {
+                _sharedFlowField.EnsureFlowFieldUpToDate(
+                    Mathf.FloorToInt(playerPos.x),
+                    Mathf.FloorToInt(playerPos.y),
+                    Mathf.FloorToInt(playerPos.z),
+                    time,
+                    worldChunks,
+                    Stage1InteractivePlayController.MaxEditableVoxelY);
+
+                if (_boidsPositionsScratch.Length < _agents.Count)
+                {
+                    _boidsPositionsScratch = new System.Numerics.Vector2[Math.Max(_agents.Count * 2, 64)];
+                }
+                for (int b = 0; b < _agents.Count; b++)
+                {
+                    LiveCreatureAgent ba = _agents[b];
+                    if (ba.Root != null && !ba.IsOffScreenAnalytical && ba.State != CreatureAiState.Dead)
+                    {
+                        Vector3 bp = ba.Root.position;
+                        _boidsPositionsScratch[b] = new System.Numerics.Vector2(bp.x, bp.z);
+                    }
+                    else
+                    {
+                        _boidsPositionsScratch[b] = new System.Numerics.Vector2(-99999f, -99999f);
+                    }
+                }
+                _sharedFlowField.RebuildSpatialBoidsHash(_boidsPositionsScratch.AsSpan(0, _agents.Count), _agents.Count);
+            }
+
+            int frameCount = Time.frameCount;
             for (int i = 0; i < _agents.Count; i++)
             {
                 LiveCreatureAgent a = _agents[i];
@@ -394,25 +428,34 @@ namespace Stratocraft.Character
                     StepPatrolAgent(a, time, worldChunks);
                 }
 
-                StepCreatureArticulatedAnimation(a, time);
+                // Mesafe Bazli Animasyon Seyreltme (Animation LOD Throttling):
+                // > 26m uzaktaki canlilarin uzuv Transform rotasyonlarini her kare yerine 4 karede 1 guncelle (%75 Transform tasarrufu!)
+                if (horizDist <= 26.0f || ((frameCount + i) & 3) == 0)
+                {
+                    StepCreatureArticulatedAnimation(a, time);
+                }
             }
 
             OffScreenAnalyticalAgentCount = offScreenCount;
 
-            if (nearest != null)
+            if (time >= _nextHudSummaryUpdateTime)
             {
-                string eggInfo = nearest.State == CreatureAiState.EmberEgg ? $" [KOR YUMURTA: {nearest.EmberEggTimer:F1}sn]" : string.Empty;
-                string tameTag = nearest == MountedCreatureAgent ? " [BINEK SURUSUNDE - [E] In]"
-                    : (nearest.IsTamed ? " [EVCIL DOST]"
-                    : (Creature21BehaviorSystem.IsTamableArchetype(nearest.ArchetypeId) && nearest.CurrentHp <= nearest.MaxHp * 0.38f
-                        ? " [[E] EVCILESTIR!]" : string.Empty));
-                NearestCreatureHudSummary =
-                    $"{nearest.DisplayName} [{nearest.State}]{eggInfo}{tameTag} HP:{Mathf.CeilToInt(nearest.CurrentHp)}/{Mathf.CeilToInt(nearest.MaxHp)} " +
-                    $"Hiz:%{Mathf.RoundToInt(nearest.SpeedMultiplier * 100f)} Mesafe:{nearestDist:F1}m (ExcelSim:{offScreenCount})";
-            }
-            else
-            {
-                NearestCreatureHudSummary = $"Yakin 3B Canli: Yok (Arka Plan Excel Tablosu Sim: {offScreenCount} canli)";
+                _nextHudSummaryUpdateTime = time + 0.15f;
+                if (nearest != null)
+                {
+                    string eggInfo = nearest.State == CreatureAiState.EmberEgg ? $" [KOR YUMURTA: {nearest.EmberEggTimer:F1}sn]" : string.Empty;
+                    string tameTag = nearest == MountedCreatureAgent ? " [BINEK SURUSUNDE - [E] In]"
+                        : (nearest.IsTamed ? " [EVCIL DOST]"
+                        : (Creature21BehaviorSystem.IsTamableArchetype(nearest.ArchetypeId) && nearest.CurrentHp <= nearest.MaxHp * 0.38f
+                            ? " [[E] EVCILESTIR!]" : string.Empty));
+                    NearestCreatureHudSummary =
+                        $"{nearest.DisplayName} [{nearest.State}]{eggInfo}{tameTag} HP:{Mathf.CeilToInt(nearest.CurrentHp)}/{Mathf.CeilToInt(nearest.MaxHp)} " +
+                        $"Hiz:%{Mathf.RoundToInt(nearest.SpeedMultiplier * 100f)} Mesafe:{nearestDist:F1}m (ExcelSim:{offScreenCount})";
+                }
+                else
+                {
+                    NearestCreatureHudSummary = $"Yakin 3B Canli: Yok (Arka Plan Excel Tablosu Sim: {offScreenCount} canli)";
+                }
             }
         }
 
@@ -976,18 +1019,53 @@ namespace Stratocraft.Character
             LiveCreatureAgent self, int selfIdx, Vector3 pos, Vector3 flatToPlayer, float horizDist)
         {
             Vector3 sep = Vector3.zero;
-            for (int i = 0; i < _agents.Count; i++)
+            if (Stage1GameSettings.EnableFlowFieldAndSpatialBoids)
             {
-                if (i == selfIdx) continue;
-                LiveCreatureAgent other = _agents[i];
-                if (other.Root == null || other.State == CreatureAiState.Dead) continue;
-                Vector3 diff = pos - other.Root.position;
-                diff.y = 0f;
-                float dSq = diff.sqrMagnitude;
-                if (dSq > 0.0001f && dSq < 4.84f) // 2.2m ayrisma yaricapi
+                // O(1) Spatial Hash Boids: Yalnizca 3x3 (2.5m x 2.5m) komsu hucre kovalarini tara!
+                int cx = Mathf.FloorToInt(pos.x * 0.4f);
+                int cz = Mathf.FloorToInt(pos.z * 0.4f);
+                for (int dz = -1; dz <= 1; dz++)
                 {
-                    float d = Mathf.Sqrt(dSq);
-                    sep += (diff / d) * ((2.2f - d) / 2.2f) * 1.35f;
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int idx = _sharedFlowField.GetSpatialBucketHead(cx + dx, cz + dz);
+                        while (idx >= 0 && idx < _agents.Count)
+                        {
+                            if (idx != selfIdx)
+                            {
+                                LiveCreatureAgent other = _agents[idx];
+                                if (other.Root != null && other.State != CreatureAiState.Dead)
+                                {
+                                    Vector3 diff = pos - other.Root.position;
+                                    diff.y = 0f;
+                                    float dSq = diff.sqrMagnitude;
+                                    if (dSq > 0.0001f && dSq < 4.84f)
+                                    {
+                                        float d = Mathf.Sqrt(dSq);
+                                        sep += (diff / d) * ((2.2f - d) / 2.2f) * 1.35f;
+                                    }
+                                }
+                            }
+                            idx = _sharedFlowField.GetNextAgentInBucket(idx);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i < _agents.Count; i++)
+                {
+                    if (i == selfIdx) continue;
+                    LiveCreatureAgent other = _agents[i];
+                    if (other.Root == null || other.State == CreatureAiState.Dead) continue;
+                    Vector3 diff = pos - other.Root.position;
+                    diff.y = 0f;
+                    float dSq = diff.sqrMagnitude;
+                    if (dSq > 0.0001f && dSq < 4.84f) // 2.2m ayrisma yaricapi
+                    {
+                        float d = Mathf.Sqrt(dSq);
+                        sep += (diff / d) * ((2.2f - d) / 2.2f) * 1.35f;
+                    }
                 }
             }
 
@@ -1590,6 +1668,19 @@ namespace Stratocraft.Character
             LiveCreatureAgent a, Vector3 currentPos, Vector3 goalPos,
             Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 fallbackFlatDir)
         {
+            // Deep Rock Galactic / 7 Days to Die Paylasimli 3B Akis Alani (Shared Flow Field):
+            // 16.384 voksel kopyalamak ve her canli icin ayri A* kosmak yerine O(1) akis vektorunu oku!
+            if (Stage1GameSettings.EnableFlowFieldAndSpatialBoids &&
+                _sharedFlowField.TrySampleFlowDirection(currentPos.x, currentPos.z, out float fdx, out float fdz, out _))
+            {
+                Vector3 flowVec = new Vector3(fdx, 0f, fdz);
+                if (flowVec.sqrMagnitude > 0.01f)
+                {
+                    a.CachedDetourDir = flowVec.normalized;
+                    return a.CachedDetourDir;
+                }
+            }
+
             float now = Time.time;
             if (now < a.NextAStarAllowedTime || _lastAStarFrame == Time.frameCount)
             {

@@ -391,14 +391,14 @@ namespace Stratocraft.Character
                     voxels[idx] = VoxelBitUtility.PackChiseled(
                         depositMat, poolIdx, VoxelBitUtility.GetOriginState(raw), dmg4);
                     LooseRubbleShardCount++;
-                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
                     LastFeedbackText =
                         $"0.25m MIKRO-KESKI: {GetMaterialDisplayName(mat)} Alt-Kup ({AimSubVoxelX},{AimSubVoxelY},{AimSubVoxelZ}) Yontuldu! (+4 Q24.8 Kutle & +1 Moloz)";
                 }
                 else
                 {
                     voxels[idx] = 0u;
-                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
                     WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
                     SpawnDroppedWorldItem(new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), mat, VoxelBitUtility.ChiseledMicroVoxelShapeId, 1, sharedMat);
                     collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out _);
@@ -430,7 +430,7 @@ namespace Stratocraft.Character
                 voxels[(wy << 8) | (lz << 4) | lx] = VoxelBitUtility.PackChiseled(
                     mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat,
                     poolIdx, BlokKokenDurumu.OyuncuItemBlogu, restoredDmg);
-                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
                 LastFeedbackText = $"0.25m MIKRO-KESKI [RMB]: {GetMaterialDisplayName(mat)} Alt-Kup ({AimSubVoxelX},{AimSubVoxelY},{AimSubVoxelZ}) Konuldu (Hasar:{restoredDmg}/15)!";
             }
         }
@@ -590,12 +590,19 @@ namespace Stratocraft.Character
             }
             _miningDamageAccumulator -= dmgStep;
 
-            int nextDmg = VoxelBitUtility.GetDamageState(raw) + dmgStep;
+            byte prevDmg = VoxelBitUtility.GetDamageState(raw);
+            int nextDmg = prevDmg + dmgStep;
             if (nextDmg < 15)
             {
                 voxels[idx] = VoxelBitUtility.WithDamageState(raw, (byte)nextDmg);
                 AimDamageState = (byte)nextDmg;
-                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                // Geometri degismediginden (ShapeId ve Density ayni) her karede tum komsu chunk'lari orme!
+                // Yalnizca gorsel catlama kademesi (4, 8, 12) degistiginde sadece ilgili 16x16x16 alt-chunk'i guncelle.
+                if ((nextDmg >> 2) != (prevDmg >> 2))
+                {
+                    dirty.Add((cx, cz));
+                    Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: false);
+                }
                 LastFeedbackText = $"FIZIKSEL DARBE! {GetMaterialDisplayName(mat)} Catliyor... Hasar: {AimDamageState}/15 (+{dmgStep} | Alet:%{ToolDurability01 * 100f:0})";
                 return;
             }
@@ -606,7 +613,7 @@ namespace Stratocraft.Character
             {
                 CarveSmoothSdfCraterNeighbors(wx, wy, wz, maxY, worldChunks, dirty);
             }
-            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
             WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
 
             Vector3 dropWorldPos = new Vector3(wx + 0.5f, wy + 0.55f, wz + 0.5f);
@@ -653,7 +660,7 @@ namespace Stratocraft.Character
                     nChunk[nIdx] = nextDens < 28 ? 0u : VoxelBitUtility.WithDensityOrLiquid(nRaw, (byte)nextDens);
                 }
 
-                MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks);
+                MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
             }
         }
 
@@ -865,7 +872,7 @@ namespace Stratocraft.Character
                     voxels[idx] = nextDens == 0 ? 0u : VoxelBitUtility.WithDensityOrLiquid(curRaw, nextDens);
                 }
                 touched = (cx, cz);
-                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
                 WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
             }
             if (vacuumedQ24_8 > 0u && worldChunks.TryGetValue(touched, out uint[]? tv))
@@ -986,7 +993,7 @@ namespace Stratocraft.Character
                 FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, sliceLen), 16, maxY, 16, lx, wy, lz, radius: 2);
                 dirtyFluidChunks?.Add((cx, cz));
             }
-            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
+            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
             collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out string msg);
             LastFeedbackText = !string.IsNullOrEmpty(msg)
                 ? msg
@@ -1053,13 +1060,13 @@ namespace Stratocraft.Character
                     if (nMat != MaterialIdCatalog.Air && VoxelBitUtility.GetShapeId(nRaw) == 0)
                     {
                         nChunk[nIdx] = VoxelBitUtility.WithDensityOrLiquid(nRaw, VoxelBitUtility.FullDensity);
-                        MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks);
+                        MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
                     }
                 }
                 else if (nMat == MaterialIdCatalog.Air)
                 {
                     nChunk[nIdx] = VoxelBitUtility.PackStandard(mat, 48, 0, 0, BlokKokenDurumu.DogalKutle, 0);
-                    MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks);
+                    MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
                 }
                 else if (VoxelBitUtility.GetShapeId(nRaw) == 0)
                 {
@@ -1067,7 +1074,7 @@ namespace Stratocraft.Character
                     if (curDens < 96)
                     {
                         nChunk[nIdx] = VoxelBitUtility.WithDensityOrLiquid(nRaw, (byte)Mathf.Min(127, curDens + 32));
-                        MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks);
+                        MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
                     }
                 }
             }
@@ -1502,13 +1509,17 @@ namespace Stratocraft.Character
         public static float GetMaterialHardness(byte m) => m switch { MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass or MaterialIdCatalog.Sand or MaterialIdCatalog.LooseRubble or MaterialIdCatalog.GlowingMoss => 0.8f, MaterialIdCatalog.OakWood or MaterialIdCatalog.WoodPlank => 1.4f, MaterialIdCatalog.Ironwood => 2.1f, MaterialIdCatalog.Stone or MaterialIdCatalog.Cobblestone or MaterialIdCatalog.StoneBrick or MaterialIdCatalog.Marble => 2.2f, MaterialIdCatalog.CopperOre or MaterialIdCatalog.IronOre or MaterialIdCatalog.GoldOre => 3.4f, MaterialIdCatalog.Basalt or MaterialIdCatalog.MagmaBlock => 3.8f, MaterialIdCatalog.NaturalObsidian or MaterialIdCatalog.MithrilOre or MaterialIdCatalog.TitaniumOre => 6.2f, _ => 3.5f };
         public static string GetMaterialDisplayName(byte m) => m switch { MaterialIdCatalog.Air => "Hava", MaterialIdCatalog.Bedrock => "Kirilmaz Ana Kaya (Bedrock)", MaterialIdCatalog.Stone => "Ham Tas", MaterialIdCatalog.Dirt => "Toprak", MaterialIdCatalog.Grass => "Cimenli Toprak", MaterialIdCatalog.Sand => "Kum", MaterialIdCatalog.Basalt => "Bazalt", MaterialIdCatalog.NaturalObsidian => "Dogal Obsidyen", MaterialIdCatalog.Cobblestone => "Kiriktas", MaterialIdCatalog.StoneBrick => "Tas Tugla", MaterialIdCatalog.Marble => "Kadim Mermer", MaterialIdCatalog.OakWood => "Mese Odunu", MaterialIdCatalog.Ironwood => "Demiragac Odunu", MaterialIdCatalog.WoodPlank => "Ahsap Kalas", MaterialIdCatalog.GlowingMoss => "Parlayan Yosun Yapragi", MaterialIdCatalog.LooseRubble => "Tas Moloz", MaterialIdCatalog.CopperOre => "Bakir Cevheri", MaterialIdCatalog.IronOre => "Demir Cevheri", MaterialIdCatalog.GoldOre => "Altin Cevheri", MaterialIdCatalog.MithrilOre => "Mithril Cevheri", MaterialIdCatalog.AstralOre => "Astral Cevheri", MaterialIdCatalog.StarCore => "Yildiz Cekirdegi", MaterialIdCatalog.PhoenixFeatherGold => "Anka Altin-Kor Tuyu", MaterialIdCatalog.CreatureFurAsh => "Yaratik Postu", MaterialIdCatalog.BoneIvory => "Canli Kemigi/Disi", _ => $"Materyal #{m}" };
         private static int FloorDiv16(int v) => v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
-        private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks)
+        private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks, int wy = -1)
         {
             dirty.Add((cx, cz));
             if (lx <= 1 && chunks.ContainsKey((cx - 1, cz))) dirty.Add((cx - 1, cz));
             if (lx >= 14 && chunks.ContainsKey((cx + 1, cz))) dirty.Add((cx + 1, cz));
             if (lz <= 1 && chunks.ContainsKey((cx, cz - 1))) dirty.Add((cx, cz - 1));
             if (lz >= 14 && chunks.ContainsKey((cx, cz + 1))) dirty.Add((cx, cz + 1));
+            if (wy >= 0)
+            {
+                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
+            }
         }
     }
 }

@@ -272,13 +272,16 @@ namespace Stratocraft.Physics.Jobs
         /// Komşu chunk sınırlarında (lx = 15 &lt;-&gt; 0 ve lz = 15 &lt;-&gt; 0) su, lav ve asit akışkanlarının
         /// görünmez duvara çarpmadan 16m chunk sınırlarını kesintisiz geçmesini ve sınırda stokiyometrik
         /// su+lav reaksiyonuna girmesini sağlar.
+        /// Eğer <paramref name="activeChunks"/> verilirse tüm kıtayı (560+ chunk) taramak yerine YALNIZCA
+        /// aktif akışkan bulunan chunk'ların 4 sınırını O(AktifChunk) sürede tarar.
         /// </summary>
         public static int ExchangeChunkBorderFluids(
             Dictionary<(int cx, int cz), uint[]> worldChunks,
             Dictionary<(int cx, int cz), ushort[]> fluidChunks,
             int maxY,
             HashSet<(int cx, int cz)> dirtyFluidChunks,
-            HashSet<(int cx, int cz)>? dirtySolidChunks = null)
+            HashSet<(int cx, int cz)>? dirtySolidChunks = null,
+            IReadOnlyList<(int cx, int cz)>? activeChunks = null)
         {
             if (worldChunks == null || fluidChunks == null || fluidChunks.Count == 0)
             {
@@ -286,6 +289,78 @@ namespace Stratocraft.Physics.Jobs
             }
 
             int exchangedBorders = 0;
+
+            if (activeChunks != null && activeChunks.Count > 0)
+            {
+                for (int i = 0; i < activeChunks.Count; i++)
+                {
+                    (int cx, int cz) keyA = activeChunks[i];
+                    if (!fluidChunks.TryGetValue(keyA, out ushort[]? fluidsA) || fluidsA == null ||
+                        !worldChunks.TryGetValue(keyA, out uint[]? voxelsA) || voxelsA == null)
+                    {
+                        continue;
+                    }
+
+                    // +X Sınırı: keyA (lx = 15) <-> (cx + 1, cz) (lx = 0)
+                    (int cx, int cz) keyEast = (keyA.cx + 1, keyA.cz);
+                    if (fluidChunks.TryGetValue(keyEast, out ushort[]? fluidsEast) && fluidsEast != null &&
+                        worldChunks.TryGetValue(keyEast, out uint[]? voxelsEast) && voxelsEast != null)
+                    {
+                        exchangedBorders += ExchangeSingleChunkSeam(
+                            keyA, voxelsA, fluidsA,
+                            keyEast, voxelsEast, fluidsEast,
+                            alongXSeam: true,
+                            maxY,
+                            dirtyFluidChunks,
+                            dirtySolidChunks);
+                    }
+
+                    // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0)
+                    (int cx, int cz) keyWest = (keyA.cx - 1, keyA.cz);
+                    if (fluidChunks.TryGetValue(keyWest, out ushort[]? fluidsWest) && fluidsWest != null &&
+                        worldChunks.TryGetValue(keyWest, out uint[]? voxelsWest) && voxelsWest != null)
+                    {
+                        exchangedBorders += ExchangeSingleChunkSeam(
+                            keyWest, voxelsWest, fluidsWest,
+                            keyA, voxelsA, fluidsA,
+                            alongXSeam: true,
+                            maxY,
+                            dirtyFluidChunks,
+                            dirtySolidChunks);
+                    }
+
+                    // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
+                    (int cx, int cz) keyNorth = (keyA.cx, keyA.cz + 1);
+                    if (fluidChunks.TryGetValue(keyNorth, out ushort[]? fluidsNorth) && fluidsNorth != null &&
+                        worldChunks.TryGetValue(keyNorth, out uint[]? voxelsNorth) && voxelsNorth != null)
+                    {
+                        exchangedBorders += ExchangeSingleChunkSeam(
+                            keyA, voxelsA, fluidsA,
+                            keyNorth, voxelsNorth, fluidsNorth,
+                            alongXSeam: false,
+                            maxY,
+                            dirtyFluidChunks,
+                            dirtySolidChunks);
+                    }
+
+                    // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
+                    (int cx, int cz) keySouth = (keyA.cx, keyA.cz - 1);
+                    if (fluidChunks.TryGetValue(keySouth, out ushort[]? fluidsSouth) && fluidsSouth != null &&
+                        worldChunks.TryGetValue(keySouth, out uint[]? voxelsSouth) && voxelsSouth != null)
+                    {
+                        exchangedBorders += ExchangeSingleChunkSeam(
+                            keySouth, voxelsSouth, fluidsSouth,
+                            keyA, voxelsA, fluidsA,
+                            alongXSeam: false,
+                            maxY,
+                            dirtyFluidChunks,
+                            dirtySolidChunks);
+                    }
+                }
+
+                return exchangedBorders;
+            }
+
             foreach (KeyValuePair<(int cx, int cz), ushort[]> kv in fluidChunks)
             {
                 (int cx, int cz) keyA = kv.Key;
