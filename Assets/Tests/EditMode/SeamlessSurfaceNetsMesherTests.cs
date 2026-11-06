@@ -6,6 +6,7 @@ using Stratocraft.Core.Constants;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.Voxel.Systems;
+using Stratocraft.WorldGen.Generators;
 
 namespace Stratocraft.Tests.EditMode
 {
@@ -174,6 +175,83 @@ namespace Stratocraft.Tests.EditMode
             var shellTris = new List<FacetedVoxelTriangle>(1024);
             lodSys.BuildMacroTileHorizonShellMesh(0, 0, shellTris);
             Assert.That(shellTris.Count, Is.GreaterThan(100), "64m x 64m Distant Horizon kabuk mesh'i ucgen uretmelidir!");
+        }
+
+        [Test]
+        public void RealWorldGenAdjacentChunks_SeamVertices_WeldWithZeroDiscrepancy()
+        {
+            var world = new Dictionary<(int cx, int cz), uint[]>();
+            for (int cz = -1; cz <= 1; cz++)
+            {
+                for (int cx = -1; cx <= 2; cx++)
+                {
+                    var (vox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    world[(cx, cz)] = vox;
+                }
+            }
+
+            var trisLeft = new List<FacetedVoxelTriangle>(8192);
+            var trisRight = new List<FacetedVoxelTriangle>(8192);
+
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(0, 0, 128, world, trisLeft, minY: 0);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(1, 0, 128, world, trisRight, minY: 0);
+
+            Assert.That(trisLeft.Count, Is.GreaterThan(500));
+            Assert.That(trisRight.Count, Is.GreaterThan(500));
+
+            // Chunk (0,0) ile Chunk (1,0) gercek Surface Nets birlesim hatti: X in (15.01..15.99)
+            // (X=15.0f veya X=16.0f tamsayilari chunk icindeki mimari blok kenarlaridir, seam dual kosesi degildir)
+            var seamVertsRight = new HashSet<Vector3>();
+            Vector3 rightOffset = new Vector3(16f, 0f, 0f);
+            foreach (FacetedVoxelTriangle t in trisRight)
+            {
+                Vector3 w0 = t.V0 + rightOffset;
+                Vector3 w1 = t.V1 + rightOffset;
+                Vector3 w2 = t.V2 + rightOffset;
+                if (w0.X > 15.01f && w0.X < 15.99f) seamVertsRight.Add(w0);
+                if (w1.X > 15.01f && w1.X < 15.99f) seamVertsRight.Add(w1);
+                if (w2.X > 15.01f && w2.X < 15.99f) seamVertsRight.Add(w2);
+            }
+
+            int checkedSeam = 0;
+            int missingSeam = 0;
+            var missingList = new List<string>();
+            foreach (FacetedVoxelTriangle t in trisLeft)
+            {
+                bool b0 = t.V0.X > 15.01f && t.V0.X < 15.99f;
+                bool b1 = t.V1.X > 15.01f && t.V1.X < 15.99f;
+                bool b2 = t.V2.X > 15.01f && t.V2.X < 15.99f;
+                if (b0 || b1 || b2)
+                {
+                    if (b0) checkedSeam++;
+                    if (b1) checkedSeam++;
+                    if (b2) checkedSeam++;
+
+                    bool m0 = b0 && !seamVertsRight.Contains(t.V0);
+                    bool m1 = b1 && !seamVertsRight.Contains(t.V1);
+                    bool m2 = b2 && !seamVertsRight.Contains(t.V2);
+
+                    if (m0 || m1 || m2)
+                    {
+                        if (m0) missingSeam++;
+                        if (m1) missingSeam++;
+                        if (m2) missingSeam++;
+
+                        if (missingList.Count < 50)
+                        {
+                            missingList.Add($"Tri: V0={t.V0}, V1={t.V1}, V2={t.V2}, Norm={t.Normal}, Mat={t.MaterialId}");
+                        }
+                    }
+                }
+            }
+
+            Console.WriteLine($"[Test Result] checkedSeam={checkedSeam}, missingSeam={missingSeam}, seamVertsRight={seamVertsRight.Count}");
+            foreach (var m in missingList)
+            {
+                Console.WriteLine($"  Mismatch {m}");
+            }
+            Assert.That(checkedSeam, Is.GreaterThan(50), "Sinirda incelenen kose bulunamadi.");
+            Assert.That(missingSeam, Is.EqualTo(0), $"Sinirda {missingSeam}/{checkedSeam} eslesmeyen kose tespit edildi!");
         }
     }
 }

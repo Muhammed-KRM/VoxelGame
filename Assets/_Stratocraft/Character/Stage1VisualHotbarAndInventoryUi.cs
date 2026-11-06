@@ -95,6 +95,7 @@ namespace Stratocraft.Character
         private GUIStyle? _windowTitleStyle;
         private GUIStyle? _slotTitleBannerStyle;
         private GUIStyle? _tooltipBoxStyle;
+        private GUIStyle? _vitalsLabelStyle;
         private bool _iconsInitialized;
 
         private static readonly byte[] TrackedCrystalMaterials =
@@ -583,7 +584,15 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge combatBridge,
             VisualChestCasSystem chestCasSystem,
-            Action onActiveSlotChanged)
+            Action onActiveSlotChanged,
+            float currentHp = 100f,
+            float maxHp = 100f,
+            float stamina = 100f,
+            float maxStamina = 100f,
+            bool isExhaustedLock = false,
+            float lungOxygenPercent = 100f,
+            bool isSubmerged = false,
+            float coreBodyTemp = 37.0f)
         {
             EnsureTexturesAndStyles();
             SyncWithCrystalStorage(miningCtrl);
@@ -652,8 +661,12 @@ namespace Stratocraft.Character
                 }
             }
 
+            bool showOxygen = isSubmerged || lungOxygenPercent < 98f;
+            DrawVitalsHudBars(screenW, barY, currentHp, maxHp, stamina, maxStamina, isExhaustedLock, lungOxygenPercent, isSubmerged, coreBodyTemp);
+
             string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge);
-            GUI.Box(new Rect(screenW * 0.5f - 285f, barY - 30f, 570f, 22f), activeTitle, _slotTitleBannerStyle!);
+            float bannerY = showOxygen ? barY - 50f : barY - 34f;
+            GUI.Box(new Rect(screenW * 0.5f - 285f, bannerY, 570f, 20f), activeTitle, _slotTitleBannerStyle!);
 
             // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (Tekerlek / [B] / Tıklama ile malzeme seçimi)
             if (miningCtrl.IsCrystalActive)
@@ -1228,6 +1241,99 @@ namespace Stratocraft.Character
                 wordWrap = true,
                 normal = { textColor = new Color(1.0f, 0.94f, 0.65f, 1.0f) }
             };
+            _vitalsLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 10,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color(0.96f, 0.98f, 1.0f, 1.0f) }
+            };
+        }
+
+        private void DrawVitalsHudBars(
+            float screenW, float barY,
+            float currentHp, float maxHp,
+            float stamina, float maxStamina,
+            bool isExhaustedLock,
+            float lungOxygenPercent, bool isSubmerged,
+            float coreBodyTemp)
+        {
+            const float totalBarWidth = 580f;
+            float startX = (screenW - totalBarWidth) * 0.5f;
+            float currentY = barY - 17f;
+
+            // 1. Oksijen Barı (Suya batınca veya oksijen <%98 olunca görünür)
+            if (isSubmerged || lungOxygenPercent < 98f)
+            {
+                currentY -= 15f;
+                Rect oxyRect = new Rect(startX, currentY, totalBarWidth, 12f);
+                float oxy01 = Mathf.Clamp01(lungOxygenPercent / 100f);
+                Color oxyFill = oxy01 < 0.25f ? new Color(0.95f, 0.22f, 0.22f, 1.0f) : new Color(0.18f, 0.78f, 0.95f, 1.0f);
+                DrawHorizontalBar(oxyRect, oxy01, oxyFill, new Color(0.04f, 0.12f, 0.20f, 0.88f), new Color(0.25f, 0.50f, 0.70f, 0.95f),
+                    $"🤿 OKSİJEN %{Mathf.RoundToInt(lungOxygenPercent)}");
+                currentY += 15f;
+            }
+
+            // 2. Can (HP) ve Dayanıklılık / Yorgunluk (EP) Barları Yan Yana
+            float halfWidth = (totalBarWidth - 8f) * 0.5f;
+
+            // Sol Bar: Can (HP)
+            Rect hpRect = new Rect(startX, currentY, halfWidth, 13f);
+            float hp01 = maxHp > 0.1f ? Mathf.Clamp01(currentHp / maxHp) : 1f;
+            Color hpFill = hp01 < 0.28f ? new Color(0.95f, 0.15f, 0.15f, 1.0f) : new Color(0.85f, 0.18f, 0.20f, 1.0f);
+            DrawHorizontalBar(hpRect, hp01, hpFill, new Color(0.20f, 0.05f, 0.05f, 0.88f), new Color(0.55f, 0.18f, 0.18f, 0.95f),
+                $"❤️ CAN %{Mathf.RoundToInt(hp01 * 100f)} ({Mathf.RoundToInt(currentHp)}/{Mathf.RoundToInt(maxHp)})");
+
+            // Sağ Bar: Dayanıklılık / Yorgunluk (EP / Stamina)
+            Rect stamRect = new Rect(startX + halfWidth + 8f, currentY, halfWidth, 13f);
+            float stam01 = maxStamina > 0.1f ? Mathf.Clamp01(stamina / maxStamina) : 1f;
+
+            Color stamFill;
+            string stamText;
+            if (isExhaustedLock)
+            {
+                stamFill = new Color(0.98f, 0.58f, 0.12f, 1.0f);
+                stamText = $"⚡ NEFESSİZ! (DİNLENİYOR) %{Mathf.RoundToInt(stam01 * 100f)}";
+            }
+            else
+            {
+                stamFill = stam01 < 0.25f ? new Color(0.92f, 0.80f, 0.18f, 1.0f) : new Color(0.22f, 0.84f, 0.30f, 1.0f);
+                stamText = $"⚡ ENERJİ (EP) %{Mathf.RoundToInt(stam01 * 100f)}";
+            }
+            DrawHorizontalBar(stamRect, stam01, stamFill, new Color(0.06f, 0.16f, 0.08f, 0.88f), new Color(0.22f, 0.48f, 0.26f, 0.95f), stamText);
+        }
+
+        private void DrawHorizontalBar(Rect rect, float fill01, Color fillColor, Color bgColor, Color borderColor, string labelText)
+        {
+            if (_whitePixelTex == null) return;
+            fill01 = Mathf.Clamp01(fill01);
+
+            Color oldColor = GUI.color;
+
+            // Kenarlık (Border)
+            GUI.color = borderColor;
+            GUI.DrawTexture(rect, _whitePixelTex);
+
+            // Arka plan (Background)
+            Rect bgRect = new Rect(rect.x + 1f, rect.y + 1f, rect.width - 2f, rect.height - 2f);
+            GUI.color = bgColor;
+            GUI.DrawTexture(bgRect, _whitePixelTex);
+
+            // Doluluk (Fill)
+            if (fill01 > 0.005f)
+            {
+                Rect fillRect = new Rect(bgRect.x, bgRect.y, bgRect.width * fill01, bgRect.height);
+                GUI.color = fillColor;
+                GUI.DrawTexture(fillRect, _whitePixelTex);
+            }
+
+            GUI.color = oldColor;
+
+            // Metin etiketi
+            if (!string.IsNullOrEmpty(labelText) && _vitalsLabelStyle != null)
+            {
+                GUI.Label(rect, labelText, _vitalsLabelStyle);
+            }
         }
 
         private static Texture2D BuildFramedBoxTexture(int w, int h, Color fill, Color border)

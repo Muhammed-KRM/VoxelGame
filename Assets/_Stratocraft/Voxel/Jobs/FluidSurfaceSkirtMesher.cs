@@ -18,8 +18,8 @@ namespace Stratocraft.Voxel.Jobs
     /// </summary>
     public static class FluidSurfaceSkirtMesher
     {
-        public const float ShorelineSkirtExtensionMeters = 0.35f;
-        private const float SkirtUnderTerrainDipMeters = 0.035f;
+        public const float ShorelineSkirtExtensionMeters = 0.85f;
+        private const float SkirtUnderTerrainDipMeters = 0.38f;
 
         /// <summary>
         /// Tek bir chunk'in 16-bit FluidCell16 katmanindan (komsu chunk'lari da dikkate alarak)
@@ -231,14 +231,17 @@ namespace Stratocraft.Voxel.Jobs
             {
                 Vector3 gradXZ = new Vector3(sdfPosX - sdfNegX, 0f, sdfPosZ - sdfNegZ);
                 float lenSq = gradXZ.LengthSquared();
-                if (lenSq > 1e-4f)
-                {
-                    Vector3 dirToBank = gradXZ / MathF.Sqrt(lenSq);
-                    outSkirtOffset = dirToBank * ShorelineSkirtExtensionMeters - new Vector3(0f, SkirtUnderTerrainDipMeters, 0f);
-                }
+                Vector3 dirToBank = lenSq > 1e-4f ? (gradXZ / MathF.Sqrt(lenSq)) : Vector3.Zero;
+                outSkirtOffset = dirToBank * ShorelineSkirtExtensionMeters - new Vector3(0f, SkirtUnderTerrainDipMeters, 0f);
             }
 
-            return y + avgFill;
+            float cornerY = y + avgFill;
+            if (touchesSdfShore)
+            {
+                // Kiyi egiminin ve kumun icine temizce gomulmesi icin su yuzeyini kiyida 14cm daldir (havada asili kalma %100 sifirlanir)
+                cornerY -= 0.14f;
+            }
+            return cornerY;
         }
 
         private static void EmitSideWallIfExposed(

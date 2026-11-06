@@ -87,7 +87,7 @@ namespace Stratocraft.Character
 
         private static Stage1InteractivePlayController? _activeInstance;
 
-        private const int ActiveChunkRadius = 11;
+        private static int ActiveChunkRadius => Stage1GameSettings.RenderDistanceChunks;
         private const int NearPhysicsColliderRadius = 2;
 
         private readonly Dictionary<(int cx, int cz), uint[]> _worldChunks = new();
@@ -360,15 +360,15 @@ namespace Stratocraft.Character
             UpdateNearPlayerColliderRing(pCx, pCz);
 
             // 1. Oyuncunun arkada biraktigi uzaktaki dinamik chunk'lari Destroy() etmeden Sifir-GC _chunkPool havuzuna geri al
-            if (_worldChunks.Count > 560)
+            if (_worldChunks.Count > 520)
             {
                 _chunksToUnloadScratch.Clear();
                 foreach (var kv in _worldChunks)
                 {
                     int cx = kv.Key.cx, cz = kv.Key.cz;
-                    // Sahnedeki 20x20 (-10..9) 400 adet 3B voksel chunk cekirdegini daima bellekte tut
-                    if (cx >= -10 && cx <= 9 && cz >= -10 && cz <= 9) continue;
-                    if (Mathf.Abs(cx - pCx) > ActiveChunkRadius + 2 || Mathf.Abs(cz - pCz) > ActiveChunkRadius + 2)
+                    // Merkez 4x4 (-2..1) atolye, CAS sandigi, klan kristali ve domino kulesi cekirdegini daima bellekte tut
+                    if (cx >= -2 && cx <= 1 && cz >= -2 && cz <= 1) continue;
+                    if (Mathf.Abs(cx - pCx) > ActiveChunkRadius + 3 || Mathf.Abs(cz - pCz) > ActiveChunkRadius + 3)
                     {
                         _chunksToUnloadScratch.Add(kv.Key);
                     }
@@ -416,14 +416,12 @@ namespace Stratocraft.Character
                     _chunkMeshRenderers.Remove(key);
                     _fluidMeshRenderers.Remove(key);
                     _chunkColliders.Remove(key);
+                    _chunkSubMeshCache.Remove(key);
                     _dirtyChunks.Remove(key);
                     _dirtyFluidChunks.Remove(key);
                     _activeFluidChunks.Remove(key);
                 }
             }
-
-            // 2. Kare butcesini korumak icin kirli kuyruk doluyken yeni chunk uretme; kamera bakis konisine oncelik ver
-            if (_dirtyChunks.Count >= 8) return;
 
             Vector2 camFwd2D = Vector2.up;
             if (PlayerCamera != null)
@@ -439,6 +437,9 @@ namespace Stratocraft.Character
             {
                 for (int r = 0; r <= ActiveChunkRadius; r++)
                 {
+                    // Uzak halkalar (r > 3) icin kirli kuyruk doluyken bekle; ancak oyuncu etrafindaki yakin halkalari (r <= 3) daima aninda uret!
+                    if (r > 3 && _dirtyChunks.Count >= 14) return;
+
                     for (int dz = -r; dz <= r; dz++)
                     {
                         for (int dx = -r; dx <= r; dx++)
@@ -452,7 +453,7 @@ namespace Stratocraft.Character
                                 : Mathf.Clamp(pCz + dz, StratocraftFloatingIslandWorldGen.ContinentChunkMin, StratocraftFloatingIslandWorldGen.ContinentChunkMax);
                             if (_worldChunks.ContainsKey((cx, cz))) continue;
 
-                            if (pass == 0 && r > 1)
+                            if (pass == 0 && r > 2)
                             {
                                 Vector2 dir = new Vector2(dx, dz).normalized;
                                 if (Vector2.Dot(camFwd2D, dir) < -0.15f) continue;
@@ -460,7 +461,7 @@ namespace Stratocraft.Character
 
                             CreateAndRegisterDynamicContinentChunk(cx, cz);
                             spawnedThisFrame++;
-                            if (spawnedThisFrame >= 2 || _dirtyChunks.Count >= 10) return;
+                            if (r > 2 && (spawnedThisFrame >= 4 || _dirtyChunks.Count >= 18)) return;
                         }
                     }
                 }
@@ -536,14 +537,31 @@ namespace Stratocraft.Character
             chunkComp.VisualWorldPosition = (cx * 16f, 0f, cz * 16f);
             _floatingOriginChunks.Add(chunkComp);
 
+            if (_chunkSubMeshCache.TryGetValue((cx, cz), out var selfSub)) selfSub.ResetAllDirty();
             _dirtyChunks.Add((cx, cz));
             _dirtyFluidChunks.Add((cx, cz));
 
-            // Yeni bir kita chunk'i olustugunda 4 komsusunu daima kirli isaretle ki dis sinir perdesi 0.000m dikisle kaynasin!
-            if (_worldChunks.ContainsKey((cx - 1, cz))) _dirtyChunks.Add((cx - 1, cz));
-            if (_worldChunks.ContainsKey((cx + 1, cz))) _dirtyChunks.Add((cx + 1, cz));
-            if (_worldChunks.ContainsKey((cx, cz - 1))) _dirtyChunks.Add((cx, cz - 1));
-            if (_worldChunks.ContainsKey((cx, cz + 1))) _dirtyChunks.Add((cx, cz + 1));
+            // Yeni bir kita chunk'i olustugunda 4 komsusunun alt-chunk onbellegini sifirla ve kirli isaretle ki dis sinir perdesi 0.000m dikisle kaynasin!
+            if (_worldChunks.ContainsKey((cx - 1, cz)))
+            {
+                if (_chunkSubMeshCache.TryGetValue((cx - 1, cz), out var nW)) nW.ResetAllDirty();
+                _dirtyChunks.Add((cx - 1, cz));
+            }
+            if (_worldChunks.ContainsKey((cx + 1, cz)))
+            {
+                if (_chunkSubMeshCache.TryGetValue((cx + 1, cz), out var nE)) nE.ResetAllDirty();
+                _dirtyChunks.Add((cx + 1, cz));
+            }
+            if (_worldChunks.ContainsKey((cx, cz - 1)))
+            {
+                if (_chunkSubMeshCache.TryGetValue((cx, cz - 1), out var nS)) nS.ResetAllDirty();
+                _dirtyChunks.Add((cx, cz - 1));
+            }
+            if (_worldChunks.ContainsKey((cx, cz + 1)))
+            {
+                if (_chunkSubMeshCache.TryGetValue((cx, cz + 1), out var nN)) nN.ResetAllDirty();
+                _dirtyChunks.Add((cx, cz + 1));
+            }
         }
 
         private void StepFluidSimulation(float dt)
@@ -686,9 +704,19 @@ namespace Stratocraft.Character
 
         private void StepCombatCreaturesAndRig(float dt)
         {
-            if (PlayerCamera != null && Mathf.Abs(PlayerCamera.fieldOfView - Stage1GameSettings.CameraFieldOfView) > 0.1f)
+            if (PlayerCamera != null)
             {
-                PlayerCamera.fieldOfView = Stage1GameSettings.CameraFieldOfView;
+                if (Mathf.Abs(PlayerCamera.fieldOfView - Stage1GameSettings.CameraFieldOfView) > 0.1f)
+                {
+                    PlayerCamera.fieldOfView = Stage1GameSettings.CameraFieldOfView;
+                }
+                float targetFogEnd = Stage1GameSettings.RenderDistanceChunks * 16f * 1.15f;
+                float targetFogStart = targetFogEnd * 0.65f;
+                if (RenderSettings.fog)
+                {
+                    RenderSettings.fogEndDistance = Mathf.MoveTowards(RenderSettings.fogEndDistance, targetFogEnd, dt * 150f);
+                    RenderSettings.fogStartDistance = Mathf.MoveTowards(RenderSettings.fogStartDistance, targetFogStart, dt * 150f);
+                }
             }
 
             int slot = _holsterCtrl.ActiveHolsterSlot;
@@ -1049,16 +1077,11 @@ namespace Stratocraft.Character
                     EnclosedOxygenFloodFillSystem.PrepareScratchChunkForOxygenBfs(_oxygenScratchChunk, raw, rawFluids);
                     _lastConnectedAirVoxels = _oxygenSystem.MeasureConnectedAirVolume(_oxygenScratchChunk, wx - cx * 16, wy, wz - cz * 16, 600);
                 }
-                var camTuple = (transform.position.x, transform.position.y, transform.position.z);
-                var prevTuple = camTuple;
-                _floatingOriginSystem.UpdateFloatingOrigin(ref camTuple, _floatingOriginChunks);
-                if (Mathf.Abs(camTuple.Item1 - prevTuple.Item1) > 0.01f || Mathf.Abs(camTuple.Item3 - prevTuple.Item3) > 0.01f)
-                {
-                    Vector3 shift = new Vector3(camTuple.Item1 - prevTuple.Item1, 0f, camTuple.Item3 - prevTuple.Item3);
-                    transform.position += shift;
-                    foreach (var mf in _chunkMeshFilters.Values)
-                        if (mf != null) mf.transform.position += shift;
-                }
+                // DIKKAT: 256m'de transform.position ve chunk pozisyonlarini (0,0)'a geri kaydirma!
+                // Aksi halde oyuncu (0,0)'daki sahne nesnelerinin (Klan Kristali / NPC) uzerine geri isinlanir ve pCx/pCz sifirlanip
+                // etraftaki chunk'lar gizlenir. Gercek dunya koordinatlari (cx*16, 0, cz*16) kesintisiz sonsuz akis icin dogrudan korunur.
+                _ = _floatingOriginSystem;
+                _ = _floatingOriginChunks;
             }
 
             if (!Stage1GameSettings.EnableEnvironmentalEffects)
@@ -1306,7 +1329,8 @@ namespace Stratocraft.Character
                     }
 
                     processedSolid++;
-                    if (!forceImmediateAll && (processedSolid >= maxSolidPerFrame || _meshRebuildStopwatch.Elapsed.TotalMilliseconds >= 3.2))
+                    bool isUrgentNearChunk = Mathf.Abs(key.cx - pCx) <= 2 && Mathf.Abs(key.cz - pCz) <= 2;
+                    if (!forceImmediateAll && !isUrgentNearChunk && (processedSolid >= maxSolidPerFrame || _meshRebuildStopwatch.Elapsed.TotalMilliseconds >= 3.8))
                     {
                         break;
                     }
@@ -1505,7 +1529,10 @@ namespace Stratocraft.Character
             for (int idx = 0; idx < chunkEntries.Count; idx++)
             {
                 var (_, _, mf) = chunkEntries[idx];
-                if (mf.sharedMesh == null || mf.sharedMesh.vertexCount < 3 || isSmallLegacyScene)
+                if (mf.sharedMesh == null ||
+                    mf.sharedMesh.vertexCount < 3 ||
+                    isSmallLegacyScene ||
+                    !mf.sharedMesh.name.StartsWith("Mesh_SeamlessIslandChunk_V5Underground_", StringComparison.Ordinal))
                 {
                     unmeshedIndices.Add(idx);
                 }
@@ -1671,13 +1698,21 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Paket 1: Minecraft/ARK Tarzi 9'lu Kare Hotbar + 24-Slot Envanter ([I]/Tab) + 16-Slot Sandik ([E])
+            // Paket 1: Minecraft/ARK Tarzi 9'lu Kare Hotbar + 24-Slot Envanter ([I]/Tab) + 16-Slot Sandik ([E]) + Canli Vitals HUD Barlari
             _holsterCtrl.InventoryUi.DrawHotbarAndInventoryOnGui(
                 _holsterCtrl.IsBackpackOpen,
                 _miningCtrl,
                 _combatBridge,
                 _holsterCtrl.ChestCasSystem,
-                () => _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge));
+                () => _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge),
+                currentHp: _movementBridge.Vitals.CurrentHp,
+                maxHp: _movementBridge.Vitals.MaxHp,
+                stamina: _movementBridge.Vitals.Stamina,
+                maxStamina: _movementBridge.Vitals.MaxStamina,
+                isExhaustedLock: _movementBridge.MovementState.IsExhaustedStaminaLock != 0,
+                lungOxygenPercent: _movementBridge.Vitals.LungOxygenPercent,
+                isSubmerged: _movementBridge.Vitals.SubmergedDepthMeters > 0.1f,
+                coreBodyTemp: _movementBridge.Vitals.CoreBodyTempCelsius);
 
             if (_showDebugHudText)
             {

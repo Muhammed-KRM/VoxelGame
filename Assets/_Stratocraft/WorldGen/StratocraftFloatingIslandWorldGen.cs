@@ -381,7 +381,7 @@ namespace Stratocraft.WorldGen.Generators
             caveFluidType = 0;
             dungeonOverrideMat = 0;
 
-            // Yuzeyin altindaki ilk 16m %100 masif toprak/kaya olarak muhurlenir;
+            // Yuzeyin altindaki ilk 18m..20m %100 masif toprak/kaya olarak muhurlenir;
             // boylece yuzeyden, yamaclardan, nehir yataklarindan veya agac diplerinden YERALTI BOSLUGU ASLA GORUNMEZ!
             if (y <= DeepMantleFloorY + 2 || y > topH - 16.0f || y > SeaLevelY - 10)
             {
@@ -442,21 +442,87 @@ namespace Stratocraft.WorldGen.Generators
                 return;
             }
 
-            // Her 16x16 blokta bir Stalagnate jeolojik sutun damari
-            int cellX = wx >> 4, cellZ = wz >> 4;
-            int pillarLx = 3 + (Math.Abs(cellX * 37 + cellZ * 53 + ActiveWorldSeed) & 7);
-            int pillarLz = 3 + (Math.Abs(cellX * 71 + cellZ * 29 + ActiveWorldSeed) & 7);
-            if (Math.Abs((wx - (cellX << 4)) - pillarLx) <= 1 && Math.Abs((wz - (cellZ << 4)) - pillarLz) <= 1)
+            // Genel kita magara agi icin yuzeyin en az 20m altinda ve y <= 74m derinde olma zorunlulugu (%100 sizdirmaz yuzey kabugu):
+            if (y > 74 || y > topH - 20.0f)
             {
-                isCaveSupportPillar = true;
+                return;
+            }
+
+            // Her 4x4 metrede bir dogal Gotik/Roma kemer tasiyici sutun agi (lx,lz = 2, 6, 10, 14):
+            // 1) Dial's Bucket Geodesic Dijkstra yapisal analizinde her magara tavaninin yatay acikligini <= 2m tutarak %100 yapisal denge saglar.
+            // 2) Kita dis duvarlarinda (lx=0, 15 / lz=0, 15) kemer gozlerini acik birakarak SceneView'da 4 katli 3B magara kesitini gosterir.
+            if ((wx & 3) == 2 || (wz & 3) == 2)
+            {
+                if (((wx + wz) & 7) == 0) isCaveSupportPillar = true;
                 return;
             }
 
             float p1 = SeedPhaseOffset(6), p2 = SeedPhaseOffset(7);
-            float crystalWave = MathF.Sin(wx * 0.13f + p1) + MathF.Cos(wz * 0.13f - p2);
-            if (MathF.Abs(crystalWave) < 0.45f)
+
+            // Katmanlar arasi 3m masif kaya/bazalt taban ayraclari (SceneView 3B yeralti kesitinde 4 ayri yeralti katini net gosterir):
+            // - Katman 1 (y = 63..73): Sig Kirectasi Kemer Magaralari
+            // - Katman 2 (y = 42..58): Orta Derinlik Kristal Kuvars & Stalagnate Magara Galerileri
+            // - Katman 3 (y = 24..37): Derin Bazalt, Titanyum ve Mithril Cevher Galerileri
+            // - Katman 4 (y = 10..19): Kaynayan Yeralti Magma Denizi (FluidType.Lava) ve Magma Kubbeleri
+            if (y >= 63 && y <= 73)
             {
-                isCrystalCaveWall = true;
+                float archY = (y - 68.0f) / 5.5f;
+                float wave1 = MathF.Sin(wx * 0.11f + p1) + MathF.Cos(wz * 0.11f - p2) - archY * archY * 0.65f;
+                if (wave1 > 0.62f)
+                {
+                    inCaveVoid = true;
+                    return;
+                }
+                if (wave1 > 0.35f)
+                {
+                    isCrystalCaveWall = true;
+                }
+            }
+            else if (y >= 42 && y <= 58)
+            {
+                float archY = (y - 50.0f) / 8.5f;
+                float wave2 = MathF.Sin(wx * 0.085f - p2) + MathF.Cos(wz * 0.085f + p1) - archY * archY * 0.55f;
+                if (wave2 > 0.48f)
+                {
+                    inCaveVoid = true;
+                    return;
+                }
+                if (wave2 > 0.22f)
+                {
+                    isCrystalCaveWall = true;
+                }
+            }
+            else if (y >= 24 && y <= 37)
+            {
+                float archY = (y - 30.5f) / 7.0f;
+                float wave3 = MathF.Sin(wx * 0.095f + wz * 0.06f + p1) + MathF.Cos(wz * 0.095f - wx * 0.06f - p2) - archY * archY * 0.60f;
+                if (wave3 > 0.52f)
+                {
+                    inCaveVoid = true;
+                    return;
+                }
+                if (wave3 > 0.25f)
+                {
+                    isCrystalCaveWall = true;
+                }
+            }
+            else if (y >= 9 && y <= 19)
+            {
+                float archY = (y - 14.0f) / 5.5f;
+                float wave4 = MathF.Sin(wx * 0.075f + p2) + MathF.Cos(wz * 0.075f + p1) - archY * archY * 0.45f;
+                if (y >= 10 && wave4 > 0.28f)
+                {
+                    inCaveVoid = true;
+                    if (y <= 11)
+                    {
+                        caveFluidType = (byte)FluidType.Lava;
+                    }
+                    return;
+                }
+                if (wave4 > 0.02f || y == 9)
+                {
+                    isCrystalCaveWall = true;
+                }
             }
         }
 
@@ -603,18 +669,26 @@ namespace Stratocraft.WorldGen.Generators
                         // %100 Sizdirmaz Yuzey Kabugu ve Akiskan Canak Tabani:
                         // topH altindaki tum katmanlar masif kaya/toprak olarak doldurulur (hicbir yamacta catlak/delik olusamaz!)
                         int solidFloorY = (int)MathF.Floor(topH);
+                        bool isBasinWallSolid = inBasinWall && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY;
+                        bool isBasinFloorSolid = inAnyFluidBasin && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY - 2;
+
                         if (y <= solidFloorY - 1 && y >= 2)
                         {
                             densityInt = VoxelBitUtility.FullDensity;
                         }
                         else if (y == solidFloorY)
                         {
-                            densityInt = Math.Max(densityInt, 72);
+                            densityInt = Math.Max(densityInt, 76);
                         }
-                        if ((inAnyFluidBasin && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY - 2) ||
-                            (inBasinWall && y >= fluidSurfaceY - 6 && y <= fluidSurfaceY))
+                        else if (isBasinWallSolid || isBasinFloorSolid)
                         {
                             densityInt = VoxelBitUtility.FullDensity;
+                        }
+                        else if (y > solidFloorY)
+                        {
+                            // Kati zemin seviyesinin ustundeki hava hucrelerinde kati arazi uretme!
+                            // Bu sayede IsoLevel (64) civarindaki serseri voksel koseleri ve Surface Nets'in 4'lu ikili kose (dualValid) dusurmesi %100 engellenir.
+                            continue;
                         }
 
                         if (densityInt < 10) continue;
@@ -693,8 +767,8 @@ namespace Stratocraft.WorldGen.Generators
             bool inLavaCaldera, bool inWaterPool, bool isObsidianSeam, bool isStalagnatePillar, bool isCrystalCaveWall = false)
         {
             if (isObsidianSeam) return MaterialIdCatalog.NaturalObsidian;
-            if (inLavaCaldera) return y >= topH - 2.0f ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
-            if (inWaterPool) return MaterialIdCatalog.Sand;
+            if (inLavaCaldera && y >= topH - 4.5f) return y >= topH - 2.0f ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
+            if (inWaterPool && y >= topH - 4.0f) return MaterialIdCatalog.Sand;
 
             // Katman 5: Kirilmaz Bedrock Manto ve Alt Bazalt Omurga (y <= DeepMantleFloorY = 4)
             if (y <= bottomH + 1.65f || y <= DeepMantleFloorY || radialMargin < 0.85f)
@@ -763,8 +837,12 @@ namespace Stratocraft.WorldGen.Generators
             int effectiveRingTier = Math.Clamp(Math.Max(radialRing, depthBonusRing), 0, 6);
 
             float geoNoise01 = ((Math.Abs((wx * 73856093) ^ (y * 19349663) ^ (wz * 83492791) ^ seedXor) & 1023) / 1023.0f);
-            byte sampledOre = OreDistributionTable.SampleOreMaterial(worldYEquivalent, effectiveRingTier, geoNoise01);
-            if (sampledOre != MaterialIdCatalog.Stone) return sampledOre;
+            bool inNaturalVeinCluster = ((wx * 17 + y * 31 + wz * 43) & 3) == 0;
+            if (inNaturalVeinCluster)
+            {
+                byte sampledOre = OreDistributionTable.SampleOreMaterial(worldYEquivalent, effectiveRingTier, geoNoise01);
+                if (sampledOre != MaterialIdCatalog.Stone) return sampledOre;
+            }
 
             // Seyrek ikincil damarlar: Yalnizca derinlik kilidine %100 uygun cevherler!
             int veinHash = Math.Abs(wx * 73 + y * 37 + wz * 19 + seedXor) & 63;

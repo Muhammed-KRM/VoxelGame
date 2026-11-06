@@ -13,11 +13,11 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#031` (Bozuk Sahte `DistantHorizonShell` (`64m x 64m`) / `DistantHorizonMega` (`256m x 256m`) Kabukların Tamamen Kaldırılması \| Homojen `16m x 16m` Gerçek 3B `VoxelChunk` (`400` Chunk, `320m x 320m` + Dinamik Akış) Sıfırdan Temiz Sahne Kurulumu \| Yamaçlara Tırmanan Siyah/Turuncu Basamaklı Sıvıların & SceneView Simsiyah Su/Lav Hatasının (`StratocraftFluidSurface.shader`) Çözümü \| `%100` Sızdırmaz Yüzey Kabuğu + 3 Kapalı Yeraltı Odası (`[F12]`) \| `16x16x16` Sub-Chunk Yatay Yarıklarının (`isSurfaceOverworldSlice`) Kaldırılması \| 5 Performans/Mimari Raporu (`docs/PERFORMANS_RAPORU_1..4` & `FINAL_PERFORMANS_VE_OPTIMIZASYON_MIMARI_YOL_HARITASI.md`)) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-05T18:17:00+03:00` |
+| **Devir Numarası** | `#034` (Voksel Chunk Sınır Çatlakları / Yerin İçinin Görünmesi Kapsamlı Kök Neden ve Çözüm Araştırması \| Sub-Agent & Kod Tabanı & İnternet/Forum Literatürü İncelemesi Tamamlandı \| Kullanıcı Talimatı Uyarınca Kod Donduruldu (Sıfır Kod Değişikliği) \| Detaylı Sorun ve Kök Neden Analiz Raporu Hazırlandı: `docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md` \| Yeni Sohbete Devir Teslim Hazırlandı \| 46/46 Test PASS, 0 Error / 0 Warning) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-06T14:10:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Sahne Yeniden Kuruldu ve Unity MCP ile Doğrulandı (Devir #031)` |
-| **Aktif Test Durumu** | `43/43 Standalone & Unity Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Sahne Yeniden Kuruldu ve Unity MCP ile Doğrulandı (Devir #033)` |
+| **Aktif Test Durumu** | `45/45 Standalone & Unity Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
@@ -229,7 +229,34 @@
      - **`%100` Sızdırmaz Yüzey Kabuğu + 3 Kapalı Yeraltı Odası (`StratocraftFloatingIslandWorldGen.cs`) ve `16x16x16` Sub-Chunk Yatay Yarık Çözümü (`HybridSurfaceNetsAndShapeMesher.cs`):**
        - `EvaluateUndergroundCaveNetwork` varsayılan olarak `%100` masif kaya + cevher damarları + `Stalagnate` sütunlar olarak mühürlendi; dış chunk'ların altında `y = 58`'de havada asılı kalan `dungeonOverrideMat` (`shapeId = 1`) kutuları kaldırıldı ve `[F12]` yeraltı keşfi için 3 tam kapalı derin oda (`Katman 1: (-8, 75, 8)`, `Katman 2: (-8, 54, 18)`, `Katman 4: (12, 12.2, 18)`) korundu.
        - `HybridSurfaceNetsAndShapeMesher.cs` içerisindeki `isSurfaceOverworldSlice` kısayolu kaldırılarak `16x16x16` Sub-Chunk parçalı örme (`subY = 0..9`) ile tam chunk örme (`minY = 0, maxY = 160`) arasında `Y = 80m, 96m, 112m` sınırlarında oluşan yatay yarıklar tamamen giderildi.
-     - **Sahne Sıfırdan Üretildi ve Doğrulandı (`< 2 MB` `.unity` Boyutu + `0` Dikiş):** `HybridSurfaceNetsAndShapeMesher.BuildEffectiveChannel1SdfGrid` içindeki `!sliceHasSolid[py]` (`Array.Clear`) kaynaklı eşik-altı yoğunluk (`0x23..0x27 < 64`) silinmesi kaldırılarak chunk sınırlarındaki (`X = 15.5, Z = -13..-9`) `0.07m` `Y` farkı `%100` sıfırlandı (`0` magenta piksel). Ayrıca 384 dış chunk mesh'ine `HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild` atanarak `StratocraftStage1Showcase.unity` dosya boyutu GitHub `100 MB` sınırının çok altında (`~1.8 MB`) tutuldu.
+     - **Sahne Sıfırdan Üretildi ve Doğrulandı (`< 2 MB` `.unity` Boyutu + `0` Dikiş):** `HybridSurfaceNetsAndShapeMesher.BuildEffectiveChannel1SdfGrid` içindeki `!sliceHasSolid[py]` (`Array.Clear`) kaynaklı eşik-altı yoğunluk (`0x23..0x27 < 64`) silinmesi kaldırılarak chunk sınırlarındaki (`X = 15.5, Z = -13..-9`) `0.07m` `Y` farkı `%100` sıfırlandı (`0` magenta piksel). Ayrıca 384 dış chunk mesh'ine `HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild` atanarak `StratocraftStage1Showcase.unity` dosya boyutu GitHub `100 MB` sınırının çok altında (`~2.08 MB`) tutuldu.
+   - **Devir `#032` — İlerlerken `256m`'de Doğduğun Yere Geri Işınlanma & Yarım Dünya Kaybolma Hatasının Çözümü ve `SceneView` 5 Katmanlı 3B Yeraltı Kesiti:**
+     - **İlerlerken Doğduğun Yere Geri Işınlanma ve Yarım Dünyanın Kaybolması Çözümü (`Stage1InteractivePlayController.cs`):**
+       - `UpdateOxygenAndFloatingOrigin` içerisindeki `transform.position += shift;` ve `mf.transform.position += shift;` bloğu (`256m` eşiğinde oyuncuyu `(0, Y, 0)` başlangıç noktasına — Klan Kristali ve Düellocu NPC'nin yanına — geri ışınlayıp `pCx = 0` yüzünden `UpdateFrustumVisibility` içinde yeni chunk'ları gizleyen ve eski chunk'ları `-256m` uzağa kaydıran hatalı kaydırma) tamamen kaldırıldı.
+       - `StepDynamicContinentChunkStreaming` içerisinde bellek havuzuna geri alma (`_chunkPool`) sırasında tüm `400` (`-10..9`) chunk yerine yalnızca merkez `4x4` (`-2..1`) atölye çekirdeği sabit tutuldu, `_chunkSubMeshCache` sıfırlaması (`ResetAllDirty`) komşu sınır geçişlerine bağlandı ve oyuncu etrafındaki yakın chunk'ların (`r <= 3`) her koşulda anında örülmesi garanti altına alındı.
+     - **`SceneView` 92m Derinlikte 5 Katmanlı 3B Yeraltı Kesiti + `%100` Sızdırmaz `20m` Yüzey Kabuğu (`HybridSurfaceNetsAndShapeMesher.cs`, `StratocraftFloatingIslandWorldGen.cs`):**
+       - `HybridSurfaceNetsAndShapeMesher.cs` içerisinde `clampUnloadedContinentEdges = false` yapılarak kıtanın dış çeperinde `Y = 4m .. 96m` arasındaki `92m` derinlikli 3B dikey yeraltı kesit duvarlarının tam örülmesi sağlandı.
+       - `EvaluateUndergroundCaveNetwork` içerisinde yüzeyin ilk `20m` kalınlığı (`y > topH - 20.0f || y > 74`) `%100` masif kaya/toprak olarak mühürlenirken (`0` yüzey çatlağı/deliği), `Y = 9m .. 73m` altında 4 kemerli yeraltı mağara katmanı (`Katman 1: Sığ Kireçtaşı Kemerleri Y=63..73`, `Katman 2: Orta Kristal & Stalagnate Sütunlu Galeriler Y=42..58`, `Katman 3: Derin Bazalt & Titanyum/Mithril Cevher Galerileri Y=24..37`, `Katman 4: Kaynayan Yeraltı Magma Denizi Y=10..19` + `Katman 5: Bedrock Manto Y=4..9`) ve `4x4m` Gotik/Roma taşıyıcı kemer sütunları (`islandCollapsed == 0`) açıldı.
+       - `ResolveGeologicalMaterial` içerisinde göl tabanı kum katmanı ilk `4m` (`y >= topH - 4.0f`) ile sınırlandırılarak dış kesit duvarındaki dikey kum şeridi giderildi.
+    - **Devir `#033` — Yer Çatlaklarının Giderilmesi, Kıyı Suyunun Gömülmesi, ESC Görüş Mesafesi Slider'ı, Skybox Ufku ve Canlı Vitals HUD Barları:**
+      - **Yerin İçinin Görünmesi ve Zemin Çatlakları Çözümü (`StratocraftFloatingIslandWorldGen.cs`):** Yüzey zemininde `y > solidFloorY` seviyesindeki hava hücrelerinde `densityInt = 64` değerinde serseri voksel üretilmesi tamamen durduruldu (`y > solidFloorY` iken `continue;`, `y == solidFloorY` iken `Math.Max(densityInt, 76)`). Böylece Surface Nets eşik değeri (64) civarındaki çift-köşe düşmeleri (`dualValid`) ve harita çatlakları sıfırlandı.
+      - **Havada Kalan Kıyı Sularının Gömülmesi (`FluidSurfaceSkirtMesher.cs`):** Kıyı eteği uzantısı (`ShorelineSkirtExtensionMeters`) `0.35m`'den `0.85m`'ye, zemin altına dikiş gömülme derinliği (`SkirtUnderTerrainDipMeters`) `0.035m`'den `0.38m`'ye çıkarıldı ve kıyı köşelerinde `cornerY -= 0.14f` eğim indirimi eklendi; su kütlesi kum/kıyı yamacının altına tam oturarak havada asılı kalma giderildi.
+      - **ESC Menüsünde Görüş Mesafesi (Render Distance) Slider'ı + Skybox Ufku (`Stage1EscapeMenuAndSettingsController.cs`, `Stage1InteractivePlayController.cs`, `StratocraftStage1SceneBuilder.cs`):** ESC menüsü Ayarlar sekmesine Minecraft tarzı `6..24 Chunk` (`96m..384m`) Görüş Mesafesi slider'ı eklendi (`Stage1GameSettings.RenderDistanceChunks`). Dinamik chunk akışı (`ActiveChunkRadius`) ve sis mesafesi (`RenderSettings.fogEndDistance = radius * 16m * 1.15f`) bu ayara bağlandı. Ana kamera arka planı düz boyalı mavi kutudan çıkarılıp `CameraClearFlags.Skybox` yapıldı; arazi uzakta düz duvara çarpmak yerine atmosferik gökyüzü ufkuna yumuşakça karışır.
+      - **Hotbar Üstünde Canlı HUD Barları (`Stage1VisualHotbarAndInventoryUi.cs`, `Stage1InteractivePlayController.cs`):** Ekranın alt-ortasındaki 9'lu Hotbar'ın hemen üstüne yüksek kontrastlı, sayısal ve yüzdelik canlı barlar yerleştirildi:
+        - **❤️ Can Barı (HP):** Kırmızı bar, `CAN %100 (100/100)`.
+        - **⚡ Dayanıklılık / Yorgunluk Barı (EP):** Yeşil bar, `ENERJİ (EP) %100`. Karakter koşarak veya dövüşerek enerjisini bitirdiğinde turuncuya dönerek `⚡ NEFESSİZ! (DİNLENİYOR) %20` uyarısı verir.
+        - **🤿 Oksijen Barı (O2):** Suya batıldığında veya oksijen `< %98` olduğunda üstte beliren camgöbeği/mavi bar.
+        - Slot başlığı ve eşya banner'ları bu barların üzerine kaydırılarak hiçbir görsel çakışma yaşanmaz.
+    - **Devir `#034` — Voksel Chunk Sınır Çatlakları Kök Neden Araştırması ve Yeni Sohbet Devir Teslimi:**
+      - **Kullanıcı Talimatı:** Kullanıcı son Play Mode testinde harita sınırlarında ($X = -160\,\text{m}$, $Z = -64\,\text{m}$) nadiren görülen tek tük zemin çatlaklarının ekran görüntülerini paylaştı (`media_1793962637954_6530db2e.jpg` ve `media_1793962653779_bc2c703a.jpg`). Koda dokunulmadan sub-agent ve internet araştırmasıyla derinlemesine kök neden raporu hazırlanması ve yeni sohbete geçiş için devir teslim dökümanı hazırlanıp commit atılması istendi.
+      - **Kod Donduruldu (Sıfır Kod Değişikliği):** Bu turda hiçbir C# kodu değiştirilmedi. Çalışma alanı bütünlüğü korundu ($46/46$ Standalone Core Tests PASS).
+      - **Üretilen Sorun Analiz Raporu:** [`docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md`](docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md) oluşturuldu.
+      - **Tespit Edilen 5 Teknik Kök Neden:**
+        1. *Dinamik Chunk Akışında Çapraz (Diagonal) Komşuların Kirletilmemesi:* `CreateAndRegisterDynamicContinentChunk` yalnızca 4 kardinal komşuyu `_dirtyChunks`'a ekliyor; 4 çapraz komşu (`SW, SE, NW, NE`) eklenmediği için 4'lü köşe dual hücreleri güncellenmiyor.
+        2. *Sınır Kuadının `dualValid` Yüzünden Düşmesi (Quad Dropping):* `EmitDualQuadAsFacetedTriangles` içinde 4 dual hücreden biri bile geçersizse tüm sınır kuadı sessizce iptal ediliyor.
+        3. *Yüklenmemiş Komşularda Tek-Sahipli Kenar Asimetrisi:* `clampUnloadedContinentEdges = false` iken komşu yüklenmeden önce örülen sınır kenarlarının komşu geldiğinde uyumsuz kalması.
+        4. *Kare Başına Örme Sınırı (Frame Budget Throttling):* Tek karede maksimum 4 chunk / $3.8\,\text{ms}$ sınırı nedeniyle komşu chunkların $1-3$ kare sonra örülmesi sırasında oluşan geçici çatlaklar.
+        5. *Blok Kazma/Koyma Sırasında Çapraz Komşu Bildirimi Eksikliği:* `NotifyWorldVoxelEdited` fonksiyonunda çapraz komşu maskesinin bulunmaması.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
@@ -258,12 +285,21 @@
 
 ---
 
-## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Bilgisayar İçin)
+## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
-1. **Adım 1 — Durumu Kontrol Et:**
-   ```powershell
-   git status -s
-   git log -5 --oneline --date=iso
-   ```
-2. **Adım 2 — Kullanıcı Play Mode Geri Bildirimini Al veya Kalite Kapısı ile Faz 3'e Geç:**
-   - Kullanıcıya Play Mode'da son eklenen **`[G]` Dojo Stilleri**, **`[F8]` 4 Kılıç**, **`RMB/LMB` Guard-Konumlu Tam-Yay Kesik & Cleave**, **Fiziksel Balta/Kazma + Yere Düşen 3B Itemlar**, **Maddeye Özel Moloz**, **`[F7]` Rastgele Harita** ve **`[F9]` Oyuncu Uzuv Kopması** özelliklerini test edip etmediğini sor; istediği ince ayarlar varsa uygula, yoksa `powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 2` çalıştırıp **Faz 3**'e geç.
+1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
+   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` ve [`docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md`](docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md) dosyasını oku.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in `#034` olduğunu doğrula.
+
+2. **Adım 2 — Kök Neden Çözümünü Kod Tabanına Uygula:**
+   - **`Stage1InteractivePlayController.cs`:**
+     - `CreateAndRegisterDynamicContinentChunk` içerisinde yeni bir chunk eklendiğinde sadece 4 kardinal değil, etraftaki 8 komşunun tamamını ($dx \in [-1, 1], dz \in [-1, 1]$) `_dirtyChunks` listesine ekle.
+     - `MarkSubChunkDirtyInternal` fonksiyonunda köşe kenarlarında ($lx \le 1$ veya $lx \ge 14$, $lz \le 1$ veya $lz \ge 14$) çapraz komşulara da sub-chunk dirty mask ilet.
+   - **`HybridSurfaceNetsAndShapeMesher.cs`:**
+     - Sınır kuadlarında `dualValid` kontrolü başarısız olsa dahi su geçirmez (watertight) sınır fallback'i sağlayarak yerin içinin görünmesini %100 engelle.
+   - **`Stage1MatterCrystalAndMiningController.cs`:**
+     - Kazma ve koyma işlemlerinde sınırda 8 komşu dirtying kuralını tamamla.
+
+3. **Adım 3 — Test ve Doğrulama:**
+   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır.
+   - Unity Editor üzerinde Play Mode'da karakteri $X = -160\,\text{m}, Z = -64\,\text{m}$ sınırlarına götürerek çatlakların %100 kapandığını doğrula.

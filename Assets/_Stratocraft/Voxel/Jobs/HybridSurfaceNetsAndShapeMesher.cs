@@ -125,7 +125,8 @@ namespace Stratocraft.Voxel.Jobs
             worldChunks.TryGetValue((chunkX - 1, chunkZ + 1), out uint[]? chunkNW);
             worldChunks.TryGetValue((chunkX + 1, chunkZ + 1), out uint[]? chunkNE);
 
-            bool clampUnloadedContinentEdges = chunkMaxCapacityY > 16 && worldChunks.Count > 4;
+            // Kita dis sinirlarinda (chunkW/E/S/N == null) 92m derinligindeki 5 katmanli 3B yeralti kesit duvarini (Y=4m..96m) tam or!
+            bool clampUnloadedContinentEdges = false;
 
             // 1. Komsu Apron Doldurma + Y-Dilimi (0x00 / 0xFF / Shape) Analizi
             for (int py = startPy; py <= endPy; py++)

@@ -75,7 +75,9 @@ namespace Stratocraft.EditorTools
                 if (n.StartsWith("VoxelChunk_", StringComparison.Ordinal))
                 {
                     totalVoxelChunkObjects++;
-                    if (filters[i].sharedMesh != null && filters[i].sharedMesh.vertexCount >= 3)
+                    if (filters[i].sharedMesh != null &&
+                        filters[i].sharedMesh.vertexCount >= 3 &&
+                        filters[i].sharedMesh.name.StartsWith("Mesh_SeamlessIslandChunk_V5Underground_", StringComparison.Ordinal))
                     {
                         validVoxelChunkMeshes++;
                     }
@@ -170,7 +172,7 @@ namespace Stratocraft.EditorTools
                 var sTris = solidTriLists[i];
                 if (sTris == null) continue;
                 var (cx, cz, mf) = chunkEntries[i];
-                Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_{cx}_{cz}");
+                Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_V5Underground_{cx}_{cz}");
                 m.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
                 mf.sharedMesh = m;
                 if (mf.TryGetComponent<MeshCollider>(out var mc) && mc != null && mc.enabled && sTris.Count >= 1)
@@ -303,8 +305,10 @@ namespace Stratocraft.EditorTools
                 var sTris = solidTriLists[idx];
                 var fTris = fluidTriLists[idx];
 
-                string meshName = $"Mesh_SeamlessIslandChunk_{cx}_{cz}";
                 bool isCoreAssetChunk = cx >= -2 && cx <= 1 && cz >= -2 && cz <= 1;
+                string meshName = isCoreAssetChunk
+                    ? $"Mesh_SeamlessIslandChunk_{cx}_{cz}"
+                    : $"Mesh_SeamlessIslandChunk_V5Underground_{cx}_{cz}";
                 Mesh chunkMesh = isCoreAssetChunk
                     ? SaveZeroGcMeshAsset(meshName, sTris)
                     : HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, meshName);
@@ -1017,7 +1021,7 @@ namespace Stratocraft.EditorTools
             mainCam.transform.rotation = camRot;
             mainCam.fieldOfView = 54f;
             mainCam.farClipPlane = 4500f;
-            mainCam.clearFlags = CameraClearFlags.SolidColor;
+            mainCam.clearFlags = CameraClearFlags.Skybox;
             mainCam.backgroundColor = new Color(0.36f, 0.52f, 0.72f, 1.0f);
 
             if (!mainCam.TryGetComponent<UniversalAdditionalCameraData>(out var camData))
