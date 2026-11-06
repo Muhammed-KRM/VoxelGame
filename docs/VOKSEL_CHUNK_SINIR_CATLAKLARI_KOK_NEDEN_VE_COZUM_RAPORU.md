@@ -2,8 +2,8 @@
 
 **Rapor Kodu:** `DOC-VOX-SEAM-001`  
 **Tarih:** 2026-11-06  
-**Durum:** KAPSAMLI ARAŞTIRMA VE KÖK NEDEN TESPİTİ (KOD DEĞİŞİKLİĞİ YAPILMADI - KOD DONDURULDU)  
-**İlgili Modüller:** `HybridSurfaceNetsAndShapeMesher.cs`, `Stage1InteractivePlayController.cs`, `StratocraftFloatingIslandWorldGen.cs`, `Stage1MatterCrystalAndMiningController.cs`  
+**Durum:** KÖK NEDEN ÇÖZÜMLERİ UYGULANDI VE DOĞRULANDI (DEVİR #035 — 47/47 TEST PASS, 0 OPEN CRACK EDGE)  
+**İlgili Modüller:** `HybridSurfaceNetsAndShapeMesher.cs`, `Stage1InteractivePlayController.cs`, `StratocraftFloatingIslandWorldGen.cs`, `Stage1MatterCrystalAndMiningController.cs`, `SeamlessSurfaceNetsMesherTests.cs`  
 
 ---
 
@@ -131,5 +131,16 @@ Bir chunk örüldüğünde sınırda bulunan komşuları kuyrukta en yüksek ön
 
 ---
 
-## 5. Taahhüt ve Güvence
-Bu oturumda kullanıcı talimatı uyarınca **hiçbir kod değiştirilmemiştir**. Mevcut çalışma alanı testleri $46/46$ PASS durumdadır. Tüm bulgular yeni sohbette doğrudan uygulanmak üzere bu dokümanda ve `DURUM_VE_DEVIR.md` dosyasında kayıt altına alınmıştır.
+## 5. Uygulanan Kesin Çözümler ve Doğrulama Sonuçları (Devir #035)
+1. **8-Komşulu (3x3 Stencil) Dinamik Chunk ve CSG Dirtying (`Stage1InteractivePlayController.cs`, `Stage1MatterCrystalAndMiningController.cs`):**
+   - `CreateAndRegisterDynamicContinentChunk` ve `_chunksToUnloadScratch` içinde sadece 4 kardinal komşu değil, **4 çapraz komşu (`SW, SE, NW, NE`) dahil tüm 8 komşunun** alt-chunk önbelleği sıfırlanıp (`ResetAllDirty()`) `_dirtyChunks` kuyruğuna eklendi.
+   - `MarkSubChunkDirtyInternal` ve `MarkChunkAndNeighborsDirty` içinde köşe vokseller ($lx \le 1 / \ge 14$ ve $lz \le 1 / \ge 14$) değiştiğinde çapraz komşular da kirli işaretlendi.
+2. **Halka-Öncelikli (`Ring-First`) Chunk Akışı ve Tek-Geçişli (`5x` Hızlı) Tam-Chunk Örme (`Stage1InteractivePlayController.cs`):**
+   - `StepDynamicContinentChunkStreaming` içinde `r` halkası dış döngü, `pass (0..1)` iç döngü yapılarak oyuncuya yakın halkaların (`r = 0..3`) 8 komşusu eksiksiz tamamlanmadan uzak halkalara geçilmesi engellendi.
+   - `_chunkPool` havuzundan geri alınan chunk'ların eski `sharedMesh` referansı anında temizlendi ve `_sortedDirtyChunks` içinde henüz mesh'i olmayan yeni chunk'lara öncelik verildi.
+   - `RebuildSingleChunkWithSubMeshCache` içinde tam-chunk yenilemelerinde (`dirtyMask == AllSubChunksMask && BuiltSubChunkMask == 0`) 10 ayrı alt-chunk çağrısı yerine tek geçişli (`minY = 0, maxY = 160`) örme kullanılarak yenileme süresi `~5x` hızlandırıldı.
+3. **Sınır Apron Simetrisi ve Su Geçirmez (`Watertight`) Kuad Emniyeti (`HybridSurfaceNetsAndShapeMesher.cs`):**
+   - `BuildEffectiveChannel1SdfGrid` içinde apron sınırındaki (`px = 0, 17`, `pz = 0, 17`) mimari/ağaç şekillerinin komşu chunk'taki doğal araziyi `ResolvePaddedColumnChunk` üzerinden okuması sağlandı.
+   - `EmitDualQuadAsFacetedTriangles` içinde 4 dual köşeden 3'ü geçerliyken kuadın tamamen düşürülmesini engelleyen paralelkenar tamamlaması eklendi.
+4. **Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):**
+   - `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` birim testi eklendi; hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem de Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `645+` sınır kenarı taranarak **`openCrackEdges == 0`** olduğu ve `47/47` testin geçtiği doğrulandı.

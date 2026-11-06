@@ -6,7 +6,8 @@
     "Stratocraft.Voxel",
     "Unity.Collections",
     "Unity.Entities",
-    "Unity.Mathematics"
+    "Unity.Mathematics",
+    "Unity.NetCode"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

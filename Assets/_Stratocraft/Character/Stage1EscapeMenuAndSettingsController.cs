@@ -66,7 +66,7 @@ namespace Stratocraft.Character
             MouseSensitivity = Mathf.Clamp(PlayerPrefs.GetFloat("SC_MouseSens", 1.00f), 0.15f, 3.00f);
             InvertMouseY = PlayerPrefs.GetInt("SC_InvertY", 0) != 0;
             CameraFieldOfView = Mathf.Clamp(PlayerPrefs.GetFloat("SC_CamFov", 75.0f), 60.0f, 105.0f);
-            RenderDistanceChunks = Mathf.Clamp(PlayerPrefs.GetInt("SC_RenderDist", 10), 6, 24);
+            RenderDistanceChunks = Mathf.Clamp(PlayerPrefs.GetInt("SC_RenderDist_v2", 10), 6, 14);
             MasterVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_MasterVol", 0.85f));
             CombatSfxVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_CombatVol", 0.90f));
             AmbientVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_AmbientVol", 0.75f));
@@ -109,7 +109,7 @@ namespace Stratocraft.Character
             PlayerPrefs.SetFloat("SC_MouseSens", MouseSensitivity);
             PlayerPrefs.SetInt("SC_InvertY", InvertMouseY ? 1 : 0);
             PlayerPrefs.SetFloat("SC_CamFov", CameraFieldOfView);
-            PlayerPrefs.SetInt("SC_RenderDist", RenderDistanceChunks);
+            PlayerPrefs.SetInt("SC_RenderDist_v2", RenderDistanceChunks);
             PlayerPrefs.SetFloat("SC_MasterVol", MasterVolume);
             PlayerPrefs.SetFloat("SC_CombatVol", CombatSfxVolume);
             PlayerPrefs.SetFloat("SC_AmbientVol", AmbientVolume);
@@ -608,9 +608,9 @@ namespace Stratocraft.Character
 
             Stage1GameSettings.RenderDistanceChunks = Mathf.RoundToInt(DrawSliderRow(
                 area.x, ref cy, area.width,
-                "Görüş Mesafesi (Render Distance):",
-                Stage1GameSettings.RenderDistanceChunks, 6f, 24f,
-                $"{Stage1GameSettings.RenderDistanceChunks} Chunk ({Stage1GameSettings.RenderDistanceChunks * 16}m)"));
+                "3B Blok Görüş Mesafesi (LOD Ufuk 768m):",
+                Stage1GameSettings.RenderDistanceChunks, 6f, 14f,
+                $"{Stage1GameSettings.RenderDistanceChunks} Chunk ({Stage1GameSettings.RenderDistanceChunks * 16}m 3B + 768m Ufuk)"));
 
             bool nextInvert = GUI.Toggle(
                 new Rect(area.x, cy, 380f, 26f),

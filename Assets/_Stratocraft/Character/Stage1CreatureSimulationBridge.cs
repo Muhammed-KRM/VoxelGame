@@ -2108,6 +2108,8 @@ namespace Stratocraft.Character
             return SampleVoxelOrTerrainHeight(worldX, worldZ, currentY, worldChunks);
         }
 
+        private static int s_voxelTerrainMask = -1;
+
         private static float SampleVoxelOrTerrainHeight(
             float worldX, float worldZ, float currentY, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
@@ -2136,12 +2138,16 @@ namespace Stratocraft.Character
                 }
             }
 
-            int terrainMask = LayerMask.GetMask("VoxelTerrain");
-            if (terrainMask != 0 && voxelY > -20f)
+            if (s_voxelTerrainMask < 0)
+            {
+                s_voxelTerrainMask = LayerMask.GetMask("VoxelTerrain");
+            }
+
+            if (s_voxelTerrainMask != 0 && voxelY > -20f)
             {
                 float rayOriginY = voxelY + 1.15f;
                 if (UnityEngine.Physics.Raycast(new Vector3(worldX, rayOriginY, worldZ), Vector3.down,
-                    out RaycastHit hit, 2.5f, terrainMask, QueryTriggerInteraction.Ignore))
+                    out RaycastHit hit, 2.5f, s_voxelTerrainMask, QueryTriggerInteraction.Ignore))
                 {
                     if (Mathf.Abs(hit.point.y - voxelY) <= 0.85f)
                     {

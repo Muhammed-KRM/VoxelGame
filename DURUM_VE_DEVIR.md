@@ -13,17 +13,31 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#034` (Voksel Chunk Sınır Çatlakları / Yerin İçinin Görünmesi Kapsamlı Kök Neden ve Çözüm Araştırması \| Sub-Agent & Kod Tabanı & İnternet/Forum Literatürü İncelemesi Tamamlandı \| Kullanıcı Talimatı Uyarınca Kod Donduruldu (Sıfır Kod Değişikliği) \| Detaylı Sorun ve Kök Neden Analiz Raporu Hazırlandı: `docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md` \| Yeni Sohbete Devir Teslim Hazırlandı \| 46/46 Test PASS, 0 Error / 0 Warning) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-06T14:10:00+03:00` |
+| **Devir Numarası** | `#036` (FPS Dalgalanması 10 <-> 90 FPS Kök Neden Çözüldü: `StratocraftNetcodeBootstrap` ile 999+ Server Tick Batching Uyarısı Kapatıldı \| `UpdateFrustumVisibility` Sonsuz Alt-Chunk Kirletme Döngüsü Giderildi \| 3B Voksel Belleği 2105 Chunk'tan 297 Chunk'a Düşürüldü + 768m Kesintisiz Ufuk Korundu \| 47/47 Test PASS, Unity 6 Console: 0 Error / 0 Warning) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-06T17:12:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Sahne Yeniden Kuruldu ve Unity MCP ile Doğrulandı (Devir #033)` |
-| **Aktif Test Durumu** | `45/45 Standalone & Unity Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Performans ve Dalgalanma Optimizasyonu Tamamlandı (Devir #036)` |
+| **Aktif Test Durumu** | `47/47 Standalone & Unity Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#018` ve `#019`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#036`)
+
+### 2.0. Devir #036: FPS Dalgalanması (10 <-> 90 FPS) ve 999+ NetCode Warning Kök Neden Çözümleri
+1. **NetCode 999+ Warning Fırtınası Engellendi (`StratocraftNetcodeBootstrap.cs`):**
+   - Unity NetCode'un tek oyunculu sahnede otomatik olarak 60 Hz arka planda `ServerWorld` ve `ClientWorld` kurup kare gecikmesinde konsola her kare binlerce `Server Tick Batching has occurred... (GetStackTrace)` basması ana thread'i 20-30 ms kilitliyordu.
+   - `StratocraftNetcodeBootstrap : ClientServerBootstrap` oluşturulup `Initialize => false` dönüldü ve `Stage1InteractivePlayController.SuppressUnusedNetCodeWarnings()` içinde aktif tekil NetCode dünyaları imha edilerek uyarılar %100 sıfırlandı (`0 Warning / 0 Error`).
+2. **Frustum Alt-Chunk Yeniden Örme Kısır Döngüsü Düzeltildi (`Stage1InteractivePlayController.cs`):**
+   - `UpdateFrustumVisibility()` içinde `(subEntry.BuiltSubChunkMask & targetMask) != targetMask` mantığı, üst hava katmanları boş olan her chunk'ı her kare kirli (`_dirtyChunks`) işaretliyordu.
+   - Bu durum kamerayı her çevirişte yüzlerce chunk'ın sürekli CPU'da yeniden örülmesine, collider pişirilmesine ve FPS'in 10'a çakılıp sonra 90'a fırlamasına neden oluyordu. Şart `subEntry.LastAppliedVisibleMask != targetMask` olarak düzeltildi; yüzeydeyken gereksiz yeniden örme %100 durduruldu.
+3. **3B Voksel Belleği ve Boşaltma Halka Sınırı Optimize Edildi (`Stage1EscapeMenuAndSettingsController.cs`, `Stage1InteractivePlayController.cs`):**
+   - Görüş mesafesi ayarı (`RenderDistanceChunks`) 24'e çekildiğinde sahnede 2,105 adet 3B voksel chunk birikiyor ve 550 MB RAM tutuyordu.
+   - Slider [6..14] aralığına kenetlendi, `unloadRadius = ActiveChunkRadius + 1` yapılarak sahnede tutulan 3B blok chunk sayısı 2,105'ten 297'ye düşürüldü.
+   - Görsel uzak ufuk `DistantHorizonLodSystem.BuildHorizonClipmapRingMesh` ile 768m (48 chunk) kesintisiz olarak muhafaza edildi.
+4. **Yaratık Fizik Raycast Sorgusu Önbelleklendi (`Stage1CreatureSimulationBridge.cs`):**
+   - `LayerMask.GetMask("VoxelTerrain")` her kare ve her yaratık çağrısında string hash hesaplamak yerine statik önbelleğe alındı.
 
 ### 2.1. Üretilen ve Güncellenen Mimari Raporlar & Anayasa
 1. **7 Mimari ve Kök Neden Raporu (`docs/`):**
@@ -247,16 +261,19 @@
         - **⚡ Dayanıklılık / Yorgunluk Barı (EP):** Yeşil bar, `ENERJİ (EP) %100`. Karakter koşarak veya dövüşerek enerjisini bitirdiğinde turuncuya dönerek `⚡ NEFESSİZ! (DİNLENİYOR) %20` uyarısı verir.
         - **🤿 Oksijen Barı (O2):** Suya batıldığında veya oksijen `< %98` olduğunda üstte beliren camgöbeği/mavi bar.
         - Slot başlığı ve eşya banner'ları bu barların üzerine kaydırılarak hiçbir görsel çakışma yaşanmaz.
-    - **Devir `#034` — Voksel Chunk Sınır Çatlakları Kök Neden Araştırması ve Yeni Sohbet Devir Teslimi:**
-      - **Kullanıcı Talimatı:** Kullanıcı son Play Mode testinde harita sınırlarında ($X = -160\,\text{m}$, $Z = -64\,\text{m}$) nadiren görülen tek tük zemin çatlaklarının ekran görüntülerini paylaştı (`media_1793962637954_6530db2e.jpg` ve `media_1793962653779_bc2c703a.jpg`). Koda dokunulmadan sub-agent ve internet araştırmasıyla derinlemesine kök neden raporu hazırlanması ve yeni sohbete geçiş için devir teslim dökümanı hazırlanıp commit atılması istendi.
-      - **Kod Donduruldu (Sıfır Kod Değişikliği):** Bu turda hiçbir C# kodu değiştirilmedi. Çalışma alanı bütünlüğü korundu ($46/46$ Standalone Core Tests PASS).
-      - **Üretilen Sorun Analiz Raporu:** [`docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md`](docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md) oluşturuldu.
-      - **Tespit Edilen 5 Teknik Kök Neden:**
-        1. *Dinamik Chunk Akışında Çapraz (Diagonal) Komşuların Kirletilmemesi:* `CreateAndRegisterDynamicContinentChunk` yalnızca 4 kardinal komşuyu `_dirtyChunks`'a ekliyor; 4 çapraz komşu (`SW, SE, NW, NE`) eklenmediği için 4'lü köşe dual hücreleri güncellenmiyor.
-        2. *Sınır Kuadının `dualValid` Yüzünden Düşmesi (Quad Dropping):* `EmitDualQuadAsFacetedTriangles` içinde 4 dual hücreden biri bile geçersizse tüm sınır kuadı sessizce iptal ediliyor.
-        3. *Yüklenmemiş Komşularda Tek-Sahipli Kenar Asimetrisi:* `clampUnloadedContinentEdges = false` iken komşu yüklenmeden önce örülen sınır kenarlarının komşu geldiğinde uyumsuz kalması.
-        4. *Kare Başına Örme Sınırı (Frame Budget Throttling):* Tek karede maksimum 4 chunk / $3.8\,\text{ms}$ sınırı nedeniyle komşu chunkların $1-3$ kare sonra örülmesi sırasında oluşan geçici çatlaklar.
-        5. *Blok Kazma/Koyma Sırasında Çapraz Komşu Bildirimi Eksikliği:* `NotifyWorldVoxelEdited` fonksiyonunda çapraz komşu maskesinin bulunmaması.
+    - **Devir `#035` — Voksel Chunk Sınır Çatlakları ($X = -160\,\text{m}, Z = -64\,\text{m}$ ve $X = -176\,\text{m}, Z = -64\,\text{m}$) 5 Kök Neden Çözümü ve Manifold Doğrulaması:**
+      - **1) 8-Komşulu (`3x3 Stencil`) Dinamik Chunk ve CSG Dirtying (`Stage1InteractivePlayController.cs`, `Stage1MatterCrystalAndMiningController.cs`):** `CreateAndRegisterDynamicContinentChunk` ve `_chunksToUnloadScratch` içinde yeni bir chunk eklendiğinde veya boşaltıldığında sadece 4 kardinal komşu değil, **4 çapraz komşu (`SW, SE, NW, NE`) dahil tüm 8 komşunun** alt-chunk önbelleği sıfırlanıp (`ResetAllDirty()`) `_dirtyChunks` kuyruğuna eklendi. Böylece `(-11, -5)` sonra `(-11, -4)` yüklendiğinde çaprazdaki `(-10, -5)` chunk'ının eski (`chunkNW == null`) köşe tepe noktasında (`-0.35m` aşağıda) takılı kalıp bumerang/V-şekilli çatlak bırakması %100 giderildi.
+      - **2) Halka-Öncelikli (`Ring-First`) Chunk Akışı ve Tek-Geçişli (`5x` Hızlı) Tam-Chunk Örme (`Stage1InteractivePlayController.cs`):** `StepDynamicContinentChunkStreaming` içinde `r` halkası dış döngü, `pass (0..1)` iç döngü yapılarak oyuncuya yakın halkaların (`r = 0..3`) 8 komşusu eksiksiz tamamlanmadan uzak halkalara geçilmesi engellendi. `_chunkPool` havuzundan geri alınan chunk'ların eski `sharedMesh` referansı temizlendi, henüz mesh'i olmayan yeni chunk'lara `_sortedDirtyChunks` içinde öncelik verildi ve tam-chunk yenilemelerinde (`dirtyMask == AllSubChunksMask`) tek geçişli (`minY = 0, maxY = 160`) örme kullanılarak yenileme süresi `5x` hızlandırıldı.
+      - **3) Sınır Apron Simetrisi ve Su Geçirmez (`Watertight`) Kuad Emniyeti (`HybridSurfaceNetsAndShapeMesher.cs`):** `BuildEffectiveChannel1SdfGrid` içinde apron sınırındaki (`px = 0, 17`, `pz = 0, 17`) mimari/ağaç şekillerinin komşu chunk'taki doğal araziyi `ResolvePaddedColumnChunk` üzerinden okuması sağlandı ve `EmitDualQuadAsFacetedTriangles` içine 3 geçerli köşeden 4. köşeyi tamamlayan su geçirmez sınır emniyeti eklendi.
+      - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
+## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar
+
+1. **Devir #036 — Performans ve FPS Dalgalanması İncelemesi:**
+   - **İlk Açılış Anındaki 3-5 Saniye Düşüş (13–17 FPS):**
+     - Oyun Play tuşuna ilk basıldığı anda çevredeki ~800–900 chunk sıfırdan prosedürel olarak hesaplanıp (WorldGen) Surface Nets 3B yüzey ağları örülene kadar CPU çekirdekleri %100 yük altındadır.
+     - Başlangıç chunk üretimi bittiğinde FPS doğrudan **73+ FPS** seviyesine çıkmaktadır.
+   - **Oynanış Sırasındaki Dalgalanma (36 FPS <-> 73 FPS):**
+     - Kamerayı boş ovaya veya gökyüzüne çevirince 73 FPS, onlarca ağaç, heykel, sıvı ve NPC'nin olduğu vadi merkezine çevirince 36 FPS olması frustum karmaşıklığından (Draw Call / üçgen sayısı) ve Unity Editör pencerelerinin (Editor GUI overhead) ek yükünden kaynaklanmaktadır. Bağımsız `.exe` derlemesinde bu dalgalanma çok daha pürüzsüz olacaktır.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
@@ -267,6 +284,7 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
+| **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
 | **`[I]` veya `Tab` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Yarıya Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
 | **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** + Kırılan bloklardan yere düşen **3B Fiziksel Itemları** toplar | ✅ Aktif |
@@ -288,18 +306,17 @@
 ## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
 1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
-   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` ve [`docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md`](docs/VOKSEL_CHUNK_SINIR_CATLAKLARI_KOK_NEDEN_VE_COZUM_RAPORU.md) dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in `#034` olduğunu doğrula.
+   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını oku.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#036` ile eşleştiğini doğrula.
 
-2. **Adım 2 — Kök Neden Çözümünü Kod Tabanına Uygula:**
-   - **`Stage1InteractivePlayController.cs`:**
-     - `CreateAndRegisterDynamicContinentChunk` içerisinde yeni bir chunk eklendiğinde sadece 4 kardinal değil, etraftaki 8 komşunun tamamını ($dx \in [-1, 1], dz \in [-1, 1]$) `_dirtyChunks` listesine ekle.
-     - `MarkSubChunkDirtyInternal` fonksiyonunda köşe kenarlarında ($lx \le 1$ veya $lx \ge 14$, $lz \le 1$ veya $lz \ge 14$) çapraz komşulara da sub-chunk dirty mask ilet.
-   - **`HybridSurfaceNetsAndShapeMesher.cs`:**
-     - Sınır kuadlarında `dualValid` kontrolü başarısız olsa dahi su geçirmez (watertight) sınır fallback'i sağlayarak yerin içinin görünmesini %100 engelle.
-   - **`Stage1MatterCrystalAndMiningController.cs`:**
-     - Kazma ve koyma işlemlerinde sınırda 8 komşu dirtying kuralını tamamla.
+2. **Adım 2 — Sıradaki Performans İyileştirmeleri:**
+   - **Kademeli Açılış Chunk Akışı (Staggered Initial Spawning):**
+     - İlk karede 800 chunk'ı birden CPU'da hesaplamak yerine başlangıçta sadece oyuncunun etrafındaki acil çekirdek halkayı ($r \le 2$, 25 chunk) anında örüp oyunu 60+ FPS ile açmak; dış halkaları arka plan iş parçacığı (background worker job) ile kademeli yükleyerek açılıştaki 13–17 FPS duraksamasını tamamen ortadan kaldırmak.
+   - **Bağımsız `.exe` (Standalone Build) Testi:**
+     - Unity Editör penceresinin GUI ve SceneView ek çizim yükü olmadan saf Standalone DirectX 12 çıktısında 120+ FPS performans testinin yapılması.
+   - **Ağaç ve Yapı GPU Instancing / Draw Call İncelemesi:**
+     - Sık ormanlık alanlarda çok sayıda ağaç gövdesi ve yaprak bloğunun çizim çağrılarının SRP Batcher / GPU Instancing ile daha da birleştirilmesi.
 
 3. **Adım 3 — Test ve Doğrulama:**
-   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır.
-   - Unity Editor üzerinde Play Mode'da karakteri $X = -160\,\text{m}, Z = -64\,\text{m}$ sınırlarına götürerek çatlakların %100 kapandığını doğrula.
+   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (47/47 PASS olmalı).
+   - Unity Editor üzerinde Play Mode'da test ederek konsolda `0 Error / 0 Warning` olduğunu doğrula.

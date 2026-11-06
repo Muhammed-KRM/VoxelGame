@@ -166,7 +166,8 @@ namespace Stratocraft.Voxel.Jobs
             // 1B. Face-Solidarity Ic SDF Sabitleme (Mimari Duvar <-> Dogal SDF Arazi V-Hendegi Kusursuz Kapatma)
             BuildEffectiveChannel1SdfGrid(
                 padded, channel1Sdf, sliceHasSolid, sliceAllSolid, sliceHasShape,
-                padX, padY, padZ, chunkX, chunkZ, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools, startPy);
+                padX, padY, padZ, chunkX, chunkZ, chunkWorldOffsetX, chunkWorldOffsetZ, worldMicroPools,
+                centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE, clampUnloadedContinentEdges, startPy);
 
             // 2. KANAL 1 DUAL HUCRE MERKEZLERI: 17 x (maxY + 1) x 17
             const int dualSizeX = 17, dualSizeZ = 17;
@@ -440,12 +441,17 @@ namespace Stratocraft.Voxel.Jobs
             uint[] paddedRaw, uint[] outChannel1Sdf, bool[] sliceHasSolid, bool[] sliceAllSolid, bool[] sliceHasShape,
             int padX, int padY, int padZ, int centerCx, int centerCz, int chunkWorldOffsetX, int chunkWorldOffsetZ,
             IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools,
+            uint[] centerChunk,
+            uint[]? chunkW, uint[]? chunkE, uint[]? chunkS, uint[]? chunkN,
+            uint[]? chunkSW, uint[]? chunkSE, uint[]? chunkNW, uint[]? chunkNE,
+            bool clampUnloadedContinentEdges,
             int startPy = 1)
         {
             ReadOnlySpan<int> ndx = stackalloc int[6] { 1, -1, 0, 0, 0, 0 };
             ReadOnlySpan<int> ndy = stackalloc int[6] { 0, 0, 1, -1, 0, 0 };
             ReadOnlySpan<int> ndz = stackalloc int[6] { 0, 0, 0, 0, 1, -1 };
             int sliceStride = padX * padZ;
+            int chunkMaxCapacityY = Math.Max(2, centerChunk.Length >> 8);
 
             for (int py = startPy; py < padY - 1; py++)
             {
@@ -477,10 +483,24 @@ namespace Stratocraft.Voxel.Jobs
                         for (int dir = 0; dir < 6; dir++)
                         {
                             int qx = px + ndx[dir], qy = py + ndy[dir], qz = pz + ndz[dir];
-                            if ((uint)qx >= (uint)padX || (uint)qy >= (uint)padY || (uint)qz >= (uint)padZ) continue;
+                            if ((uint)qy >= (uint)padY) continue;
                             if (((ownFaces & (1 << dir)) == 0) && dir != 3) continue;
 
-                            uint nRaw = paddedRaw[(qy * padZ + qz) * padX + qx];
+                            uint nRaw;
+                            if ((uint)qx < (uint)padX && (uint)qz < (uint)padZ)
+                            {
+                                nRaw = paddedRaw[(qy * padZ + qz) * padX + qx];
+                            }
+                            else
+                            {
+                                int wy = qy - 1;
+                                if ((uint)wy >= (uint)chunkMaxCapacityY) continue;
+                                uint[]? srcChunk = ResolvePaddedColumnChunk(
+                                    qx - 1, qz - 1, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
+                                    clampUnloadedContinentEdges, out int cLx, out int cLz);
+                                nRaw = srcChunk != null ? srcChunk[(wy << 8) | (cLz << 4) | cLx] : 0u;
+                            }
+
                             byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
                             if (nMat == 0 || VoxelBitUtility.GetShapeId(nRaw) != 0) continue;
 
@@ -561,7 +581,44 @@ namespace Stratocraft.Voxel.Jobs
             Vector3[] dualVertices, byte[] dualMaterials, byte[] dualTemps, byte[] dualAo, bool[] dualValid,
             int i0, int i1, int i2, int i3, bool flipWinding, uint seedHash, List<FacetedVoxelTriangle> outTriangles)
         {
-            if (!dualValid[i0] || !dualValid[i1] || !dualValid[i2] || !dualValid[i3]) return;
+            bool val0 = dualValid[i0], val1 = dualValid[i1], val2 = dualValid[i2], val3 = dualValid[i3];
+            if (!val0 || !val1 || !val2 || !val3)
+            {
+                // Su Gecirmez (Watertight) Sinir Kuad Emniyeti:
+                // Eger 4 dual koseden 3'u gecerliyse kuadi tamamen dusurup yerin altini gostermek yerine
+                // eksik 4. koseyi diger 3 koseden paralelkenar/orta-nokta tamamlamasiyla kapat!
+                int validCount = (val0 ? 1 : 0) + (val1 ? 1 : 0) + (val2 ? 1 : 0) + (val3 ? 1 : 0);
+                if (validCount < 3) return;
+
+                if (!val0)
+                {
+                    dualVertices[i0] = dualVertices[i1] + dualVertices[i3] - dualVertices[i2];
+                    dualMaterials[i0] = SelectDominantMaterial(dualMaterials[i1], dualMaterials[i2], dualMaterials[i3]);
+                    dualTemps[i0] = ResolveMaterialDefaultTemperature(dualMaterials[i0]);
+                    dualAo[i0] = dualAo[i1];
+                }
+                else if (!val1)
+                {
+                    dualVertices[i1] = dualVertices[i0] + dualVertices[i2] - dualVertices[i3];
+                    dualMaterials[i1] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);
+                    dualTemps[i1] = ResolveMaterialDefaultTemperature(dualMaterials[i1]);
+                    dualAo[i1] = dualAo[i0];
+                }
+                else if (!val2)
+                {
+                    dualVertices[i2] = dualVertices[i1] + dualVertices[i3] - dualVertices[i0];
+                    dualMaterials[i2] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i3]);
+                    dualTemps[i2] = ResolveMaterialDefaultTemperature(dualMaterials[i2]);
+                    dualAo[i2] = dualAo[i1];
+                }
+                else
+                {
+                    dualVertices[i3] = dualVertices[i0] + dualVertices[i2] - dualVertices[i1];
+                    dualMaterials[i3] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i2]);
+                    dualTemps[i3] = ResolveMaterialDefaultTemperature(dualMaterials[i3]);
+                    dualAo[i3] = dualAo[i0];
+                }
+            }
             Vector3 v0 = dualVertices[i0], v1 = dualVertices[i1], v2 = dualVertices[i2], v3 = dualVertices[i3];
             byte matA = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i2]);
             byte matB = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);

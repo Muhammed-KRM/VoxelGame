@@ -253,5 +253,155 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(checkedSeam, Is.GreaterThan(50), "Sinirda incelenen kose bulunamadi.");
             Assert.That(missingSeam, Is.EqualTo(0), $"Sinirda {missingSeam}/{checkedSeam} eslesmeyen kose tespit edildi!");
         }
+
+        [Test]
+        public void DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes()
+        {
+            // Kullanicinin ekran goruntulerindeki (X = -160m, Z = -64m, Y = 95.7m -> cx = -11..-10, cz = -5..-4)
+            // 4-chunk kose kesisimi ve 8-komsu apronu testi:
+            var world = new Dictionary<(int cx, int cz), uint[]>();
+            for (int cz = -6; cz <= -3; cz++)
+            {
+                for (int cx = -12; cx <= -8; cx++)
+                {
+                    var (vox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                    world[(cx, cz)] = vox;
+                }
+            }
+
+            var trisNW = new List<FacetedVoxelTriangle>(8192); // (-11, -4)
+            var trisNE = new List<FacetedVoxelTriangle>(8192); // (-10, -4)
+            var trisSW = new List<FacetedVoxelTriangle>(8192); // (-11, -5)
+            var trisSE = new List<FacetedVoxelTriangle>(8192); // (-10, -5) - SubChunk parcali orme ile!
+
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-11, -4, 160, world, trisNW, minY: 0);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-10, -4, 160, world, trisNE, minY: 0);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-11, -5, 160, world, trisSW, minY: 0);
+
+            var subScratch = new List<FacetedVoxelTriangle>(1024);
+            for (int subY = 0; subY < 10; subY++)
+            {
+                subScratch.Clear();
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    -10, -5, (subY + 1) * 16, world, subScratch, minY: subY * 16);
+                trisSE.AddRange(subScratch);
+            }
+
+            var trisSEFull = new List<FacetedVoxelTriangle>(8192);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-10, -5, 160, world, trisSEFull, minY: 0);
+            Assert.That(trisSE.Count, Is.EqualTo(trisSEFull.Count), "(-10, -5) Sub-Chunk parcali orme tam chunk ormesiyle birebir ayni ucgen sayisini uretmelidir!");
+
+            // 4 komsu chunk'in ((-11,-5), (-10,-5), (-11,-4), (-10,-4)) birlesik mesh'inde
+            // X = -160m ve Z = -64m sinir bolgesinde (-164.. -156, Y >= 75, -68.. -60) hicbir ACIK KENAR (Open Edge / Catlak) olmamalidir!
+            var allWorldTris = new List<(Vector3 a, Vector3 b, Vector3 c, Vector3 norm, byte mat, string src)>(16384);
+            void AppendWorldTris(List<FacetedVoxelTriangle> list, int cx, int cz, string label)
+            {
+                Vector3 off = new Vector3(cx * 16f, 0f, cz * 16f);
+                foreach (var t in list)
+                {
+                    allWorldTris.Add((t.V0 + off, t.V1 + off, t.V2 + off, t.Normal, t.MaterialId, label));
+                }
+            }
+
+            AppendWorldTris(trisNW, -11, -4, "NW(-11,-4)");
+            AppendWorldTris(trisNE, -10, -4, "NE(-10,-4)");
+            AppendWorldTris(trisSW, -11, -5, "SW(-11,-5)");
+            AppendWorldTris(trisSE, -10, -5, "SE(-10,-5)");
+
+            var undirectedEdgeCounts = new Dictionary<(Vector3 u, Vector3 v), int>();
+            var edgeOwnerSample = new Dictionary<(Vector3 u, Vector3 v), string>();
+
+            static (Vector3 u, Vector3 v) MakeCanonicalEdge(Vector3 p, Vector3 q)
+            {
+                if (p.X != q.X) return p.X < q.X ? (p, q) : (q, p);
+                if (p.Y != q.Y) return p.Y < q.Y ? (p, q) : (q, p);
+                return p.Z <= q.Z ? (p, q) : (q, p);
+            }
+
+            foreach (var tri in allWorldTris)
+            {
+                if (tri.a.Y < 72f && tri.b.Y < 72f && tri.c.Y < 72f) continue;
+                var e0 = MakeCanonicalEdge(tri.a, tri.b);
+                var e1 = MakeCanonicalEdge(tri.b, tri.c);
+                var e2 = MakeCanonicalEdge(tri.c, tri.a);
+
+                undirectedEdgeCounts[e0] = undirectedEdgeCounts.TryGetValue(e0, out int c0) ? c0 + 1 : 1;
+                undirectedEdgeCounts[e1] = undirectedEdgeCounts.TryGetValue(e1, out int c1) ? c1 + 1 : 1;
+                undirectedEdgeCounts[e2] = undirectedEdgeCounts.TryGetValue(e2, out int c2) ? c2 + 1 : 1;
+
+                edgeOwnerSample[e0] = $"{tri.src} mat={tri.mat} norm={tri.norm}";
+                edgeOwnerSample[e1] = $"{tri.src} mat={tri.mat} norm={tri.norm}";
+                edgeOwnerSample[e2] = $"{tri.src} mat={tri.mat} norm={tri.norm}";
+            }
+
+            int seamEdgesChecked = 0;
+            int openCrackEdges = 0;
+            foreach (var kv in undirectedEdgeCounts)
+            {
+                Vector3 mid = (kv.Key.u + kv.Key.v) * 0.5f;
+                // 4 chunk'in ic kesisim bolgesi: X in [-168..-152], Z in [-72..-56], Y >= 75
+                if (mid.Y >= 75f && mid.X >= -168f && mid.X <= -152f && mid.Z >= -72f && mid.Z <= -56f)
+                {
+                    bool nearSeam = (mid.X >= -161.2f && mid.X <= -158.8f) || (mid.Z >= -65.2f && mid.Z <= -62.8f);
+                    if (!nearSeam) continue;
+                    seamEdgesChecked++;
+                    if (kv.Value == 1)
+                    {
+                        if (openCrackEdges < 20)
+                        {
+                            Console.WriteLine($"[OPEN CRACK EDGE] u={kv.Key.u} v={kv.Key.v} mid={mid} owner={edgeOwnerSample[kv.Key]}");
+                        }
+                        openCrackEdges++;
+                    }
+                }
+            }
+
+            Console.WriteLine($"[Seam Manifold Check] seamEdgesChecked={seamEdgesChecked}, openCrackEdges={openCrackEdges}");
+            Assert.That(seamEdgesChecked, Is.GreaterThan(100));
+            Assert.That(openCrackEdges, Is.EqualTo(0), $"X=-160m / Z=-64m sinirinda {openCrackEdges} adet acik yirtik kenar (catlak) tespit edildi!");
+
+            // Ayrica Gorsel 2'deki (X = -174m, Z = -63m -> X = -176m, Z = -64m, yani cx = -12..-11, cz = -5..-4) kesisimini de dogrula:
+            for (int cz = -6; cz <= -3; cz++)
+            {
+                var (vox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(-13, cz);
+                world[(-13, cz)] = vox;
+            }
+
+            var trisNW2 = new List<FacetedVoxelTriangle>(8192); // (-12, -4)
+            var trisSW2 = new List<FacetedVoxelTriangle>(8192); // (-12, -5)
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-12, -4, 160, world, trisNW2, minY: 0);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(-12, -5, 160, world, trisSW2, minY: 0);
+
+            AppendWorldTris(trisNW2, -12, -4, "NW2(-12,-4)");
+            AppendWorldTris(trisSW2, -12, -5, "SW2(-12,-5)");
+
+            undirectedEdgeCounts.Clear();
+            foreach (var tri in allWorldTris)
+            {
+                if (tri.a.Y < 72f && tri.b.Y < 72f && tri.c.Y < 72f) continue;
+                var e0 = MakeCanonicalEdge(tri.a, tri.b);
+                var e1 = MakeCanonicalEdge(tri.b, tri.c);
+                var e2 = MakeCanonicalEdge(tri.c, tri.a);
+                undirectedEdgeCounts[e0] = undirectedEdgeCounts.TryGetValue(e0, out int c0) ? c0 + 1 : 1;
+                undirectedEdgeCounts[e1] = undirectedEdgeCounts.TryGetValue(e1, out int c1) ? c1 + 1 : 1;
+                undirectedEdgeCounts[e2] = undirectedEdgeCounts.TryGetValue(e2, out int c2) ? c2 + 1 : 1;
+            }
+
+            int seam2EdgesChecked = 0, openCrack2Edges = 0;
+            foreach (var kv in undirectedEdgeCounts)
+            {
+                Vector3 mid = (kv.Key.u + kv.Key.v) * 0.5f;
+                if (mid.Y >= 75f && mid.X >= -184f && mid.X <= -168f && mid.Z >= -72f && mid.Z <= -56f)
+                {
+                    bool nearSeam = (mid.X >= -177.2f && mid.X <= -174.8f) || (mid.Z >= -65.2f && mid.Z <= -62.8f);
+                    if (!nearSeam) continue;
+                    seam2EdgesChecked++;
+                    if (kv.Value == 1) openCrack2Edges++;
+                }
+            }
+
+            Assert.That(seam2EdgesChecked, Is.GreaterThan(100));
+            Assert.That(openCrack2Edges, Is.EqualTo(0), $"X=-176m / Z=-64m sinirinda {openCrack2Edges} adet acik yirtik kenar (catlak) tespit edildi!");
+        }
     }
 }

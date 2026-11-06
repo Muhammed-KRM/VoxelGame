@@ -1512,10 +1512,21 @@ namespace Stratocraft.Character
         private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks, int wy = -1)
         {
             dirty.Add((cx, cz));
-            if (lx <= 1 && chunks.ContainsKey((cx - 1, cz))) dirty.Add((cx - 1, cz));
-            if (lx >= 14 && chunks.ContainsKey((cx + 1, cz))) dirty.Add((cx + 1, cz));
-            if (lz <= 1 && chunks.ContainsKey((cx, cz - 1))) dirty.Add((cx, cz - 1));
-            if (lz >= 14 && chunks.ContainsKey((cx, cz + 1))) dirty.Add((cx, cz + 1));
+            bool west = lx <= 1;
+            bool east = lx >= 14;
+            bool south = lz <= 1;
+            bool north = lz >= 14;
+
+            if (west && chunks.ContainsKey((cx - 1, cz))) dirty.Add((cx - 1, cz));
+            if (east && chunks.ContainsKey((cx + 1, cz))) dirty.Add((cx + 1, cz));
+            if (south && chunks.ContainsKey((cx, cz - 1))) dirty.Add((cx, cz - 1));
+            if (north && chunks.ContainsKey((cx, cz + 1))) dirty.Add((cx, cz + 1));
+
+            if (west && south && chunks.ContainsKey((cx - 1, cz - 1))) dirty.Add((cx - 1, cz - 1));
+            if (east && south && chunks.ContainsKey((cx + 1, cz - 1))) dirty.Add((cx + 1, cz - 1));
+            if (west && north && chunks.ContainsKey((cx - 1, cz + 1))) dirty.Add((cx - 1, cz + 1));
+            if (east && north && chunks.ContainsKey((cx + 1, cz + 1))) dirty.Add((cx + 1, cz + 1));
+
             if (wy >= 0)
             {
                 Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);

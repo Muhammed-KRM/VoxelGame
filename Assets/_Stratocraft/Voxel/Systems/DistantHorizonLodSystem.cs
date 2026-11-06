@@ -271,6 +271,135 @@ namespace Stratocraft.Voxel.Systems
             }
         }
 
+        /// <summary>
+        /// Minecraft "Distant Horizons" ve 7 Days to Die Tarzi 16m Chunk-Hizali Ufuk Halka Mesh'i (Clipmap Ring Mesh).
+        /// Aktif 3D voksel chunk'larinin (chebDist &lt;= innerRadiusChunks) disindan baslayip
+        /// outerRadiusChunks (orn. 36-48 chunk = 576m-768m) mesafeye kadar kesintisiz dunya ufuk yuzeyini orer.
+        /// 0 Voksel Bellek (0 Byte RAM), 0 Fizik Collider!
+        /// </summary>
+        public static void BuildHorizonClipmapRingMesh(
+            int centerChunkX,
+            int centerChunkZ,
+            int innerRadiusChunks,
+            int outerRadiusChunks,
+            List<FacetedVoxelTriangle> outSolidTriangles,
+            List<FacetedVoxelTriangle> outFluidTriangles,
+            Func<float, float, float>? customTopSurfaceSampler = null,
+            Func<float, float, float, (float r, float g, float b, byte matId)>? customBiomeColorSampler = null)
+        {
+            outSolidTriangles.Clear();
+            outFluidTriangles.Clear();
+
+            int minCx = centerChunkX - outerRadiusChunks;
+            int maxCx = centerChunkX + outerRadiusChunks;
+            int minCz = centerChunkZ - outerRadiusChunks;
+            int maxCz = centerChunkZ + outerRadiusChunks;
+
+            const float seaLevel = NaturalSeaLevelY; // 90.0f
+            const float innerSkirtDrop = 6.0f; // 3D chunk sinirinda bosluk olusmamasi icin dikey etek
+
+            for (int cz = minCz; cz <= maxCz; cz++)
+            {
+                int dz = Math.Abs(cz - centerChunkZ);
+                for (int cx = minCx; cx <= maxCx; cx++)
+                {
+                    int dx = Math.Abs(cx - centerChunkX);
+                    int chebDist = Math.Max(dx, dz);
+
+                    // Aktif 3D voksel alani icindeyse (gercek chunk'lar oruluyor) atla
+                    if (chebDist <= innerRadiusChunks) continue;
+
+                    float wx0 = cx * 16.0f;
+                    float wx1 = wx0 + 16.0f;
+                    float wz0 = cz * 16.0f;
+                    float wz1 = wz0 + 16.0f;
+
+                    float y00 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx0, wz0) : SampleDefaultAnalyticalContinentSurfaceY(wx0, wz0);
+                    float y10 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx1, wz0) : SampleDefaultAnalyticalContinentSurfaceY(wx1, wz0);
+                    float y11 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx1, wz1) : SampleDefaultAnalyticalContinentSurfaceY(wx1, wz1);
+                    float y01 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx0, wz1) : SampleDefaultAnalyticalContinentSurfaceY(wx0, wz1);
+
+                    // Gokyuzu adasi/kita disindaki bosluk (y <= 4m)
+                    if (y00 <= 4.0f && y10 <= 4.0f && y11 <= 4.0f && y01 <= 4.0f) continue;
+
+                    float midX = wx0 + 8.0f;
+                    float midZ = wz0 + 8.0f;
+                    float avgY = (y00 + y10 + y11 + y01) * 0.25f;
+
+                    (float r, float g, float b, byte matId) biomeInfo = customBiomeColorSampler != null
+                        ? customBiomeColorSampler(midX, avgY, midZ)
+                        : (0.24f, 0.56f, 0.22f, MaterialIdCatalog.Grass);
+
+                    byte mat = biomeInfo.matId;
+                    if (mat == MaterialIdCatalog.Air) mat = MaterialIdCatalog.Grass;
+
+                    // Okyanus/Göl Yüzeyi: Eğer bu chunk deniz seviyesi altındaysa, su yüzeyini Fluid mesh'e ekle
+                    bool hasWater = avgY < seaLevel;
+                    if (hasWater)
+                    {
+                        Vector3 w00 = new(wx0, seaLevel, wz0);
+                        Vector3 w10 = new(wx1, seaLevel, wz0);
+                        Vector3 w11 = new(wx1, seaLevel, wz1);
+                        Vector3 w01 = new(wx0, seaLevel, wz1);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w01, w11, MaterialIdCatalog.FiniteWaterSurface, 0, 210, 0xE0, outFluidTriangles);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w11, w10, MaterialIdCatalog.FiniteWaterSurface, 0, 205, 0xE0, outFluidTriangles);
+                    }
+
+                    // Katı Arazi / Deniz Tabanı Yüzeyi
+                    Vector3 v00 = new(wx0, y00, wz0);
+                    Vector3 v10 = new(wx1, y10, wz0);
+                    Vector3 v11 = new(wx1, y11, wz1);
+                    Vector3 v01 = new(wx0, y01, wz1);
+
+                    byte shadeA = (byte)(186 + ((cx * 7 + cz * 13) & 15));
+                    byte shadeB = (byte)(shadeA - 8);
+                    byte ao = 0xE0;
+                    byte temp = 0;
+
+                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v01, v11, mat, temp, shadeA, ao, outSolidTriangles);
+                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v11, v10, mat, temp, shadeB, ao, outSolidTriangles);
+
+                    // 3D Chunk Sınır Eteği (Boundary Skirt):
+                    // Eğer bu chunk'ın herhangi bir kenarı aktif 3D bölgesiyle (innerRadiusChunks) komşuysa,
+                    // o kenardan aşağıya doğru dikey 6m etek sarkıtarak 0 boşluk garantisi sağla!
+                    bool touchWest = cx - 1 >= centerChunkX - innerRadiusChunks && cx - 1 <= centerChunkX + innerRadiusChunks && dz <= innerRadiusChunks;
+                    bool touchEast = cx + 1 >= centerChunkX - innerRadiusChunks && cx + 1 <= centerChunkX + innerRadiusChunks && dz <= innerRadiusChunks;
+                    bool touchSouth = cz - 1 >= centerChunkZ - innerRadiusChunks && cz - 1 <= centerChunkZ + innerRadiusChunks && dx <= innerRadiusChunks;
+                    bool touchNorth = cz + 1 >= centerChunkZ - innerRadiusChunks && cz + 1 <= centerChunkZ + innerRadiusChunks && dx <= innerRadiusChunks;
+
+                    byte skirtMat = MaterialIdCatalog.Stone;
+                    if (touchWest)
+                    {
+                        Vector3 b00 = new(v00.X, v00.Y - innerSkirtDrop, v00.Z);
+                        Vector3 b01 = new(v01.X, v01.Y - innerSkirtDrop, v01.Z);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v01, v00, b00, skirtMat, 0, 168, ao, outSolidTriangles);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v01, b00, b01, skirtMat, 0, 164, ao, outSolidTriangles);
+                    }
+                    if (touchEast)
+                    {
+                        Vector3 b10 = new(v10.X, v10.Y - innerSkirtDrop, v10.Z);
+                        Vector3 b11 = new(v11.X, v11.Y - innerSkirtDrop, v11.Z);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v10, v11, b11, skirtMat, 0, 168, ao, outSolidTriangles);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v10, b11, b10, skirtMat, 0, 164, ao, outSolidTriangles);
+                    }
+                    if (touchSouth)
+                    {
+                        Vector3 b00 = new(v00.X, v00.Y - innerSkirtDrop, v00.Z);
+                        Vector3 b10 = new(v10.X, v10.Y - innerSkirtDrop, v10.Z);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v10, b10, skirtMat, 0, 168, ao, outSolidTriangles);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, b10, b00, skirtMat, 0, 164, ao, outSolidTriangles);
+                    }
+                    if (touchNorth)
+                    {
+                        Vector3 b01 = new(v01.X, v01.Y - innerSkirtDrop, v01.Z);
+                        Vector3 b11 = new(v11.X, v11.Y - innerSkirtDrop, v11.Z);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v11, v01, b01, skirtMat, 0, 168, ao, outSolidTriangles);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v11, b01, b11, skirtMat, 0, 164, ao, outSolidTriangles);
+                    }
+                }
+            }
+        }
+
 #if UNITY_5_3_OR_NEWER
         /// <summary>
         /// Unity sahnesinde 64m x 64m (Tier 1) veya 256m x 256m (Tier 2 - 100x Ufuk) kabugu GameObject + MeshRenderer olusturur.
