@@ -1898,6 +1898,10 @@ namespace Stratocraft.Character
             mf.sharedMesh = mesh;
             if (!vis.TryGetComponent<MeshRenderer>(out MeshRenderer mr)) mr = vis.AddComponent<MeshRenderer>();
             if (sharedMat != null) mr.sharedMaterial = sharedMat;
+            // Sadece govde (Torso) golge dusursun; kucuk ikincil eklemlerin (boyun/kuyruk/uzuv) golge pass draw-call yukunu sifirla!
+            mr.shadowCastingMode = name.IndexOf("Torso", StringComparison.OrdinalIgnoreCase) >= 0
+                ? UnityEngine.Rendering.ShadowCastingMode.On
+                : UnityEngine.Rendering.ShadowCastingMode.Off;
 
             return pivot.transform;
         }

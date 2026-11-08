@@ -185,15 +185,22 @@ namespace Stratocraft.Physics.Jobs
                             continue;
                         }
 
-                        bool isPureVerticalColumn = (dir == 2) && (currentCantilever == 0);
+                        bool isConfinedNaturalOverburden =
+                            layout == VoxelGridMemoryLayout.YMajorChunk &&
+                            VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.DogalKutle &&
+                            HasContinuousNaturalOverburden(voxels, nx, ny, nz, sizeX, sizeY, sizeZ, layout, minOverburden: 3);
+
+                        bool isPureVerticalColumn = ((dir == 2) && (currentCantilever == 0)) || isConfinedNaturalOverburden;
                         int horizDelta = Math.Abs(StepDx[dir]) + Math.Abs(StepDz[dir]);
                         ushort candCantilever = isPureVerticalColumn
                             ? (ushort)0
                             : (ushort)(currentCantilever + (horizDelta > 0 ? 1 : 0));
 
-                        int maxReachAllowed = nProps.IsArchCapable
-                            ? nProps.MaxClosedArchArmBlocks
-                            : nProps.MaxCantileverSpanBlocks;
+                        int maxReachAllowed = isConfinedNaturalOverburden
+                            ? MaxDialBuckets - 1
+                            : (nProps.IsArchCapable
+                                ? nProps.MaxClosedArchArmBlocks
+                                : nProps.MaxCantileverSpanBlocks);
                         if (candCantilever > maxReachAllowed)
                         {
                             continue;
@@ -434,12 +441,9 @@ namespace Stratocraft.Physics.Jobs
                 return true;
             }
 
-            // Taban (-Y) ve 4 yatay yonde 2 blok derinlikte (veya pencere dis duvar sinirinda) kati kaya kontrolu
+            // Taban (-Y) kati kaya kontrolu veya YMajorChunk / kalin dogal tavan kemeri dis sinir ankraji
             int belowIdx = GridIndex(x, y - 1, z, sizeX, sizeY, sizeZ, layout);
-            if (!VoxelBitUtility.IsPhysicallySolid(voxels[belowIdx]))
-            {
-                return false;
-            }
+            bool hasSolidBelow = VoxelBitUtility.IsPhysicallySolid(voxels[belowIdx]);
 
             // Yalnizca pencere yan sinirlarindaki (kesilmemis ana kaya devam eden) dogal bloklar yanal ankraj olur;
             // icerde alttan kazilmis tavan bloklari yanlis ankrajlanmaz!
@@ -447,6 +451,18 @@ namespace Stratocraft.Physics.Jobs
             if (!touchesOuterRockBoundary)
             {
                 return false;
+            }
+
+            if (!hasSolidBelow)
+            {
+                // Chunk / pencere sinirini kesen dogal magara kemerlerinde ustte en az 4 blok kesintisiz dogal kaya
+                // ortusu (overburden) varsa komsu chunk'taki ana kaya kutlesine yatay kemer ankraji olusturur.
+                if (layout != VoxelGridMemoryLayout.YMajorChunk ||
+                    !HasContinuousNaturalOverburden(voxels, x, y, z, sizeX, sizeY, sizeZ, layout, minOverburden: 4))
+                {
+                    return false;
+                }
+                return true;
             }
 
             int confinedDirs = 0;
@@ -487,6 +503,69 @@ namespace Stratocraft.Physics.Jobs
             }
 
             return confinedDirs >= 4;
+        }
+
+        private static bool HasContinuousNaturalOverburden(
+            ReadOnlySpan<uint> voxels,
+            int x,
+            int y,
+            int z,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout,
+            int minOverburden)
+        {
+            int count = 0;
+            for (int ny = y + 1; ny < sizeY && count < minOverburden; ny++)
+            {
+                uint aboveRaw = voxels[GridIndex(x, ny, z, sizeX, sizeY, sizeZ, layout)];
+                if (VoxelBitUtility.IsPhysicallySolid(aboveRaw) &&
+                    VoxelBitUtility.GetOriginState(aboveRaw) == BlokKokenDurumu.DogalKutle)
+                {
+                    count++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (count >= minOverburden)
+            {
+                return true;
+            }
+
+            // Eger kendi ustundeki dikey ortu < minOverburden ise (ornegin dogal magara tavaninin tam alt kenari veya
+            // agac govdesi/yaprak kumesi), 4 yatay komsusundan en az birinin kesintisiz kalin ortuye bagli olup olmadigina bak:
+            for (int d = 0; d < 4; d++)
+            {
+                int nx = x + StepDx[d];
+                int nz = z + StepDz[d];
+                if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ) continue;
+                uint nRaw = voxels[GridIndex(nx, y, nz, sizeX, sizeY, sizeZ, layout)];
+                if (VoxelBitUtility.IsPhysicallySolid(nRaw) &&
+                    VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.DogalKutle)
+                {
+                    int nCount = 0;
+                    for (int ny = y + 1; ny < sizeY && nCount < minOverburden; ny++)
+                    {
+                        uint naRaw = voxels[GridIndex(nx, ny, nz, sizeX, sizeY, sizeZ, layout)];
+                        if (VoxelBitUtility.IsPhysicallySolid(naRaw) &&
+                            VoxelBitUtility.GetOriginState(naRaw) == BlokKokenDurumu.DogalKutle)
+                        {
+                            nCount++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+                    if (nCount >= minOverburden) return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

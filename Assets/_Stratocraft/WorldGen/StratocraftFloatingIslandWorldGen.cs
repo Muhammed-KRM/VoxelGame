@@ -442,76 +442,51 @@ namespace Stratocraft.WorldGen.Generators
                 return;
             }
 
-            // Genel kita magara agi icin yuzeyin en az 20m altinda ve y <= 74m derinde olma zorunlulugu (%100 sizdirmaz yuzey kabugu):
-            if (y > 74 || y > topH - 20.0f)
+            // Genel kita magara agi icin yuzeyin en az 18m altinda ve y <= 75m derinde olma zorunlulugu (%100 sizdirmaz yuzey kabugu):
+            if (y > 75 || y > topH - 18.0f)
             {
                 return;
             }
 
-            // Her 4x4 metrede bir dogal Gotik/Roma kemer tasiyici sutun agi (lx,lz = 2, 6, 10, 14):
-            // 1) Dial's Bucket Geodesic Dijkstra yapisal analizinde her magara tavaninin yatay acikligini <= 2m tutarak %100 yapisal denge saglar.
-            // 2) Kita dis duvarlarinda (lx=0, 15 / lz=0, 15) kemer gozlerini acik birakarak SceneView'da 4 katli 3B magara kesitini gosterir.
-            if ((wx & 3) == 2 || (wz & 3) == 2)
-            {
-                if (((wx + wz) & 7) == 0) isCaveSupportPillar = true;
-                return;
-            }
-
+            // Chunk birlesim sinirina (lx = 15 <-> lx = 0 veya lz = 15 <-> lz = 0) ulasan her magara tuneli
+            // tam dikiş hattında yarım kesilmeden komşu chunk'ın ilk hücresine kesintisiz geçiş yapar:
+            int cwx = (wx & 15) == 0 ? (wx - 1) : wx;
+            int cwz = (wz & 15) == 0 ? (wz - 1) : wz;
             float p1 = SeedPhaseOffset(6), p2 = SeedPhaseOffset(7);
 
-            // Katmanlar arasi 3m masif kaya/bazalt taban ayraclari (SceneView 3B yeralti kesitinde 4 ayri yeralti katini net gosterir):
-            // - Katman 1 (y = 63..73): Sig Kirectasi Kemer Magaralari
-            // - Katman 2 (y = 42..58): Orta Derinlik Kristal Kuvars & Stalagnate Magara Galerileri
-            // - Katman 3 (y = 24..37): Derin Bazalt, Titanyum ve Mithril Cevher Galerileri
-            // - Katman 4 (y = 10..19): Kaynayan Yeralti Magma Denizi (FluidType.Lava) ve Magma Kubbeleri
-            if (y >= 63 && y <= 73)
+            // 1) Bolgesel Magara Yogunluk Maskesi (Regional Province Mask - Ultra Hizli Analitik Faz):
+            // Magaralar ne her kazilan yerde cikan "Isvicre peyniri" gibi asiri sik, ne de asiri nadir olur.
+            float provinceNoise = 0.5f + 0.25f * (MathF.Sin(cwx * 0.011f + p1) + MathF.Cos(cwz * 0.011f - p2));
+            if (cwx * cwx + cwz * cwz < 19600)
             {
-                float archY = (y - 68.0f) / 5.5f;
-                float wave1 = MathF.Sin(wx * 0.11f + p1) + MathF.Cos(wz * 0.11f - p2) - archY * archY * 0.65f;
-                if (wave1 > 0.62f)
-                {
-                    inCaveVoid = true;
-                    return;
-                }
-                if (wave1 > 0.35f)
-                {
-                    isCrystalCaveWall = true;
-                }
+                provinceNoise = MathF.Max(provinceNoise, 0.54f);
             }
-            else if (y >= 42 && y <= 58)
+            if (provinceNoise < 0.27f && y > 18)
             {
-                float archY = (y - 50.0f) / 8.5f;
-                float wave2 = MathF.Sin(wx * 0.085f - p2) + MathF.Cos(wz * 0.085f + p1) - archY * archY * 0.55f;
-                if (wave2 > 0.48f)
-                {
-                    inCaveVoid = true;
-                    return;
-                }
-                if (wave2 > 0.22f)
-                {
-                    isCrystalCaveWall = true;
-                }
+                return;
             }
-            else if (y >= 24 && y <= 37)
+
+            // 2) 3B Domain Warp (Kivrilan Organik Akis) + Daralma/Genisleme (Pinch & Swell) + Dallanan Spaghetti/Noodle Kesisimi:
+            float warpX = MathF.Sin(cwz * 0.031f + y * 0.042f + p1) * 6.8f;
+            float warpY = MathF.Cos(cwx * 0.036f - cwz * 0.034f + p2) * 2.6f;
+            float warpZ = MathF.Cos(cwx * 0.031f - y * 0.042f - p2) * 6.8f;
+            float qx = cwx + warpX;
+            float qy = y + warpY;
+            float qz = cwz + warpZ;
+
+            // Bazalt/Manto katmanina (y <= 19) inildiginde kaynayan magma kubbeleri:
+            if (y >= 9 && y <= 19)
             {
-                float archY = (y - 30.5f) / 7.0f;
-                float wave3 = MathF.Sin(wx * 0.095f + wz * 0.06f + p1) + MathF.Cos(wz * 0.095f - wx * 0.06f - p2) - archY * archY * 0.60f;
-                if (wave3 > 0.52f)
+                float archY = (y - 13.8f) / 5.2f;
+                float magmaWave = MathF.Sin(qx * 0.068f + p2) * MathF.Cos(qz * 0.068f + p1) - archY * archY * 0.55f;
+                if (y >= 10 && magmaWave > 0.18f)
                 {
-                    inCaveVoid = true;
-                    return;
-                }
-                if (wave3 > 0.25f)
-                {
-                    isCrystalCaveWall = true;
-                }
-            }
-            else if (y >= 9 && y <= 19)
-            {
-                float archY = (y - 14.0f) / 5.5f;
-                float wave4 = MathF.Sin(wx * 0.075f + p2) + MathF.Cos(wz * 0.075f + p1) - archY * archY * 0.45f;
-                if (y >= 10 && wave4 > 0.28f)
-                {
+                    float colWave = MathF.Sin(cwx * 0.55f + p1) * MathF.Cos(cwz * 0.55f - p2);
+                    if (colWave > 0.88f)
+                    {
+                        isCaveSupportPillar = true;
+                        return;
+                    }
                     inCaveVoid = true;
                     if (y <= 11)
                     {
@@ -519,10 +494,67 @@ namespace Stratocraft.WorldGen.Generators
                     }
                     return;
                 }
-                if (wave4 > 0.02f || y == 9)
+                if (magmaWave > -0.04f || y == 9)
                 {
                     isCrystalCaveWall = true;
                 }
+                return;
+            }
+
+            // Tunel boyunca kimi yerde daralan (Pinch: ~2.4m gecit), kimi yerde genisleyen (Swell: ~8m-14m galeri/oda) modülasyon:
+            float swell01 = 0.5f + 0.25f * (MathF.Sin(qx * 0.037f + qy * 0.045f + p1) + MathF.Cos(qz * 0.037f - qy * 0.041f - p2));
+            float chamberBoost = (provinceNoise > 0.66f && swell01 > 0.62f)
+                ? (swell01 - 0.62f) * 0.24f
+                : 0f;
+
+            // Ana Govde Tunel Alani (Psi1 = 0 ve Psi2 = 0 3B sifir-gecis kesisim egrisi -> kesintisiz uzanan kivrimli ana tunel):
+            float psi1 = 0.5f * (MathF.Sin(qx * 0.048f + qz * 0.029f + p1) + MathF.Cos(qy * 0.072f - qz * 0.041f + p2));
+            float psi2 = 0.5f * (MathF.Cos(qx * 0.033f - qz * 0.046f - p2) + MathF.Sin(qy * 0.068f + qx * 0.039f + p1));
+
+            // Yan Dallanma Tunel Alani (Psi3 = 0 ile Psi1/Psi2 kesisimi -> ana tunelden ayrilan ve tekrar birlesen Y-kavsakli kollar):
+            float psi3 = 0.5f * (MathF.Sin(qx * 0.064f - qy * 0.078f + p2) + MathF.Cos(qz * 0.062f + qy * 0.074f - p1));
+
+            // Daralma/Genisleme yaricapi:
+            float provinceScale = Math.Clamp((provinceNoise - 0.27f) / 0.45f, 0.58f, 1.18f);
+            float baseRadius = (0.145f + swell01 * 0.165f + chamberBoost) * provinceScale;
+            float branchRadius = (0.115f + swell01 * 0.095f) * provinceScale;
+
+            // Parabolik Gotik Kemer Tavan Kesiti:
+            float normUp = psi2 > 0f ? (psi2 / Math.Max(0.05f, baseRadius)) : 0f;
+            float archPinch = psi2 > 0f ? (1.0f + 1.45f * normUp * normUp) : 0.86f;
+
+            float trunkDistSq = (psi1 * archPinch) * (psi1 * archPinch) + psi2 * psi2;
+            float branchDistSqA = (psi1 * archPinch) * (psi1 * archPinch) + (psi3 * 1.12f) * (psi3 * 1.12f);
+            float branchDistSqB = (psi3 * archPinch) * (psi3 * archPinch) + (psi2 * 1.12f) * (psi2 * 1.12f);
+            float minBranchDistSq = MathF.Min(branchDistSqA, branchDistSqB);
+
+            float rTrunkSq = baseRadius * baseRadius;
+            float rBranchSq = branchRadius * branchRadius;
+            bool insideTrunk = trunkDistSq < rTrunkSq;
+            bool insideBranch = swell01 > 0.28f && minBranchDistSq < rBranchSq;
+
+            if (insideTrunk || insideBranch)
+            {
+                if (insideTrunk && swell01 > 0.66f && trunkDistSq < rTrunkSq * 0.48f)
+                {
+                    float pillarField = MathF.Sin(cwx * 0.58f + cwz * 0.21f + p1) * MathF.Cos(cwz * 0.58f - cwx * 0.21f - p2);
+                    if (pillarField > 0.86f)
+                    {
+                        isCaveSupportPillar = true;
+                        return;
+                    }
+                }
+
+                inCaveVoid = true;
+                return;
+            }
+
+            // Magara duvar kabugu (Parlayan Yosun, Kuvars, Ametist ve Derin Cevher Damarlari icin 1 blokluk dis kabuk):
+            float wallTrunkSq = (baseRadius + 0.048f) * (baseRadius + 0.048f);
+            float wallBranchSq = (branchRadius + 0.038f) * (branchRadius + 0.038f);
+            if (trunkDistSq < wallTrunkSq || (swell01 > 0.28f && minBranchDistSq < wallBranchSq))
+            {
+                isCrystalCaveWall = true;
             }
         }
 
@@ -615,6 +647,7 @@ namespace Stratocraft.WorldGen.Generators
                     }
 
                     int maxColumnY = Math.Min(MaxEditableVoxelY - 1, Math.Max(fluidSurfaceY + 3, (int)MathF.Ceiling(topH) + 3));
+                    byte colSurfaceMat = SampleBiomeColor(wx, topH, wz).matId;
 
                     for (int y = 1; y <= maxColumnY; y++)
                     {
@@ -696,7 +729,8 @@ namespace Stratocraft.WorldGen.Generators
                         byte clampedDensity = (byte)Math.Clamp(densityInt, 10, 127);
                         byte matId = ResolveGeologicalMaterial(
                             wx, y, wz, topH, bottomH, radialMargin,
-                            inLavaCaldera, inWaterPool, isObsidianSeam, isStalagnatePillar, isCrystalCaveWall);
+                            inLavaCaldera, inWaterPool, isObsidianSeam, isStalagnatePillar, isCrystalCaveWall,
+                            biomeId, colSurfaceMat);
 
                         voxels[idx] = VoxelBitUtility.PackStandard(
                             matId, clampedDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
@@ -764,7 +798,8 @@ namespace Stratocraft.WorldGen.Generators
 
         public static byte ResolveGeologicalMaterial(
             int wx, int y, int wz, float topH, float bottomH, float radialMargin,
-            bool inLavaCaldera, bool inWaterPool, bool isObsidianSeam, bool isStalagnatePillar, bool isCrystalCaveWall = false)
+            bool inLavaCaldera, bool inWaterPool, bool isObsidianSeam, bool isStalagnatePillar, bool isCrystalCaveWall = false,
+            int precomputedBiomeId = -1, byte precomputedSurfaceMatId = 0)
         {
             if (isObsidianSeam) return MaterialIdCatalog.NaturalObsidian;
             if (inLavaCaldera && y >= topH - 4.5f) return y >= topH - 2.0f ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
@@ -779,13 +814,13 @@ namespace Stratocraft.WorldGen.Generators
 
             if (isStalagnatePillar) return MaterialIdCatalog.Stalagnate;
 
-            int biomeId = GetBiomeId(wx, wz);
-
             // Yuzey Kabugu (12 Farkli Biyom Yuzey Katmani — Organik Jeolojik Katmanlasma)
             if (y + 1.55f >= topH)
             {
-                return SampleBiomeColor(wx, topH, wz).matId;
+                return precomputedSurfaceMatId != 0 ? precomputedSurfaceMatId : SampleBiomeColor(wx, topH, wz).matId;
             }
+
+            int biomeId = precomputedBiomeId >= 0 ? precomputedBiomeId : GetBiomeId(wx, wz);
 
             // Alt Toprak Katmani (Sub-surface soil)
             if (y + 3.25f >= topH)

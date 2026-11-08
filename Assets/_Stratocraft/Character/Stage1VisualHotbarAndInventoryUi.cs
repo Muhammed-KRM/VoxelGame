@@ -98,6 +98,27 @@ namespace Stratocraft.Character
         private GUIStyle? _vitalsLabelStyle;
         private bool _iconsInitialized;
 
+        private static readonly string[] CachedHotbarKeyLabels = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+        private static readonly string[] CachedStackCountStrings = BuildCachedStackCountStrings();
+        private int _lastHpCurInt = -1;
+        private int _lastHpMaxInt = -1;
+        private string _cachedHpLabel = string.Empty;
+        private int _lastStamPctInt = -1;
+        private bool _lastStamExhausted;
+        private string _cachedStamLabel = string.Empty;
+        private int _lastOxyPctInt = -1;
+        private string _cachedOxyLabel = string.Empty;
+
+        private static string[] BuildCachedStackCountStrings()
+        {
+            var arr = new string[257];
+            for (int i = 0; i < arr.Length; i++) arr[i] = $"x{i}";
+            return arr;
+        }
+
+        private static string GetCachedStackCountString(int count) =>
+            (uint)count < (uint)CachedStackCountStrings.Length ? CachedStackCountStrings[count] : $"x{count}";
+
         private static readonly byte[] TrackedCrystalMaterials =
         {
             MaterialIdCatalog.Stone,
@@ -595,7 +616,11 @@ namespace Stratocraft.Character
             float coreBodyTemp = 37.0f)
         {
             EnsureTexturesAndStyles();
-            SyncWithCrystalStorage(miningCtrl);
+            Event ev = Event.current;
+            if (ev.type == EventType.Layout)
+            {
+                SyncWithCrystalStorage(miningCtrl);
+            }
             HoveredSlotTooltip = string.Empty;
 
             if (!isBackpackOpen && IsChestWindowOpen) IsChestWindowOpen = false;
@@ -604,7 +629,6 @@ namespace Stratocraft.Character
 
             float screenW = Screen.width;
             float screenH = Screen.height;
-            Event ev = Event.current;
             Vector2 mousePos = ev.mousePosition;
 
             const float slotSize = 54f;
@@ -635,7 +659,7 @@ namespace Stratocraft.Character
                 Rect slotRect = new Rect(sx, sy, slotSize, slotSize);
                 bool isSel = SelectedHotbarIndex == i && !miningCtrl.IsCrystalActive;
 
-                DrawSingleSlotBox(slotRect, HotbarSlots[i], (i + 1).ToString(), isSel, false, combatBridge, mousePos);
+                DrawSingleSlotBox(slotRect, HotbarSlots[i], CachedHotbarKeyLabels[i], isSel, false, combatBridge, mousePos);
 
                 if ((ev.type == EventType.MouseDown || ev.type == EventType.MouseUp) && slotRect.Contains(mousePos))
                 {
@@ -792,7 +816,7 @@ namespace Stratocraft.Character
 
                 string shortName = GetShortMaterialBadgeName(matId);
                 GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + 1f, cellRect.width - 4f, 14f), shortName, _keyBadgeStyle!);
-                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 18f, cellRect.width - 5f, 16f), $"x{count}", _countLabelStyle!);
+                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 18f, cellRect.width - 5f, 16f), GetCachedStackCountString(count), _countLabelStyle!);
 
                 if (ev.type == EventType.MouseDown && cellRect.Contains(mousePos))
                 {
@@ -1087,7 +1111,7 @@ namespace Stratocraft.Character
 
                 if (slot.Count > 1 || slot.Kind == InventoryItemKind.VoxelBlock || slot.Kind == InventoryItemKind.OreChunk || slot.Kind == InventoryItemKind.MetalIngot)
                 {
-                    GUI.Label(new Rect(rect.x + 4f, rect.y + rect.height - 20f, rect.width - 7f, 18f), $"x{slot.Count}", _countLabelStyle!);
+                    GUI.Label(new Rect(rect.x + 4f, rect.y + rect.height - 20f, rect.width - 7f, 18f), GetCachedStackCountString(slot.Count), _countLabelStyle!);
                 }
 
                 if (slot.Kind == InventoryItemKind.WeaponSword ||
@@ -1269,8 +1293,14 @@ namespace Stratocraft.Character
                 Rect oxyRect = new Rect(startX, currentY, totalBarWidth, 12f);
                 float oxy01 = Mathf.Clamp01(lungOxygenPercent / 100f);
                 Color oxyFill = oxy01 < 0.25f ? new Color(0.95f, 0.22f, 0.22f, 1.0f) : new Color(0.18f, 0.78f, 0.95f, 1.0f);
+                int oxyInt = Mathf.RoundToInt(lungOxygenPercent);
+                if (oxyInt != _lastOxyPctInt)
+                {
+                    _lastOxyPctInt = oxyInt;
+                    _cachedOxyLabel = $"🤿 OKSİJEN %{oxyInt}";
+                }
                 DrawHorizontalBar(oxyRect, oxy01, oxyFill, new Color(0.04f, 0.12f, 0.20f, 0.88f), new Color(0.25f, 0.50f, 0.70f, 0.95f),
-                    $"🤿 OKSİJEN %{Mathf.RoundToInt(lungOxygenPercent)}");
+                    _cachedOxyLabel);
                 currentY += 15f;
             }
 
@@ -1281,26 +1311,34 @@ namespace Stratocraft.Character
             Rect hpRect = new Rect(startX, currentY, halfWidth, 13f);
             float hp01 = maxHp > 0.1f ? Mathf.Clamp01(currentHp / maxHp) : 1f;
             Color hpFill = hp01 < 0.28f ? new Color(0.95f, 0.15f, 0.15f, 1.0f) : new Color(0.85f, 0.18f, 0.20f, 1.0f);
+            int hpCurInt = Mathf.RoundToInt(currentHp);
+            int hpMaxInt = Mathf.RoundToInt(maxHp);
+            if (hpCurInt != _lastHpCurInt || hpMaxInt != _lastHpMaxInt)
+            {
+                _lastHpCurInt = hpCurInt;
+                _lastHpMaxInt = hpMaxInt;
+                _cachedHpLabel = $"❤️ CAN %{Mathf.RoundToInt(hp01 * 100f)} ({hpCurInt}/{hpMaxInt})";
+            }
             DrawHorizontalBar(hpRect, hp01, hpFill, new Color(0.20f, 0.05f, 0.05f, 0.88f), new Color(0.55f, 0.18f, 0.18f, 0.95f),
-                $"❤️ CAN %{Mathf.RoundToInt(hp01 * 100f)} ({Mathf.RoundToInt(currentHp)}/{Mathf.RoundToInt(maxHp)})");
+                _cachedHpLabel);
 
             // Sağ Bar: Dayanıklılık / Yorgunluk (EP / Stamina)
             Rect stamRect = new Rect(startX + halfWidth + 8f, currentY, halfWidth, 13f);
             float stam01 = maxStamina > 0.1f ? Mathf.Clamp01(stamina / maxStamina) : 1f;
+            int stamPctInt = Mathf.RoundToInt(stam01 * 100f);
 
-            Color stamFill;
-            string stamText;
-            if (isExhaustedLock)
+            Color stamFill = isExhaustedLock
+                ? new Color(0.98f, 0.58f, 0.12f, 1.0f)
+                : (stam01 < 0.25f ? new Color(0.92f, 0.80f, 0.18f, 1.0f) : new Color(0.22f, 0.84f, 0.30f, 1.0f));
+            if (stamPctInt != _lastStamPctInt || isExhaustedLock != _lastStamExhausted)
             {
-                stamFill = new Color(0.98f, 0.58f, 0.12f, 1.0f);
-                stamText = $"⚡ NEFESSİZ! (DİNLENİYOR) %{Mathf.RoundToInt(stam01 * 100f)}";
+                _lastStamPctInt = stamPctInt;
+                _lastStamExhausted = isExhaustedLock;
+                _cachedStamLabel = isExhaustedLock
+                    ? $"⚡ NEFESSİZ! (DİNLENİYOR) %{stamPctInt}"
+                    : $"⚡ ENERJİ (EP) %{stamPctInt}";
             }
-            else
-            {
-                stamFill = stam01 < 0.25f ? new Color(0.92f, 0.80f, 0.18f, 1.0f) : new Color(0.22f, 0.84f, 0.30f, 1.0f);
-                stamText = $"⚡ ENERJİ (EP) %{Mathf.RoundToInt(stam01 * 100f)}";
-            }
-            DrawHorizontalBar(stamRect, stam01, stamFill, new Color(0.06f, 0.16f, 0.08f, 0.88f), new Color(0.22f, 0.48f, 0.26f, 0.95f), stamText);
+            DrawHorizontalBar(stamRect, stam01, stamFill, new Color(0.06f, 0.16f, 0.08f, 0.88f), new Color(0.22f, 0.48f, 0.26f, 0.95f), _cachedStamLabel);
         }
 
         private void DrawHorizontalBar(Rect rect, float fill01, Color fillColor, Color bgColor, Color borderColor, string labelText)

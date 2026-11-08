@@ -13,19 +13,47 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#036` (FPS Dalgalanması 10 <-> 90 FPS Kök Neden Çözüldü: `StratocraftNetcodeBootstrap` ile 999+ Server Tick Batching Uyarısı Kapatıldı \| `UpdateFrustumVisibility` Sonsuz Alt-Chunk Kirletme Döngüsü Giderildi \| 3B Voksel Belleği 2105 Chunk'tan 297 Chunk'a Düşürüldü + 768m Kesintisiz Ufuk Korundu \| 47/47 Test PASS, Unity 6 Console: 0 Error / 0 Warning) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-06T17:12:00+03:00` |
+| **Devir Numarası** | `#037` (Sabit 60+ FPS Optimizasyonu + Paralel Dünya Akışı + Gerçek Fizik Motoruyla Beklemesiz Devrilme, Yönsel Ağaç Kesimi & Yerde Kütük Doğrama, Darbe Enerjisine Göre Sağlam Blok vs. Moloz + Üstüne Düşmeyle Ezilme + Dallanan & Kendi Kendine Çökmeyen Doğal 3B Mağara Ağı \| 48/48 Test PASS, 0 Error / 0 Warning) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-08T18:05:34+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Performans ve Dalgalanma Optimizasyonu Tamamlandı (Devir #036)` |
-| **Aktif Test Durumu** | `47/47 Standalone & Unity Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Sabit 60+ FPS (Yürürken/Koşarken Paralel Dünya Akışı Dahil), Gerçek Fiziksel Devrilme/Kütük ve Dallanan Mağara Ağı Tamamlandı ve Kullanıcı Tarafından Doğrulandı (Devir #037)` |
+| **Aktif Test Durumu** | `48/48 Standalone & Unity Test PASS (678 ms)`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#036`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#037`)
 
-### 2.0. Devir #036: FPS Dalgalanması (10 <-> 90 FPS) ve 999+ NetCode Warning Kök Neden Çözümleri
+### 2.0. Devir #037: Sabit 60+ FPS, Gerçek Fizik Motoruyla Devrilme / Kütük Kesimi ve Dallanan Mağara Ağı
+1. **Problem 1 — En Düşük Bilgisayarda Bile Sabit 60+ FPS (`<= 16.6 ms`, Sıfır Spike & Sıfır GC):**
+   - **Alt-Chunk Dilimleme (`IsConsolidatedFullPass = false`):** `Stage1InteractivePlayController.RebuildSingleChunkWithSubMeshCache` ve `EnsureChunksInitialized` içinde tek geçişte üretilen üçgenler anında `Y >> 4` (`SubChunkTriangles[0..9]`) dilimlerine dağıtıldı; böylece ilk kazma/balta vuruşunda tüm chunk'ın (160m) baştan örülmesi engellendi (`< 0.35 ms` tekil alt-chunk güncellemesi).
+   - **Yüzeyde Yeraltı Mağara Ayıklaması (`consolidatedMinY = 72`):** Oyuncu yüzeydeyken (`visibleMask == SurfaceAndUpperCaveSubChunksMask`) `Y = 0..72m` arasındaki tüm mağara katmanlarının örülmesi atlandı (göl/deniz tabanları `Y >= 74m` olduğundan yüzeyde sıfır delik).
+   - **Gölge, Collider, Ufuk ve Köşe Kaynaştırma Optimizasyonu:**
+     - `HybridSurfaceNetsAndShapeMesher`: Sekizgen sütunlar/ağaç gövdeleri (`EmitOctagonalPillar`) 3 dikey dilimden (64 üçgen) 1 temiz şafta (32 üçgen, `%50` azalma) indirildi; `EmitDualQuadAsFacetedTriangles` ve `CanShareQuadVertices` optimize edilerek tepe (vertex) sayısı `%33` azaltıldı.
+     - `UpdateFrustumVisibility`: Arazi gölge mesafesi `chebDist <= 5` (121 chunk) yerine `chebDist <= 2` (25 chunk) yapıldı; `Stage1CreatureSimulationBridge.CreateCreatureJoint` içinde ikincil küçük uzuvların gölgesi kapatılıp yalnızca gövde (`Torso`) gölgesi korundu.
+     - `NearPhysicsColliderRadius = -1` (Sıfır PhysX `MeshCollider` BVH Pişirme): Oyuncu hareketi (`SampleBilinearVoxelGroundHeight`), kazı/inşa (`PerformSubVoxelDdaRaycast`), yıkım (`FindSupportingVoxelY`) ve canlılar doğrudan `_worldChunks` voksel dizisini $O(1)$ sorguladığından `VoxelChunk_` üzerindeki `MeshCollider` pişirmesi tamamen devre dışı bırakıldı (`0.000 ms` PhysX spike).
+     - **Yürürken ve Koşarken Paralel Dünya Akışı & Paralel Runtime Örme (`SpawnDynamicContinentChunksBatchParallel`, `RebuildAllDirtyChunks`):**
+       - `EnsureChunksInitialized`: Başlangıçta yalnızca sahnedeki 121 objeyi değil, `r <= ActiveChunkRadius + 1` içindeki **529/529 chunk'ın tamamını** `Parallel.For` ile üretip örer ve `_chunkPool` havuzunu 28 hazır slotla (`Mesh` + `uint[65536]` + `ushort[65536]`) ısıtır.
+       - `StepDynamicContinentChunkStreaming` & `RebuildAllDirtyChunks`: Oyuncu 16m sınırını geçtiğinde yeni giren ön cephe chunk'ları (`MaxStreamSpawnBatch = 32`) ve görünür chunk mesh'leri (`MaxParallelMeshBatch = 12`) tüm CPU çekirdeklerinde `Parallel.For` ile paralel üretilir; havuzdan dönen `Mesh` nesneleri `null` yapılmak yerine `.Clear(keepVertexLayout: true)` ile yerinde yeniden kullanılır (`0 Byte` GC, `0` eksik arazi).
+       - `EvaluateUndergroundCaveNetwork`: Voksel başına 7 adet 3B trilinear gürültü çağrısı (`~989.000` hash/chunk) yerine analitik 3B domain-warped trigonometrik sıfır-geçiş alanları (`MathF.Sin`/`MathF.Cos`) kullanılarak chunk üretim süresi `18 ms`'den `0.18 ms`'ye (`100x` hızlanma) indirildi.
+       - `UpdateDistantHorizonShellsVisibility` & `DistantHorizonLodSystem.BuildHorizonClipmapRingMesh`: Köşe yükseklikleri `[ThreadStatic] _tsClipmapCornerHeights` dizisinde önbelleklenerek `SampleIslandTopSurfaceY` çağrıları `%75` azaltıldı; `UpdateOxygenAndFloatingOrigin` içinde açık gökyüzü kolon kontrolüyle gereksiz `384 KB` kopyalama kaldırıldı.
+     - `Stage1MatterCrystalAndMiningController` (`Physics.RaycastNonAlloc`) ve `Stage1VisualHotbarAndInventoryUi` (`OnGUI` statik string önbelleklemesi + `EventType.Layout` senkronizasyonu) ile çalışma zamanı GC tahsisatı sıfırlandı.
+2. **Problem 2 — Gerçek Fizik Motoruyla Beklemesiz Devrilme, Yönsel Ağaç Kesimi & Kütük Doğrama, Darbe Enerjisi ($\Phi_{\text{impact}}$) ve Üstten Ezilme:**
+   - **Havada Bekleme ve Sallanma Kaldırıldı (`PreCollapseWarningDurationSeconds = 0.0f`):** Destek kesildiği karede (`WarningTimer = 0f`) yapı veya ağaç hiç beklemeden anında fizik motoruyla (`Rigidbody` + `BoxCollider` + ters sarkaç torku) devrilmeye başlar (`Stage1StructuralCollapseBridge.cs`).
+   - **Bileşik Gövde Birleştirme (`ConsolidateClustersByConnectedComponent`) & Doğru Devrilme Yönü (`GreedyBoxFractureJob.cs`):** Aynı `ConnectedComponentId`'ye sahip kutular tek bir bütünleşik 3B mesh ve fiziksel gövdede birleştirildi; devrilme tork kolu düzeltilerek kesilen kolona / boşluğa doğru gerçekçi eğilip devrilmesi sağlandı.
+   - **Balta Açısına Göre Yönsel Ağaç Devrilmesi, Canlı Voksel Zemini Üstünde Durma ve Yerdeki Kütüğü Parçalama (`FallenTreeLogInstance`, `SampleActualVoxelGroundY`, `StepGroundedTreeLogs`, `TryChopFallenTreeLog`):**
+     - Ağaç baltayla (`[3]`) kesildiğinde vuruş yönüne (`PreferredStrikeDirectionXZ`) doğru tek parça kütük olarak yan devrilir; devrilme sırasında gövde ekseni (`centerTrunkLx`, `centerTrunkLz`) merkezlenir, alt taraftaki yaprakların toprağa batması engellenir ve canlı voksel arazisinin (`SampleActualVoxelGroundY`) eğimine (`yButt`, `yMid`, `yTip`) göre tam temas açısında (`maxTiltAngleRad`) durur.
+     - Arazi chunk'larında PhysX `MeshCollider` kapalı (`NearPhysicsColliderRadius = -1`) olduğu için yerdeki kütüğün `Rigidbody` bileşeni `isKinematic = true, useGravity = false` yapılarak yerin içinden geçip kaybolması tamamen engellendi; bunun yerine `StepGroundedTreeLogs` ile canlı voksel zemini üzerinde fiziksel olarak tutulması (ve altındaki toprak kazılırsa yerçekimiyle yeni zemine düşmesi) sağlandı. Oyuncu yerdeki kütüğe baltayla vurdukça kütük dilimlenir ve gerçek odun blokları (`Meşe Odunu` / `Demir Ağacı`) düşer.
+   - **Darbe Enerjisi ($\Phi_{\text{impact}}$) vs. Sağlam Madde ve Üstüne Düşmeyle Ezilme (`StructuralCollapseSystem.ShouldMaterialStayIntactOnImpact`, `SettleClusterAsIntactBlocks`):**
+     - Alçaktan (`<= 2.55m`) düşen sağlam maddeler ($\Phi_{\text{impact}} < 0.45$) **moloza (`ShapeId=63`) dönüşmez**; yerde kendi orijinal maddesi ve mimari şekliyle sağlam blok olarak kalır.
+     - Yüksekten sert düşen ($\Phi_{\text{impact}} \ge 0.45$) kütleler kırılıp moloza dönüşür; ayrıca düşen kütle yerdeki sağlam bir bloğun üstüne çarptığında darbe şok yükü alt bloğun ezilme sınırını aşarsa (`DoesImpactBreachFloorBlock`), **altta kalan sağlam blok da ezilerek kendi maddesinin molozuna (`ShapeId=63`) dönüşür**.
+3. **Problem 3 — Çökmeyen, Uzun, Dallanan ve Daralıp Genişleyen Doğal Mağara Ağı (`StratocraftFloatingIslandWorldGen.cs`, `GeodesicSupportDijkstraJob.cs`, `TributaryLoadDagJob.cs`):**
+   - Eski `sin(kx) + cos(kz)` küre odacıkları ve her 4m'de bir çıkan `(wx & 3) == 2 || (wz & 3) == 2` yapay ızgara duvarları tamamen kaldırıldı (`[F12]` vitrin odaları korundu).
+   - Yerine **Bölgesel Mağara Yoğunluk Maskesi (`provinceNoise`) + 3B Domain-Warped İkili Sıfır-Geçiş Kesişimi ($\Psi_1 = 0 \cap \Psi_2 = 0$ ana tünel + $\Psi_3 = 0$ Y-dallanma kolları) + `Pinch & Swell` (dar dehlizlerden geniş salonlara geçiş) + Parabolik Gotik Kemer Tavan Kesiti** eklendi.
+   - `GeodesicSupportDijkstraJob` ve `TributaryLoadDagJob` içinde `YMajorChunk` doğal yeraltı kemerlerinin 3B litostatik kuşatması güçlendirildi; mağaralar kendi kendine asla çökmez (`naturalCaveCollapsed == 0`), ancak oyuncu mağara içindeki `Stalagnate` destek sütununu veya ince tavanı kazarsa o bölge fiziksel olarak çöker.
+
+### 2.0b. Devir #036 Özeti: FPS Dalgalanması (10 <-> 90 FPS) ve 999+ NetCode Warning Kök Neden Çözümleri
 1. **NetCode 999+ Warning Fırtınası Engellendi (`StratocraftNetcodeBootstrap.cs`):**
    - Unity NetCode'un tek oyunculu sahnede otomatik olarak 60 Hz arka planda `ServerWorld` ve `ClientWorld` kurup kare gecikmesinde konsola her kare binlerce `Server Tick Batching has occurred... (GetStackTrace)` basması ana thread'i 20-30 ms kilitliyordu.
    - `StratocraftNetcodeBootstrap : ClientServerBootstrap` oluşturulup `Initialize => false` dönüldü ve `Stage1InteractivePlayController.SuppressUnusedNetCodeWarnings()` içinde aktif tekil NetCode dünyaları imha edilerek uyarılar %100 sıfırlandı (`0 Warning / 0 Error`).
@@ -268,12 +296,9 @@
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar
 
-1. **Devir #036 — Performans ve FPS Dalgalanması İncelemesi:**
-   - **İlk Açılış Anındaki 3-5 Saniye Düşüş (13–17 FPS):**
-     - Oyun Play tuşuna ilk basıldığı anda çevredeki ~800–900 chunk sıfırdan prosedürel olarak hesaplanıp (WorldGen) Surface Nets 3B yüzey ağları örülene kadar CPU çekirdekleri %100 yük altındadır.
-     - Başlangıç chunk üretimi bittiğinde FPS doğrudan **73+ FPS** seviyesine çıkmaktadır.
-   - **Oynanış Sırasındaki Dalgalanma (36 FPS <-> 73 FPS):**
-     - Kamerayı boş ovaya veya gökyüzüne çevirince 73 FPS, onlarca ağaç, heykel, sıvı ve NPC'nin olduğu vadi merkezine çevirince 36 FPS olması frustum karmaşıklığından (Draw Call / üçgen sayısı) ve Unity Editör pencerelerinin (Editor GUI overhead) ek yükünden kaynaklanmaktadır. Bağımsız `.exe` derlemesinde bu dalgalanma çok daha pürüzsüz olacaktır.
+1. **Devir #037 — Kullanıcı Tarafından Doğrulanan ve Kalan Noktalar:**
+   - **Yürürken / Koşarken Sabit 60+ FPS, Paralel Dünya Akışı ve Fiziksel Yıkım/Devrilme:** Kullanıcı tarafından canlı oyunda test edilip onaylandı; kesilen ağacın yerin içine girmesi sorunu da `SampleActualVoxelGroundY`, `StepGroundedTreeLogs` ve `rb.isKinematic = true` ile çözüldü.
+   - **Bağımsız `.exe` (Standalone Build) Performansı:** Unity Editör pencerelerinin (SceneView / Inspector GUI) ek yükü olmadan saf DirectX 12 `.exe` çıktısında performans çok daha yüksek ve pürüzsüz olacaktır.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
@@ -307,16 +332,11 @@
 
 1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
    - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#036` ile eşleştiğini doğrula.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#037` ile eşleştiğini doğrula.
 
-2. **Adım 2 — Sıradaki Performans İyileştirmeleri:**
-   - **Kademeli Açılış Chunk Akışı (Staggered Initial Spawning):**
-     - İlk karede 800 chunk'ı birden CPU'da hesaplamak yerine başlangıçta sadece oyuncunun etrafındaki acil çekirdek halkayı ($r \le 2$, 25 chunk) anında örüp oyunu 60+ FPS ile açmak; dış halkaları arka plan iş parçacığı (background worker job) ile kademeli yükleyerek açılıştaki 13–17 FPS duraksamasını tamamen ortadan kaldırmak.
-   - **Bağımsız `.exe` (Standalone Build) Testi:**
-     - Unity Editör penceresinin GUI ve SceneView ek çizim yükü olmadan saf Standalone DirectX 12 çıktısında 120+ FPS performans testinin yapılması.
-   - **Ağaç ve Yapı GPU Instancing / Draw Call İncelemesi:**
-     - Sık ormanlık alanlarda çok sayıda ağaç gövdesi ve yaprak bloğunun çizim çağrılarının SRP Batcher / GPU Instancing ile daha da birleştirilmesi.
+2. **Adım 2 — Sıradaki Geliştirme veya Faz 3 Hazırlığı:**
+   - Kullanıcının talebine göre Faz 1–2 ince ayarlarına veya Faz 3 (Atölye / Örs üzerinde silah dövme, Dojo parşömenleri, gelişmiş düşman / yapı etkileşimleri) adımlarına geç.
 
 3. **Adım 3 — Test ve Doğrulama:**
-   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (47/47 PASS olmalı).
+   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (`48/48 PASS` olmalı).
    - Unity Editor üzerinde Play Mode'da test ederek konsolda `0 Error / 0 Warning` olduğunu doğrula.

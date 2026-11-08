@@ -90,7 +90,9 @@ namespace Stratocraft.Character
         private static Stage1InteractivePlayController? _activeInstance;
 
         private static int ActiveChunkRadius => Stage1GameSettings.RenderDistanceChunks;
-        private const int NearPhysicsColliderRadius = 2;
+        private const int NearPhysicsColliderRadius = -1;
+        private const int MaxStreamSpawnBatch = 32;
+        private const int MaxParallelMeshBatch = 12;
 
         private readonly Dictionary<(int cx, int cz), uint[]> _worldChunks = new();
         private readonly Dictionary<(int cx, int cz), ushort[]> _fluidChunks = new();
@@ -116,6 +118,16 @@ namespace Stratocraft.Character
         private readonly HashSet<(int cx, int cz)> _activeFluidChunks = new();
         private readonly List<(int cx, int cz)> _activeFluidScratch = new(32);
         private readonly List<(int cx, int cz)> _sortedDirtyChunks = new(64);
+        private readonly List<(int cx, int cz)> _chunksToSpawnScratch = new(MaxStreamSpawnBatch);
+        private readonly uint[][] _spawnBatchVoxels = new uint[MaxStreamSpawnBatch][];
+        private readonly ushort[][] _spawnBatchFluids = new ushort[MaxStreamSpawnBatch][];
+        private readonly PooledChunkSlot?[] _spawnBatchPooled = new PooledChunkSlot?[MaxStreamSpawnBatch];
+        private readonly (int cx, int cz)[] _parallelMeshKeys = new (int cx, int cz)[MaxParallelMeshBatch];
+        private readonly ChunkSubMeshEntry[] _parallelMeshEntries = new ChunkSubMeshEntry[MaxParallelMeshBatch];
+        private readonly ushort[] _parallelMeshVisibleMasks = new ushort[MaxParallelMeshBatch];
+        private readonly List<FacetedVoxelTriangle>[] _parallelSolidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
+        private readonly List<FacetedVoxelTriangle>[] _parallelFluidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
+        private readonly HashSet<(int cx, int cz)> _meshedWithAll8Neighbors = new();
         private readonly Stack<PooledChunkSlot> _chunkPool = new(64);
         private readonly Plane[] _frustumPlanes = new Plane[6];
         private readonly System.Diagnostics.Stopwatch _meshRebuildStopwatch = new();
@@ -273,6 +285,7 @@ namespace Stratocraft.Character
         private void Start()
         {
             _activeInstance = this;
+            Stage1GameSettings.EnsureLoaded();
             SuppressUnusedNetCodeWarnings();
             EnsureCameraAndSceneReferences();
             EnsureChunksInitialized();
@@ -288,8 +301,8 @@ namespace Stratocraft.Character
             _cameraYaw = transform.eulerAngles.y;
             _cameraPitch = 0f;
             ApplyFirstPersonVisibility();
-            RebuildAllDirtyChunks(forceImmediateAll: false);
             UpdateFrustumVisibility();
+            RebuildAllDirtyChunks(forceImmediateAll: false);
             Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
         }
 
@@ -409,8 +422,8 @@ namespace Stratocraft.Character
             StepCombatCreaturesAndRig(dt);
             WakeAllDirtyChunksFluid();
             StepFluidSimulation(dt);
-            RebuildAllDirtyChunks(forceImmediateAll: false);
             UpdateFrustumVisibility();
+            RebuildAllDirtyChunks(forceImmediateAll: false);
             if (spanId >= 0L) _telemetryLogger?.LogPipelineEnd(spanId, "OK");
         }
 
@@ -449,6 +462,14 @@ namespace Stratocraft.Character
                         _fluidChunks.TryGetValue(key, out ushort[]? flArr);
 
                         if (mc != null) mc.enabled = false;
+                        if (mf.sharedMesh != null && mf.sharedMesh.name.StartsWith("DynamicSeamlessChunk_", StringComparison.Ordinal))
+                        {
+                            mf.sharedMesh.Clear(keepVertexLayout: true);
+                        }
+                        if (fmf != null && fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
+                        {
+                            fmf.sharedMesh.Clear(keepVertexLayout: true);
+                        }
                         mf.gameObject.SetActive(false);
 
                         if (mr != null && mc != null && fmf != null && fmr != null && flArr != null)
@@ -480,27 +501,10 @@ namespace Stratocraft.Character
                     _fluidMeshRenderers.Remove(key);
                     _chunkColliders.Remove(key);
                     _chunkSubMeshCache.Remove(key);
+                    _meshedWithAll8Neighbors.Remove(key);
                     _dirtyChunks.Remove(key);
                     _dirtyFluidChunks.Remove(key);
                     _activeFluidChunks.Remove(key);
-                }
-
-                for (int i = 0; i < _chunksToUnloadScratch.Count; i++)
-                {
-                    var key = _chunksToUnloadScratch[i];
-                    for (int ndz = -1; ndz <= 1; ndz++)
-                    {
-                        for (int ndx = -1; ndx <= 1; ndx++)
-                        {
-                            if (ndx == 0 && ndz == 0) continue;
-                            var nKey = (key.cx + ndx, key.cz + ndz);
-                            if (_worldChunks.ContainsKey(nKey))
-                            {
-                                if (_chunkSubMeshCache.TryGetValue(nKey, out var nSub)) nSub.ResetAllDirty();
-                                _dirtyChunks.Add(nKey);
-                            }
-                        }
-                    }
                 }
             }
 
@@ -513,17 +517,17 @@ namespace Stratocraft.Character
             }
 
             bool infinite = StratocraftFloatingIslandWorldGen.InfiniteProceduralWorldMode;
-            int spawnedThisFrame = 0;
+            _chunksToSpawnScratch.Clear();
             int maxDataRadius = ActiveChunkRadius + 1; // +1 voksel apron halkasi: r <= ActiveChunkRadius icindeki tum chunk'larin 8 komsusu hazir olur
             // Halka-Oncelikli (Ring-First) Akis: Once oyuncuya en yakin halka (r = 0, 1, 2, 3...) hem on (pass=0) hem yan/arka (pass=1)
-            // olmak uzere %100 eksiksiz doldurulur; yakin halkanin 8 komsusu tamamlanmadan asla uzaktaki halkaya (r + 1) gecilmez!
-            for (int r = 0; r <= maxDataRadius; r++)
+            // olmak uzere %100 eksiksiz doldurulur; tek karede tum on cepheyi (MaxStreamSpawnBatch = 32) paralel uretir!
+            for (int r = 0; r <= maxDataRadius && _chunksToSpawnScratch.Count < MaxStreamSpawnBatch; r++)
             {
-                for (int pass = 0; pass < 2; pass++)
+                for (int pass = 0; pass < 2 && _chunksToSpawnScratch.Count < MaxStreamSpawnBatch; pass++)
                 {
-                    for (int dz = -r; dz <= r; dz++)
+                    for (int dz = -r; dz <= r && _chunksToSpawnScratch.Count < MaxStreamSpawnBatch; dz++)
                     {
-                        for (int dx = -r; dx <= r; dx++)
+                        for (int dx = -r; dx <= r && _chunksToSpawnScratch.Count < MaxStreamSpawnBatch; dx++)
                         {
                             if (Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz)) != r) continue;
                             int cx = infinite
@@ -532,20 +536,58 @@ namespace Stratocraft.Character
                             int cz = infinite
                                 ? pCz + dz
                                 : Mathf.Clamp(pCz + dz, StratocraftFloatingIslandWorldGen.ContinentChunkMin, StratocraftFloatingIslandWorldGen.ContinentChunkMax);
-                            if (_worldChunks.ContainsKey((cx, cz))) continue;
+                            if (_worldChunks.ContainsKey((cx, cz)) || _chunksToSpawnScratch.Contains((cx, cz))) continue;
 
-                            if (pass == 0 && r > 3)
+                            if (pass == 0 && r > 2)
                             {
                                 Vector2 dir = new Vector2(dx, dz).normalized;
                                 if (Vector2.Dot(camFwd2D, dir) < -0.15f) continue;
                             }
 
-                            CreateAndRegisterDynamicContinentChunk(cx, cz);
-                            spawnedThisFrame++;
-                            if (r > 3 && spawnedThisFrame >= 2) return;
+                            _chunksToSpawnScratch.Add((cx, cz));
                         }
                     }
                 }
+            }
+
+            if (_chunksToSpawnScratch.Count > 0)
+            {
+                SpawnDynamicContinentChunksBatchParallel(_chunksToSpawnScratch);
+            }
+        }
+
+        private void SpawnDynamicContinentChunksBatchParallel(List<(int cx, int cz)> batchCoords)
+        {
+            int count = Mathf.Min(batchCoords.Count, MaxStreamSpawnBatch);
+            for (int i = 0; i < count; i++)
+            {
+                if (_chunkPool.Count > 0)
+                {
+                    PooledChunkSlot slot = _chunkPool.Pop();
+                    _spawnBatchPooled[i] = slot;
+                    _spawnBatchVoxels[i] = slot.Voxels;
+                    _spawnBatchFluids[i] = slot.Fluids;
+                }
+                else
+                {
+                    _spawnBatchPooled[i] = null;
+                    _spawnBatchVoxels[i] = new uint[65536];
+                    _spawnBatchFluids[i] = new ushort[65536];
+                }
+            }
+
+            // Voksel ve akiskan verilerini tum CPU cekirdeklerinde PARALEL uret (Ana Thread'de sifir takilma ve 0 Byte GC!)
+            System.Threading.Tasks.Parallel.For(0, count, i =>
+            {
+                var (cx, cz) = batchCoords[i];
+                StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(cx, cz, _spawnBatchVoxels[i], _spawnBatchFluids[i]);
+            });
+
+            for (int i = 0; i < count; i++)
+            {
+                var (cx, cz) = batchCoords[i];
+                RegisterPrepopulatedDynamicContinentChunk(cx, cz, _spawnBatchVoxels[i], _spawnBatchFluids[i], _spawnBatchPooled[i]);
+                _spawnBatchPooled[i] = null;
             }
         }
 
@@ -563,6 +605,22 @@ namespace Stratocraft.Character
 
         private void CreateAndRegisterDynamicContinentChunk(int cx, int cz)
         {
+            if (_chunkPool.Count > 0)
+            {
+                PooledChunkSlot slot = _chunkPool.Pop();
+                StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(cx, cz, slot.Voxels, slot.Fluids);
+                RegisterPrepopulatedDynamicContinentChunk(cx, cz, slot.Voxels, slot.Fluids, slot);
+            }
+            else
+            {
+                var (voxels, fluids) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                RegisterPrepopulatedDynamicContinentChunk(cx, cz, voxels, fluids, null);
+            }
+        }
+
+        private void RegisterPrepopulatedDynamicContinentChunk(
+            int cx, int cz, uint[] voxels, ushort[] fluids, PooledChunkSlot? pooledSlot)
+        {
             if (_chunkContainerParent == null)
             {
                 GameObject? existingParent = GameObject.Find("01_Faz1_VoxelTerrain_And_DominoWorld");
@@ -578,25 +636,30 @@ namespace Stratocraft.Character
             bool inNearPhysics = Mathf.Abs(cx - pCx) <= NearPhysicsColliderRadius && Mathf.Abs(cz - pCz) <= NearPhysicsColliderRadius;
             Material? fluidMat = ResolveFluidSurfaceMaterial();
 
-            if (_chunkPool.Count > 0)
+            if (pooledSlot != null)
             {
-                PooledChunkSlot slot = _chunkPool.Pop();
-                StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(cx, cz, slot.Voxels, slot.Fluids);
+                PooledChunkSlot slot = pooledSlot;
                 slot.ChunkGo.name = $"VoxelChunk_{cx}_{cz}";
                 slot.ChunkGo.transform.position = new Vector3(cx * 16f, 0f, cz * 16f);
                 slot.FluidGo.name = $"FluidSurface_{cx}_{cz}";
                 if (fluidMat != null) slot.FluidMr.sharedMaterial = fluidMat;
                 slot.SolidMc.enabled = false;
-                slot.SolidMc.sharedMesh = null;
-                slot.SolidMf.sharedMesh = null;
-                slot.FluidMf.sharedMesh = null;
+                if (slot.SolidMf.sharedMesh != null)
+                {
+                    slot.SolidMf.sharedMesh.Clear(keepVertexLayout: true);
+                    slot.SolidMf.sharedMesh.name = $"DynamicSeamlessChunk_{cx}_{cz}";
+                }
+                if (slot.FluidMf.sharedMesh != null)
+                {
+                    slot.FluidMf.sharedMesh.Clear(keepVertexLayout: true);
+                    slot.FluidMf.sharedMesh.name = $"DynamicFluidSurface_{cx}_{cz}";
+                }
                 slot.ChunkGo.SetActive(true);
 
-                RegisterEditableChunk(new Vector2Int(cx, cz), slot.Voxels, slot.SolidMf, slot.SolidMc, slot.Fluids, slot.FluidMf);
+                RegisterEditableChunk(new Vector2Int(cx, cz), voxels, slot.SolidMf, slot.SolidMc, fluids, slot.FluidMf);
             }
             else
             {
-                var (voxels, fluids) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
                 GameObject chunkGo = new GameObject($"VoxelChunk_{cx}_{cz}");
                 if (_chunkContainerParent != null) chunkGo.transform.SetParent(_chunkContainerParent, false);
                 chunkGo.transform.position = new Vector3(cx * 16f, 0f, cz * 16f);
@@ -617,26 +680,43 @@ namespace Stratocraft.Character
                 RegisterEditableChunk(new Vector2Int(cx, cz), voxels, mf, mc, fluids, fluidMf);
             }
 
-            if (_chunkSubMeshCache.TryGetValue((cx, cz), out var selfSub)) selfSub.ResetAllDirty();
-            _dirtyChunks.Add((cx, cz));
-            _dirtyFluidChunks.Add((cx, cz));
+            if (!_chunkSubMeshCache.TryGetValue((cx, cz), out var selfSub) || selfSub == null)
+            {
+                selfSub = new ChunkSubMeshEntry();
+                _chunkSubMeshCache[(cx, cz)] = selfSub;
+            }
+            else
+            {
+                selfSub.ResetAllDirty();
+            }
+            _meshedWithAll8Neighbors.Remove((cx, cz));
+            int selfDist = Mathf.Max(Mathf.Abs(cx - pCx), Mathf.Abs(cz - pCz));
+            if (selfDist <= ActiveChunkRadius)
+            {
+                _dirtyChunks.Add((cx, cz));
+                _dirtyFluidChunks.Add((cx, cz));
+            }
 
-            // Yeni bir kita chunk'i olustugunda SADECE 4 kardinal degil, etrafindaki TUM 8 KOMSUSUNUN (4 kardinal + 4 capraz: SW, SE, NW, NE)
-            // daha onceden orulmus olanlarini (BuiltSubChunkMask != 0) sifirla ve kirli isaretle!
-            // Henuz hic orulmemis komsular ise 8 komsu voksel apronu tamamlandiginda TEK SEFERDE orulur (5-8 kez tekrar orme yukunu onler!).
+            // Komsu chunk'larin 8 komsusu tamamlandiginda eger daha once tam komsulukla orulmemisse TEK SEFER kirli isaretle!
             for (int ndz = -1; ndz <= 1; ndz++)
             {
                 for (int ndx = -1; ndx <= 1; ndx++)
                 {
                     if (ndx == 0 && ndz == 0) continue;
-                    var nKey = (cx + ndx, cz + ndz);
-                    if (_worldChunks.ContainsKey(nKey))
+                    (int cx, int cz) nKey = (cx + ndx, cz + ndz);
+                    if (_worldChunks.ContainsKey(nKey) && !_meshedWithAll8Neighbors.Contains(nKey))
                     {
-                        if (_chunkSubMeshCache.TryGetValue(nKey, out var nSub) && nSub.BuiltSubChunkMask != 0)
+                        if (HasAll8NeighborVoxels(nKey.cx, nKey.cz))
                         {
-                            nSub.ResetAllDirty();
-                            _dirtyChunks.Add(nKey);
-                            _dirtyFluidChunks.Add(nKey);
+                            if (_chunkSubMeshCache.TryGetValue(nKey, out var nSub) && nSub.BuiltSubChunkMask != 0)
+                            {
+                                nSub.ResetAllDirty();
+                            }
+                            if (Mathf.Max(Mathf.Abs(nKey.cx - pCx), Mathf.Abs(nKey.cz - pCz)) <= ActiveChunkRadius)
+                            {
+                                _dirtyChunks.Add(nKey);
+                                _dirtyFluidChunks.Add(nKey);
+                            }
                         }
                     }
                 }
@@ -1152,10 +1232,31 @@ namespace Stratocraft.Character
                 int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
                 if (_worldChunks.TryGetValue((cx, cz), out uint[]? raw))
                 {
-                    _oxygenScratchChunk ??= new VoxelChunkComponent(cx, cz);
-                    _fluidChunks.TryGetValue((cx, cz), out ushort[]? rawFluids);
-                    EnclosedOxygenFloodFillSystem.PrepareScratchChunkForOxygenBfs(_oxygenScratchChunk, raw, rawFluids);
-                    _lastConnectedAirVoxels = _oxygenSystem.MeasureConnectedAirVolume(_oxygenScratchChunk, wx - cx * 16, wy, wz - cz * 16, 600);
+                    int lx = wx - cx * 16;
+                    int lz = wz - cz * 16;
+                    int colBase = (lz << 4) | lx;
+                    bool hasOverheadRoof = false;
+                    for (int sy = wy + 1; sy < MaxEditableVoxelY; sy++)
+                    {
+                        if (VoxelBitUtility.IsPhysicallySolid(raw[(sy << 8) | colBase]))
+                        {
+                            hasOverheadRoof = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasOverheadRoof)
+                    {
+                        // Oyuncu acik gokyuzu altindaysa 384 KB kopyalama ve 65.536 voksel SkyOcclusion taramasi yapmadan O(1) acik atmosfer don!
+                        _lastConnectedAirVoxels = 600;
+                    }
+                    else
+                    {
+                        _oxygenScratchChunk ??= new VoxelChunkComponent(cx, cz);
+                        _fluidChunks.TryGetValue((cx, cz), out ushort[]? rawFluids);
+                        EnclosedOxygenFloodFillSystem.PrepareScratchChunkForOxygenBfs(_oxygenScratchChunk, raw, rawFluids);
+                        _lastConnectedAirVoxels = _oxygenSystem.MeasureConnectedAirVolume(_oxygenScratchChunk, lx, wy, lz, 600);
+                    }
                 }
                 // DIKKAT: 256m'de transform.position ve chunk pozisyonlarini (0,0)'a geri kaydirma!
                 // Aksi halde oyuncu (0,0)'daki sahne nesnelerinin (Klan Kristali / NPC) uzerine geri isinlanir ve pCx/pCz sifirlanip
@@ -1288,7 +1389,7 @@ namespace Stratocraft.Character
                 if (mr.enabled != visible) mr.enabled = visible;
                 if (visible)
                 {
-                    ShadowCastingMode targetShadow = chebDist <= 5 ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                    ShadowCastingMode targetShadow = chebDist <= 2 ? ShadowCastingMode.On : ShadowCastingMode.Off;
                     if (mr.shadowCastingMode != targetShadow) mr.shadowCastingMode = targetShadow;
                 }
 
@@ -1309,13 +1410,17 @@ namespace Stratocraft.Character
                 if (visible)
                 {
                     visCount++;
+                }
+
+                if (inRange)
+                {
                     ushort targetMask = ComputeVisibleSubChunkMask(cx, cz, pCx, pCz, playerPos);
-                    if (_chunkSubMeshCache.TryGetValue(kv.Key, out var subEntry) && subEntry.BuiltSubChunkMask != 0)
+                    if (!_chunkSubMeshCache.TryGetValue(kv.Key, out var subEntry) ||
+                        subEntry.BuiltSubChunkMask == 0 ||
+                        (visible && subEntry.LastAppliedVisibleMask != targetMask))
                     {
-                        if (subEntry.LastAppliedVisibleMask != targetMask)
-                        {
-                            _dirtyChunks.Add(kv.Key);
-                        }
+                        _dirtyChunks.Add(kv.Key);
+                        _dirtyFluidChunks.Add(kv.Key);
                     }
                 }
             }
@@ -1433,7 +1538,10 @@ namespace Stratocraft.Character
             if (_distantHorizonSolidMf == null) return;
 
             int currentRadius = ActiveChunkRadius;
-            if (pCx == _lastHorizonPlayerCx && pCz == _lastHorizonPlayerCz && currentRadius == _lastHorizonRadius && _distantHorizonSolidMf.sharedMesh != null)
+            if (Mathf.Abs(pCx - _lastHorizonPlayerCx) < 3 &&
+                Mathf.Abs(pCz - _lastHorizonPlayerCz) < 3 &&
+                currentRadius == _lastHorizonRadius &&
+                _distantHorizonSolidMf.sharedMesh != null)
             {
                 return;
             }
@@ -1442,8 +1550,8 @@ namespace Stratocraft.Character
             _lastHorizonPlayerCz = pCz;
             _lastHorizonRadius = currentRadius;
 
-            int innerRadius = currentRadius;
-            int outerRadius = Mathf.Max(36, currentRadius + 24); // 36-48 chunks = 576m-768m kesintisiz ufuk
+            int innerRadius = Mathf.Max(2, currentRadius - 1);
+            int outerRadius = Mathf.Max(32, currentRadius + 22); // 32-44 chunks = 512m-704m kesintisiz ufuk
 
             DistantHorizonLodSystem.BuildHorizonClipmapRingMesh(
                 pCx, pCz,
@@ -1494,90 +1602,192 @@ namespace Stratocraft.Character
             {
                 _sortedDirtyChunks.Clear();
                 foreach (var k in _dirtyChunks) _sortedDirtyChunks.Add(k);
-                _sortedDirtyChunks.Sort((a, b) =>
+                if (_sortedDirtyChunks.Count > 1)
                 {
-                    int da = Mathf.Abs(a.cx - pCx) + Mathf.Abs(a.cz - pCz);
-                    int db = Mathf.Abs(b.cx - pCx) + Mathf.Abs(b.cz - pCz);
-                    bool nearA = Mathf.Abs(a.cx - pCx) <= 3 && Mathf.Abs(a.cz - pCz) <= 3;
-                    bool nearB = Mathf.Abs(b.cx - pCx) <= 3 && Mathf.Abs(b.cz - pCz) <= 3;
-                    if (nearA != nearB) return nearA ? -1 : 1;
+                    _sortedDirtyChunks.Sort((a, b) =>
+                    {
+                        int chebA = Mathf.Max(Mathf.Abs(a.cx - pCx), Mathf.Abs(a.cz - pCz));
+                        int chebB = Mathf.Max(Mathf.Abs(b.cx - pCx), Mathf.Abs(b.cz - pCz));
+                        bool nearA = chebA <= 2;
+                        bool nearB = chebB <= 2;
+                        if (nearA != nearB) return nearA ? -1 : 1;
 
-                    // Henuz hic mesh'i olmayan yeni olusmus chunk'lari komsularindan once or ki komsu dis perdeyi kaldirdiginda yan taraf bos kalmasin!
-                    bool unmeshedA = !_chunkMeshFilters.TryGetValue(a, out MeshFilter? mfA) || mfA == null || mfA.sharedMesh == null || mfA.sharedMesh.vertexCount < 3;
-                    bool unmeshedB = !_chunkMeshFilters.TryGetValue(b, out MeshFilter? mfB) || mfB == null || mfB.sharedMesh == null || mfB.sharedMesh.vertexCount < 3;
-                    if (unmeshedA != unmeshedB) return unmeshedA ? -1 : 1;
+                        bool unmeshedA = !_chunkSubMeshCache.TryGetValue(a, out var subA) || subA.BuiltSubChunkMask == 0;
+                        bool unmeshedB = !_chunkSubMeshCache.TryGetValue(b, out var subB) || subB.BuiltSubChunkMask == 0;
+                        if (unmeshedA != unmeshedB) return unmeshedA ? -1 : 1;
 
-                    if (da != db) return da.CompareTo(db);
-                    float dotA = Vector2.Dot(camFwd2D, new Vector2(a.cx - pCx, a.cz - pCz).normalized);
-                    float dotB = Vector2.Dot(camFwd2D, new Vector2(b.cx - pCx, b.cz - pCz).normalized);
-                    return dotB.CompareTo(dotA);
-                });
+                        float dotA = (a.cx - pCx) * camFwd2D.x + (a.cz - pCz) * camFwd2D.y;
+                        float dotB = (b.cx - pCx) * camFwd2D.x + (b.cz - pCz) * camFwd2D.y;
+                        bool frontA = dotA >= -1.5f;
+                        bool frontB = dotB >= -1.5f;
+                        if (frontA != frontB) return frontA ? -1 : 1;
 
-                int maxSolidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 6;
-                int processedSolid = 0;
+                        int da = Mathf.Abs(a.cx - pCx) + Mathf.Abs(a.cz - pCz);
+                        int db = Mathf.Abs(b.cx - pCx) + Mathf.Abs(b.cz - pCz);
+                        if (da != db) return da.CompareTo(db);
+                        return dotB.CompareTo(dotA);
+                    });
+                }
+
+                int parallelBatchCount = 0;
+                int partialProcessed = 0;
 
                 for (int i = 0; i < _sortedDirtyChunks.Count; i++)
                 {
                     var key = _sortedDirtyChunks[i];
                     int chebDist = Mathf.Max(Mathf.Abs(key.cx - pCx), Mathf.Abs(key.cz - pCz));
 
-                    // Dis voksel veri apronu (r = ActiveChunkRadius + 1) yalnizca komsu sinir hesaplamasi icindir;
-                    // oyuncu yaklasip ActiveChunkRadius icine girene kadar bosuna mesh uretme!
                     if (!forceImmediateAll && chebDist > ActiveChunkRadius)
                     {
                         _dirtyChunks.Remove(key);
                         continue;
                     }
 
-                    // Uzak akis chunk'larini (r > 2) henuz 8 komsusunun voksel verisi olusmamissa bu karede orme;
-                    // komsulari olustugunda TEK SEFERDE (%100 bit-exact sinirlarla) orulmesini sagla!
-                    if (!forceImmediateAll && chebDist > 2 && !HasAll8NeighborVoxels(key.cx, key.cz))
+                    if (!_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) || mf == null)
                     {
+                        _dirtyChunks.Remove(key);
+                        continue;
+                    }
+
+                    if (!_chunkSubMeshCache.TryGetValue(key, out ChunkSubMeshEntry? entry) || entry == null)
+                    {
+                        entry = new ChunkSubMeshEntry();
+                        _chunkSubMeshCache[key] = entry;
+                    }
+
+                    ushort visibleMask = ComputeVisibleSubChunkMask(key.cx, key.cz, pCx, pCz, playerPos);
+                    bool isFullPass = Stage1GameSettings.EnableSubChunkPartialMeshing &&
+                                      (entry.BuiltSubChunkMask == 0 ||
+                                       (entry.BuiltSubChunkMask & visibleMask) != visibleMask ||
+                                       entry.DirtySubChunkMask == AllSubChunksMask ||
+                                       (entry.DirtySubChunkMask == 0 && entry.LastAppliedVisibleMask == visibleMask));
+
+                    if (isFullPass && !forceImmediateAll)
+                    {
+                        if (parallelBatchCount < MaxParallelMeshBatch)
+                        {
+                            _dirtyChunks.Remove(key);
+                            _dirtyFluidChunks.Remove(key);
+                            _parallelMeshKeys[parallelBatchCount] = key;
+                            _parallelMeshEntries[parallelBatchCount] = entry;
+                            _parallelMeshVisibleMasks[parallelBatchCount] = visibleMask;
+                            parallelBatchCount++;
+                            if (chebDist <= 1) anyNearRebuilt = true;
+                        }
+                        if (parallelBatchCount >= MaxParallelMeshBatch && partialProcessed >= 2)
+                        {
+                            break;
+                        }
                         continue;
                     }
 
                     _dirtyChunks.Remove(key);
-
-                    if (!_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) || mf == null) continue;
-
-                    Mesh updated = RebuildSingleChunkWithSubMeshCache(key, mf, pCx, pCz, playerPos, out int totalTriCount);
+                    Mesh updated = RebuildSingleChunkWithSubMeshCache(key, mf, pCx, pCz, playerPos, out _);
                     mf.sharedMesh = updated;
+                    if (HasAll8NeighborVoxels(key.cx, key.cz)) _meshedWithAll8Neighbors.Add(key);
+                    if (chebDist <= 1) anyNearRebuilt = true;
+                    partialProcessed++;
+                    if (!forceImmediateAll && partialProcessed >= 4) break;
+                }
 
-                    bool isNearPhysics = Mathf.Abs(key.cx - pCx) <= NearPhysicsColliderRadius &&
-                                         Mathf.Abs(key.cz - pCz) <= NearPhysicsColliderRadius;
-                    if (_chunkColliders.TryGetValue(key, out MeshCollider? mc) && mc != null)
+                if (parallelBatchCount > 0)
+                {
+                    for (int idx = 0; idx < parallelBatchCount; idx++)
                     {
-                        if (isNearPhysics && totalTriCount > 0)
-                        {
-                            if (Stage1GameSettings.EnableBurstAndAsyncBakeMesh)
-                            {
-                                HybridSurfaceNetsAndShapeMesher.ScheduleAsyncColliderBake(updated).Complete();
-                            }
-                            mc.enabled = true;
-                            mc.sharedMesh = null;
-                            mc.sharedMesh = updated;
-                            anyNearRebuilt = true;
-                        }
-                        else
-                        {
-                            mc.enabled = false;
-                        }
+                        _parallelSolidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(2048);
+                        _parallelFluidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(512);
                     }
 
-                    processedSolid++;
-                    bool isUrgentNearChunk = chebDist <= 2;
-                    if (!forceImmediateAll && !isUrgentNearChunk && (processedSolid >= maxSolidPerFrame || _meshRebuildStopwatch.Elapsed.TotalMilliseconds >= 3.2))
+                    // Tum yeni / tam-gecis chunk meshlerini tum CPU cekirdeklerinde PARALEL uret (0.35 ms duvar saati suresi!)
+                    System.Threading.Tasks.Parallel.For(0, parallelBatchCount, idx =>
                     {
-                        break;
+                        var key = _parallelMeshKeys[idx];
+                        var entry = _parallelMeshEntries[idx];
+                        ushort visibleMask = _parallelMeshVisibleMasks[idx];
+                        var sList = _parallelSolidTrisScratch[idx];
+                        var fList = _parallelFluidTrisScratch[idx];
+                        sList.Clear();
+                        fList.Clear();
+
+                        int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask ? 72 : 0;
+                        HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                            key.cx, key.cz, MaxEditableVoxelY, _worldChunks, sList, minY: consolidatedMinY);
+                        FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
+                            key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, fList, minY: consolidatedMinY);
+
+                        for (int s = 0; s < SubChunkCountY; s++) entry.SubChunkTriangles[s].Clear();
+                        for (int t = 0; t < sList.Count; t++)
+                        {
+                            var tri = sList[t];
+                            int sIdx = Mathf.Clamp(((int)tri.V0.Y) >> 4, 0, SubChunkCountY - 1);
+                            entry.SubChunkTriangles[sIdx].Add(tri);
+                        }
+                        entry.BuiltSubChunkMask = visibleMask;
+                        entry.DirtySubChunkMask = 0;
+                        entry.LastAppliedVisibleMask = visibleMask;
+                        entry.IsConsolidatedFullPass = false;
+                    });
+
+                    for (int idx = 0; idx < parallelBatchCount; idx++)
+                    {
+                        var key = _parallelMeshKeys[idx];
+                        var entry = _parallelMeshEntries[idx];
+                        ushort visibleMask = _parallelMeshVisibleMasks[idx];
+                        if (_chunkMeshFilters.TryGetValue(key, out MeshFilter? mf) && mf != null)
+                        {
+                            Mesh? existingDynamicMesh = mf.sharedMesh != null &&
+                                                        mf.sharedMesh.name.StartsWith("DynamicSeamlessChunk_", StringComparison.Ordinal)
+                                ? mf.sharedMesh
+                                : null;
+                            mf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshFromSubChunksZeroGc(
+                                entry.SubChunkTriangles,
+                                visibleMask,
+                                $"DynamicSeamlessChunk_{key.cx}_{key.cz}",
+                                existingDynamicMesh,
+                                out _,
+                                out int culledSubCount);
+                            CulledUndergroundSubChunkCount = culledSubCount;
+                        }
+
+                        if (_fluidMeshFilters.TryGetValue(key, out MeshFilter? fmf) && fmf != null)
+                        {
+                            var fList = _parallelFluidTrisScratch[idx];
+                            if (fList.Count == 0)
+                            {
+                                if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
+                                {
+                                    fmf.sharedMesh.Clear(keepVertexLayout: true);
+                                }
+                                else
+                                {
+                                    fmf.sharedMesh = null;
+                                }
+                                if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
+                            }
+                            else
+                            {
+                                Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
+                                                                 fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
+                                    ? fmf.sharedMesh
+                                    : null;
+                                fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
+                                    fList, $"DynamicFluidSurface_{key.cx}_{key.cz}", existingFluidDynamicMesh);
+                            }
+                        }
+
+                        if (HasAll8NeighborVoxels(key.cx, key.cz))
+                        {
+                            _meshedWithAll8Neighbors.Add(key);
+                        }
                     }
                 }
             }
 
-            if (_dirtyFluidChunks.Count > 0 && (forceImmediateAll || _meshRebuildStopwatch.Elapsed.TotalMilliseconds < 2.8))
+            if (_dirtyFluidChunks.Count > 0)
             {
                 _sortedDirtyChunks.Clear();
                 foreach (var k in _dirtyFluidChunks) _sortedDirtyChunks.Add(k);
-                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 4;
+                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 6;
                 int processedFluid = 0;
 
                 for (int i = 0; i < _sortedDirtyChunks.Count; i++)
@@ -1587,10 +1797,6 @@ namespace Stratocraft.Character
                     if (!forceImmediateAll && chebDist > ActiveChunkRadius)
                     {
                         _dirtyFluidChunks.Remove(key);
-                        continue;
-                    }
-                    if (!forceImmediateAll && chebDist > 2 && !HasAll8NeighborVoxels(key.cx, key.cz))
-                    {
                         continue;
                     }
 
@@ -1603,7 +1809,14 @@ namespace Stratocraft.Character
                         key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris, minY: fluidMinY);
                     if (_reusableFluidTris.Count == 0)
                     {
-                        fmf.sharedMesh = null;
+                        if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
+                        {
+                            fmf.sharedMesh.Clear(keepVertexLayout: true);
+                        }
+                        else
+                        {
+                            fmf.sharedMesh = null;
+                        }
                         if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
                     }
                     else
@@ -1621,6 +1834,7 @@ namespace Stratocraft.Character
                 }
             }
 
+            LastChunkRebuildMilliseconds = (float)_meshRebuildStopwatch.Elapsed.TotalMilliseconds;
             if (anyNearRebuilt || forceImmediateAll)
             {
                 _movementBridge.ResolveVoxelAndColliderDepenetration(transform, _worldChunks);
@@ -1700,14 +1914,21 @@ namespace Stratocraft.Character
 
             if (dirtyMask == AllSubChunksMask && entry.BuiltSubChunkMask == 0)
             {
-                // Yeni akis chunk'i veya komsu sinir guncellemesi: 10 ayri alt-chunk gecisi yerine TEK GECISTE (8x daha hizli) or!
-                // Yuzeydeyken (visibleMask == SurfaceAndUpperCaveSubChunksMask) minY=64 ile Y=0..64m derin magaralari tamamen atla!
+                // Yeni akis chunk'i veya komsu sinir guncellemesi: 10 ayri alt-chunk gecisi yerine TEK GECISTE (8x daha hizli) or
+                // ve uretilen ucgenleri dogrudan Y >> 4 alt-chunk dilimlerine dagit ki ilk kazmada tum chunk bastan orulmesin!
                 for (int s = 0; s < SubChunkCountY; s++) entry.SubChunkTriangles[s].Clear();
-                int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask ? 64 : 0;
+                _reusableTris.Clear();
+                int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask ? 72 : 0;
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
-                    key.cx, key.cz, MaxEditableVoxelY, _worldChunks, entry.SubChunkTriangles[4], minY: consolidatedMinY);
+                    key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris, minY: consolidatedMinY);
+                for (int t = 0; t < _reusableTris.Count; t++)
+                {
+                    var tri = _reusableTris[t];
+                    int sIdx = Mathf.Clamp(((int)tri.V0.Y) >> 4, 0, SubChunkCountY - 1);
+                    entry.SubChunkTriangles[sIdx].Add(tri);
+                }
                 entry.BuiltSubChunkMask = visibleMask;
-                entry.IsConsolidatedFullPass = true;
+                entry.IsConsolidatedFullPass = false;
             }
             else
             {
@@ -1762,7 +1983,8 @@ namespace Stratocraft.Character
             int pCx = Mathf.FloorToInt(transform.position.x / 16f);
             int pCz = Mathf.FloorToInt(transform.position.z / 16f);
             var filters = FindObjectsByType<MeshFilter>(FindObjectsInactive.Exclude);
-            var chunkEntries = new List<(int cx, int cz, MeshFilter mf)>(512);
+            var chunkEntries = new List<(int cx, int cz, MeshFilter mf)>(600);
+            var existingCoords = new HashSet<(int cx, int cz)>();
 
             for (int i = 0; i < filters.Length; i++)
             {
@@ -1775,19 +1997,96 @@ namespace Stratocraft.Character
                 string[] p = n.Split('_');
                 if (p.Length >= 3 && int.TryParse(p[1], out int cx) && int.TryParse(p[2], out int cz))
                 {
-                    chunkEntries.Add((cx, cz, filters[i]));
+                    if (existingCoords.Add((cx, cz)))
+                    {
+                        chunkEntries.Add((cx, cz, filters[i]));
+                    }
                 }
             }
 
-            // Tum sahne VoxelChunk (16x16x160m) voksel ve akiskan dizilerini tum CPU cekirdeklerinde PARALEL uret!
+            if (_chunkContainerParent == null)
+            {
+                GameObject? existingParent = GameObject.Find("01_Faz1_VoxelTerrain_And_DominoWorld")
+                                          ?? GameObject.Find("01_Faz1_VoxelTerrain_And_DominoStructures");
+                _chunkContainerParent = existingParent != null ? existingParent.transform : transform.parent;
+            }
+
+            Material? fluidMat = ResolveFluidSurfaceMaterial();
+            int initRadius = ActiveChunkRadius + 1;
+            for (int dz = -initRadius; dz <= initRadius; dz++)
+            {
+                for (int dx = -initRadius; dx <= initRadius; dx++)
+                {
+                    int cx = pCx + dx;
+                    int cz = pCz + dz;
+                    if (existingCoords.Contains((cx, cz))) continue;
+                    existingCoords.Add((cx, cz));
+
+                    GameObject chunkGo = new GameObject($"VoxelChunk_{cx}_{cz}");
+                    if (_chunkContainerParent != null) chunkGo.transform.SetParent(_chunkContainerParent, false);
+                    chunkGo.transform.position = new Vector3(cx * 16f, 0f, cz * 16f);
+
+                    MeshFilter mf = chunkGo.AddComponent<MeshFilter>();
+                    MeshRenderer mr = chunkGo.AddComponent<MeshRenderer>();
+                    if (SharedVoxelMaterial != null) mr.sharedMaterial = SharedVoxelMaterial;
+                    MeshCollider mc = chunkGo.AddComponent<MeshCollider>();
+                    mc.enabled = false;
+
+                    GameObject fluidGo = new GameObject($"FluidSurface_{cx}_{cz}");
+                    fluidGo.transform.SetParent(chunkGo.transform, false);
+                    fluidGo.transform.localPosition = Vector3.zero;
+                    fluidGo.AddComponent<MeshFilter>();
+                    MeshRenderer fluidMr = fluidGo.AddComponent<MeshRenderer>();
+                    if (fluidMat != null) fluidMr.sharedMaterial = fluidMat;
+
+                    chunkEntries.Add((cx, cz, mf));
+                }
+            }
+
+            // Yurutme / Kosma sirasinda 0 GameObject / 0 Mesh / 0 Dizi tahsisi icin _chunkPool'u baslangicta 28 hazir slotla isit!
+            for (int pIdx = _chunkPool.Count; pIdx < 28; pIdx++)
+            {
+                GameObject poolGo = new GameObject($"VoxelChunk_Pooled_{pIdx}");
+                if (_chunkContainerParent != null) poolGo.transform.SetParent(_chunkContainerParent, false);
+                MeshFilter poolMf = poolGo.AddComponent<MeshFilter>();
+                MeshRenderer poolMr = poolGo.AddComponent<MeshRenderer>();
+                if (SharedVoxelMaterial != null) poolMr.sharedMaterial = SharedVoxelMaterial;
+                MeshCollider poolMc = poolGo.AddComponent<MeshCollider>();
+                poolMc.enabled = false;
+                poolMf.sharedMesh = new Mesh { name = $"DynamicSeamlessChunk_Pool_{pIdx}", indexFormat = IndexFormat.UInt32 };
+                poolMf.sharedMesh.MarkDynamic();
+
+                GameObject poolFluidGo = new GameObject($"FluidSurface_Pooled_{pIdx}");
+                poolFluidGo.transform.SetParent(poolGo.transform, false);
+                poolFluidGo.transform.localPosition = Vector3.zero;
+                MeshFilter poolFluidMf = poolFluidGo.AddComponent<MeshFilter>();
+                MeshRenderer poolFluidMr = poolFluidGo.AddComponent<MeshRenderer>();
+                if (fluidMat != null) poolFluidMr.sharedMaterial = fluidMat;
+                poolFluidMf.sharedMesh = new Mesh { name = $"DynamicFluidSurface_Pool_{pIdx}", indexFormat = IndexFormat.UInt32 };
+                poolFluidMf.sharedMesh.MarkDynamic();
+                poolGo.SetActive(false);
+
+                _chunkPool.Push(new PooledChunkSlot
+                {
+                    ChunkGo = poolGo,
+                    SolidMf = poolMf,
+                    SolidMr = poolMr,
+                    SolidMc = poolMc,
+                    FluidGo = poolFluidGo,
+                    FluidMf = poolFluidMf,
+                    FluidMr = poolFluidMr,
+                    Voxels = new uint[65536],
+                    Fluids = new ushort[65536]
+                });
+            }
+
+            // Tum sahne + aktif yaricap VoxelChunk (16x16x160m) voksel ve akiskan dizilerini tum CPU cekirdeklerinde PARALEL uret!
             var popResults = new (uint[] voxels, ushort[] fluids)[chunkEntries.Count];
             System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, idx =>
             {
                 var entry = chunkEntries[idx];
                 popResults[idx] = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(entry.cx, entry.cz);
             });
-
-            bool isSmallLegacyScene = chunkEntries.Count <= 25;
 
             for (int idx = 0; idx < chunkEntries.Count; idx++)
             {
@@ -1798,6 +2097,7 @@ namespace Stratocraft.Character
                 {
                     mc = mf.gameObject.AddComponent<MeshCollider>();
                 }
+                mc.enabled = false;
 
                 MeshFilter? fluidMf = null;
                 var childMf = mf.GetComponentsInChildren<MeshFilter>(true);
@@ -1821,19 +2121,21 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Sahnedeki baslangic chunk'larini tum CPU cekirdeklerinde PARALEL olarak (yuzey modunda minY=64 ile 15x daha az ucgenle)
-            // or ve _chunkSubMeshCache'e kaydet; boylece 400 sahne chunk'inda gorunmeyen 5.6 milyon yeralti magara ucgeni GPU'yu yormaz!
-            int startupSolidMinY = Stage1GameSettings.EnableUndergroundCaveCulling ? 64 : 0;
-            int startupFluidMinY = Stage1GameSettings.EnableUndergroundCaveCulling ? 70 : 0;
+            // Aktif yaricap icindeki (chebDist <= ActiveChunkRadius) tum baslangic chunk'larini tum CPU cekirdeklerinde PARALEL olarak
+            // (yuzey modunda minY=72 ile) or ve _chunkSubMeshCache alt-chunk dilimlerine dagit!
+            int startupSolidMinY = Stage1GameSettings.EnableUndergroundCaveCulling ? 72 : 0;
+            int startupFluidMinY = Stage1GameSettings.EnableUndergroundCaveCulling ? 72 : 0;
             ushort startupMask = Stage1GameSettings.EnableUndergroundCaveCulling ? SurfaceAndUpperCaveSubChunksMask : AllSubChunksMask;
+            int activeR = ActiveChunkRadius;
 
             if (chunkEntries.Count > 0)
             {
-                var builtSolidTris = new List<FacetedVoxelTriangle>[chunkEntries.Count];
-                var builtFluidTris = new List<FacetedVoxelTriangle>[chunkEntries.Count];
+                var builtSolidTris = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
+                var builtFluidTris = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
                 System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, k =>
                 {
                     var (cx, cz, _) = chunkEntries[k];
+                    if (Mathf.Max(Mathf.Abs(cx - pCx), Mathf.Abs(cz - pCz)) > activeR) return;
                     var sList = new List<FacetedVoxelTriangle>(1024);
                     var fList = new List<FacetedVoxelTriangle>(256);
                     HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(cx, cz, MaxEditableVoxelY, _worldChunks, sList, minY: startupSolidMinY);
@@ -1846,17 +2148,38 @@ namespace Stratocraft.Character
                 {
                     var (cx, cz, mf) = chunkEntries[k];
                     var sList = builtSolidTris[k];
+                    if (sList == null)
+                    {
+                        // Dis +1 voksel apron halkasi: voksel verisi hazir, oyuncu yaklastiginda aninda orulecek
+                        mf.sharedMesh = new Mesh { name = $"DynamicSeamlessChunk_{cx}_{cz}", indexFormat = IndexFormat.UInt32 };
+                        mf.sharedMesh.MarkDynamic();
+                        _chunkSubMeshCache[(cx, cz)] = new ChunkSubMeshEntry();
+                        if (_fluidMeshFilters.TryGetValue((cx, cz), out MeshFilter? apronFmf) && apronFmf != null)
+                        {
+                            apronFmf.sharedMesh = new Mesh { name = $"DynamicFluidSurface_{cx}_{cz}", indexFormat = IndexFormat.UInt32 };
+                            apronFmf.sharedMesh.MarkDynamic();
+                            if (_fluidMeshRenderers.TryGetValue((cx, cz), out MeshRenderer? apronFmr) && apronFmr != null) apronFmr.enabled = false;
+                        }
+                        continue;
+                    }
+
                     Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sList, $"DynamicSeamlessChunk_{cx}_{cz}");
                     mf.sharedMesh = m;
+                    if (HasAll8NeighborVoxels(cx, cz)) _meshedWithAll8Neighbors.Add((cx, cz));
 
                     var subEntry = new ChunkSubMeshEntry
                     {
                         BuiltSubChunkMask = startupMask,
                         DirtySubChunkMask = 0,
                         LastAppliedVisibleMask = startupMask,
-                        IsConsolidatedFullPass = true
+                        IsConsolidatedFullPass = false
                     };
-                    subEntry.SubChunkTriangles[4].AddRange(sList);
+                    for (int t = 0; t < sList.Count; t++)
+                    {
+                        var tri = sList[t];
+                        int sIdx = Mathf.Clamp(((int)tri.V0.Y) >> 4, 0, SubChunkCountY - 1);
+                        subEntry.SubChunkTriangles[sIdx].Add(tri);
+                    }
                     _chunkSubMeshCache[(cx, cz)] = subEntry;
 
                     var fList = builtFluidTris[k];
@@ -1868,38 +2191,9 @@ namespace Stratocraft.Character
                         }
                         else
                         {
-                            fmf.sharedMesh = null;
+                            fmf.sharedMesh = new Mesh { name = $"DynamicFluidSurface_{cx}_{cz}", indexFormat = IndexFormat.UInt32 };
+                            fmf.sharedMesh.MarkDynamic();
                             if (_fluidMeshRenderers.TryGetValue((cx, cz), out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
-                        }
-                    }
-                }
-            }
-
-            for (int idx = 0; idx < chunkEntries.Count; idx++)
-            {
-                var (cx, cz, mf) = chunkEntries[idx];
-                bool isNearPhysics = Mathf.Abs(cx - pCx) <= NearPhysicsColliderRadius &&
-                                     Mathf.Abs(cz - pCz) <= NearPhysicsColliderRadius;
-                bool hasValidMesh = mf.sharedMesh != null && mf.sharedMesh.vertexCount >= 3;
-                if (_chunkColliders.TryGetValue((cx, cz), out MeshCollider? mc) && mc != null)
-                {
-                    mc.enabled = isNearPhysics && hasValidMesh;
-                    if (isNearPhysics && hasValidMesh)
-                    {
-                        mc.sharedMesh = mf.sharedMesh;
-                    }
-                }
-            }
-
-            if (isSmallLegacyScene)
-            {
-                for (int cz = -4; cz <= 3; cz++)
-                {
-                    for (int cx = -4; cx <= 3; cx++)
-                    {
-                        if (!_worldChunks.ContainsKey((cx, cz)))
-                        {
-                            CreateAndRegisterDynamicContinentChunk(cx, cz);
                         }
                     }
                 }

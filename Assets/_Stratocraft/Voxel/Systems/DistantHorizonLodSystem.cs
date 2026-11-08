@@ -62,6 +62,7 @@ namespace Stratocraft.Voxel.Systems
 
         private readonly ColumnLod64[] _sampleGrid = new ColumnLod64[GridResolution * GridResolution];
         private readonly List<FacetedVoxelTriangle> _scratchTris = new(2048);
+        [ThreadStatic] private static float[]? _tsClipmapCornerHeights;
 
         /// <summary>
         /// Verilen (wx, wz) dunya koordinati icin 3B voksel dizisi uretmeden O(1) analitik yuzey-kabuk ozeti uretir.
@@ -294,6 +295,24 @@ namespace Stratocraft.Voxel.Systems
             int maxCx = centerChunkX + outerRadiusChunks;
             int minCz = centerChunkZ - outerRadiusChunks;
             int maxCz = centerChunkZ + outerRadiusChunks;
+            int cornerSpan = (maxCx - minCx) + 2;
+            int totalCorners = cornerSpan * cornerSpan;
+            float[] cornerHeights = _tsClipmapCornerHeights != null && _tsClipmapCornerHeights.Length >= totalCorners
+                ? _tsClipmapCornerHeights
+                : (_tsClipmapCornerHeights = new float[Math.Max(totalCorners, 16384)]);
+
+            for (int gz = 0; gz < cornerSpan; gz++)
+            {
+                float wz = (minCz + gz) * 16.0f;
+                int rowOff = gz * cornerSpan;
+                for (int gx = 0; gx < cornerSpan; gx++)
+                {
+                    float wx = (minCx + gx) * 16.0f;
+                    cornerHeights[rowOff + gx] = customTopSurfaceSampler != null
+                        ? customTopSurfaceSampler(wx, wz)
+                        : SampleDefaultAnalyticalContinentSurfaceY(wx, wz);
+                }
+            }
 
             const float seaLevel = NaturalSeaLevelY; // 90.0f
             const float innerSkirtDrop = 6.0f; // 3D chunk sinirinda bosluk olusmamasi icin dikey etek
@@ -301,6 +320,9 @@ namespace Stratocraft.Voxel.Systems
             for (int cz = minCz; cz <= maxCz; cz++)
             {
                 int dz = Math.Abs(cz - centerChunkZ);
+                int gz = cz - minCz;
+                int row0 = gz * cornerSpan;
+                int row1 = (gz + 1) * cornerSpan;
                 for (int cx = minCx; cx <= maxCx; cx++)
                 {
                     int dx = Math.Abs(cx - centerChunkX);
@@ -309,15 +331,16 @@ namespace Stratocraft.Voxel.Systems
                     // Aktif 3D voksel alani icindeyse (gercek chunk'lar oruluyor) atla
                     if (chebDist <= innerRadiusChunks) continue;
 
+                    int gx = cx - minCx;
                     float wx0 = cx * 16.0f;
                     float wx1 = wx0 + 16.0f;
                     float wz0 = cz * 16.0f;
                     float wz1 = wz0 + 16.0f;
 
-                    float y00 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx0, wz0) : SampleDefaultAnalyticalContinentSurfaceY(wx0, wz0);
-                    float y10 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx1, wz0) : SampleDefaultAnalyticalContinentSurfaceY(wx1, wz0);
-                    float y11 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx1, wz1) : SampleDefaultAnalyticalContinentSurfaceY(wx1, wz1);
-                    float y01 = customTopSurfaceSampler != null ? customTopSurfaceSampler(wx0, wz1) : SampleDefaultAnalyticalContinentSurfaceY(wx0, wz1);
+                    float y00 = cornerHeights[row0 + gx];
+                    float y10 = cornerHeights[row0 + gx + 1];
+                    float y11 = cornerHeights[row1 + gx + 1];
+                    float y01 = cornerHeights[row1 + gx];
 
                     // Gokyuzu adasi/kita disindaki bosluk (y <= 4m)
                     if (y00 <= 4.0f && y10 <= 4.0f && y11 <= 4.0f && y01 <= 4.0f) continue;

@@ -729,22 +729,17 @@ namespace Stratocraft.Character
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
         {
             float smoothVoxelY = SampleBilinearVoxelGroundHeight(worldChunks, pos.x, pos.z, pos.y);
+            if (smoothVoxelY > -20f)
+            {
+                return smoothVoxelY;
+            }
+
             int terrainMask = LayerMask.GetMask("VoxelTerrain");
             int castMask = terrainMask != 0 ? terrainMask : UnityEngine.Physics.DefaultRaycastLayers;
 
             if (UnityEngine.Physics.Raycast(new Vector3(pos.x, pos.y + 0.95f, pos.z), Vector3.down,
                 out RaycastHit hit, 16f, castMask, QueryTriggerInteraction.Ignore))
             {
-                if (smoothVoxelY > -20f)
-                {
-                    // Eger MeshCollider yuzeyi bilineer voksel yuksekligi ile uyumluysa (±0.75m),
-                    // gercek Smooth SurfaceNets ag yuzeyini (hit.point.y) dogrudan takip et -> sifir basamak ziplatmasi!
-                    if (Mathf.Abs(hit.point.y - smoothVoxelY) <= 0.75f)
-                    {
-                        return Mathf.Max(hit.point.y, smoothVoxelY - 0.32f);
-                    }
-                    return smoothVoxelY;
-                }
                 return hit.point.y;
             }
             return smoothVoxelY;

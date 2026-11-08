@@ -276,10 +276,44 @@ namespace Stratocraft.Character
             {
                 bool hasBladeVoxelHit = combatBridge.ConsumePendingToolVoxelHit(out Vector3Int bladeHitCoord, out float bladeImpactPower);
                 bool isNewIntentionalSwing = combatBridge.CurrentSwingId > 0 && _lastToolSwingId != combatBridge.CurrentSwingId;
+                bool isFullArcReady = isNewIntentionalSwing &&
+                                      combatBridge.SlashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
+                                      combatBridge.SlashProgress01 >= 0.30f;
+
+                if (isNewIntentionalSwing && (isFullArcReady || hasBladeVoxelHit))
+                {
+                    UnityEngine.Camera? activeCam = UnityEngine.Camera.main;
+                    if (activeCam != null)
+                    {
+                        Vector3 camFwd = activeCam.transform.forward;
+                        Vector3 camRight = activeCam.transform.right;
+                        Vector2 slashDir = combatBridge.CurrentSlashDirUnit;
+                        Vector3 strikeDirXZ = new Vector3(
+                            camFwd.x + camRight.x * slashDir.x * 0.45f,
+                            0f,
+                            camFwd.z + camRight.z * slashDir.x * 0.45f);
+                        if (strikeDirXZ.sqrMagnitude > 0.01f)
+                        {
+                            collapseBridge.PreferredStrikeDirectionXZ = strikeDirXZ.normalized;
+                        }
+
+                        // Yerde yatan devrilmis bir agac kutugune baltayla vurulduysa kutugu parcalara ayirip odun topla!
+                        if (collapseBridge.TryChopFallenTreeLog(
+                                activeCam.transform.position,
+                                activeCam.transform.forward,
+                                4.2f,
+                                activeHolsterSlot == 3 ? 0.55f : 0.35f,
+                                out string logChopFeedback))
+                        {
+                            _lastToolSwingId = combatBridge.CurrentSwingId;
+                            LastFeedbackText = logChopFeedback;
+                            return;
+                        }
+                    }
+                }
+
                 bool hasCloseSwingStrike = !hasBladeVoxelHit &&
-                                           isNewIntentionalSwing &&
-                                           combatBridge.SlashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
-                                           combatBridge.SlashProgress01 >= 0.30f &&
+                                           isFullArcReady &&
                                            HasAimHit && AimHit.distance <= 3.85f;
 
                 if (isNewIntentionalSwing && (hasBladeVoxelHit || hasCloseSwingStrike))
@@ -345,15 +379,38 @@ namespace Stratocraft.Character
 
             if (IsCrystalActive)
             {
+                UnityEngine.Camera? activeCam = UnityEngine.Camera.main;
+                if (activeCam != null)
+                {
+                    Vector3 fwdXZ = new Vector3(activeCam.transform.forward.x, 0f, activeCam.transform.forward.z);
+                    if (fwdXZ.sqrMagnitude > 0.01f) collapseBridge.PreferredStrikeDirectionXZ = fwdXZ.normalized;
+                }
                 _actionCooldown = 0.09f / Mathf.Clamp(Stage1GameSettings.MiningSpeedMultiplier, 0.5f, 4.0f);
                 ExecuteCrystalVacuumBrush(maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat, fluidChunks, dirtyFluidChunks, holsterCtrl);
             }
-            else if (activeHolsterSlot == 0 && AimHit.distance <= 3.5f)
+            else if (activeHolsterSlot == 0)
             {
-                _actionCooldown = 0.16f;
-                ExecutePhysicalToolStrike(
-                    activeHolsterSlot, maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat,
-                    fluidChunks, dirtyFluidChunks, AimVoxelCoord, impactMultiplier: 0.55f, holsterCtrl: holsterCtrl);
+                UnityEngine.Camera? activeCam = UnityEngine.Camera.main;
+                if (activeCam != null)
+                {
+                    Vector3 fwdXZ = new Vector3(activeCam.transform.forward.x, 0f, activeCam.transform.forward.z);
+                    if (fwdXZ.sqrMagnitude > 0.01f) collapseBridge.PreferredStrikeDirectionXZ = fwdXZ.normalized;
+
+                    if (collapseBridge.TryChopFallenTreeLog(
+                            activeCam.transform.position, activeCam.transform.forward, 3.8f, 0.25f, out string handLogFeedback))
+                    {
+                        _actionCooldown = 0.16f;
+                        LastFeedbackText = handLogFeedback;
+                        return;
+                    }
+                }
+                if (AimHit.distance <= 3.5f)
+                {
+                    _actionCooldown = 0.16f;
+                    ExecutePhysicalToolStrike(
+                        activeHolsterSlot, maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat,
+                        fluidChunks, dirtyFluidChunks, AimVoxelCoord, impactMultiplier: 0.55f, holsterCtrl: holsterCtrl);
+                }
             }
             else if ((activeHolsterSlot == 2 || activeHolsterSlot == 3) && AimHit.distance <= 3.85f &&
                      (combatBridge == null || combatBridge.SlashPhase == BallisticSlashPhase.IdleInGuard))
@@ -526,7 +583,10 @@ namespace Stratocraft.Character
             }
 
             float hardness = GetMaterialHardness(mat);
-            bool isWood = mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood || mat == MaterialIdCatalog.WoodPlank;
+            bool isWood = mat == MaterialIdCatalog.OakWood ||
+                          mat == MaterialIdCatalog.Ironwood ||
+                          mat == MaterialIdCatalog.SpiritWood ||
+                          mat == MaterialIdCatalog.WoodPlank;
             bool isSoftEarth = mat == MaterialIdCatalog.Dirt || mat == MaterialIdCatalog.Grass ||
                                mat == MaterialIdCatalog.Sand || mat == MaterialIdCatalog.LooseRubble ||
                                mat == MaterialIdCatalog.GlowingMoss;
@@ -1111,6 +1171,8 @@ namespace Stratocraft.Character
             _vacuumBeamGo.transform.localScale = new Vector3(0.08f, dist * 0.5f, 0.08f);
         }
 
+        private readonly RaycastHit[] _aimRaycastBuffer = new RaycastHit[16];
+
         private void UpdateTargetAimProbe(UnityEngine.Camera? cam, Dictionary<(int cx, int cz), uint[]> chunks)
         {
             HasAimHit = false;
@@ -1120,7 +1182,8 @@ namespace Stratocraft.Character
             Vector3 camPos = cam.transform.position;
             Vector3 fwd = cam.transform.forward.sqrMagnitude > 0.0001f ? cam.transform.forward.normalized : Vector3.forward;
 
-            RaycastHit[] hits = UnityEngine.Physics.RaycastAll(camPos, fwd, 24f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            int hitCount = UnityEngine.Physics.RaycastNonAlloc(
+                camPos, fwd, _aimRaycastBuffer, 24f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
             RaycastHit hit = default;
             float bestDist = float.MaxValue;
             bool foundVoxelMeshHit = false;
@@ -1128,37 +1191,34 @@ namespace Stratocraft.Character
             float fallbackAnyDist = float.MaxValue;
             bool foundAnyHit = false;
 
-            if (hits != null)
+            for (int i = 0; i < hitCount; i++)
             {
-                for (int i = 0; i < hits.Length; i++)
+                Collider col = _aimRaycastBuffer[i].collider;
+                if (col == null) continue;
+                string goName = col.gameObject.name;
+                if (goName.StartsWith("Dropped", StringComparison.Ordinal) ||
+                    goName.StartsWith("PlacementGhost", StringComparison.Ordinal) ||
+                    goName.StartsWith("MatterCrystal_", StringComparison.Ordinal))
                 {
-                    Collider col = hits[i].collider;
-                    if (col == null) continue;
-                    string goName = col.gameObject.name;
-                    if (goName.StartsWith("Dropped", StringComparison.Ordinal) ||
-                        goName.StartsWith("PlacementGhost", StringComparison.Ordinal) ||
-                        goName.StartsWith("MatterCrystal_", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    bool isVoxelChunk = goName.StartsWith("VoxelChunk_", StringComparison.Ordinal) ||
-                                        (col.transform.parent != null && col.transform.parent.name.StartsWith("VoxelChunk_", StringComparison.Ordinal));
-                    if (isVoxelChunk)
+                bool isVoxelChunk = goName.StartsWith("VoxelChunk_", StringComparison.Ordinal) ||
+                                    (col.transform.parent != null && col.transform.parent.name.StartsWith("VoxelChunk_", StringComparison.Ordinal));
+                if (isVoxelChunk)
+                {
+                    if (_aimRaycastBuffer[i].distance < bestDist)
                     {
-                        if (hits[i].distance < bestDist)
-                        {
-                            bestDist = hits[i].distance;
-                            hit = hits[i];
-                            foundVoxelMeshHit = true;
-                        }
+                        bestDist = _aimRaycastBuffer[i].distance;
+                        hit = _aimRaycastBuffer[i];
+                        foundVoxelMeshHit = true;
                     }
-                    else if (!goName.Contains("Player", StringComparison.OrdinalIgnoreCase) && hits[i].distance < fallbackAnyDist)
-                    {
-                        fallbackAnyDist = hits[i].distance;
-                        fallbackAnyHit = hits[i];
-                        foundAnyHit = true;
-                    }
+                }
+                else if (!goName.Contains("Player", StringComparison.OrdinalIgnoreCase) && _aimRaycastBuffer[i].distance < fallbackAnyDist)
+                {
+                    fallbackAnyDist = _aimRaycastBuffer[i].distance;
+                    fallbackAnyHit = _aimRaycastBuffer[i];
+                    foundAnyHit = true;
                 }
             }
 

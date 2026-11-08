@@ -206,8 +206,13 @@ namespace Stratocraft.Physics.Jobs
             }
 
             // 2. 2B (Hem X Hem Z Eksenli) Terzaghi Kaya Kemerlenmesi / Tavan Gevseme Kubbesi
-            newlyFailedCount += Evaluate2DTerzaghiRoofLoosening(
-                voxels, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout);
+            // Not: YMajorChunk (tam chunk dogal dunya uretimi) icindeki parabolik kemerli dogal magara aglari
+            // jeolojik gerilme dengesinde dogdugu icin kendi kendine cokmez; Terzaghi gevsemesi yerel kazi pencerelerinde (ZMajorLocal) calisir.
+            if (layout != VoxelGridMemoryLayout.YMajorChunk)
+            {
+                newlyFailedCount += Evaluate2DTerzaghiRoofLoosening(
+                    voxels, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout);
+            }
 
             return newlyFailedCount;
         }
@@ -227,6 +232,11 @@ namespace Stratocraft.Physics.Jobs
             if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
             {
                 return 0;
+            }
+
+            if (layout == VoxelGridMemoryLayout.YMajorChunk)
+            {
+                return 4;
             }
 
             int lateralConfinedFaces = 0;

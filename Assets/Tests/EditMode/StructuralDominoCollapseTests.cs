@@ -605,5 +605,72 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(flyWaypoints[flyWaypoints.Count - 1].Y, Is.EqualTo(5),
                 "Ucan yaratik (canFly=true) 3B boslukta y=5 noktasina dogrudan ucabilir!");
         }
+
+        [Test]
+        public void Devir037_PhysicsIntactImpact_DirectionalTorque_AndBranchingCaves_OperateCorrectly()
+        {
+            // 1) Alcaktan dusen saglam malzeme (dropHeight <= 2.55m, Phi < 0.45) MOLOZ OLMAZ; kendi maddesi/sekli olarak yere oturur!
+            bool stayIntactLowDrop = StructuralCollapseSystem.ShouldMaterialStayIntactOnImpact(
+                MaterialIdCatalog.StoneBrick,
+                dropHeightMeters: 1.4f,
+                impactFractureRatioPhi: 0.18f);
+            Assert.That(stayIntactLowDrop, Is.True,
+                "Alcaktan dusen saglam StoneBrick blogu moloza (ShapeId=63) donusmemeli, kendi maddesi olarak kalmalidir!");
+
+            bool stayIntactHighDrop = StructuralCollapseSystem.ShouldMaterialStayIntactOnImpact(
+                MaterialIdCatalog.StoneBrick,
+                dropHeightMeters: 8.5f,
+                impactFractureRatioPhi: 0.82f);
+            Assert.That(stayIntactHighDrop, Is.False,
+                "Yuksekten sert dusen (Phi >= 0.45, h > 2.55m) kutle kirilarak moloza donusmelidir!");
+
+            uint[] chunk = new uint[StratocraftConstants.VoxelsPerChunk];
+            uint bedrock = VoxelBitUtility.PackStandard(MaterialIdCatalog.Bedrock, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    chunk[(0 << 8) | (z << 4) | x] = bedrock;
+                }
+            }
+
+            int intactPlaced = StructuralCollapseSystem.SettleClusterAsIntactBlocks(
+                chunk, 16, 256, 16,
+                settleLocalX: 6, settleLocalY: 3, settleLocalZ: 6,
+                sourceVoxelCount: 3,
+                dominantMaterialId: MaterialIdCatalog.OakWood,
+                dominantShapeId: ArchitecturalShapeCatalog.OctagonalColumn);
+            Assert.That(intactPlaced, Is.EqualTo(3));
+            uint sampleIntact = chunk[(1 << 8) | (6 << 4) | 6];
+            Assert.That(VoxelBitUtility.GetMaterialId(sampleIntact), Is.EqualTo(MaterialIdCatalog.OakWood));
+            Assert.That(VoxelBitUtility.GetShapeId(sampleIntact), Is.EqualTo(ArchitecturalShapeCatalog.OctagonalColumn));
+
+            // 2) Yeni dallanan 3B solucan magara agi: eski (wx & 3) == 2 izgara duvarlari olmadan kesintisiz uzanir ve kendi kendine cokmez!
+            var (caveChunk, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(0, 0);
+            int crossGridOpenVoxels = 0;
+            for (int y = 26; y <= 72; y++)
+            {
+                for (int z = 0; z < 16; z++)
+                {
+                    for (int x = 0; x < 16; x++)
+                    {
+                        if (((x & 3) == 2 || (z & 3) == 2) && VoxelBitUtility.GetMaterialId(caveChunk[(y << 8) | (z << 4) | x]) == MaterialIdCatalog.Air)
+                        {
+                            crossGridOpenVoxels++;
+                        }
+                    }
+                }
+            }
+            Assert.That(crossGridOpenVoxels, Is.GreaterThan(20),
+                "Magaralar 4m'de bir yapay izgara duvarlariyla bolunmemeli; (wx & 3) == 2 koordinatlarindan kesintisiz gecmelidir!");
+
+            var collapseSys = new StructuralCollapseSystem();
+            var clusters = new FallingStructureClusterComponent[GreedyBoxFractureJob.MaxCompoundBoxes];
+            collapseSys.EvaluateAndFracture(
+                caveChunk, 16, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, 16,
+                supportFloorY: 0, Vector3.Zero, Vector3.Zero, clusters, out int naturalCaveCollapsed, VoxelGridMemoryLayout.YMajorChunk);
+            Assert.That(naturalCaveCollapsed, Is.EqualTo(0),
+                "Dogal dallanan magaralar kemer ve litostatik kusatma sayesinde kendi kendine asla cokmemelidir!");
+        }
     }
 }

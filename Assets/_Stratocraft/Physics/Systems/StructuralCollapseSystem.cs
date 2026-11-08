@@ -347,6 +347,108 @@ namespace Stratocraft.Physics.Systems
             return placed;
         }
 
+        /// <summary>
+        /// Darbe enerjisi ($\Phi_{\text{impact}}$), dusus yuksekligi ($h_{\text{drop}}$) ve malzeme dayanikliligina gore
+        /// yere dusen blogun moloza donusmeden kendi maddesi olarak saglam kalip kalmayacagini belirler.
+        /// Eger yuksekten dusmediyse ve saglam bir maddeyse ($\Phi_{\text{impact}} &lt; 0.45$ ve $h_{\text{drop}} \le 2.5\text{m}$),
+        /// moloza donusmez ve oldugu yerde kendi maddesi olarak kalir!
+        /// </summary>
+        public static bool ShouldMaterialStayIntactOnImpact(
+            byte materialId,
+            float dropHeightMeters,
+            float impactFractureRatioPhi)
+        {
+            if (materialId == MaterialIdCatalog.Air ||
+                materialId == MaterialIdCatalog.LooseRubble ||
+                materialId == MaterialIdCatalog.Sand ||
+                materialId == MaterialIdCatalog.Dirt ||
+                materialId == MaterialIdCatalog.Grass ||
+                materialId == MaterialIdCatalog.GlowingMoss)
+            {
+                return false;
+            }
+
+            StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(materialId);
+            if (props.CompressiveCrushLimitKg < 12000f)
+            {
+                return false;
+            }
+
+            return dropHeightMeters <= 2.55f && impactFractureRatioPhi < 0.45f;
+        }
+
+        /// <summary>
+        /// Yuksekten dusmeyen ve darbe enerjisi kritik kirilma esiginin altinda kalan ($\Phi_{\text{impact}} &lt; 0.45$)
+        /// saglam maddeleri moloza (ShapeID=63) cevirmez; zemine kendi orijinal MaterialId ve ShapeId degeriyle saglam blok olarak yerlestirir.
+        /// </summary>
+        public static int SettleClusterAsIntactBlocks(
+            Span<uint> chunkVoxels,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int settleLocalX,
+            int settleLocalY,
+            int settleLocalZ,
+            int sourceVoxelCount,
+            byte dominantMaterialId,
+            byte dominantShapeId = 1,
+            VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.YMajorChunk)
+        {
+            int targetBlocks = Math.Clamp(sourceVoxelCount, 1, 16);
+            int placed = 0;
+            byte mat = dominantMaterialId == MaterialIdCatalog.Air ? MaterialIdCatalog.Stone : dominantMaterialId;
+            byte shape = dominantShapeId == 0 || dominantShapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId
+                ? (byte)1
+                : dominantShapeId;
+
+            for (int radius = 0; radius <= 2 && placed < targetBlocks; radius++)
+            {
+                for (int dz = -radius; dz <= radius && placed < targetBlocks; dz++)
+                {
+                    for (int dx = -radius; dx <= radius && placed < targetBlocks; dx++)
+                    {
+                        int tx = settleLocalX + dx;
+                        int tz = settleLocalZ + dz;
+                        if ((uint)tx >= (uint)sizeX || (uint)tz >= (uint)sizeZ)
+                        {
+                            continue;
+                        }
+
+                        int ty = Math.Clamp(settleLocalY, 1, sizeY - 2);
+                        while (ty > 1 && !VoxelBitUtility.IsPhysicallySolid(
+                                   chunkVoxels[GeodesicSupportDijkstraJob.GridIndex(tx, ty - 1, tz, sizeX, sizeY, sizeZ, layout)]))
+                        {
+                            ty--;
+                        }
+
+                        while (ty < sizeY - 2 && VoxelBitUtility.IsPhysicallySolid(
+                                   chunkVoxels[GeodesicSupportDijkstraJob.GridIndex(tx, ty, tz, sizeX, sizeY, sizeZ, layout)]))
+                        {
+                            ty++;
+                        }
+
+                        if ((uint)ty < (uint)sizeY)
+                        {
+                            int idx = GeodesicSupportDijkstraJob.GridIndex(tx, ty, tz, sizeX, sizeY, sizeZ, layout);
+                            if (!VoxelBitUtility.IsPhysicallySolid(chunkVoxels[idx]))
+                            {
+                                chunkVoxels[idx] = VoxelBitUtility.PackStandard(
+                                    mat,
+                                    VoxelBitUtility.FullDensity,
+                                    shape,
+                                    0,
+                                    BlokKokenDurumu.OyuncuItemBlogu,
+                                    1);
+                                placed++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return placed;
+        }
+
         private static void EnsureBuffers(
             int volume,
             out ushort[] geodesicDist,

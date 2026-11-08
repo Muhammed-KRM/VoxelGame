@@ -624,7 +624,8 @@ namespace Stratocraft.Voxel.Jobs
             byte matB = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);
             byte tempA = ResolveMaterialDefaultTemperature(matA), tempB = ResolveMaterialDefaultTemperature(matB);
             byte aoA = AveragePackedAoWear(dualAo[i0], dualAo[i1], dualAo[i2]), aoB = AveragePackedAoWear(dualAo[i0], dualAo[i2], dualAo[i3]);
-            byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245), shadeB = (byte)Math.Clamp(120 + (int)((seedHash >> 7) & 0x7Fu) - 36, 72, 245);
+            byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245);
+            byte shadeB = (byte)Math.Clamp(shadeA + ((int)((seedHash >> 7) & 0x0Fu) - 8), 72, 245);
 
             if (Vector3.DistanceSquared(v0, v2) <= Vector3.DistanceSquared(v1, v3))
             {
@@ -813,25 +814,19 @@ namespace Stratocraft.Voxel.Jobs
         {
             const int sides = 8;
             float y0 = -0.50f - skirtDrop;
-            const float y1 = -0.34f, y2 = 0.34f, y3 = 0.50f, rBase = 0.46f, rShaft = 0.36f;
+            const float y3 = 0.50f, rShaft = 0.38f;
             Vector3 topCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y3, 0f), center, rot);
             Vector3 botCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y0, 0f), center, rot);
             for (int i = 0; i < sides; i++)
             {
                 float a0 = (i / (float)sides) * MathF.PI * 2f + (MathF.PI / 8f), a1 = ((i + 1) / (float)sides) * MathF.PI * 2f + (MathF.PI / 8f);
                 float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0), c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
-                byte shade1 = (byte)(155 + (i % 3) * 22), shade2 = (byte)(140 + ((i + 1) % 3) * 22);
-                Vector3 b0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rBase, y0, s0 * rBase), center, rot);
-                Vector3 b1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rBase, y0, s1 * rBase), center, rot);
-                Vector3 m0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y1, s0 * rShaft), center, rot);
-                Vector3 m1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y1, s1 * rShaft), center, rot);
-                Vector3 t0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y2, s0 * rShaft), center, rot);
-                Vector3 t1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y2, s1 * rShaft), center, rot);
-                Vector3 u0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rBase, y3, s0 * rBase), center, rot);
-                Vector3 u1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rBase, y3, s1 * rBase), center, rot);
-                AddFacetedQuad(b0, m0, m1, b1, matId, shade1, shade2, ao, outTriangles);
-                AddFacetedQuad(m0, t0, t1, m1, matId, shade1, shade2, ao, outTriangles);
-                AddFacetedQuad(t0, u0, u1, t1, matId, shade1, shade2, ao, outTriangles);
+                byte shade1 = (byte)(155 + (i % 3) * 14), shade2 = (byte)(148 + (i % 3) * 14);
+                Vector3 b0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y0, s0 * rShaft), center, rot);
+                Vector3 b1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y0, s1 * rShaft), center, rot);
+                Vector3 u0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y3, s0 * rShaft), center, rot);
+                Vector3 u1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y3, s1 * rShaft), center, rot);
+                AddFacetedQuad(b0, u0, u1, b1, matId, shade1, shade2, ao, outTriangles);
                 AddFacetedTriangle(topCenter, u1, u0, matId, 210, ao, outTriangles);
                 AddFacetedTriangle(botCenter, b0, b1, matId, 130, ao, outTriangles);
             }
@@ -1197,7 +1192,7 @@ namespace Stratocraft.Voxel.Jobs
                 return false;
             }
             if (Math.Abs(a.FacetShade - b.FacetShade) > 18) return false;
-            if (Vector3.DistanceSquared(a.Normal, b.Normal) > 0.002f) return false;
+            if (Vector3.DistanceSquared(a.Normal, b.Normal) > 0.08f) return false;
             return Vector3.DistanceSquared(a.V0, b.V0) < 1e-6f && Vector3.DistanceSquared(a.V2, b.V1) < 1e-6f;
         }
 
@@ -1305,7 +1300,6 @@ namespace Stratocraft.Voxel.Jobs
             }
         }
 
-        [BurstCompile(FloatPrecision.Standard, FloatMode.Fast, CompileSynchronously = true)]
         public struct BakeMeshColliderBurstJob : IJob
         {
             public UnityEngine.EntityId MeshEntityId;
@@ -1317,7 +1311,7 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         /// <summary>
-        /// Unity 6 Burst + PhysX BakeMesh API kullanarak MeshCollider BVH agacini onceden pisirir;
+        /// Unity 6 PhysX BakeMesh API kullanarak MeshCollider BVH agacini arka plan is parcaciginda onceden pisirir;
         /// boylece mc.sharedMesh atamasi Ana Thread'de takilma (spike) yaratmaz.
         /// </summary>
         public static JobHandle ScheduleAsyncColliderBake(UnityEngine.Mesh mesh)
@@ -1327,7 +1321,6 @@ namespace Stratocraft.Voxel.Jobs
             return job.Schedule();
         }
 
-        [BurstCompile(FloatPrecision.Standard, FloatMode.Fast, CompileSynchronously = true)]
         public struct PaddedSurfaceNetsDualBurstJob : IJob
         {
             [ReadOnly] public NativeArray<uint> PaddedVoxels;

@@ -25,9 +25,27 @@ namespace Stratocraft.Character
     {
         public const int MaxRingBufferSlots = 64;
         public const int SurgeModeActiveClusterLimit = 16;
-        public const float PreCollapseWarningDurationSeconds = 1.5f;
+        public const float PreCollapseWarningDurationSeconds = 0.0f;
         private const float GravityAcceleration = 9.81f;
         private const int MaxMeshVoxelsPerFallingProxy = 512;
+
+        /// <summary>
+        /// Baltayla kesilip devrildikten sonra yerde tek parca kutuk olarak yatan ve oyuncunun baltayla vurarak
+        /// parcalara ayirip odun toplayabildigi fiziksel agac govdesi.
+        /// </summary>
+        public sealed class FallenTreeLogInstance
+        {
+            public GameObject? LogObject;
+            public Rigidbody? Body;
+            public BoxCollider? Collider;
+            public byte WoodMaterialId;
+            public int RemainingSegments;
+            public int InitialSegments;
+            public float SegmentLengthMeters;
+            public Vector3 TrunkDirection;
+            public float CurrentDamage;
+            public float VerticalVelocity;
+        }
 
         private struct ActiveFallingClusterSlot
         {
@@ -37,14 +55,26 @@ namespace Stratocraft.Character
             public float WarningTimer;
             public float DropStartHeightY, CurrentCenterY, VerticalVelocity;
             public Vector3 BaseWorldCenter;
+            public Vector3 CurrentWorldPosition;
+            public Vector3 HorizontalVelocity;
+            public Vector3 ToppleDirectionXZ;
+            public Vector3 ToppleAxis;
+            public Vector3 HingePivotWorld;
+            public float HingeArmLength;
+            public float CurrentTiltAngleRad;
+            public float AngularSpeedRad;
+            public bool IsTreeCluster;
+            public byte DominantShapeId;
             public Vector3 AngularVelocityDeg;
             public GameObject? VisualProxy;
+            public Rigidbody? ProxyRigidbody;
             public Transform? DustPuffGroup;
         }
 
         private readonly StructuralCollapseSystem _collapseSystem = new();
         private readonly FallingStructureClusterComponent[] _evalBuffer = new FallingStructureClusterComponent[16];
         private readonly ActiveFallingClusterSlot[] _ringBuffer = new ActiveFallingClusterSlot[MaxRingBufferSlots];
+        private readonly List<FallenTreeLogInstance> _fallenTreeLogs = new(16);
         private readonly List<FacetedVoxelTriangle> _proxyTris = new(256);
         private uint[]? _scratchSlice;
         private uint[]? _detachedSnapshot;
@@ -54,7 +84,10 @@ namespace Stratocraft.Character
 
         public Material? DefaultVoxelMaterial { get; set; }
         public Stage1MatterCrystalAndMiningController? MiningControllerForItemDrops { get; set; }
+        /// <summary>Son balta/kazma vurusunun yatay darbe/bakis yonu (agaclarin ve kolonlarin kesildigi yone devrilmesi icin).</summary>
+        public Vector3 PreferredStrikeDirectionXZ { get; set; } = Vector3.forward;
         public int ActiveFallingClusterCount => _activeClusterCount;
+        public int ActiveFallenTreeLogCount => _fallenTreeLogs.Count;
         public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
         public float LastImpactFractureRatio { get; private set; }
         public int LastPancakeBreachedBlocksCount { get; private set; }
@@ -128,9 +161,10 @@ namespace Stratocraft.Character
             }
 
             dirtyChunks.Add((cx, cz));
+            int consolidatedCount = ConsolidateClustersByConnectedComponent(_evalBuffer, clusterCount);
             int spawnedDynamic = 0, surgeBaked = 0;
             Material? matToUse = sharedVoxelMaterial != null ? sharedVoxelMaterial : DefaultVoxelMaterial;
-            for (int i = 0; i < clusterCount; i++)
+            for (int i = 0; i < consolidatedCount; i++)
             {
                 FallingStructureClusterComponent c = _evalBuffer[i];
                 if (_activeClusterCount >= SurgeModeActiveClusterLimit)
@@ -140,15 +174,139 @@ namespace Stratocraft.Character
                 }
                 else
                 {
-                    SpawnFallingClusterIntoRingBuffer(c, cx, cz, _detachedSnapshot, maxEditableY, matToUse);
+                    SpawnFallingClusterIntoRingBuffer(c, cx, cz, _detachedSnapshot, maxEditableY, matToUse, pivotWorld);
                     spawnedDynamic++;
                 }
             }
 
             feedbackText = surgeBaked > 0
-                ? $"DOMINO + SURGE MODE! {collapsedVoxels} blok ({spawnedDynamic} dinamik, {surgeBaked} aninda moloz) [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]"
-                : $"DOMINO COKUS UYARISI (1.5sn Catirdama & Toz)! {collapsedVoxels} blok ({clusterCount} gercek voksel kumesi) kopuyor [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]";
+                ? $"FIZIKSEL COKUS + SURGE MODE! {collapsedVoxels} blok ({spawnedDynamic} fiziksel govde, {surgeBaked} aninda moloz) [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]"
+                : $"FIZIKSEL DEVRILME & COKUS! {collapsedVoxels} blok ({consolidatedCount} butunluklu fiziksel kutle) kesilen yone devriliyor [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]";
             return collapsedVoxels;
+        }
+
+        private static int ConsolidateClustersByConnectedComponent(
+            FallingStructureClusterComponent[] clusters, int rawCount)
+        {
+            if (rawCount <= 1) return rawCount;
+            int outCount = 0;
+
+            for (int i = 0; i < rawCount; i++)
+            {
+                FallingStructureClusterComponent cur = clusters[i];
+                int existingIdx = -1;
+                for (int j = 0; j < outCount; j++)
+                {
+                    if (clusters[j].ConnectedComponentId == cur.ConnectedComponentId)
+                    {
+                        existingIdx = j;
+                        break;
+                    }
+                }
+
+                if (existingIdx < 0)
+                {
+                    clusters[outCount++] = cur;
+                }
+                else
+                {
+                    FallingStructureClusterComponent prev = clusters[existingIdx];
+                    float combMass = prev.TotalMassKg + cur.TotalMassKg;
+                    var prevCom = new System.Numerics.Vector3(prev.CenterOfMass.X, prev.CenterOfMass.Y, prev.CenterOfMass.Z);
+                    var curCom = new System.Numerics.Vector3(cur.CenterOfMass.X, cur.CenterOfMass.Y, cur.CenterOfMass.Z);
+                    var combCom = combMass > 0.01f ? (prevCom * prev.TotalMassKg + curCom * cur.TotalMassKg) / combMass : prevCom;
+
+                    byte domMat = ChoosePreferredStructuralMaterial(prev.DominantMaterialId, cur.DominantMaterialId);
+
+                    clusters[existingIdx] = new FallingStructureClusterComponent
+                    {
+                        ConnectedComponentId = prev.ConnectedComponentId,
+                        MinBounds = (
+                            Math.Min(prev.MinBounds.X, cur.MinBounds.X),
+                            Math.Min(prev.MinBounds.Y, cur.MinBounds.Y),
+                            Math.Min(prev.MinBounds.Z, cur.MinBounds.Z)),
+                        MaxBounds = (
+                            Math.Max(prev.MaxBounds.X, cur.MaxBounds.X),
+                            Math.Max(prev.MaxBounds.Y, cur.MaxBounds.Y),
+                            Math.Max(prev.MaxBounds.Z, cur.MaxBounds.Z)),
+                        VoxelCount = prev.VoxelCount + cur.VoxelCount,
+                        TotalMassKg = combMass,
+                        CenterOfMass = (combCom.X, combCom.Y, combCom.Z),
+                        OverturningTorqueNm = (
+                            prev.OverturningTorqueNm.X + cur.OverturningTorqueNm.X,
+                            prev.OverturningTorqueNm.Y + cur.OverturningTorqueNm.Y,
+                            prev.OverturningTorqueNm.Z + cur.OverturningTorqueNm.Z),
+                        InertiaTensorDiag = (
+                            prev.InertiaTensorDiag.Ixx + cur.InertiaTensorDiag.Ixx,
+                            prev.InertiaTensorDiag.Iyy + cur.InertiaTensorDiag.Iyy,
+                            prev.InertiaTensorDiag.Izz + cur.InertiaTensorDiag.Izz),
+                        DominantMaterialId = domMat
+                    };
+                }
+            }
+
+            return outCount;
+        }
+
+        private static byte ChoosePreferredStructuralMaterial(byte matA, byte matB)
+        {
+            if (IsTreeTrunkMaterial(matA)) return matA;
+            if (IsTreeTrunkMaterial(matB)) return matB;
+            if (matA == MaterialIdCatalog.Grass || matA == MaterialIdCatalog.GlowingMoss) return matB;
+            if (matB == MaterialIdCatalog.Grass || matB == MaterialIdCatalog.GlowingMoss) return matA;
+            float massA = StructuralMaterialProps.GetForMaterial(matA).MassKg;
+            float massB = StructuralMaterialProps.GetForMaterial(matB).MassKg;
+            return massB > massA ? matB : matA;
+        }
+
+        private static bool IsTreeTrunkMaterial(byte matId) =>
+            matId == MaterialIdCatalog.OakWood ||
+            matId == MaterialIdCatalog.Ironwood ||
+            matId == MaterialIdCatalog.SpiritWood;
+
+        /// <summary>
+        /// Canli voksel chunk dizisinden (worldChunks) agac govdesi/yapraklarini atlayarak gercek zemin yuksekligini okur.
+        /// Boylece egimli arazide veya EnsureSolidFoundationUnder yukseltilerinde agac asla yerin icine girmez.
+        /// </summary>
+        private static float SampleActualVoxelGroundY(
+            Dictionary<(int cx, int cz), uint[]> worldChunks, float worldX, float worldZ, int referenceY)
+        {
+            int wx = Mathf.FloorToInt(worldX);
+            int wz = Mathf.FloorToInt(worldZ);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+
+            if (worldChunks.TryGetValue((cx, cz), out uint[]? chunkVoxels) && chunkVoxels != null)
+            {
+                int lx = Mathf.Clamp(wx - cx * 16, 0, 15);
+                int lz = Mathf.Clamp(wz - cz * 16, 0, 15);
+                int colXZ = (lz << 4) | lx;
+                int maxY = Mathf.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 1, (chunkVoxels.Length >> 8) - 1);
+                int startY = Mathf.Clamp(referenceY + 8, 2, maxY);
+
+                for (int y = startY; y >= StratocraftFloatingIslandWorldGen.DeepMantleFloorY; y--)
+                {
+                    uint raw = chunkVoxels[(y << 8) | colXZ];
+                    if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                    byte mat = VoxelBitUtility.GetMaterialId(raw);
+                    byte shape = VoxelBitUtility.GetShapeId(raw);
+                    if (IsTreeTrunkMaterial(mat)) continue;
+                    if (shape != 0 && (mat == MaterialIdCatalog.Grass || mat == MaterialIdCatalog.GlowingMoss || mat == MaterialIdCatalog.Marble))
+                    {
+                        continue;
+                    }
+
+                    if (shape == 0)
+                    {
+                        float smoothTop = Mathf.Clamp(VoxelBitUtility.GetDensityOrLiquid(raw) / 127f, 0.35f, 0.95f);
+                        return y + smoothTop;
+                    }
+                    return y + 1.0f;
+                }
+            }
+
+            return StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
         }
 
         private static void PrepareLocalSolveScratch(
@@ -167,7 +325,8 @@ namespace Stratocraft.Character
                     int wx = baseWx + lx;
                     float dx = (wx + 0.5f) - pivotWorld.x;
                     float dz = (wz + 0.5f) - pivotWorld.z;
-                    bool outsideHorizontalRadius = (dx * dx + dz * dz) > 18.0f;
+                    float distSqXZ = dx * dx + dz * dz;
+                    bool outsideHorizontalRadius = distSqXZ > 25.0f;
                     int surfY = Mathf.RoundToInt(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz));
                     int colXZ = (lz << 4) | lx;
 
@@ -182,17 +341,45 @@ namespace Stratocraft.Character
                         }
 
                         byte mat = VoxelBitUtility.GetMaterialId(raw);
-                        bool isTreeTrunk = mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood;
-                        // Yalnizca zemin yuzeyinin en az 3 blok ustundeki agac yapragi (Grass) bloklari agac taci sayilir;
-                        // adanin kendi dogal yuzey topragi/kumu/kayasi ASLA cokmez!
-                        bool isTreeCanopy = mat == MaterialIdCatalog.Grass && y >= surfY + 3;
+                        byte shape = VoxelBitUtility.GetShapeId(raw);
+                        bool isTreeTrunk = IsTreeTrunkMaterial(mat);
+                        bool isTreeCanopy = (mat == MaterialIdCatalog.Grass ||
+                                             mat == MaterialIdCatalog.GlowingMoss ||
+                                             mat == MaterialIdCatalog.Marble) &&
+                                            (shape != 0 || y >= surfY + 2);
 
                         if (!outsideHorizontalRadius && y >= minY && (isTreeTrunk || isTreeCanopy))
                         {
                             continue;
                         }
 
-                        // Dogal ada zemini (Toprak, Cimen, Kum, Tas, Bazalt, Magara tavanlari) KaliciYapi olarak sabitlenir
+                        // Yeralti magaralarinda oyuncu bir tasiyici sutunu (Stalagnate) kestiginde veya ince tavan kemerini (<=3 blok)
+                        // oydugunda yerel tavan parcasinin gercekci sekilde cokebilmesi icin minY..pivotY+6 penceresini serbest birak:
+                        if (!outsideHorizontalRadius &&
+                            pivotWorld.y < surfY - 6f &&
+                            y >= minY &&
+                            y <= Mathf.FloorToInt(pivotWorld.y) + 6)
+                        {
+                            if (mat == MaterialIdCatalog.Stalagnate)
+                            {
+                                continue;
+                            }
+
+                            int overburden = 0;
+                            for (int oy = y + 1; oy < maxY && overburden <= 3; oy++)
+                            {
+                                if (VoxelBitUtility.IsPhysicallySolid(src[(oy << 8) | colXZ]))
+                                    overburden++;
+                                else
+                                    break;
+                            }
+                            if (overburden <= 3)
+                            {
+                                continue;
+                            }
+                        }
+
+                        // Dogal ada zemini ve kalin kaya kutleleri KaliciYapi olarak sabitlenir
                         dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
                     }
                 }
@@ -228,7 +415,7 @@ namespace Stratocraft.Character
                             return true;
                         }
                         byte mat = VoxelBitUtility.GetMaterialId(raw);
-                        if (mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood)
+                        if (IsTreeTrunkMaterial(mat) || mat == MaterialIdCatalog.Stalagnate)
                         {
                             return true;
                         }
@@ -243,13 +430,17 @@ namespace Stratocraft.Character
             return false;
         }
 
-        /// <summary>Havada dusen yapi kumelerini 1.5sn catirdama/toz uyari fazindan gecirip yercekimiyle ilerletir ve Pancake alt kat delmeyi uygular.</summary>
+        /// <summary>Kopan yapi kumelerini ve kesilen agaclari 0sn gecikmeyle gercek fiziksel tork ve yercekimiyle devirir.</summary>
         public void StepFallingClusters(
             float dt, int maxEditableY, Dictionary<(int cx, int cz), uint[]> worldChunks,
             HashSet<(int cx, int cz)> dirtyChunks, Transform playerTransform,
             ref CharacterVitalsComponent playerVitals, out string? impactNotification)
         {
             impactNotification = null;
+            if (_fallenTreeLogs.Count > 0)
+            {
+                StepGroundedTreeLogs(dt, worldChunks);
+            }
             if (_activeClusterCount <= 0) return;
 
             Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
@@ -264,7 +455,7 @@ namespace Stratocraft.Character
 
         private void SpawnFallingClusterIntoRingBuffer(
             FallingStructureClusterComponent cluster, int cx, int cz,
-            uint[] detachedSnapshot, int maxEditableY, Material? sharedMat)
+            uint[] detachedSnapshot, int maxEditableY, Material? sharedMat, Vector3 pivotWorld)
         {
             int slotIdx = _ringWriteCursor;
             _ringWriteCursor = (_ringWriteCursor + 1) % MaxRingBufferSlots;
@@ -288,7 +479,68 @@ namespace Stratocraft.Character
             float comLocalY = cluster.CenterOfMass.Y;
             float comLocalZ = cluster.CenterOfMass.Z - (cz * 16f);
 
+            bool hasWoodTrunk = false;
+            byte detectedWoodMat = MaterialIdCatalog.OakWood;
+            byte dominantShape = ArchitecturalShapeCatalog.FullMasonryCube;
+            int trunkLxSum = 0, trunkLzSum = 0, trunkColumnCount = 0;
+
+            for (int ly = minLy; ly <= maxLy; ly++)
+            {
+                for (int lz = minLz; lz <= maxLz; lz++)
+                {
+                    for (int lx = minLx; lx <= maxLx; lx++)
+                    {
+                        int idx = (ly << 8) | (lz << 4) | lx;
+                        uint raw = (uint)idx < (uint)detachedSnapshot.Length ? detachedSnapshot[idx] : 0u;
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                        byte matId = VoxelBitUtility.GetMaterialId(raw);
+                        if (IsTreeTrunkMaterial(matId))
+                        {
+                            hasWoodTrunk = true;
+                            detectedWoodMat = matId;
+                            if (VoxelBitUtility.GetShapeId(raw) == ArchitecturalShapeCatalog.OctagonalColumn)
+                            {
+                                trunkLxSum += lx;
+                                trunkLzSum += lz;
+                                trunkColumnCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (hasWoodTrunk && trunkColumnCount > 0)
+            {
+                int centerTrunkLx = Mathf.RoundToInt(trunkLxSum / (float)trunkColumnCount);
+                int centerTrunkLz = Mathf.RoundToInt(trunkLzSum / (float)trunkColumnCount);
+                comLocalX = centerTrunkLx + 0.5f;
+                comLocalZ = centerTrunkLz + 0.5f;
+            }
+
+            Vector3 basePos = new Vector3(cx * 16f + comLocalX, comLocalY, cz * 16f + comLocalZ);
+            bool isTree = hasWoodTrunk || IsTreeTrunkMaterial(cluster.DominantMaterialId);
+            Vector3 cutDeltaXZ = new Vector3(pivotWorld.x - basePos.x, 0f, pivotWorld.z - basePos.z);
+            Vector3 toppleDirXZ;
+            if (isTree && PreferredStrikeDirectionXZ.sqrMagnitude > 0.01f)
+            {
+                toppleDirXZ = new Vector3(PreferredStrikeDirectionXZ.x, 0f, PreferredStrikeDirectionXZ.z).normalized;
+            }
+            else if (cutDeltaXZ.sqrMagnitude > 0.04f)
+            {
+                toppleDirXZ = cutDeltaXZ.normalized;
+            }
+            else if (PreferredStrikeDirectionXZ.sqrMagnitude > 0.01f)
+            {
+                toppleDirXZ = new Vector3(PreferredStrikeDirectionXZ.x, 0f, PreferredStrikeDirectionXZ.z).normalized;
+            }
+            else
+            {
+                toppleDirXZ = new Vector3(0.8f, 0f, 0.6f).normalized;
+            }
+
             int emittedBlocks = 0;
+
             for (int ly = minLy; ly <= maxLy && emittedBlocks < MaxMeshVoxelsPerFallingProxy; ly++)
             {
                 for (int lz = minLz; lz <= maxLz && emittedBlocks < MaxMeshVoxelsPerFallingProxy; lz++)
@@ -302,15 +554,38 @@ namespace Stratocraft.Character
                             continue;
                         }
 
-                        // Bu voksel bu kumeye tuketildikten sonra sifirlanir ki ayni chunk'taki diger kumelerle karismasin
                         byte matId = VoxelBitUtility.GetMaterialId(raw);
                         if (matId == 0) matId = fallbackMat;
+
                         byte shapeId = VoxelBitUtility.GetShapeId(raw);
+                        if (shapeId != 0 && shapeId != VoxelBitUtility.ChiseledMicroVoxelShapeId)
+                        {
+                            dominantShape = shapeId;
+                        }
                         byte rot = VoxelBitUtility.GetRotationState(raw);
-                        byte dmg = (byte)Math.Max((int)VoxelBitUtility.GetDamageState(raw), 4);
+                        byte dmg = (byte)Math.Max((int)VoxelBitUtility.GetDamageState(raw), 2);
                         byte occludedMask = ComputeDetachedClusterInternalMask(detachedSnapshot, lx, ly, lz, maxEditableY);
 
-                        var relOrigin = new System.Numerics.Vector3(lx - comLocalX, ly - comLocalY, lz - comLocalZ);
+                        float relX = lx - comLocalX;
+                        float relY = ly - comLocalY;
+                        float relZ = lz - comLocalZ;
+
+                        // Agac devrilirken alt tarafta (+toppleDirXZ yonunde) kalan yaprak/dal bloklarinin
+                        // govde ekseninden asagiya sarkip yerin icine girmesini onle:
+                        if (isTree && !IsTreeTrunkMaterial(matId))
+                        {
+                            float centerOffX = (lx + 0.5f) - comLocalX;
+                            float centerOffZ = (lz + 0.5f) - comLocalZ;
+                            float projAlongFall = centerOffX * toppleDirXZ.x + centerOffZ * toppleDirXZ.z;
+                            if (projAlongFall > 0.35f)
+                            {
+                                float pullBack = projAlongFall - 0.35f;
+                                relX -= toppleDirXZ.x * pullBack;
+                                relZ -= toppleDirXZ.z * pullBack;
+                            }
+                        }
+
+                        var relOrigin = new System.Numerics.Vector3(relX, relY, relZ);
 
                         if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
                         {
@@ -331,11 +606,30 @@ namespace Stratocraft.Character
                 }
             }
 
+            // Tuketilen vokselleri sifirla ki baska bir bilesenle cakisip ikilenmesin
+            for (int ly = minLy; ly <= maxLy; ly++)
+            {
+                for (int lz = minLz; lz <= maxLz; lz++)
+                {
+                    for (int lx = minLx; lx <= maxLx; lx++)
+                    {
+                        int idx = (ly << 8) | (lz << 4) | lx;
+                        if ((uint)idx < (uint)detachedSnapshot.Length) detachedSnapshot[idx] = 0u;
+                    }
+                }
+            }
+
+            if (hasWoodTrunk)
+            {
+                cluster.DominantMaterialId = detectedWoodMat;
+                fallbackMat = detectedWoodMat;
+            }
+
             if (emittedBlocks == 0)
             {
                 HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
                     new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
-                    fallbackMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 6, _proxyTris);
+                    fallbackMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 4, _proxyTris);
             }
 
             Mesh coloredMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_FallingCluster_{slotIdx}");
@@ -345,16 +639,32 @@ namespace Stratocraft.Character
             MeshRenderer mr = proxy.AddComponent<MeshRenderer>();
             if (sharedMat != null) mr.sharedMaterial = sharedMat;
 
-            Vector3 basePos = new Vector3(cluster.CenterOfMass.X, cluster.CenterOfMass.Y, cluster.CenterOfMass.Z);
+            // Gercek Fizik Motoru Bilesenleri (BoxCollider + Rigidbody):
+            BoxCollider boxCol = proxy.AddComponent<BoxCollider>();
+            boxCol.size = new Vector3(
+                Mathf.Max(0.8f, (maxLx - minLx + 1) * 0.85f),
+                Mathf.Max(0.8f, (maxLy - minLy + 1) * 0.85f),
+                Mathf.Max(0.8f, (maxLz - minLz + 1) * 0.85f));
+            Rigidbody rb = proxy.AddComponent<Rigidbody>();
+            rb.mass = Mathf.Max(40f, cluster.TotalMassKg);
+            rb.isKinematic = true;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+
             proxy.transform.position = basePos;
             proxy.transform.localScale = Vector3.one;
 
             Transform dustGroup = CreateWarningDustPuffGroup(proxy.transform, minLy - comLocalY, sharedMat);
 
-            Vector3 torqueVec = new Vector3(
-                cluster.OverturningTorqueNm.X, cluster.OverturningTorqueNm.Y, cluster.OverturningTorqueNm.Z);
-            Vector3 angVel = Vector3.ClampMagnitude(torqueVec * 0.04f, 95f);
-            if (angVel.sqrMagnitude < 4f) angVel = new Vector3(18f, 7f, -14f);
+            // Unity Sol-El Koordinat Sisteminde +Y eksenini toppleDirXZ yonune yatiran donme ekseni: Cross(up, toppleDirXZ)
+            Vector3 toppleAxis = Vector3.Cross(Vector3.up, toppleDirXZ);
+            if (toppleAxis.sqrMagnitude < 0.001f) toppleAxis = Vector3.right;
+            toppleAxis.Normalize();
+
+            float pivotY = isTree ? (minLy + 0.65f) : minLy;
+            float hingeArm = Mathf.Max(0.85f, basePos.y - pivotY);
+            Vector3 hingePivot = new Vector3(basePos.x, pivotY, basePos.z);
+            float initialAngSpeedRad = isTree ? 0.92f : 0.75f;
+            Vector3 angVelDeg = toppleAxis * (initialAngSpeedRad * Mathf.Rad2Deg);
 
             _ringBuffer[slotIdx] = new ActiveFallingClusterSlot
             {
@@ -362,13 +672,24 @@ namespace Stratocraft.Character
                 Cluster = cluster,
                 ChunkX = cx,
                 ChunkZ = cz,
-                WarningTimer = PreCollapseWarningDurationSeconds,
+                WarningTimer = 0f, // 0sn bekleme! Baglantisi kesildigi anda fiziksel olarak devrilmeye baslar.
                 DropStartHeightY = cluster.CenterOfMass.Y,
                 CurrentCenterY = cluster.CenterOfMass.Y,
-                VerticalVelocity = -0.35f,
+                VerticalVelocity = isTree ? -0.15f : -0.65f,
                 BaseWorldCenter = basePos,
-                AngularVelocityDeg = angVel,
+                CurrentWorldPosition = basePos,
+                HorizontalVelocity = toppleDirXZ * (isTree ? 0.85f : 1.35f),
+                ToppleDirectionXZ = toppleDirXZ,
+                ToppleAxis = toppleAxis,
+                HingePivotWorld = hingePivot,
+                HingeArmLength = hingeArm,
+                CurrentTiltAngleRad = 0.04f,
+                AngularSpeedRad = initialAngSpeedRad,
+                IsTreeCluster = isTree,
+                DominantShapeId = dominantShape,
+                AngularVelocityDeg = angVelDeg,
                 VisualProxy = proxy,
+                ProxyRigidbody = rb,
                 DustPuffGroup = dustGroup
             };
             _activeClusterCount++;
@@ -426,60 +747,105 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirtyChunks,
             Vector3 playerPos, ref CharacterVitalsComponent playerVitals, ref string? impactNotification)
         {
-            // 1. Faz: 1.5 Saniyelik Yapısal Çatırdama (Creak), Titreme ve Toz Dökülme Uyarı Fazı
             float fallDt = dt;
-            if (slot.WarningTimer > 0f)
-            {
-                float consumedWarning = Mathf.Min(slot.WarningTimer, dt);
-                slot.WarningTimer -= consumedWarning;
-                fallDt = dt - consumedWarning;
 
-                float elapsedWarning = PreCollapseWarningDurationSeconds - slot.WarningTimer;
-                float intensity = Mathf.Clamp01(elapsedWarning / PreCollapseWarningDurationSeconds);
+            // A) AGAC DEVRILME FIZIGI (Menteseli Ters Sarkac Torku: tau = M*g*L*sin(theta) -> Yere Kutuk Olarak Yan Devrilme!)
+            if (slot.IsTreeCluster)
+            {
+                float effArm = Mathf.Max(1.2f, slot.HingeArmLength);
+                float angularAccel = (GravityAcceleration * 1.45f / effArm) * Mathf.Sin(Mathf.Max(0.18f, slot.CurrentTiltAngleRad));
+                slot.AngularSpeedRad = Mathf.Min(slot.AngularSpeedRad + angularAccel * fallDt, 3.8f);
+                slot.CurrentTiltAngleRad += slot.AngularSpeedRad * fallDt;
+
+                int refY = Mathf.RoundToInt(slot.HingePivotWorld.y);
+                Vector3 dirXZ = slot.ToppleDirectionXZ.sqrMagnitude > 0.01f ? slot.ToppleDirectionXZ.normalized : Vector3.forward;
+
+                // Canli voksel arazi yuksekligini kutuk dibi, ortasi ve ucunda olcerek egimli zemine gore tam temas acisini bul:
+                float groundAtButt = SampleActualVoxelGroundY(worldChunks, slot.HingePivotWorld.x + dirXZ.x * 0.6f, slot.HingePivotWorld.z + dirXZ.z * 0.6f, refY);
+                if (slot.HingePivotWorld.y < groundAtButt + 0.60f)
+                {
+                    slot.HingePivotWorld.y = groundAtButt + 0.60f;
+                }
+
+                float sMid = Mathf.Max(2.5f, effArm * 0.95f);
+                float sTip = Mathf.Max(4.5f, effArm * 1.55f);
+                float groundAtMid = SampleActualVoxelGroundY(worldChunks, slot.HingePivotWorld.x + dirXZ.x * sMid, slot.HingePivotWorld.z + dirXZ.z * sMid, refY);
+                float groundAtTip = SampleActualVoxelGroundY(worldChunks, slot.HingePivotWorld.x + dirXZ.x * sTip, slot.HingePivotWorld.z + dirXZ.z * sTip, refY);
+
+                float cosMid = Mathf.Clamp((groundAtMid + 0.62f - slot.HingePivotWorld.y) / sMid, -0.12f, 0.90f);
+                float cosTip = Mathf.Clamp((groundAtTip + 0.62f - slot.HingePivotWorld.y) / sTip, -0.12f, 0.90f);
+                float maxTiltAngleRad = Mathf.Clamp(Mathf.Min(Mathf.Acos(cosMid), Mathf.Acos(cosTip)), 0.45f, 1.45f);
+
+                bool hitGround = false;
+                if (slot.CurrentTiltAngleRad >= maxTiltAngleRad)
+                {
+                    slot.CurrentTiltAngleRad = maxTiltAngleRad;
+                    hitGround = true;
+                }
+
+                Quaternion tiltRot = Quaternion.AngleAxis(slot.CurrentTiltAngleRad * Mathf.Rad2Deg, slot.ToppleAxis);
+                Vector3 rotatedArm = tiltRot * new Vector3(0f, slot.HingeArmLength, 0f);
+                Vector3 nextComWorld = slot.HingePivotWorld + rotatedArm;
+                slot.CurrentWorldPosition = nextComWorld;
+                slot.CurrentCenterY = nextComWorld.y;
 
                 if (slot.VisualProxy != null)
                 {
-                    float jitterX = Mathf.Sin(elapsedWarning * 48f) * (0.025f + 0.045f * intensity);
-                    float jitterZ = Mathf.Cos(elapsedWarning * 53f) * (0.025f + 0.045f * intensity);
-                    float sagY = -0.08f * intensity;
-                    slot.VisualProxy.transform.position = slot.BaseWorldCenter + new Vector3(jitterX, sagY, jitterZ);
-                    slot.VisualProxy.transform.Rotate(slot.AngularVelocityDeg * (0.08f * consumedWarning), Space.Self);
+                    slot.VisualProxy.transform.position = nextComWorld;
+                    slot.VisualProxy.transform.rotation = tiltRot;
                 }
 
-                if (slot.DustPuffGroup != null)
+                // Agac zemine temas ettiginde yerin icine girmez veya yok olmaz;
+                // arazinin egimine tam oturmus parcalanabilir kutuk (FallenTreeLogInstance) olarak yerde kalir!
+                if (hitGround)
                 {
-                    slot.DustPuffGroup.localPosition += new Vector3(0f, -0.65f * consumedWarning, 0f);
-                    slot.DustPuffGroup.Rotate(new Vector3(45f, 110f, 35f) * consumedWarning, Space.Self);
+                    SpawnGroundedTreeLogForHarvesting(ref slot, worldChunks, playerPos, ref playerVitals, out impactNotification);
+                    ReleaseClusterSlot(ref slot);
                 }
-
-                impactNotification ??= $"YAPI CATIRDIYOR & TOZ DOKULUYOR! ({Mathf.Max(0.1f, slot.WarningTimer):0.1}sn icinde cokecek!)";
-                if (fallDt <= 0.0001f)
-                {
-                    return;
-                }
+                return;
             }
 
-            // 2. Faz: Serbest Düşüş + Dinamik Pancake Alt Kat Delme
+            // B) BINA / KOLON / MAGARA TAVANI DEVRILME VE SERBEST DUSUS FIZIGI:
+            // Kesilen kolona dogru devrilme torku + yercekimi ivmesi
+            float structArm = Mathf.Max(0.9f, slot.HingeArmLength);
+            float structAngAccel = (GravityAcceleration / structArm) * Mathf.Sin(Mathf.Max(0.15f, slot.CurrentTiltAngleRad)) * 0.85f;
+            slot.AngularSpeedRad = Mathf.Min(slot.AngularSpeedRad + structAngAccel * fallDt, 3.2f);
+            slot.CurrentTiltAngleRad = Mathf.Min(slot.CurrentTiltAngleRad + slot.AngularSpeedRad * fallDt, 1.48f);
+
             slot.VerticalVelocity -= GravityAcceleration * fallDt;
             slot.CurrentCenterY += slot.VerticalVelocity * fallDt;
+            slot.CurrentWorldPosition += new Vector3(
+                slot.HorizontalVelocity.x * fallDt,
+                slot.VerticalVelocity * fallDt,
+                slot.HorizontalVelocity.z * fallDt);
+            slot.CurrentWorldPosition.y = slot.CurrentCenterY;
 
             if (slot.VisualProxy != null)
             {
-                slot.VisualProxy.transform.position = new Vector3(slot.Cluster.CenterOfMass.X, slot.CurrentCenterY, slot.Cluster.CenterOfMass.Z);
-                slot.VisualProxy.transform.Rotate(slot.AngularVelocityDeg * fallDt, Space.Self);
+                Quaternion tiltRot = Quaternion.AngleAxis(slot.CurrentTiltAngleRad * Mathf.Rad2Deg, slot.ToppleAxis);
+                slot.VisualProxy.transform.position = slot.CurrentWorldPosition;
+                slot.VisualProxy.transform.rotation = tiltRot;
             }
 
-            float halfHeight = Mathf.Max(0.5f, (slot.Cluster.MaxBounds.Y - slot.Cluster.MinBounds.Y + 1) * 0.5f);
+            float halfHeight = Mathf.Max(0.5f, (slot.Cluster.MaxBounds.Y - slot.Cluster.MinBounds.Y + 1) * 0.5f * Mathf.Cos(slot.CurrentTiltAngleRad * 0.65f));
             int probeY = Mathf.Clamp(Mathf.FloorToInt(slot.CurrentCenterY - halfHeight), 1, maxEditableY - 2);
-            int minLx = Mathf.Clamp(slot.Cluster.MinBounds.X, 0, 15), maxLx = Mathf.Clamp(slot.Cluster.MaxBounds.X, 0, 15);
-            int minLz = Mathf.Clamp(slot.Cluster.MinBounds.Z, 0, 15), maxLz = Mathf.Clamp(slot.Cluster.MaxBounds.Z, 0, 15);
-            int centerLx = (minLx + maxLx) / 2, centerLz = (minLz + maxLz) / 2;
+            int curWx = Mathf.FloorToInt(slot.CurrentWorldPosition.x);
+            int curWz = Mathf.FloorToInt(slot.CurrentWorldPosition.z);
+            int curCx = curWx >= 0 ? (curWx >> 4) : -(((-curWx) + 15) >> 4);
+            int curCz = curWz >= 0 ? (curWz >> 4) : -(((-curWz) + 15) >> 4);
 
-            if (!worldChunks.TryGetValue((slot.ChunkX, slot.ChunkZ), out uint[]? chunkVoxels))
+            if (!worldChunks.TryGetValue((curCx, curCz), out uint[]? chunkVoxels))
             {
                 ReleaseClusterSlot(ref slot);
                 return;
             }
+
+            int centerLx = Mathf.Clamp(curWx - curCx * 16, 0, 15);
+            int centerLz = Mathf.Clamp(curWz - curCz * 16, 0, 15);
+            int spanX = Mathf.Clamp((slot.Cluster.MaxBounds.X - slot.Cluster.MinBounds.X) / 2, 0, 3);
+            int spanZ = Mathf.Clamp((slot.Cluster.MaxBounds.Z - slot.Cluster.MinBounds.Z) / 2, 0, 3);
+            int minLx = Mathf.Clamp(centerLx - spanX, 0, 15), maxLx = Mathf.Clamp(centerLx + spanX, 0, 15);
+            int minLz = Mathf.Clamp(centerLz - spanZ, 0, 15), maxLz = Mathf.Clamp(centerLz + spanZ, 0, 15);
 
             byte hitMat = MaterialIdCatalog.Air;
             for (int lz = minLz; lz <= maxLz && hitMat == MaterialIdCatalog.Air; lz++)
@@ -498,12 +864,14 @@ namespace Stratocraft.Character
             int mantleStopY = StratocraftFloatingIslandWorldGen.DeepMantleFloorY + 1;
             if (hitMat != MaterialIdCatalog.Air && probeY > mantleStopY)
             {
-                float dropHeight = Mathf.Max(0.5f, slot.DropStartHeightY - slot.CurrentCenterY);
+                float dropHeight = Mathf.Max(0.25f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = Mathf.Max(Mathf.Abs(slot.VerticalVelocity), PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight));
 
-                // Pancake Collapse: Yalnizca OYUNCU YAPISI (OyuncuItemBlogu) bina doseme bloklari delinir;
-                // dogal ada arazisi (DogalKutle) asla matkap gibi delinip yer cokmesine yol acmaz!
-                int breachedBlocks = 0;
+                // 1) UZERINE DUSME ILE ALT BLOK EZILMESI VE PANCAKE DELME:
+                // Alttaki blok saglam bir madde olsa bile, uzerine yuksekten agir bir kutle dustugunde darbe enerjisi
+                // alt blogun dayanikliligini asarsa alt blok kirilir ve moloza (ShapeId=63) donusur!
+                int breachedHollowFloorBlocks = 0;
+                int crushedGroundedBlocks = 0;
                 float addedMassKg = 0f;
                 byte lastBreachedMat = hitMat;
 
@@ -514,33 +882,55 @@ namespace Stratocraft.Character
                         int bIdx = (probeY << 8) | (lz << 4) | lx;
                         uint bRaw = chunkVoxels[bIdx];
                         if (!VoxelBitUtility.IsPhysicallySolid(bRaw)) continue;
-                        if (VoxelBitUtility.GetOriginState(bRaw) != BlokKokenDurumu.OyuncuItemBlogu) continue;
 
                         byte bm = VoxelBitUtility.GetMaterialId(bRaw);
                         if (bm == MaterialIdCatalog.Air || bm == MaterialIdCatalog.Bedrock) continue;
 
+                        BlokKokenDurumu bOrigin = VoxelBitUtility.GetOriginState(bRaw);
+                        bool isPlayerBlock = bOrigin == BlokKokenDurumu.OyuncuItemBlogu;
+                        bool alreadyRubble = VoxelBitUtility.GetShapeId(bRaw) == VoxelBitUtility.ChiseledMicroVoxelShapeId;
+                        if (alreadyRubble) continue;
+
                         if (StructuralCollapseSystem.DoesImpactBreachFloorBlock(in slot.Cluster, vHit, bm))
                         {
-                            chunkVoxels[bIdx] = 0u;
-                            Stage1InteractivePlayController.NotifyWorldVoxelEdited(slot.ChunkX, slot.ChunkZ, probeY, lx, lz, includeNeighbors: true);
-                            breachedBlocks++;
-                            lastBreachedMat = bm;
-                            addedMassKg += StructuralMaterialProps.GetForMaterial(bm).MassKg;
+                            bool hasEmptySpaceBelow = probeY > mantleStopY + 1 &&
+                                                      !VoxelBitUtility.IsPhysicallySolid(chunkVoxels[((probeY - 1) << 8) | (lz << 4) | lx]);
+
+                            if (isPlayerBlock && hasEmptySpaceBelow)
+                            {
+                                // Alti bos bina kat doseme blogu -> delinir ve ustteki kutleyle birlikte alt kata duser (Pancake Collapse)!
+                                chunkVoxels[bIdx] = 0u;
+                                Stage1InteractivePlayController.NotifyWorldVoxelEdited(curCx, curCz, probeY, lx, lz, includeNeighbors: true);
+                                breachedHollowFloorBlocks++;
+                                lastBreachedMat = bm;
+                                addedMassKg += StructuralMaterialProps.GetForMaterial(bm).MassKg;
+                            }
+                            else if (isPlayerBlock || dropHeight >= 2.2f)
+                            {
+                                // Yerde duran saglam blogun uzerine agir bir sey dustu -> ezilerek kendi maddesinin molozuna (ShapeID=63) donusur!
+                                int seed = (lx * 73) ^ (probeY * 37) ^ (lz * 19);
+                                PrebakedFracturePatternLut.SelectShardMask64(seed, 0.75f, out byte shardIdx, out _);
+                                ushort shardSlot = (ushort)(32 + (shardIdx & 0x3F));
+                                chunkVoxels[bIdx] = VoxelBitUtility.PackChiseled(bm, shardSlot, bOrigin, 11);
+                                Stage1InteractivePlayController.NotifyWorldVoxelEdited(curCx, curCz, probeY, lx, lz, includeNeighbors: true);
+                                crushedGroundedBlocks++;
+                                lastBreachedMat = bm;
+                            }
                         }
                     }
                 }
 
-                if (breachedBlocks > 0)
+                if (breachedHollowFloorBlocks > 0)
                 {
-                    LastPancakeBreachedBlocksCount = breachedBlocks;
-                    slot.Cluster.VoxelCount += breachedBlocks;
+                    LastPancakeBreachedBlocksCount = breachedHollowFloorBlocks;
+                    slot.Cluster.VoxelCount += breachedHollowFloorBlocks;
                     slot.Cluster.TotalMassKg += addedMassKg;
-                    dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
+                    dirtyChunks.Add((curCx, curCz));
 
                     if (MiningControllerForItemDrops != null)
                     {
-                        int dropCount = Mathf.Clamp(breachedBlocks, 1, 4);
-                        Vector3 breachPos = new Vector3(slot.ChunkX * 16 + centerLx + 0.5f, probeY + 0.5f, slot.ChunkZ * 16 + centerLz + 0.5f);
+                        int dropCount = Mathf.Clamp(breachedHollowFloorBlocks, 1, 4);
+                        Vector3 breachPos = new Vector3(curCx * 16 + centerLx + 0.5f, probeY + 0.5f, curCz * 16 + centerLz + 0.5f);
                         for (int d = 0; d < dropCount; d++)
                         {
                             Vector3 offset = new Vector3((d - 1.5f) * 0.35f, 0.2f, ((d & 1) - 0.5f) * 0.35f);
@@ -549,16 +939,15 @@ namespace Stratocraft.Character
                         }
                     }
 
-                    // Alt kat döşemesi delindiğinde, o kattaki komşu kiriş ve bloklar için zincirleme (Pancake) çöküş tetikle!
                     if (!_isEvaluatingCascade)
                     {
                         _isEvaluatingCascade = true;
                         try
                         {
                             Vector3 lowerFloorPivot = new Vector3(
-                                slot.ChunkX * 16 + centerLx + 0.5f, probeY + 0.5f, slot.ChunkZ * 16 + centerLz + 0.5f);
+                                curCx * 16 + centerLx + 0.5f, probeY + 0.5f, curCz * 16 + centerLz + 0.5f);
                             EvaluateChunkStability(
-                                slot.ChunkX, slot.ChunkZ, chunkVoxels, maxEditableY,
+                                curCx, curCz, chunkVoxels, maxEditableY,
                                 lowerFloorPivot, DefaultVoxelMaterial, dirtyChunks, out _);
                         }
                         finally
@@ -568,58 +957,354 @@ namespace Stratocraft.Character
                     }
 
                     slot.VerticalVelocity = Mathf.Min(-2.2f, slot.VerticalVelocity * 0.70f);
-                    impactNotification = $"PANCAKE ALT KAT DELINDI! ({breachedBlocks} taban blogu kirildi, Hiz={vHit:0.1} m/s -> Kat y={probeY} zincirleme coktu!)";
+                    impactNotification = $"PANCAKE ALT KAT DELINDI! ({breachedHollowFloorBlocks} taban blogu kirildi, Hiz={vHit:0.1} m/s -> Kat y={probeY} zincirleme coktu!)";
                     return;
                 }
 
+                slot.ChunkX = curCx;
+                slot.ChunkZ = curCz;
                 FinalizeClusterImpact(
                     ref slot, chunkVoxels, maxEditableY, centerLx, probeY + 1, centerLz,
-                    dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
-                dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
+                    dropHeight, vHit, crushedGroundedBlocks, playerPos, ref playerVitals, out impactNotification);
+                dirtyChunks.Add((curCx, curCz));
                 ReleaseClusterSlot(ref slot);
             }
             else if (slot.CurrentCenterY <= mantleStopY + 0.5f)
             {
                 float dropHeight = Mathf.Max(1.0f, slot.DropStartHeightY - slot.CurrentCenterY);
                 float vHit = PrebakedFracturePatternLut.ComputeImpactVelocityMps(dropHeight);
+                slot.ChunkX = curCx;
+                slot.ChunkZ = curCz;
                 FinalizeClusterImpact(
                     ref slot, chunkVoxels, maxEditableY, centerLx, mantleStopY + 1, centerLz,
-                    dropHeight, vHit, playerPos, ref playerVitals, out impactNotification);
-                dirtyChunks.Add((slot.ChunkX, slot.ChunkZ));
+                    dropHeight, vHit, 0, playerPos, ref playerVitals, out impactNotification);
+                dirtyChunks.Add((curCx, curCz));
                 ReleaseClusterSlot(ref slot);
             }
         }
 
-        private void FinalizeClusterImpact(
-            ref ActiveFallingClusterSlot slot, uint[] chunkVoxels, int maxEditableY,
-            int settleLx, int settleLy, int settleLz, float dropHeight, float vHit,
-            Vector3 playerPos, ref CharacterVitalsComponent playerVitals, out string? impactNotification)
+        private void SpawnGroundedTreeLogForHarvesting(
+            ref ActiveFallingClusterSlot slot,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 playerPos,
+            ref CharacterVitalsComponent playerVitals,
+            out string? impactNotification)
         {
-            StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(slot.Cluster.DominantMaterialId);
-            float eCrit = Mathf.Max(400f, props.CompressiveCrushLimitKg * 0.45f);
-            float phi = PrebakedFracturePatternLut.ComputeImpactFractureRatio(slot.Cluster.TotalMassKg, dropHeight, eCrit, 1.0f, 1.15f);
-            LastImpactFractureRatio = phi;
+            byte woodMat = IsTreeTrunkMaterial(slot.Cluster.DominantMaterialId)
+                ? slot.Cluster.DominantMaterialId
+                : MaterialIdCatalog.OakWood;
+            byte crownMat = woodMat == MaterialIdCatalog.SpiritWood
+                ? MaterialIdCatalog.GlowingMoss
+                : MaterialIdCatalog.Grass;
+            int segments = Mathf.Clamp(slot.Cluster.MaxBounds.Y - slot.Cluster.MinBounds.Y, 5, 8);
+            float totalLogLength = segments * 1.0f;
 
-            bool isTreeWoodCluster = slot.Cluster.DominantMaterialId == MaterialIdCatalog.OakWood ||
-                                     slot.Cluster.DominantMaterialId == MaterialIdCatalog.Ironwood;
-            int maxRubbleBlocks = isTreeWoodCluster
-                ? Math.Clamp(slot.Cluster.VoxelCount / 6, 1, 4)
-                : Math.Clamp(slot.Cluster.VoxelCount, 1, 12);
-            int deposited = StructuralCollapseSystem.RevoxelizeClusterToLooseRubble(
-                chunkVoxels.AsSpan(0, 16 * maxEditableY * 16), 16, maxEditableY, 16,
-                settleLx, settleLy, settleLz, maxRubbleBlocks,
-                VoxelGridMemoryLayout.YMajorChunk, dropHeight, slot.Cluster.DominantMaterialId);
-            Stage1InteractivePlayController.NotifyWorldVoxelEdited(slot.ChunkX, slot.ChunkZ, settleLy, settleLx, settleLz, includeNeighbors: true);
+            Vector3 dirXZ = slot.ToppleDirectionXZ.sqrMagnitude > 0.01f ? slot.ToppleDirectionXZ.normalized : Vector3.forward;
+            int refY = Mathf.RoundToInt(slot.HingePivotWorld.y);
 
-            byte domMat = slot.Cluster.DominantMaterialId == MaterialIdCatalog.Air
-                ? MaterialIdCatalog.LooseRubble
-                : slot.Cluster.DominantMaterialId;
-            string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(domMat);
+            Vector3 buttXZ = slot.HingePivotWorld + dirXZ * 0.75f;
+            Vector3 midXZ = buttXZ + dirXZ * (totalLogLength * 0.5f);
+            Vector3 tipXZ = buttXZ + dirXZ * totalLogLength;
 
-            Vector3 impactWorld = new Vector3(slot.Cluster.CenterOfMass.X, slot.CurrentCenterY, slot.Cluster.CenterOfMass.Z);
+            float yButt = SampleActualVoxelGroundY(worldChunks, buttXZ.x, buttXZ.z, refY);
+            float yMid = SampleActualVoxelGroundY(worldChunks, midXZ.x, midXZ.z, refY);
+            float yTip = SampleActualVoxelGroundY(worldChunks, tipXZ.x, tipXZ.z, refY);
+
+            float centerGroundY = Mathf.Max((yButt + yTip) * 0.5f, yMid);
+            Vector3 baseGroundPos = new Vector3(midXZ.x, centerGroundY + 0.58f, midXZ.z);
+            Vector3 logSlopeDir = new Vector3(dirXZ.x * totalLogLength, yTip - yButt, dirXZ.z * totalLogLength).normalized;
+            if (logSlopeDir.sqrMagnitude < 0.01f) logSlopeDir = dirXZ;
+
+            // En fazla 12 devrilmis kutuk sahnede tutulur; fazlasi varsa en eskisini temizle
+            if (_fallenTreeLogs.Count >= 12)
+            {
+                if (_fallenTreeLogs[0].LogObject != null)
+                {
+                    UnityEngine.Object.Destroy(_fallenTreeLogs[0].LogObject);
+                }
+                _fallenTreeLogs.RemoveAt(0);
+            }
+
+            _proxyTris.Clear();
+            for (int s = 0; s < segments; s++)
+            {
+                float offsetY = (s - (segments - 1) * 0.5f);
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, -0.5f),
+                    woodMat,
+                    ArchitecturalShapeCatalog.OctagonalColumn,
+                    0,
+                    1,
+                    _proxyTris,
+                    extendFoundationSkirt: false);
+
+                // Kutugun uc kisminda (s >= segments - 2) yanlarda ve ustte (+Z yonu gokyuzune bakar) dal ve yaprak kumeleri:
+                if (s == segments - 2)
+                {
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-1.35f, offsetY - 0.5f, -0.25f),
+                        crownMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 1, _proxyTris, extendFoundationSkirt: false);
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(0.35f, offsetY - 0.5f, -0.25f),
+                        crownMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 1, _proxyTris, extendFoundationSkirt: false);
+                }
+                else if (s == segments - 1)
+                {
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, 0.35f),
+                        crownMat, ArchitecturalShapeCatalog.FullMasonryCube, 0, 1, _proxyTris, extendFoundationSkirt: false);
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, offsetY + 0.35f, -0.35f),
+                        crownMat, ArchitecturalShapeCatalog.BattlementMerlon, 0, 1, _proxyTris, extendFoundationSkirt: false);
+                }
+            }
+
+            Mesh logMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_FallenTreeLog_{Time.frameCount}");
+            GameObject logGo = new GameObject($"FallenTreeLog_{woodMat}_{Time.frameCount}");
+            logGo.AddComponent<MeshFilter>().sharedMesh = logMesh;
+            MeshRenderer mr = logGo.AddComponent<MeshRenderer>();
+            if (DefaultVoxelMaterial != null) mr.sharedMaterial = DefaultVoxelMaterial;
+
+            logGo.transform.position = baseGroundPos;
+            // Yerel +Y eksenini arazi egimiyle hizali kutuk yonune (logSlopeDir), yerel +Z eksenini ise gokyuzune cevir:
+            Vector3 localX = Vector3.Cross(Vector3.up, logSlopeDir);
+            if (localX.sqrMagnitude < 0.001f) localX = Vector3.right;
+            localX.Normalize();
+            Vector3 skyUpZ = Vector3.Cross(localX, logSlopeDir).normalized;
+            logGo.transform.rotation = Quaternion.LookRotation(skyUpZ, logSlopeDir);
+
+            BoxCollider col = logGo.AddComponent<BoxCollider>();
+            col.size = new Vector3(1.15f, segments * 1.05f, 1.15f);
+
+            // KRITIK DUZELTME: Voksel arazi chunk'larinda PhysX MeshCollider kapali oldugundan (NearPhysicsColliderRadius = -1),
+            // rb.useGravity = true ve isKinematic = false birakilirsa kutuk zeminin icinden gecerek sonsuzluga duser!
+            // Bu yuzden Rigidbody kinematik tutulur ve dikey yercekimi/zemin oturma fizigi StepGroundedTreeLogs ile canli vokseller uzerinde cozulur.
+            Rigidbody rb = logGo.AddComponent<Rigidbody>();
+            rb.mass = segments * 85f;
+            rb.useGravity = false;
+            rb.isKinematic = true;
+
+            _fallenTreeLogs.Add(new FallenTreeLogInstance
+            {
+                LogObject = logGo,
+                Body = rb,
+                Collider = col,
+                WoodMaterialId = woodMat,
+                RemainingSegments = segments,
+                InitialSegments = segments,
+                SegmentLengthMeters = 1.0f,
+                TrunkDirection = dirXZ,
+                CurrentDamage = 0f,
+                VerticalVelocity = 0f
+            });
+
+            // Yaprak tacindan yere 2 adet fidan/dal parcasi duser; asil odunlar yerdeki kutugu baltayla parcalayinca toplanir!
             if (MiningControllerForItemDrops != null)
             {
-                int dropItemCount = Mathf.Clamp(Mathf.CeilToInt(slot.Cluster.VoxelCount * 0.45f), 2, 6);
+                MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                    baseGroundPos + new Vector3(0.35f, 0.45f, -0.35f), woodMat, shape: 2, count: 1, DefaultVoxelMaterial);
+            }
+
+            if (Vector3.Distance(playerPos, baseGroundPos) <= 2.6f)
+            {
+                playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - 12f);
+            }
+
+            string woodName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(woodMat);
+            impactNotification =
+                $"AGAC DEVRILDI! {woodName} govdesi kesilen yone kutuk olarak devrildi ({segments} parca). [3] Balta ile yerdeki kutuge vurarak odunlara ayirin!";
+        }
+
+        /// <summary>
+        /// Yerde yatan devrilmis agac kutuklerini canli voksel arazisi uzerinde tutar.
+        /// Eger oyuncu kutugun altindaki topragi kazarsa kutuk yercekimiyle yeni zemine duser; asla yerin icine girip kaybolmaz.
+        /// </summary>
+        private void StepGroundedTreeLogs(float dt, Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (log.LogObject == null)
+                {
+                    _fallenTreeLogs.RemoveAt(i);
+                    continue;
+                }
+
+                Vector3 pos = log.LogObject.transform.position;
+                Vector3 dirXZ = log.TrunkDirection.sqrMagnitude > 0.01f ? log.TrunkDirection : Vector3.forward;
+                float halfSpan = Mathf.Max(0.8f, log.RemainingSegments * 0.42f);
+                int refY = Mathf.RoundToInt(pos.y);
+
+                float yButt = SampleActualVoxelGroundY(worldChunks, pos.x - dirXZ.x * halfSpan, pos.z - dirXZ.z * halfSpan, refY);
+                float yMid = SampleActualVoxelGroundY(worldChunks, pos.x, pos.z, refY);
+                float yTip = SampleActualVoxelGroundY(worldChunks, pos.x + dirXZ.x * halfSpan, pos.z + dirXZ.z * halfSpan, refY);
+
+                float targetY = Mathf.Max((yButt + yTip) * 0.5f, yMid) + 0.58f;
+                if (pos.y > targetY + 0.05f)
+                {
+                    log.VerticalVelocity = Mathf.Max(log.VerticalVelocity - GravityAcceleration * dt, -18f);
+                    pos.y = Mathf.Max(targetY, pos.y + log.VerticalVelocity * dt);
+                    log.LogObject.transform.position = pos;
+                }
+                else if (pos.y < targetY - 0.01f)
+                {
+                    log.VerticalVelocity = 0f;
+                    pos.y = targetY;
+                    log.LogObject.transform.position = pos;
+                }
+                else
+                {
+                    log.VerticalVelocity = 0f;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Oyuncu yerde yatan devrilmis bir agac kutugune ([3] Balta veya [2] Kazma ile) vurdugunda kutugu parcalara ayirir
+        /// ve her parcadan gercek 3B odun kutukleri (OakWood / Ironwood) dusurur!
+        /// </summary>
+        public bool TryChopFallenTreeLog(
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float maxDistance,
+            float chopPower,
+            out string feedback)
+        {
+            feedback = string.Empty;
+            if (_fallenTreeLogs.Count == 0) return false;
+
+            int hitIndex = -1;
+            Vector3 hitPoint = Vector3.zero;
+            float bestDist = maxDistance;
+
+            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (log.LogObject == null || log.Collider == null)
+                {
+                    _fallenTreeLogs.RemoveAt(i);
+                    continue;
+                }
+
+                Ray ray = new Ray(rayOrigin, rayDirection);
+                if (log.Collider.Raycast(ray, out RaycastHit hit, bestDist))
+                {
+                    bestDist = hit.distance;
+                    hitPoint = hit.point;
+                    hitIndex = i;
+                }
+                else
+                {
+                    // Yakin mesafe kepce toleransi (oyuncu kutugun dibindeyken asagi savurdugunda)
+                    Vector3 closest = log.Collider.ClosestPoint(rayOrigin + rayDirection * Mathf.Min(2.2f, maxDistance));
+                    float d = Vector3.Distance(rayOrigin, closest);
+                    if (d <= 2.85f && Vector3.Dot((closest - rayOrigin).normalized, rayDirection) >= 0.42f && d < bestDist)
+                    {
+                        bestDist = d;
+                        hitPoint = closest;
+                        hitIndex = i;
+                    }
+                }
+            }
+
+            if (hitIndex < 0) return false;
+
+            FallenTreeLogInstance target = _fallenTreeLogs[hitIndex];
+            target.CurrentDamage += chopPower;
+            string woodName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(target.WoodMaterialId);
+
+            if (target.CurrentDamage < 1.0f)
+            {
+                if (target.LogObject != null)
+                {
+                    target.LogObject.transform.position += new Vector3(0f, 0.04f, 0f);
+                }
+                feedback = $"KUTUK KESILIYOR: {woodName} Kutugu (Kesim: %{Mathf.RoundToInt(target.CurrentDamage * 100f)} | Kalan: {target.RemainingSegments} kutuk bolumu)";
+                return true;
+            }
+
+            target.CurrentDamage = 0f;
+            target.RemainingSegments--;
+
+            // Kesilen kutuk bolumunden yere 2 adet gercek odun blogu dusur
+            if (MiningControllerForItemDrops != null)
+            {
+                for (int d = 0; d < 2; d++)
+                {
+                    Vector3 dropOffset = new Vector3((d - 0.5f) * 0.35f, 0.25f + d * 0.1f, 0.15f);
+                    MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                        hitPoint + dropOffset,
+                        target.WoodMaterialId,
+                        shape: ArchitecturalShapeCatalog.OctagonalColumn,
+                        count: 1,
+                        DefaultVoxelMaterial);
+                }
+            }
+
+            if (target.RemainingSegments <= 0)
+            {
+                if (target.LogObject != null)
+                {
+                    UnityEngine.Object.Destroy(target.LogObject);
+                }
+                _fallenTreeLogs.RemoveAt(hitIndex);
+                feedback = $"KUTUK TAMAMEN PARCALANDI! +2 {woodName} kutugu yere dustu (Tum govde islendi!).";
+                return true;
+            }
+
+            // Kutugun boyunu kisalt (kesilen parca eksildi)
+            if (target.LogObject != null)
+            {
+                float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
+                target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.25f, ratio), 1f);
+            }
+            feedback = $"KUTUK PARCALANDI! +2 {woodName} kutugu yere dustu (Kalan kutuk: {target.RemainingSegments}/{target.InitialSegments}).";
+            return true;
+        }
+
+        private void FinalizeClusterImpact(
+            ref ActiveFallingClusterSlot slot, uint[] chunkVoxels, int maxEditableY,
+            int settleLx, int settleLy, int settleLz, float dropHeight, float vHit, int crushedLowerBlocks,
+            Vector3 playerPos, ref CharacterVitalsComponent playerVitals, out string? impactNotification)
+        {
+            byte domMat = slot.Cluster.DominantMaterialId == MaterialIdCatalog.Air
+                ? MaterialIdCatalog.Stone
+                : slot.Cluster.DominantMaterialId;
+            StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(domMat);
+            float eCrit = Mathf.Max(400f, props.CompressiveCrushLimitKg);
+            float phi = PrebakedFracturePatternLut.ComputeImpactFractureRatio(slot.Cluster.TotalMassKg, dropHeight, eCrit, 0.5f, 1.15f);
+            LastImpactFractureRatio = phi;
+
+            string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(domMat);
+            int targetBlocks = Math.Clamp(slot.Cluster.VoxelCount, 1, 12);
+
+            // DARBE ENERJISI VS. MALZEME DAYANIKLILIGI:
+            // Eger yuksekten dusmediyse (dropHeight <= 2.55m) ve saglam bir maddeyse (phi < 0.45f),
+            // moloza (ShapeID=63) DONUSMEZ; yerde ayni madde olarak saglam kalir!
+            bool staysIntact = StructuralCollapseSystem.ShouldMaterialStayIntactOnImpact(domMat, dropHeight, phi);
+            int deposited;
+
+            if (staysIntact)
+            {
+                deposited = StructuralCollapseSystem.SettleClusterAsIntactBlocks(
+                    chunkVoxels.AsSpan(0, 16 * maxEditableY * 16), 16, maxEditableY, 16,
+                    settleLx, settleLy, settleLz, targetBlocks,
+                    domMat, slot.DominantShapeId, VoxelGridMemoryLayout.YMajorChunk);
+            }
+            else
+            {
+                deposited = StructuralCollapseSystem.RevoxelizeClusterToLooseRubble(
+                    chunkVoxels.AsSpan(0, 16 * maxEditableY * 16), 16, maxEditableY, 16,
+                    settleLx, settleLy, settleLz, targetBlocks,
+                    VoxelGridMemoryLayout.YMajorChunk, dropHeight, domMat);
+            }
+
+            Stage1InteractivePlayController.NotifyWorldVoxelEdited(slot.ChunkX, slot.ChunkZ, settleLy, settleLx, settleLz, includeNeighbors: true);
+
+            Vector3 impactWorld = slot.CurrentWorldPosition;
+            if (!staysIntact && MiningControllerForItemDrops != null)
+            {
+                int dropItemCount = Mathf.Clamp(Mathf.CeilToInt(slot.Cluster.VoxelCount * 0.35f), 1, 5);
                 for (int d = 0; d < dropItemCount; d++)
                 {
                     Vector3 offset = new Vector3((d % 3 - 1) * 0.42f, 0.45f + d * 0.12f, ((d / 3) - 0.5f) * 0.42f);
@@ -635,9 +1320,21 @@ namespace Stratocraft.Character
                 playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - crushDamage);
             }
 
-            impactNotification = crushDamage > 0.5f
-                ? $"YAPI CARPMASI! Phi={phi:0.00} | {deposited} blok {matName} Molozu + Yere Item Dustu | Ezilme Hasari: -{crushDamage:0} HP!"
-                : $"YAPI YERE CAKILDI! Yukseklik={dropHeight:0.1}m | {deposited} parca {matName} Molozu + Yere 3B {matName} Item Dustu.";
+            string lowerCrushNote = crushedLowerBlocks > 0
+                ? $" | Altta kalan {crushedLowerBlocks} blok ezilerek moloza donustu!"
+                : string.Empty;
+
+            if (staysIntact)
+            {
+                impactNotification =
+                    $"SAGLAM DUSUS! Yukseklik={dropHeight:0.1}m (Phi={phi:0.00} < 0.45) -> {deposited} blok {matName} kirilmadan yerde saglam kaldi!{lowerCrushNote}";
+            }
+            else
+            {
+                impactNotification = crushDamage > 0.5f
+                    ? $"YAPI CARPMASI! Phi={phi:0.00} | {deposited} blok {matName} Molozu olustu{lowerCrushNote} | Ezilme Hasari: -{crushDamage:0} HP!"
+                    : $"YUKSEKTEN CARPMA! Yukseklik={dropHeight:0.1}m (Phi={phi:0.00}) -> {deposited} blok {matName} parcalanarak Moloza donustu!{lowerCrushNote}";
+            }
         }
 
         private static void BakeClusterDirectlyInSurgeMode(

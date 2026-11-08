@@ -169,7 +169,9 @@ namespace Stratocraft.Physics.Jobs
                                     Vector3 cellWorldPos = worldOriginOffset + new Vector3(bx + 0.5f, by + 0.5f, bz + 0.5f);
                                     boxMass += m;
                                     weightedCom += cellWorldPos * m;
-                                    Vector3 r = cellWorldPos - anchorPivotWorld;
+                                    // Unity sol-el koordinat sisteminde ust govdenin (+Y) kirilan kolona / bosluga (anchorPivotWorld)
+                                    // dogru egilip devrilmesini saglayan tork kolu:
+                                    Vector3 r = anchorPivotWorld - cellWorldPos;
                                     totalTorque += Vector3.Cross(r, gravity * m);
                                     boxVoxelCount++;
 
