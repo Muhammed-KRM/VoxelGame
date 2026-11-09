@@ -13,19 +13,76 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#037` (Sabit 60+ FPS Optimizasyonu + Paralel Dünya Akışı + Gerçek Fizik Motoruyla Beklemesiz Devrilme, Yönsel Ağaç Kesimi & Yerde Kütük Doğrama, Darbe Enerjisine Göre Sağlam Blok vs. Moloz + Üstüne Düşmeyle Ezilme + Dallanan & Kendi Kendine Çökmeyen Doğal 3B Mağara Ağı \| 48/48 Test PASS, 0 Error / 0 Warning) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-08T18:05:34+03:00` |
+| **Devir Numarası** | `#039` (Faz 1 & Faz 2: Kaba Hammadde İnşa/Hayalet Küp Engeli, The Forest Tarzı Dinamik Kütük Dilimleme [Uç/Kök/Orta], Su Akışkan Uyandırma Düzeltmesi, [F4] Yaratıcı Modu + [Tab] Eşya Kataloğu, Zırhlar, İksirler ve Hayatta Kalma Tüketimleri | 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-09T15:45:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Sabit 60+ FPS (Yürürken/Koşarken Paralel Dünya Akışı Dahil), Gerçek Fiziksel Devrilme/Kütük ve Dallanan Mağara Ağı Tamamlandı ve Kullanıcı Tarafından Doğrulandı (Devir #037)` |
-| **Aktif Test Durumu** | `48/48 Standalone & Unity Test PASS (678 ms)`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Kritik Geri Bildirim Revizyonu ve Yaratıcı Test Modu Tamamlandı (Devir #039 - Unity Derleme Hatası Çözüldü)` |
+| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (848 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif Edildi ve Doğrulandı)` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#037`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#039`)
 
-### 2.0. Devir #037: Sabit 60+ FPS, Gerçek Fizik Motoruyla Devrilme / Kütük Kesimi ve Dallanan Mağara Ağı
+### 2.0. Devir #039: Faz 1 & Faz 2 5 Kritik Gerçekçilik ve Oynanış Sorununun Çözümü
+
+1. **Sorun 1 — Kaba Hammadde Blok İnşa Engeli ve Hayalet Yeşil Küp Önizleme Bug'ı:**
+   - **Kök Neden:** `UpdatePlacementGhostVisual`, aktif hotbar yuvası $\ge 7$ olduğunda oyuncunun elinde blok olduğunu varsayıyordu; bu yüzden elinde `Yarma Odun`, `Kuru Dal`, `Kaba Taş`, `Gevşek Toprak` veya `Ham Cevher` olan oyuncuya yeşil hayalet küp gösteriyor ve taş/toprağın sağ tıkla moloz olarak konulmasına izin veriyordu.
+   - **Çözüm:** `UpdatePlacementGhostVisual` içine `holsterCtrl` aktarılarak aktif eşyanın `VoxelBlock` veya `MetalIngot` olup olmadığı kesin olarak kontrol edildi. Kaba hammaddeler tutulduğunda `PlacementGhostPreview_Cube` kapatıldı. `ExecuteCrystalOrRubblePlacement` içinde kaba hammaddeler kesin olarak reddedildi ve ekranda `"KABA HAMMADDE BLOK YAPILAMAZ: Kaba tas, toprak, odun ve ham cevher dogrudan dunya blogu olarak konulamaz! Tezgahta isleyin veya [Q]/[G] ile yere atin."` uyarısı verildi.
+
+2. **Sorun 2 — The Forest Tarzı Dinamik Ağaç Kesimi / Vurulan Yerden Dilimleme:**
+   - **Kök Neden:** Devrilen ağaç gövdesi (`TryChopFallenTreeLog`) daha önce baltanın vurulduğu noktayı dikkate almadan her zaman kök tarafından parça eksiltiyordu; bu yüzden gövdenin ucuna vurulsa bile kütük hep aynı yerden kesiliyordu.
+   - **Çözüm:** Baltanın vuruş noktası kütük silindir eksenine izdüşürüldü ($t = \text{Clamp01}(\mathbf{s} / L)$):
+     - **Uç Vuruşu ($t \ge 0.65$):** Kütüğün ucundan 2 metrelik ağır kütük kesilir, gövdenin kök tarafı olduğu yerde kalır.
+     - **Dip/Kök Vuruşu ($t \le 0.35$):** Kütüğün dibinden 2 metre kesilir, gövde uç tarafında dengesini korur.
+     - **Ortadan Vuruş ($0.35 < t < 0.65$):** Vurulan noktadan 2 metrelik kütük çıkarılır ve geriye kalan gövde iki bağımsız kütüğe (`SpawnPartialFallenTreeLog`) bölünür.
+
+3. **Sorun 3 — Su / Akışkan Fiziklerinin Havada Donması / Yok Olması Düzeltmesi:**
+   - **Kök Neden:** Matara ile su döküldüğünde veya blok kırıldığında akışkan hücresel otomatı (`_activeFluidChunks`) uyandırılmıyor, sadece yüzey örgü bayrağı (`dirtyFluidChunks`) işaretleniyordu. Bu nedenle su yerçekimi simülasyonuna girmeden havada donuyordu.
+   - **Çözüm:** `Stage1InteractivePlayController.WakeFluidChunkAndNeighborsStatic(cx, cz)` statik köprüsü yazıldı ve `WakeChunkFluidsOnEdit` ile matara boşaltma/doldurma noktalarında tetiklendi. Dökülen su anında komşu hücreleriyle birlikte simülasyona girerek doğal olarak aşağı ve yana akar.
+
+4. **Sorun 4 — [F4] Yaratıcı / Test Modu ve [Tab] 5-Sekmeli Eşya Kataloğu:**
+   - **Çözüm:** Hayatta kalma modunda boş envanterle başlayan oyuncunun tüm mekanikleri ve yeni eşyaları hızlıca test edebilmesi için `[F4]` Yaratıcı Modu eklendi:
+     - **Tanrı Modu:** Can (100 HP), Dayanıklılık (100 EP), Akciğer Oksijeni (%100) kilitlenir; alet dayanıklılığı eksilmez.
+     - **Sonsuz İnşa:** Blok yerleştirmede eldeki bloklar ve kristal stoğu eksilmez.
+     - **[Tab] Eşya Kataloğu:** `[Tab]` tuşuna basıldığında açılan 5 sekmeli GUI:
+       - 1. Bloklar (Toprak, Taş, Bazalt, Kırıktaş, Meşe Odunu, Obsidyen, Cevherler).
+       - 2. Aletler & Kristal (Kılıç, Kazma, Balta, Madde Kristali T1..T4, Su/Lav Matarası).
+       - 3. Zırhlar (Miğfer, Göğüslük, Kolçak, Dizlik - Deri, Tahta, Bakır, Demir).
+       - 4. İksirler & Yiyecek (Can İksiri, Dayanıklılık İksiri, Tıbbi Bandaj, Pişmiş Et, Yabani Meyve, Temiz Su).
+       - 5. Hayatta Kalma (Yarma Odun, Dal, Kaba Taş, Gevşek Toprak, Ham Cevher, Külçeler, Kamp Ateşi).
+       - Tıklanan eşya tek tıkla doğrudan hotbar veya çantaya eklenir.
+
+5. **Sorun 5 — Faz 1 & Faz 2 Temel Hayatta Kalma Eşyaları & Zırhlar:**
+   - Miğfer, Göğüslük, Kolçak, Dizlik (Deri, Tahta, Bakır, Demir kademeleri) için prosedürel 16x16 piksellik simgeler ve kuşanma mantığı eklendi.
+   - Şifalı Can İksiri (+45 Can), Dayanıklılık İksiri (+60 Enerji / Tükenmişlik kilidini kaldırır), Tıbbi Bandaj (+25 Can), Pişmiş Et (+30 Can, +40 Enerji, Isıtır), Yabani Meyve (+12 Can, +20 Enerji), Temiz Kaynak Suyu (+35 Enerji, Serinletir), Kamp Ateşi Kiti eklendi.
+   - Sağ tıkla tüketim animasyonu/geri bildirimi, açlık/susuzluk/can/dayanıklılık canlı etkileri bağlandı.
+   - Standalone test paketi `50/50 PASS` durumunda korundu. Unity derlemesi `0 Error / 0 Warning`.
+1. **Ağaç Devirme, Gövde Dilimleme (Bucking) ve Kütük Yarma (Splitting):**
+   - **Devrilen Gövde Dilimleme (`IsBuckedTimberLog = false`):** Baltayla devrilen ağacın gövdesine vurulduğunda artık doğrudan hazır blok düşmez. Gövde baltalandıkça her vuruşta 2 metrelik bağımsız bir **Ağır Kütük Parçası (`SpawnBuckedTimberLog`, ~32 kg)** ve 1x **Kuru Dal (`Stick`)** yere düşer.
+   - **Bağımsız Kütük Yarma (`IsBuckedTimberLog = true`):** Yerdeki 2 metrelik ağır kütüğe baltayla tekrar vurulduğunda kütük kırılarak 2x **Yarma Odun (`SplitFirewood`)** ve 1x **Kuru Dal (`Stick`)** parçalarına yarılır.
+2. **Omuzda Ağır Kütük Taşıma Mekaniği (Shoulder Carry):**
+   - Ağır kütükler çantaya ve kemere sığmaz. Yerdeki kesilmiş kütüğe bakıp `[E]` basıldığında (`<= 2.8m`), kütük doğrudan oyuncunun omzuna alınır (`IsCarryingShoulderLog = true`).
+   - Oyuncuya anında `+32.0 kg` kütle (`equippedMass`) eklenir. Eller boşaltılır (`ActiveHolsterSlot = 0`), silah/alet kuşanma, sıcak çubuk (hotbar) seçimi ve `[I]` ile çanta açma kilitlenir.
+   - `[E]`, `[G]` veya `[X]` tuşuna basıldığında omuzdaki kütük oyuncunun baktığı yöne yere bırakılır (`SpawnDroppedTimberLogFromShoulder`) ve eller serbest kalır.
+   - HUD durum çubuğunda anlık `>> [OMUZDA AGIR KUTUK (+32 kg)] << ([E]/[G]/[X] ile yere birak)` uyarısı görüntülenir.
+3. **Kaba Madencilik ve Mimari İnşa Kısıtları (Kaba Taş, Gevşek Toprak, Yarma Odun, Dal):**
+   - Doğal kaya kazıldığında doğrudan düzgün mimari taş bloğu yerine **Kaba Taş Parçası (`RoughStoneChunk`)**, toprak kazıldığında **Gevşek Toprak Yığını (`LooseDirtClod`)**, cevherler kazıldığında **Ham Cevher Parçası (`OreChunk`)** düşer.
+   - Kaba taş parçaları ve gevşek toprak yığınları düzgün mimari taşıyıcı blok (`ShapeId = 1`) olarak yere konulamaz! Dünyaya konulduklarında mecburen **Serbest Moloz (`ShapeId = 63`)** olarak düşerler ve mimari yük taşıyamazlar. Düzgün kesme taş ve tuğla bloklar yalnızca atölye/tezgah işleminden sonra üretilebilir.
+   - Yarma Odun ve Kuru Dal dünyada voksel blok olarak inşa edilemez; yakıt, alet sapı ve atölye hammaddesidir.
+4. **Manuel Yerden Alma ve Mıknatısın Kaldırılması:**
+   - Eski 2.65 metrelik otomatik eşya çekim mıknatısı kaldırıldı. Yere düşen fiziksel 3B eşyalar (`DroppedWorldItem`) oyuncu yanına gidip `[E]` (`<= 2.4m`) basana kadar veya sol bilek Madde Kristali vakum ışınını (`[C]` + Sol Tık `<= 6.5m`) kullanana kadar arazide fiziksel olarak bekler.
+   - Toplanan eşyalar doğrudan oyuncunun hotbar / kınaş çanta slotlarına yerleşir.
+5. **Gerçekçi Başlangıç Kesesi ve Yığın Limitleri:**
+   - Oyuncu boş bir Kademe 1 deri kese ile başlar (önceden dolu gelen 16x meşe odunu, 16x kırıktaş, 12x bakır külçesi kaldırıldı).
+   - Yığın limitleri hardcore hayatta kalma sınırlarına çekildi: Kaba Taş maks 6, Yarma Odun maks 6, Gevşek Toprak maks 8, Kuru Dal maks 16, Ham Cevher maks 6.
+6. **Uyuyan Madde Kristali (Tier 0 Start):**
+   - Başlangıçta Madde Kristali uyuyan (`Tier 0`) durumdadır (içinde önceden doldurulmuş 0 blok vardır). Klan Kristali veya Kadim Örs rezonansıyla uyandırılana kadar doğal blokları ve cevherleri vakumlayamaz.
+7. **Birim Testleri:**
+   - `InventoryCasAndMatterCrystalTests.cs` içine Tier 0 kristal vakum reddi ve hardcore eşya yığın limitleri testleri eklenerek standalone test paketi `50/50 PASS` durumuna getirildi.
+
+### 2.1. Devir #037 Özeti: Sabit 60+ FPS, Gerçek Fizik Motoruyla Devrilme / Kütük Kesimi ve Dallanan Mağara Ağı
 1. **Problem 1 — En Düşük Bilgisayarda Bile Sabit 60+ FPS (`<= 16.6 ms`, Sıfır Spike & Sıfır GC):**
    - **Alt-Chunk Dilimleme (`IsConsolidatedFullPass = false`):** `Stage1InteractivePlayController.RebuildSingleChunkWithSubMeshCache` ve `EnsureChunksInitialized` içinde tek geçişte üretilen üçgenler anında `Y >> 4` (`SubChunkTriangles[0..9]`) dilimlerine dağıtıldı; böylece ilk kazma/balta vuruşunda tüm chunk'ın (160m) baştan örülmesi engellendi (`< 0.35 ms` tekil alt-chunk güncellemesi).
    - **Yüzeyde Yeraltı Mağara Ayıklaması (`consolidatedMinY = 72`):** Oyuncu yüzeydeyken (`visibleMask == SurfaceAndUpperCaveSubChunksMask`) `Y = 0..72m` arasındaki tüm mağara katmanlarının örülmesi atlandı (göl/deniz tabanları `Y >= 74m` olduğundan yüzeyde sıfır delik).
@@ -312,7 +369,10 @@
 | **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
 | **`[I]` veya `Tab` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Yarıya Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
-| **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** + Kırılan bloklardan yere düşen **3B Fiziksel Itemları** toplar | ✅ Aktif |
+| **`[E]` Tuşu (Ağır Kütük Yanında)** | Yerdeki kesilmiş 2m bağımsız **Ağır Kütüğü** omzuna alır (`+32 kg`, çantaya sığmaz, eller kilitlenir) | ✅ Aktif |
+| **`[E]`, `[G]` veya `[X]` (Kütük Omuzdaken)** | Omuzdaki ağır kütüğü yere bırakır, elleri ve silahları serbest bırakır | ✅ Aktif |
+| **`[E]` Tuşu (Yerde Eşya Yanında)** | Yere düşen **Kaba Taş, Moloz, Yarma Odun, Dal, Cevher ve Eşyaları** manuel toplar (`<= 2.4m`, mıknatıs yok) | ✅ Aktif |
+| **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** (CAS versiyon korumalı atomik çekim) | ✅ Aktif |
 | **`[5]` Mikro-Keski (`Chisel`)** | `LMB`: Vokseli `4x4x4` alt-voksel hassasiyetinde yontar \| `RMB`: Mikro-voksel ekler | ✅ Aktif |
 | **`[6]` Sıvı Matarası (`Flask`)** | `LMB`: Göletten Su / Kalderadan Lav doldurur \| `RMB`: Sıvıyı dünyaya döker (`Su + Lav` -> `Obsidyen`) | ✅ Aktif |
 | **`[F10]` Tuşu** | **Kılıç Ustası Düellocu NPC & Eğitim Kuklasını** oyuncunun önüne çağırır ve NPC modunu değiştirir (`Aktif Düello` / `Sadece Blok` / `Sadece Saldırı`) | ✅ Aktif |
@@ -332,7 +392,7 @@
 
 1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
    - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#037` ile eşleştiğini doğrula.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#038` ile eşleştiğini doğrula.
 
 2. **Adım 2 — Sıradaki Geliştirme veya Faz 3 Hazırlığı:**
    - Kullanıcının talebine göre Faz 1–2 ince ayarlarına veya Faz 3 (Atölye / Örs üzerinde silah dövme, Dojo parşömenleri, gelişmiş düşman / yapı etkileşimleri) adımlarına geç.

@@ -23,7 +23,22 @@ namespace Stratocraft.Character
         ToolFluidFlask = 5,
         VoxelBlock = 6,
         OreChunk = 7,
-        MetalIngot = 8
+        MetalIngot = 8,
+        RoughStoneChunk = 9,
+        LooseDirtClod = 10,
+        SplitFirewood = 11,
+        Stick = 12,
+        ArmorHelmet = 13,
+        ArmorChestplate = 14,
+        ArmorVambrace = 15,
+        ArmorGreaves = 16,
+        PotionHealth = 17,
+        PotionStamina = 18,
+        MedicalBandage = 19,
+        FoodCookedMeat = 20,
+        FoodWildBerries = 21,
+        FoodCleanWater = 22,
+        PlaceableCampfire = 23
     }
 
     /// <summary>
@@ -32,7 +47,7 @@ namespace Stratocraft.Character
     public struct VisualInventorySlot
     {
         public InventoryItemKind Kind;
-        public byte SubId; // VoxelBlock/OreChunk -> MaterialId, ToolFluidFlask -> 0:Bos 1:Su 2:Lav, MetalIngot -> 1:Cu 2:Fe 3:Mi
+        public byte SubId; // VoxelBlock/OreChunk/RoughStone/Firewood -> MaterialId, ToolFluidFlask -> 0:Bos 1:Su 2:Lav, MetalIngot -> 1:Cu 2:Fe 3:Mi, Armor -> Tier
         public int Count;
         public float Durability01;
 
@@ -45,7 +60,18 @@ namespace Stratocraft.Character
             return Kind == InventoryItemKind.VoxelBlock ||
                    Kind == InventoryItemKind.OreChunk ||
                    Kind == InventoryItemKind.MetalIngot ||
-                   Kind == InventoryItemKind.ToolFluidFlask;
+                   Kind == InventoryItemKind.ToolFluidFlask ||
+                   Kind == InventoryItemKind.RoughStoneChunk ||
+                   Kind == InventoryItemKind.LooseDirtClod ||
+                   Kind == InventoryItemKind.SplitFirewood ||
+                   Kind == InventoryItemKind.Stick ||
+                   Kind == InventoryItemKind.PotionHealth ||
+                   Kind == InventoryItemKind.PotionStamina ||
+                   Kind == InventoryItemKind.MedicalBandage ||
+                   Kind == InventoryItemKind.FoodCookedMeat ||
+                   Kind == InventoryItemKind.FoodWildBerries ||
+                   Kind == InventoryItemKind.FoodCleanWater ||
+                   Kind == InventoryItemKind.PlaceableCampfire;
         }
     }
 
@@ -70,6 +96,8 @@ namespace Stratocraft.Character
 
         public int SelectedHotbarIndex { get; private set; } = -1; // -1 = Bos El [0], 0..8 = Slot [1..9]
         public bool IsChestWindowOpen { get; set; }
+        public bool IsCreativeCatalogOpen { get; set; }
+        public int CreativeCategoryIndex { get; set; }
         public string HoveredSlotTooltip { get; private set; } = string.Empty;
 
         /// <summary>3B Kumas Canta Ortusu uzerinde fareyle uzerine gelinen 3B esyanin dunya konumu ve bilgi etiketi.</summary>
@@ -143,39 +171,126 @@ namespace Stratocraft.Character
             InitializeDefaultSlots();
         }
 
+        public static int GetMaxStackCount(InventoryItemKind kind, byte subId = 0) => kind switch
+        {
+            InventoryItemKind.RoughStoneChunk => 6,
+            InventoryItemKind.LooseDirtClod => 8,
+            InventoryItemKind.SplitFirewood => 6,
+            InventoryItemKind.Stick => 16,
+            InventoryItemKind.OreChunk => 6,
+            InventoryItemKind.MetalIngot => 16,
+            InventoryItemKind.VoxelBlock => 8,
+            InventoryItemKind.ToolFluidFlask => 16,
+            InventoryItemKind.PotionHealth => 8,
+            InventoryItemKind.PotionStamina => 8,
+            InventoryItemKind.MedicalBandage => 12,
+            InventoryItemKind.FoodCookedMeat => 12,
+            InventoryItemKind.FoodWildBerries => 16,
+            InventoryItemKind.FoodCleanWater => 8,
+            InventoryItemKind.PlaceableCampfire => 4,
+            _ => 1
+        };
+
         private void InitializeDefaultSlots()
         {
+            // Baslangicta oyuncunun kemerinde yalnizca temel aletler vardir; yuvalar 5..8 ve canta yuvalari tamamen bostur!
             HotbarSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1.0f };
             HotbarSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 0, Count = 1, Durability01 = 0.96f };
             HotbarSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 0, Count = 1, Durability01 = 0.95f };
             HotbarSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.ToolMicroChisel, SubId = 0, Count = 1, Durability01 = 1.0f };
-            HotbarSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 6, Durability01 = 1.0f };
-            HotbarSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Stone, Count = 16, Durability01 = 1.0f };
-            HotbarSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.OakWood, Count = 8, Durability01 = 1.0f };
-            HotbarSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Cobblestone, Count = 8, Durability01 = 1.0f };
-            HotbarSlots[8] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Basalt, Count = 8, Durability01 = 1.0f };
+            HotbarSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 1, Durability01 = 1.0f };
+            for (int i = 5; i < HotbarSlotCount; i++)
+            {
+                HotbarSlots[i] = default;
+            }
 
-            BackpackSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Dirt, Count = 12, Durability01 = 1.0f };
-            BackpackSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Sand, Count = 8, Durability01 = 1.0f };
-            BackpackSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.NaturalObsidian, Count = 4, Durability01 = 1.0f };
-            BackpackSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.LooseRubble, Count = 8, Durability01 = 1.0f };
-            BackpackSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.StoneBrick, Count = 12, Durability01 = 1.0f };
-            BackpackSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Marble, Count = 8, Durability01 = 1.0f };
-            BackpackSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 2, Count = 4, Durability01 = 1.0f };
-            BackpackSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 12, Durability01 = 1.0f };
-            BackpackSlots[8] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 2, Count = 12, Durability01 = 1.0f };
-            BackpackSlots[9] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 3, Count = 12, Durability01 = 1.0f };
-            BackpackSlots[10] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.GoldOre, Count = 6, Durability01 = 1.0f };
-            BackpackSlots[11] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.MithrilOre, Count = 4, Durability01 = 1.0f };
+            // The Forest / Gercekcilik: Canta baslangicta sifir hazir blok/kulceyle tertemiz baslar.
+            for (int i = 0; i < BackpackSlotCount; i++)
+            {
+                BackpackSlots[i] = default;
+            }
 
+            // Dunyadaki baslangic sandigi (CAS Sandik Kasasi) acil durum rezervi olarak bazi maddeleri icerir
             ChestSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 8, Durability01 = 1.0f };
             ChestSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 2, Count = 6, Durability01 = 1.0f };
             ChestSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 3, Count = 4, Durability01 = 1.0f };
-            ChestSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.StoneBrick, Count = 24, Durability01 = 1.0f };
-            ChestSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Marble, Count = 16, Durability01 = 1.0f };
-            ChestSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Ironwood, Count = 12, Durability01 = 1.0f };
-            ChestSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.GoldOre, Count = 6, Durability01 = 1.0f };
-            ChestSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.MithrilOre, Count = 4, Durability01 = 1.0f };
+            ChestSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.StoneBrick, Count = 16, Durability01 = 1.0f };
+            ChestSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Marble, Count = 12, Durability01 = 1.0f };
+            ChestSlots[5] = new VisualInventorySlot { Kind = InventoryItemKind.VoxelBlock, SubId = MaterialIdCatalog.Ironwood, Count = 8, Durability01 = 1.0f };
+            ChestSlots[6] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.GoldOre, Count = 4, Durability01 = 1.0f };
+            ChestSlots[7] = new VisualInventorySlot { Kind = InventoryItemKind.OreChunk, SubId = MaterialIdCatalog.MithrilOre, Count = 2, Durability01 = 1.0f };
+            for (int i = 8; i < ChestSlotCount; i++)
+            {
+                ChestSlots[i] = default;
+            }
+        }
+
+        /// <summary>
+        /// Yerden [E] ile toplanan veya kazidan/kesimden elde edilen esyalari cantaya (veya hotbara) fiziksel yigin siniriyla istifler.
+        /// </summary>
+        public bool TryAddHarvestedWorldItem(InventoryItemKind kind, byte subId, int count, out int addedCount)
+        {
+            addedCount = 0;
+            if (count <= 0 || kind == InventoryItemKind.Empty) return false;
+
+            int remaining = count;
+            int maxStack = GetMaxStackCount(kind, subId);
+
+            // 1) Once cantadaki mevcut ayni tur ve dolmamis yuvalara ekle
+            for (int i = 0; i < BackpackSlotCount && remaining > 0; i++)
+            {
+                ref VisualInventorySlot slot = ref BackpackSlots[i];
+                if (!slot.IsEmpty && slot.Kind == kind && slot.SubId == subId && slot.Count < maxStack)
+                {
+                    int space = maxStack - slot.Count;
+                    int add = Mathf.Min(space, remaining);
+                    slot.Count += add;
+                    remaining -= add;
+                    addedCount += add;
+                }
+            }
+
+            // 2) Sonra hotbardaki mevcut ayni tur ve dolmamis yuvalara ekle
+            for (int i = 0; i < HotbarSlotCount && remaining > 0; i++)
+            {
+                ref VisualInventorySlot slot = ref HotbarSlots[i];
+                if (!slot.IsEmpty && slot.Kind == kind && slot.SubId == subId && slot.Count < maxStack)
+                {
+                    int space = maxStack - slot.Count;
+                    int add = Mathf.Min(space, remaining);
+                    slot.Count += add;
+                    remaining -= add;
+                    addedCount += add;
+                }
+            }
+
+            // 3) Hala kaldiysa cantadaki ilk bos yuvaya koy
+            for (int i = 0; i < BackpackSlotCount && remaining > 0; i++)
+            {
+                ref VisualInventorySlot slot = ref BackpackSlots[i];
+                if (slot.IsEmpty)
+                {
+                    int add = Mathf.Min(maxStack, remaining);
+                    slot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = add, Durability01 = 1.0f };
+                    remaining -= add;
+                    addedCount += add;
+                }
+            }
+
+            // 4) Cantada yer yoksa hotbardaki ilk bos yuvaya koy
+            for (int i = 0; i < HotbarSlotCount && remaining > 0; i++)
+            {
+                ref VisualInventorySlot slot = ref HotbarSlots[i];
+                if (slot.IsEmpty)
+                {
+                    int add = Mathf.Min(maxStack, remaining);
+                    slot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = add, Durability01 = 1.0f };
+                    remaining -= add;
+                    addedCount += add;
+                }
+            }
+
+            return addedCount > 0;
         }
 
         /// <summary>Secili Hotbar slotundaki esyayi dondurur (Bos El ise Empty doner).</summary>
@@ -187,17 +302,23 @@ namespace Stratocraft.Character
             SelectedHotbarIndex = Mathf.Clamp(index, -1, HotbarSlotCount - 1);
 
         /// <summary>
-        /// Secili Hotbar slotunda insa edilebilir VoxelBlock, OreChunk veya MetalIngot varsa 1 adet tuketir ve MaterialId dondurur.
+        /// Secili Hotbar slotunda yalnizca insa edilebilir VoxelBlock veya MetalIngot varsa 1 adet tuketir ve MaterialId dondurur.
+        /// (Kaba tas parcalari, gevsek toprak, odun ve dallar dogrudan blok olarak konulamaz!)
         /// </summary>
         public bool TryConsumeSelectedBuildableVoxel(out byte materialId)
         {
+            return TryConsumeSelectedBuildableVoxel(out materialId, out _);
+        }
+
+        public bool TryConsumeSelectedBuildableVoxel(out byte materialId, out InventoryItemKind itemKind)
+        {
             materialId = 0;
+            itemKind = InventoryItemKind.Empty;
             if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return false;
             ref VisualInventorySlot slot = ref HotbarSlots[SelectedHotbarIndex];
             if (slot.IsEmpty) return false;
 
             if (slot.Kind == InventoryItemKind.VoxelBlock ||
-                slot.Kind == InventoryItemKind.OreChunk ||
                 slot.Kind == InventoryItemKind.MetalIngot)
             {
                 byte resolvedMat = slot.Kind == InventoryItemKind.MetalIngot
@@ -212,6 +333,7 @@ namespace Stratocraft.Character
 
                 if (resolvedMat == 0) return false;
                 materialId = resolvedMat;
+                itemKind = slot.Kind;
                 slot.Count--;
                 if (slot.Count <= 0)
                 {
@@ -220,6 +342,19 @@ namespace Stratocraft.Character
                 return true;
             }
             return false;
+        }
+
+        public bool TryConsumeActiveHotbarSlot(int count = 1)
+        {
+            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return false;
+            ref VisualInventorySlot slot = ref HotbarSlots[SelectedHotbarIndex];
+            if (slot.IsEmpty || slot.Count < count) return false;
+            slot.Count -= count;
+            if (slot.Count <= 0)
+            {
+                slot = default;
+            }
+            return true;
         }
 
         /// <summary>Secili aletin dayaniklilik cubugunu (0..1) gunceller.</summary>
@@ -890,6 +1025,21 @@ namespace Stratocraft.Character
             InventoryItemKind.MetalIngot => slot.SubId == 1 ? "Bakır" : (slot.SubId == 2 ? "Demir" : "Mithril"),
             InventoryItemKind.OreChunk => GetShortMaterialBadgeName(slot.SubId),
             InventoryItemKind.VoxelBlock => GetShortMaterialBadgeName(slot.SubId),
+            InventoryItemKind.RoughStoneChunk => "KabaTaş",
+            InventoryItemKind.LooseDirtClod => "Toprak",
+            InventoryItemKind.SplitFirewood => "Odun",
+            InventoryItemKind.Stick => "Dal",
+            InventoryItemKind.ArmorHelmet => "Miğfer",
+            InventoryItemKind.ArmorChestplate => "Zırh",
+            InventoryItemKind.ArmorVambrace => "Kolçak",
+            InventoryItemKind.ArmorGreaves => "Dizlik",
+            InventoryItemKind.PotionHealth => "Canİks",
+            InventoryItemKind.PotionStamina => "Enrİks",
+            InventoryItemKind.MedicalBandage => "Bandaj",
+            InventoryItemKind.FoodCookedMeat => "Et",
+            InventoryItemKind.FoodWildBerries => "Böğürt",
+            InventoryItemKind.FoodCleanWater => "Su",
+            InventoryItemKind.PlaceableCampfire => "Ateş",
             _ => "Eşya"
         };
 
@@ -1185,6 +1335,41 @@ namespace Stratocraft.Character
                 3 => "Saf Mithril Kulce",
                 _ => "Metal Kulce"
             },
+            InventoryItemKind.RoughStoneChunk => $"Kaba {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} Parçası",
+            InventoryItemKind.LooseDirtClod => "Gevşek Toprak Yığını",
+            InventoryItemKind.SplitFirewood => $"{Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} Yarma Odun",
+            InventoryItemKind.Stick => "Kuru Dal (Çalı/Odun Parçası)",
+            InventoryItemKind.ArmorHelmet => slot.SubId switch
+            {
+                1 => "Deri Miğfer (0.4 kg)",
+                2 => "Ahşap Savaş Miğferi (0.8 kg)",
+                3 => "Dövme Bakır Miğfer (1.4 kg)",
+                _ => "Dövme Demir Miğfer (1.2 kg)"
+            },
+            InventoryItemKind.ArmorChestplate => slot.SubId switch
+            {
+                1 => "Deri Zırh Yeleği (1.8 kg)",
+                2 => "Ahşap Plaka Göğüslük (2.8 kg)",
+                3 => "Dövme Bakır Göğüslük (5.2 kg)",
+                _ => "Dövme Demir Göğüslük (4.5 kg)"
+            },
+            InventoryItemKind.ArmorVambrace => slot.SubId switch
+            {
+                1 => "Deri Ön Kolçak (0.4 kg)",
+                _ => "Demir Plaka Ön Kolçak (1.0 kg)"
+            },
+            InventoryItemKind.ArmorGreaves => slot.SubId switch
+            {
+                1 => "Deri Çizme / Dizlik (0.9 kg)",
+                _ => "Demir Plaka Dizlik ve Çizme (2.2 kg)"
+            },
+            InventoryItemKind.PotionHealth => "Şifalı Can İksiri (+%45 Can)",
+            InventoryItemKind.PotionStamina => "Dayanıklılık / Enerji İksiri (+%70 Enerji)",
+            InventoryItemKind.MedicalBandage => "Tıbbi Bandaj (Kanamayı Durdurur & +%20 Can)",
+            InventoryItemKind.FoodCookedMeat => "Közde Pişmiş Et (+%35 Can & +%50 Enerji)",
+            InventoryItemKind.FoodWildBerries => "Yaban Orman Böğürtleni (+%10 Can & +%20 Enerji)",
+            InventoryItemKind.FoodCleanWater => "Arıtılmış Temiz Su (+%40 Enerji & Ferahlama)",
+            InventoryItemKind.PlaceableCampfire => "Kamp Ateşi Kiti (Isınma, Işık ve Pişirme)",
             _ => "Bos Yuva"
         };
 
@@ -1198,6 +1383,21 @@ namespace Stratocraft.Character
             InventoryItemKind.VoxelBlock => "[Sag Tik] Dunyaya Blok Yerlestir | [V] Mimari Sekil Degistir | [R] 24-Yon Dondur",
             InventoryItemKind.OreChunk => "[Sag Tik] Dunyaya Cevher Koy veya Ors/Izabe Ocaginda Islet",
             InventoryItemKind.MetalIngot => "[Sag Tik] Dunyaya Kulce Koy veya 16x32x4 Ors Uzerinde Silah/Zirh Dov",
+            InventoryItemKind.RoughStoneChunk => "Kaba Madencilik Hammaddesi (Doğrudan blok olarak konulamaz! Tezgahta işleyin)",
+            InventoryItemKind.LooseDirtClod => "Gevşek Kazı Hammaddesi (Doğrudan blok olarak konulamaz)",
+            InventoryItemKind.SplitFirewood => "Ateş / Kömür / Tezgah Hammaddesi (Doğrudan blok olarak konulamaz)",
+            InventoryItemKind.Stick => "Alet Sapı / Meşale / Çerçeve Hammaddesi",
+            InventoryItemKind.ArmorHelmet => "[Sağ Tık] Başa Kuşan / Çıkar (Kafa Hasar Koruması)",
+            InventoryItemKind.ArmorChestplate => "[Sağ Tık] Göğse Kuşan / Çıkar (Gövde Darbe Direnci)",
+            InventoryItemKind.ArmorVambrace => "[Sağ Tık] Kollara Kuşan / Çıkar (Kol Koruması)",
+            InventoryItemKind.ArmorGreaves => "[Sağ Tık] Bacaklara Kuşan / Çıkar (Bacak ve Ayak Koruması)",
+            InventoryItemKind.PotionHealth => "[Sol Tık] İç (+45 HP Can Yeniler)",
+            InventoryItemKind.PotionStamina => "[Sol Tık] İç (+70 EP Enerji Yeniler)",
+            InventoryItemKind.MedicalBandage => "[Sol Tık] Sar (Kanamayı Durdurur, +20 HP)",
+            InventoryItemKind.FoodCookedMeat => "[Sol Tık] Ye (+35 HP, +50 EP, Tokluk Sağlar)",
+            InventoryItemKind.FoodWildBerries => "[Sol Tık] Ye (+10 HP, +20 EP)",
+            InventoryItemKind.FoodCleanWater => "[Sol Tık] İç (Susuzluğu Giderir, +40 EP)",
+            InventoryItemKind.PlaceableCampfire => "[Sağ Tık] Yere Kur (Işık, Isınma ve Pişirme Alanı)",
             _ => string.Empty
         };
 
@@ -1436,6 +1636,21 @@ namespace Stratocraft.Character
                 case InventoryItemKind.VoxelBlock: DrawIsometricVoxelCubeIcon(tex, slot.SubId); break;
                 case InventoryItemKind.OreChunk: DrawOreChunkIcon(tex, slot.SubId); break;
                 case InventoryItemKind.MetalIngot: DrawIngotIcon(tex, slot.SubId); break;
+                case InventoryItemKind.RoughStoneChunk: DrawRoughStoneIcon(tex, slot.SubId); break;
+                case InventoryItemKind.LooseDirtClod: DrawLooseDirtIcon(tex); break;
+                case InventoryItemKind.SplitFirewood: DrawFirewoodIcon(tex, slot.SubId); break;
+                case InventoryItemKind.Stick: DrawStickIcon(tex); break;
+                case InventoryItemKind.ArmorHelmet: DrawHelmetIcon(tex, slot.SubId); break;
+                case InventoryItemKind.ArmorChestplate: DrawChestplateIcon(tex, slot.SubId); break;
+                case InventoryItemKind.ArmorVambrace: DrawVambraceIcon(tex, slot.SubId); break;
+                case InventoryItemKind.ArmorGreaves: DrawGreavesIcon(tex, slot.SubId); break;
+                case InventoryItemKind.PotionHealth: DrawPotionBottleIcon(tex, new Color(0.88f, 0.18f, 0.18f, 1f)); break;
+                case InventoryItemKind.PotionStamina: DrawPotionBottleIcon(tex, new Color(0.22f, 0.82f, 0.32f, 1f)); break;
+                case InventoryItemKind.MedicalBandage: DrawBandageIcon(tex); break;
+                case InventoryItemKind.FoodCookedMeat: DrawCookedMeatIcon(tex); break;
+                case InventoryItemKind.FoodWildBerries: DrawBerriesIcon(tex); break;
+                case InventoryItemKind.FoodCleanWater: DrawCleanWaterIcon(tex); break;
+                case InventoryItemKind.PlaceableCampfire: DrawCampfireIcon(tex); break;
             }
 
             tex.Apply(false, false);
@@ -1620,6 +1835,87 @@ namespace Stratocraft.Character
             FillRect(tex, 15, 24, 18, 3, Color.Lerp(col, Color.white, 0.45f));
         }
 
+        private static void DrawRoughStoneIcon(Texture2D tex, byte matId)
+        {
+            Color stoneCol = GetMaterialIconColor(matId);
+            Color darkChip = stoneCol * 0.65f; darkChip.a = 1f;
+            Color lightFacet = Color.Lerp(stoneCol, Color.white, 0.28f);
+
+            // Pürüzlü, köşeli kaba taş parçası
+            for (int y = 10; y <= 36; y++)
+            {
+                for (int x = 10; x <= 38; x++)
+                {
+                    float dx = x - 24f;
+                    float dy = y - 22f;
+                    // Düzensiz çokgen sınırı
+                    float radius = 13.0f + Mathf.Sin(dx * 1.7f + dy * 0.9f) * 2.2f + Mathf.Cos(dy * 2.1f) * 1.5f;
+                    if (dx * dx + dy * dy <= radius * radius)
+                    {
+                        Color c = stoneCol;
+                        if (dy > dx * 0.4f + 2f) c = lightFacet;
+                        else if (dy < -2f) c = darkChip;
+                        if (((x * 5 + y * 7) & 7) == 0) c *= 0.88f;
+                        c.a = 1f;
+                        tex.SetPixel(x, y, c);
+                    }
+                }
+            }
+        }
+
+        private static void DrawLooseDirtIcon(Texture2D tex)
+        {
+            Color earthDark = new Color(0.38f, 0.25f, 0.15f, 1f);
+            Color earthMid = new Color(0.52f, 0.36f, 0.22f, 1f);
+            Color earthLight = new Color(0.64f, 0.48f, 0.30f, 1f);
+
+            // Gevşek toprak yığını - tabanı geniş tepe
+            for (int y = 10; y <= 32; y++)
+            {
+                int halfW = Mathf.RoundToInt((34 - y) * 0.65f) + 2;
+                for (int x = 24 - halfW; x <= 24 + halfW; x++)
+                {
+                    if (x < 6 || x > 42) continue;
+                    float n = Mathf.PerlinNoise(x * 0.35f, y * 0.35f);
+                    Color c = n > 0.6f ? earthLight : (n > 0.35f ? earthMid : earthDark);
+                    tex.SetPixel(x, y, c);
+                }
+            }
+            // Üstüne ufak döküntü toprak parçacıkları
+            FillRect(tex, 22, 33, 4, 3, earthMid);
+            FillRect(tex, 17, 12, 3, 2, earthLight);
+            FillRect(tex, 28, 14, 3, 2, earthDark);
+        }
+
+        private static void DrawFirewoodIcon(Texture2D tex, byte matId)
+        {
+            Color bark = matId == MaterialIdCatalog.Ironwood ? new Color(0.28f, 0.22f, 0.18f, 1f) : new Color(0.38f, 0.24f, 0.14f, 1f);
+            Color splitWood = matId == MaterialIdCatalog.Ironwood ? new Color(0.55f, 0.45f, 0.36f, 1f) : new Color(0.72f, 0.54f, 0.32f, 1f);
+            Color heartWood = Color.Lerp(splitWood, Color.white, 0.22f);
+
+            // İki yarma odun parçası (çapraz ve paralel kütük dilimleri)
+            // 1. Odun (sol yatık)
+            DrawThickLine(tex, 10, 14, 34, 32, 4, bark);
+            DrawThickLine(tex, 12, 17, 34, 32, 2, splitWood);
+            DrawThickLine(tex, 13, 20, 32, 32, 1, heartWood);
+
+            // 2. Odun (altına dayalı)
+            DrawThickLine(tex, 14, 10, 38, 22, 3, bark);
+            DrawThickLine(tex, 16, 12, 38, 22, 1, splitWood);
+        }
+
+        private static void DrawStickIcon(Texture2D tex)
+        {
+            Color wood = new Color(0.48f, 0.32f, 0.18f, 1f);
+            Color highlight = new Color(0.62f, 0.44f, 0.26f, 1f);
+
+            // Kuru dal / sopa: sol alttan sağ üste uzanan çatallı dal
+            DrawThickLine(tex, 10, 8, 38, 38, 2, wood);
+            DrawThickLine(tex, 11, 9, 37, 37, 1, highlight);
+            // Yan dal budağı
+            DrawThickLine(tex, 24, 23, 34, 18, 1, wood);
+        }
+
         private static Color GetMaterialIconColor(byte matId) => matId switch
         {
             MaterialIdCatalog.Stone => new Color(0.56f, 0.58f, 0.62f, 1f),
@@ -1657,6 +1953,391 @@ namespace Stratocraft.Character
                 int cy = Mathf.RoundToInt(Mathf.Lerp(y0, y1, t));
                 FillRect(tex, cx - radius, cy - radius, radius * 2 + 1, radius * 2 + 1, c);
             }
+        }
+
+        private static void DrawHelmetIcon(Texture2D tex, byte tier)
+        {
+            Color baseCol = tier switch
+            {
+                1 => new Color(0.48f, 0.32f, 0.20f, 1f), // Deri
+                2 => new Color(0.60f, 0.42f, 0.24f, 1f), // Ahşap
+                3 => new Color(0.88f, 0.52f, 0.28f, 1f), // Bakır
+                _ => new Color(0.72f, 0.75f, 0.80f, 1f)  // Demir
+            };
+            Color darkRim = baseCol * 0.65f; darkRim.a = 1f;
+            Color visor = new Color(0.12f, 0.14f, 0.18f, 1f);
+
+            for (int y = 14; y <= 36; y++)
+            {
+                for (int x = 12; x <= 36; x++)
+                {
+                    float dx = x - 24f;
+                    float dy = y - 24f;
+                    if (dx * dx + dy * dy <= 12f * 12f && y >= 20)
+                        tex.SetPixel(x, y, baseCol);
+                    else if (y < 20 && Mathf.Abs(dx) <= 11f && y >= 14)
+                        tex.SetPixel(x, y, baseCol);
+                }
+            }
+            FillRect(tex, 16, 20, 16, 3, visor);
+            DrawThickLine(tex, 14, 14, 34, 14, 1, darkRim);
+            DrawThickLine(tex, 24, 32, 24, 38, 1, darkRim);
+        }
+
+        private static void DrawChestplateIcon(Texture2D tex, byte tier)
+        {
+            Color col = tier switch
+            {
+                1 => new Color(0.48f, 0.32f, 0.20f, 1f),
+                2 => new Color(0.60f, 0.42f, 0.24f, 1f),
+                3 => new Color(0.88f, 0.52f, 0.28f, 1f),
+                _ => new Color(0.72f, 0.75f, 0.80f, 1f)
+            };
+            Color edge = col * 0.65f; edge.a = 1f;
+
+            for (int y = 10; y <= 36; y++)
+            {
+                int halfW = y > 28 ? 14 : (y < 16 ? 9 : 12);
+                for (int x = 24 - halfW; x <= 24 + halfW; x++)
+                {
+                    tex.SetPixel(x, y, col);
+                }
+            }
+            FillRect(tex, 20, 32, 8, 6, new Color(0f, 0f, 0f, 0f));
+            FillRect(tex, 8, 30, 5, 6, edge);
+            FillRect(tex, 35, 30, 5, 6, edge);
+        }
+
+        private static void DrawVambraceIcon(Texture2D tex, byte tier)
+        {
+            Color col = tier == 1 ? new Color(0.48f, 0.32f, 0.20f, 1f) : new Color(0.72f, 0.75f, 0.80f, 1f);
+            Color strap = new Color(0.28f, 0.18f, 0.10f, 1f);
+            DrawThickLine(tex, 16, 12, 32, 34, 4, col);
+            DrawThickLine(tex, 18, 18, 22, 14, 1, strap);
+            DrawThickLine(tex, 24, 26, 28, 22, 1, strap);
+        }
+
+        private static void DrawGreavesIcon(Texture2D tex, byte tier)
+        {
+            Color col = tier == 1 ? new Color(0.48f, 0.32f, 0.20f, 1f) : new Color(0.72f, 0.75f, 0.80f, 1f);
+            DrawThickLine(tex, 18, 10, 18, 36, 3, col);
+            DrawThickLine(tex, 30, 10, 30, 36, 3, col);
+            FillRect(tex, 14, 10, 8, 4, col * 0.8f);
+            FillRect(tex, 26, 10, 8, 4, col * 0.8f);
+        }
+
+        private static void DrawPotionBottleIcon(Texture2D tex, Color liquidCol)
+        {
+            Color glass = new Color(0.85f, 0.92f, 0.98f, 0.75f);
+            Color cork = new Color(0.62f, 0.42f, 0.22f, 1f);
+
+            FillRect(tex, 21, 33, 6, 4, cork);
+            FillRect(tex, 22, 27, 4, 6, glass);
+
+            for (int y = 8; y <= 27; y++)
+            {
+                for (int x = 12; x <= 36; x++)
+                {
+                    float dx = x - 24f;
+                    float dy = y - 18f;
+                    if (dx * dx + dy * dy <= 10.5f * 10.5f)
+                    {
+                        Color c = y <= 22 ? liquidCol : glass;
+                        tex.SetPixel(x, y, c);
+                    }
+                }
+            }
+            DrawThickLine(tex, 17, 21, 19, 23, 1, Color.white);
+        }
+
+        private static void DrawBandageIcon(Texture2D tex)
+        {
+            Color cloth = new Color(0.92f, 0.90f, 0.86f, 1f);
+            Color shadow = new Color(0.74f, 0.72f, 0.68f, 1f);
+            Color redCross = new Color(0.88f, 0.18f, 0.18f, 1f);
+
+            for (int y = 12; y <= 34; y++)
+            {
+                for (int x = 12; x <= 36; x++)
+                {
+                    float dx = x - 24f;
+                    float dy = y - 23f;
+                    if (dx * dx + dy * dy <= 11f * 11f)
+                    {
+                        Color c = (x + y) % 6 == 0 ? shadow : cloth;
+                        tex.SetPixel(x, y, c);
+                    }
+                }
+            }
+            FillRect(tex, 22, 17, 4, 12, redCross);
+            FillRect(tex, 18, 21, 12, 4, redCross);
+        }
+
+        private static void DrawCookedMeatIcon(Texture2D tex)
+        {
+            Color meatCooked = new Color(0.62f, 0.32f, 0.18f, 1f);
+            Color sear = new Color(0.24f, 0.12f, 0.08f, 1f);
+            Color bone = new Color(0.92f, 0.90f, 0.84f, 1f);
+
+            for (int y = 14; y <= 34; y++)
+            {
+                for (int x = 12; x <= 32; x++)
+                {
+                    float dx = x - 22f;
+                    float dy = y - 24f;
+                    if (dx * dx + dy * dy <= 9.5f * 9.5f)
+                    {
+                        tex.SetPixel(x, y, meatCooked);
+                    }
+                }
+            }
+            DrawThickLine(tex, 15, 20, 28, 28, 1, sear);
+            DrawThickLine(tex, 18, 16, 30, 24, 1, sear);
+            DrawThickLine(tex, 28, 18, 38, 12, 2, bone);
+        }
+
+        private static void DrawBerriesIcon(Texture2D tex)
+        {
+            Color berry1 = new Color(0.58f, 0.12f, 0.38f, 1f);
+            Color berry2 = new Color(0.38f, 0.10f, 0.48f, 1f);
+            Color leaf = new Color(0.28f, 0.62f, 0.22f, 1f);
+
+            FillCircle(tex, 18, 18, 6, berry1);
+            FillCircle(tex, 28, 18, 6, berry2);
+            FillCircle(tex, 23, 26, 6, berry1);
+            DrawThickLine(tex, 23, 28, 23, 34, 1, leaf);
+            DrawThickLine(tex, 23, 33, 27, 36, 1, leaf);
+        }
+
+        private static void DrawCleanWaterIcon(Texture2D tex)
+        {
+            DrawPotionBottleIcon(tex, new Color(0.25f, 0.65f, 0.92f, 0.92f));
+        }
+
+        private static void DrawCampfireIcon(Texture2D tex)
+        {
+            Color wood = new Color(0.42f, 0.24f, 0.12f, 1f);
+            Color flameRed = new Color(0.92f, 0.28f, 0.10f, 1f);
+            Color flameYellow = new Color(1.00f, 0.82f, 0.15f, 1f);
+
+            DrawThickLine(tex, 10, 12, 38, 18, 2, wood);
+            DrawThickLine(tex, 12, 18, 36, 12, 2, wood);
+
+            for (int y = 16; y <= 38; y++)
+            {
+                int halfW = Mathf.RoundToInt((38 - y) * 0.45f) + 1;
+                for (int x = 24 - halfW; x <= 24 + halfW; x++)
+                {
+                    Color c = y < 28 && Mathf.Abs(x - 24) <= 2 ? flameYellow : flameRed;
+                    tex.SetPixel(x, y, c);
+                }
+            }
+        }
+
+        private static void FillCircle(Texture2D tex, int cx, int cy, int radius, Color c)
+        {
+            for (int y = cy - radius; y <= cy + radius; y++)
+            {
+                for (int x = cx - radius; x <= cx + radius; x++)
+                {
+                    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= radius * radius)
+                    {
+                        if (x >= 0 && x < tex.width && y >= 0 && y < tex.height)
+                            tex.SetPixel(x, y, c);
+                    }
+                }
+            }
+        }
+
+        private static readonly string[] CreativeCategoryNames =
+        {
+            "🧱 Bloklar (24)",
+            "⚔️ Silah & Aletler (10)",
+            "🛡️ Zırhlar (12)",
+            "🧪 İksir & Tıp (3)",
+            "🍖 Yemek & Yaşam (9)"
+        };
+
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativeBlocks =
+        {
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Stone),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Dirt),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Grass),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Sand),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Basalt),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.NaturalObsidian),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Cobblestone),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.StoneBrick),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Marble),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.OakWood),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Ironwood),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.WoodPlank),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.GlowingMoss),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.LooseRubble),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CopperOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.IronOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.GoldOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.MithrilOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.AstralOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.StarCore),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.MagmaBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.TitaniumOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.OrichalcumOre),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.ObsidianBrick)
+        };
+
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativeTools =
+        {
+            (InventoryItemKind.WeaponSword, 0),
+            (InventoryItemKind.ToolPickaxe, 0),
+            (InventoryItemKind.ToolAxe, 0),
+            (InventoryItemKind.ToolMicroChisel, 0),
+            (InventoryItemKind.ToolFluidFlask, 0),
+            (InventoryItemKind.ToolFluidFlask, 1),
+            (InventoryItemKind.ToolFluidFlask, 2),
+            (InventoryItemKind.MetalIngot, 1),
+            (InventoryItemKind.MetalIngot, 2),
+            (InventoryItemKind.MetalIngot, 3)
+        };
+
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativeArmors =
+        {
+            (InventoryItemKind.ArmorHelmet, 1),
+            (InventoryItemKind.ArmorHelmet, 2),
+            (InventoryItemKind.ArmorHelmet, 3),
+            (InventoryItemKind.ArmorHelmet, 4),
+            (InventoryItemKind.ArmorChestplate, 1),
+            (InventoryItemKind.ArmorChestplate, 2),
+            (InventoryItemKind.ArmorChestplate, 3),
+            (InventoryItemKind.ArmorChestplate, 4),
+            (InventoryItemKind.ArmorVambrace, 1),
+            (InventoryItemKind.ArmorVambrace, 4),
+            (InventoryItemKind.ArmorGreaves, 1),
+            (InventoryItemKind.ArmorGreaves, 4)
+        };
+
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativePotions =
+        {
+            (InventoryItemKind.PotionHealth, 0),
+            (InventoryItemKind.PotionStamina, 0),
+            (InventoryItemKind.MedicalBandage, 0)
+        };
+
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativeSurvival =
+        {
+            (InventoryItemKind.FoodCookedMeat, 0),
+            (InventoryItemKind.FoodWildBerries, 0),
+            (InventoryItemKind.FoodCleanWater, 0),
+            (InventoryItemKind.PlaceableCampfire, 0),
+            (InventoryItemKind.SplitFirewood, MaterialIdCatalog.OakWood),
+            (InventoryItemKind.SplitFirewood, MaterialIdCatalog.Ironwood),
+            (InventoryItemKind.Stick, 0),
+            (InventoryItemKind.RoughStoneChunk, MaterialIdCatalog.Stone),
+            (InventoryItemKind.LooseDirtClod, 0)
+        };
+
+        private bool TryAddOrMergeItem(InventoryItemKind kind, byte subId, int count, Stage1MatterCrystalAndMiningController? miningCtrl = null)
+        {
+            var slot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = count, Durability01 = 1f };
+            bool added = TryMergeOrPlaceIntoArray(in slot, HotbarSlots) || TryMergeOrPlaceIntoArray(in slot, BackpackSlots);
+            if (added && miningCtrl != null)
+            {
+                PushUiCountsToCrystalStorage(miningCtrl);
+            }
+            return added;
+        }
+
+        public void DrawCreativeCatalogGUI(
+            float screenW,
+            float screenH,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (!IsCreativeCatalogOpen) return;
+            EnsureTexturesAndStyles();
+
+            float winW = Mathf.Min(780f, screenW - 40f);
+            float winH = Mathf.Min(460f, screenH - 60f);
+            float winX = (screenW - winW) * 0.5f;
+            float winY = (screenH - winH) * 0.5f;
+
+            Rect winRect = new Rect(winX, winY, winW, winH);
+            GUI.DrawTexture(winRect, _windowBgTex!);
+
+            GUI.Label(new Rect(winX + 16f, winY + 12f, winW - 140f, 26f),
+                "<b>[YARATICI TEST MODU — EŞYA VE BLOK KATALOĞU (F4 / TAB)]</b>", _windowTitleStyle!);
+
+            if (GUI.Button(new Rect(winX + winW - 120f, winY + 10f, 106f, 26f), "[KAPAT - ESC]"))
+            {
+                IsCreativeCatalogOpen = false;
+                return;
+            }
+
+            float tabX = winX + 16f;
+            float tabY = winY + 44f;
+            float tabW = (winW - 32f) / CreativeCategoryNames.Length;
+            for (int c = 0; c < CreativeCategoryNames.Length; c++)
+            {
+                bool isSelected = CreativeCategoryIndex == c;
+                Rect tabRect = new Rect(tabX + c * tabW, tabY, tabW - 4f, 28f);
+                GUI.DrawTexture(tabRect, isSelected ? _slotSelectedBgTex! : _slotBgTex!);
+                if (GUI.Button(tabRect, CreativeCategoryNames[c], _keyBadgeStyle!))
+                {
+                    CreativeCategoryIndex = c;
+                }
+            }
+
+            var items = CreativeCategoryIndex switch
+            {
+                0 => CreativeBlocks,
+                1 => CreativeTools,
+                2 => CreativeArmors,
+                3 => CreativePotions,
+                _ => CreativeSurvival
+            };
+
+            float gridX = winX + 16f;
+            float gridY = tabY + 38f;
+            const float cellW = 120f;
+            const float cellH = 50f;
+            int cols = Mathf.Max(1, Mathf.FloorToInt((winW - 32f) / cellW));
+
+            for (int i = 0; i < items.Length; i++)
+            {
+                int col = i % cols;
+                int row = i / cols;
+                Rect cellRect = new Rect(gridX + col * cellW, gridY + row * cellH, cellW - 6f, cellH - 6f);
+                var entry = items[i];
+                int maxStack = GetMaxStackCount(entry.kind, entry.subId);
+                var testSlot = new VisualInventorySlot { Kind = entry.kind, SubId = entry.subId, Count = maxStack, Durability01 = 1f };
+
+                bool isHovered = cellRect.Contains(Event.current.mousePosition);
+                GUI.DrawTexture(cellRect, isHovered ? _slotHoverBgTex! : _slotBgTex!);
+
+                Texture2D icon = GetOrBuildIconForSlot(in testSlot, CombatWeaponArchetype.Longsword);
+                if (icon != null)
+                {
+                    GUI.DrawTexture(new Rect(cellRect.x + 4f, cellRect.y + 4f, 36f, 36f), icon);
+                }
+
+                string name = GetShortSlotBadgeLabel(in testSlot);
+                GUI.Label(new Rect(cellRect.x + 42f, cellRect.y + 6f, cellRect.width - 44f, 18f), name, _keyBadgeStyle!);
+                GUI.Label(new Rect(cellRect.x + 42f, cellRect.y + 24f, cellRect.width - 44f, 16f), $"x{maxStack}", _countLabelStyle!);
+
+                if (GUI.Button(cellRect, GUIContent.none, GUIStyle.none))
+                {
+                    if (TryAddOrMergeItem(entry.kind, entry.subId, maxStack, miningCtrl))
+                    {
+                        miningCtrl.LastFeedbackText = $"KREATİF KATALOG: +{maxStack}x {GetSlotDisplayName(in testSlot)} envantere eklendi!";
+                    }
+                    else
+                    {
+                        miningCtrl.LastFeedbackText = "ENVANTER DOLU: Eşya eklemek için önce bazı yuvaları boşaltın!";
+                    }
+                }
+            }
+
+            GUI.Label(new Rect(winX + 16f, winY + winH - 26f, winW - 32f, 20f),
+                "İpucu: Bir eşyaya tıklayarak tam bir yığın halinde doğrudan çantanıza/hotbarınıza alabilirsiniz. ([TAB] veya [ESC] ile kapatın)", _keyBadgeStyle!);
         }
     }
 }

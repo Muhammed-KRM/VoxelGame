@@ -215,5 +215,45 @@ namespace Stratocraft.Tests.EditMode
                 out _);
             Assert.That(hitSlot, Is.EqualTo(0));
         }
+
+        [Test]
+        public void DormantTier0Crystal_RejectsVacuumUntilAwakened()
+        {
+            using var chunk = new VoxelChunkComponent(0, 0);
+            var dormantStorage = new CrystalMassStorage(maxTotalBlocksCapacity: 1024, crystalTier: 1);
+            dormantStorage.Data.CrystalTier = 0; // Tier 0 dormant crystal
+            var vacuumSystem = new MatterCrystalVacuumSystem();
+
+            // Tier 0 Kristal: Uyuyan baslangic kristali (0 serbest baslangic blogu, sertlik yetersiz)
+            chunk.SetVoxel(0, 10, 0, new VoxelCell(VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Dirt, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.DogalKutle, 0)));
+
+            VacuumAttemptResult resultTier0 = vacuumSystem.TryVacuumVoxel(chunk, 0, 10, 0, dormantStorage);
+            Assert.That(resultTier0.Success, Is.False, "Tier 0 uyuyan kristal Dogal Toprak dahil hicbir blogu emememelidir (Sertlik > Tier 0).");
+            Assert.That(resultTier0.ErrorCode, Is.EqualTo(ErrorCodes.CrystalOreResonanceImmune));
+            Assert.That(dormantStorage.CurrentTotalBlocks, Is.EqualTo(0), "Uyuyan kristal 0 blok depolamalidir.");
+
+            // Klan Kristali / Kadim Ors rezonansi sonrasi Tier 1'e uyanis
+            dormantStorage.CrystalTier = 1;
+            VacuumAttemptResult resultTier1 = vacuumSystem.TryVacuumVoxel(chunk, 0, 10, 0, dormantStorage);
+            Assert.That(resultTier1.Success, Is.True, "Tier 1 kristal uyaninca Dogal Topragi emebilmelidir.");
+            Assert.That(dormantStorage.GetCount(MaterialIdCatalog.Dirt), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void StackableItemSlot_LooseRubbleAndOreHardcoreStackCaps_PreserveDataIntegrity()
+        {
+            var stoneSlot = new StackableItemSlot(MaterialIdCatalog.Stone, 6);
+            Assert.That(stoneSlot.ItemId, Is.EqualTo((ushort)MaterialIdCatalog.Stone));
+            Assert.That(stoneSlot.Count, Is.EqualTo(6));
+
+            var oreSlot = new StackableItemSlot(MaterialIdCatalog.IronOre, 6);
+            Assert.That(oreSlot.ItemId, Is.EqualTo((ushort)MaterialIdCatalog.IronOre));
+            Assert.That(oreSlot.Count, Is.EqualTo(6));
+
+            var dirtSlot = new StackableItemSlot(MaterialIdCatalog.Dirt, 8);
+            Assert.That(dirtSlot.ItemId, Is.EqualTo((ushort)MaterialIdCatalog.Dirt));
+            Assert.That(dirtSlot.Count, Is.EqualTo(8));
+        }
     }
 }

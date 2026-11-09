@@ -31,7 +31,7 @@ namespace Stratocraft.Character
 
         /// <summary>
         /// Baltayla kesilip devrildikten sonra yerde tek parca kutuk olarak yatan ve oyuncunun baltayla vurarak
-        /// parcalara ayirip odun toplayabildigi fiziksel agac govdesi.
+        /// boylayabildigi (bucking) veya yarabildigi (splitting), omuzda tasinabilen fiziksel agac govdesi.
         /// </summary>
         public sealed class FallenTreeLogInstance
         {
@@ -45,6 +45,7 @@ namespace Stratocraft.Character
             public Vector3 TrunkDirection;
             public float CurrentDamage;
             public float VerticalVelocity;
+            public bool IsBuckedTimberLog;
         }
 
         private struct ActiveFallingClusterSlot
@@ -1160,8 +1161,9 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Oyuncu yerde yatan devrilmis bir agac kutugune ([3] Balta veya [2] Kazma ile) vurdugunda kutugu parcalara ayirir
-        /// ve her parcadan gercek 3B odun kutukleri (OakWood / Ironwood) dusurur!
+        /// Oyuncu yerde yatan devrilmis bir agac kutugune ([3] Balta ile) vurdugunda gercekci The Forest mekanigi uygular:
+        /// 1) Eger tam devrilmis govdeyse (IsBuckedTimberLog = false): Her darbede govdeden 2m boyunda bagimsiz Agir Kutuk (Timber Log ~32 kg) ayrilir (Bucking).
+        /// 2) Eger boylanmis Agir Kutuk ise (IsBuckedTimberLog = true): Baltayla yarilarak 2x Yarma Odun ve 1x Dal parcasina ayrilir (Splitting).
         /// </summary>
         public bool TryChopFallenTreeLog(
             Vector3 rayOrigin,
@@ -1213,53 +1215,363 @@ namespace Stratocraft.Character
             target.CurrentDamage += chopPower;
             string woodName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(target.WoodMaterialId);
 
+            // A) BOYLANMIS AGIR KUTUK (IS BUCKED TIMBER LOG) YARMALAMA (SPLITTING):
+            if (target.IsBuckedTimberLog)
+            {
+                if (target.CurrentDamage < 1.0f)
+                {
+                    if (target.LogObject != null)
+                    {
+                        target.LogObject.transform.position += new Vector3(0f, 0.04f, 0f);
+                    }
+                    feedback = $"AGIR KUTUK YARILIYOR: {woodName} (Darbe: %{Mathf.RoundToInt(target.CurrentDamage * 100f)} | [E] ile Omuzlayabilir veya Baltayla Yarabilirsiniz)";
+                    return true;
+                }
+
+                // Agir Kutuk yarildi -> 2x Yarma Odun (SplitFirewood) ve 1x Dal (Stick) yere duser!
+                if (MiningControllerForItemDrops != null)
+                {
+                    MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                        hitPoint + new Vector3(-0.18f, 0.25f, 0.10f),
+                        target.WoodMaterialId,
+                        shape: 2,
+                        count: 2,
+                        DefaultVoxelMaterial,
+                        "Yarma Odun");
+
+                    MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                        hitPoint + new Vector3(0.18f, 0.22f, -0.10f),
+                        target.WoodMaterialId,
+                        shape: 7,
+                        count: 1,
+                        DefaultVoxelMaterial,
+                        "Kuru Dal");
+                }
+
+                if (target.LogObject != null)
+                {
+                    UnityEngine.Object.Destroy(target.LogObject);
+                }
+                _fallenTreeLogs.RemoveAt(hitIndex);
+                feedback = $"AGIR KUTUK YARILDI! 2x Yarma Odun ve 1x Dal elde edildi (Cantaya koyabilir, ates yakabilir veya tezgahta isleyebilirsiniz).";
+                return true;
+            }
+
+            // B) TAM AGAC GOVDESINDEN AGIR KUTUK BOYLAMA (BUCKING):
             if (target.CurrentDamage < 1.0f)
             {
                 if (target.LogObject != null)
                 {
                     target.LogObject.transform.position += new Vector3(0f, 0.04f, 0f);
                 }
-                feedback = $"KUTUK KESILIYOR: {woodName} Kutugu (Kesim: %{Mathf.RoundToInt(target.CurrentDamage * 100f)} | Kalan: {target.RemainingSegments} kutuk bolumu)";
+                feedback = $"AGAC GOVDESI KESILIYOR: {woodName} (Boylama: %{Mathf.RoundToInt(target.CurrentDamage * 100f)} | Kalan: {target.RemainingSegments} bolum)";
                 return true;
             }
 
             target.CurrentDamage = 0f;
-            target.RemainingSegments--;
 
-            // Kesilen kutuk bolumunden yere 2 adet gercek odun blogu dusur
-            if (MiningControllerForItemDrops != null)
+            // Gercekci "The Forest" Tarzi Boylama (Bucking) Algoritmasi:
+            // Kutugun uzunlamasina ekseni = target.LogObject.transform.up
+            // Kutugun o anki boyu L = target.RemainingSegments * target.SegmentLengthMeters
+            Vector3 u = target.LogObject != null ? target.LogObject.transform.up.normalized : Vector3.up;
+            Vector3 pCenter = target.LogObject != null ? target.LogObject.transform.position : hitPoint;
+            float currentLength = target.RemainingSegments * target.SegmentLengthMeters;
+            Vector3 pBase = pCenter - u * (currentLength * 0.5f);
+            Vector3 pTip = pCenter + u * (currentLength * 0.5f);
+
+            // Vurus noktasinin tabandan tepeye goreli orani t in [0, 1]
+            float distAlongAxis = Vector3.Dot(hitPoint - pBase, u);
+            float t = Mathf.Clamp01(distAlongAxis / Mathf.Max(0.5f, currentLength));
+
+            // Eger govde son 2 bolumdeyse, dogrudan son kutuge donusur
+            if (target.RemainingSegments <= 2)
             {
-                for (int d = 0; d < 2; d++)
+                SpawnBuckedTimberLog(pCenter, target.WoodMaterialId, target.TrunkDirection);
+                if (MiningControllerForItemDrops != null)
                 {
-                    Vector3 dropOffset = new Vector3((d - 0.5f) * 0.35f, 0.25f + d * 0.1f, 0.15f);
                     MiningControllerForItemDrops.SpawnDroppedWorldItem(
-                        hitPoint + dropOffset,
-                        target.WoodMaterialId,
-                        shape: ArchitecturalShapeCatalog.OctagonalColumn,
-                        count: 1,
-                        DefaultVoxelMaterial);
+                        hitPoint + new Vector3(0f, 0.25f, 0f), target.WoodMaterialId, shape: 7, count: 1, DefaultVoxelMaterial, "Kuru Dal");
                 }
-            }
-
-            if (target.RemainingSegments <= 0)
-            {
-                if (target.LogObject != null)
-                {
-                    UnityEngine.Object.Destroy(target.LogObject);
-                }
+                if (target.LogObject != null) UnityEngine.Object.Destroy(target.LogObject);
                 _fallenTreeLogs.RemoveAt(hitIndex);
-                feedback = $"KUTUK TAMAMEN PARCALANDI! +2 {woodName} kutugu yere dustu (Tum govde islendi!).";
+                feedback = "AGAC GOVDESI TAMAMEN BOYLNDI! Son Agir Kutuk ayrildi (Omuzlamak icin [E], yarmak icin baltayla vurun).";
                 return true;
             }
 
-            // Kutugun boyunu kisalt (kesilen parca eksildi)
+            // A) Uc / Tac Vurusu (t >= 0.65f) veya Kalan < 6:
+            if (t >= 0.65f || target.RemainingSegments < 6)
+            {
+                if (t < 0.35f && target.RemainingSegments >= 4)
+                {
+                    // Taban / Kok Vurusu (t <= 0.35f): Sadece tabandan 2m kesilir, uc (pTip) sabit kalir!
+                    Vector3 buckedBasePos = pBase + u * 1.0f;
+                    SpawnBuckedTimberLog(buckedBasePos, target.WoodMaterialId, target.TrunkDirection);
+
+                    target.RemainingSegments -= 2;
+                    float newLen = target.RemainingSegments * target.SegmentLengthMeters;
+                    Vector3 newCenter = pTip - u * (newLen * 0.5f);
+                    if (target.LogObject != null)
+                    {
+                        target.LogObject.transform.position = newCenter;
+                        float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
+                        target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
+                    }
+                    feedback = $"KOK TARAFINDAN BOYLNDI! Dip kismindan 2m Agir Kutuk kesildi (Uc sabit | Kalan: {target.RemainingSegments} bolum).";
+                }
+                else
+                {
+                    // Uctan 2m kesim: Taban (pBase) sabit kalir!
+                    Vector3 buckedTipPos = pTip - u * 1.0f;
+                    SpawnBuckedTimberLog(buckedTipPos, target.WoodMaterialId, target.TrunkDirection);
+
+                    target.RemainingSegments -= 2;
+                    float newLen = target.RemainingSegments * target.SegmentLengthMeters;
+                    Vector3 newCenter = pBase + u * (newLen * 0.5f);
+                    if (target.LogObject != null)
+                    {
+                        target.LogObject.transform.position = newCenter;
+                        float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
+                        target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
+                    }
+                    feedback = $"UC TARAFINDAN BOYLNDI! Govdenin ucundan 2m Agir Kutuk kesildi (Kok sabit | Kalan: {target.RemainingSegments} bolum).";
+                }
+            }
+            // B) Ortadan Kesim (0.35f < t < 0.65f ve Kalan >= 6):
+            // Vurulan noktadan 2m'lik kutuk cikarilir ve kalan govde IKI AYRI KUTUGE ayrilir!
+            else
+            {
+                int baseSegs = Mathf.Max(2, Mathf.RoundToInt(t * target.RemainingSegments) - 1);
+                int tipSegs = target.RemainingSegments - 2 - baseSegs;
+                if (tipSegs < 2)
+                {
+                    tipSegs = 2;
+                    baseSegs = target.RemainingSegments - 4;
+                }
+
+                // Ortadaki 2m Agir Kutuk vurus noktasinda duser
+                SpawnBuckedTimberLog(hitPoint + new Vector3(0f, 0.1f, 0f), target.WoodMaterialId, target.TrunkDirection);
+
+                // 1. Parca: Kok Govdesi
+                target.RemainingSegments = baseSegs;
+                float baseLen = baseSegs * target.SegmentLengthMeters;
+                Vector3 newBaseCenter = pBase + u * (baseLen * 0.5f);
+                if (target.LogObject != null)
+                {
+                    target.LogObject.transform.position = newBaseCenter;
+                    float ratio = baseSegs / (float)Math.Max(1, target.InitialSegments);
+                    target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
+                }
+
+                // 2. Parca: Uc Govdesi (Yeni bagimsiz kutuk nesnesi olarak dunyaya eklenir)
+                float tipLen = tipSegs * target.SegmentLengthMeters;
+                Vector3 newTipCenter = pTip - u * (tipLen * 0.5f);
+                SpawnPartialFallenTreeLog(newTipCenter, target.LogObject != null ? target.LogObject.transform.rotation : Quaternion.identity, target.WoodMaterialId, tipSegs, target.TrunkDirection);
+
+                feedback = $"GOVDE ORTADAN IKIYE BOLUNDU! Ortadan 2m Agir Kutuk cikarildi, govde iki bagimsiz kutuge ayrildi ({baseSegs}m ve {tipSegs}m).";
+            }
+
+            if (MiningControllerForItemDrops != null)
+            {
+                MiningControllerForItemDrops.SpawnDroppedWorldItem(
+                    hitPoint + new Vector3(0f, 0.25f, 0f),
+                    target.WoodMaterialId,
+                    shape: 7,
+                    count: 1,
+                    DefaultVoxelMaterial,
+                    "Kuru Dal");
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Yerde yatan boylanmis bir Agir Kutuk (~2m, ~32 kg) arar; oyuncu bakip [E] bastiginda omuza alinmak uzere nesneyi kaldirir.
+        /// </summary>
+        public bool TryPickupBuckedTimberLog(
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float maxDistance,
+            out byte woodMat)
+        {
+            woodMat = MaterialIdCatalog.Air;
+            if (_fallenTreeLogs.Count == 0) return false;
+
+            int bestIdx = -1;
+            float bestDist = maxDistance;
+
+            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (!log.IsBuckedTimberLog || log.LogObject == null || log.Collider == null) continue;
+
+                Ray ray = new Ray(rayOrigin, rayDirection);
+                if (log.Collider.Raycast(ray, out RaycastHit hit, bestDist))
+                {
+                    bestDist = hit.distance;
+                    bestIdx = i;
+                }
+                else
+                {
+                    Vector3 closest = log.Collider.ClosestPoint(rayOrigin + rayDirection * Mathf.Min(2.2f, maxDistance));
+                    float d = Vector3.Distance(rayOrigin, closest);
+                    if (d <= 2.85f && Vector3.Dot((closest - rayOrigin).normalized, rayDirection) >= 0.35f && d < bestDist)
+                    {
+                        bestDist = d;
+                        bestIdx = i;
+                    }
+                }
+            }
+
+            if (bestIdx < 0) return false;
+
+            FallenTreeLogInstance target = _fallenTreeLogs[bestIdx];
+            woodMat = target.WoodMaterialId;
             if (target.LogObject != null)
             {
-                float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
-                target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.25f, ratio), 1f);
+                UnityEngine.Object.Destroy(target.LogObject);
             }
-            feedback = $"KUTUK PARCALANDI! +2 {woodName} kutugu yere dustu (Kalan kutuk: {target.RemainingSegments}/{target.InitialSegments}).";
+            _fallenTreeLogs.RemoveAt(bestIdx);
             return true;
+        }
+
+        /// <summary>
+        /// Oyuncu omuzundaki Agir Kutugu [E], [G] veya [X] ile onune yere birakir.
+        /// </summary>
+        public void SpawnDroppedTimberLogFromShoulder(Vector3 playerPos, Vector3 playerForward, byte woodMat, Material? sharedMat = null)
+        {
+            Vector3 fwdXZ = new Vector3(playerForward.x, 0f, playerForward.z);
+            if (fwdXZ.sqrMagnitude < 0.01f) fwdXZ = Vector3.forward;
+            fwdXZ.Normalize();
+
+            Vector3 spawnPos = playerPos + fwdXZ * 1.25f + new Vector3(0f, 0.45f, 0f);
+            SpawnBuckedTimberLog(spawnPos, woodMat, fwdXZ, sharedMat);
+        }
+
+        private void SpawnPartialFallenTreeLog(Vector3 centerPos, Quaternion rot, byte woodMat, int segments, Vector3 trunkDir)
+        {
+            if (woodMat == MaterialIdCatalog.Air) woodMat = MaterialIdCatalog.OakWood;
+            if (_fallenTreeLogs.Count >= 24)
+            {
+                if (_fallenTreeLogs[0].LogObject != null)
+                {
+                    UnityEngine.Object.Destroy(_fallenTreeLogs[0].LogObject);
+                }
+                _fallenTreeLogs.RemoveAt(0);
+            }
+
+            _proxyTris.Clear();
+            for (int s = 0; s < segments; s++)
+            {
+                float offsetY = (s - (segments - 1) * 0.5f);
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, -0.5f),
+                    woodMat,
+                    ArchitecturalShapeCatalog.OctagonalColumn,
+                    0,
+                    1,
+                    _proxyTris,
+                    extendFoundationSkirt: false);
+            }
+
+            Mesh logMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_PartialTreeLog_{Time.frameCount}");
+            GameObject logGo = new GameObject($"FallenTreeLog_{woodMat}_{Time.frameCount}");
+            logGo.AddComponent<MeshFilter>().sharedMesh = logMesh;
+            MeshRenderer mr = logGo.AddComponent<MeshRenderer>();
+            if (DefaultVoxelMaterial != null) mr.sharedMaterial = DefaultVoxelMaterial;
+
+            logGo.transform.position = centerPos;
+            logGo.transform.rotation = rot;
+
+            BoxCollider col = logGo.AddComponent<BoxCollider>();
+            col.size = new Vector3(1.15f, segments * 1.05f, 1.15f);
+
+            Rigidbody rb = logGo.AddComponent<Rigidbody>();
+            rb.mass = segments * 85f;
+            rb.useGravity = false;
+            rb.isKinematic = true;
+
+            _fallenTreeLogs.Add(new FallenTreeLogInstance
+            {
+                LogObject = logGo,
+                Body = rb,
+                Collider = col,
+                WoodMaterialId = woodMat,
+                RemainingSegments = segments,
+                InitialSegments = segments,
+                SegmentLengthMeters = 1.0f,
+                TrunkDirection = trunkDir,
+                CurrentDamage = 0f,
+                VerticalVelocity = 0f
+            });
+        }
+
+        /// <summary>
+        /// 2 metrelik bağımsız Agir Kutuk nesnesi olusturur (The Forest stili omuzlanabilir/yarilabilir kutuk).
+        /// </summary>
+        public void SpawnBuckedTimberLog(Vector3 basePos, byte woodMat, Vector3 dirXZ, Material? sharedMat = null)
+        {
+            if (woodMat == MaterialIdCatalog.Air) woodMat = MaterialIdCatalog.OakWood;
+            if (sharedMat != null) DefaultVoxelMaterial = sharedMat;
+
+            if (_fallenTreeLogs.Count >= 18)
+            {
+                if (_fallenTreeLogs[0].LogObject != null)
+                {
+                    UnityEngine.Object.Destroy(_fallenTreeLogs[0].LogObject);
+                }
+                _fallenTreeLogs.RemoveAt(0);
+            }
+
+            _proxyTris.Clear();
+            const int buckedSegments = 2;
+            for (int s = 0; s < buckedSegments; s++)
+            {
+                float offsetY = (s - (buckedSegments - 1) * 0.5f);
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, -0.5f),
+                    woodMat,
+                    ArchitecturalShapeCatalog.OctagonalColumn,
+                    0,
+                    1,
+                    _proxyTris,
+                    extendFoundationSkirt: false);
+            }
+
+            Mesh logMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_BuckedTimberLog_{Time.frameCount}");
+            GameObject logGo = new GameObject($"BuckedTimberLog_{woodMat}_{Time.frameCount}");
+            logGo.AddComponent<MeshFilter>().sharedMesh = logMesh;
+            MeshRenderer mr = logGo.AddComponent<MeshRenderer>();
+            if (DefaultVoxelMaterial != null) mr.sharedMaterial = DefaultVoxelMaterial;
+
+            logGo.transform.position = basePos;
+            Vector3 logSlopeDir = dirXZ.sqrMagnitude > 0.01f ? dirXZ.normalized : Vector3.forward;
+            Vector3 localX = Vector3.Cross(Vector3.up, logSlopeDir);
+            if (localX.sqrMagnitude < 0.001f) localX = Vector3.right;
+            localX.Normalize();
+            Vector3 skyUpZ = Vector3.Cross(localX, logSlopeDir).normalized;
+            logGo.transform.rotation = Quaternion.LookRotation(skyUpZ, logSlopeDir);
+
+            BoxCollider col = logGo.AddComponent<BoxCollider>();
+            col.size = new Vector3(1.15f, buckedSegments * 1.05f, 1.15f);
+
+            Rigidbody rb = logGo.AddComponent<Rigidbody>();
+            rb.mass = 32.0f;
+            rb.useGravity = false;
+            rb.isKinematic = true;
+
+            _fallenTreeLogs.Add(new FallenTreeLogInstance
+            {
+                LogObject = logGo,
+                Body = rb,
+                Collider = col,
+                WoodMaterialId = woodMat,
+                RemainingSegments = buckedSegments,
+                InitialSegments = buckedSegments,
+                SegmentLengthMeters = 1.0f,
+                TrunkDirection = logSlopeDir,
+                CurrentDamage = 0f,
+                VerticalVelocity = 0f,
+                IsBuckedTimberLog = true
+            });
         }
 
         private void FinalizeClusterImpact(

@@ -208,6 +208,11 @@ namespace Stratocraft.Character
             if (_worldChunks.ContainsKey((key.cx, key.cz + 1))) _activeFluidChunks.Add((key.cx, key.cz + 1));
         }
 
+        public static void WakeFluidChunkAndNeighborsStatic(int cx, int cz)
+        {
+            _activeInstance?.WakeChunkAndNeighborsFluid((cx, cz));
+        }
+
         /// <summary>
         /// Bir voksel (wx, wy, wz) kirildiginda, konuldugunda veya hasar aldiginda YALNIZCA ilgili
         /// 16x16x16 Kubik Alt-Chunk dilimini (subY = wy &gt;&gt; 4) kirli isaretler (10x daha hizli kismi orme!).
@@ -416,6 +421,14 @@ namespace Stratocraft.Character
             float dt = Mathf.Clamp(Time.deltaTime, 0.0005f, 0.05f);
             long spanId = _telemetryLogger?.LogPipelineStart(1UL, nameof(Stage1InteractivePlayController), "Update") ?? -1L;
             HandleCameraModeAndPersistenceHotkeys();
+            if (_holsterCtrl.IsCreativeMode)
+            {
+                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                _movementBridge.Vitals.Stamina = _movementBridge.Vitals.MaxStamina;
+                _movementBridge.Vitals.LungOxygenPercent = 100f;
+                _miningCtrl.CurrentToolDurability = _miningCtrl.MaxToolDurability;
+            }
+            StepConsumablesAndArmor(dt);
             StepDynamicContinentChunkStreaming();
             StepMovementAndOxygen(dt);
             StepHolsterBackpackAndMining(dt);
@@ -821,7 +834,7 @@ namespace Stratocraft.Character
             float holsteredMass = 4.2f;
             float backpackMass = _holsterCtrl.BackpackSystem.StoredEquipment.Count * 2.5f;
             float wetMult = 1.0f + _movementBridge.Vitals.Wetness01 * 0.10f;
-            float equippedMass = (activeHandheldMass + holsteredMass * 0.55f + backpackMass * 0.65f) * wetMult;
+            float equippedMass = (activeHandheldMass + holsteredMass * 0.55f + backpackMass * 0.65f + _holsterCtrl.ShoulderLogMassKg) * wetMult;
 
             // Henuz oyuncu icin aktif aclik/susuzluk tuketim mekanigi olmadigindan sabit tut; can/hiz dusurmesin
             _movementBridge.Vitals.HungerKcal = 2000f;
@@ -840,25 +853,129 @@ namespace Stratocraft.Character
             UpdateOxygenAndFloatingOrigin(dt);
         }
 
+        private void StepConsumablesAndArmor(float dt)
+        {
+            if (_holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen) return;
+
+            if (_holsterCtrl.ActiveHolsterSlot == 8)
+            {
+                if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0))
+                {
+                    VisualInventorySlot slot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                    bool consumed = false;
+                    string feedback = "";
+                    switch (slot.Kind)
+                    {
+                        case InventoryItemKind.PotionHealth:
+                            if (_movementBridge.Vitals.CurrentHp < _movementBridge.Vitals.MaxHp || _holsterCtrl.IsCreativeMode)
+                            {
+                                _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 45f);
+                                feedback = "Şifalı Can İksiri İçildi (+45 Can!)";
+                                consumed = true;
+                            }
+                            else
+                            {
+                                _miningCtrl.LastFeedbackText = "Can zaten tam dolu!";
+                            }
+                            break;
+
+                        case InventoryItemKind.PotionStamina:
+                            if (_movementBridge.Vitals.Stamina < _movementBridge.Vitals.MaxStamina || _holsterCtrl.IsCreativeMode)
+                            {
+                                _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 60f);
+                                _movementBridge.MovementState.IsExhaustedStaminaLock = 0;
+                                feedback = "Dayanıklılık İksiri İçildi (+60 Enerji, Yorgunluk Silindi!)";
+                                consumed = true;
+                            }
+                            else
+                            {
+                                _miningCtrl.LastFeedbackText = "Dayanıklılık (Stamina) zaten tam dolu!";
+                            }
+                            break;
+
+                        case InventoryItemKind.MedicalBandage:
+                            if (_movementBridge.Vitals.CurrentHp < _movementBridge.Vitals.MaxHp || _holsterCtrl.IsCreativeMode)
+                            {
+                                _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 25f);
+                                feedback = "Tıbbi Bandaj Sarıldı (+25 Can, Yaralar Sarıldı)";
+                                consumed = true;
+                            }
+                            break;
+
+                        case InventoryItemKind.FoodCookedMeat:
+                            _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 30f);
+                            _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 40f);
+                            _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Min(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius + 0.8f);
+                            feedback = "Pişmiş Et Yendi (+30 Can, +40 Enerji, Vücut Isındı)";
+                            consumed = true;
+                            break;
+
+                        case InventoryItemKind.FoodWildBerries:
+                            _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 12f);
+                            _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 20f);
+                            feedback = "Yabani Meyve Yendi (+12 Can, +20 Enerji)";
+                            consumed = true;
+                            break;
+
+                        case InventoryItemKind.FoodCleanWater:
+                            _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 35f);
+                            _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Max(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius - 0.5f);
+                            feedback = "Temiz Kaynak Suyu İçildi (+35 Enerji, Ferahlatıcı)";
+                            consumed = true;
+                            break;
+                    }
+
+                    if (consumed)
+                    {
+                        if (!_holsterCtrl.IsCreativeMode)
+                        {
+                            _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
+                        }
+                        _miningCtrl.LastFeedbackText = feedback;
+                    }
+                }
+            }
+            else if (_holsterCtrl.ActiveHolsterSlot == 9)
+            {
+                if (Input.GetMouseButtonDown(1))
+                {
+                    VisualInventorySlot slot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                    string slotName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, _combatBridge);
+                    _miningCtrl.LastFeedbackText = $"Zırh Kuşanıldı: {slotName} (+Darbe ve Kesilme Direnci)";
+                }
+            }
+            else if (_holsterCtrl.ActiveHolsterSlot == 10)
+            {
+                if (Input.GetMouseButtonDown(1) && _miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 4.0f)
+                {
+                    if (!_holsterCtrl.IsCreativeMode)
+                    {
+                        _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
+                    }
+                    _miningCtrl.LastFeedbackText = "Kamp Ateşi Kuruldu! Isınma ve Pişirme Alanı Aktif.";
+                }
+            }
+        }
+
         private void StepHolsterBackpackAndMining(float dt)
         {
-            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen;
+            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.IsCarryingShoulderLog || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
             GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
             if (!_escapeMenuCtrl.IsMenuOpen)
             {
                 _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
                     swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
-                    ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge);
+                    ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge, _collapseBridge);
             }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
-            _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial);
+            _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial, _holsterCtrl);
             _miningCtrl.ExecuteMiningOrBuilding(
                 dt, _holsterCtrl.ActiveHolsterSlot, uiBlocked, MaxEditableVoxelY,
                 transform.position, _movementBridge.MovementState.CapsuleHeightMeters,
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
                 _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl);
-            _miningCtrl.StepDroppedWorldItems(dt, transform.position, _worldChunks);
+            _miningCtrl.StepDroppedWorldItems(dt, transform.position, _worldChunks, _holsterCtrl);
         }
 
         private void StepCombatCreaturesAndRig(float dt)
@@ -880,13 +997,14 @@ namespace Stratocraft.Character
 
             int slot = _holsterCtrl.ActiveHolsterSlot;
             bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
+                             !_holsterCtrl.IsCarryingShoulderLog &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
             float massScale = slot == 2 ? 1.45f : (slot == 3 ? 1.25f : 1.0f);
             bool isPlayerAirborne = _movementBridge.MovementState.IsGrounded == 0 || Mathf.Abs(_movementBridge.VerticalVelocity) > 1.2f;
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen;
+            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
             float sens = Stage1GameSettings.MouseSensitivity;
             float ySign = Stage1GameSettings.InvertMouseY ? -1.0f : 1.0f;
             float mouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X") * sens;
@@ -997,12 +1115,47 @@ namespace Stratocraft.Character
                 _showDebugHudText = !_showDebugHudText;
                 _miningCtrl.LastFeedbackText = _showDebugHudText ? "[F3] Gelistirici & Simulasyon Bilgi Yazilari Acildi" : "[F3] Ekran Bilgi Yazilari Gizlendi (Temiz Ekran)";
             }
+            if (Input.GetKeyDown(KeyCode.F4))
+            {
+                _holsterCtrl.ToggleCreativeMode(_miningCtrl);
+            }
+            if (Input.GetKeyDown(KeyCode.Tab) && !_escapeMenuCtrl.IsMenuOpen)
+            {
+                if (_holsterCtrl.IsCreativeMode)
+                {
+                    _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
+                    if (_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+                    {
+                        Cursor.lockState = CursorLockMode.None;
+                        Cursor.visible = true;
+                    }
+                    else
+                    {
+                        Cursor.lockState = CursorLockMode.Locked;
+                        Cursor.visible = false;
+                    }
+                }
+                else
+                {
+                    GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
+                    _holsterCtrl.ToggleBackpackMat(
+                        transform, TacticalBackpackMatRoot, swordGo, PickaxeVisualRoot, AxeVisualRoot,
+                        SharedVoxelMaterial, ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl);
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.Escape) && _holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+            {
+                _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+                return;
+            }
             if (Input.GetKeyDown(Stage1GameSettings.KeyCameraToggle) || Input.GetKeyDown(KeyCode.F5))
             {
                 _isFirstPersonMode = !_isFirstPersonMode;
                 ApplyFirstPersonVisibility();
             }
-            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && Cursor.lockState != CursorLockMode.Locked)
+            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && Cursor.lockState != CursorLockMode.Locked)
             {
                 Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             }
@@ -2276,7 +2429,7 @@ namespace Stratocraft.Character
                 _nextHudStringRefreshTime = nowUnscaled + 0.10f;
             }
 
-            if (!_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen)
+            if (!_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
             {
                 string reticle = _miningCtrl.IsCrystalActive
                     ? "◎"
@@ -2314,6 +2467,15 @@ namespace Stratocraft.Character
                 lungOxygenPercent: _movementBridge.Vitals.LungOxygenPercent,
                 isSubmerged: _movementBridge.Vitals.SubmergedDepthMeters > 0.1f,
                 coreBodyTemp: _movementBridge.Vitals.CoreBodyTempCelsius);
+
+            if (_holsterCtrl.IsCreativeMode)
+            {
+                GUI.Box(new Rect(cx - 320f, 10f, 640f, 26f), "★ [YARATICI TEST MODU - F4: AKTIF] (Olumsuzluk | Sinirsiz Insa | [Tab] Esya Menusu) ★", _tooltipStyle);
+            }
+            if (_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+            {
+                _holsterCtrl.InventoryUi.DrawCreativeCatalogGUI(Screen.width, Screen.height, _miningCtrl);
+            }
 
             if (_showDebugHudText)
             {
