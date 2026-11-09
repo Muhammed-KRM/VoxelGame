@@ -13,17 +13,51 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#039` (Faz 1 & Faz 2: Kaba Hammadde İnşa/Hayalet Küp Engeli, The Forest Tarzı Dinamik Kütük Dilimleme [Uç/Kök/Orta], Su Akışkan Uyandırma Düzeltmesi, [F4] Yaratıcı Modu + [Tab] Eşya Kataloğu, Zırhlar, İksirler ve Hayatta Kalma Tüketimleri | 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-09T15:45:00+03:00` |
+| **Devir Numarası** | `#040` (Faz 1 & Faz 2 Anayasa ve Geliştirici Dökümanları Uyumluluk Denetimi, Bölgesel Zırh/Hasar Analizi, Ağaç Kesimi / Sıvı / Envanter Mantık Hataları Raporu ve Devir Teslimi \| 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-09T17:40:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Kritik Geri Bildirim Revizyonu ve Yaratıcı Test Modu Tamamlandı (Devir #039 - Unity Derleme Hatası Çözüldü)` |
-| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (848 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif Edildi ve Doğrulandı)` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Anayasa Uyumluluk Denetimi, Bölgesel Hasar / Zırh Mimarisi ve Devir Teslimi Tamamlandı (Devir #040)` |
+| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (854 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif ve Doğrulandı)` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#039`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#040`)
+
+### 2.0. Devir #040: Faz 1 & Faz 2 Anayasa (Game Logic Bible v7.0) Uyumluluk Denetimi ve Mantık Hataları Analizi
+
+Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md`, `docs/faz1_faz2_mekanikler/`, `docs/RAPOR_2_...`, `docs/FIZIKSEL_ENVANTER_...` ve canlı kod tabanımız (`Assets/_Stratocraft/**`) satır satır karşılaştırılmış, detaylı denetim raporu [`docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md`](docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md) dosyasına kaydedilmiştir.
+
+#### 1. Zırh Kuşanma ve Anatomik Bölgesel Hasar Azaltımı (Hitzones)
+- **Anayasa Kuralı (§4.7.A / §4.7.B):** Zırh tek parça bir sayısal stat (`+40 Zırh`) değildir. Vücut 5 bağımsız bölgeye ayrılmıştır: Kafa (Miğfer), Gövde (Göğüslük), Kollar (Omuzluk & Kolçak), Bacaklar (Dizlik), Ayaklar (Bot).
+- **Kritik Mantık Kuralı:** Oyuncu üzerinde en iyi göğüslük ve bot olsa bile kafasında **Miğfer yoksa**, kafasına darbe aldığında **0 Fiziksel Zırh** ve **2.0x - 2.5x Kafa Çarpanı** ile doğrudan ağır/kritik hasar yer!
+- **Mevcut Koddaki Durum:** `Stage1InteractivePlayController` içinde sağ tıklanan zırh yalnızca `"Zırh giyildi: +42 Zırh"` şeklinde sahte bir metin göstermektedir. Canlı `CharacterVitalsComponent` veya `EquipmentSlots` üzerinde bağımsız miğfer/göğüslük/kolçak/dizlik yuvaları ve `TakeDamageRegional` anatomik hasar ayrıştırması bulunmamaktadır.
+- **Yol Haritası:** Canlı vitals ve combat sistemine 4 parçalı bölgesel zırh yuvası ve isabet alanına göre hasar soğurma formülü bağlanacaktır.
+
+#### 2. Kaba Hammadde vs. Yapı Bloğu ve Hayalet Önizleme Mantığı
+- **Anayasa Kuralı (§2.2.A / §2.2.B):** Aletle kırılan kaba taş, gevşek toprak, yarma odun, kuru dal ve ham cevher **ham envanter eşyasıdır (Item Material)**. Bu biçimsiz parçalar doğrudan dünyaya bir yapı bloğu gibi konulamaz; tezgahlarda (Taşçı Tezgahı, Marangoz Masası) işlenip tuğla veya kereste yapıldıktan sonra inşa edilebilir.
+- **Koddaki Mantık Hatası:** Kaba odun dünyaya konulamıyordu ancak elinde odun varken bile havada yeşil bir `PlacementGhostPreview_Cube` (Hayalet İnşa Küpü) görünüyordu. Kaba taş ise sağ tıkla moloz olarak konabiliyordu.
+- **Düzeltme:** Kaba hammaddeler seçiliyken hayalet inşa küpü kesin olarak kapatıldı ve doğrudan blok inşası engellenerek diyalog uyarısı verildi.
+
+#### 3. Ağaç Kesme ve Kütük Boylama Fiziği (The Forest Modeli)
+- **Anayasa (§2.2, §4.1) & Rapor DOC-PHYS-RIGID-002:** Devrilen ağaç gövdesi yerde rijit bir kütük (`FallenTreeLogRigidbody`) olarak kalmalıdır; yok olup moloza/bloğa dönüşmemelidir. Koca kütük çantaya sığmaz, `[E]` ile omuzda taşınır (`+32 kg`, eller serbest kalana kadar kilitli).
+- **Koddaki Mantık Hatası:** Kütük baltalandığında `localScale.y` ezilerek görsel squashing yapılıyor ve nereye vurulursa vurulsun ortadan iki eşit parçaya bölünüyordu.
+- **Gereken Düzeltme:** Silindir squashing kaldırılacak; vurulan $t$ eksen izdüşümüne göre uçtan/kökten 2 metrelik bağımsız tomruk (`BuckedTimberLog`) koparılacak, ana kütük kısalacak, kopan tomruk tekrar baltalandığında çantaya girebilen yarma odun ve dallara ayrılacaktır.
+
+#### 4. Sıvı Fiziği (Sonlu Akışkan, 3B Hacim, Viskozite ve Göllenme - Cohesion)
+- **Anayasa Kuralı (§2.7.D):** Sıvı hücresi 16-bit'tir ($V \in [0..255]$). Düşey yerçekimi akışı + Red-Black yatay akış ile kütle mutlak korunur. Su + Lav temasında tek seferlik stokiyometrik obsidyen reaksiyonu gerçekleşir.
+- **Koddaki Mantık Hatası:** 
+  1. `FluidSurfaceSkirtMesher` alt yüzeyleri (`Bottom Quads`) örmediği için su havada dururken veya eğimde alttan bakıldığında görünmez olmakta ve 2D kağıt gibi durmaktadır.
+  2. Yatay akış denkleminde yüzey gerilimi / kohezyon eşiği olmadığı için düz zemine dökülen su anında $255 \to 63 \to 15 \to 3$ şeklinde milimetrik inceliğe yayılarak yok olmuş gibi görünmektedir.
+- **Gereken Düzeltme:** Alt yüzey üçgenleri (`Bottom Quads`) eklenecek ve minimum göllenme eşiği ($\Delta V \ge 32$) getirilerek düz zeminde su birikintisi olarak kalması sağlanacaktır.
+
+#### 5. Başlangıç Envanteri & Yaratıcı Test Modu (Creative Mode)
+- **Anayasa Kuralı (§3.1, §3.3.A):** Hayatta kalma modunda oyuncu oyuna **eli tamamen boş** (Slot 0 / El) başlamalıdır. Hazır 5 adet aletle doğulamaz.
+- **Koddaki Durum & Düzeltme:** `InitializeDefaultSlots()` içindeki hazır alet başlangıcı, `[F4]` Yaratıcı Modu ve `[Tab]` 5-sekmeli Eşya Kataloğu ayrımı ile çözülecektir. Oyuncu Survival'da boş başlayacak, test etmek istediğinde `[F4]` + `[Tab]` ile istediği tüm eşyaları tek tıkla alabilecektir.
+
+#### 6. Temel Hayatta Kalma Tüketimleri
+- Miğfer, Göğüslük, Kolçak, Dizlik (Deri, Ahşap, Bakır, Demir kademeleri), Can İksiri (+45 HP), Stamina İksiri (+60 EP), Tıbbi Bandaj (+25 HP), Pişmiş Et (+30 HP, +40 EP, Isıtır), Temiz Su tüketim etkileri canlı vitals sistemine bağlanmıştır.
 
 ### 2.0. Devir #039: Faz 1 & Faz 2 5 Kritik Gerçekçilik ve Oynanış Sorununun Çözümü
 
@@ -353,12 +387,15 @@
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar
 
-1. **Devir #037 — Kullanıcı Tarafından Doğrulanan ve Kalan Noktalar:**
-   - **Yürürken / Koşarken Sabit 60+ FPS, Paralel Dünya Akışı ve Fiziksel Yıkım/Devrilme:** Kullanıcı tarafından canlı oyunda test edilip onaylandı; kesilen ağacın yerin içine girmesi sorunu da `SampleActualVoxelGroundY`, `StepGroundedTreeLogs` ve `rb.isKinematic = true` ile çözüldü.
-   - **Bağımsız `.exe` (Standalone Build) Performansı:** Unity Editör pencerelerinin (SceneView / Inspector GUI) ek yükü olmadan saf DirectX 12 `.exe` çıktısında performans çok daha yüksek ve pürüzsüz olacaktır.
+1. **Devir #040 — Anayasa Uyumluluk Denetimi Sonrası Kalan Düzeltmeler:**
+   - **Bölgesel Zırh Koruma Entegrasyonu:** `CharacterVitalsComponent` ve `EquipmentSlots` içine 4 anatomik zırh slotu (`Helmet`, `Chestplate`, `Vambraces`, `Greaves`) eklenip, `TakeDamageRegional` metodunda isabet alan uzva göre zırhsız kafa vuruşunda `2.5x` kritik hasar formülü canlı döngüye bağlanacaktır.
+   - **Kütük Dilimleme (Bucking) ve Squashing Temizliği:** `Stage1StructuralCollapseBridge` içindeki silindir `localScale.y` ezilmesi kaldırılarak, vurulan $t$ eksen izdüşümüne göre uç/kök/orta gerçek boylu tomruk koparma temizlenecektir.
+   - **Sıvı Alt Yüzey Meshlemesi ve Göllenme Eşiği:** `FluidSurfaceSkirtMesher` içine alt yüzey (`Bottom Quads`) örme eklenerek havada asılı suyun 2D kağıt görünümü giderilecek; `FluidCellularAutomataJob` içine $\Delta V \ge 32$ göllenme/kohezyon eşiği eklenerek suyun düz zeminde birikinti olarak kalması sağlanacaktır.
+   - **Survival Modu Boş El Başlangıcı:** `InitializeDefaultSlots()` içindeki hazır aletler Survival modunda boşaltılacak; tüm eşyalar `[F4]` Yaratıcı Modu ve `[Tab]` Kataloğu üzerinden verilecektir.
+
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
-   - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Şu an test kolaylığı için 4 Dojo stilinin tamamı açık (`AllDojoStancesUnlocked = true`). Faz 3–5 ilerlemesinde dünyadaki **Dojo Ustaları / Parşömenler** ile açılması ve kullandıkça ustalık (`0.0 -> 1.0`) kazanılması bağlanacak.
-   - **Örs Üzerinde Dövülen Özel Silah Modelleri:** Şu an `[1]` / `[F8]` ile geçiş yapılan 4 kılıç arketipi (`Longsword`, `Greatsword`, `Rapier`, `Katana`), Faz 3'te `16x32x4` **Çift Boynuzlu Örs** üzerinde dövülen bağımsız 3B GLB modelleriyle genişletilecek.
+   - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Faz 3–5 ilerlemesinde dünyadaki Dojo Ustaları / Parşömenler ile açılması ve kullandıkça ustalık kazanılması.
+   - **Örs Üzerinde Dövülen Özel Silah Modelleri:** `16x32x4` Çift Boynuzlu Örs üzerinde dövülen serbest voksel modelleri.
 
 ---
 
@@ -366,9 +403,11 @@
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
+| **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sonsuz Enerji (100 EP), Sınırsız Oksijen ve Sınırsız Blok İnşası açar/kapatır | ✅ Aktif |
+| **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler, Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
 | **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
-| **`[I]` veya `Tab` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Yarıya Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
+| **`[I]` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Tüket / Kuşan / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
 | **`[E]` Tuşu (Ağır Kütük Yanında)** | Yerdeki kesilmiş 2m bağımsız **Ağır Kütüğü** omzuna alır (`+32 kg`, çantaya sığmaz, eller kilitlenir) | ✅ Aktif |
 | **`[E]`, `[G]` veya `[X]` (Kütük Omuzdaken)** | Omuzdaki ağır kütüğü yere bırakır, elleri ve silahları serbest bırakır | ✅ Aktif |
 | **`[E]` Tuşu (Yerde Eşya Yanında)** | Yere düşen **Kaba Taş, Moloz, Yarma Odun, Dal, Cevher ve Eşyaları** manuel toplar (`<= 2.4m`, mıknatıs yok) | ✅ Aktif |
@@ -391,12 +430,15 @@
 ## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
 1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
-   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#038` ile eşleştiğini doğrula.
+   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını ve `docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md` dosyasını oku.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#040` ile eşleştiğini doğrula.
 
-2. **Adım 2 — Sıradaki Geliştirme veya Faz 3 Hazırlığı:**
-   - Kullanıcının talebine göre Faz 1–2 ince ayarlarına veya Faz 3 (Atölye / Örs üzerinde silah dövme, Dojo parşömenleri, gelişmiş düşman / yapı etkileşimleri) adımlarına geç.
+2. **Adım 2 — Anayasa Uyumlu Mantık Düzeltmelerini Uygula:**
+   - **Öncelik 1: Bölgesel Zırh ve Hasar Mimarisi:** `CharacterVitalsComponent` ve `EquipmentSlots` içine 4 uzuv zırhı (Miğfer, Göğüslük, Kolçak, Dizlik) bağlamak; `TakeDamageRegional` ile kafa vuruşunda miğfersiz `2.5x` hasar kuralını canlı döngüye geçirmek.
+   - **Öncelik 2: Ağaç Kesme & Boylama:** `Stage1StructuralCollapseBridge` kütük boylamada silindir squashing'i temizleyip $t$ eksenine göre uç/kök tomruk koparma mantığını sağlamlaştırmak.
+   - **Öncelik 3: Sıvı 3B Hacim ve Göllenme:** `FluidSurfaceSkirtMesher` alt yüzey (`Bottom Quads`) ve `FluidCellularAutomataJob` kohezyon eşiğini ($\Delta V \ge 32$) eklemek.
+   - **Öncelik 4: Boş Başlangıç Envanteri:** Survival modunda hotbar'ı boş başlatıp yaratıcı mod `[F4]` ayrımını kesinleştirmek.
 
 3. **Adım 3 — Test ve Doğrulama:**
-   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (`48/48 PASS` olmalı).
+   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (`50/50 PASS` olmalı).
    - Unity Editor üzerinde Play Mode'da test ederek konsolda `0 Error / 0 Warning` olduğunu doğrula.
