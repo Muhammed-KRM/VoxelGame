@@ -49,15 +49,9 @@ namespace Stratocraft.Physics.Data
                     return 255;
                 }
 
-                if (density >= StratocraftConstants.SdfConfinedSolidLevel)
-                {
-                    // Derin kaya cekirdegi gecirimsizdir
-                    return 0;
-                }
-
-                // 64 <= Density < 96 kiyi yuzeyi hucresi: egimli Smooth Surface Nets kiyisiyla bosluksuz temas icin kismi kapasite
-                int shoreOpen = StratocraftConstants.SdfConfinedSolidLevel - density; // 1..32
-                return (byte)Math.Clamp((shoreOpen * 96) / 32, 0, 96);
+                // SurfaceNets kati arazi vokselleri (Density >= 64) gecirimsiz tabandir;
+                // su kati vokselin icine bolunmez, ustundeki hucrede alt-voksel taban kotu b(x,y,z) uzerine oturur.
+                return 0;
             }
 
             // Mimari yarim levha / kiris sekillerinde kismi bosluk kapasitesi, tam kup (1) ise 0
@@ -69,6 +63,63 @@ namespace Stratocraft.Physics.Data
                 ArchitecturalShapeCatalog.Ramp45 => 128,
                 _ => 0
             };
+        }
+
+        /// <summary>
+        /// Bir (x, y, z) sivi hucresinin oturdugu alt-voksel taban yuksekligini (b) [0..255] sabit noktali
+        /// kutle esdegeri biriminde (255 birim = 1.0 metre) hesaplar.
+        /// - Eger alt hucre (y - 1) bosluksa (selale / yamaç dususu): (y - 1) * 255 doner (kuvvetli yokus asagi cekim!).
+        /// - Eger alt hucre (y - 1) ShapeId == 0 dogal SurfaceNets arazisiyse: izo-yuzey yuksekligi
+        ///   b = (y - 1) + Clamp((d_below - 64) / (d_below - d_curr), 0.08, 0.92) metre olarak [0..255] olceginde doner.
+        /// - Eger alt hucre tam mimari bloksa (ShapeId != 0): y * 255 doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int ComputeCellBedElevationUnits255(uint belowSolidRaw, uint currentSolidRaw, int y)
+        {
+            byte curMat = VoxelBitUtility.GetMaterialId(currentSolidRaw);
+            byte curShape = VoxelBitUtility.GetShapeId(currentSolidRaw);
+            if (curMat != MaterialIdCatalog.Air && curShape != 0 && curShape != VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            {
+                byte cap = ComputeCellFluidCapacity(currentSolidRaw);
+                if (cap > 0 && cap < 255)
+                {
+                    return y * 255 + (255 - cap);
+                }
+            }
+
+            if (y <= 0)
+            {
+                return 0;
+            }
+
+            if (!VoxelBitUtility.IsPhysicallySolid(belowSolidRaw))
+            {
+                // Alt hucre fiziksel olarak kati degil (yamaç kenari / bosluk): su buraya dogru hizla akar
+                return (y - 1) * 255;
+            }
+
+            byte belowShape = VoxelBitUtility.GetShapeId(belowSolidRaw);
+            if (belowShape == 0)
+            {
+                int dBelow = VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw);
+                int dCurr = (curMat != MaterialIdCatalog.Air && curShape == 0)
+                    ? VoxelBitUtility.GetDensityOrLiquid(currentSolidRaw)
+                    : 0;
+                int denom = Math.Max(1, dBelow - dCurr);
+                int isoOffset255 = Math.Clamp(((dBelow - StratocraftConstants.SdfIsoLevel) * 255) / denom, 20, 235);
+                return (y - 1) * 255 + isoOffset255;
+            }
+
+            return y * 255;
+        }
+
+        /// <summary>
+        /// Mesh uretimi icin (x, y, z) sutununda SurfaceNets arazi yuzeyinin tam metre cinsinden yuksekligini doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputeColumnSurfaceNetsBedMeters(uint belowSolidRaw, uint currentSolidRaw, int y)
+        {
+            return ComputeCellBedElevationUnits255(belowSolidRaw, currentSolidRaw, y) * (1.0f / 255.0f);
         }
 
         /// <summary>

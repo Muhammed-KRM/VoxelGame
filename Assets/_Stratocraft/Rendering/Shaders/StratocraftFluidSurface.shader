@@ -145,6 +145,18 @@ Shader "Stratocraft/FluidSurface"
                 return frac(p.x * p.y);
             }
 
+            float SmoothValueNoise2D(float2 uv)
+            {
+                float2 i = floor(uv);
+                float2 f = frac(uv);
+                float2 u = f * f * (3.0 - 2.0 * f);
+                float a = Hash21(i);
+                float b = Hash21(i + float2(1.0, 0.0));
+                float c = Hash21(i + float2(0.0, 1.0));
+                float d = Hash21(i + float2(1.0, 1.0));
+                return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+            }
+
             float Voronoi2D(float2 uv)
             {
                 float2 g = floor(uv);
@@ -206,13 +218,16 @@ Shader "Stratocraft/FluidSurface"
                     float3 skyReflection = float3(0.42, 0.68, 0.95) * lightCol * 1.15;
                     float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * 0.55);
 
-                    // Shoreline Foam Band (Kiyi Etegi Kopugu)
-                    float foamFactor = saturate(1.0 - (opticalDepth / max(0.05, _ShorelineFoamDistance)));
-                    float foamNoise = Hash21(input.positionWS.xz * 6.0 + _Time.y * 0.4);
-                    float foam = step(0.45, foamFactor * foamNoise);
-                    finalColor = lerp(finalColor, float3(0.95, 0.98, 1.0) * lightCol * 1.3, foam * 0.80);
+                    // Shoreline Foam Band & Smooth Depth Alpha Fade (Sifir piksellesme, yumusak kiyi gecisi)
+                    float shoreDist = max(0.05, _ShorelineFoamDistance);
+                    float foamFactor = smoothstep(shoreDist, 0.0, opticalDepth);
+                    float foamWave = SmoothValueNoise2D(input.positionWS.xz * 2.4 + _Time.y * 0.35);
+                    float foam = smoothstep(0.58, 0.82, foamFactor * (0.65 + 0.35 * foamWave));
+                    finalColor = lerp(finalColor, float3(0.92, 0.96, 1.0) * lightCol * 1.15, foam * 0.45);
 
-                    float alpha = saturate(_WaterColorShallow.a + (clamp(opticalDepth, 0.0, 4.0) * 0.06) + (foam * 0.25));
+                    float shoreFeather = validDepth ? smoothstep(0.0, 0.08, opticalDepth) : 1.0;
+                    float baseAlpha = saturate(_WaterColorShallow.a + (clamp(opticalDepth, 0.0, 4.0) * 0.06) + (foam * 0.14));
+                    float alpha = baseAlpha * lerp(0.55, 1.0, shoreFeather);
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 

@@ -1696,7 +1696,10 @@ namespace Stratocraft.Character
                 if (shownSlot == 2)
                 {
                     EnsureToolHandGauntlet(pickaxeVisual.transform, ref _pickaxeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
-                    pickaxeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                    if (HolsterTransitionRemaining > 0.01f)
+                    {
+                        pickaxeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                    }
                 }
             }
             if (axeVisual != null)
@@ -1705,7 +1708,10 @@ namespace Stratocraft.Character
                 if (shownSlot == 3)
                 {
                     EnsureToolHandGauntlet(axeVisual.transform, ref _axeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
-                    axeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                    if (HolsterTransitionRemaining > 0.01f)
+                    {
+                        axeVisual.transform.localPosition = new Vector3(0f, drawDropY, 0f);
+                    }
                 }
             }
 

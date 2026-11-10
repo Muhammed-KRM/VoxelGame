@@ -19,7 +19,7 @@ namespace Stratocraft.Voxel.Jobs
     public static class FluidSurfaceSkirtMesher
     {
         public const float ShorelineSkirtExtensionMeters = 0.85f;
-        private const float SkirtUnderTerrainDipMeters = 0.38f;
+        private const float SkirtUnderTerrainDipMeters = 0.03f;
 
         /// <summary>
         /// Tek bir chunk'in 16-bit FluidCell16 katmanindan (komsu chunk'lari da dikkate alarak)
@@ -111,16 +111,16 @@ namespace Stratocraft.Voxel.Jobs
 
                         float h00 = ComputeCornerHeightAndSkirt(
                             chunkX, chunkZ, lx, y, lz, cornerDx: 0, cornerDz: 0, fType,
-                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt00);
+                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt00, out float bed00);
                         float h10 = ComputeCornerHeightAndSkirt(
                             chunkX, chunkZ, lx, y, lz, cornerDx: 1, cornerDz: 0, fType,
-                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt10);
+                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt10, out float bed10);
                         float h11 = ComputeCornerHeightAndSkirt(
                             chunkX, chunkZ, lx, y, lz, cornerDx: 1, cornerDz: 1, fType,
-                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt11);
+                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt11, out float bed11);
                         float h01 = ComputeCornerHeightAndSkirt(
                             chunkX, chunkZ, lx, y, lz, cornerDx: 0, cornerDz: 1, fType,
-                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt01);
+                            centerSolids, centerFluids, solidChunks, fluidChunks, out Vector3 skirt01, out float bed01);
 
                         Vector3 p00 = new Vector3(lx, h00, lz) + skirt00;
                         Vector3 p10 = new Vector3(lx + 1, h10, lz) + skirt10;
@@ -148,10 +148,10 @@ namespace Stratocraft.Voxel.Jobs
 
                         if (hasExposedBottom)
                         {
-                            Vector3 b00 = new Vector3(lx, y, lz);
-                            Vector3 b10 = new Vector3(lx + 1, y, lz);
-                            Vector3 b11 = new Vector3(lx + 1, y, lz + 1);
-                            Vector3 b01 = new Vector3(lx, y, lz + 1);
+                            Vector3 b00 = new Vector3(lx, bed00, lz);
+                            Vector3 b10 = new Vector3(lx + 1, bed10, lz);
+                            Vector3 b11 = new Vector3(lx + 1, bed11, lz + 1);
+                            Vector3 b01 = new Vector3(lx, bed01, lz + 1);
 
                             HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(
                                 b00, b11, b01, renderMat, temp, 180, packedAo, outFluidTriangles);
@@ -162,19 +162,19 @@ namespace Stratocraft.Voxel.Jobs
                         // Acik kenar / selale yan yuzleri (+X, -X, +Z, -Z) — komsu chunk sinirlari (nx < 0, nx >= 16, nz < 0, nz >= 16) dahil!
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 1, dirZ: 0, fType, renderMat, temp, packedAo,
-                            new Vector3(p10.X, y, p10.Z), p10, p11, new Vector3(p11.X, y, p11.Z),
+                            new Vector3(p10.X, bed10, p10.Z), p10, p11, new Vector3(p11.X, bed11, p11.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: -1, dirZ: 0, fType, renderMat, temp, packedAo,
-                            new Vector3(p01.X, y, p01.Z), p01, p00, new Vector3(p00.X, y, p00.Z),
+                            new Vector3(p01.X, bed01, p01.Z), p01, p00, new Vector3(p00.X, bed00, p00.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 0, dirZ: 1, fType, renderMat, temp, packedAo,
-                            new Vector3(p11.X, y, p11.Z), p11, p01, new Vector3(p01.X, y, p01.Z),
+                            new Vector3(p11.X, bed11, p11.Z), p11, p01, new Vector3(p01.X, bed01, p01.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 0, dirZ: -1, fType, renderMat, temp, packedAo,
-                            new Vector3(p00.X, y, p00.Z), p00, p10, new Vector3(p10.X, y, p10.Z),
+                            new Vector3(p00.X, bed00, p00.Z), p00, p10, new Vector3(p10.X, bed10, p10.Z),
                             centerSolids, centerFluids, solidChunks, fluidChunks, outFluidTriangles);
                     }
                 }
@@ -194,15 +194,22 @@ namespace Stratocraft.Voxel.Jobs
             ushort[] centerFluids,
             IReadOnlyDictionary<(int cx, int cz), uint[]> solidChunks,
             IReadOnlyDictionary<(int cx, int cz), ushort[]> fluidChunks,
-            out Vector3 outSkirtOffset)
+            out Vector3 outSkirtOffset,
+            out float outCornerBedY)
         {
             // Kose (lx + cornerDx, lz + cornerDz) etrafindaki 4 hucre: (-1..0, -1..0)
             int baseCornerX = lx + cornerDx;
             int baseCornerZ = lz + cornerDz;
 
             float fillSum = 0f;
-            int fluidSamples = 0;
+            float wetSurfaceSum = 0f;
+            int wetSamples = 0;
             bool touchesSdfShore = false;
+            bool touchesDrySlopedBed = false;
+            bool anyColumnAboveFluid = false;
+            float bedSum = 0f;
+            float maxWetBedY = Math.Max(0f, y - 1f);
+            int bedSamples = 0;
 
             float sdfNegX = 0f;
             float sdfPosX = 0f;
@@ -217,19 +224,50 @@ namespace Stratocraft.Voxel.Jobs
                     int sz = baseCornerZ + dz;
                     SampleCell(centerCx, centerCz, sx, y, sz, centerSolids, centerFluids, solidChunks, fluidChunks, out uint solidRaw, out ushort fluidRaw);
 
+                    uint belowSolidRaw = 0u;
+                    ushort belowFluidRaw = 0;
+                    if (y > 0)
+                    {
+                        SampleCell(centerCx, centerCz, sx, y - 1, sz, centerSolids, centerFluids, solidChunks, fluidChunks, out belowSolidRaw, out belowFluidRaw);
+                    }
+
+                    bool isCurrentCellSolidWall = VoxelBitUtility.IsPhysicallySolid(solidRaw);
+                    bool hasBelowSameFluid = y > 0 && (belowFluidRaw & 0xFFu) > 0u && ((belowFluidRaw >> 8) & 0x03u) == fluidType;
+                    bool hasCurrentSameFluid = (fluidRaw & 0xFFu) > 0u && ((fluidRaw >> 8) & 0x03u) == fluidType;
+
+                    float cellBedY = y;
+                    if (!hasBelowSameFluid && y > 0 && VoxelBitUtility.IsPhysicallySolid(belowSolidRaw) && !isCurrentCellSolidWall)
+                    {
+                        cellBedY = ComputeColumnSurfaceNetsBedMeters(belowSolidRaw, solidRaw, y);
+                    }
+
+                    if (hasCurrentSameFluid || hasBelowSameFluid)
+                    {
+                        bedSum += cellBedY;
+                        if (cellBedY > maxWetBedY) maxWetBedY = cellBedY;
+                        bedSamples++;
+                    }
+
                     // Eger ustunde ayni tip sivi varsa bu kose o hucrede tam 1.0 yuksekliktedir
                     SampleCell(centerCx, centerCz, sx, Math.Min(255, y + 1), sz, centerSolids, centerFluids, solidChunks, fluidChunks, out _, out ushort aboveRaw);
                     if (y + 1 < 256 && (aboveRaw & 0xFFu) > 0u && ((aboveRaw >> 8) & 0x03u) == fluidType)
                     {
                         fillSum += 1.0f;
-                        fluidSamples++;
+                        wetSurfaceSum += y + 1.0f;
+                        wetSamples++;
+                        anyColumnAboveFluid = true;
                     }
-                    else if ((fluidRaw & 0xFFu) > 0u && ((fluidRaw >> 8) & 0x03u) == fluidType)
+                    else if (hasCurrentSameFluid)
                     {
                         byte cap = ComputeSdfPorousCapacity(solidRaw);
-                        float norm = cap > 0 ? Math.Clamp((fluidRaw & 0xFFu) / (float)cap, 0.06f, 0.96f) : 0.92f;
+                        float norm = cap > 0 ? Math.Clamp((fluidRaw & 0xFFu) / (float)cap, 0.045f, 0.96f) : 0.92f;
                         fillSum += norm;
-                        fluidSamples++;
+                        wetSurfaceSum += Math.Min(y + 1.0f, cellBedY + norm);
+                        wetSamples++;
+                    }
+                    else if (y > 0 && VoxelBitUtility.IsPhysicallySolid(belowSolidRaw) && VoxelBitUtility.GetShapeId(belowSolidRaw) == 0 && !isCurrentCellSolidWall)
+                    {
+                        touchesDrySlopedBed = true;
                     }
 
                     byte sMat = VoxelBitUtility.GetMaterialId(solidRaw);
@@ -248,7 +286,10 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            float avgFill = fluidSamples > 0 ? (fillSum / fluidSamples) : 0.5f;
+            outCornerBedY = bedSamples > 0 ? (bedSum / bedSamples) : y;
+            float avgWetFill = wetSamples > 0 ? (fillSum / wetSamples) : 0.08f;
+            float avgWetSurfaceY = wetSamples > 0 ? (wetSurfaceSum / wetSamples) : (outCornerBedY + 0.08f);
+            bool isThinFlowRibbon = !anyColumnAboveFluid && avgWetFill < 0.25f;
             outSkirtOffset = Vector3.Zero;
 
             if (touchesSdfShore)
@@ -256,14 +297,30 @@ namespace Stratocraft.Voxel.Jobs
                 Vector3 gradXZ = new Vector3(sdfPosX - sdfNegX, 0f, sdfPosZ - sdfNegZ);
                 float lenSq = gradXZ.LengthSquared();
                 Vector3 dirToBank = lenSq > 1e-4f ? (gradXZ / MathF.Sqrt(lenSq)) : Vector3.Zero;
-                outSkirtOffset = dirToBank * ShorelineSkirtExtensionMeters - new Vector3(0f, SkirtUnderTerrainDipMeters, 0f);
+                if (isThinFlowRibbon)
+                {
+                    outSkirtOffset = dirToBank * 0.18f;
+                }
+                else
+                {
+                    outSkirtOffset = dirToBank * ShorelineSkirtExtensionMeters - new Vector3(0f, SkirtUnderTerrainDipMeters, 0f);
+                }
             }
 
-            float cornerY = y + avgFill;
-            if (touchesSdfShore)
+            if (anyColumnAboveFluid)
             {
-                // Kiyi egiminin ve kumun icine temizce gomulmesi icin su yuzeyini kiyida 14cm daldir (havada asili kalma %100 sifirlanir)
-                cornerY -= 0.14f;
+                return y + 1.0f;
+            }
+
+            if (isThinFlowRibbon)
+            {
+                return Math.Min(y + 1.0f, Math.Max(avgWetSurfaceY, maxWetBedY + 0.055f));
+            }
+
+            float cornerY = Math.Min(y + 1.0f, avgWetSurfaceY);
+            if (touchesSdfShore || touchesDrySlopedBed)
+            {
+                cornerY -= 0.015f;
             }
             return cornerY;
         }
@@ -296,6 +353,19 @@ namespace Stratocraft.Voxel.Jobs
             if (((nFluid & 0xFFu) > 0u && ((nFluid >> 8) & 0x03u) == fluidType) || VoxelBitUtility.IsPhysicallySolid(nSolid))
             {
                 return;
+            }
+
+            // Eger yan komsunun altinda dogal SurfaceNets arazisi varsa (egimli yamac kiyisi),
+            // ust yuzey zaten araziye sifirlandigi icin dikey kutu yan duvari cizilmez (selale/ucurum haric).
+            if (y > 0)
+            {
+                SampleCell(centerCx, centerCz, nx, y - 1, nz, centerSolids, centerFluids, solidChunks, fluidChunks, out uint nBelowSolid, out ushort nBelowFluid);
+                if (VoxelBitUtility.IsPhysicallySolid(nBelowSolid) &&
+                    VoxelBitUtility.GetShapeId(nBelowSolid) == 0 &&
+                    (nBelowFluid & 0xFFu) == 0u)
+                {
+                    return;
+                }
             }
 
             HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(b0, t0, t1, renderMat, temp, 178, packedAo, outFluidTriangles);
@@ -352,6 +422,34 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ComputeColumnSurfaceNetsBedMeters(uint belowSolidRaw, uint currentSolidRaw, int y)
+        {
+            byte curMat = VoxelBitUtility.GetMaterialId(currentSolidRaw);
+            byte curShape = VoxelBitUtility.GetShapeId(currentSolidRaw);
+            byte curDens = (curMat != 0 && curShape == 0) ? VoxelBitUtility.GetDensityOrLiquid(currentSolidRaw) : (byte)0;
+
+            if (y > 0 && VoxelBitUtility.IsPhysicallySolid(belowSolidRaw))
+            {
+                byte belowShape = VoxelBitUtility.GetShapeId(belowSolidRaw);
+                if (belowShape == 0)
+                {
+                    float dBelow = Math.Max((int)VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw), 64);
+                    float dCurr = curDens;
+                    float denom = Math.Max(1f, dBelow - dCurr);
+                    float frac = Math.Clamp((dBelow - 64f) / denom, 0.08f, 0.92f);
+                    return (y - 1) + frac;
+                }
+                return y;
+            }
+
+            if (curDens > 0 && curDens < 64)
+            {
+                return y + (curDens / 64.0f) * 0.45f;
+            }
+
+            return y;
+        }
+
         private static byte ComputeSdfPorousCapacity(uint solidRaw)
         {
             byte mat = VoxelBitUtility.GetMaterialId(solidRaw);

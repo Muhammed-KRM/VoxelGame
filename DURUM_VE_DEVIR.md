@@ -13,19 +13,85 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#041` (Faz 1 & 2 Anayasa Mantık Düzeltmeleri Tamamlandı: 4 Yuvalı Anatomik Bölgesel Zırh, [I] Taktik Panel & RMB Kuşanma, Miğfersiz Kafaya 2.5x Kritik Hasar, Squashing'siz Gerçek Kütük Boylama ($t \in [0, 1]$), 3B Volümetrik Sıvı Tabanı (Bottom Quads) ve $\Delta V \ge 32$ Göllenme Fiziği, Boş Başlangıç Survival Modu \| 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-10T13:45:00+03:00` |
+| **Devir Numarası** | `#043` (Savurma/Su Telemetrisi + Kılıç Spam Engeli & Mikro-Kesik + Hissedilir Saplanma Tamamlandı; **AÇIK SORUNLAR:** Balta/Kazma Sağ-Sol Otomatik Sallanma Hatası & Su 3B Hacim/Akış Görünürlüğü/Yerle Temas/Koyma Sorunları — bkz. `docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md` \| 57/57 Standalone Test PASS, 0 Error / 0 Warning) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-10T17:53:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Anayasa Uyumluluk Düzeltmeleri ve Oyuncu Arayüz/Mekanik Entegrasyonu Tamamlandı (Devir #041)` |
-| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (946 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif ve Doğrulandı)` |
+| **Mevcut Çalışma Aşaması** | `Devir #043: Faz A–E İlk Uygulaması Tamamlandı; PlayMode Testinde Tespit Edilen Balta/Kazma Sağ-Sol Savurma ve Su 3B Hacim/Akış/Temas Sorunları Raporlandı (Sıradaki İlk İş)` |
+| **Aktif Test Durumu** | `57/57 Standalone Core Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#041`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#043`)
 
-### 2.0. Devir #041: Faz 1 & Faz 2 Anayasa Düzeltmeleri ve Oyuncu Arayüz/Mekanik Entegrasyonu
+### 2.0. Devir #043: Yönlü Savaş Jest Birikimcisi (Spam Engeli & Mikro-Kesik), Balta/Kazma Sabit Düzlemli Kırma Yayı, Hissedilir Saplanma ve Yokuşta Su Akış Yolu Görünürlüğü (`Faz A – E`)
+
+4'lü mimari ve geliştirme doküman seti (`DOK1_HEDEF_VE_GEREKSINIMLER_V2.md`, `DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU_V2.md`, `DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI_V2.md`, `DOK4_ADIM_ADIM_GELISTIRME_PLANI_V2.md`) doğrultusunda 5 iş paketi eksiksiz kodlanmış ve doğrulanmıştır:
+
+#### 1. Faz A — Savurma ve Su Telemetrisi (`SwingTraceRecorder`, `SwingTraceGizmoRenderer`, `FluidTraceRecorder`)
+- **`SwingTraceRecorder.cs` (`Assets/_Stratocraft/Character/Diagnostics/`):** 512 karelik Sıfır-GC halka tamponu ile her savurmanın ham fare girdisini, jest yol uzunluğunu, gücünü (`Power01`), bilek açılarını, dünya uzayındaki `Hilt/Head/Tip` koordinatlarını, temas edilen voksel/malzeme/sonuç (`Lodge/Ricochet/Cleave`) ve çekip çıkarma ilerlemesini kaydeder; savurma bittiğinde `Logs/swing_trace_*.csv` ve `Logs/swing_summary.log` dosyalarına yazar.
+- **`SwingTraceGizmoRenderer.cs` (`[Insert]` Tuşu):** Oyun içinde `[Insert]` tuşuna basıldığında son 8 savurmanın 3B kabza-uç vektör şeritlerini ve saplanma/sekme noktalarını sahnede canlı çizer.
+- **`FluidTraceRecorder.cs` (`Assets/_Stratocraft/Physics/Diagnostics/`):** Her sıvı tick'inde aktif/işlenen chunk sayısını, toplam sıvı kütlesini, reaksiyon sayılarını ve pariteyi `Logs/fluid_trace_*.csv` dosyasına yazar.
+
+#### 2. Faz B — Kılıç: Küçük Fare Hareketiyle Spam Engeli ve Mikro-Kesik (`SwingGestureAccumulator` & `SwingGestureTuning`)
+- **Kamera Hassasiyetinden ve FPS'ten Bağımsız Jest Birikimcisi (`SwingGestureAccumulator.cs`):** `0.12s` kayan pencerede hassasiyet çarpanından arındırılmış ham fare yer değiştirmesini toplar (`60 FPS` ve `144 FPS` altında aynı fiziksel hareket aynı `Power01` değerini üretir).
+- **3 Kademeli Jest Yanıtı (`SwingGestureTuning.cs`):**
+  1. **Ölü Bölge (`< 0.40` birim):** Savurma başlatmaz, yalnızca gardı kaydırır.
+  2. **Mikro-Kesik (`Micro-Cut`, `Power01 < 0.35`):** Ufak bilek hareketlerinde kılıç yavaş (`3.2..5.5 rad/s`) ve kısa yaylı hareket eder, tam savurmanın **en fazla `%16..%24`'ü** kadar hasar verir, uzuv koparmaz ve düşmanı sarsmaz (`Stage1CreatureSimulationBridge.cs`).
+  3. **Tam Savurma (`Full Swing`) & Sağ-Sol Spam Cezası (`Reversal Tax`):** `0.55s` içinde zıt yöne (`dot < -0.35`) ardışık savurma denendiğinde `1.65x` fare yolu şartı, zorunlu `ReChamberingToStart` ve `+0.16s` ek toparlanma uygulanır.
+
+#### 3. Faz C — Balta (`Slot 3`) ve Kazma (`Slot 2`): Sabit Düzlemli Kırma Yayı (`ToolChopArcProfile.cs`)
+- **Fare Savurma Şartı Olmadan Anında Vuruş:** Kazma ve Balta eldeyken Sol Tık (`LMB`) basıldığı anda fareyi savurma şartı aranmadan (`mouseFlickMag` gerektirmez) doğrudan sabit düzlemli kırma/yarma yayına girer:
+  - Kazma (`Slot 2`): Baş üstü dikey kırma yayı (`OverheadVerticalPick`).
+  - Balta (`Slot 3`): Dikili ağaca bakarken sağ-üstten sol-alta oduncu kesiği (`DiagonalWoodcutterChop`), yere/kütüğe bakarken (`pitch >= 24°`) dikey yarma (`OverheadLogSplit`).
+- **Sıfır Roll Burkulması ve `-90°` GLB Ağız Kalibrasyonu (`ComputeLockedRollToolRotation`):** Kazma (`0.72m`) ve Balta (`0.68m`) GLB modellerinde `+X` yönüne bakan kesici kafa `-90°` yerel yaw düzeltmesiyle tam vuruş düzlemine (`+Z`) kilitlendi ve `_edgeRollRad` sap burkulması aletlerde tamamen devre dışı bırakıldı.
+- **Kafa-Öncelikli Süpürülmüş Voksel Teması ve Kuşanma Koruması:** Aletlerde yalnızca metal kafa noktaları (`i >= 3`) ve 4 alt-adım (substep) ile voksel teması taranır; `Stage1HolsterAndBackpackController` içinde her karede yerel pozisyonu ezen `drawDropY` hatası düzeltildi; `bladeImpactPower / 24f` birim hatası giderildi.
+
+#### 4. Faz D — Hissedilir Saplanma (`Lodge`), Sekme (`Ricochet`) ve Çekince Kırılma (`Deferred Break`)
+- **Minimum `0.25s` Saplanma Kilit Süresi (`_lodgeGraceTimer = 0.25f`):** Alet veya silah saplandığında Sol Tık basılı tutulsa veya fare ileri itilse bile ilk `0.25s` boyunca kesinlikle saplı kalır; `forwardMousePull` ve `holdingLmb` ile otomatik kurtulma kaldırıldı (yalnızca ters yöne fare çekişi, Sağ Tık asılması, `[F]`/`[Q]` veya `[S]` geri adım ile çıkar).
+- **Çekince Kırılma (`Deferred Break on Pull-Out`):** Tek vuruşta kırılacak saplanabilir bloklarda (`prevDmg == 0 && nextDmg >= 15`) blok ilk darbede `14/15` hasarda tutulup alet bloğa saplanır; oyuncu aleti çekip çıkardığı anda (`ConsumePendingBreakOnPullOut` -> `CompleteDeferredVoxelBreakOnPullOut`) blok parçalanır.
+
+#### 5. Faz E — Su: Yokuşta Akış Yolu Görünürlüğü, Tam Tahliye, Düz Havuzlanma ve CFL 1-Hücre/Tick Hız Kontrolü
+- **Yüzey Voksel Alt-Eğim Yoğunluğu (`StratocraftFloatingIslandWorldGen.cs`):** Yüzey çim bloklarındaki sabit `density = 76` platosu kaldırılarak her yüzey vokselinin gerçek `subVoxelFrac = topH - solidFloorY` eğimini `66..124` aralığında kodlaması sağlandı; böylece aynı tam sayı `Y` seviyesindeki eğimli yamaçlarda `bedA > bedB` farkı korunur.
+- **Yokuşta Tam Tahliye ve Sıfır Asılı Kalma (`FluidCellularAutomataJob.cs`):** Yokuş üzerinde `1` kütle birimi su bırakan yapışkan iz kuralı kaldırıldı ve su için `minDiffThreshold = 1` yapılarak yokuşlardaki ince suyun (`Mass <= 16`) en alt çukura kadar tamamen akıp düz birikmesi sağlandı.
+- **Kıyı Duvarlarına Tırmanmayan Düz Havuz Yüzeyi (`FluidSurfaceSkirtMesher.cs`):** `ComputeCornerHeightAndSkirt` içinde komşu katı yamaç duvarlarının (`isCurrentCellSolidWall`) su yatağı ortalamasına (`bedSum` ve `maxBedY`) katılması engellendi; köşe yüksekliği yalnızca ıslak hücrelerin hidrostatik yüzey ortalamasından (`avgWetSurfaceY`) hesaplanarak çukurda biriken suyun eğimli değil tam yatay/düz görünmesi sağlandı.
+- **3B Savurma Gizmosu Varsayılan Kapalı (`SwingTraceRecorder.cs`):** `ShowVisualGizmos` varsayılanı `false` yapıldı; havada kalan yeşil/turkuaz debug çizgileri yalnızca `[Insert]` tuşuna basıldığında açılır.
+- **Adil Döngüsel Chunk Zamanlayıcı (`Stage1InteractivePlayController.cs` & `FluidSimulationSystem.cs`):** `_fluidRoundRobinCursor` ile tüm aktif sıvı chunk'ları sırayla eşit güncellenir ve aynı tick içinde ortak `tickParity` paylaşır.
+
+---
+
+### 2.0.1. Devir #042: Sonlu-Hacim Hidrolik Sıvı Fiziği ($H = b + h$) ve Silah/Alet Saplanma-Çekip Çıkarma & Sekme Sistemi
+
+Onaylanan geliştirme planı (`GELISTIRME_PLANI_SIVI_FIZIGI_VE_ALET_SAPLANMA_SEKME.md`) doğrultusunda `FAZ S0 – S5` (Sıvı Fiziği ve `SurfaceNets` Görsel Uyumu) ile `FAZ L1 – L4` (Silah ve Alet Fiziksel Saplanma / Çekip Çıkarma / Sekme Mekanikleri) eksiksiz kodlanmış ve doğrulanmıştır:
+
+#### 1. Sonlu-Hacim Hidrolik Sıvı Fiziği ($H = b + h$) ve `SurfaceNets` Arazi Uyumu (`FAZ S0 – S5`)
+- **Çift Katmanlı Su Bölünmesi ve Havada Asılı Kalma Kök Neden Çözümü (`FluidPorosityUtility.cs` & `FluidSurfaceSkirtMesher.cs`):**
+  - `FluidPorosityUtility.ComputeCellFluidCapacity`: `ShapeId == 0` ve `density >= SdfIsoLevel (64)` olan katı arazi bloklarının sıvı kapasitesi `0` (geçirimsiz yatak) yapıldı; böylece suyun eğimli çimen bloklarının içine sızıp `y` ve `y+1` olmak üzere iki ayrı katmana bölünmesi tamamen engellendi.
+  - `FluidPorosityUtility.ComputeCellBedElevationUnits255` & `ComputeColumnSurfaceNetsBedMeters`: `HybridSurfaceNetsAndShapeMesher` ile birebir aynı izo-yüzey formülü (`(y - 1) + Clamp((dBelow - 64) / (dBelow - dCurr), 0.08, 0.92)`) kullanılarak her sütunun alt-voksel `SurfaceNets` yatak kotu $b(\mathbf{x})$ hesaplandı.
+  - `FluidSurfaceSkirtMesher.ComputeCornerHeightAndSkirt`: Su köşe yüksekliği tamsayı `y + avgFill` yerine gerçek alt-voksel arazi yatağı `outCornerBedY + avgFill` üzerine oturtuldu; suyun yeşil `SurfaceNets` çimen üçgenlerinin `0.50m..0.95m` üstünde havada uçması sorunu tamamen giderildi ve `+0.35m` kıyı eteği sözleşmesi korundu.
+  - `FluidSurfaceSkirtMesher.EmitSideWallIfExposed`: Kuru komşusu eğimli `ShapeId == 0` arazi yatağı olan kıyılarda dik kutu yan duvar (`Side Wall`) basılması engellenerek suyun araziye sıfır açıyla kavuşması sağlandı.
+- **Sanal Boru ($H = b + h$) Yanal Akış ve Aktif Y-Dilimi Optimizasyonu (`FluidCellularAutomataJob.cs`):**
+  - `RunLateralPairPass` ve `ExchangeSingleChunkSeam` içinde düz `aCell.Mass - bCell.Mass` karşılaştırması yerine toplam hidrolik yük $H = b + h$ (`headA = bedA + aCell.Mass`, `headB = bedB + bCell.Mass`) modeline geçildi; yamaç aşağı akışta `Cohesion = 32` barajı kaldırılarak ince su filmlerinin yamaçtan aşağı takılmadan akması ve çukurlarda göllenmesi sağlandı.
+  - `StepFluidGridVolumeConservative` içine aktif Y-dilimi penceresi (`[minFluidY..maxFluidY]`) eklenerek boş Y katmanlarının taranması atlandı.
+- **Pürüzsüz Kıyı Köpüğü (`StratocraftFluidSurface.shader`):**
+  - Kesikli beyaz gürültü (`Hash21 + step`) yerine sürekli çift-doğrusal `SmoothValueNoise2D` ve `smoothstep` kıyı şeffaflık geçişi eklendi.
+
+#### 2. Silah ve Alet Fiziksel Saplanma (`Saplanma / Pull-Out`) ve Sekme (`Sekme / Ricochet`) Sistemi (`FAZ L1 – L4`)
+- **Sıfır-GC Karar Motoru (`ImpactResponseResolver.cs`):**
+  - **Balta (`Slot 3`):** Ağaç/odun/devrik kütük (`OakWood`, `Ironwood`, `SpiritWood`, `WoodPlank`, `FallenTreeLogInstance`) ve toprak/çimen/kum (`Dirt`, `Grass`, `Sand`, `Clay`, `Gravel`) yüzeylere **saplanır (`Lodge`)**; taş ve cevherlerden kıvılcımla **seker (`Ricochet`)**.
+  - **Kazma (`Slot 2`):** Taş/cevher (kademe yeterliyse), toprak ve ahşap yüzeylere **saplanır (`Lodge`)**; kademesi yetersizse (`CurrentToolTier < reqToolTier`) veya `Bedrock` ise **seker (`Ricochet`)**.
+  - **Normal Kılıçlar (`Longsword`, `Katana`, `Rapier`):** Ağaç/odun ve toprağa **saplanır (`Lodge`)**; taşa ve cevhere vurulduğunda **seker (`Ricochet`)**.
+  - **Büyük Kılıç (`Greatsword / Zweihänder`):** Ağaç ve toprağa saplanır; yüksek enerjili (`impactEnergy >= 1.15f`) ağır vuruşlarda **taşa bile saplanır (`Lodge`)**, düşük enerjili vuruşlarda taştan seker.
+  - **Forte (`u < 0.45`), Yassı Namlu (`edgeAlignment01 < 0.40`) ve Kırılan Hedef (`targetBrokeOnHit`):** Forte ve yassı namlu vuruşları seker; hedef blok veya devrik kütük o darbeyle kırıldıysa (`nextDmg >= 15` veya kütük yarıldıysa) silah saplanmadan **yarıp geçer (`CleaveThrough`)**.
+- **Dünya Uzayında Çivilenme ve 1D Eksenel Çekip Çıkarma (`Stage1DirectionalCombatBridge.cs`, `Stage1MatterCrystalAndMiningController.cs`, `Stage1InteractivePlayController.cs`):**
+  - `BallisticSlashPhase` enum'una `LodgedInTarget = 3` ve `PullingOut = 4` evreleri eklendi.
+  - Silah/alet saplandığında dünya uzayındaki pozisyonu ve yönelimi (`_lodgedWorldHiltPos`, `_lodgedWorldRot`) kilitlenir; oyuncu kamerayı çevirse bile silah ağaçta/yerde/kütükte saplı kalır ve çekip çıkarılana kadar yeni savurma başlatılamaz.
+  - Oyuncu fareyi vuruş yönünün tersine çekerek, sağ/sol tık basılı tutup asılarak, `[F]`/`[Q]` tuşlarıyla veya geri adım atarak (`ApplyBackstepPullAssist`) silahı eksenel olarak geri çeker (`_lodgePullProgress01`). `%100`'e ulaşıldığında silah sarsıntıyla kurtulur ve anında tekrar savurma için `IsPreChamberedReady` (Ön-Kurulum) durumuna geçer (`Sapla -> Çek -> Tekrar Savur`).
+
+---
+
+### 2.1. Devir #041: Faz 1 & Faz 2 Anayasa Düzeltmeleri ve Oyuncu Arayüz/Mekanik Entegrasyonu
 
 Game Logic Bible v7.0 ve denetim raporu (`DOC-AUDIT-CONSTITUTION-PHASE1-2-V1`) doğrultusunda 4 temel anayasal eksik ve mantık hatası tamamen giderilmiş, oyuncu arayüz ve etkileşim döngülerine kusursuzca bağlanmıştır:
 
@@ -438,14 +504,23 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
       - **2) Halka-Öncelikli (`Ring-First`) Chunk Akışı ve Tek-Geçişli (`5x` Hızlı) Tam-Chunk Örme (`Stage1InteractivePlayController.cs`):** `StepDynamicContinentChunkStreaming` içinde `r` halkası dış döngü, `pass (0..1)` iç döngü yapılarak oyuncuya yakın halkaların (`r = 0..3`) 8 komşusu eksiksiz tamamlanmadan uzak halkalara geçilmesi engellendi. `_chunkPool` havuzundan geri alınan chunk'ların eski `sharedMesh` referansı temizlendi, henüz mesh'i olmayan yeni chunk'lara `_sortedDirtyChunks` içinde öncelik verildi ve tam-chunk yenilemelerinde (`dirtyMask == AllSubChunksMask`) tek geçişli (`minY = 0, maxY = 160`) örme kullanılarak yenileme süresi `5x` hızlandırıldı.
       - **3) Sınır Apron Simetrisi ve Su Geçirmez (`Watertight`) Kuad Emniyeti (`HybridSurfaceNetsAndShapeMesher.cs`):** `BuildEffectiveChannel1SdfGrid` içinde apron sınırındaki (`px = 0, 17`, `pz = 0, 17`) mimari/ağaç şekillerinin komşu chunk'taki doğal araziyi `ResolvePaddedColumnChunk` üzerinden okuması sağlandı ve `EmitDualQuadAsFacetedTriangles` içine 3 geçerli köşeden 4. köşeyi tamamlayan su geçirmez sınır emniyeti eklendi.
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
-## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar
+## 3. Yarım Kalan / Açık Sorunlar ve Henüz Çözülmemiş Noktalar (`Devir #043`)
 
-1. **Devir #041 — Oyuncu Tarafından PlayMode'da Test Edilecek Canlı Mekanikler:**
-   - **Bölgesel Zırh Kuşanma & Kafa Hasarı:** `[F4]` ile Yaratıcı Mod açılıp `[Tab]` Kataloğundan Zırh sekmesine girilmeli; Miğfer, Göğüslük, Kolçak ve Dizlik alınarak hem Hotbar'da sağ tıkla hem de `[I]` Taktik Çanta ekranındaki **"🛡️ ANATOMİK BÖLGESEL ZIRHLAR"** paneline sürükle-bırak yapılarak kuşanılmalı. `[F10]` ile Düellocu NPC çağrılıp miğfer çıkarıldığında baş üstü darbelerde `[💥 MİĞFERSİZ KAFA KRİTİK 2.5x]` uyarısı ve ağır hasar gözlemlenmelidir.
-   - **Kütük Boylama Fiziği:** Bir ağaç baltalandığında devrilen gövdenin dibine ($t \le 0.35$) veya tepesine ($t \ge 0.65$) baltayla vurularak 2m bağımsız tomruk koparıldığı, ana kütüğün squashing olmadan temizce kısaldığı ve kopan tomruğun `[E]` ile omuzlandığı doğrulanmalıdır.
-   - **3B Sıvı Hacmi ve Göllenme:** Yüksek bir falezden su döküldüğünde alt yüzeylerin (`Bottom Quads`) örüldüğü ve düz zemine dökülen suyun hızla yok olmak yerine $\Delta V \ge 32$ kohezyonla stabil göletler oluşturduğu test edilmelidir.
-   - **Survival Modu Boş Başlangıç:** Oyuna ilk girildiğinde hotbar'ın ve elin tamamen boş başladığı (`SelectedHotbarIndex = -1`) teyit edilmelidir.
+### 3.1. PlayMode Testinde Tespit Edilen Açık Sorunlar (`docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md`)
 
+1. **Balta (`Slot 3`) ve Kazma (`Slot 2`) Sağ-Sol Savurma / Otomatik Tekrarlama Hatası:**
+   - **Sorun:** Ağaç oyuncunun **solunda** dururken fareyi **sola** savurunca balta ağaca düzgün vuruyor ve saplanıyor; ancak fareyi **sağa** götürünce (aleti sağa kurmak/çekmek istediğinde) balta yalnızca sağ tarafa geçip beklemek yerine kendi kendine sürekli **sağ-sol** yapmaya başlıyor ve ağaca ardı ardına çok hızlı vurarak kesiyor. Aynı durum **Kazma (`Slot 2`)** için de geçerli.
+   - **Beklenen:** Fare sağa götürüldüğünde balta/kazma yalnızca sağ tarafa (kurulma/hazırlık konumuna) geçmeli; sadece sola (hedefe doğru) savrulduğunda vurup saplanmalı.
+   - **Log Kanıtı (`Logs/swing_summary.log`):** `Stage1DirectionalCombatBridge.cs` içinde `isToolSlot` için fare yönünden bağımsız sabit `ToolChopArcProfile` yayının her `LMB` karesinde yeniden başlaması nedeniyle saniyede 2–3 kez otomatik vuruş tetiklenmektedir.
+
+2. **Su Fiziği, 3B Hacim, Akış Süresi, Yerle Temas ve Su Koyma Sorunları:**
+   - **2A — Suyun Gidiş Süresinin Olmaması / Anında Aşağıda Oluşması:** Su döküldüğünde oyuncunun önünde oluşuyor ve yokuştan aşağı akış yolculuğu hiç görülmeden anında yokuşun altında beliriyor (yerin altına girip yok oluyor ve aşağıda çıkıyor gibi görünüyor).
+   - **2B — Su Hacminin Çok Ufak / İnce Olması (3B Blok Hissiyatı Eksikliği):** Suyun hacmi ve kalınlığı çok ufak/ince durduğu için arazide seçilemiyor; Minecraft'taki gibi daha dolgun, belirgin **3 boyutlu (3D)** bir hacme sahip olması gerekiyor.
+   - **2C — Suyun Yerle Temas Etmiyor / Havada Duruyor Gibi Görünmesi:** Su kütlesi eğimli çim araziyle tam temas etmiyor, yerin üstünde havada asılı duran bir yüzey gibi görünüyor.
+   - **2D — Farklı Açılardan Yere Bakıp Su Döküldüğünde Koyulmaması / Anlaşılamaması:** Yere farklı açılardan bakıp su matarasıyla sağ tıklandığında çoğu açıda su koyulmuyor veya koyulup koyulmadığı hiç anlaşılmıyor.
+
+### 3.2. Diğer Bekleyen Kontroller ve Faz 3+ Genişletmeleri
+1. **Devir #041 Canlı Mekanikleri:** Bölgesel zırh kuşanma, kütük boylama (`[E]` ile omuzlama) ve boş survival başlangıcı.
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Faz 3–5 ilerlemesinde dünyadaki Dojo Ustaları / Parşömenler ile açılması ve kullandıkça ustalık kazanılması.
    - **Örs Üzerinde Dövülen Özel Silah Modelleri:** `16x32x4` Çift Boynuzlu Örs üzerinde dövülen serbest voksel modelleri.
@@ -459,6 +534,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sonsuz Enerji (100 EP), Sınırsız Oksijen ve Sınırsız Blok İnşası açar/kapatır | ✅ Aktif |
 | **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler, Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
 | **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
+| **`[Insert]` Tuşu** | **3B Savurma Telemetri Gizmosu:** Son 8 savurmanın 3B kabza-uç vektör izlerini ve saplanma/sekme noktalarını açar/kapatır (`Varsayılan: Kapalı`) | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
 | **`[I]` Tuşu** | **24-Slotlu (`4x6`) Taktik Çanta & 4 Yuvalı "🛡️ ANATOMİK BÖLGESEL ZIRHLAR" Paneli** (Sol Tık: Sürükle-Bırak, Sağ Tık: Zırhı Kuşan / Tüket / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
 | **Hotbar'da Zırh Seçiliyken `RMB` (Sağ Tık)** | Seçili zırhı anında ilgili uzva (Miğfer -> Baş, Göğüslük -> Gövde, vb.) **kuşanır**; eski zırhı hotbar'a takas eder | ✅ Aktif |
@@ -483,26 +559,21 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
-1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -2 --oneline --date=iso` çalıştırarak en son commit'in Devir `#041` (`c47526c`) ile birebir eşleştiğini doğrula.
-   - Çalışma ağacının temiz (`working tree clean`) olduğunu kontrol et.
+1. **Adım 1 — Devir Raporunu, Açık Sorunlar Dokümanını ve Git Durumunu Doğrula:**
+   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` ve [`docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md`](docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md) dosyalarını oku.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak en son commit'in Devir `#043` ile birebir eşleştiğini doğrula.
 
-2. **Adım 2 — Devir #041 Durumunu Kullanıcıya Bildir ve Faz 3 Geçişini Sor:**
-   - Kullanıcıya Devir `#041` ile tamamlanan 4 anayasal sistemin hazır olduğunu özetle:
-     1. **Bölgesel Zırh:** 4 uzuv yuvası (Miğfer, Göğüslük, Kolçak, Dizlik), Hotbar RMB ile kuşanma, `[I]` Taktik Sırt Çantası sağ panelinden sürükle-bırak veya sağ tıkla kuşanma.
-     2. **Kritik Kafa Hasarı:** Miğfer takılı değilken başa alınan darbelerde `%0` zırh ve `2.5x` kritik hasar (`[💥 MİĞFERSİZ KAFA KRİTİK 2.5x]`).
-     3. **Gerçekçi Kütük Boylama:** Silindir squashing'siz, $t \in [0, 1]$ kök/tepe eksenli 2m tomruk koparma ve `[E]` ile omuzlama.
-     4. **3B Sıvı Hacmi ve Göllenme:** Havada asılı suyun altına `Bottom Quads` örülmesi ve düz zeminde $\Delta V \ge 32$ göllenme/kohezyon eşiği.
-     5. **Boş Survival Başlangıcı:** Hotbar ve el boş başlar; test için `[F4]` Yaratıcı Mod ve `[Tab]` Eşya Kataloğu kullanılır.
-   - Kullanıcıya sor: *"Devir #041 mekaniklerini PlayMode'da denediniz mi / denemek ister misiniz, yoksa doğrudan **Faz 3 (240 Hz Yönsel Yakın Dövüş, 15 Parça 3 Katman Zırh, 16x32x4 Çift Boynuzlu Örs & 4 Harmonizer Katalizörü)** geliştirme adımlarına mı geçelim?"*
+2. **Adım 2 — Öncelikli Olarak `docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md` İçindeki 2 Ana Sorun Grubunu Çöz:**
+   - **Sorun Grubu 1 — Balta ve Kazma Yönlü Kurulma vs. Savurma Ayrımı:**
+     - Fareyi sağa çektiğinde baltanın/kazmanın kendi kendine sağ-sol yapıp ağaca seri vurmasını engelle; fare sağa götürüldüğünde alet yalnızca sağa (kurulma/hazırlık konumuna) geçmeli, yalnız hedefe doğru (örn. sola/aşağı) savrulduğunda vuruş yapıp saplanmalı.
+   - **Sorun Grubu 2 — Su 3B Hacmi, Yokuş Aşağı Akış Süresi/Görünürlüğü, Zeminle Temas ve Her Açıdan Su Koyma:**
+     - Suyun hacmini/görsel kalınlığını büyütüp belirgin 3B blok/kütle görünümüne kavuştur.
+     - Suyun anında yokuş altında belirmesi yerine yamaç boyunca görünür bir hızla akmasını sağla.
+     - Suyun havada asılı durmasını giderip arazi yüzeyiyle tam temas etmesini sağla.
+     - Yere her bakış açısından sağ tıkla su koyulduğunda tutarlı şekilde yerleşmesini ve oyuncunun suyu koyduğunu net biçimde görmesini sağla.
 
-3. **Adım 3 — Faz 3 Başlangıç Adımları (Onay Alındığında):**
-   - `stratocraft-combat-and-catalogs` becerisini ve Game Logic Bible v7.0 §4 (Dövüş ve Zırh) maddelerini referans al.
-   - 15 Parçalı 3 Katmanlı Zırh Sistemini (Kumaş İçlik -> Zincir/Halka Örgü -> Plaka Zırh) ve Örs tezgâhı veri modellerini kur.
-
-4. **Adım 4 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` (`50/50 PASS`).
+3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`57/57 PASS`).
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
    - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).

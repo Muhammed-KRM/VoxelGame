@@ -1256,7 +1256,7 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                if (hitSpeedMps < 1.8f && combatBridge.CurrentThrustExtensionMeters < 0.12f) continue;
+                if (hitSpeedMps < 0.85f && combatBridge.CurrentThrustExtensionMeters < 0.12f) continue;
 
                 float uHit = (bestPtIdx + 1) * 0.20f;
                 if (uHit <= 0.20f && combatBridge.CurrentThrustExtensionMeters < 0.12f && !isJumpStrike)
@@ -1280,37 +1280,42 @@ namespace Stratocraft.Character
                 float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
                 float edgeMult = combatBridge.EdgeAlignment01;
                 float speedFactor01 = Mathf.Clamp01((hitSpeedMps - 1.6f) / 11.0f);
+                bool isMicroCut = combatBridge.IsMicroCut;
+                float gestureDamageMult = SwingGestureTuning.ComputeDamageMultiplier(combatBridge.CurrentSwingPower01, isMicroCut);
 
                 combatBridge.EvaluateWeaponStanceCompatibility(
                     playerMissingArm: false, out _, out float stanceDamageMult, out _, out _);
 
-                float preChamberMult = combatBridge.WasLastSlashPreChambered ? 1.28f : 1.0f;
+                float preChamberMult = (!isMicroCut && combatBridge.WasLastSlashPreChambered) ? 1.28f : 1.0f;
                 float jumpStrikeMult = isJumpStrike ? 1.40f : 1.0f;
-                float riposteMult = combatBridge.WasLastSlashRiposte ? 1.85f : 1.0f;
-                float iaidoMult = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
-                bool isWeakPointCrit = a.State == CreatureAiState.EmberEgg || (a.IsPhoenixBoss && region == AnatomicalHitRegion.HeadOrTorso);
+                float riposteMult = (!isMicroCut && combatBridge.WasLastSlashRiposte) ? 1.85f : 1.0f;
+                float iaidoMult = (!isMicroCut && combatBridge.WasLastSlashIaidoCharged) ? 1.60f : 1.0f;
+                bool isWeakPointCrit = !isMicroCut && (a.State == CreatureAiState.EmberEgg || (a.IsPhoenixBoss && region == AnatomicalHitRegion.HeadOrTorso));
                 float weakPointMult = isWeakPointCrit ? Creature21BehaviorSystem.PhoenixWeakPointCriticalMultiplier : 1.0f;
 
                 float damage = Mathf.Lerp(26f, 96f, speedFactor01)
-                    * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult * weakPointMult
+                    * gestureDamageMult * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult * weakPointMult
                     * Stage1GameSettings.PlayerCombatDamageMultiplier;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
-                a.HitFlinchTimer = 0.25f;
+                if (!isMicroCut)
+                {
+                    a.HitFlinchTimer = 0.25f;
+                }
 
                 combatBridge.NotifyBladeCleaveThroughFlesh();
 
                 Vector3 slashVelocity = (currPts[bestPtIdx] - prevPts[bestPtIdx]) / dt;
                 AttachSlashWoundScar(a, currPts[bestPtIdx], slashVelocity, sharedMat);
 
-                float severPower = speedFactor01 * edgeMult
+                float severPower = isMicroCut ? 0f : speedFactor01 * edgeMult
                     * (isJumpStrike ? 1.35f : 1.0f)
                     * (combatBridge.WasLastSlashPreChambered ? 1.20f : 1.0f)
                     * (combatBridge.WasLastSlashRiposte ? 1.35f : 1.0f);
-                string severNote = a.State != CreatureAiState.EmberEgg
+                string severNote = (!isMicroCut && a.State != CreatureAiState.EmberEgg)
                     ? TrySeverRegionalLimb(a, region, currPts[bestPtIdx], severPower, slashVelocity, sharedMat)
                     : string.Empty;
 
-                string bonusLabel = string.Empty;
+                string bonusLabel = isMicroCut ? " [HAFIF KESIK]" : string.Empty;
                 if (isWeakPointCrit) bonusLabel += " [ZAYIF NOKTA KRITIK 3.0x!]";
                 if (combatBridge.WasLastSlashRiposte) bonusLabel += " [USTA RIPOSTE 1.85x!]";
                 if (combatBridge.WasLastSlashIaidoCharged) bonusLabel += " [IAIDO SIMSEK 1.60x!]";

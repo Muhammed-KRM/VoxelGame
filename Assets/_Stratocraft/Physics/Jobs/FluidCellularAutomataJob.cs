@@ -109,9 +109,13 @@ namespace Stratocraft.Physics.Jobs
                 throw new ArgumentException("Fluid or voxel buffer smaller than grid dimensions.");
             }
 
-            // Hizli %0 CPU Durgunluk Erken Cikisi: Hic aktif (IsSettled == false) sivi hucresi yoksa yalnizca kutle topla ve cik!
+            // Hizli %0 CPU Durgunluk Erken Cikisi + Aktif Y-Dilimi Penceresi [minFluidY..maxFluidY]:
+            // Hic aktif (IsSettled == false) sivi hucresi yoksa yalnizca kutle topla ve cik!
             bool anyActive = false;
             long fastMassSum = 0;
+            int strideY = sizeZ * sizeX;
+            int minFluidY = sizeY - 1;
+            int maxFluidY = 0;
             for (int i = 0; i < totalCells; i++)
             {
                 ushort raw = fluids[i];
@@ -119,6 +123,9 @@ namespace Stratocraft.Physics.Jobs
                 if (m > 0)
                 {
                     fastMassSum += m;
+                    int cy = i / strideY;
+                    if (cy < minFluidY) minFluidY = cy;
+                    if (cy > maxFluidY) maxFluidY = cy;
                     if ((raw & FluidCell16.SettledBitMask) == 0)
                     {
                         anyActive = true;
@@ -134,10 +141,11 @@ namespace Stratocraft.Physics.Jobs
             EnsureScratch(totalCells, out int[] visitedStamp, out int[] bfsQueue, out byte[] changedMask);
             Array.Clear(changedMask, 0, totalCells);
 
-            int strideY = sizeZ * sizeX;
+            int startY = Math.Max(1, minFluidY);
+            int endY = Math.Min(sizeY - 1, maxFluidY + 1);
 
             // 1. Gecis: -Y Yercekimi Akisi ve Dikey Su+Lav Temas Kimyasi
-            for (int y = 1; y < sizeY; y++)
+            for (int y = startY; y <= endY; y++)
             {
                 for (int z = 0; z < sizeZ; z++)
                 {
@@ -493,30 +501,37 @@ namespace Stratocraft.Physics.Jobs
                         continue;
                     }
 
-                    // 2) Sınır ötesi yanal (veya -Y düşüş destekli) kütle korunumlu akış
+                    // 2) Sınır ötesi yanal (H = b + h sanal boru ve -Y düşüş destekli) kütle korunumlu akış
                     FluidType activeType = aCell.Mass > 0 ? aCell.Type : bCell.Type;
                     if (activeType == FluidType.None)
                     {
                         continue;
                     }
 
-                    int diff = aCell.Mass - bCell.Mass;
-                    int absDiff = Math.Abs(diff);
-                    // Lav Bingham Plastik Akma Esigi (16) ve Su Kohezyon/Gollenme Esigi (Bos hucreye yayilmada min 32 kitle, dolu hucreler arasi 2 kitle)
-                    int minDiffThreshold = activeType == FluidType.Lava
-                        ? LavaBinghamYieldThreshold
-                        : ((aCell.Mass == 0 || bCell.Mass == 0) ? 32 : 2);
-                    if (absDiff < minDiffThreshold)
-                    {
-                        continue;
-                    }
+                    uint belowSolidA = y > 0 ? voxelsA[idxA - 256] : 0u;
+                    uint belowSolidB = y > 0 ? voxelsB[idxB - 256] : 0u;
+                    int bedA = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowSolidA, voxelsA[idxA], y);
+                    int bedB = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowSolidB, voxelsB[idxB], y);
+                    int headA = bedA + aCell.Mass;
+                    int headB = bedB + bCell.Mass;
 
                     int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
-                    int transfer = Math.Max(1, absDiff / viscosityDiv);
-
-                    if (diff > 0)
+                    if (aCell.Mass > 0 && headA > headB)
                     {
-                        transfer = Math.Min(transfer, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
+                        int diffH = headA - headB;
+                        bool isDownhill = bedA > bedB;
+                        int minThreshold = activeType == FluidType.Lava
+                            ? LavaBinghamYieldThreshold
+                            : 1;
+                        if (diffH < minThreshold)
+                        {
+                            continue;
+                        }
+
+                        int desired = isDownhill && aCell.Mass <= 16
+                            ? aCell.Mass
+                            : Math.Max(1, diffH / viscosityDiv);
+                        int transfer = Math.Min(desired, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
                         if (transfer > 0)
                         {
                             fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false, aCell.PressureHead).RawValue;
@@ -528,9 +543,22 @@ namespace Stratocraft.Physics.Jobs
                             seamTransfers++;
                         }
                     }
-                    else
+                    else if (bCell.Mass > 0 && headB > headA)
                     {
-                        transfer = Math.Min(transfer, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
+                        int diffH = headB - headA;
+                        bool isDownhill = bedB > bedA;
+                        int minThreshold = activeType == FluidType.Lava
+                            ? LavaBinghamYieldThreshold
+                            : 1;
+                        if (diffH < minThreshold)
+                        {
+                            continue;
+                        }
+
+                        int desired = isDownhill && bCell.Mass <= 16
+                            ? bCell.Mass
+                            : Math.Max(1, diffH / viscosityDiv);
+                        int transfer = Math.Min(desired, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
                         if (transfer > 0)
                         {
                             fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false, bCell.PressureHead).RawValue;
@@ -673,41 +701,84 @@ namespace Stratocraft.Physics.Jobs
                             continue;
                         }
 
-                        int diff = aCell.Mass - bCell.Mass;
-                        int absDiff = Math.Abs(diff);
-
-                        // Lav Bingham Plastik Akma Esigi (16) ve Su Kohezyon/Gollenme Esigi (Bos hucreye yayilmada min 32 kitle, dolu hucreler arasi 2 kitle)
-                        int minDiffThreshold = activeType == FluidType.Lava
-                            ? LavaBinghamYieldThreshold
-                            : ((aCell.Mass == 0 || bCell.Mass == 0) ? 32 : 2);
-                        if (absDiff < minDiffThreshold)
-                        {
-                            continue;
-                        }
+                        uint belowA = y > 0 ? voxels[aIdx - strideY] : 0u;
+                        uint belowB = y > 0 ? voxels[bIdx - strideY] : 0u;
+                        int bedA = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowA, voxels[aIdx], y);
+                        int bedB = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowB, voxels[bIdx], y);
+                        int headA = bedA + aCell.Mass;
+                        int headB = bedB + bCell.Mass;
 
                         int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
-                        int transfer = Math.Max(1, absDiff / viscosityDiv);
+                        byte axisNewlyWetFlag = alongX ? (byte)0x02 : (byte)0x04;
 
-                        if (diff > 0)
+                        if (aCell.Mass > 0 && headA > headB)
                         {
-                            transfer = Math.Min(transfer, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
+                            // CFL <= 1 Hucre/Tick Siniri: Bu eksende bu tick icinde yeni islanan oncu hucre ayni tick'te ileri sicrayamaz!
+                            if ((changedMask[aIdx] & axisNewlyWetFlag) != 0)
+                            {
+                                continue;
+                            }
+
+                            int diffH = headA - headB;
+                            bool isDownhill = bedA > bedB;
+                            int minDiffThreshold = activeType == FluidType.Lava
+                                ? LavaBinghamYieldThreshold
+                                : 1;
+                            if (diffH < minDiffThreshold)
+                            {
+                                continue;
+                            }
+
+                            int desired = isDownhill && aCell.Mass <= 16
+                                ? aCell.Mass
+                                : Math.Max(1, diffH / viscosityDiv);
+                            int transfer = Math.Min(desired, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
                             if (transfer > 0)
                             {
+                                bool bWasDry = bCell.Mass == 0;
                                 fluids[aIdx] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false).RawValue;
                                 fluids[bIdx] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false).RawValue;
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
+                                if (bWasDry)
+                                {
+                                    changedMask[bIdx] |= axisNewlyWetFlag;
+                                }
                             }
                         }
-                        else
+                        else if (bCell.Mass > 0 && headB > headA)
                         {
-                            transfer = Math.Min(transfer, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
+                            // CFL <= 1 Hucre/Tick Siniri: Bu eksende bu tick icinde yeni islanan oncu hucre ayni tick'te ileri sicrayamaz!
+                            if ((changedMask[bIdx] & axisNewlyWetFlag) != 0)
+                            {
+                                continue;
+                            }
+
+                            int diffH = headB - headA;
+                            bool isDownhill = bedB > bedA;
+                            int minDiffThreshold = activeType == FluidType.Lava
+                                ? LavaBinghamYieldThreshold
+                                : 1;
+                            if (diffH < minDiffThreshold)
+                            {
+                                continue;
+                            }
+
+                            int desired = isDownhill && bCell.Mass <= 16
+                                ? bCell.Mass
+                                : Math.Max(1, diffH / viscosityDiv);
+                            int transfer = Math.Min(desired, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
                             if (transfer > 0)
                             {
+                                bool aWasDry = aCell.Mass == 0;
                                 fluids[bIdx] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false).RawValue;
                                 fluids[aIdx] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false).RawValue;
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
+                                if (aWasDry)
+                                {
+                                    changedMask[aIdx] |= axisNewlyWetFlag;
+                                }
                             }
                         }
                     }
@@ -984,14 +1055,14 @@ namespace Stratocraft.Physics.Jobs
         {
             int strideY = sizeZ * sizeX;
             int idx = y * strideY + z * sizeX + x;
-            changedMask[idx] = 1;
+            changedMask[idx] |= 1;
 
-            if (x > 0) changedMask[idx - 1] = 1;
-            if (x + 1 < sizeX) changedMask[idx + 1] = 1;
-            if (z > 0) changedMask[idx - sizeX] = 1;
-            if (z + 1 < sizeZ) changedMask[idx + sizeX] = 1;
-            if (y > 0) changedMask[idx - strideY] = 1;
-            if (y + 1 < sizeY) changedMask[idx + strideY] = 1;
+            if (x > 0) changedMask[idx - 1] |= 1;
+            if (x + 1 < sizeX) changedMask[idx + 1] |= 1;
+            if (z > 0) changedMask[idx - sizeX] |= 1;
+            if (z + 1 < sizeZ) changedMask[idx + sizeX] |= 1;
+            if (y > 0) changedMask[idx - strideY] |= 1;
+            if (y + 1 < sizeY) changedMask[idx + strideY] |= 1;
         }
 
         private static void EnsureScratch(int totalCells, out int[] visitedStamp, out int[] bfsQueue, out byte[] activeNext)

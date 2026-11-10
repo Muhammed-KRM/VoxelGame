@@ -4,11 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Stratocraft.Character.Data;
+using Stratocraft.Character.Diagnostics;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Logging;
 using Stratocraft.Core.Persistence;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
+using Stratocraft.Physics.Diagnostics;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
@@ -148,6 +150,10 @@ namespace Stratocraft.Character
         private int _lastAimTooltipDistQuant;
         private string _cachedSwordBannerString = string.Empty;
         private readonly FluidSimulationSystem _fluidSystem = new();
+        private readonly FluidTraceRecorder _fluidTraceRecorder = new();
+        private readonly List<(int cx, int cz)> _allActiveFluidKeysScratch = new(64);
+        private int _fluidRoundRobinCursor;
+        private int _fluidTickIndex;
         private float _fluidTickTimer;
         private readonly Stage1PlayerMovementBridge _movementBridge = new();
         private readonly Stage1StructuralCollapseBridge _collapseBridge = new();
@@ -413,7 +419,13 @@ namespace Stratocraft.Character
             {
                 _activeInstance = null;
             }
+            _fluidTraceRecorder.Flush(Path.Combine(Directory.GetCurrentDirectory(), "Logs"));
             _telemetryLogger?.Dispose();
+        }
+
+        private void OnRenderObject()
+        {
+            SwingTraceGizmoRenderer.DrawTrails(_combatBridge.TraceRecorder);
         }
 
         private void Update()
@@ -742,17 +754,37 @@ namespace Stratocraft.Character
 
             _fluidTickTimer -= dt;
             if (_fluidTickTimer > 0f) return;
-            _fluidTickTimer = 0.12f;
+            _fluidTickTimer = 0.10f;
 
-            _activeFluidScratch.Clear();
+            int budgetChunks = Mathf.Clamp(_fluidSystem.MaxChunksPerTick, 2, 8);
+            _allActiveFluidKeysScratch.Clear();
             foreach (var key in _activeFluidChunks)
             {
-                _activeFluidScratch.Add(key);
-                if (_activeFluidScratch.Count >= 4) break;
+                _allActiveFluidKeysScratch.Add(key);
+            }
+
+            _activeFluidScratch.Clear();
+            int totalActive = _allActiveFluidKeysScratch.Count;
+            if (totalActive > 0)
+            {
+                _fluidRoundRobinCursor %= totalActive;
+                int countToPick = Mathf.Min(budgetChunks, totalActive);
+                for (int i = 0; i < countToPick; i++)
+                {
+                    int idx = (_fluidRoundRobinCursor + i) % totalActive;
+                    _activeFluidScratch.Add(_allActiveFluidKeysScratch[idx]);
+                }
+                _fluidRoundRobinCursor = (_fluidRoundRobinCursor + countToPick) % totalActive;
             }
 
             int sliceVolume = 16 * MaxEditableVoxelY * 16;
             bool anyActiveStepped = false;
+            int tickParity = _fluidSystem.AdvanceTickParity();
+            _fluidTickIndex++;
+            int steppedCount = 0;
+            long totalRemainingAcrossStepped = 0;
+            int totalObsidian = 0;
+            int totalSteam = 0;
 
             for (int i = 0; i < _activeFluidScratch.Count; i++)
             {
@@ -771,11 +803,17 @@ namespace Stratocraft.Character
                 }
 
                 anyActiveStepped = true;
+                steppedCount++;
                 long remaining = _fluidSystem.StepChunkFluid(
                     voxels.AsSpan(0, sliceVolume),
                     fluids.AsSpan(0, sliceVolume),
                     16, MaxEditableVoxelY, 16,
-                    out int obsidianCount, out int steamCount);
+                    out int obsidianCount, out int steamCount,
+                    explicitTickParity: tickParity);
+
+                totalRemainingAcrossStepped += remaining;
+                totalObsidian += obsidianCount;
+                totalSteam += steamCount;
 
                 if (obsidianCount > 0 || steamCount > 0)
                 {
@@ -794,6 +832,18 @@ namespace Stratocraft.Character
                 {
                     _activeFluidChunks.Remove(key);
                 }
+            }
+
+            if (_fluidTraceRecorder.IsEnabled && steppedCount > 0)
+            {
+                _fluidTraceRecorder.RecordTick(
+                    Path.Combine(Directory.GetCurrentDirectory(), "Logs"),
+                    totalActive,
+                    steppedCount,
+                    totalRemainingAcrossStepped,
+                    totalObsidian,
+                    totalSteam,
+                    tickParity);
             }
 
             if (anyActiveStepped)
@@ -845,6 +895,20 @@ namespace Stratocraft.Character
                 transform, _worldChunks, moveInput, wantSprint, wantCrouch, wantProne,
                 !menuOpen && Input.GetKeyDown(KeyCode.Space), _holsterCtrl.IsBackpackOpen || menuOpen, equippedMass, dt, out string moveFeedback, _fluidChunks);
             if (!string.IsNullOrEmpty(moveFeedback)) _miningCtrl.LastFeedbackText = moveFeedback;
+            if (_combatBridge.IsWeaponLodged)
+            {
+                if (moveInput.y < -0.1f)
+                {
+                    _combatBridge.ApplyBackstepPullAssist(dt);
+                }
+                if (_combatBridge.IsWeaponLodged &&
+                    Vector3.Distance(transform.position + Vector3.up * 1.05f, _combatBridge.LodgedWorldAnchorPoint) > 2.35f)
+                {
+                    _combatBridge.ForceReleaseLodgedWeapon(transitionToRechamber: true);
+                    _movementBridge.Vitals.Stamina = Mathf.Max(0f, _movementBridge.Vitals.Stamina - 8.0f);
+                    _miningCtrl.LastFeedbackText = "⚡ SİLAH GERİ ADIMLA SÖKÜLDÜ (-8 EP)! Tekrar savurmaya hazır!";
+                }
+            }
             _collapseBridge.StepFallingClusters(
                 dt, MaxEditableVoxelY, _worldChunks, _dirtyChunks, transform, ref _movementBridge.Vitals, out string? collapseNote);
             if (!string.IsNullOrEmpty(collapseNote)) _miningCtrl.LastFeedbackText = collapseNote!;
@@ -1009,14 +1073,19 @@ namespace Stratocraft.Character
             bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
             float sens = Stage1GameSettings.MouseSensitivity;
             float ySign = Stage1GameSettings.InvertMouseY ? -1.0f : 1.0f;
-            float mouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X") * sens;
-            float mouseY = lockCamForUi ? 0f : Input.GetAxis("Mouse Y") * sens * ySign;
+            float rawMouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X");
+            float rawMouseY = lockCamForUi ? 0f : Input.GetAxis("Mouse Y") * ySign;
+            float mouseX = rawMouseX * sens;
+            float mouseY = rawMouseY * sens;
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
                 !lockCamForUi && Input.GetMouseButton(0), !lockCamForUi && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
                 canCombat, massScale, dt, ref _cameraYaw, ref _cameraPitch,
                 out _, out _, out _, _rigAnimator.PlayerLeftArmSevered,
-                isPlayerAirborne, _movementBridge.VerticalVelocity);
+                isPlayerAirborne, _movementBridge.VerticalVelocity,
+                activeHolsterSlot: slot,
+                unscaledGestureMouseX: rawMouseX,
+                unscaledGestureMouseY: rawMouseY);
             float combatStaminaDrain = _combatBridge.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
             if (combatStaminaDrain > 0f)
             {
@@ -1191,6 +1260,13 @@ namespace Stratocraft.Character
                 else CyclePlayerLimbDismembermentTest();
             }
             if (Input.GetKeyDown(KeyCode.F7)) RegenerateWorldWithNewRandomSeed();
+            if (Input.GetKeyDown(KeyCode.Insert))
+            {
+                _combatBridge.TraceRecorder.ShowVisualGizmos = !_combatBridge.TraceRecorder.ShowVisualGizmos;
+                _miningCtrl.LastFeedbackText = _combatBridge.TraceRecorder.ShowVisualGizmos
+                    ? "[INSERT] 3B SAVURMA IZLERI (SwingTraceGizmo) ACIK — Son 8 savurmanin kabza/uc vektorleri ciziliyor!"
+                    : "[INSERT] 3B SAVURMA IZLERI (SwingTraceGizmo) KAPALI";
+            }
         }
 
         private void CycleThermalAndFreezingTestMode()

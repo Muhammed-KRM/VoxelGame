@@ -1160,6 +1160,10 @@ namespace Stratocraft.Character
             }
         }
 
+        public bool LastLogChopSplitOrBucked { get; private set; }
+        public Vector3 LastLogChopHitPoint { get; private set; }
+        public byte LastLogChopMaterialId { get; private set; } = MaterialIdCatalog.OakWood;
+
         /// <summary>
         /// Oyuncu yerde yatan devrilmis bir agac kutugune ([3] Balta ile) vurdugunda gercekci The Forest mekanigi uygular:
         /// 1) Eger tam devrilmis govdeyse (IsBuckedTimberLog = false): Her darbede govdeden 2m boyunda bagimsiz Agir Kutuk (Timber Log ~32 kg) ayrilir (Bucking).
@@ -1173,6 +1177,7 @@ namespace Stratocraft.Character
             out string feedback)
         {
             feedback = string.Empty;
+            LastLogChopSplitOrBucked = false;
             if (_fallenTreeLogs.Count == 0) return false;
 
             int hitIndex = -1;
@@ -1213,6 +1218,8 @@ namespace Stratocraft.Character
 
             FallenTreeLogInstance target = _fallenTreeLogs[hitIndex];
             target.CurrentDamage += chopPower;
+            LastLogChopHitPoint = hitPoint;
+            LastLogChopMaterialId = target.WoodMaterialId != 0 ? target.WoodMaterialId : MaterialIdCatalog.OakWood;
             string woodName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(target.WoodMaterialId);
 
             // A) BOYLANMIS AGIR KUTUK (IS BUCKED TIMBER LOG) YARMALAMA (SPLITTING):
@@ -1227,6 +1234,8 @@ namespace Stratocraft.Character
                     feedback = $"AGIR KUTUK YARILIYOR: {woodName} (Darbe: %{Mathf.RoundToInt(target.CurrentDamage * 100f)} | [E] ile Omuzlayabilir veya Baltayla Yarabilirsiniz)";
                     return true;
                 }
+
+                LastLogChopSplitOrBucked = true;
 
                 // Agir Kutuk yarildi -> 2x Yarma Odun (SplitFirewood) ve 1x Dal (Stick) yere duser!
                 if (MiningControllerForItemDrops != null)
@@ -1268,6 +1277,7 @@ namespace Stratocraft.Character
                 return true;
             }
 
+            LastLogChopSplitOrBucked = true;
             target.CurrentDamage = 0f;
 
             // Gercekci "The Forest" Tarzi Boylama (Bucking) Algoritmasi:

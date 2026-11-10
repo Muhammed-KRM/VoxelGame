@@ -711,7 +711,9 @@ namespace Stratocraft.WorldGen.Generators
                         }
                         else if (y == solidFloorY)
                         {
-                            densityInt = Math.Max(densityInt, 76);
+                            float subVoxelFrac = Clamp01(topH - solidFloorY);
+                            int slopeDensity = 66 + RoundToInt(subVoxelFrac * 58f);
+                            densityInt = Math.Clamp(Math.Max(densityInt, slopeDensity), 66, 124);
                         }
                         else if (isBasinWallSolid || isBasinFloorSolid)
                         {

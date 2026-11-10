@@ -262,13 +262,21 @@ namespace Stratocraft.Character
                 }
             }
 
+            if (combatBridge != null && combatBridge.ConsumePendingBreakOnPullOut(out Vector3Int deferredBreakCoord, out int deferredBreakSlot))
+            {
+                CompleteDeferredVoxelBreakOnPullOut(
+                    deferredBreakSlot, maxEditableY, worldChunks, dirtyChunks, collapseBridge,
+                    sharedMat, fluidChunks, dirtyFluidChunks, deferredBreakCoord);
+                return;
+            }
+
             if (!IsCrystalActive && (activeHolsterSlot == 2 || activeHolsterSlot == 3) && combatBridge != null)
             {
                 bool hasBladeVoxelHit = combatBridge.ConsumePendingToolVoxelHit(out Vector3Int bladeHitCoord, out float bladeImpactPower);
                 bool isNewIntentionalSwing = combatBridge.CurrentSwingId > 0 && _lastToolSwingId != combatBridge.CurrentSwingId;
                 bool isFullArcReady = isNewIntentionalSwing &&
                                       combatBridge.SlashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
-                                      combatBridge.SlashProgress01 >= 0.30f;
+                                      combatBridge.SlashProgress01 >= 0.36f;
 
                 if (isNewIntentionalSwing && (isFullArcReady || hasBladeVoxelHit))
                 {
@@ -291,35 +299,47 @@ namespace Stratocraft.Character
                         if (collapseBridge.TryChopFallenTreeLog(
                                 activeCam.transform.position,
                                 activeCam.transform.forward,
-                                4.2f,
+                                2.85f,
                                 activeHolsterSlot == 3 ? 0.55f : 0.35f,
                                 out string logChopFeedback))
                         {
                             _lastToolSwingId = combatBridge.CurrentSwingId;
-                            LastFeedbackText = logChopFeedback;
+                            var logRes = combatBridge.ResolveAndApplyToolStrikeImpact(
+                                activeHolsterSlot,
+                                collapseBridge.LastLogChopMaterialId,
+                                targetBrokeOnHit: collapseBridge.LastLogChopSplitOrBucked,
+                                hasRequiredToolTier: true,
+                                collapseBridge.LastLogChopHitPoint,
+                                new Vector3Int(int.MinValue, int.MinValue, int.MinValue));
+                            LastFeedbackText = logRes.Outcome == ImpactResponseOutcome.Lodge
+                                ? $"{logChopFeedback} -> [🪓 KÜTÜKTE SAPLANDI! Fareyi geri çekerek çıkarıp tekrar vurun!]"
+                                : logChopFeedback;
                             return;
                         }
                     }
                 }
 
+                // FAZ C5: Yalnızca gerçek alet başı teması (hasBladeVoxelHit) veya alet erişim mesafesi (<= 2.55m) içindeki hedef vurulur!
                 bool hasCloseSwingStrike = !hasBladeVoxelHit &&
                                            isFullArcReady &&
-                                           HasAimHit && AimHit.distance <= 3.85f;
+                                           HasAimHit && AimHit.distance <= 2.55f;
 
                 if (isNewIntentionalSwing && (hasBladeVoxelHit || hasCloseSwingStrike))
                 {
                     _lastToolSwingId = combatBridge.CurrentSwingId;
-                    Vector3Int targetCoord = (HasAimHit && AimHit.distance <= 3.85f &&
-                                              (!hasBladeVoxelHit || Vector3Int.Distance(bladeHitCoord, AimVoxelCoord) <= 2.1f))
+                    Vector3Int targetCoord = (HasAimHit && AimHit.distance <= 2.55f &&
+                                              (!hasBladeVoxelHit || Vector3Int.Distance(bladeHitCoord, AimVoxelCoord) <= 1.8f))
                         ? AimVoxelCoord
                         : bladeHitCoord;
+                    // FAZ C6: bladeImpactPower zaten 0.85..2.25 aralığındadır (/24f birim hatası düzeltildi!)
                     float impactMult = hasBladeVoxelHit
-                        ? Mathf.Clamp(bladeImpactPower / 24f, 0.85f, 2.25f)
-                        : Mathf.Clamp(combatBridge.AngularSpeedMagnitude / 8.5f, 0.90f, 2.10f);
+                        ? Mathf.Clamp(bladeImpactPower, 0.85f, 2.25f)
+                        : Mathf.Clamp(combatBridge.AngularSpeedMagnitude / 8.5f, 0.90f, 1.85f);
+                    byte contactFlag = hasBladeVoxelHit ? (byte)1 : (byte)2;
 
                     ExecutePhysicalToolStrike(
                         activeHolsterSlot, maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat,
-                        fluidChunks, dirtyFluidChunks, targetCoord, impactMult, holsterCtrl, combatBridge);
+                        fluidChunks, dirtyFluidChunks, targetCoord, impactMult, holsterCtrl, combatBridge, contactFlag);
                     return;
                 }
             }
@@ -402,10 +422,10 @@ namespace Stratocraft.Character
                         fluidChunks, dirtyFluidChunks, AimVoxelCoord, impactMultiplier: 0.55f, holsterCtrl: holsterCtrl, combatBridge: combatBridge);
                 }
             }
-            else if ((activeHolsterSlot == 2 || activeHolsterSlot == 3) && AimHit.distance <= 3.85f &&
+            else if ((activeHolsterSlot == 2 || activeHolsterSlot == 3) && AimHit.distance <= 2.85f &&
                      (combatBridge == null || combatBridge.SlashPhase == BallisticSlashPhase.IdleInGuard))
             {
-                LastFeedbackText = "FIZIKSEL VURUS GEREKLI: Aleti savurmak icin [LMB] basili tutarak fareyi savurun! (Uzaktan cekim icin [C] Kristal)";
+                LastFeedbackText = "FIZIKSEL VURUS: [Sol Tik] ile aleti savurun! Saplanirsa [Sag Tik / Fareyi Geri Cek] ile sokun.";
             }
         }
 
@@ -520,10 +540,31 @@ namespace Stratocraft.Character
             else
             {
                 FluidType pourType = currentFlaskFluid == 2 ? FluidType.Lava : FluidType.Water;
-                int wx = PlacementVoxelCoord.x, wy = Mathf.Clamp(PlacementVoxelCoord.y, 1, maxY - 2), wz = PlacementVoxelCoord.z;
+                Vector3Int targetCoord = PlacementVoxelCoord;
+                if (HasAimHit)
+                {
+                    int acx = FloorDiv16(AimVoxelCoord.x), acz = FloorDiv16(AimVoxelCoord.z);
+                    int alx = AimVoxelCoord.x - acx * 16, alz = AimVoxelCoord.z - acz * 16;
+                    int awy = Mathf.Clamp(AimVoxelCoord.y, 1, maxY - 2);
+                    if (worldChunks.TryGetValue((acx, acz), out uint[]? aimVox) && aimVox != null)
+                    {
+                        uint aimRaw = aimVox[(awy << 8) | (alz << 4) | alx];
+                        if (aimRaw != 0u && FluidPorosityUtility.ComputeCellFluidCapacity(aimRaw) > 0)
+                        {
+                            targetCoord = AimVoxelCoord;
+                        }
+                    }
+                }
+                int wx = targetCoord.x, wy = Mathf.Clamp(targetCoord.y, 1, maxY - 2), wz = targetCoord.z;
                 int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
                 if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) return;
                 int idx = (wy << 8) | (lz << 4) | lx;
+                byte cellCap = 255;
+                if (worldChunks.TryGetValue((cx, cz), out uint[]? capVoxels) && capVoxels != null)
+                {
+                    cellCap = FluidPorosityUtility.ComputeCellFluidCapacity(capVoxels[idx]);
+                    if (cellCap == 0) return;
+                }
 
                 FluidCell16 existing = new FluidCell16(fluids[idx]);
                 if (existing.Type != FluidType.None && existing.Type != pourType && worldChunks.TryGetValue((cx, cz), out uint[]? voxels))
@@ -540,7 +581,7 @@ namespace Stratocraft.Character
                     }
                 }
 
-                fluids[idx] = FluidCell16.Pack(pourType, 255, isSettled: false, pressureHead: 2).RawValue;
+                fluids[idx] = FluidCell16.Pack(pourType, cellCap, isSettled: false, pressureHead: 2).RawValue;
                 WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
                 string fName = pourType == FluidType.Lava ? "Lav (Magma)" : "Su";
                 LastFeedbackText = $"SIVI MATARASI [RMB]: ({wx},{wy},{wz}) noktasina 255 birim {fName} dokuldu! (Akiskan fizigi aktif)";
@@ -553,7 +594,8 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks,
             Vector3Int targetCoord, float impactMultiplier = 1.0f,
             Stage1HolsterAndBackpackController? holsterCtrl = null,
-            Stage1DirectionalCombatBridge? combatBridge = null)
+            Stage1DirectionalCombatBridge? combatBridge = null,
+            byte contactFlag = 1)
         {
             int wx = targetCoord.x, wy = Mathf.Clamp(targetCoord.y, 1, maxY - 2), wz = targetCoord.z;
             int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
@@ -562,8 +604,14 @@ namespace Stratocraft.Character
             uint raw = voxels[idx];
             byte mat = VoxelBitUtility.GetMaterialId(raw);
             if (mat == MaterialIdCatalog.Air) return;
+            Vector3 hitWorldPos = (HasAimHit && AimHit.distance <= 4.2f)
+                ? AimHit.point
+                : (combatBridge != null && combatBridge.PendingToolVoxelHitPoint.sqrMagnitude > 0.01f
+                    ? combatBridge.PendingToolVoxelHitPoint
+                    : new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f));
             if (mat == MaterialIdCatalog.Bedrock)
             {
+                if (slot == 2 || slot == 3) combatBridge?.TriggerWallRicochetAndAbort(hitWorldPos, mat, 0.72f);
                 LastFeedbackText = "KIRILMAZ ZEMIN (Bedrock): Ana kaya katmani hicbir fiziksel aletle kirilamaz!";
                 return;
             }
@@ -597,7 +645,9 @@ namespace Stratocraft.Character
             {
                 if (!isWood && !isSoftEarth)
                 {
-                    LastFeedbackText = $"YANLIS ALET [3]: {GetMaterialDisplayName(mat)} baltayla kirilamaz! [2] Demir Kazma kullanin.";
+                    combatBridge?.ResolveAndApplyToolStrikeImpact(
+                        slot, mat, targetBrokeOnHit: false, hasRequiredToolTier: false, hitWorldPos, targetCoord);
+                    LastFeedbackText = $"💥 BALTA TAŞTAN SEKTİ [3]: {GetMaterialDisplayName(mat)} baltayla kırılamaz, kıvılcımla sekti! [2] Demir Kazma kullanin.";
                     return;
                 }
                 if (CurrentToolDurability <= 0f)
@@ -617,6 +667,8 @@ namespace Stratocraft.Character
                 byte reqToolTier = GetRequiredToolTierForMaterial(mat);
                 if (reqToolTier > CurrentToolTier)
                 {
+                    combatBridge?.ResolveAndApplyToolStrikeImpact(
+                        slot, mat, targetBrokeOnHit: false, hasRequiredToolTier: false, hitWorldPos, targetCoord);
                     LastFeedbackText = $"ERR_TOOL_TIER_TOO_LOW: {GetMaterialDisplayName(mat)} icin Kademe T{reqToolTier} Kazma gerekli (Mevcut: T{CurrentToolTier} — Ors yaninda [E] ile yukseltin)!";
                     return;
                 }
@@ -640,7 +692,12 @@ namespace Stratocraft.Character
             if (dmgStep <= 0)
             {
                 AimDamageState = VoxelBitUtility.GetDamageState(raw);
-                LastFeedbackText = $"{GetMaterialDisplayName(mat)} Darbe Aliyor... Hasar: {AimDamageState}/15 (Sertlik: {hardness:0.1} | Alet:%{ToolDurability01 * 100f:0})";
+                if (slot == 2 || slot == 3)
+                {
+                    combatBridge?.ResolveAndApplyToolStrikeImpact(
+                        slot, mat, targetBrokeOnHit: false, hasRequiredToolTier: true, hitWorldPos, targetCoord);
+                }
+                LastFeedbackText = $"{GetMaterialDisplayName(mat)} Darbe Aliyor... Hasar: {AimDamageState}/15 (Sertlik: {hardness:0.1} | Alet:%{ToolDurability01 * 100f:0}) [SAPLANDI -> Geri Cekin!]";
                 return;
             }
             _miningDamageAccumulator -= dmgStep;
@@ -656,9 +713,64 @@ namespace Stratocraft.Character
                     dirty.Add((cx, cz));
                     Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: false);
                 }
-                LastFeedbackText = $"FIZIKSEL DARBE! {GetMaterialDisplayName(mat)} Catliyor... Hasar: {AimDamageState}/15 (+{dmgStep} | Alet:%{ToolDurability01 * 100f:0})";
+                if (slot == 2 || slot == 3)
+                {
+                    combatBridge?.ResolveAndApplyToolStrikeImpact(
+                        slot, mat, targetBrokeOnHit: false, hasRequiredToolTier: true, hitWorldPos, targetCoord,
+                        deferBlockBreakUntilPullOut: false, damageBefore: prevDmg, damageAfter: (byte)nextDmg, contactFlag: contactFlag);
+                }
+                LastFeedbackText = $"🪓 SAPLANDI! {GetMaterialDisplayName(mat)} Catliyor... Hasar: {AimDamageState}/15 (+{dmgStep} | Alet:%{ToolDurability01 * 100f:0}) -> [Cekip Cikarmak Icin Fareyi Geri Cekin / Sag Tik!]";
                 return;
             }
+
+            // FAZ D3: Ertelenmiş Kırılma (Deferred Break on Pull-Out):
+            // Eğer blok ilk vuruşta (prevDmg == 0) tek darbede kırılacak kadar hasar aldıysa bile,
+            // alet önce bloğa saplanır (Hasar: 14/15) ve oyuncu aleti çekip çıkardığı anda blok parçalanır!
+            if ((slot == 2 || slot == 3) && prevDmg == 0 && combatBridge != null)
+            {
+                voxels[idx] = VoxelBitUtility.WithDamageState(raw, 14);
+                AimDamageState = 14;
+                dirty.Add((cx, cz));
+                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: false);
+
+                var deferredRes = combatBridge.ResolveAndApplyToolStrikeImpact(
+                    slot, mat, targetBrokeOnHit: true, hasRequiredToolTier: true, hitWorldPos, targetCoord,
+                    deferBlockBreakUntilPullOut: true, damageBefore: prevDmg, damageAfter: 14, contactFlag: contactFlag);
+                if (deferredRes.Outcome == ImpactResponseOutcome.Lodge)
+                {
+                    LastFeedbackText = $"🪓 DERİN SAPLANDI! {GetMaterialDisplayName(mat)} (14/15) -> [Çekip Çıkardığınız Anda Parçalanacak! Sağ Tık / Geri Çek!]";
+                    return;
+                }
+            }
+
+            if (slot == 2 || slot == 3)
+            {
+                combatBridge?.ResolveAndApplyToolStrikeImpact(
+                    slot, mat, targetBrokeOnHit: true, hasRequiredToolTier: true, hitWorldPos, targetCoord,
+                    deferBlockBreakUntilPullOut: false, damageBefore: prevDmg, damageAfter: 15, contactFlag: contactFlag);
+            }
+
+            CompleteDeferredVoxelBreakOnPullOut(
+                slot, maxY, worldChunks, dirty, collapseBridge, sharedMat, fluidChunks, dirtyFluidChunks, targetCoord);
+        }
+
+        public void CompleteDeferredVoxelBreakOnPullOut(
+            int slot, int maxY, Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirty, Stage1StructuralCollapseBridge collapseBridge, Material? sharedMat,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            Vector3Int targetCoord)
+        {
+            int wx = targetCoord.x, wy = Mathf.Clamp(targetCoord.y, 1, maxY - 2), wz = targetCoord.z;
+            int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels)) return;
+            int idx = (wy << 8) | (lz << 4) | lx;
+            uint raw = voxels[idx];
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            if (mat == MaterialIdCatalog.Air || mat == MaterialIdCatalog.Bedrock) return;
+            bool isWood = mat == MaterialIdCatalog.OakWood ||
+                          mat == MaterialIdCatalog.Ironwood ||
+                          mat == MaterialIdCatalog.SpiritWood ||
+                          mat == MaterialIdCatalog.WoodPlank;
 
             byte brokenShape = VoxelBitUtility.GetShapeId(raw);
             voxels[idx] = 0u;

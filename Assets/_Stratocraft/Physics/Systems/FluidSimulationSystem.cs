@@ -22,6 +22,11 @@ namespace Stratocraft.Physics.Systems
         public double LastStepMicroseconds { get; private set; }
         public long TotalRemainingFluidMass { get; private set; }
 
+        public int AdvanceTickParity()
+        {
+            return _stepCounter++;
+        }
+
         public long StepChunkFluid(
             Span<uint> solidVoxels,
             Span<ushort> fluids,
@@ -29,10 +34,11 @@ namespace Stratocraft.Physics.Systems
             int sizeY,
             int sizeZ,
             out int obsidianFormedCount,
-            out int steamSlagFizzleCount)
+            out int steamSlagFizzleCount,
+            int? explicitTickParity = null)
         {
             long startTicks = Stopwatch.GetTimestamp();
-            int parity = _stepCounter++;
+            int parity = explicitTickParity ?? _stepCounter++;
 
             long remainingMass = FluidCellularAutomataJob.StepFluidGridVolumeConservative(
                 solidVoxels,
