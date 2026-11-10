@@ -72,13 +72,26 @@ Game Logic Bible v7.0 ve denetim raporu (`DOC-AUDIT-CONSTITUTION-PHASE1-2-V1`) d
 - `Stage1VisualHotbarAndInventoryUi.InitializeDefaultSlots()`: Survival modunda oyuncu oyuna **eli tamamen boş** (`SelectedHotbarIndex = -1`), 0 hotbar eşyası ve 0 zırh ile başlar.
 - Test amacıyla eşya almak için `[F4]` (Yaratıcı Mod) açılır ve `[Tab]` (5 Sekmeli Eşya Kataloğu) kullanılarak istenilen zırh, silah, alet veya hammadde tek tıkla envantere alınabilir.
 
+#### 5. Değiştirilen Dosyalar ve Doğrulama Durumu (Devir #041)
+- **Değiştirilen Dosyalar:**
+  1. `Assets/_Stratocraft/Core/Data/CharacterVitalsComponent.cs` (HitZone, 4 bölgesel zırh yuvası, TakeDamageRegional, 2.5x kafa çarpanı)
+  2. `Assets/_Stratocraft/Character/Stage1VisualHotbarAndInventoryUi.cs` (4 yuvalı taktik panel, RMB hızlı kuşanma, sürükle-bırak, boş survival başlangıcı)
+  3. `Assets/_Stratocraft/Character/Stage1InteractivePlayController.cs` (Hotbar RMB kuşanma, termal izolasyon hesaplama, Vitals senkronizasyonu)
+  4. `Assets/_Stratocraft/Character/Stage1CombatFeedbackAndArenaBridge.cs` (Düellocu NPC yönsel vuruşları -> Head, Torso, Legs bölgesel hasar, kritik kafa popupları)
+  5. `Assets/_Stratocraft/Character/Stage1CreatureSimulationBridge.cs` (Yaratık saldırıları -> bölgesel hasar)
+  6. `Assets/_Stratocraft/Character/Stage1StructuralCollapseBridge.cs` (Squashing'siz RebuildLogMeshAndCollider, $t \in [0, 1]$ kök/tepe boylama, 2m tomruk koparma)
+  7. `Assets/_Stratocraft/Voxel/Jobs/FluidSurfaceSkirtMesher.cs` (3B volümetrik taban yüzeyleri - Bottom Quads)
+  8. `Assets/_Stratocraft/Physics/Jobs/FluidCellularAutomataJob.cs` ($\Delta V \ge 32$ kohezyon/göllenme eşiği, kütle korunumlu yatay akış)
+- **Doğrulama:** `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj` -> **50/50 PASS** (`946 ms`), Unity 6 Console -> **0 Error / 0 Warning**.
+
+### 2.1. Devir #040: Faz 1 & Faz 2 Anayasa (Game Logic Bible v7.0) Uyumluluk Denetimi ve Mantık Hataları Analizi
+
 Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md`, `docs/faz1_faz2_mekanikler/`, `docs/RAPOR_2_...`, `docs/FIZIKSEL_ENVANTER_...` ve canlı kod tabanımız (`Assets/_Stratocraft/**`) satır satır karşılaştırılmış, detaylı denetim raporu [`docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md`](docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md) dosyasına kaydedilmiştir.
 
 #### 1. Zırh Kuşanma ve Anatomik Bölgesel Hasar Azaltımı (Hitzones)
 - **Anayasa Kuralı (§4.7.A / §4.7.B):** Zırh tek parça bir sayısal stat (`+40 Zırh`) değildir. Vücut 5 bağımsız bölgeye ayrılmıştır: Kafa (Miğfer), Gövde (Göğüslük), Kollar (Omuzluk & Kolçak), Bacaklar (Dizlik), Ayaklar (Bot).
 - **Kritik Mantık Kuralı:** Oyuncu üzerinde en iyi göğüslük ve bot olsa bile kafasında **Miğfer yoksa**, kafasına darbe aldığında **0 Fiziksel Zırh** ve **2.0x - 2.5x Kafa Çarpanı** ile doğrudan ağır/kritik hasar yer!
-- **Mevcut Koddaki Durum:** `Stage1InteractivePlayController` içinde sağ tıklanan zırh yalnızca `"Zırh giyildi: +42 Zırh"` şeklinde sahte bir metin göstermektedir. Canlı `CharacterVitalsComponent` veya `EquipmentSlots` üzerinde bağımsız miğfer/göğüslük/kolçak/dizlik yuvaları ve `TakeDamageRegional` anatomik hasar ayrıştırması bulunmamaktadır.
-- **Yol Haritası:** Canlı vitals ve combat sistemine 4 parçalı bölgesel zırh yuvası ve isabet alanına göre hasar soğurma formülü bağlanacaktır.
+- **Mevcut Koddaki Durum:** `Stage1InteractivePlayController` içinde sağ tıklanan zırh yalnızca `"Zırh giyildi: +42 Zırh"` şeklinde sahte bir metin göstermekteydi. Devir #041 ile çözüldü.
 
 #### 2. Kaba Hammadde vs. Yapı Bloğu ve Hayalet Önizleme Mantığı
 - **Anayasa Kuralı (§2.2.A / §2.2.B):** Aletle kırılan kaba taş, gevşek toprak, yarma odun, kuru dal ve ham cevher **ham envanter eşyasıdır (Item Material)**. Bu biçimsiz parçalar doğrudan dünyaya bir yapı bloğu gibi konulamaz; tezgahlarda (Taşçı Tezgahı, Marangoz Masası) işlenip tuğla veya kereste yapıldıktan sonra inşa edilebilir.
@@ -87,24 +100,19 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 #### 3. Ağaç Kesme ve Kütük Boylama Fiziği (The Forest Modeli)
 - **Anayasa (§2.2, §4.1) & Rapor DOC-PHYS-RIGID-002:** Devrilen ağaç gövdesi yerde rijit bir kütük (`FallenTreeLogRigidbody`) olarak kalmalıdır; yok olup moloza/bloğa dönüşmemelidir. Koca kütük çantaya sığmaz, `[E]` ile omuzda taşınır (`+32 kg`, eller serbest kalana kadar kilitli).
-- **Koddaki Mantık Hatası:** Kütük baltalandığında `localScale.y` ezilerek görsel squashing yapılıyor ve nereye vurulursa vurulsun ortadan iki eşit parçaya bölünüyordu.
-- **Gereken Düzeltme:** Silindir squashing kaldırılacak; vurulan $t$ eksen izdüşümüne göre uçtan/kökten 2 metrelik bağımsız tomruk (`BuckedTimberLog`) koparılacak, ana kütük kısalacak, kopan tomruk tekrar baltalandığında çantaya girebilen yarma odun ve dallara ayrılacaktır.
+- **Koddaki Mantık Hatası:** Kütük baltalandığında `localScale.y` ezilerek görsel squashing yapılıyor ve nereye vurulursa vurulsun ortadan iki eşit parçaya bölünüyordu. Devir #041 ile çözüldü.
 
 #### 4. Sıvı Fiziği (Sonlu Akışkan, 3B Hacim, Viskozite ve Göllenme - Cohesion)
 - **Anayasa Kuralı (§2.7.D):** Sıvı hücresi 16-bit'tir ($V \in [0..255]$). Düşey yerçekimi akışı + Red-Black yatay akış ile kütle mutlak korunur. Su + Lav temasında tek seferlik stokiyometrik obsidyen reaksiyonu gerçekleşir.
-- **Koddaki Mantık Hatası:** 
-  1. `FluidSurfaceSkirtMesher` alt yüzeyleri (`Bottom Quads`) örmediği için su havada dururken veya eğimde alttan bakıldığında görünmez olmakta ve 2D kağıt gibi durmaktadır.
-  2. Yatay akış denkleminde yüzey gerilimi / kohezyon eşiği olmadığı için düz zemine dökülen su anında $255 \to 63 \to 15 \to 3$ şeklinde milimetrik inceliğe yayılarak yok olmuş gibi görünmektedir.
-- **Gereken Düzeltme:** Alt yüzey üçgenleri (`Bottom Quads`) eklenecek ve minimum göllenme eşiği ($\Delta V \ge 32$) getirilerek düz zeminde su birikintisi olarak kalması sağlanacaktır.
+- **Koddaki Mantık Hatası:** `FluidSurfaceSkirtMesher` alt yüzeyleri (`Bottom Quads`) örmediği için su havada dururken veya eğimde alttan bakıldığında 2D kağıt gibi durmaktaydı. Yatay akışta kohezyon eşiği olmadığı için düz zeminde göllenme olmuyordu. Devir #041 ile çözüldü.
 
 #### 5. Başlangıç Envanteri & Yaratıcı Test Modu (Creative Mode)
-- **Anayasa Kuralı (§3.1, §3.3.A):** Hayatta kalma modunda oyuncu oyuna **eli tamamen boş** (Slot 0 / El) başlamalıdır. Hazır 5 adet aletle doğulamaz.
-- **Koddaki Durum & Düzeltme:** `InitializeDefaultSlots()` içindeki hazır alet başlangıcı, `[F4]` Yaratıcı Modu ve `[Tab]` 5-sekmeli Eşya Kataloğu ayrımı ile çözülecektir. Oyuncu Survival'da boş başlayacak, test etmek istediğinde `[F4]` + `[Tab]` ile istediği tüm eşyaları tek tıkla alabilecektir.
+- **Anayasa Kuralı (§3.1, §3.3.A):** Hayatta kalma modunda oyuncu oyuna **eli tamamen boş** (Slot 0 / El) başlamalıdır. Hazır 5 adet aletle doğulamaz. Devir #041 ile çözüldü.
 
 #### 6. Temel Hayatta Kalma Tüketimleri
 - Miğfer, Göğüslük, Kolçak, Dizlik (Deri, Ahşap, Bakır, Demir kademeleri), Can İksiri (+45 HP), Stamina İksiri (+60 EP), Tıbbi Bandaj (+25 HP), Pişmiş Et (+30 HP, +40 EP, Isıtır), Temiz Su tüketim etkileri canlı vitals sistemine bağlanmıştır.
 
-### 2.0. Devir #039: Faz 1 & Faz 2 5 Kritik Gerçekçilik ve Oynanış Sorununun Çözümü
+### 2.2. Devir #039: Faz 1 & Faz 2 5 Kritik Gerçekçilik ve Oynanış Sorununun Çözümü
 
 1. **Sorun 1 — Kaba Hammadde Blok İnşa Engeli ve Hayalet Yeşil Küp Önizleme Bug'ı:**
    - **Kök Neden:** `UpdatePlacementGhostVisual`, aktif hotbar yuvası $\ge 7$ olduğunda oyuncunun elinde blok olduğunu varsayıyordu; bu yüzden elinde `Yarma Odun`, `Kuru Dal`, `Kaba Taş`, `Gevşek Toprak` veya `Ham Cevher` olan oyuncuya yeşil hayalet küp gösteriyor ve taş/toprağın sağ tıkla moloz olarak konulmasına izin veriyordu.
@@ -475,13 +483,27 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
-1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
-   - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını ve `docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#041` ile eşleştiğini doğrula.
+1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
+   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
+   - `git status -s` ve `git log -2 --oneline --date=iso` çalıştırarak en son commit'in Devir `#041` (`c47526c`) ile birebir eşleştiğini doğrula.
+   - Çalışma ağacının temiz (`working tree clean`) olduğunu kontrol et.
 
-2. **Adım 2 — Kullanıcı ile Canlı Doğrulama ve Faz 3 Hazırlığı:**
-   - Kullanıcı Unity PlayMode'da `[F4]` + `[Tab]` ile zırh kuşanma (RMB ve `[I]` paneli), miğfersiz kafa vuruşu kritik hasarı (`[F10]` Düellocu), kütük boylama ($t$ ekseni) ve sıvı göllenme testlerini gerçekleştirdikten sonra Faz 3 (Yakın Dövüş, Zırh Katmanları, Örs & Katalizörler) kapsamına geçiş yapılacaktır.
+2. **Adım 2 — Devir #041 Durumunu Kullanıcıya Bildir ve Faz 3 Geçişini Sor:**
+   - Kullanıcıya Devir `#041` ile tamamlanan 4 anayasal sistemin hazır olduğunu özetle:
+     1. **Bölgesel Zırh:** 4 uzuv yuvası (Miğfer, Göğüslük, Kolçak, Dizlik), Hotbar RMB ile kuşanma, `[I]` Taktik Sırt Çantası sağ panelinden sürükle-bırak veya sağ tıkla kuşanma.
+     2. **Kritik Kafa Hasarı:** Miğfer takılı değilken başa alınan darbelerde `%0` zırh ve `2.5x` kritik hasar (`[💥 MİĞFERSİZ KAFA KRİTİK 2.5x]`).
+     3. **Gerçekçi Kütük Boylama:** Silindir squashing'siz, $t \in [0, 1]$ kök/tepe eksenli 2m tomruk koparma ve `[E]` ile omuzlama.
+     4. **3B Sıvı Hacmi ve Göllenme:** Havada asılı suyun altına `Bottom Quads` örülmesi ve düz zeminde $\Delta V \ge 32$ göllenme/kohezyon eşiği.
+     5. **Boş Survival Başlangıcı:** Hotbar ve el boş başlar; test için `[F4]` Yaratıcı Mod ve `[Tab]` Eşya Kataloğu kullanılır.
+   - Kullanıcıya sor: *"Devir #041 mekaniklerini PlayMode'da denediniz mi / denemek ister misiniz, yoksa doğrudan **Faz 3 (240 Hz Yönsel Yakın Dövüş, 15 Parça 3 Katman Zırh, 16x32x4 Çift Boynuzlu Örs & 4 Harmonizer Katalizörü)** geliştirme adımlarına mı geçelim?"*
 
-3. **Adım 3 — Test ve Doğrulama Standartları:**
-   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (`50/50 PASS` olmalı).
-   - Unity Editor üzerinde Play Mode'da konsolda `0 Error / 0 Warning` olduğunu doğrula.
+3. **Adım 3 — Faz 3 Başlangıç Adımları (Onay Alındığında):**
+   - `stratocraft-combat-and-catalogs` becerisini ve Game Logic Bible v7.0 §4 (Dövüş ve Zırh) maddelerini referans al.
+   - 15 Parçalı 3 Katmanlı Zırh Sistemini (Kumaş İçlik -> Zincir/Halka Örgü -> Plaka Zırh) ve Örs tezgâhı veri modellerini kur.
+
+4. **Adım 4 — Test, Derleme ve Mimari Kuralları:**
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` (`50/50 PASS`).
+   - Unity Konsolu: `0 Error / 0 Warning`.
+   - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
+   - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).
+   - Taşınabilirlik: Sıfır mutlak yol (`$PSScriptRoot` / göreceli yol) ve saf ASCII `.ps1` dosyaları.
