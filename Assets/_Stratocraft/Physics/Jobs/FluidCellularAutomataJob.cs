@@ -502,7 +502,10 @@ namespace Stratocraft.Physics.Jobs
 
                     int diff = aCell.Mass - bCell.Mass;
                     int absDiff = Math.Abs(diff);
-                    int minDiffThreshold = activeType == FluidType.Lava ? LavaBinghamYieldThreshold : 2;
+                    // Lav Bingham Plastik Akma Esigi (16) ve Su Kohezyon/Gollenme Esigi (Bos hucreye yayilmada min 32 kitle, dolu hucreler arasi 2 kitle)
+                    int minDiffThreshold = activeType == FluidType.Lava
+                        ? LavaBinghamYieldThreshold
+                        : ((aCell.Mass == 0 || bCell.Mass == 0) ? 32 : 2);
                     if (absDiff < minDiffThreshold)
                     {
                         continue;
@@ -673,8 +676,10 @@ namespace Stratocraft.Physics.Jobs
                         int diff = aCell.Mass - bCell.Mass;
                         int absDiff = Math.Abs(diff);
 
-                        // Lav Bingham Plastik Akma Esigi (16) ve Su 1-birim denge kohezyonu
-                        int minDiffThreshold = activeType == FluidType.Lava ? LavaBinghamYieldThreshold : 2;
+                        // Lav Bingham Plastik Akma Esigi (16) ve Su Kohezyon/Gollenme Esigi (Bos hucreye yayilmada min 32 kitle, dolu hucreler arasi 2 kitle)
+                        int minDiffThreshold = activeType == FluidType.Lava
+                            ? LavaBinghamYieldThreshold
+                            : ((aCell.Mass == 0 || bCell.Mass == 0) ? 32 : 2);
                         if (absDiff < minDiffThreshold)
                         {
                             continue;

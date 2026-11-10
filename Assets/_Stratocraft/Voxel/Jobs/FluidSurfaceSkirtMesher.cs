@@ -135,6 +135,30 @@ namespace Stratocraft.Voxel.Jobs
                                 p00, p11, p10, renderMat, temp, 198, packedAo, outFluidTriangles);
                         }
 
+                        // Alt hucre bosluksa (selale, havada asili su, magara tavani) 3B hacimli sivi geometrisi icin alt taban (Bottom Quad) orulur:
+                        ushort belowFluid = (y > 0)
+                            ? centerFluids[((y - 1) << 8) | (lz << 4) | lx]
+                            : (ushort)0;
+                        uint belowSolid = (y > 0)
+                            ? centerSolids[((y - 1) << 8) | (lz << 4) | lx]
+                            : 0u;
+                        bool hasExposedBottom = (y == 0) ||
+                            (((belowFluid & 0xFFu) == 0u || ((belowFluid >> 8) & 0x03u) != fType) &&
+                             !VoxelBitUtility.IsPhysicallySolid(belowSolid));
+
+                        if (hasExposedBottom)
+                        {
+                            Vector3 b00 = new Vector3(lx, y, lz);
+                            Vector3 b10 = new Vector3(lx + 1, y, lz);
+                            Vector3 b11 = new Vector3(lx + 1, y, lz + 1);
+                            Vector3 b01 = new Vector3(lx, y, lz + 1);
+
+                            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(
+                                b00, b11, b01, renderMat, temp, 180, packedAo, outFluidTriangles);
+                            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(
+                                b00, b10, b11, renderMat, temp, 180, packedAo, outFluidTriangles);
+                        }
+
                         // Acik kenar / selale yan yuzleri (+X, -X, +Z, -Z) — komsu chunk sinirlari (nx < 0, nx >= 16, nz < 0, nz >= 16) dahil!
                         EmitSideWallIfExposed(
                             chunkX, chunkZ, lx, y, lz, dirX: 1, dirZ: 0, fType, renderMat, temp, packedAo,

@@ -935,13 +935,15 @@ namespace Stratocraft.Character
                     }
                 }
             }
-            else if (_holsterCtrl.ActiveHolsterSlot == 9)
+            else if (_holsterCtrl.ActiveHolsterSlot == 9 || Stage1VisualHotbarAndInventoryUi.IsArmorKind(_holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind))
             {
                 if (Input.GetMouseButtonDown(1))
                 {
-                    VisualInventorySlot slot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
-                    string slotName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, _combatBridge);
-                    _miningCtrl.LastFeedbackText = $"Zırh Kuşanıldı: {slotName} (+Darbe ve Kesilme Direnci)";
+                    if (_holsterCtrl.InventoryUi.TryEquipActiveHotbarArmor(ref _movementBridge.Vitals, out string feedback))
+                    {
+                        _miningCtrl.LastFeedbackText = feedback;
+                        _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge);
+                    }
                 }
             }
             else if (_holsterCtrl.ActiveHolsterSlot == 10)
@@ -1463,10 +1465,12 @@ namespace Stratocraft.Character
 
             _movementBridge.Vitals.HungerKcal = 2000f;
             _movementBridge.Vitals.ThirstHydration = 100f;
+            _holsterCtrl.InventoryUi.SyncEquippedArmorToVitals(ref _movementBridge.Vitals);
+            float armorInsulation = 0.15f + (_movementBridge.Vitals.EquippedHelmetTier + _movementBridge.Vitals.EquippedChestplateTier + _movementBridge.Vitals.EquippedVambracesTier + _movementBridge.Vitals.EquippedGreavesTier) * 0.08f;
             _thermalSystem.StepBiology(
                 ref _movementBridge.Vitals,
                 ambientTempCelsius: _ambientTempCelsius,
-                armorThermalInsulation01: 0.35f,
+                armorThermalInsulation01: Mathf.Clamp01(armorInsulation),
                 isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f,
                 deltaTime: dt);
 

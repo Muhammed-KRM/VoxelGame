@@ -568,14 +568,23 @@ namespace Stratocraft.Character
                     {
                         float baseNpcDmg = (_duelistCurrentStrikeIsHeavySmash ? 19f : 12f) * Stage1GameSettings.CreatureDamageMultiplier;
                         float npcDmg = combatBridge.IsParryStance ? (baseNpcDmg * 0.55f) : baseNpcDmg;
-                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - npcDmg);
+                        Stratocraft.Character.Data.HitZone hitZone = _duelistAttackDir switch
+                        {
+                            CombatDirectionQuadrant.Overhead => Stratocraft.Character.Data.HitZone.Head,
+                            CombatDirectionQuadrant.Lower => Stratocraft.Character.Data.HitZone.Legs,
+                            CombatDirectionQuadrant.Right or CombatDirectionQuadrant.Left => Stratocraft.Character.Data.HitZone.Torso,
+                            _ => Stratocraft.Character.Data.HitZone.Arms
+                        };
+                        float actualDmg = playerVitals.TakeDamageRegional(hitZone, npcDmg, out float absorbedDmg, out bool isCritHead);
+                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - actualDmg);
                         ThermalAndBiologySystem.ApplyRegionalBleeding(ref playerVitals, 1.5f);
                         PlayFleshCleaveHit(false);
                         string blockHint = combatBridge.IsParryStance
                             ? $"Yanlış Guard Yönü! ({GetDirectionLabel(_duelistAttackDir)} yönüne RMB tut veya RMB+Fare ile SAPTIR!)"
                             : $"RMB ile {GetDirectionLabel(_duelistAttackDir)} yönünde blok tut veya RMB+Fare ile SAPTIR!";
-                        SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 1.85f, $"❗ DÜELLOCU VURDU: -{npcDmg:F0} HP + 🩸 KANAMA (1.5 HP/s) ({blockHint})", new Color(1f, 0.35f, 0.35f), 1.85f, 14);
-                        combatBridge.LastCombatActionText = $"❗ DÜELLOCU İSABETİ (-{npcDmg:F0} HP + 🩸 Kanama) | {blockHint}";
+                        string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {hitZone} Soğurdu: -{absorbedDmg:F0}]" : "");
+                        SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 1.85f, $"❗ DÜELLOCU VURDU ({hitZone}): -{actualDmg:F0} HP{critNote} + 🩸 KANAMA", new Color(1f, 0.35f, 0.35f), 1.85f, 14);
+                        combatBridge.LastCombatActionText = $"❗ DÜELLOCU İSABETİ [{hitZone}] (-{actualDmg:F0} HP{critNote}) | {blockHint}";
                     }
                 }
             }

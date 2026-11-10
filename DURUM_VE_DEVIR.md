@@ -13,19 +13,64 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#040` (Faz 1 & Faz 2 Anayasa ve Geliştirici Dökümanları Uyumluluk Denetimi, Bölgesel Zırh/Hasar Analizi, Ağaç Kesimi / Sıvı / Envanter Mantık Hataları Raporu ve Devir Teslimi \| 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-09T17:40:00+03:00` |
+| **Devir Numarası** | `#041` (Faz 1 & 2 Anayasa Mantık Düzeltmeleri Tamamlandı: 4 Yuvalı Anatomik Bölgesel Zırh, [I] Taktik Panel & RMB Kuşanma, Miğfersiz Kafaya 2.5x Kritik Hasar, Squashing'siz Gerçek Kütük Boylama ($t \in [0, 1]$), 3B Volümetrik Sıvı Tabanı (Bottom Quads) ve $\Delta V \ge 32$ Göllenme Fiziği, Boş Başlangıç Survival Modu \| 50/50 Test PASS, 0 Error / 0 Warning - PlayMode Doğrulandı) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-10T13:45:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Anayasa Uyumluluk Denetimi, Bölgesel Hasar / Zırh Mimarisi ve Devir Teslimi Tamamlandı (Devir #040)` |
-| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (854 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif ve Doğrulandı)` |
+| **Mevcut Çalışma Aşaması** | `Faz 1 & Faz 2 Anayasa Uyumluluk Düzeltmeleri ve Oyuncu Arayüz/Mekanik Entegrasyonu Tamamlandı (Devir #041)` |
+| **Aktif Test Durumu** | `50/50 Standalone & Unity Test PASS (946 ms)`, `Unity 6 Console: 0 Error / 0 Warning (PlayMode Aktif ve Doğrulandı)` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#040`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#041`)
 
-### 2.0. Devir #040: Faz 1 & Faz 2 Anayasa (Game Logic Bible v7.0) Uyumluluk Denetimi ve Mantık Hataları Analizi
+### 2.0. Devir #041: Faz 1 & Faz 2 Anayasa Düzeltmeleri ve Oyuncu Arayüz/Mekanik Entegrasyonu
+
+Game Logic Bible v7.0 ve denetim raporu (`DOC-AUDIT-CONSTITUTION-PHASE1-2-V1`) doğrultusunda 4 temel anayasal eksik ve mantık hatası tamamen giderilmiş, oyuncu arayüz ve etkileşim döngülerine kusursuzca bağlanmıştır:
+
+#### 1. Dört Yuvalı Anatomik Bölgesel Zırh & Hasar Azaltımı (§4.7.A/B)
+- **Anatomik Zırh Yuvaları (`CharacterVitalsComponent.cs` & `Stage1VisualHotbarAndInventoryUi.cs`):**
+  - Karakter modeline 4 bağımsız uzuv yuvası eklendi:
+    1. **Miğfer (`Helmet` - Yuva 0):** Baş bölgesi koruması.
+    2. **Göğüslük (`Chestplate` - Yuva 1):** Gövde bölgesi koruması.
+    3. **Kolçak / Omuzluk (`Vambraces` - Yuva 2):** Kollar bölgesi koruması.
+    4. **Dizlik / Bot (`Greaves` - Yuva 3):** Bacaklar ve ayaklar koruması.
+- **Miğfersiz Kafa Vuruşunda 2.5x Kritik Hasar Kuralı (`CalculateRegionalDamage` & `TakeDamageRegional`):**
+  - Baş bölgesine (`HitZone.Head`) isabet alındığında karakterin başında miğfer yoksa (`EquippedHelmetTier == 0`), fiziksel zırh **0** kabul edilir ve gelen hasar **`2.5x` Kritik Kafa Çarpanı** ile doğrudan cana işler! Ekranda `[💥 MİĞFERSİZ KAFA KRİTİK 2.5x]` uyarısı çıkar.
+  - Zırh takılı uzuvlarda malzeme kademesine göre bölgesel hasar soğurulur:
+    - Tier 1 (Deri/Kumaş): `%30`
+    - Tier 2 (Ahşap): `%45`
+    - Tier 3 (Bakır/Bronz): `%60`
+    - Tier 4 (Demir/Çelik): `%75`
+    - Tier 5 (Mithril/Adamant): `%90`
+- **Kullanıcı Etkileşim ve Kuşanma Arayüzü (Nasıl Kuşanılır?):**
+  - **A) Hızlı Kuşanma (Hotbar Sağ Tık - RMB):** Sıcak çubukta (`1..9`) zırh parçası seçiliyken dünyada boşluğa sağ tıklandığında karakter doğrudan o zırhı ilgili anatomik uzvuna kuşanır. Önceden giyili parça varsa, hotbar'daki slota geri takas edilir.
+  - **B) Çanta İçi Hızlı Kuşanma (`[I]` Ekranında Sağ Tık):** Çantada veya hotbar'da herhangi bir zırh parçasına sağ tıklandığında doğrudan doğru uzva giyilir, eski parça çantadaki o slota geçer.
+  - **C) Diagetik Anatomik Zırh Paneli (`[I]` Taktik Sırt Çantası Ekranı):** `[I]` ile çanta açıldığında ekranın sağ tarafında (`screenW - 304, 72, 286, 212`) **"🛡️ ANATOMİK BÖLGESEL ZIRHLAR"** paneli belirir.
+    - 4 uzuv yuvası, yuva simgeleri, giyili zırhın adı, kademesi ve koruma yüzdesi listelenir.
+    - Baş yuvası boşken panelde yanıp sönen kırmızı uyarı verilir: `"KORUMASIZ! ⚠️ (2.5x Kritik Kafa)"`.
+    - Zırh parçaları çantadan bu paneldeki yuvalara **sürükle-bırak** ile giyilebilir; takılı parçaya sol tıklandığında zırh çıkarılıp imlece / boş çantaya aktarılır.
+- **Canlı Düello ve Yaratık Entegrasyonu:**
+  - `Stage1CombatFeedbackAndArenaBridge.cs`: Kılıç Ustası Düellocu NPC'nin baş üstü savurması (`CombatDirectionQuadrant.Overhead`) başı (`HitZone.Head`), aşağı savurması (`Lower`) bacakları (`HitZone.Legs`), yatay savurmaları gövdeyi hedefler. Miğfer yoksa doğrudan 2.5x hasar ve kanama uygular.
+  - `Stage1CreatureSimulationBridge.cs`: Yaratık darbeleri hedeflenen uzva göre bölgesel hasar hesaplar.
+
+#### 2. Squashing'siz Gerçek Kütük Boylama Fiziği (§2.2 & DOC-PHYS-RIGID-002)
+- `Stage1StructuralCollapseBridge.cs` içindeki silindir ölçek ezme (`localScale.y`) tamamen kaldırıldı; kütükler daima `localScale = Vector3.one` rijit geometrisini korur.
+- `RebuildLogMeshAndCollider`: Kütük kesildikçe sekizgen silindir mesh'i ve fiziksel `BoxCollider.size` gerçek uzunluğuna ($L = \text{segment} \times 0.5\text{m}$) göre sıfır çöp (GC alloc 0) ile yeniden örülür.
+- Eksenel Vuruş Konumu ($t \in [0, 1]$) Boylama Mantığı:
+  - $t \le 0.35$ (Kök tarafı): Kütüğün dibinden 2m tomruk kopar, ana kütük kısalır.
+  - $t \ge 0.65$ (Tepe tarafı): Kütüğün ucundan 2m tomruk kopar.
+  - $0.35 < t < 0.65$ (Orta bölge): Kütük yeterince uzunsa ($\ge 6$ segment) iki bağımsız kısa kütük ve aradaki 2m tomruk olmak üzere 3 parçaya ayrılır.
+  - Kopan 2m tomruklar (`BuckedTimberLog`) `[E]` ile omuzlanabilir veya baltayla kırılarak yarma odun ve dallara ayrılabilir.
+
+#### 3. 3B Volümetrik Sıvı Tabanı (Bottom Quads) ve Göllenme / Kohezyon Fiziği (§2.7.D)
+- `FluidSurfaceSkirtMesher.cs`: Altında hava veya şeffaf blok olan sıvı hücrelerinde aşağı bakan taban yüzeyleri (`Bottom Quads`) örülerek suyun havada asılıyken veya şelalelerden dökülürken 2D kağıt gibi görünmesi engellendi; tam 3B volümetrik manifold geometri sağlandı.
+- `FluidCellularAutomataJob.cs`: Düz zeminde yatay yayılma esnasında boş hücreye akış için $\Delta V \ge 32$ ($%12.5$) kohezyon (yüzey gerilimi) eşiği getirildi. Böylece su düz zeminde 1-birimlik hayalet tabakalar halinde buharlaşıp yok oluyor hissi vermez; stabil göletler ve birikintiler halinde kalır. Kütle koruma kanunu ($\Delta = 0$) tam olarak muhafaza edilmektedir.
+
+#### 4. Survival Modu Boş El Başlangıcı & Yaratıcı Test Ayrımı (§3.1 / §3.3.A)
+- `Stage1VisualHotbarAndInventoryUi.InitializeDefaultSlots()`: Survival modunda oyuncu oyuna **eli tamamen boş** (`SelectedHotbarIndex = -1`), 0 hotbar eşyası ve 0 zırh ile başlar.
+- Test amacıyla eşya almak için `[F4]` (Yaratıcı Mod) açılır ve `[Tab]` (5 Sekmeli Eşya Kataloğu) kullanılarak istenilen zırh, silah, alet veya hammadde tek tıkla envantere alınabilir.
 
 Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK ANAYASASI (GAME LOGIC BIBLE) (2).md`, `docs/faz1_faz2_mekanikler/`, `docs/RAPOR_2_...`, `docs/FIZIKSEL_ENVANTER_...` ve canlı kod tabanımız (`Assets/_Stratocraft/**`) satır satır karşılaştırılmış, detaylı denetim raporu [`docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md`](docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md) dosyasına kaydedilmiştir.
 
@@ -387,11 +432,11 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
 ## 3. Yarım Kalan / Kullanıcı Tarafından Henüz Test Edilmemiş Noktalar
 
-1. **Devir #040 — Anayasa Uyumluluk Denetimi Sonrası Kalan Düzeltmeler:**
-   - **Bölgesel Zırh Koruma Entegrasyonu:** `CharacterVitalsComponent` ve `EquipmentSlots` içine 4 anatomik zırh slotu (`Helmet`, `Chestplate`, `Vambraces`, `Greaves`) eklenip, `TakeDamageRegional` metodunda isabet alan uzva göre zırhsız kafa vuruşunda `2.5x` kritik hasar formülü canlı döngüye bağlanacaktır.
-   - **Kütük Dilimleme (Bucking) ve Squashing Temizliği:** `Stage1StructuralCollapseBridge` içindeki silindir `localScale.y` ezilmesi kaldırılarak, vurulan $t$ eksen izdüşümüne göre uç/kök/orta gerçek boylu tomruk koparma temizlenecektir.
-   - **Sıvı Alt Yüzey Meshlemesi ve Göllenme Eşiği:** `FluidSurfaceSkirtMesher` içine alt yüzey (`Bottom Quads`) örme eklenerek havada asılı suyun 2D kağıt görünümü giderilecek; `FluidCellularAutomataJob` içine $\Delta V \ge 32$ göllenme/kohezyon eşiği eklenerek suyun düz zeminde birikinti olarak kalması sağlanacaktır.
-   - **Survival Modu Boş El Başlangıcı:** `InitializeDefaultSlots()` içindeki hazır aletler Survival modunda boşaltılacak; tüm eşyalar `[F4]` Yaratıcı Modu ve `[Tab]` Kataloğu üzerinden verilecektir.
+1. **Devir #041 — Oyuncu Tarafından PlayMode'da Test Edilecek Canlı Mekanikler:**
+   - **Bölgesel Zırh Kuşanma & Kafa Hasarı:** `[F4]` ile Yaratıcı Mod açılıp `[Tab]` Kataloğundan Zırh sekmesine girilmeli; Miğfer, Göğüslük, Kolçak ve Dizlik alınarak hem Hotbar'da sağ tıkla hem de `[I]` Taktik Çanta ekranındaki **"🛡️ ANATOMİK BÖLGESEL ZIRHLAR"** paneline sürükle-bırak yapılarak kuşanılmalı. `[F10]` ile Düellocu NPC çağrılıp miğfer çıkarıldığında baş üstü darbelerde `[💥 MİĞFERSİZ KAFA KRİTİK 2.5x]` uyarısı ve ağır hasar gözlemlenmelidir.
+   - **Kütük Boylama Fiziği:** Bir ağaç baltalandığında devrilen gövdenin dibine ($t \le 0.35$) veya tepesine ($t \ge 0.65$) baltayla vurularak 2m bağımsız tomruk koparıldığı, ana kütüğün squashing olmadan temizce kısaldığı ve kopan tomruğun `[E]` ile omuzlandığı doğrulanmalıdır.
+   - **3B Sıvı Hacmi ve Göllenme:** Yüksek bir falezden su döküldüğünde alt yüzeylerin (`Bottom Quads`) örüldüğü ve düz zemine dökülen suyun hızla yok olmak yerine $\Delta V \ge 32$ kohezyonla stabil göletler oluşturduğu test edilmelidir.
+   - **Survival Modu Boş Başlangıç:** Oyuna ilk girildiğinde hotbar'ın ve elin tamamen boş başladığı (`SelectedHotbarIndex = -1`) teyit edilmelidir.
 
 2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
    - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Faz 3–5 ilerlemesinde dünyadaki Dojo Ustaları / Parşömenler ile açılması ve kullandıkça ustalık kazanılması.
@@ -407,7 +452,8 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler, Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
 | **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
-| **`[I]` Tuşu** | **24-Slotlu (`4x6`) Sürükle-Bırak Görsel Çanta Arayüzü** (Sol Tık: Sürükle-Bırak, Sağ Tık: Tüket / Kuşan / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
+| **`[I]` Tuşu** | **24-Slotlu (`4x6`) Taktik Çanta & 4 Yuvalı "🛡️ ANATOMİK BÖLGESEL ZIRHLAR" Paneli** (Sol Tık: Sürükle-Bırak, Sağ Tık: Zırhı Kuşan / Tüket / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
+| **Hotbar'da Zırh Seçiliyken `RMB` (Sağ Tık)** | Seçili zırhı anında ilgili uzva (Miğfer -> Baş, Göğüslük -> Gövde, vb.) **kuşanır**; eski zırhı hotbar'a takas eder | ✅ Aktif |
 | **`[E]` Tuşu (Ağır Kütük Yanında)** | Yerdeki kesilmiş 2m bağımsız **Ağır Kütüğü** omzuna alır (`+32 kg`, çantaya sığmaz, eller kilitlenir) | ✅ Aktif |
 | **`[E]`, `[G]` veya `[X]` (Kütük Omuzdaken)** | Omuzdaki ağır kütüğü yere bırakır, elleri ve silahları serbest bırakır | ✅ Aktif |
 | **`[E]` Tuşu (Yerde Eşya Yanında)** | Yere düşen **Kaba Taş, Moloz, Yarma Odun, Dal, Cevher ve Eşyaları** manuel toplar (`<= 2.4m`, mıknatıs yok) | ✅ Aktif |
@@ -431,14 +477,11 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 1. **Adım 1 — Durumu ve Devir Raporunu Oku:**
    - Yeni sohbette ilk olarak `DURUM_VE_DEVIR.md` dosyasını ve `docs/FAZ1_FAZ2_ANAYASA_KARSILASTIRMA_VE_MANTIK_HATALARI_RAPORU.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#040` ile eşleştiğini doğrula.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp en son commit'in Devir `#041` ile eşleştiğini doğrula.
 
-2. **Adım 2 — Anayasa Uyumlu Mantık Düzeltmelerini Uygula:**
-   - **Öncelik 1: Bölgesel Zırh ve Hasar Mimarisi:** `CharacterVitalsComponent` ve `EquipmentSlots` içine 4 uzuv zırhı (Miğfer, Göğüslük, Kolçak, Dizlik) bağlamak; `TakeDamageRegional` ile kafa vuruşunda miğfersiz `2.5x` hasar kuralını canlı döngüye geçirmek.
-   - **Öncelik 2: Ağaç Kesme & Boylama:** `Stage1StructuralCollapseBridge` kütük boylamada silindir squashing'i temizleyip $t$ eksenine göre uç/kök tomruk koparma mantığını sağlamlaştırmak.
-   - **Öncelik 3: Sıvı 3B Hacim ve Göllenme:** `FluidSurfaceSkirtMesher` alt yüzey (`Bottom Quads`) ve `FluidCellularAutomataJob` kohezyon eşiğini ($\Delta V \ge 32$) eklemek.
-   - **Öncelik 4: Boş Başlangıç Envanteri:** Survival modunda hotbar'ı boş başlatıp yaratıcı mod `[F4]` ayrımını kesinleştirmek.
+2. **Adım 2 — Kullanıcı ile Canlı Doğrulama ve Faz 3 Hazırlığı:**
+   - Kullanıcı Unity PlayMode'da `[F4]` + `[Tab]` ile zırh kuşanma (RMB ve `[I]` paneli), miğfersiz kafa vuruşu kritik hasarı (`[F10]` Düellocu), kütük boylama ($t$ ekseni) ve sıvı göllenme testlerini gerçekleştirdikten sonra Faz 3 (Yakın Dövüş, Zırh Katmanları, Örs & Katalizörler) kapsamına geçiş yapılacaktır.
 
-3. **Adım 3 — Test ve Doğrulama:**
+3. **Adım 3 — Test ve Doğrulama Standartları:**
    - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release --nologo` çalıştır (`50/50 PASS` olmalı).
-   - Unity Editor üzerinde Play Mode'da test ederek konsolda `0 Error / 0 Warning` olduğunu doğrula.
+   - Unity Editor üzerinde Play Mode'da konsolda `0 Error / 0 Warning` olduğunu doğrula.

@@ -85,10 +85,12 @@ namespace Stratocraft.Character
         public const int HotbarSlotCount = 9;
         public const int BackpackSlotCount = 24;
         public const int ChestSlotCount = 16;
+        public const int ArmorSlotCount = 4;
 
         public readonly VisualInventorySlot[] HotbarSlots = new VisualInventorySlot[HotbarSlotCount];
         public readonly VisualInventorySlot[] BackpackSlots = new VisualInventorySlot[BackpackSlotCount];
         public readonly VisualInventorySlot[] ChestSlots = new VisualInventorySlot[ChestSlotCount];
+        public readonly VisualInventorySlot[] EquippedArmorSlots = new VisualInventorySlot[ArmorSlotCount];
 
         public VisualInventorySlot CursorHeldSlot;
         public bool DragOriginIsHotbar { get; private set; }
@@ -193,21 +195,22 @@ namespace Stratocraft.Character
 
         private void InitializeDefaultSlots()
         {
-            // Baslangicta oyuncunun kemerinde yalnizca temel aletler vardir; yuvalar 5..8 ve canta yuvalari tamamen bostur!
-            HotbarSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1.0f };
-            HotbarSlots[1] = new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 0, Count = 1, Durability01 = 0.96f };
-            HotbarSlots[2] = new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 0, Count = 1, Durability01 = 0.95f };
-            HotbarSlots[3] = new VisualInventorySlot { Kind = InventoryItemKind.ToolMicroChisel, SubId = 0, Count = 1, Durability01 = 1.0f };
-            HotbarSlots[4] = new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 1, Durability01 = 1.0f };
-            for (int i = 5; i < HotbarSlotCount; i++)
+            // Hayatta Kalma (Survival) Anayasası: Oyuncu dünyaya eli tamamen boş başlar.
+            // Tüm alet ve zırhları kendisi üretir veya [F4] + [Tab] Yaratıcı Mod ile test eder!
+            SelectedHotbarIndex = -1;
+            for (int i = 0; i < HotbarSlotCount; i++)
             {
                 HotbarSlots[i] = default;
             }
 
-            // The Forest / Gercekcilik: Canta baslangicta sifir hazir blok/kulceyle tertemiz baslar.
             for (int i = 0; i < BackpackSlotCount; i++)
             {
                 BackpackSlots[i] = default;
+            }
+
+            for (int i = 0; i < ArmorSlotCount; i++)
+            {
+                EquippedArmorSlots[i] = default;
             }
 
             // Dunyadaki baslangic sandigi (CAS Sandik Kasasi) acil durum rezervi olarak bazi maddeleri icerir
@@ -300,6 +303,156 @@ namespace Stratocraft.Character
         /// <summary>Belirli bir Hotbar slotunu (0..8 -> [1..9], -1 -> Bos El [0]) secer.</summary>
         public void SelectHotbarSlot(int index) =>
             SelectedHotbarIndex = Mathf.Clamp(index, -1, HotbarSlotCount - 1);
+
+        public void SetActiveHotbarSlot(VisualInventorySlot slot)
+        {
+            if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount)
+            {
+                HotbarSlots[SelectedHotbarIndex] = slot;
+            }
+        }
+
+        public static bool IsArmorKind(InventoryItemKind kind) =>
+            kind == InventoryItemKind.ArmorHelmet ||
+            kind == InventoryItemKind.ArmorChestplate ||
+            kind == InventoryItemKind.ArmorVambrace ||
+            kind == InventoryItemKind.ArmorGreaves;
+
+        public static int GetArmorSlotIndexForItemKind(InventoryItemKind kind) => kind switch
+        {
+            InventoryItemKind.ArmorHelmet => 0,
+            InventoryItemKind.ArmorChestplate => 1,
+            InventoryItemKind.ArmorVambrace => 2,
+            InventoryItemKind.ArmorGreaves => 3,
+            _ => -1
+        };
+
+        public static string GetArmorSlotName(int slotIndex) => slotIndex switch
+        {
+            0 => "Kafa (Miğfer)",
+            1 => "Gövde (Göğüslük)",
+            2 => "Kollar (Kolçak)",
+            3 => "Bacaklar (Dizlik)",
+            _ => "Zırh"
+        };
+
+        public static string GetArmorTierName(byte tier) => tier switch
+        {
+            1 => "Deri/Kumaş (%30)",
+            2 => "Ahşap (%45)",
+            3 => "Bakır (%60)",
+            4 => "Demir (%75)",
+            5 => "Mithril (%90)",
+            _ => "Zırhsız (%0)"
+        };
+
+        public void SyncEquippedArmorToVitals(ref Stratocraft.Character.Data.CharacterVitalsComponent vitals)
+        {
+            vitals.EquippedHelmetTier = (byte)(EquippedArmorSlots[0].Kind == InventoryItemKind.ArmorHelmet ? EquippedArmorSlots[0].SubId : 0);
+            vitals.EquippedChestplateTier = (byte)(EquippedArmorSlots[1].Kind == InventoryItemKind.ArmorChestplate ? EquippedArmorSlots[1].SubId : 0);
+            vitals.EquippedVambracesTier = (byte)(EquippedArmorSlots[2].Kind == InventoryItemKind.ArmorVambrace ? EquippedArmorSlots[2].SubId : 0);
+            vitals.EquippedGreavesTier = (byte)(EquippedArmorSlots[3].Kind == InventoryItemKind.ArmorGreaves ? EquippedArmorSlots[3].SubId : 0);
+        }
+
+        public bool TryEquipArmor(ref VisualInventorySlot itemToEquip, out VisualInventorySlot unequippedOld)
+        {
+            unequippedOld = default;
+            int targetSlot = GetArmorSlotIndexForItemKind(itemToEquip.Kind);
+            if (targetSlot < 0) return false;
+
+            unequippedOld = EquippedArmorSlots[targetSlot];
+            EquippedArmorSlots[targetSlot] = itemToEquip;
+            EquippedArmorSlots[targetSlot].Count = 1;
+            itemToEquip = unequippedOld;
+            return true;
+        }
+
+        public bool TryUnequipArmor(int slotIndex, out VisualInventorySlot unequipped)
+        {
+            unequipped = default;
+            if ((uint)slotIndex >= (uint)EquippedArmorSlots.Length) return false;
+            if (EquippedArmorSlots[slotIndex].IsEmpty) return false;
+
+            unequipped = EquippedArmorSlots[slotIndex];
+            EquippedArmorSlots[slotIndex] = default;
+            return true;
+        }
+
+        public bool TryEquipActiveHotbarArmor(ref Stratocraft.Character.Data.CharacterVitalsComponent vitals, out string feedback)
+        {
+            feedback = string.Empty;
+            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return false;
+            ref VisualInventorySlot activeSlot = ref HotbarSlots[SelectedHotbarIndex];
+            if (activeSlot.IsEmpty || !IsArmorKind(activeSlot.Kind)) return false;
+
+            int targetSlot = GetArmorSlotIndexForItemKind(activeSlot.Kind);
+            if (targetSlot < 0) return false;
+
+            VisualInventorySlot oldArmor = EquippedArmorSlots[targetSlot];
+            EquippedArmorSlots[targetSlot] = activeSlot;
+            EquippedArmorSlots[targetSlot].Count = 1;
+            activeSlot = oldArmor;
+
+            SyncEquippedArmorToVitals(ref vitals);
+            feedback = $"🛡️ Kuşanıldı: {GetArmorSlotName(targetSlot)} ({GetArmorTierName(EquippedArmorSlots[targetSlot].SubId)})";
+            return true;
+        }
+
+        public void HandleArmorSlotClick(
+            int slotIndex,
+            int mouseButton,
+            Stage1MatterCrystalAndMiningController? miningCtrl)
+        {
+            if ((uint)slotIndex >= (uint)EquippedArmorSlots.Length) return;
+
+            if (!CursorHeldSlot.IsEmpty)
+            {
+                int targetIndex = GetArmorSlotIndexForItemKind(CursorHeldSlot.Kind);
+                if (targetIndex == slotIndex)
+                {
+                    VisualInventorySlot old = EquippedArmorSlots[slotIndex];
+                    EquippedArmorSlots[slotIndex] = CursorHeldSlot;
+                    EquippedArmorSlots[slotIndex].Count = 1;
+                    CursorHeldSlot = old;
+                    if (miningCtrl != null)
+                    {
+                        miningCtrl.LastFeedbackText = $"🛡️ Kuşanıldı: {GetArmorSlotName(slotIndex)} ({GetArmorTierName(EquippedArmorSlots[slotIndex].SubId)})";
+                    }
+                    return;
+                }
+                else
+                {
+                    if (miningCtrl != null)
+                    {
+                        miningCtrl.LastFeedbackText = $"⚠️ Bu eşya {GetArmorSlotName(slotIndex)} yuvasına takılamaz!";
+                    }
+                    return;
+                }
+            }
+
+            if (!EquippedArmorSlots[slotIndex].IsEmpty)
+            {
+                VisualInventorySlot unequipped = EquippedArmorSlots[slotIndex];
+                EquippedArmorSlots[slotIndex] = default;
+
+                if (mouseButton == 1)
+                {
+                    if (!TryMergeOrPlaceIntoArray(unequipped, BackpackSlots) && !TryMergeOrPlaceIntoArray(unequipped, HotbarSlots))
+                    {
+                        CursorHeldSlot = unequipped;
+                    }
+                }
+                else
+                {
+                    CursorHeldSlot = unequipped;
+                }
+
+                if (miningCtrl != null)
+                {
+                    miningCtrl.LastFeedbackText = $"{GetArmorSlotName(slotIndex)} zırhı çıkarıldı.";
+                }
+            }
+        }
 
         /// <summary>
         /// Secili Hotbar slotunda yalnizca insa edilebilir VoxelBlock veya MetalIngot varsa 1 adet tuketir ve MaterialId dondurur.
@@ -838,6 +991,9 @@ namespace Stratocraft.Character
                 // 3B Kumaş Çanta Örtüsü üzerindeki her dolu 3B yuvanın üstüne isim + adet rozeti (x16, x12 vb.) çiz
                 Draw3DMatSlotStackBadges(screenW, screenH, combatBridge);
 
+                // 🛡️ ANATOMİK BÖLGESEL ZIRHLAR Paneli (Kafa, Gövde, Kollar, Bacaklar)
+                DrawEquippedArmorPanel(screenW, screenH, barY, ev, mousePos, miningCtrl, onActiveSlotChanged);
+
                 // Ust ince diyajetik rehber seridi (3B Kumas Canta Ortusunun ustunu ASLA kapatmaz!)
                 Rect matBannerRect = new Rect(screenW * 0.5f - 410f, 178f, 820f, 28f);
                 GUI.DrawTexture(matBannerRect, _windowBgTex!);
@@ -885,6 +1041,89 @@ namespace Stratocraft.Character
                     float tx = Mathf.Clamp(mousePos.x + 16f, 10f, screenW - tw - 10f);
                     float ty = Mathf.Clamp(mousePos.y - 64f, 10f, barY - 62f);
                     GUI.Box(new Rect(tx, ty, tw, 54f), HoveredSlotTooltip, _tooltipBoxStyle!);
+                }
+            }
+        }
+
+        private void DrawEquippedArmorPanel(
+            float screenW,
+            float screenH,
+            float barY,
+            Event ev,
+            Vector2 mousePos,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Action onActiveSlotChanged)
+        {
+            const float panelW = 286f;
+            const float panelH = 212f;
+            float px = screenW - panelW - 18f;
+            float py = 72f;
+
+            Rect panelRect = new Rect(px, py, panelW, panelH);
+            GUI.DrawTexture(panelRect, _windowBgTex!);
+
+            string title = "🛡️ ANATOMİK BÖLGESEL ZIRHLAR";
+            GUI.Label(new Rect(px + 8f, py + 4f, panelW - 16f, 22f), title, _slotTitleBannerStyle!);
+
+            const float slotSize = 38f;
+            const float rowH = 42f;
+
+            for (int i = 0; i < ArmorSlotCount; i++)
+            {
+                float ry = py + 30f + i * rowH;
+                Rect slotRect = new Rect(px + 10f, ry, slotSize, slotSize);
+                ref VisualInventorySlot armorSlot = ref EquippedArmorSlots[i];
+                bool isHovered = slotRect.Contains(mousePos);
+
+                Texture2D bg = isHovered ? _slotHoverBgTex! : _slotBgTex!;
+                GUI.DrawTexture(slotRect, bg);
+
+                if (!armorSlot.IsEmpty)
+                {
+                    Texture2D icon = GetOrBuildIconForSlot(in armorSlot, CombatWeaponArchetype.Longsword);
+                    GUI.DrawTexture(new Rect(slotRect.x + 3f, slotRect.y + 3f, slotSize - 6f, slotSize - 6f), icon);
+                }
+
+                string slotLabel = GetArmorSlotName(i);
+                string statusText;
+                Color statusColor;
+
+                if (armorSlot.IsEmpty)
+                {
+                    if (i == 0)
+                    {
+                        statusText = "KORUMASIZ! ⚠️ (2.5x Kritik Kafa)";
+                        statusColor = new Color(1.0f, 0.35f, 0.35f);
+                    }
+                    else
+                    {
+                        statusText = "Boş Yuva (%0 Koruma)";
+                        statusColor = new Color(0.72f, 0.72f, 0.72f);
+                    }
+                }
+                else
+                {
+                    string tierDesc = GetArmorTierName(armorSlot.SubId);
+                    statusText = $"{GetSlotDisplayName(in armorSlot, null)} — {tierDesc}";
+                    statusColor = new Color(0.40f, 1.0f, 0.65f);
+                }
+
+                Rect textRect = new Rect(px + slotSize + 16f, ry, panelW - slotSize - 22f, rowH - 4f);
+                Color prevColor = GUI.color;
+                GUI.Label(new Rect(textRect.x, textRect.y, textRect.width, 18f), slotLabel, _keyBadgeStyle!);
+                GUI.color = statusColor;
+                GUI.Label(new Rect(textRect.x, textRect.y + 18f, textRect.width, 18f), statusText, _vitalsLabelStyle!);
+                GUI.color = prevColor;
+
+                if (isHovered)
+                {
+                    HoveredSlotTooltip = $"{slotLabel}\n{statusText}\n[Sol/Sağ Tık]: Çıkar / Zırh Değiştir";
+                    if (ev.type == EventType.MouseDown)
+                    {
+                        HandleArmorSlotClick(i, ev.button, miningCtrl);
+                        onActiveSlotChanged();
+                        ev.Use();
+                    }
                 }
             }
         }
@@ -1124,6 +1363,26 @@ namespace Stratocraft.Character
             {
                 if (CursorHeldSlot.IsEmpty && !clickedSlot.IsEmpty)
                 {
+                    if (IsArmorKind(clickedSlot.Kind))
+                    {
+                        int targetSlot = GetArmorSlotIndexForItemKind(clickedSlot.Kind);
+                        if (targetSlot >= 0)
+                        {
+                            VisualInventorySlot old = EquippedArmorSlots[targetSlot];
+                            EquippedArmorSlots[targetSlot] = clickedSlot;
+                            EquippedArmorSlots[targetSlot].Count = 1;
+                            clickedSlot = old;
+                            if (isChest)
+                            {
+                                if (!old.IsEmpty) chestCasSystem.InitializeSlot(slotIndex, old.SubId, (ushort)old.Count);
+                                else chestCasSystem.TryWithdrawAtomic(slotIndex, 1, out _, out _);
+                            }
+                            miningCtrl.LastFeedbackText = $"🛡️ Kuşanıldı: {GetArmorSlotName(targetSlot)} ({GetArmorTierName(EquippedArmorSlots[targetSlot].SubId)})";
+                            PushUiCountsToCrystalStorage(miningCtrl);
+                            return;
+                        }
+                    }
+
                     int takeHalf = Mathf.Max(1, (clickedSlot.Count + 1) / 2);
                     CursorHeldSlot = clickedSlot;
                     CursorHeldSlot.Count = takeHalf;

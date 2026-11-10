@@ -981,10 +981,15 @@ namespace Stratocraft.Character
                     else
                     {
                         float finalDmg = isPlayerParrying ? rawDmg * 0.15f : rawDmg;
-                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - finalDmg);
+                        Stratocraft.Character.Data.HitZone zone = (a.IsFlyingBoss || a.IsPhoenixBoss)
+                            ? Stratocraft.Character.Data.HitZone.Head
+                            : (UnityEngine.Random.value < 0.25f ? Stratocraft.Character.Data.HitZone.Head : (UnityEngine.Random.value < 0.35f ? Stratocraft.Character.Data.HitZone.Legs : Stratocraft.Character.Data.HitZone.Torso));
+                        float actualDmg = playerVitals.TakeDamageRegional(zone, finalDmg, out float absorbedDmg, out bool isCritHead);
+                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - actualDmg);
+                        string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {zone} Soğurdu: -{absorbedDmg:F0}]" : "");
                         LastCreatureEventText = isPlayerParrying
-                            ? $"GARD SIPERI BASARILI! {a.DisplayName} [{attackMoveLabel}] saptirildi (-{finalDmg:F1} HP)."
-                            : $"{a.DisplayName} [{attackMoveLabel}] ile saldirdi! (-{finalDmg:F1} HP | Kalan HP: {playerVitals.CurrentHp:F0})";
+                            ? $"GARD SIPERI BASARILI! {a.DisplayName} [{attackMoveLabel}] saptirildi (-{actualDmg:F1} HP{critNote})."
+                            : $"{a.DisplayName} [{attackMoveLabel}] ile vurdu! (-{actualDmg:F1} HP{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
                     }
                 }
 

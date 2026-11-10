@@ -1298,45 +1298,39 @@ namespace Stratocraft.Character
                 return true;
             }
 
-            // A) Uc / Tac Vurusu (t >= 0.65f) veya Kalan < 6:
-            if (t >= 0.65f || target.RemainingSegments < 6)
+            // A) Kok / Taban Vurusu (t <= 0.35f): Sadece tabandan 2m kesilir, uc (pTip) sabit kalir!
+            if (t <= 0.35f || (target.RemainingSegments < 6 && t < 0.5f))
             {
-                if (t < 0.35f && target.RemainingSegments >= 4)
-                {
-                    // Taban / Kok Vurusu (t <= 0.35f): Sadece tabandan 2m kesilir, uc (pTip) sabit kalir!
-                    Vector3 buckedBasePos = pBase + u * 1.0f;
-                    SpawnBuckedTimberLog(buckedBasePos, target.WoodMaterialId, target.TrunkDirection);
+                Vector3 buckedBasePos = pBase + u * 1.0f;
+                SpawnBuckedTimberLog(buckedBasePos, target.WoodMaterialId, target.TrunkDirection);
 
-                    target.RemainingSegments -= 2;
-                    float newLen = target.RemainingSegments * target.SegmentLengthMeters;
-                    Vector3 newCenter = pTip - u * (newLen * 0.5f);
-                    if (target.LogObject != null)
-                    {
-                        target.LogObject.transform.position = newCenter;
-                        float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
-                        target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
-                    }
-                    feedback = $"KOK TARAFINDAN BOYLNDI! Dip kismindan 2m Agir Kutuk kesildi (Uc sabit | Kalan: {target.RemainingSegments} bolum).";
-                }
-                else
+                int remaining = target.RemainingSegments - 2;
+                float newLen = remaining * target.SegmentLengthMeters;
+                Vector3 newCenter = pTip - u * (newLen * 0.5f);
+                if (target.LogObject != null)
                 {
-                    // Uctan 2m kesim: Taban (pBase) sabit kalir!
-                    Vector3 buckedTipPos = pTip - u * 1.0f;
-                    SpawnBuckedTimberLog(buckedTipPos, target.WoodMaterialId, target.TrunkDirection);
-
-                    target.RemainingSegments -= 2;
-                    float newLen = target.RemainingSegments * target.SegmentLengthMeters;
-                    Vector3 newCenter = pBase + u * (newLen * 0.5f);
-                    if (target.LogObject != null)
-                    {
-                        target.LogObject.transform.position = newCenter;
-                        float ratio = target.RemainingSegments / (float)Math.Max(1, target.InitialSegments);
-                        target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
-                    }
-                    feedback = $"UC TARAFINDAN BOYLNDI! Govdenin ucundan 2m Agir Kutuk kesildi (Kok sabit | Kalan: {target.RemainingSegments} bolum).";
+                    target.LogObject.transform.position = newCenter;
                 }
+                RebuildLogMeshAndCollider(target, remaining);
+                feedback = $"KÖK TARAFINDAN BOYLNDI! Dip kısmından 2m Ağır Kütük kesildi (Uç sabit | Kalan: {remaining} bölüm).";
             }
-            // B) Ortadan Kesim (0.35f < t < 0.65f ve Kalan >= 6):
+            // B) Uc / Tac Vurusu (t >= 0.65f): Sadece uctan 2m kesilir, taban (pBase) sabit kalir!
+            else if (t >= 0.65f || (target.RemainingSegments < 6 && t >= 0.5f))
+            {
+                Vector3 buckedTipPos = pTip - u * 1.0f;
+                SpawnBuckedTimberLog(buckedTipPos, target.WoodMaterialId, target.TrunkDirection);
+
+                int remaining = target.RemainingSegments - 2;
+                float newLen = remaining * target.SegmentLengthMeters;
+                Vector3 newCenter = pBase + u * (newLen * 0.5f);
+                if (target.LogObject != null)
+                {
+                    target.LogObject.transform.position = newCenter;
+                }
+                RebuildLogMeshAndCollider(target, remaining);
+                feedback = $"UÇ TARAFINDAN BOYLNDI! Gövdenin ucundan 2m Ağır Kütük kesildi (Kök sabit | Kalan: {remaining} bölüm).";
+            }
+            // C) Ortadan Kesim (0.35f < t < 0.65f ve Kalan >= 6):
             // Vurulan noktadan 2m'lik kutuk cikarilir ve kalan govde IKI AYRI KUTUGE ayrilir!
             else
             {
@@ -1352,22 +1346,20 @@ namespace Stratocraft.Character
                 SpawnBuckedTimberLog(hitPoint + new Vector3(0f, 0.1f, 0f), target.WoodMaterialId, target.TrunkDirection);
 
                 // 1. Parca: Kok Govdesi
-                target.RemainingSegments = baseSegs;
                 float baseLen = baseSegs * target.SegmentLengthMeters;
                 Vector3 newBaseCenter = pBase + u * (baseLen * 0.5f);
                 if (target.LogObject != null)
                 {
                     target.LogObject.transform.position = newBaseCenter;
-                    float ratio = baseSegs / (float)Math.Max(1, target.InitialSegments);
-                    target.LogObject.transform.localScale = new Vector3(1f, Mathf.Max(0.2f, ratio), 1f);
                 }
+                RebuildLogMeshAndCollider(target, baseSegs);
 
                 // 2. Parca: Uc Govdesi (Yeni bagimsiz kutuk nesnesi olarak dunyaya eklenir)
                 float tipLen = tipSegs * target.SegmentLengthMeters;
                 Vector3 newTipCenter = pTip - u * (tipLen * 0.5f);
                 SpawnPartialFallenTreeLog(newTipCenter, target.LogObject != null ? target.LogObject.transform.rotation : Quaternion.identity, target.WoodMaterialId, tipSegs, target.TrunkDirection);
 
-                feedback = $"GOVDE ORTADAN IKIYE BOLUNDU! Ortadan 2m Agir Kutuk cikarildi, govde iki bagimsiz kutuge ayrildi ({baseSegs}m ve {tipSegs}m).";
+                feedback = $"GÖVDE ORTADAN İKİYE BÖLÜNDÜ! Ortadan 2m Ağır Kütük çıkarıldı, gövde iki bağımsız kütüğe ayrıldı ({baseSegs}m ve {tipSegs}m).";
             }
 
             if (MiningControllerForItemDrops != null)
@@ -1502,6 +1494,47 @@ namespace Stratocraft.Character
                 CurrentDamage = 0f,
                 VerticalVelocity = 0f
             });
+        }
+
+        private void RebuildLogMeshAndCollider(FallenTreeLogInstance log, int newSegments)
+        {
+            if (log.LogObject == null) return;
+            log.RemainingSegments = newSegments;
+            log.LogObject.transform.localScale = Vector3.one;
+
+            _proxyTris.Clear();
+            for (int s = 0; s < newSegments; s++)
+            {
+                float offsetY = (s - (newSegments - 1) * 0.5f);
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, -0.5f),
+                    log.WoodMaterialId,
+                    ArchitecturalShapeCatalog.OctagonalColumn,
+                    0,
+                    1,
+                    _proxyTris,
+                    extendFoundationSkirt: false);
+            }
+
+            Mesh newMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_proxyTris, $"Mesh_FallenTreeLog_{Time.frameCount}");
+            var mf = log.LogObject.GetComponent<MeshFilter>();
+            if (mf != null)
+            {
+                if (mf.sharedMesh != null) UnityEngine.Object.Destroy(mf.sharedMesh);
+                mf.sharedMesh = newMesh;
+            }
+
+            var col = log.LogObject.GetComponent<BoxCollider>();
+            if (col != null)
+            {
+                col.size = new Vector3(1.15f, newSegments * 1.05f, 1.15f);
+            }
+
+            var rb = log.LogObject.GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.mass = newSegments * 85f;
+            }
         }
 
         /// <summary>
