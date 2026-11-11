@@ -37,7 +37,7 @@ Shader "Stratocraft/FluidSurface"
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite On
             ZTest LEqual
-            Cull Back
+            Cull Off
 
             HLSLPROGRAM
             #pragma target 4.5
@@ -68,6 +68,12 @@ Shader "Stratocraft/FluidSurface"
                 float4 _AcidColorShallow;
                 float4 _AcidColorDeep;
             CBUFFER_END
+
+            // Global Oyuncu-Su Etkilesimi (SRP Batcher uyumlu, 0 B doku VRAM):
+            // xyz = yuzucu dunya konumu, w = etkilesim siddeti (0..1)
+            float4 _StratocraftSwimmerPos;
+            // xyz = yuzucu hiz vektoru (m/s), w = suya giris sicrama darbesi (0..1)
+            float4 _StratocraftSwimmerVel;
 
             struct Attributes
             {
@@ -119,17 +125,38 @@ Shader "Stratocraft/FluidSurface"
                 float2 flux = float2(input.color.b * 2.0 - 1.0, input.color.a * 2.0 - 1.0);
                 output.fluxVelocity = flux;
 
-                // Su ve Asit icin prosedurel Gerstner dalgasi
+                // Su ve Asit icin prosedurel Gerstner dalgasi + Oyuncu Yuzme Dairesel Dalga Halkasi
+                float3 nrmWS = TransformObjectToWorldNormal(input.normalOS);
                 if (fType == 1 || fType == 3)
                 {
                     float time = _Time.y * _WaterWaveSpeed;
                     float wave = sin((posWS.x + flux.x) * _WaterWaveFrequency + time) *
                                  cos((posWS.z + flux.y) * _WaterWaveFrequency * 1.3 + time * 0.8);
-                    posWS.y += wave * _WaterWaveAmplitude;
+                    float topMask = saturate(nrmWS.y * 1.5);
+                    posWS.y += wave * _WaterWaveAmplitude * topMask;
+
+                    float swimWeight = saturate(_StratocraftSwimmerPos.w);
+                    if (swimWeight > 0.01 && topMask > 0.25 && abs(posWS.y - _StratocraftSwimmerPos.y) < 2.4)
+                    {
+                        float2 toVert = posWS.xz - _StratocraftSwimmerPos.xz;
+                        float dist = length(toVert);
+                        float splashPulse = saturate(_StratocraftSwimmerVel.w);
+                        float rippleAmp = (0.042 * swimWeight + 0.068 * splashPulse) * exp(-dist * 0.58);
+                        float phase = dist * 7.8 - _Time.y * 9.6;
+                        float ripple = sin(phase) * rippleAmp;
+                        posWS.y += ripple * topMask;
+
+                        if (dist > 0.04)
+                        {
+                            float dRippleDr = cos(phase) * 7.8 * rippleAmp;
+                            float2 radialDir = toVert / dist;
+                            nrmWS = normalize(nrmWS + float3(-radialDir.x * dRippleDr, 0.0, -radialDir.y * dRippleDr) * 0.55);
+                        }
+                    }
                 }
 
                 output.positionWS = posWS;
-                output.normalWS = TransformObjectToWorldNormal(input.normalOS);
+                output.normalWS = nrmWS;
                 output.positionCS = TransformWorldToHClip(posWS);
                 output.screenPos = ComputeScreenPos(output.positionCS);
                 output.fogFactor = ComputeFogFactor(output.positionCS.z);
@@ -175,11 +202,11 @@ Shader "Stratocraft/FluidSurface"
                 return minDist;
             }
 
-            float4 FluidFrag(Varyings input) : SV_Target
+            float4 FluidFrag(Varyings input, bool isFrontFace : SV_IsFrontFace) : SV_Target
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                float3 normalWS = normalize(input.normalWS);
+                float3 normalWS = normalize(isFrontFace ? input.normalWS : -input.normalWS);
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - input.positionWS);
                 float NdotV = max(0.0, dot(normalWS, viewDirWS));
 
@@ -208,26 +235,73 @@ Shader "Stratocraft/FluidSurface"
                 // ==================== 1. SU (FluidType == 1) ====================
                 if (input.fluidType == 1)
                 {
-                    // Beer-Lambert Derinlik Sogurmasi
+                    if (!isFrontFace)
+                    {
+                        // Su icinden yukari bakis: Snell penceresi (dik acida aydinlik turkuaz, yatay acida tam ic yansima laciverti)
+                        float snellWindow = smoothstep(0.42, 0.78, NdotV);
+                        float causticWave = SmoothValueNoise2D(input.positionWS.xz * 2.1 + _Time.y * 0.45);
+                        float3 tirDeep = _WaterColorDeep.rgb * lightCol * 0.92;
+                        float3 windowBright = lerp(_WaterColorShallow.rgb, float3(0.68, 0.92, 1.0), 0.45 + 0.20 * causticWave) * lightCol * 1.15;
+                        float3 underColor = lerp(tirDeep, windowBright, snellWindow);
+                        float underAlpha = saturate(lerp(0.84, 0.58, snellWindow));
+                        return float4(MixFog(underColor, input.fogFactor), underAlpha);
+                    }
+
+                    // Beer-Lambert Derinlik Sogurmasi + 3B Prizma Yan Duvar Kontrasti
+                    float sideWallMask = 1.0 - saturate(abs(normalWS.y) * 1.35);
                     float3 extinction = _WaterExtinction.rgb;
-                    float3 absorb = exp(-extinction * clamp(opticalDepth, 0.1, 6.0));
+                    float3 absorb = exp(-extinction * clamp(opticalDepth + sideWallMask * 0.85, 0.18, 6.0));
                     float3 waterColor = lerp(_WaterColorDeep.rgb, _WaterColorShallow.rgb, absorb);
+                    waterColor = lerp(waterColor, _WaterColorDeep.rgb * 1.15, sideWallMask * 0.38);
 
-                    // Schlick Fresnel
-                    float fresnel = 0.06 + 0.94 * pow(1.0 - NdotV, 4.0);
-                    float3 skyReflection = float3(0.42, 0.68, 0.95) * lightCol * 1.15;
-                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * 0.55);
+                    // Schlick Fresnel + Ust-Yan Kenar Meniskus Okunurlugu
+                    float fresnel = 0.08 + 0.92 * pow(1.0 - NdotV, 3.6);
+                    float3 skyReflection = float3(0.42, 0.70, 0.96) * lightCol * 1.16;
+                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * (0.52 - sideWallMask * 0.22));
 
-                    // Shoreline Foam Band & Smooth Depth Alpha Fade (Sifir piksellesme, yumusak kiyi gecisi)
+                    // Shoreline Foam Band + Oyuncu Yuzme Calkanti Halkasi ve V-Iz Kopugu
                     float shoreDist = max(0.05, _ShorelineFoamDistance);
                     float foamFactor = smoothstep(shoreDist, 0.0, opticalDepth);
                     float foamWave = SmoothValueNoise2D(input.positionWS.xz * 2.4 + _Time.y * 0.35);
-                    float foam = smoothstep(0.58, 0.82, foamFactor * (0.65 + 0.35 * foamWave));
-                    finalColor = lerp(finalColor, float3(0.92, 0.96, 1.0) * lightCol * 1.15, foam * 0.45);
+                    float foam = smoothstep(0.56, 0.82, foamFactor * (0.65 + 0.35 * foamWave));
 
-                    float shoreFeather = validDepth ? smoothstep(0.0, 0.08, opticalDepth) : 1.0;
-                    float baseAlpha = saturate(_WaterColorShallow.a + (clamp(opticalDepth, 0.0, 4.0) * 0.06) + (foam * 0.14));
-                    float alpha = baseAlpha * lerp(0.55, 1.0, shoreFeather);
+                    float swimWeight = saturate(_StratocraftSwimmerPos.w);
+                    if (swimWeight > 0.01 && abs(input.positionWS.y - _StratocraftSwimmerPos.y) < 2.2)
+                    {
+                        float2 relXZ = input.positionWS.xz - _StratocraftSwimmerPos.xz;
+                        float r = length(relXZ);
+                        float splashPulse = saturate(_StratocraftSwimmerVel.w);
+                        float ringWave = 0.5 + 0.5 * sin(r * 9.0 - _Time.y * 10.5);
+                        float churnNoise = SmoothValueNoise2D(input.positionWS.xz * 5.2 - _Time.yy * 1.4);
+                        float bodyRing = smoothstep(1.35 + splashPulse * 0.65, 0.18, r) * (0.45 + 0.55 * ringWave * churnNoise);
+
+                        float2 velXZ = _StratocraftSwimmerVel.xz;
+                        float speedXZ = length(velXZ);
+                        float wakeFoam = 0.0;
+                        if (speedXZ > 0.25)
+                        {
+                            float2 backDir = -velXZ / speedXZ;
+                            float2 sideDir = float2(-backDir.y, backDir.x);
+                            float alongBack = dot(relXZ, backDir);
+                            float acrossSide = abs(dot(relXZ, sideDir));
+                            if (alongBack > 0.0 && alongBack < 3.6)
+                            {
+                                float wakeHalfWidth = 0.22 + alongBack * 0.34;
+                                float vEdge = 1.0 - smoothstep(wakeHalfWidth * 0.55, wakeHalfWidth, acrossSide);
+                                float wakeFade = (1.0 - alongBack / 3.6) * saturate(speedXZ * 0.28);
+                                wakeFoam = vEdge * wakeFade * (0.55 + 0.45 * churnNoise);
+                            }
+                        }
+
+                        float playerFoam = saturate((bodyRing * (0.65 + 0.55 * splashPulse) + wakeFoam) * swimWeight);
+                        foam = max(foam, playerFoam);
+                    }
+
+                    finalColor = lerp(finalColor, float3(0.92, 0.97, 1.0) * lightCol * 1.15, foam * 0.54);
+
+                    float shoreFeather = validDepth ? smoothstep(0.0, 0.04, opticalDepth) : 1.0;
+                    float baseAlpha = saturate(max(0.74, _WaterColorShallow.a) + (clamp(opticalDepth, 0.0, 4.0) * 0.06) + (sideWallMask * 0.08) + (foam * 0.12));
+                    float alpha = baseAlpha * lerp(0.76, 1.0, shoreFeather);
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 

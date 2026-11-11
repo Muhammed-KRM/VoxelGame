@@ -362,10 +362,204 @@ namespace Stratocraft.WorldGen.Generators
             return Math.Clamp(2.25f + crag, 1.45f, 3.35f);
         }
 
+        private const int CaveEntranceMacroSize = 144; // 144m x 144m (9x9 chunk) makro bolgede en fazla 1 dogal magara girisi
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static int FloorDivMacro(int v, int size) => v >= 0 ? (v / size) : -(((-v) + size - 1) / size);
+
+        /// <summary>
+        /// Verilen 144m x 144m makro bolgede yuzeye acilan dogal, seyrek ve kuru yamacli bir magara girisi olup olmadigini cozer.
+        /// Giris agzi [50..94]m ic bolgede tutuldugundan 44m'lik egimli rampa ve kavsak odasi %100 tek makro hucre icinde kalir (O(1)).
+        /// </summary>
+        public static bool TryGetMacroRegionCaveEntrance(
+            int macroX, int macroZ,
+            out float mouthX, out float mouthZ,
+            out float dirX, out float dirZ,
+            out float mouthTopH)
+        {
+            mouthX = 0f;
+            mouthZ = 0f;
+            dirX = 1f;
+            dirZ = 0f;
+            mouthTopH = DefaultSurfaceBaseY;
+
+            uint h = (uint)((macroX * 73856093) ^ (macroZ * 19349663) ^ (ActiveWorldSeed * 83492791));
+            h ^= h >> 15;
+            h *= 0x2C1B3C6Du;
+            h ^= h >> 12;
+
+            // Cok sik olmamasi icin: baslangic kitasinda 2 kesfedilebilir dogal giris, dis dunyada ise makro bolgelerin yalnizca ~%35'inde 1 giris!
+            bool isStarterContinentGuaranteed = (macroX == -1 && macroZ == 0) || (macroX == 0 && macroZ == -1);
+            if (!isStarterContinentGuaranteed && (h % 20u) >= 7u)
+            {
+                return false;
+            }
+
+            int baseWx = macroX * CaveEntranceMacroSize;
+            int baseWz = macroZ * CaveEntranceMacroSize;
+
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                uint ah = h + (uint)(attempt * 0x9E3779B9u);
+                ah ^= ah >> 13;
+                float candX = baseWx + 52.0f + (ah % 41u);
+                float candZ = baseWz + 52.0f + ((ah >> 8) % 41u);
+
+                float distOrigin = MathF.Sqrt(candX * candX + candZ * candZ);
+                if (distOrigin < 50.0f) continue; // Baslangic vadisi / atolye meydanina acilmasin
+                if (!InfiniteProceduralWorldMode)
+                {
+                    float coastR = ComputeIslandCoastRadius(candX, candZ);
+                    if (coastR - distOrigin < 28.0f) continue; // Dis falez kenarina cok yaklasmasin
+                }
+
+                float centerTop = SampleIslandTopSurfaceY(candX, candZ);
+                if (centerTop < SeaLevelY + 3.2f || centerTop > MaxEditableVoxelY - 22) continue;
+
+                // Agiz cevresinde gol/deniz/kaldera olmadigini dogrula ki su magaraya dolmasin:
+                if (SampleIslandTopSurfaceY(candX + 6f, candZ) < SeaLevelY + 2.4f ||
+                    SampleIslandTopSurfaceY(candX - 6f, candZ) < SeaLevelY + 2.4f ||
+                    SampleIslandTopSurfaceY(candX, candZ + 6f) < SeaLevelY + 2.4f ||
+                    SampleIslandTopSurfaceY(candX, candZ - 6f) < SeaLevelY + 2.4f)
+                {
+                    continue;
+                }
+
+                // Tunel yonu yokus yukari / tepe icine dogru baksin ki yamaca dogal bir magara agzi gibi oyulsun:
+                float gx = SampleIslandTopSurfaceY(candX + 4f, candZ) - SampleIslandTopSurfaceY(candX - 4f, candZ);
+                float gz = SampleIslandTopSurfaceY(candX, candZ + 4f) - SampleIslandTopSurfaceY(candX, candZ - 4f);
+                float gLen = MathF.Sqrt(gx * gx + gz * gz);
+                if (gLen > 0.15f)
+                {
+                    dirX = gx / gLen;
+                    dirZ = gz / gLen;
+                }
+                else
+                {
+                    float angle = ((ah >> 16) & 1023u) * (MathF.PI * 2.0f / 1024.0f);
+                    dirX = MathF.Cos(angle);
+                    dirZ = MathF.Sin(angle);
+                }
+
+                // Tam kapi onunde de kuru zemin oldugunu dogrula:
+                if (SampleIslandTopSurfaceY(candX - dirX * 5f, candZ - dirZ * 5f) < SeaLevelY + 2.0f)
+                {
+                    continue;
+                }
+
+                mouthX = candX;
+                mouthZ = candZ;
+                mouthTopH = centerTop;
+                return true;
+            }
+
+            return false;
+        }
+
+        public static bool IsNearNaturalCaveEntranceMouth(int wx, int wz, float clearanceRadius = 9.5f)
+        {
+            int macroX = FloorDivMacro(wx, CaveEntranceMacroSize);
+            int macroZ = FloorDivMacro(wz, CaveEntranceMacroSize);
+            if (!TryGetMacroRegionCaveEntrance(macroX, macroZ, out float mx, out float mz, out _, out _, out _))
+            {
+                return false;
+            }
+            float dx = wx - mx;
+            float dz = wz - mz;
+            return (dx * dx + dz * dz) <= clearanceRadius * clearanceRadius;
+        }
+
+        public static bool IsChunkNearSurfaceCaveEntrance(int chunkX, int chunkZ)
+        {
+            int wx = chunkX * 16 + 8;
+            int wz = chunkZ * 16 + 8;
+            int macroX = FloorDivMacro(wx, CaveEntranceMacroSize);
+            int macroZ = FloorDivMacro(wz, CaveEntranceMacroSize);
+            if (!TryGetMacroRegionCaveEntrance(macroX, macroZ, out float mx, out float mz, out float dirX, out float dirZ, out _))
+            {
+                return false;
+            }
+            float midX = mx + dirX * 20.0f;
+            float midZ = mz + dirZ * 20.0f;
+            float dx = wx - midX;
+            float dz = wz - midZ;
+            return (dx * dx + dz * dz) <= 44.0f * 44.0f;
+        }
+
+        private static void EvaluateNaturalCaveSurfaceEntrance(
+            int wx, int y, int wz, float topH,
+            out bool inEntranceVoid,
+            out bool isEntranceStoneRim,
+            out float junctionBoost01)
+        {
+            inEntranceVoid = false;
+            isEntranceStoneRim = false;
+            junctionBoost01 = 0f;
+
+            if (y <= DeepMantleFloorY + 4 || y > topH + 3.0f) return;
+
+            int macroX = FloorDivMacro(wx, CaveEntranceMacroSize);
+            int macroZ = FloorDivMacro(wz, CaveEntranceMacroSize);
+            if (!TryGetMacroRegionCaveEntrance(macroX, macroZ, out float mouthX, out float mouthZ, out float dirX, out float dirZ, out float mouthTopH))
+            {
+                return;
+            }
+
+            float dx = wx - mouthX;
+            float dz = wz - mouthZ;
+            if (dx * dx + dz * dz > 52.0f * 52.0f) return;
+
+            // Alt kavsak odasi cevresinde (along ~ 40m, y ~ 52..75) ana yeralti magara agini genisletip %100 baglanti kur:
+            float endX = mouthX + dirX * 40.0f;
+            float endZ = mouthZ + dirZ * 40.0f;
+            float jDx = wx - endX;
+            float jDz = wz - endZ;
+            float jDistSq = jDx * jDx + jDz * jDz;
+            if (jDistSq < 26.0f * 26.0f && y >= 48 && y <= 75)
+            {
+                junctionBoost01 = 1.0f - MathF.Sqrt(jDistSq) / 26.0f;
+            }
+
+            float along = dx * dirX + dz * dirZ;
+            if (along < -3.5f || along > 43.5f) return;
+
+            float perp = -dx * dirZ + dz * dirX;
+            float bend = along > 4.0f ? MathF.Sin((along - 4.0f) * 0.11f) * 2.6f : 0f;
+            float lat = perp - bend;
+
+            // Yurunebilir ~31 derece egimli dogal magara giris rampasi (yuzeyden y ~ 69m derinlige iner):
+            float floorY = along <= 0f
+                ? (mouthTopH - 0.85f) + (-along) * 0.22f
+                : (mouthTopH - 0.85f) - along * 0.62f;
+
+            float widen = along > 30.0f ? (along - 30.0f) * 0.22f : 0f;
+            float halfW = 2.15f + widen;
+            float archH = 3.90f + (along > 30.0f ? (along - 30.0f) * 0.12f : 0f);
+            float ly = y - floorY;
+
+            if (ly >= 0f && ly <= archH)
+            {
+                float normH = ly / archH;
+                float archHalfW = halfW * MathF.Sqrt(MathF.Max(0f, 1.0f - normH * normH * 0.86f));
+                if (MathF.Abs(lat) < archHalfW)
+                {
+                    inEntranceVoid = true;
+                    return;
+                }
+            }
+
+            // Magara agzi cevresinde dogal tas kemer cercevesi (ince cimen kabugu yerine saglam tas kemer gorunumu):
+            if (along >= -1.2f && along <= 12.0f && y <= topH + 0.25f &&
+                ly >= -1.2f && ly <= archH + 1.35f && MathF.Abs(lat) < halfW + 1.45f)
+            {
+                isEntranceStoneRim = true;
+            }
+        }
+
         /// <summary>
         /// 5 Katmanli Yeralti Magara, Nehir, Zindan ve Kaynayan Magma Denizi Sistemi:
-        /// Katman 1 (y = topH-26..topH-5): Sig Magaralar, Yeralti Nehirleri ve Kadim Zindan Odalari (240/241)
-        /// Katman 2 (y = 44..69): Orta Derinlik Kristal &amp; Voronoi Stalagnate Sutunlu Magara Aglari
+        /// Katman 1 (y = topH-26..topH-5): Sig Magaralar, Yeralti Nehirleri, Seyrek Dogal Yuzey Girisleri ve Kadim Zindan Odalari (240/241)
+        /// Katman 2 (y = 44..69): Orta Derinlik Kristal &amp; Kesintisiz Taban-Tavan Stalagnate Sutunlu Magara Aglari
         /// Katman 3 (y = 20..43): Derin Bazalt, Mermer, Titanyum &amp; Kizil Elmas Katmanlari + Asit Cepleri
         /// Katman 4 (y = 6..19): Kaynayan Yeralti Magma Denizi (FluidType.Lava) ve Obsidyen Kubbeler
         /// Katman 5 (y = 1..5): Kirilmaz Bedrock Manto Omurgasi
@@ -373,16 +567,30 @@ namespace Stratocraft.WorldGen.Generators
         private static void EvaluateUndergroundCaveNetwork(
             int wx, int y, int wz, float topH,
             out bool inCaveVoid, out bool isCaveSupportPillar, out bool isCrystalCaveWall,
-            out byte caveFluidType, out byte dungeonOverrideMat)
+            out byte caveFluidType, out byte dungeonOverrideMat,
+            out bool isEntranceStoneRim)
         {
             inCaveVoid = false;
             isCaveSupportPillar = false;
             isCrystalCaveWall = false;
             caveFluidType = 0;
             dungeonOverrideMat = 0;
+            isEntranceStoneRim = false;
 
-            // Yuzeyin altindaki ilk 18m..20m %100 masif toprak/kaya olarak muhurlenir;
-            // boylece yuzeyden, yamaclardan, nehir yataklarindan veya agac diplerinden YERALTI BOSLUGU ASLA GORUNMEZ!
+            // 0) Seyrek, yurunebilir Dogal Yuzey Magara Girisi kontrolu (kuru yamaclardan yeralti magara agina iner):
+            EvaluateNaturalCaveSurfaceEntrance(
+                wx, y, wz, topH,
+                out bool inEntranceVoid,
+                out isEntranceStoneRim,
+                out float entranceJunctionBoost01);
+            if (inEntranceVoid)
+            {
+                inCaveVoid = true;
+                return;
+            }
+
+            // Giris disindaki tum yuzeyin ilk 18m'si %100 masif toprak/kaya olarak muhurlenir;
+            // boylece yamaclardan, nehir yataklarindan veya agac diplerinden rastgele yeralti catlagi ASLA olusmaz!
             if (y <= DeepMantleFloorY + 2 || y > topH - 16.0f || y > SeaLevelY - 10)
             {
                 return;
@@ -461,6 +669,10 @@ namespace Stratocraft.WorldGen.Generators
             {
                 provinceNoise = MathF.Max(provinceNoise, 0.54f);
             }
+            if (entranceJunctionBoost01 > 0f)
+            {
+                provinceNoise = MathF.Max(provinceNoise, 0.45f + entranceJunctionBoost01 * 0.42f);
+            }
             if (provinceNoise < 0.27f && y > 18)
             {
                 return;
@@ -481,8 +693,8 @@ namespace Stratocraft.WorldGen.Generators
                 float magmaWave = MathF.Sin(qx * 0.068f + p2) * MathF.Cos(qz * 0.068f + p1) - archY * archY * 0.55f;
                 if (y >= 10 && magmaWave > 0.18f)
                 {
-                    float colWave = MathF.Sin(cwx * 0.55f + p1) * MathF.Cos(cwz * 0.55f - p2);
-                    if (colWave > 0.88f)
+                    float colWave = MathF.Sin(cwx * 0.45f + p1) * MathF.Cos(cwz * 0.45f - p2);
+                    if (colWave > 0.90f)
                     {
                         isCaveSupportPillar = true;
                         return;
@@ -516,8 +728,8 @@ namespace Stratocraft.WorldGen.Generators
 
             // Daralma/Genisleme yaricapi:
             float provinceScale = Math.Clamp((provinceNoise - 0.27f) / 0.45f, 0.58f, 1.18f);
-            float baseRadius = (0.145f + swell01 * 0.165f + chamberBoost) * provinceScale;
-            float branchRadius = (0.115f + swell01 * 0.095f) * provinceScale;
+            float baseRadius = (0.145f + swell01 * 0.165f + chamberBoost) * provinceScale + entranceJunctionBoost01 * 0.22f;
+            float branchRadius = (0.115f + swell01 * 0.095f) * provinceScale + entranceJunctionBoost01 * 0.14f;
 
             // Parabolik Gotik Kemer Tavan Kesiti:
             float normUp = psi2 > 0f ? (psi2 / Math.Max(0.05f, baseRadius)) : 0f;
@@ -533,15 +745,24 @@ namespace Stratocraft.WorldGen.Generators
             bool insideTrunk = trunkDistSq < rTrunkSq;
             bool insideBranch = swell01 > 0.28f && minBranchDistSq < rBranchSq;
 
-            if (insideTrunk || insideBranch)
+            // Yuzey magara girisinin alt ucunda (entranceJunctionBoost01 > 0.55, y in [65..72]) kavsak holu acarak ana tunele %100 bagla:
+            bool insideEntranceVestibule = entranceJunctionBoost01 > 0.58f && y >= 65 && y <= 72;
+
+            if (insideTrunk || insideBranch || insideEntranceVestibule)
             {
-                if (insideTrunk && swell01 > 0.66f && trunkDistSq < rTrunkSq * 0.48f)
+                // KURAL: Magara sutunlari Y-bagimsiz saf 2B (cwx, cwz) kolonu olmalidir ki magara tabanindan tavanina
+                // %100 kesintisiz birlessin; ASLA havada asili parca/sarkit olusturmaz!
+                if (entranceJunctionBoost01 <= 0.05f)
                 {
-                    float pillarField = MathF.Sin(cwx * 0.58f + cwz * 0.21f + p1) * MathF.Cos(cwz * 0.58f - cwx * 0.21f - p2);
-                    if (pillarField > 0.86f)
+                    float gallery2D = 0.5f + 0.25f * (MathF.Sin(cwx * 0.037f + p1) + MathF.Cos(cwz * 0.037f - p2));
+                    if (gallery2D > 0.68f)
                     {
-                        isCaveSupportPillar = true;
-                        return;
+                        float pillarField2D = MathF.Sin(cwx * 0.42f + cwz * 0.16f + p1) * MathF.Cos(cwz * 0.42f - cwx * 0.16f - p2);
+                        if (pillarField2D > 0.90f)
+                        {
+                            isCaveSupportPillar = true;
+                            return;
+                        }
                     }
                 }
 
@@ -679,7 +900,8 @@ namespace Stratocraft.WorldGen.Generators
                         EvaluateUndergroundCaveNetwork(
                             wx, y, wz, topH,
                             out bool inCaveVoid, out bool isStalagnatePillar, out bool isCrystalCaveWall,
-                            out byte caveFluidType, out byte dungeonOverrideMat);
+                            out byte caveFluidType, out byte dungeonOverrideMat,
+                            out bool isEntranceStoneRim);
 
                         if (dungeonOverrideMat != 0)
                         {
@@ -690,7 +912,7 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        if (inCaveVoid)
+                        if (inCaveVoid && !inAnyFluidBasin && !isNaturalSea)
                         {
                             if (caveFluidType != 0)
                             {
@@ -711,9 +933,16 @@ namespace Stratocraft.WorldGen.Generators
                         }
                         else if (y == solidFloorY)
                         {
-                            float subVoxelFrac = Clamp01(topH - solidFloorY);
-                            int slopeDensity = 66 + RoundToInt(subVoxelFrac * 58f);
-                            densityInt = Math.Clamp(Math.Max(densityInt, slopeDensity), 66, 124);
+                            if (isEntranceStoneRim)
+                            {
+                                densityInt = VoxelBitUtility.FullDensity;
+                            }
+                            else
+                            {
+                                float subVoxelFrac = Clamp01(topH - solidFloorY);
+                                int slopeDensity = 66 + RoundToInt(subVoxelFrac * 58f);
+                                densityInt = Math.Clamp(Math.Max(densityInt, slopeDensity), 66, 124);
+                            }
                         }
                         else if (isBasinWallSolid || isBasinFloorSolid)
                         {
@@ -729,14 +958,19 @@ namespace Stratocraft.WorldGen.Generators
                         if (densityInt < 10) continue;
 
                         byte clampedDensity = (byte)Math.Clamp(densityInt, 10, 127);
-                        byte matId = ResolveGeologicalMaterial(
-                            wx, y, wz, topH, bottomH, radialMargin,
-                            inLavaCaldera, inWaterPool, isObsidianSeam, isStalagnatePillar, isCrystalCaveWall,
-                            biomeId, colSurfaceMat);
+                        byte matId = isEntranceStoneRim
+                            ? (((wx * 19 + y * 7 + wz * 13) & 7) == 0 ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Stone)
+                            : ResolveGeologicalMaterial(
+                                wx, y, wz, topH, bottomH, radialMargin,
+                                inLavaCaldera, inWaterPool, isObsidianSeam, isStalagnatePillar, isCrystalCaveWall,
+                                biomeId, colSurfaceMat);
 
                         voxels[idx] = VoxelBitUtility.PackStandard(
                             matId, clampedDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
                     }
+
+                    // Kesisen magara kollarinin arasinda 1..4 blokluk havada asili kaya parcasi kalmissa sutun icinde temizle:
+                    RemoveUngroundedCaveSliversInColumn(voxels, (lz << 4) | lx, (int)MathF.Floor(topH) - 2);
                 }
             }
 
@@ -744,6 +978,46 @@ namespace Stratocraft.WorldGen.Generators
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids);
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
             StampSurfaceFloraAndLandmarks(chunkX, chunkZ, voxels);
+        }
+
+        private static void RemoveUngroundedCaveSliversInColumn(uint[] voxels, int colOffset, int maxCheckY)
+        {
+            int upper = Math.Clamp(maxCheckY, DeepMantleFloorY + 3, MaxEditableVoxelY - 4);
+            int y = DeepMantleFloorY + 2;
+            while (y <= upper)
+            {
+                int idx = (y << 8) | colOffset;
+                uint raw = voxels[idx];
+                if (raw == 0u)
+                {
+                    y++;
+                    continue;
+                }
+
+                int runStart = y;
+                bool anyPermanent = VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.KaliciYapi;
+                while (y <= upper)
+                {
+                    uint cur = voxels[(y << 8) | colOffset];
+                    if (cur == 0u) break;
+                    if (VoxelBitUtility.GetOriginState(cur) == BlokKokenDurumu.KaliciYapi) anyPermanent = true;
+                    y++;
+                }
+
+                int runEnd = y - 1;
+                int runLen = runEnd - runStart + 1;
+                bool airBelow = runStart > DeepMantleFloorY + 1 && voxels[((runStart - 1) << 8) | colOffset] == 0u;
+                bool airAbove = runEnd + 1 < MaxEditableVoxelY && voxels[((runEnd + 1) << 8) | colOffset] == 0u;
+
+                // Hem altinda hem ustunde magara boslugu olan <= 4 blokluk ince sarkit/kaya kirintilarini temizle (0 havada duran tas):
+                if (!anyPermanent && airBelow && airAbove && runLen <= 4)
+                {
+                    for (int cy = runStart; cy <= runEnd; cy++)
+                    {
+                        voxels[(cy << 8) | colOffset] = 0u;
+                    }
+                }
+            }
         }
 
         private static void StampDetachedFloatingSkyIslands(int chunkX, int chunkZ, uint[] voxels, ushort[] fluids)
@@ -1076,6 +1350,7 @@ namespace Stratocraft.WorldGen.Generators
 
             int centerWx = chunkX * 16 + 8;
             int centerWz = chunkZ * 16 + 8;
+            if (IsNearNaturalCaveEntranceMouth(centerWx, centerWz, clearanceRadius: 15.0f)) return false;
             float topH = SampleIslandTopSurfaceY(centerWx, centerWz);
             if (topH < SeaLevelY + 1.2f || topH > MaxEditableVoxelY - 16) return false;
 
@@ -1254,6 +1529,7 @@ namespace Stratocraft.WorldGen.Generators
             lx = Math.Clamp(lx, 3, 12);
             lz = Math.Clamp(lz, 3, 12);
             int wx = chunkX * 16 + lx, wz = chunkZ * 16 + lz;
+            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 9.5f)) return;
             float r = MathF.Sqrt(wx * wx + wz * wz);
             float coastR = ComputeIslandCoastRadius(wx, wz);
             float radialMargin = InfiniteProceduralWorldMode ? 64000.0f : (coastR - r);

@@ -336,14 +336,397 @@ namespace Stratocraft.Tests.EditMode
             var tris = new List<FacetedVoxelTriangle>(16);
 
             FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(0, 0, 14, solidDict, fluidDict, tris);
-            Assert.That(tris.Count, Is.GreaterThanOrEqualTo(2));
+            Assert.That(tris.Count, Is.GreaterThanOrEqualTo(24),
+                "0.5m Marching-Squares yuvarlatilmis tekil su birikintisi keskin kup yerine cokgen ust yuzey + sizdirmaz yan etek uretmelidir!");
+
+            int topTriCount = 0;
+            int sideTriCount = 0;
+            float minSideBottomY = float.MaxValue;
+            bool hasSharpCubeCorner55 = false;
+            foreach (var t in tris)
+            {
+                if (t.Normal.Y > 0.5f)
+                {
+                    topTriCount++;
+                    Assert.That(t.V0.Y, Is.GreaterThan(9.35f), "3B su ust yuzeyi cimenin (9.19m) ustunde dolgun kalinlikta durmalidir!");
+                    Assert.That(t.V1.Y, Is.GreaterThan(9.35f));
+                    Assert.That(t.V2.Y, Is.GreaterThan(9.35f));
+                    if ((t.V0.X <= 5.01f && t.V0.Z <= 5.01f) ||
+                        (t.V1.X <= 5.01f && t.V1.Z <= 5.01f) ||
+                        (t.V2.X <= 5.01f && t.V2.Z <= 5.01f))
+                    {
+                        hasSharpCubeCorner55 = true;
+                    }
+                }
+                else
+                {
+                    sideTriCount++;
+                    minSideBottomY = System.MathF.Min(minSideBottomY, System.MathF.Min(t.V0.Y, System.MathF.Min(t.V1.Y, t.V2.Y)));
+                }
+            }
+            Assert.That(topTriCount, Is.GreaterThanOrEqualTo(8), "0.5m alt-hucre konturu keskin 2 ucgenli kare yerine >= 8 ust ucgen uretmelidir!");
+            Assert.That(sideTriCount, Is.GreaterThanOrEqualTo(16));
+            Assert.That(hasSharpCubeCorner55, Is.False, "Acik arazideki tekil su birikintisinde keskin 90 derece (5.0, 5.0) Minecraft kup kosesi kalmamalidir!");
+            Assert.That(minSideBottomY, Is.LessThanOrEqualTo(9.16f), "3B yan duvar tabani cimen yatagina gomulerek havada asili bosluk birakmamalidir!");
+        }
+
+        [Test]
+        public void ToolChamberTracker_PullOutToRightWhileHoldingLmb_StaysCockedRightWithZeroAutoSwing()
+        {
+            var tracker = new ToolChamberTracker();
+            // Balta (Slot 3) soldaki agaca saplanip saga cekilerek (+0.85, +0.52) kurtarildi; LMB hala basili!
+            tracker.EnterCockedFromPullOut(
+                holsterSlot: 3,
+                cameraPitchDownDeg: 5f,
+                pullBackDirX: 0.85f,
+                pullBackDirY: 0.52f,
+                currentlyHoldingLmb: true);
+
+            // Oyuncu 45 kare boyunca LMB basili tutarak fareyi SAGA cekmeye veya sabit tutmaya devam ediyor:
+            for (int frame = 0; frame < 45; frame++)
+            {
+                float dx = frame < 20 ? 0.08f : 0.0f;
+                var step = tracker.Step(
+                    holsterSlot: 3,
+                    cameraPitchDownDeg: 5f,
+                    gestureDx: dx,
+                    gestureDy: 0.01f,
+                    dt: 0.016f,
+                    holdingLmb: true,
+                    holdingRmb: false,
+                    canStartSwingNow: true);
+
+                Assert.That(step.ShouldTriggerStrike, Is.False,
+                    $"Kare {frame}: Balta saga cekilirken veya sagda kuruluyken ASLA kendi kendine sola vurmamalidir!");
+                Assert.That(step.ActiveCockSide, Is.EqualTo(ToolCockSide.Right));
+            }
+
+            // Simdi oyuncu kasitli olarak SOLA (agaca dogru) savuruyor:
+            bool firedLeftChop = false;
+            for (int frame = 0; frame < 6 && !firedLeftChop; frame++)
+            {
+                var strikeStep = tracker.Step(
+                    holsterSlot: 3,
+                    cameraPitchDownDeg: 5f,
+                    gestureDx: -0.09f,
+                    gestureDy: -0.04f,
+                    dt: 0.016f,
+                    holdingLmb: true,
+                    holdingRmb: false,
+                    canStartSwingNow: true);
+                if (strikeStep.ShouldTriggerStrike)
+                {
+                    firedLeftChop = true;
+                    Assert.That(strikeStep.ActiveCockSide, Is.EqualTo(ToolCockSide.Right));
+                }
+            }
+
+            Assert.That(firedLeftChop, Is.True, "Sagda kurulu balta oyuncu sola savurdugunda vurus baslatmalidir!");
+        }
+
+        [Test]
+        public void ToolChamberTracker_SymmetricLeftCockAndRightStrike_ChopsTreeOnRight()
+        {
+            var tracker = new ToolChamberTracker();
+
+            // Ilk karede oyuncu LMB basip fareyi SOLA cekerek baltayi sol omuza kuruyor:
+            for (int i = 0; i < 8; i++)
+            {
+                var cockStep = tracker.Step(
+                    holsterSlot: 3,
+                    cameraPitchDownDeg: 0f,
+                    gestureDx: -0.11f,
+                    gestureDy: 0.02f,
+                    dt: 0.016f,
+                    holdingLmb: true,
+                    holdingRmb: false,
+                    canStartSwingNow: true);
+                Assert.That(cockStep.ShouldTriggerStrike, Is.False, "Sola cekerek kurma sirasinda otomatik vurus olmamalidir!");
+                Assert.That(cockStep.ActiveCockSide, Is.EqualTo(ToolCockSide.Left));
+            }
+
+            // Solda kuruluyken SAGA savurma -> Soldan-Saga oduncu kesigi baslamali:
+            bool firedRightward = false;
+            for (int i = 0; i < 6 && !firedRightward; i++)
+            {
+                var strikeStep = tracker.Step(
+                    holsterSlot: 3,
+                    cameraPitchDownDeg: 0f,
+                    gestureDx: 0.09f,
+                    gestureDy: -0.03f,
+                    dt: 0.016f,
+                    holdingLmb: true,
+                    holdingRmb: false,
+                    canStartSwingNow: true);
+                if (strikeStep.ShouldTriggerStrike)
+                {
+                    firedRightward = true;
+                    Assert.That(strikeStep.ActiveCockSide, Is.EqualTo(ToolCockSide.Left));
+                    ToolChopArcProfile.GetSymmetricArcEndpointsPure(
+                        strikeStep.ArcKind, strikeStep.ActiveCockSide, 0f, 0f,
+                        out float sx, out _, out float ex, out _, out float dirX, out _);
+                    Assert.That(sx, Is.LessThan(-0.5f));
+                    Assert.That(ex, Is.GreaterThan(0.5f));
+                    Assert.That(dirX, Is.GreaterThan(0.7f));
+                }
+            }
+
+            Assert.That(firedRightward, Is.True, "Solda kurulu balta saga savruldugunda soldan-saga kesim baslatmalidir!");
+        }
+
+        [Test]
+        public void FluidSurfaceSkirtMesher_SteppedSurfaceNetsSlope_NeverBuriesStreamUnderDiagonalGrassRamp()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+
+            // 1 voksel basamakli SurfaceNets yamaci:
+            // x=4 kolonunda y=9 ve y=10 dolu cimen (ust basamak, Density=96 -> dual rampa ~10.33m'ye cikar)
+            // x=5 kolonunda y=9 dolu cimen (Density=96 -> 9.33m), y=10 acik hava ve icinde akan ince su (Mass=28)!
+            for (int z = 4; z <= 6; z++)
+            {
+                solids[(9 << 8) | (z << 4) | 4] = VoxelBitUtility.PackStandard(
+                    MaterialIdCatalog.Grass, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                solids[(10 << 8) | (z << 4) | 4] = VoxelBitUtility.PackStandard(
+                    MaterialIdCatalog.Grass, 96, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+                solids[(9 << 8) | (z << 4) | 5] = VoxelBitUtility.PackStandard(
+                    MaterialIdCatalog.Grass, 96, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+            }
+
+            fluids[(10 << 8) | (5 << 4) | 5] = FluidCell16.Pack(FluidType.Water, 28).RawValue;
+
+            var solidDict = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidDict = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FacetedVoxelTriangle>(16);
+
+            FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(0, 0, 14, solidDict, fluidDict, tris);
+
+            // x=5 (yamac birlesim kenari) uzerindeki ust yuzey koseleri dual cimen rampasinin (~9.83m) ustunde kalmalidir!
+            float minUphillEdgeTopY = float.MaxValue;
+            foreach (var t in tris)
+            {
+                if (t.Normal.Y > 0.4f)
+                {
+                    if (t.V0.X <= 5.05f) minUphillEdgeTopY = System.MathF.Min(minUphillEdgeTopY, t.V0.Y);
+                    if (t.V1.X <= 5.05f) minUphillEdgeTopY = System.MathF.Min(minUphillEdgeTopY, t.V1.Y);
+                    if (t.V2.X <= 5.05f) minUphillEdgeTopY = System.MathF.Min(minUphillEdgeTopY, t.V2.Y);
+                }
+            }
+
+            Assert.That(minUphillEdgeTopY, Is.GreaterThan(10.0f),
+                "Yamac basamagindaki su ust kenari diyagonal SurfaceNets cimen ucgeninin (~9.83m) altina ASLA gomulmemelidir!");
+        }
+
+        [Test]
+        public void FluidPorosityUtility_MultiAnglePourSolver_ResolvesGrazingSlopeAndWakesCrossChunkBorder()
+        {
+            uint[] solids0 = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids0 = new ushort[StratocraftConstants.VoxelsPerChunk];
+            uint[] solids1 = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids1 = new ushort[StratocraftConstants.VoxelsPerChunk];
+
+            // Chunk (0,0) lx=14..15 ve Chunk (1,0) lx=0..1 uzerinde egimli cimen zemini:
+            solids0[(10 << 8) | (8 << 4) | 14] = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Grass, 110, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+            solids0[(10 << 8) | (8 << 4) | 15] = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Grass, 72, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+            solids1[(9 << 8) | (8 << 4) | 0] = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Grass, 90, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids0, [(1, 0)] = solids1 };
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids0, [(1, 0)] = fluids1 };
+            var dirtyFluids = new HashSet<(int cx, int cz)>();
+            var activeFluids = new HashSet<(int cx, int cz)> { (0, 0) };
+
+            // Sig (12 deg) bakis acisi simülasyonu: DDA (15,10,8) cimenine yandan carpip PlacementVoxelCoord olarak dolu (14,10,8) dondurmus olsun!
+            bool resolved = FluidPorosityUtility.TryResolveFluidPourCell(
+                worldChunks, fluidChunks, maxY: 64, FluidType.Water,
+                aimX: 15, aimY: 10, aimZ: 8,
+                placeX: 14, placeY: 10, placeZ: 8,
+                hitNormalX: -1f, hitNormalY: 0f, hitNormalZ: 0f,
+                hasMeshSurfaceHit: false, 0f, 0f, 0f,
+                out int px, out int py, out int pz);
+
+            Assert.That(resolved, Is.True, "Sig acili DDA yan yuz carpmasinda su dokme cozucusu sessizce iptal olmamalidir!");
+            Assert.That((px, py, pz), Is.EqualTo((15, 11, 8)), "Cozucu vurulan arazi kolonunun hemen ustundeki acik hucreyi (15,11,8) secmelidir!");
+
+            int added = FluidPorosityUtility.ApplySingleFlaskFluidPour(
+                worldChunks, fluidChunks, dirtyFluids, px, py, pz, maxY: 64, FluidType.Water, maxPourUnits: 255);
+            Assert.That(added, Is.EqualTo(255), "Tek tikta 1 matara tam olarak en fazla 255 birim kontrollu su dokmelidir!");
+
+            var activeList = new List<(int cx, int cz)> { (0, 0) };
+            Stratocraft.Physics.Jobs.FluidCellularAutomataJob.ExchangeChunkBorderFluids(
+                worldChunks, fluidChunks, 32, dirtyFluids, null, activeList, activeFluids);
+
+            Assert.That(activeFluids.Contains((1, 0)), Is.True,
+                "Chunk sinirindan (lx=15 -> lx=0) gecen su komsu chunk'i (_activeFluidChunks) aninda uyandirmalidir!");
+        }
+
+        [Test]
+        public void OpenPond_DoesNotTriggerUPipeSiphonTeleport_AndSettlesToZeroActiveCells()
+        {
+            const int sx = 10, sy = 6, sz = 10;
+            int strideY = sz * sx;
+            uint[] solids = new uint[sx * sy * sz];
+            ushort[] fluids = new ushort[sx * sy * sz];
+
+            uint stoneFloor = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            // y=0 taban ve dis cerceve duvarlari (acik hava havzasi, USTU TAMAMEN ACIK!)
+            for (int z = 0; z < sz; z++)
+            {
+                for (int x = 0; x < sx; x++)
+                {
+                    solids[0 * strideY + z * sx + x] = stoneFloor;
+                    if (x == 0 || x == sx - 1 || z == 0 || z == sz - 1)
+                    {
+                        for (int y = 1; y < sy; y++)
+                        {
+                            solids[y * strideY + z * sx + x] = stoneFloor;
+                        }
+                    }
+                }
+            }
+
+            // Ortada (x=4..5, z=4..5) 2 kat yuksekliginde (y=1 ve y=2) acik su kutlesi (8 * 255 = 2040 birim)
+            long initialMass = 0;
+            for (int y = 1; y <= 2; y++)
+            {
+                for (int z = 4; z <= 5; z++)
+                {
+                    for (int x = 4; x <= 5; x++)
+                    {
+                        fluids[y * strideY + z * sx + x] = FluidCell16.Pack(FluidType.Water, 255).RawValue;
+                        initialMass += 255;
+                    }
+                }
+            }
+
+            var sim = new FluidSimulationSystem();
+            long afterFirstTick = sim.StepChunkFluid(solids, fluids, sx, sy, sz, out _, out _, explicitTickParity: 0);
+            Assert.That(afterFirstTick, Is.EqualTo(initialMass));
+            Assert.That(sim.LastStepSiphonTransfers, Is.EqualTo(0),
+                "Ustu acik golette U-borusu sifonu ASLA tetiklenmemeli ve uzaktaki hucrelere su isinlamamalidir!");
+
+            // Ilk tick sonunda x=1 veya x=8 gibi uzaktaki kenarlara isinlanma olmamalidir (CFL <= 1)
+            Assert.That(new FluidCell16(fluids[1 * strideY + 4 * sx + 1]).Mass, Is.EqualTo(0));
+            Assert.That(new FluidCell16(fluids[1 * strideY + 4 * sx + 8]).Mass, Is.EqualTo(0));
+
+            // 48 tick icinde acik havzadaki su %100 durulmalidir (0 ping-pong, tum hucrelerde IsSettled == true)
+            long finalMass = 0;
+            for (int step = 1; step < 48; step++)
+            {
+                finalMass = sim.StepChunkFluid(solids, fluids, sx, sy, sz, out _, out _, explicitTickParity: step);
+                Assert.That(sim.LastStepSiphonTransfers, Is.EqualTo(0));
+            }
+
+            Assert.That(finalMass, Is.EqualTo(initialMass), "Acik havzada toplam su kutlesi %100 korunmalidir.");
+            int unsettledCells = 0;
+            for (int i = 0; i < fluids.Length; i++)
+            {
+                if (fluids[i] != 0 && !new FluidCell16(fluids[i]).IsSettled)
+                {
+                    unsettledCells++;
+                }
+            }
+            Assert.That(unsettledCells, Is.EqualTo(0),
+                "Durgunlasan golette 1-birimlik yanal ping-pong olmamali; tum hucreler IsSettled uykusuna gecmelidir!");
+        }
+
+        [Test]
+        public void DugSurfaceNetsPit_WaterTopIsHorizontalAndExtendsIntoPitWallsWithoutGap()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+
+            // Dogal SurfaceNets (ShapeId == 0, Density = 120) arazi icinde 2x2 kazilmis cukur (x=6..7, z=6..7, y=10 acik)
+            uint solidEarth = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Stone, 120, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+            for (int y = 8; y <= 11; y++)
+            {
+                for (int z = 4; z <= 9; z++)
+                {
+                    for (int x = 4; x <= 9; x++)
+                    {
+                        bool insidePit = y >= 10 && x >= 6 && x <= 7 && z >= 6 && z <= 7;
+                        if (!insidePit)
+                        {
+                            solids[(y << 8) | (z << 4) | x] = solidEarth;
+                        }
+                    }
+                }
+            }
+
+            for (int z = 6; z <= 7; z++)
+            {
+                for (int x = 6; x <= 7; x++)
+                {
+                    fluids[(10 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 220).RawValue;
+                }
+            }
+
+            var solidDict = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidDict = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FacetedVoxelTriangle>(64);
+
+            FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(0, 0, 14, solidDict, fluidDict, tris);
+            Assert.That(tris.Count, Is.GreaterThanOrEqualTo(24));
+
+            float minTopY = float.MaxValue;
+            float maxTopY = float.MinValue;
+            float minSkirtX = float.MaxValue;
+            float maxSkirtX = float.MinValue;
+            int sideTriCount = 0;
 
             foreach (var t in tris)
             {
-                Assert.That(t.V0.Y, Is.GreaterThan(9.20f), "Ince su seridi kuru komsular yuzunden cimenin (9.19m) altina gomulmemelidir!");
-                Assert.That(t.V1.Y, Is.GreaterThan(9.20f));
-                Assert.That(t.V2.Y, Is.GreaterThan(9.20f));
+                if (t.Normal.Y > 0.7f)
+                {
+                    minTopY = System.MathF.Min(minTopY, System.MathF.Min(t.V0.Y, System.MathF.Min(t.V1.Y, t.V2.Y)));
+                    maxTopY = System.MathF.Max(maxTopY, System.MathF.Max(t.V0.Y, System.MathF.Max(t.V1.Y, t.V2.Y)));
+                    minSkirtX = System.MathF.Min(minSkirtX, System.MathF.Min(t.V0.X, System.MathF.Min(t.V1.X, t.V2.X)));
+                    maxSkirtX = System.MathF.Max(maxSkirtX, System.MathF.Max(t.V0.X, System.MathF.Max(t.V1.X, t.V2.X)));
+                }
+                else
+                {
+                    sideTriCount++;
+                }
             }
+
+            Assert.That(maxTopY - minTopY, Is.LessThan(0.02f),
+                "Cukur icindeki durgun suyun ust yuzeyi duvar kenarlarinda yukari kivrilmamali, tam yatay olmalidir!");
+            Assert.That(minSkirtX, Is.LessThan(5.55f),
+                "Su etegi (0.65m) sol SurfaceNets cukur duvarinin (~5.55m) icine gomulerek bosluk birakmamalidir!");
+            Assert.That(maxSkirtX, Is.GreaterThan(8.45f),
+                "Su etegi (0.65m) sag SurfaceNets cukur duvarinin (~8.45m) icine gomulerek bosluk birakmamalidir!");
+            Assert.That(sideTriCount, Is.GreaterThanOrEqualTo(16),
+                "Yuksek yogunluklu (Density=120) ShapeId==0 cukur duvarlarinda da yan sivi etekleri uretilmelidir!");
+        }
+
+        [Test]
+        public void SubmergedPitBelowY88_WithOverhangLip_StillEmitsVisibleWaterMesh()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+
+            uint dirtRaw = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Dirt, 110, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            // Y=85 (< 88!) kotunda kazilmis cukur tabani ve y=88..89 kotunda 2 blokluk sarkan cimen dudagi:
+            solids[(84 << 8) | (5 << 4) | 5] = dirtRaw;
+            solids[(88 << 8) | (5 << 4) | 5] = dirtRaw;
+            solids[(89 << 8) | (5 << 4) | 5] = dirtRaw;
+            fluids[(85 << 8) | (5 << 4) | 5] = FluidCell16.Pack(FluidType.Water, 200).RawValue;
+
+            var solidDict = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidDict = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FacetedVoxelTriangle>(16);
+
+            FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(0, 0, 96, solidDict, fluidDict, tris, minY: 72);
+            Assert.That(tris.Count, Is.GreaterThan(0),
+                "Y=88 altinda (orn. Y=85..87) acilan yuzey cukurlarindaki su sarkan dudak yuzunden ASLA gizlenmemelidir!");
         }
 
         [Test]
@@ -531,6 +914,218 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(bridge.IsWeaponLodged, Is.False, "Yeterli cekme isi uygulandiginda balta agactan cikmalidir!");
             Assert.That(bridge.IsPreChamberedReady, Is.True, "Cekip cikarilan alet aninda tekrar savurma icin On-Kurulum (Pre-Chamber) hazir olmalidir!");
         }
+
+        [Test]
+        public void TieredFluidContainers_UiDepletion_ConvertsSpentBucketToEmptyContainer()
+        {
+            Assert.That(Stage1VisualHotbarAndInventoryUi.GetFluidContainerMaxUnits(InventoryItemKind.ToolFluidFlask), Is.EqualTo(380));
+            Assert.That(Stage1VisualHotbarAndInventoryUi.GetFluidContainerMaxUnits(InventoryItemKind.ToolFluidBucket), Is.EqualTo(1275));
+            Assert.That(Stage1VisualHotbarAndInventoryUi.GetFluidContainerMaxUnits(InventoryItemKind.ToolFluidCauldron), Is.EqualTo(3825));
+
+            var ui = new Stage1VisualHotbarAndInventoryUi();
+            ui.SelectHotbarSlot(0);
+            ui.HotbarSlots[0] = new VisualInventorySlot
+            {
+                Kind = InventoryItemKind.ToolFluidBucket,
+                SubId = 1,
+                Count = 1,
+                Durability01 = 1.0f
+            };
+
+            VisualInventorySlot beforeEmpty = ui.GetActiveHotbarSlot();
+            Assert.That(Stage1VisualHotbarAndInventoryUi.GetSlotStoredFluidUnits(in beforeEmpty), Is.EqualTo(1275));
+            ui.UpdateSelectedFluidContainerUnits(1, 0);
+            VisualInventorySlot afterEmpty = ui.GetActiveHotbarSlot();
+            Assert.That(afterEmpty.SubId, Is.EqualTo(0), "Suyu tamamen harcanan kova Bos Su Kovasi (SubId=0) durumuna gecmelidir!");
+            Assert.That(afterEmpty.Durability01, Is.EqualTo(0f));
+        }
 #endif
+
+        [Test]
+        public void SoilMoistureAndMudSystem_AbsorbsUntil255_StopsAtSaturation_SlowsPlayer_AndDriesInSun()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            uint stoneBed = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+            uint grassSoil = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.Grass, 100, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            int col = (5 << 4) | 5;
+            solids[(8 << 8) | col] = stoneBed;  // y=8 gecirimsiz kaya taban
+            solids[(9 << 8) | col] = grassSoil; // y=9 tek kat emici cimenli toprak
+            fluids[(10 << 8) | col] = FluidCell16.Pack(FluidType.Water, 200).RawValue;
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var soilSys = new SoilMoistureAndMudSystem();
+
+            int totalAbsorbed = 0;
+            for (int tick = 0; tick < 40; tick++)
+            {
+                totalAbsorbed += soilSys.StepChunkSoilInfiltration(
+                    0, 0, solids, fluids, 16, out _, out _);
+            }
+
+            byte satMoisture = soilSys.ReadWorldMoisture(5, 9, 5);
+            Assert.That(satMoisture, Is.EqualTo(255), "Su duran toprak tam doygunluga (255) ulasmalidir!");
+            Assert.That(totalAbsorbed, Is.GreaterThan(0).And.LessThan(40));
+
+            // Doygunluga ulastiktan sonra (Moisture == 255) ARTIK 0 BIRIM SU CEKMELIDIR!
+            byte massAfterSaturation = new FluidCell16(fluids[(10 << 8) | col]).Mass;
+            int extraAbsorbed = soilSys.StepChunkSoilInfiltration(0, 0, solids, fluids, 16, out _, out bool changedAfterSat);
+            Assert.That(extraAbsorbed, Is.EqualTo(0), "Doygunluga (255) ulasan toprak artik tek damla bile su cekmemelidir!");
+            Assert.That(changedAfterSat, Is.False);
+            Assert.That(new FluidCell16(fluids[(10 << 8) | col]).Mass, Is.EqualTo(massAfterSaturation));
+
+            // Camurlasan zemin oyuncuyu yavaslatmali (0.65..0.85)
+            float mudMult = soilSys.SampleGroundMudSlowdownMultiplier(worldChunks, 5.5f, 9.5f, 5.5f, out byte detectedM);
+            Assert.That(detectedM, Is.EqualTo(255));
+            Assert.That(mudMult, Is.EqualTo(0.65f).Within(0.01f));
+
+            // Su cekildikten sonra guneste yavasca kuruyup normal topraga donmeli
+            fluids[(10 << 8) | col] = 0;
+            for (int dryStep = 0; dryStep < 60; dryStep++)
+            {
+                soilSys.StepSolarDryingAllMoistChunks(worldChunks, fluidChunks, 16, isSunnyDaytime: true, ambientTempCelsius: 28f, null);
+            }
+
+            Assert.That(soilSys.ReadWorldMoisture(5, 9, 5), Is.EqualTo(0), "Uzerindeki su kalktiktan sonra camur guneste kuruyup normal topraga donmelidir!");
+            float dryMult = soilSys.SampleGroundMudSlowdownMultiplier(worldChunks, 5.5f, 9.5f, 5.5f, out _);
+            Assert.That(dryMult, Is.EqualTo(1.0f));
+        }
+
+        [Test]
+        public void TieredFluidContainers_BucketAndCauldronPourAndScoop_ConserveExactFluidMass()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            uint stone = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            // 7x7 cukur tabani ve duvarlari (y=5 taban, y=6..9 duvar, ic alan x=5..9, z=5..9)
+            for (int y = 4; y <= 9; y++)
+            {
+                for (int z = 4; z <= 10; z++)
+                {
+                    for (int x = 4; x <= 10; x++)
+                    {
+                        bool insidePit = y >= 6 && x >= 5 && x <= 9 && z >= 5 && z <= 9;
+                        if (!insidePit)
+                        {
+                            solids[(y << 8) | (z << 4) | x] = stone;
+                        }
+                    }
+                }
+            }
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var dirtyFluids = new HashSet<(int cx, int cz)>();
+
+            int pouredBucket = FluidPorosityUtility.ApplyContainerFluidPour(
+                worldChunks, fluidChunks, dirtyFluids, 7, 6, 7, 32, FluidType.Water, requestedUnits: 1275);
+            Assert.That(pouredBucket, Is.EqualTo(1275), "Su Kovasi 1275 birim (5 tam hucre) suyu cukura eksiksiz dokebilmelidir!");
+
+            int scoopedFlask = FluidPorosityUtility.ScoopFluidIntoContainer(
+                worldChunks, fluidChunks, dirtyFluids, 7, 6, 7, 32, FluidType.None, 380, out FluidType scoopedType);
+            Assert.That(scoopedType, Is.EqualTo(FluidType.Water));
+            Assert.That(scoopedFlask, Is.EqualTo(380), "Bos matara goletten tam 380 birim su doldurabilmelidir!");
+
+            long remainingWorldMass = 0;
+            for (int i = 0; i < fluids.Length; i++)
+            {
+                if (fluids[i] != 0) remainingWorldMass += new FluidCell16(fluids[i]).Mass;
+            }
+            Assert.That(remainingWorldMass + scoopedFlask, Is.EqualTo(pouredBucket), "Doldurma ve bosaltma toplami %100 kutle korunumlu olmalidir!");
+        }
+
+        [Test]
+        public void FluidSurfaceSkirtMesher_TinyResidualWaterMass2_IsThinYetAlwaysVisible()
+        {
+            uint[] solids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            for (int z = 4; z <= 7; z++)
+            {
+                for (int x = 4; x <= 7; x++)
+                {
+                    solids[(9 << 8) | (z << 4) | x] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Grass, 76, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+            }
+
+            // Sadece 2 birimlik cok az kalinti su: ASLA gorunmez olmamali, ama kalin kup de olmamali!
+            fluids[(10 << 8) | (5 << 4) | 5] = FluidCell16.Pack(FluidType.Water, 2).RawValue;
+
+            var solidDict = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidDict = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FacetedVoxelTriangle>(32);
+
+            FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(0, 0, 14, solidDict, fluidDict, tris);
+            Assert.That(tris.Count, Is.GreaterThan(0), "2 birimlik cok az su bile ASLA gorunmez olmamalidir!");
+
+            float maxTopY = float.MinValue;
+            foreach (var t in tris)
+            {
+                if (t.Normal.Y > 0.5f)
+                {
+                    maxTopY = System.MathF.Max(maxTopY, t.V0.Y);
+                }
+            }
+            // Grass Density=76 yatagi ~9.19m; Mass=2 ince su ~9.24m..9.28m araliginda ince bir film olmalidir (< 9.31m!)
+            Assert.That(maxTopY, Is.GreaterThan(9.20f).And.LessThan(9.31f),
+                "Az su kalin blok (9.43m) gibi gorunmemeli, ince ama gorunur bir film (~3-8 cm) olmalidir!");
+        }
+
+        [Test]
+        public void SingleOverhangPit_DoesNotTriggerFalseSiphon_AndSwimmerSurgeConservesMass()
+        {
+            const int sx = 8, sy = 6, sz = 8;
+            int strideY = sz * sx;
+            uint[] solids = new uint[sx * sy * sz];
+            ushort[] fluids = new ushort[sx * sy * sz];
+            uint stone = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            for (int z = 0; z < sz; z++)
+            {
+                for (int x = 0; x < sx; x++)
+                {
+                    solids[0 * strideY + z * sx + x] = stone;
+                    if (x == 0 || x == sx - 1 || z == 0 || z == sz - 1)
+                    {
+                        for (int y = 1; y < sy; y++) solids[y * strideY + z * sx + x] = stone;
+                    }
+                }
+            }
+
+            // Cukur kenarinda TEK BLOKLUK sarkan toprak dudagi (x=3, y=2, z=3): gercek U-borusu tuneli DEGILDIR!
+            solids[2 * strideY + 3 * sx + 3] = stone;
+            fluids[1 * strideY + 3 * sx + 3] = FluidCell16.Pack(FluidType.Water, 255).RawValue;
+            fluids[1 * strideY + 3 * sx + 4] = FluidCell16.Pack(FluidType.Water, 255).RawValue;
+            fluids[2 * strideY + 3 * sx + 4] = FluidCell16.Pack(FluidType.Water, 240).RawValue;
+
+            var sim = new FluidSimulationSystem();
+            long rem = sim.StepChunkFluid(solids, fluids, sx, sy, sz, out _, out _, explicitTickParity: 0);
+            Assert.That(rem, Is.EqualTo(255 + 255 + 240));
+            Assert.That(sim.LastStepSiphonTransfers, Is.EqualTo(0),
+                "Tek blokluk sarkan cukur dudagi sahte U-borusu sifonu tetiklememelidir!");
+
+            // Oyuncu suya giris calkanti dalgasi (ApplyMassConservingSwimmerSurge) %100 kutle korumali!
+            uint[] cSolids = new uint[StratocraftConstants.VoxelsPerChunk];
+            ushort[] cFluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            cFluids[(10 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 200).RawValue;
+            var wDict = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = cSolids };
+            var fDict = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = cFluids };
+
+            int moved = Stage1PlayerMovementBridge.ApplyMassConservingSwimmerSurge(
+                wDict, fDict, null, null, wx: 8, wy: 10, wz: 8, maxPushUnits: 16);
+            Assert.That(moved, Is.GreaterThan(0));
+
+            long sumAfterSurge = 0;
+            for (int i = 0; i < cFluids.Length; i++)
+            {
+                if (cFluids[i] != 0) sumAfterSurge += new FluidCell16(cFluids[i]).Mass;
+            }
+            Assert.That(sumAfterSurge, Is.EqualTo(200), "Oyuncu suya giris dalgasi 1 birim bile su yok etmemeli veya uretmemelidir!");
+        }
     }
 }

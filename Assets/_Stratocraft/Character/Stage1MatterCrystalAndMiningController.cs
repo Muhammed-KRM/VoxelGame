@@ -90,6 +90,9 @@ namespace Stratocraft.Character
         public RaycastHit AimHit { get; private set; }
         public Vector3Int AimVoxelCoord { get; private set; }
         public Vector3Int PlacementVoxelCoord { get; private set; }
+        private bool _hasExactMeshSurfaceHit;
+        private Vector3 _exactMeshSurfacePoint;
+        private Vector3 _exactMeshSurfaceNormal = Vector3.up;
         public int AimSubVoxelX { get; private set; }
         public int AimSubVoxelY { get; private set; }
         public int AimSubVoxelZ { get; private set; }
@@ -174,7 +177,8 @@ namespace Stratocraft.Character
         public void HandleHotkeysAndAim(
             float dt, UnityEngine.Camera? cam, bool backpackOpen, int activeSlot,
             Dictionary<(int cx, int cz), uint[]> worldChunks, Material? sharedMat,
-            Stage1HolsterAndBackpackController? holsterCtrl = null)
+            Stage1HolsterAndBackpackController? holsterCtrl = null,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null)
         {
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
             CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 4);
@@ -222,7 +226,7 @@ namespace Stratocraft.Character
                 }
             }
             UpdateTargetAimProbe(cam, worldChunks);
-            UpdatePlacementGhostVisual(!backpackOpen && HasAimHit && AimHit.distance <= 8.5f, activeSlot, worldChunks, sharedMat, holsterCtrl);
+            UpdatePlacementGhostVisual(!backpackOpen && HasAimHit && AimHit.distance <= 8.5f, activeSlot, worldChunks, sharedMat, holsterCtrl, fluidChunks);
         }
 
         public void ExecuteMiningOrBuilding(
@@ -360,13 +364,13 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (!IsCrystalActive && activeHolsterSlot == 6 && AimHit.distance <= 5.5f)
+            if (!IsCrystalActive && activeHolsterSlot == 6 && AimHit.distance <= 8.5f)
             {
                 bool flaskLmb = Input.GetMouseButtonDown(0);
                 bool flaskRmb = Input.GetMouseButtonDown(1);
                 if (flaskLmb || flaskRmb)
                 {
-                    _actionCooldown = 0.16f;
+                    _actionCooldown = flaskLmb ? 0.16f : 0.20f;
                     ExecuteFluidFlaskAction(
                         scoopMode: flaskLmb, maxEditableY, worldChunks, dirtyChunks,
                         fluidChunks, dirtyFluidChunks, holsterCtrl);
@@ -509,82 +513,158 @@ namespace Stratocraft.Character
             Stage1HolsterAndBackpackController? holsterCtrl)
         {
             if (fluidChunks == null) return;
-            byte currentFlaskFluid = holsterCtrl != null ? holsterCtrl.InventoryUi.GetSelectedFlaskFluidType() : (byte)1;
+
+            VisualInventorySlot activeSlot = holsterCtrl != null
+                ? holsterCtrl.InventoryUi.GetActiveHotbarSlot()
+                : new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidFlask, SubId = 1, Count = 1, Durability01 = 1f };
+
+            InventoryItemKind containerKind = Stage1VisualHotbarAndInventoryUi.IsFluidContainerKind(activeSlot.Kind)
+                ? activeSlot.Kind
+                : InventoryItemKind.ToolFluidFlask;
+            int maxCapUnits = Stage1VisualHotbarAndInventoryUi.GetFluidContainerMaxUnits(containerKind);
+            byte currentFluidSubId = activeSlot.SubId;
+            int currentStoredUnits = Stage1VisualHotbarAndInventoryUi.GetSlotStoredFluidUnits(in activeSlot);
+            string containerShortTitle = containerKind == InventoryItemKind.ToolFluidCauldron
+                ? "TASINABILIR KAZAN"
+                : (containerKind == InventoryItemKind.ToolFluidBucket ? "SIVI KOVASI" : "SIVI MATARASI");
 
             if (scoopMode)
             {
-                for (int dy = 1; dy >= -1; dy--)
-                for (int dz = -1; dz <= 1; dz++)
-                for (int dx = -1; dx <= 1; dx++)
+                int roomLeft = maxCapUnits - currentStoredUnits;
+                if (currentFluidSubId != 0 && roomLeft <= 0)
                 {
-                    int wx = AimVoxelCoord.x + dx, wy = Mathf.Clamp(AimVoxelCoord.y + dy, 1, maxY - 2), wz = AimVoxelCoord.z + dz;
-                    int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
-                    if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) continue;
-                    int idx = (wy << 8) | (lz << 4) | lx;
-                    FluidCell16 cell = new FluidCell16(fluids[idx]);
-                    if (cell.Type != FluidType.None && cell.Mass >= 32)
-                    {
-                        byte pickedType = (byte)cell.Type;
-                        fluids[idx] = 0;
-                        WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
-                        holsterCtrl?.InventoryUi.SetSelectedFlaskFluidType(pickedType);
-                        string fName = cell.Type == FluidType.Lava ? "Lav (Magma)" : "Su";
-                        LastFeedbackText = $"SIVI MATARASI [LMB]: Havzadan {fName} dolduruldu! ([RMB] ile istediginiz yere dokebilirsiniz)";
-                        return;
-                    }
+                    LastFeedbackText = $"{containerShortTitle} [LMB]: Kap zaten tamamen dolu ({maxCapUnits}/{maxCapUnits} birim)! [Sag Tik] ile dokun.";
+                    return;
                 }
-                byte nextFluid = currentFlaskFluid == 1 ? (byte)2 : (byte)1;
-                holsterCtrl?.InventoryUi.SetSelectedFlaskFluidType(nextFluid);
-                LastFeedbackText = $"SIVI MATARASI [LMB]: Matara icerigi {(nextFluid == 2 ? "Lav (Magma)" : "Su")} olarak ayarlandi! ([RMB] ile dokun)";
+
+                FluidType requiredType = currentFluidSubId == 2
+                    ? FluidType.Lava
+                    : (currentFluidSubId == 1 ? FluidType.Water : FluidType.None);
+
+                int scoopedUnits = FluidPorosityUtility.ScoopFluidIntoContainer(
+                    worldChunks,
+                    fluidChunks,
+                    dirtyFluidChunks,
+                    AimVoxelCoord.x,
+                    AimVoxelCoord.y,
+                    AimVoxelCoord.z,
+                    maxY,
+                    requiredType,
+                    Math.Max(1, roomLeft),
+                    out FluidType scoopedType);
+
+                if (scoopedUnits > 0 && scoopedType != FluidType.None)
+                {
+                    byte newSubId = scoopedType == FluidType.Lava ? (byte)2 : (byte)1;
+                    int updatedUnits = Mathf.Clamp(currentStoredUnits + scoopedUnits, 1, maxCapUnits);
+                    holsterCtrl?.InventoryUi.UpdateSelectedFluidContainerUnits(newSubId, updatedUnits);
+
+                    int aimCx = FloorDiv16(AimVoxelCoord.x), aimCz = FloorDiv16(AimVoxelCoord.z);
+                    WakeChunkFluidsOnEdit(
+                        aimCx, aimCz,
+                        AimVoxelCoord.x - aimCx * 16,
+                        Mathf.Clamp(AimVoxelCoord.y, 1, maxY - 2),
+                        AimVoxelCoord.z - aimCz * 16,
+                        maxY, fluidChunks, dirtyFluidChunks);
+
+                    Stage1InteractivePlayController.RecordFluidFlaskEventStatic(
+                        scoopedType == FluidType.Lava ? "SCOOP_LAVA" : "SCOOP_WATER",
+                        AimVoxelCoord.x, AimVoxelCoord.y, AimVoxelCoord.z, -scoopedUnits);
+
+                    string fName = scoopedType == FluidType.Lava ? "Lav (Magma)" : "Su";
+                    LastFeedbackText = $"{containerShortTitle} [LMB]: Havzadan +{scoopedUnits} birim {fName} dolduruldu! (Doluluk: {updatedUnits}/{maxCapUnits})";
+                    return;
+                }
+
+                LastFeedbackText = $"{containerShortTitle} [LMB]: Hedef noktada doldurulacak Su veya Lav bulunamadi! Bir gol/havzaya yaklasip nisan alin.";
+                return;
             }
             else
             {
-                FluidType pourType = currentFlaskFluid == 2 ? FluidType.Lava : FluidType.Water;
-                Vector3Int targetCoord = PlacementVoxelCoord;
-                if (HasAimHit)
+                if (currentFluidSubId == 0 || currentStoredUnits <= 0)
                 {
-                    int acx = FloorDiv16(AimVoxelCoord.x), acz = FloorDiv16(AimVoxelCoord.z);
-                    int alx = AimVoxelCoord.x - acx * 16, alz = AimVoxelCoord.z - acz * 16;
-                    int awy = Mathf.Clamp(AimVoxelCoord.y, 1, maxY - 2);
-                    if (worldChunks.TryGetValue((acx, acz), out uint[]? aimVox) && aimVox != null)
-                    {
-                        uint aimRaw = aimVox[(awy << 8) | (alz << 4) | alx];
-                        if (aimRaw != 0u && FluidPorosityUtility.ComputeCellFluidCapacity(aimRaw) > 0)
-                        {
-                            targetCoord = AimVoxelCoord;
-                        }
-                    }
+                    LastFeedbackText = $"{containerShortTitle} BOS! Tekrar dokmek icin bir su veya lav kaynagina gidip [Sol Tik] ile doldurun.";
+                    return;
                 }
-                int wx = targetCoord.x, wy = Mathf.Clamp(targetCoord.y, 1, maxY - 2), wz = targetCoord.z;
+
+                FluidType pourType = currentFluidSubId == 2 ? FluidType.Lava : FluidType.Water;
+                Vector3 hitNorm = AimHit.normal.sqrMagnitude > 0.001f ? AimHit.normal.normalized : Vector3.up;
+                bool useMeshSurf = _hasExactMeshSurfaceHit && Vector3.Distance(_exactMeshSurfacePoint, AimHit.point) <= 2.4f;
+                Vector3 surfNorm = useMeshSurf ? _exactMeshSurfaceNormal : hitNorm;
+
+                if (!FluidPorosityUtility.TryResolveFluidPourCell(
+                        worldChunks,
+                        fluidChunks,
+                        maxY,
+                        pourType,
+                        AimVoxelCoord.x, AimVoxelCoord.y, AimVoxelCoord.z,
+                        PlacementVoxelCoord.x, PlacementVoxelCoord.y, PlacementVoxelCoord.z,
+                        surfNorm.x, surfNorm.y, surfNorm.z,
+                        useMeshSurf,
+                        _exactMeshSurfacePoint.x, _exactMeshSurfacePoint.y, _exactMeshSurfacePoint.z,
+                        out int wx, out int wy, out int wz))
+                {
+                    LastFeedbackText = $"{containerShortTitle} [RMB]: Hedef nokta tamamen kapali, acik bir yuzeye nisan alin.";
+                    return;
+                }
+
                 int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
                 if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) return;
                 int idx = (wy << 8) | (lz << 4) | lx;
-                byte cellCap = 255;
-                if (worldChunks.TryGetValue((cx, cz), out uint[]? capVoxels) && capVoxels != null)
-                {
-                    cellCap = FluidPorosityUtility.ComputeCellFluidCapacity(capVoxels[idx]);
-                    if (cellCap == 0) return;
-                }
 
                 FluidCell16 existing = new FluidCell16(fluids[idx]);
                 if (existing.Type != FluidType.None && existing.Type != pourType && worldChunks.TryGetValue((cx, cz), out uint[]? voxels))
                 {
-                    if (existing.Mass >= 128)
+                    if (existing.Mass >= 128 && currentStoredUnits >= 128)
                     {
+                        int consumedMass = existing.Mass;
                         fluids[idx] = 0;
                         voxels[idx] = VoxelBitUtility.PackStandard(
                             MaterialIdCatalog.NaturalObsidian, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.DogalKutle, 0);
                         MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
                         WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
-                        LastFeedbackText = "STOKIYOMETRIK REAKSIYON: Matara ile Su + Lav (>=128) birlesti -> Dogal Obsidyen Blogu olustu!";
+
+                        int leftAfterReaction = Math.Max(0, currentStoredUnits - 255);
+                        holsterCtrl?.InventoryUi.UpdateSelectedFluidContainerUnits(
+                            leftAfterReaction > 0 ? currentFluidSubId : (byte)0, leftAfterReaction);
+
+                        Stage1InteractivePlayController.RecordFluidFlaskEventStatic("POUR_OBSIDIAN_REACTION", wx, wy, wz, -consumedMass);
+                        LastFeedbackText = "STOKIYOMETRIK REAKSIYON: Su + Lav (>=128) birlesti -> Dogal Obsidyen Blogu olustu!";
                         return;
                     }
                 }
 
-                fluids[idx] = FluidCell16.Pack(pourType, cellCap, isSettled: false, pressureHead: 2).RawValue;
-                WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                int pouredUnits = FluidPorosityUtility.ApplyContainerFluidPour(
+                    worldChunks, fluidChunks, dirtyFluidChunks, wx, wy, wz, maxY, pourType, requestedUnits: currentStoredUnits);
+                if (pouredUnits <= 0)
+                {
+                    LastFeedbackText = $"{containerShortTitle} [RMB]: Hedef nokta agzina kadar dolu!";
+                    return;
+                }
+
+                int remainingInContainer = Math.Max(0, currentStoredUnits - pouredUnits);
+                byte nextSubId = remainingInContainer > 0 ? currentFluidSubId : (byte)0;
+                holsterCtrl?.InventoryUi.UpdateSelectedFluidContainerUnits(nextSubId, remainingInContainer);
+
+                int wakeSpread = containerKind == InventoryItemKind.ToolFluidCauldron ? 3 : 2;
+                for (int dz = -wakeSpread; dz <= wakeSpread; dz++)
+                {
+                    for (int dx = -wakeSpread; dx <= wakeSpread; dx++)
+                    {
+                        int wkx = wx + dx, wkz = wz + dz;
+                        int wkCx = FloorDiv16(wkx), wkCz = FloorDiv16(wkz);
+                        WakeChunkFluidsOnEdit(wkCx, wkCz, wkx - wkCx * 16, wy, wkz - wkCz * 16, maxY, fluidChunks, dirtyFluidChunks);
+                    }
+                }
+
+                Stage1InteractivePlayController.RecordFluidFlaskEventStatic(
+                    pourType == FluidType.Lava ? "POUR_LAVA" : "POUR_WATER", wx, wy, wz, pouredUnits);
+
                 string fName = pourType == FluidType.Lava ? "Lav (Magma)" : "Su";
-                LastFeedbackText = $"SIVI MATARASI [RMB]: ({wx},{wy},{wz}) noktasina 255 birim {fName} dokuldu! (Akiskan fizigi aktif)";
+                string emptyNotice = remainingInContainer <= 0
+                    ? " (Kap BOSALDI! Gol/havzadan tekrar doldurun)"
+                    : $" (Kalan: {remainingInContainer}/{maxCapUnits})";
+                LastFeedbackText = $"{containerShortTitle} [RMB]: +{pouredUnits} birim {fName} dokuldu!{emptyNotice}";
             }
         }
 
@@ -1412,6 +1492,7 @@ namespace Stratocraft.Character
         private void UpdateTargetAimProbe(UnityEngine.Camera? cam, Dictionary<(int cx, int cz), uint[]> chunks)
         {
             HasAimHit = false;
+            _hasExactMeshSurfaceHit = false;
             if (cam == null || chunks == null || chunks.Count == 0) return;
 
             int maxY = StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 1;
@@ -1462,6 +1543,12 @@ namespace Stratocraft.Character
             {
                 hit = fallbackAnyHit;
                 foundVoxelMeshHit = true;
+            }
+            if (foundVoxelMeshHit)
+            {
+                _hasExactMeshSurfaceHit = true;
+                _exactMeshSurfacePoint = hit.point;
+                _exactMeshSurfaceNormal = hit.normal.sqrMagnitude > 0.001f ? hit.normal.normalized : Vector3.up;
             }
 
             // 1) ÖNCE doğrudan 3B Voksel DDA (Amanatides & Woo) ile gerçek voksel dizisini (_worldChunks) tara:
@@ -1732,7 +1819,8 @@ namespace Stratocraft.Character
 
         private void UpdatePlacementGhostVisual(
             bool canShow, int activeSlot, Dictionary<(int cx, int cz), uint[]> chunks, Material? sharedMat,
-            Stage1HolsterAndBackpackController? holsterCtrl = null)
+            Stage1HolsterAndBackpackController? holsterCtrl = null,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null)
         {
             bool isHoldingBuildableBlock = false;
             if (!IsCrystalActive && holsterCtrl != null)
@@ -1747,7 +1835,8 @@ namespace Stratocraft.Character
             }
 
             bool showBuild = canShow && (isHoldingBuildableBlock || (IsCrystalActive && Input.GetMouseButton(1)));
-            bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || activeSlot == 5 || IsCrystalActive);
+            bool showFluidPreview = canShow && !showBuild && !IsCrystalActive && activeSlot == 6;
+            bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || activeSlot == 5 || showFluidPreview || IsCrystalActive);
             if (!showBuild && !showMineFrame) { if (_placementGhostGo != null) _placementGhostGo.SetActive(false); return; }
             if (_placementGhostGo == null)
             {
@@ -1776,9 +1865,11 @@ namespace Stratocraft.Character
                 StructuralPreviewColor.OrangeCritical => MaterialIdCatalog.CopperOre,
                 _ => MaterialIdCatalog.MagmaBlock
             };
-            byte mat = showBuild ? stressMat : MaterialIdCatalog.GoldOre;
+            byte flaskSubId = (showFluidPreview && holsterCtrl != null) ? holsterCtrl.InventoryUi.GetSelectedFlaskFluidType() : (byte)1;
+            byte fluidPreviewMat = flaskSubId == 2 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.MithrilOre;
+            byte mat = showBuild ? stressMat : (showFluidPreview ? fluidPreviewMat : MaterialIdCatalog.GoldOre);
             byte effectiveBuildShape = (isHoldingBuildableBlock && SelectedShapeId == 0) ? (byte)1 : SelectedShapeId;
-            byte shape = showBuild ? (effectiveBuildShape == 0 ? (byte)7 : effectiveBuildShape) : (activeSlot == 5 ? (byte)1 : (byte)5);
+            byte shape = showBuild ? (effectiveBuildShape == 0 ? (byte)7 : effectiveBuildShape) : ((activeSlot == 5 || showFluidPreview) ? (byte)1 : (byte)5);
             byte colorCode = (byte)CurrentGhostPreviewColor;
             if (_placementGhostMf != null &&
                 (_lastGhostMat != mat || _lastGhostShape != shape || _lastGhostColorCode != colorCode || _lastGhostRot != _selectedRotation24 || _placementGhostMf.sharedMesh == null))
@@ -1792,6 +1883,28 @@ namespace Stratocraft.Character
             {
                 _placementGhostGo.transform.position = new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.5f, PlacementVoxelCoord.z + 0.5f);
                 _placementGhostGo.transform.localScale = effectiveBuildShape == 0 ? new Vector3(0.92f, 0.72f, 0.92f) : new Vector3(0.96f, 0.96f, 0.96f);
+            }
+            else if (showFluidPreview)
+            {
+                Vector3Int pourPreview = PlacementVoxelCoord;
+                if (fluidChunks != null)
+                {
+                    FluidType pType = flaskSubId == 2 ? FluidType.Lava : FluidType.Water;
+                    bool useSurf = _hasExactMeshSurfaceHit && Vector3.Distance(_exactMeshSurfacePoint, AimHit.point) <= 2.4f;
+                    Vector3 sNorm = useSurf ? _exactMeshSurfaceNormal : (AimHit.normal.sqrMagnitude > 0.001f ? AimHit.normal.normalized : Vector3.up);
+                    if (FluidPorosityUtility.TryResolveFluidPourCell(
+                            chunks, fluidChunks, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 1, pType,
+                            AimVoxelCoord.x, AimVoxelCoord.y, AimVoxelCoord.z,
+                            PlacementVoxelCoord.x, PlacementVoxelCoord.y, PlacementVoxelCoord.z,
+                            sNorm.x, sNorm.y, sNorm.z, useSurf,
+                            _exactMeshSurfacePoint.x, _exactMeshSurfacePoint.y, _exactMeshSurfacePoint.z,
+                            out int px, out int py, out int pz))
+                    {
+                        pourPreview = new Vector3Int(px, py, pz);
+                    }
+                }
+                _placementGhostGo.transform.position = new Vector3(pourPreview.x + 0.5f, pourPreview.y + 0.28f, pourPreview.z + 0.5f);
+                _placementGhostGo.transform.localScale = new Vector3(0.90f, 0.42f, 0.90f);
             }
             else if (activeSlot == 5 && !IsCrystalActive)
             {

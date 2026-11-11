@@ -283,10 +283,15 @@ namespace Stratocraft.Character
                     break;
 
                 case InventoryItemKind.ToolFluidFlask:
+                case InventoryItemKind.ToolFluidBucket:
+                case InventoryItemKind.ToolFluidCauldron:
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
                     ActiveHolsterSlot = 6;
-                    string flaskType = slot.SubId == 1 ? "Su Dolu" : (slot.SubId == 2 ? "Lav Dolu" : "Bos");
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Kristal Sivi Matarasi ({flaskType} x{slot.Count}) — [Sol Tik] Sivi Cek | [Sag Tik] Sivi Dok.";
+                    int curStored = Stage1VisualHotbarAndInventoryUi.GetSlotStoredFluidUnits(in slot);
+                    int maxCap = Stage1VisualHotbarAndInventoryUi.GetFluidContainerMaxUnits(slot.Kind);
+                    string contName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    string stateTxt = slot.SubId == 0 ? "BOS" : $"{curStored}/{maxCap} Birim Dolu";
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {contName} ({stateTxt}) — [Sol Tik] Havzadan Doldur | [Sag Tik] Dunyaya Dok.";
                     break;
 
                 case InventoryItemKind.VoxelBlock:
@@ -769,6 +774,18 @@ namespace Stratocraft.Character
                     localScale = new Vector3(0.072f, 0.092f, 0.072f) * slotScaleFactor;
                     break;
 
+                case InventoryItemKind.ToolFluidBucket:
+                    localOffset = new Vector3(0f, 0.048f, 0f);
+                    localRot = Quaternion.Euler(6f, 18f, -4f);
+                    localScale = new Vector3(0.094f, 0.096f, 0.094f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.ToolFluidCauldron:
+                    localOffset = new Vector3(0f, 0.052f, 0f);
+                    localRot = Quaternion.Euler(4f, 14f, -3f);
+                    localScale = new Vector3(0.118f, 0.102f, 0.118f) * slotScaleFactor;
+                    break;
+
                 case InventoryItemKind.MetalIngot:
                     localOffset = new Vector3(0f, 0.016f, 0f);
                     localRot = Quaternion.Euler(0f, 18f, 0f);
@@ -848,10 +865,15 @@ namespace Stratocraft.Character
                     break;
 
                 case InventoryItemKind.ToolFluidFlask:
+                case InventoryItemKind.ToolFluidBucket:
+                case InventoryItemKind.ToolFluidCauldron:
                 {
+                    byte emptyMat = slot.Kind == InventoryItemKind.ToolFluidCauldron
+                        ? MaterialIdCatalog.Bronze
+                        : (slot.Kind == InventoryItemKind.ToolFluidBucket ? MaterialIdCatalog.OakWood : MaterialIdCatalog.Marble);
                     byte flaskMat = slot.SubId == 2
                         ? MaterialIdCatalog.MagmaBlock
-                        : (slot.SubId == 1 ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.Marble);
+                        : (slot.SubId == 1 ? MaterialIdCatalog.AstralOre : emptyMat);
                     HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
                         new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), flaskMat, 6, 0, 0, _matMeshTris);
                     break;
@@ -1736,10 +1758,13 @@ namespace Stratocraft.Character
             EnsureToolHandGauntlet(_heldMaterialBlockGo.transform, ref _heldBlockHandGloveGo, sharedVoxelMat, new Vector3(0.08f, -0.35f, -0.22f));
 
             VisualInventorySlot activeUiSlot = InventoryUi.GetActiveHotbarSlot();
+            byte emptyContMat = activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron
+                ? MaterialIdCatalog.Bronze
+                : (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket ? MaterialIdCatalog.OakWood : MaterialIdCatalog.Marble);
             byte displayMat = shownSlot == 5
                 ? MaterialIdCatalog.Steel
                 : (shownSlot == 6
-                    ? (activeUiSlot.SubId == 2 ? MaterialIdCatalog.MagmaBlock : (activeUiSlot.SubId == 1 ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.Marble))
+                    ? (activeUiSlot.SubId == 2 ? MaterialIdCatalog.MagmaBlock : (activeUiSlot.SubId == 1 ? MaterialIdCatalog.AstralOre : emptyContMat))
                     : selectedMat);
             byte displayShape = shownSlot == 5 ? (byte)7 : (shownSlot == 6 ? (byte)6 : (byte)1);
 
@@ -1752,10 +1777,25 @@ namespace Stratocraft.Character
             }
             else if (shownSlot == 6)
             {
-                // Kristal Sivi Matarasi tutusu
-                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
-                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(12f + drawPitchAdd, 24f, -6f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.22f, 0.30f, 0.22f);
+                // Sivi Kabi tutusu: Matara kucuk/ince, Kova orta/genis, Kazan buyuk/agir!
+                if (activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron)
+                {
+                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.26f + drawDropY, 0.58f);
+                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(8f + drawPitchAdd, 18f, -4f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.38f, 0.32f, 0.38f);
+                }
+                else if (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket)
+                {
+                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.31f, -0.24f + drawDropY, 0.56f);
+                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(10f + drawPitchAdd, 22f, -5f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.29f, 0.30f, 0.29f);
+                }
+                else
+                {
+                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
+                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(12f + drawPitchAdd, 24f, -6f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.20f, 0.28f, 0.20f);
+                }
             }
             else
             {
@@ -1765,10 +1805,11 @@ namespace Stratocraft.Character
                 _heldMaterialBlockGo.transform.localScale = new Vector3(0.26f, 0.26f, 0.26f);
             }
 
-            if (_heldMaterialBlockMf != null && (_lastHeldBlockMat != displayMat || _lastHeldVisualMode != shownSlot || _heldMaterialBlockMf.sharedMesh == null))
+            int heldVisualKey = (shownSlot << 8) | (int)activeUiSlot.Kind;
+            if (_heldMaterialBlockMf != null && (_lastHeldBlockMat != displayMat || _lastHeldVisualMode != heldVisualKey || _heldMaterialBlockMf.sharedMesh == null))
             {
                 _lastHeldBlockMat = displayMat;
-                _lastHeldVisualMode = shownSlot;
+                _lastHeldVisualMode = heldVisualKey;
                 _heldBlockTris.Clear();
                 HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), displayMat, displayShape, 0, 0, _heldBlockTris);
                 Mesh? existing = _heldMaterialBlockMf.sharedMesh != null &&

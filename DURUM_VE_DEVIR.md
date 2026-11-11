@@ -13,17 +13,111 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#043` (Savurma/Su Telemetrisi + Kılıç Spam Engeli & Mikro-Kesik + Hissedilir Saplanma Tamamlandı; **AÇIK SORUNLAR:** Balta/Kazma Sağ-Sol Otomatik Sallanma Hatası & Su 3B Hacim/Akış Görünürlüğü/Yerle Temas/Koyma Sorunları — bkz. `docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md` \| 57/57 Standalone Test PASS, 0 Error / 0 Warning) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-10T17:53:00+03:00` |
+| **Devir Numarası** | `#047` (Edit Mode & PlayMode `Y = 96.0m` Sub-Chunk Dikiş Çatlağı Çözümü, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar & Havada Parça Temizliği, Nadir Doğal Yüzey Mağara Girişleri, PlayMode `MarkSceneDirty` Koruması \| Su Fiziği & Saplanma Onaylandı \| `69/69` Standalone + `25/25` Unity EditMode Test PASS, `0 Error / 0 Warning`) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T15:27:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #043: Faz A–E İlk Uygulaması Tamamlandı; PlayMode Testinde Tespit Edilen Balta/Kazma Sağ-Sol Savurma ve Su 3B Hacim/Akış/Temas Sorunları Raporlandı (Sıradaki İlk İş)` |
-| **Aktif Test Durumu** | `57/57 Standalone Core Test PASS`, `Unity 6 Console: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Devir #047 TAMAMLANDI & KULLANICI TARAFINDAN ONAYLANDI (Yönlü Dövüş, Saplanma, Su Fiziği, Sualtı Kamerası, Arazi Çatlağı Onarımı, Mağara Sütunları ve Yüzey Mağara Girişleri Onaylandı) -> Sıradaki Aşama: Devir #048 15 Maddelik Eksikler ve Taş Devri Zanaat Yol Haritası` |
+| **Aktif Test Durumu** | `69/69 Standalone Core Test PASS`, `Unity EditMode FluidConservationTests: 25/25 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#043`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#047` & `#046`)
+
+### 2.0.0000. Devir #047: Edit Mode & PlayMode Arazi Görünmez Üçgen/Çatlak Çözümü, Mağara İçi Sıfır Havada Sütun Garantisi ve Nadir Doğal Yüzey Mağara Girişleri
+
+Kullanıcının canlı testinde **su fiziğinin tamamı (`Devir #046`) ve saplanma mekaniği (`Devir #045`) onaylanmış**; bildirilen **3 dünya/mesh sorunu + 1 PlayMode konsol istisnası** kök nedenleriyle çözülüp doğrulanmıştır:
+
+1. **Edit Mode (`[-2..1]` Merkez Sınırı) ve PlayMode (`Y = 96.0m` Su Islatma Dikişi) Arazi İçi Görünme Çözümü (`Stage1InteractivePlayController.cs`, `SoilMoistureAndMudSystem.cs`, `StratocraftStage1SceneBuilder.cs`):**
+   - **PlayMode Kök Nedeni ve Çözümü:** `EnsureChunksInitialized` başlangıçta `[72..160)` aralığını tek geçişte örüp üçgenleri `((int)tri.V0.Y) >> 4` ile alt-chunk kutularına dağıtıyor, ancak `IsConsolidatedFullPass = false` bıraktığı için `wy = 96` (`subY = 6`) vokselinin ürettiği `V0.Y = 95.92m` üçgeni `subY = 5` kutusuna düşüyordu. Su `wy = 95` (`subY = 5`) toprağını ıslattığında yalnızca `[80..96)` yeniden örülüp `wy = 96`'nın üçgeni siliniyor (delik açılıyor), deliğin tam üstüne su döküldüğünde ise `subY = 6` (`[96..112)`) örülerek üçgen kalıcı olarak geri geliyordu. `IsConsolidatedFullPass = true` ataması düzeltildi, kısmi alt-chunk moduna geçişte tek-geçiş önbelleği temizlendi, `consolidatedMinY` `16`'nın tam katlarına (`64` / `48`) hizalandı ve `SoilMoistureAndMudSystem.ComputeSubChunkMaskWithSeamApron` ile alt-chunk sınırındaki (`(y & 15) <= 1` veya `>= 14`) ıslanma/kurumalarda komşu `subY ± 1` maskesi birlikte işaretlendi.
+   - **Edit Mode Kök Nedeni ve Çözümü:** `PopulateInMemoryEditorMeshesForOuterChunks` artık merkezdeki `16` disk `.asset` mesh'ini atlamak yerine dış `384` chunk ile **aynı `worldChunks` sözlüğünden yerinde (`in-place`)** günceller ve kaydeder (`0.000m` sıfır çatlak); `PollOuterChunkMeshSentinel` EditMode test koşuları sonrasında silinen `DontSaveInEditor` dış chunk mesh'lerini otomatik yeniler.
+2. **Mağaralarda Havada Asılı Sütun / Kaya Parçası Kalmaması (`StratocraftFloatingIslandWorldGen.cs`):**
+   - `EvaluateUndergroundCaveNetwork` içindeki `trunkDistSq < rTrunkSq * 0.48f` koşulu sütunu mağara ortasında başlatıp taban ve tavana yaklaşırken (`0.48..1.00`) kestiği için sütunların altı ve üstü boş kalıyordu. Sütun kontrolü `Y`'den bağımsız saf 2B `(cwx, cwz)` kolon fonksiyonuna dönüştürülerek her `Stalagnate` sütununun mağara tabanından tavanına **`%100` kesintisiz** birleşmesi sağlandı; ayrıca kesişen tüneller arasında sıkışabilecek `<= 4` blokluk kopuk kaya kıymıklarını temizleyen `RemoveUngroundedCaveSliversInColumn` eklendi.
+3. **Nadir, Yürüyerek İnilir Doğal Yüzey Mağara Girişleri (`StratocraftFloatingIslandWorldGen.cs`, `Stage1InteractivePlayController.cs`):**
+   - `144m x 144m` (`9x9` chunk) makro bölgelerin yalnızca ~`%35`'inde (`SeaLevelY + 3.2m` üstü kuru yamaçlarda, ağaç/köy/tapınak çakışması engellenerek) `Stone` + `GlowingMoss` kemerli ağızla başlayan, `~31°` yürüyerek inilir doğal mağara tünelleri (`TryGetMacroRegionCaveEntrance` + `EvaluateNaturalCaveSurfaceEntrance`) eklendi ve `y = 65..72` kavşak holüyle ana yeraltı mağara ağına bağlandı.
+   - **Başlangıç Kıtasındaki Hazır Doğal Mağara Girişi Koordinatları (`[F3]` ile gidilebilir):**
+     - Kuzeybatı Orman Yamacı: **`X = -85, Y = 97.5, Z = 86`**
+     - Güneybatı Yamacı: **`X = -77, Y = 94.6, Z = -67`**
+     - Güneydoğu Yamacı: **`X = 88, Y = 95.9, Z = -89`**
+     - Kuzeydoğu Yamacı: **`X = 87, Y = 96.5, Z = 68`**
+4. **PlayMode `EditorSceneManager.MarkSceneDirty` İstisnası Çözümü (`StratocraftStage1SceneBuilder.cs`):**
+   - Tüm Edit-Mode senkronizasyon metotlarına `Application.isPlaying || EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode` koruması eklendi, `hierarchyChanged` tetikleyicisi kaldırıldı ve `DisableSceneReload` sonrası sahnede kalan çalışma zamanı `DistantHorizon_ClipmapRing_*` / `VoxelChunk_Pooled_*` nesneleri yalnızca Edit Mode'a dönüldüğünde güvenle temizlendi.
+
+### 2.0.000. Devir #046: Su Doğallaştırma, Toprak Emilimi / Çamur / Kuruma Döngüsü, 3 Kademeli Tükenen Sıvı Kapları, `0.5m` Organik Mesher, Sualtı Kamerası ve Yüzücü Dalga Tepkisi (`WP-N1 .. WP-N7`)
+
+Kullanıcının onayladığı 4'lü mimari ve geliştirme doküman seti (`DOK1..DOK4`) doğrultusunda, Balta/Kazma saplanma mekaniğine (`ToolChopArcProfile.cs`, `Stage1DirectionalCombatBridge.cs`) dokunulmadan **7 iş paketinin tamamı** sıfır-GC ve bütçe içi (`4.14 MB` VRAM) olarak kodlanmış ve doğrulanmıştır:
+
+1. **`WP-N1` — Toprağa Su Emilimi, Doygunluk Tavanı (`255`), Görsel Çamurlaşma, Çamurda Yavaşlama ve Güneşte Kuruma (`SoilMoistureAndMudSystem.cs`, `HybridSurfaceNetsAndShapeMesher.cs`, `StratocraftUberShader.hlsl`, `Stage1PlayerMovementBridge.cs`, `Stage1InteractivePlayController.cs`):**
+   - **Doygunluk Tavanlı Emilim (`0..255`):** Emici zeminler (`Dirt=2`, `Grass=3`, `Sand=4`, `Gravel=9`, `LooseRubble=15`) üzerlerindeki suyu `Moisture == 255` doygunluk sınırına ulaşana kadar kademeli emer; `Moisture == 255` olduğunda emilim **tamamen durur (`0` birim)** ve su artık eksilmeden göllenir/akar. Gelecek yağmur sistemi için `AddPrecipitationMoistureToColumn` kancası hazırlandı.
+   - **Sıfır-VRAM Görsel Koyulaşma ve Islak Çamur Parlaklığı:** Toprak ıslaklığı `dualTemps` kanalının `1..120` bandına kodlanarak `StratocraftUberShader.hlsl` içinde toprağın doygunlukla koyu çamur rengine dönmesi ve pürüzlülüğünün (`roughness -> 0.14`) düşerek ıslak parlaması sağlandı (`0 B` ek VRAM, turuncu kor ışıması olmadan).
+   - **Çamurda Oyuncu Yavaşlaması ve Güneşte Kuruma:** Çamurlu zemin (`Moisture >= 150`) oyuncuyu doygunluğa göre **`%15–%35`** (`0.85x .. 0.65x`) yavaşlatır; üstündeki su çekildikten sonra açık gökyüzü/güneş gören çamur yavaşça kuruyarak normal toprağa döner.
+2. **`WP-N2` — 3 Kademeli Tükenen Sıvı Kapları (Matara / Kova / Kazan) ve İnce-Ama-Görünür Az Su Eğrisi (`Stage1VisualHotbarAndInventoryUi.cs`, `Stage1HolsterAndBackpackController.cs`, `Stage1MatterCrystalAndMiningController.cs`, `FluidPorosityUtility.cs`, `FluidSurfaceSkirtMesher.cs`):**
+   - **3 Kap Boyutu (`[F4] + [Tab]` -> Aletler Sekmesinde Hazır):**
+     - **Sıvı Matarası (`ToolFluidFlask = 5`):** `380` birim (~`1.5` hücre) — az ama görünür su.
+     - **Sıvı Kovası (`ToolFluidBucket = 24`):** `1275` birim (`5` tam hücre) — çukur/dere beslemesi.
+     - **Taşınabilir Kazan (`ToolFluidCauldron = 25`):** `3825` birim (`15` tam hücre) — tek seferde gölet/şelale oluşturacak bol su.
+   - **Harcayınca Bitme & `%100` Kütle Korunumlu Doldurma:** Sağ Tık (`RMB`) ile döküldükçe kaptaki sıvı azalır (slot üzerinde canlı doluluk barı görünür) ve bittiğinde kap `SubId = 0` (`Boş Matara / Boş Kova / Boş Kazan`) durumuna geçer; boş havaya Sol Tık ile sınırsız Su<->Lav değiştirme hilesi kaldırıldı. Sol Tık (`LMB`) ile gölden/çukurdan gerçek sıvı çekilerek tekrar doldurulur.
+   - **Az Su Az Gözükür Ama Asla Görünmez Olmaz:** `Mass = 1..12` aralığındaki ince su kalıntıları `22–24 cm` kaba blok yerine gerçekçi **`2.5 cm – 9.5 cm`** ince su tabakası olarak çizilir (`Mass >= 1` olduğu sürece asla görünmez olmaz).
+3. **`WP-N3` — Hafif İlk Yayılma, En Dik Eğim Öncelikli Akış (`Quinn MFD`), Dengeli Akış Hızı ve 2 Gizli Log Anomalisi Çözümü (`FluidCellularAutomataJob.cs`, `Stage1InteractivePlayController.cs`):**
+   - Su ilk döküldüğünde (`srcMass >= 135`) hafifçe doğal bir yastık gibi yayılır, hemen ardından `EvaluateDonorSlopeRouting` (`Quinn MFD` eğim ağırlıklı yönlendirme) ile yanlara sel gibi dağılmak yerine en dik eğim yönüne öncelik vererek akar.
+   - Sıvı fizik adımı `0.085s` -> **`0.130s`** ve yanal aktarım tavanı dengeli seviyeye çekilerek aşırı hızlı sel hissi doğal akarsu hızına indirildi.
+   - `Logs/fluid_trace_20261111_121124.csv` loglarında yakalanan 2 gizli anomali giderildi: (a) düz chunk sınırında `< 3` mikro-yük farkı için sınır ping-pong'u durduruldu, (b) kazılan çukur ağzındaki tek blokluk toprak dudağının sahte U-boru sifonu tetiklemesi `confinedTunnelCells >= 2` şartıyla kapatıldı.
+4. **`WP-N4` — Minecraft Küpü Yerine `0.5m` (`2x2` Alt-Hücre) Organik Su Yüzeyi (`FluidSurfaceSkirtMesher.cs`):**
+   - Her ıslak hücre `0.5m` (`2x2` alt-hücre) Marching-Squares kontur halkasına bölünerek açık arazideki `90°` keskin Minecraft dış köşeleri yumuşak diyagonal pahlarla yuvarlatıldı; çukur duvarlarına giren tam sızdırmaz kıyı etekleri (`0.65m`) korundu.
+5. **`WP-N5` — Suya Girince Mavi Ton ve Hafif Bulanık Sualtı Kamerası (`UnderwaterCameraEffect.cs`, `Stage1InteractivePlayController.cs`):**
+   - Kamera su yüzeyinin altına indiğinde kesintisiz Beer-Lambert sualtı turkuaz-mavi sis (`RenderSettings.fog`), URP `Volume` (`ColorAdjustments` mavi filtre + `DepthOfField` hafif Gaussian bulanıklık) ve `0 B` VRAM ekran tülü devreye girer; sudan çıkıldığında tüm sahne ayarları kayıpsız eski haline döner.
+6. **`WP-N6` — Oyuncu Suya Girince / Yüzünce 3B Dalga Halkaları, Köpük İzi ve Fiziksel Çalkantı (`StratocraftFluidSurface.shader`, `Stage1PlayerMovementBridge.cs`, `Stage1InteractivePlayController.cs`):**
+   - `_StratocraftSwimmerPos` ve `_StratocraftSwimmerVel` global shader vektörleri ile oyuncunun etrafında gerçek 3B eşmerkezli su halkaları, yüzey normal kırılması ve yüzerken V-biçimli Kelvin köpük izi oluşturulur; ayrıca suya atlama ve hızlı yüzme anında `ApplyMassConservingSwimmerSurge` ile komşu hücrelere `%100` kütle korunumlu gerçek fiziksel dalga darbesi uygulanır.
+
+---
+
+### 2.0.00. Devir #045: Canlı PlayMode Su Fiziği & Render 5 Kök Neden Çözümü (`WP-W1 .. WP-W6`)
+
+Kullanıcının canlı PlayMode testinde **Balta (`Slot 3`) ve Kazma (`Slot 2`) saplanma/çekip çıkarma mekaniği %100 onaylanarak dondurulmuş** (`ToolChopArcProfile.cs`, `Stage1DirectionalCombatBridge.cs` dokunulmadan korundu); 12 canlı ekran görüntüsü ve `Logs/fluid_trace_*.csv` üzerinden tespit edilen **5 su fiziği ve render hatası** onaylı `DOK1..DOK4` mimarisine göre eksiksiz çözülmüştür:
+
+1. **`WP-W2` — Kuru Sahne Chunk'larında (`131 / 400`) Görünmez Su ve `Z = 32` Chunk Sınırında Havada Kesilme Çözümü (`Stage1InteractivePlayController.cs`, `StratocraftStage1SceneBuilder.cs`, `FluidSurfaceSkirtMesher.cs`):**
+   - `StratocraftStage1Showcase.unity` içindeki `400` `VoxelChunk_` nesnesinin yalnızca `269`'unda `FluidSurface_cx_cz` alt nesnesi bulunduğu, geri kalan `131` kuru chunk'ta (`Chunk -2, 2`, `Chunk -3, 2`, `Chunk -2, -2` dahil) su fiziğinin çalışıp (yüzme + oksijen barı aktif) `_fluidMeshFilters` kaydı olmadığı için `0` üçgen çizildiği kanıtlandı.
+   - `EnsureChunkFluidSurfaceChild` ile hem `EnsureChunksInitialized` başlangıcında hem `RebuildAllDirtyChunks` sırasında **sahnedeki `400/400` chunk'ın tamamına** `FluidSurface_cx_cz` (`StratocraftFluidSurface` materyalli) bağlanması garanti edildi.
+   - `FluidSurfaceSkirtMesher` içindeki `suppressUndergroundCaveFluids && y < 88` kontrolü, `Y = 85..87` yüzey çukurlarını gizlememesi için `y < 74` ve `>= 6` ardışık kaya tavan şartına çekildi.
+2. **`WP-W3` — Tek Sağ Tıkta Kontrollü 1 Matara (`255` Birim) Döküm (`Stage1MatterCrystalAndMiningController.cs`, `FluidPorosityUtility.cs`):**
+   - `Input.GetMouseButton(1)` basılı tutma makineli tüfek dökümü kaldırılıp yalnızca `Input.GetMouseButtonDown(1)` tek tık tetiklemesine geçildi; `ApplySingleFlaskFluidPour(..., maxPourUnits: 255)` ile her sağ tıkta **en fazla `255` birim (1 tam matara)** kontrollü su dökülmesi sağlandı.
+3. **`WP-W4` — Açık Gölette Sifon Işınlanmasının ve Yanal Ping-Pong Titreşiminin Durdurulması (`FluidCellularAutomataJob.cs`, `FluidSimulationSystem.cs`, `Stage1InteractivePlayController.cs`):**
+   - `UpdateHydrostaticHeadAndSolveUPipes` yalnızca **gerçek kapalı tavanlı borularda (`traversedConfinedPipe == true`)** ve **dikey yükseliş kollarında (`dy == 1`)** çalışacak şekilde sınırlandırıldı (açık göletlerde `SiphonTransfers == 0`).
+   - `ComputeStableLateralTransfer` ile aşım (`overshoot`) yapmayan sanal boru dengelemesi kurularak `101 <-> 100` sonsuz kıyı salınımı sıfırlandı; aktif chunk bütçesi `12..24` senkron chunk (`0.085s` tick) yapıldı.
+4. **`WP-W5` — Tam Yatay Çukur/Gölet Yüzeyi, `0.65m` Sızdırmaz Çukur Eteği ve `Cull Off` Su Altı Tavanı (`FluidSurfaceSkirtMesher.cs`, `StratocraftFluidSurface.shader`):**
+   - `dualTerrainY + 0.24f` kaldırması yalnızca zemine oturan tek hücreli sığ akıntılarla (`embedFoundationIntoGround && wetSamples == 1 && maxWetMass < 80`) sınırlandırılarak tüm gölet/çukur üst yüzeyleri tam yatay hale getirildi; düşük kütleler (`mass < 12`) `5..22 cm` ince film eğrisine alındı.
+   - Kıyı etek uzatması `0.35m` -> **`0.65m`**, taban gömülmesi **`0.18m`** yapıldı ve `ShapeId == 0` çukur duvarlarında `density >= 112` yan duvar iptali kaldırıldı.
+   - `StratocraftFluidSurface.shader` `Cull Off` + `SV_IsFrontFace` ile çift yüzlü yapılarak su içindeyken yukarı bakıldığında Snell penceresi (berrak turkuaz su tavanı) görünür kılındı (`0 B` ek VRAM).
+5. **`WP-W1` & `WP-W6` — Sıfır-GC Sıvı Anomali Telemetrisi ve `64/64` Regresyon Testleri (`FluidTraceRecorder.cs`, `FluidConservationTests.cs`):**
+   - `Logs/fluid_trace_*.csv` (`GlobalActiveMass`, `MissingRenderers`, `ZeroMeshChunks`, `SeamTransfers`, `SiphonTransfers`) ve `Logs/fluid_events.log` (`POUR_WATER`, `SCOOP_WATER`, `MeshVerts`) aktif edildi; 3 yeni birim testiyle toplam **`64/64`** C# testi geçti.
+
+---
+
+### 2.0.0. Devir #044: Balta/Kazma Yönlü Kurulma (`ToolChamberTracker`) ve 3B Volümetrik Su Fiziği / Yamaç Görünürlüğü / Çok-Açılı Su Koyma Çözümleri
+
+Onaylanan 4'lü mimari ve geliştirme doküman seti (`DOK1..DOK4`) doğrultusunda [`docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md`](docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md) içindeki tüm sorunlar sıfır-GC ve bütçe içi olarak çözülmüştür:
+
+#### 1. Balta (`Slot 3`) ve Kazma (`Slot 2`) Sağ-Sol Otomatik Sallanma Hatasının Kök Neden Çözümü (`ToolChopArcProfile.cs`, `Stage1DirectionalCombatBridge.cs`)
+- **Otomatik Tekrarlama Döngüsü Kaldırıldı:** `Stage1DirectionalCombatBridge.StepCombatAndCameraInput` içinde `holdingLmb` basılıyken fare yönüne bakmaksızın her bitişte yeni vuruş başlatan koşulsuz tetikleyici kaldırıldı.
+- **Histerezisli `ToolChamberTracker` (`None`, `Right`, `Left`, `Overhead`):**
+  - Ağaçtan baltayı/kazmayı sağa çekip çıkardığınızda (`ForceReleaseLodgedWeapon` -> `EnterCockedFromPullOut`), `PullOutLatchActive` kilidi sayesinde alet sağ omuzda **kurulu (`Right`)** bekler; fareyi sağa götürmeye veya `LMB` basılı tutmaya devam etseniz bile **asla kendi kendine vurmaz**.
+  - Yalnızca fareyi hedefe doğru ters yöne (**sola** veya **aşağı**) savurduğunuzda darbe indirir ve saplanır.
+  - **Simetrik Sağ ve Sol Kesim:** Sağdaki bir ağaca vurmak için fareyi **sola** götürerek sol omuza kurabilir (`Left`) ve **sağa** savurarak kesebilirsiniz; `ComputeLockedRollToolRotation` içindeki `strikeDirX` teğet yönlendirmesi ve `0°` bilek roll kilidi her iki yönde de keskin ağzın önde gitmesini garanti eder (`anyFloorSkimming` ve `anyWallPenetrating` sapmaları da `ComputeLockedRollToolRotation`'a geçirildi).
+  - Hızlı tek Sol Tık (`Quick Chop`) tek bir darbe vurur; basılı tutulduğunda tekrarlamaz. Aktif kurma sırasında kamera dönüşü `0.38x` yumuşatılır.
+
+#### 2. 3B Dolgun Su Hacmi, Yamaçta Kademeli Akış Görünürlüğü, Tam Zemin Teması ve Çok-Açılı Su Koyma (`FluidSurfaceSkirtMesher.cs`, `FluidCellularAutomataJob.cs`, `FluidPorosityUtility.cs`, `FluidSimulationSystem.cs`, `StratocraftFluidSurface.shader`, `Stage1MatterCrystalAndMiningController.cs`, `Stage1InteractivePlayController.cs`)
+- **Tam 3B Su Prizması ve Zeminle Sıfır Boşluklu Temas (`FluidSurfaceSkirtMesher.cs`):**
+  - `EmitSideWallIfExposed` içindeki doğal çim/toprak (`ShapeId == 0`) üzerinde **4 yan duvarı da silen** hatalı erken çıkış kaldırıldı; tüm açık kenarlarda 3B yan duvarlar örülür ve duvar tabanları doğal zeminin `0.12m` içine gömülür (`+0.35m` SDF kıyı uzantısı korunur).
+  - İçbükey kalınlık eğrisi `ComputeVisualFluidThickness` (`0.26m .. 0.88m`, $\gamma = 0.56$) ile ince akış kolları bile en az `26 cm` kalınlığında dolgun 3B su bloğu olarak görünür; `StratocraftFluidSurface.shader` yan duvar derinlik kontrastı güçlendirildi (`0 B` ek VRAM).
+- **Yamaçta Çim Üçgeni Altına Gömülmeme ve Adım Adım Akış (`FluidSurfaceSkirtMesher.cs`, `FluidCellularAutomataJob.cs`, `FluidSimulationSystem.cs`, `Stage1InteractivePlayController.cs`):**
+  - `ComputeCornerHeightAndSkirt` içinde yokuş yukarı `ShapeId == 0` komşu arazi sütunlarını da kapsayan `dualTerrainY` zarfı hesaplanarak ıslak su köşelerinin çapraz `SurfaceNets` çim üçgenlerinin en az `+0.24m` üstünde kalması sağlandı (su yamaçta asla yer altına gizlenmez).
+  - `NewlyWetFromGravityFlag (0x08)` (`Split-Tick Cascade`) ve yamaç aşağı `%55` tek-tick aktarım tavanı (`slopeCap`) ile suyun yokuştan aşağı adım adım görünür hızda akması sağlandı.
+  - `ExchangeChunkBorderFluids` içine `wakeActiveFluidChunks` eklendi (16m chunk sınırını geçen su komşu chunk'ı uyandırır), `FluidSimulationSystem` tick bütçesi en az `4` chunk/tick'e çıkarıldı ve yeni ıslanan chunk'larda `_fluidMeshRenderers[key].enabled = true` anında açılarak görünmez kalma hatası giderildi.
+- **Her Açıdan (`10°–90°`) `8.5m` Menzilli Su Koyma ve 3B Önizleme (`FluidPorosityUtility.cs`, `Stage1MatterCrystalAndMiningController.cs`):**
+  - 5 aşamalı `TryResolveFluidPourCell` çözücüsü, `ApplyCohesiveFluidPour` çok-hücreli kaynak beslemesi ve `Slot 6` seçiliyken aktif olan **3B mavi/turuncu sıvı dökme önizleme kutusu** devreye alındı.
+
+---
 
 ### 2.0. Devir #043: Yönlü Savaş Jest Birikimcisi (Spam Engeli & Mikro-Kesik), Balta/Kazma Sabit Düzlemli Kırma Yayı, Hissedilir Saplanma ve Yokuşta Su Akış Yolu Görünürlüğü (`Faz A – E`)
 
@@ -504,26 +598,36 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
       - **2) Halka-Öncelikli (`Ring-First`) Chunk Akışı ve Tek-Geçişli (`5x` Hızlı) Tam-Chunk Örme (`Stage1InteractivePlayController.cs`):** `StepDynamicContinentChunkStreaming` içinde `r` halkası dış döngü, `pass (0..1)` iç döngü yapılarak oyuncuya yakın halkaların (`r = 0..3`) 8 komşusu eksiksiz tamamlanmadan uzak halkalara geçilmesi engellendi. `_chunkPool` havuzundan geri alınan chunk'ların eski `sharedMesh` referansı temizlendi, henüz mesh'i olmayan yeni chunk'lara `_sortedDirtyChunks` içinde öncelik verildi ve tam-chunk yenilemelerinde (`dirtyMask == AllSubChunksMask`) tek geçişli (`minY = 0, maxY = 160`) örme kullanılarak yenileme süresi `5x` hızlandırıldı.
       - **3) Sınır Apron Simetrisi ve Su Geçirmez (`Watertight`) Kuad Emniyeti (`HybridSurfaceNetsAndShapeMesher.cs`):** `BuildEffectiveChannel1SdfGrid` içinde apron sınırındaki (`px = 0, 17`, `pz = 0, 17`) mimari/ağaç şekillerinin komşu chunk'taki doğal araziyi `ResolvePaddedColumnChunk` üzerinden okuması sağlandı ve `EmitDualQuadAsFacetedTriangles` içine 3 geçerli köşeden 4. köşeyi tamamlayan su geçirmez sınır emniyeti eklendi.
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
-## 3. Yarım Kalan / Açık Sorunlar ve Henüz Çözülmemiş Noktalar (`Devir #043`)
+## 3. Onaylanan Sistemler ve Sıradaki 15 Maddelik Eksikler & Çözüm Yol Haritası (`Devir #047 -> #048`)
 
-### 3.1. PlayMode Testinde Tespit Edilen Açık Sorunlar (`docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md`)
+> 📄 **Tam Detaylı Kök Neden ve Çözüm Tasarım Raporu:** [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md)
 
-1. **Balta (`Slot 3`) ve Kazma (`Slot 2`) Sağ-Sol Savurma / Otomatik Tekrarlama Hatası:**
-   - **Sorun:** Ağaç oyuncunun **solunda** dururken fareyi **sola** savurunca balta ağaca düzgün vuruyor ve saplanıyor; ancak fareyi **sağa** götürünce (aleti sağa kurmak/çekmek istediğinde) balta yalnızca sağ tarafa geçip beklemek yerine kendi kendine sürekli **sağ-sol** yapmaya başlıyor ve ağaca ardı ardına çok hızlı vurarak kesiyor. Aynı durum **Kazma (`Slot 2`)** için de geçerli.
-   - **Beklenen:** Fare sağa götürüldüğünde balta/kazma yalnızca sağ tarafa (kurulma/hazırlık konumuna) geçmeli; sadece sola (hedefe doğru) savrulduğunda vurup saplanmalı.
-   - **Log Kanıtı (`Logs/swing_summary.log`):** `Stage1DirectionalCombatBridge.cs` içinde `isToolSlot` için fare yönünden bağımsız sabit `ToolChopArcProfile` yayının her `LMB` karesinde yeniden başlaması nedeniyle saniyede 2–3 kez otomatik vuruş tetiklenmektedir.
+### 3.1. Canlı PlayMode Testinde Kullanıcı Tarafından Onaylanan Sistemler (Donduruldu — Bozma!)
+- ✅ **Balta (`Slot 3`) ve Kazma (`Slot 2`) Saplanma, Çekip Çıkarma ve Yönlü Savurma (`Devir #044–#045`)**
+- ✅ **Su Fiziği, Eğim Öncelikli Akış, 3 Kademeli Tükenen Sıvı Kapları (Matara / Kova / Kazan), `0.5m` Organik Su Yüzeyi, Sualtı Mavi/Bulanık Kamera ve 3B Yüzücü Dalgaları (`Devir #046`)**
+- ✅ **Edit Mode & PlayMode Arazi Dikiş Çatlağı Onarımı, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar ve Nadir Doğal Yüzey Mağara Girişleri (`Devir #047`)**
 
-2. **Su Fiziği, 3B Hacim, Akış Süresi, Yerle Temas ve Su Koyma Sorunları:**
-   - **2A — Suyun Gidiş Süresinin Olmaması / Anında Aşağıda Oluşması:** Su döküldüğünde oyuncunun önünde oluşuyor ve yokuştan aşağı akış yolculuğu hiç görülmeden anında yokuşun altında beliriyor (yerin altına girip yok oluyor ve aşağıda çıkıyor gibi görünüyor).
-   - **2B — Su Hacminin Çok Ufak / İnce Olması (3B Blok Hissiyatı Eksikliği):** Suyun hacmi ve kalınlığı çok ufak/ince durduğu için arazide seçilemiyor; Minecraft'taki gibi daha dolgun, belirgin **3 boyutlu (3D)** bir hacme sahip olması gerekiyor.
-   - **2C — Suyun Yerle Temas Etmiyor / Havada Duruyor Gibi Görünmesi:** Su kütlesi eğimli çim araziyle tam temas etmiyor, yerin üstünde havada asılı duran bir yüzey gibi görünüyor.
-   - **2D — Farklı Açılardan Yere Bakıp Su Döküldüğünde Koyulmaması / Anlaşılamaması:** Yere farklı açılardan bakıp su matarasıyla sağ tıklandığında çoğu açıda su koyulmuyor veya koyulup koyulmadığı hiç anlaşılmıyor.
+### 3.2. Sıradaki 5 İş Paketi (Toplam 15 Madde — Kök Nedenleri Tespit Edildi, Uygulama Onayı Bekleniyor)
 
-### 3.2. Diğer Bekleyen Kontroller ve Faz 3+ Genişletmeleri
-1. **Devir #041 Canlı Mekanikleri:** Bölgesel zırh kuşanma, kütük boylama (`[E]` ile omuzlama) ve boş survival başlangıcı.
-2. **İleriki Fazlara (Faz 3+) Bağlanacak Genişletmeler:**
-   - **Dojo Stili Açma & Ustalık (`StanceMastery01`):** Faz 3–5 ilerlemesinde dünyadaki Dojo Ustaları / Parşömenler ile açılması ve kullandıkça ustalık kazanılması.
-   - **Örs Üzerinde Dövülen Özel Silah Modelleri:** `16x32x4` Çift Boynuzlu Örs üzerinde dövülen serbest voksel modelleri.
+1. **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`6 Madde`):**
+   - **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `HybridSurfaceNetsAndShapeMesher.cs:697` (`EmitDualQuadAsFacetedTriangles`) hesaplanan `dualTemps` nem dizisini okumayıp `0` ile eziyor; `dualTemps` aktarılıp doygunlukla yeşilden/topraktan koyu kahverengi çamura dönüşecek.
+   - **(#2) Mağara Koridoruna Zıplarken ve Ağaca Geri Geri Yürürken Yukarı Işınlanma ("Asansör Hatası"):** `Stage1PlayerMovementBridge.cs:913` (`startY = refY + 1.35f`) zıplarken koridor tavanını ve ağaç dalını "zemin" sanıp `ResolveVoxelAndColliderDepenetration` ile oyuncuyu yukarı ışınlıyor; ayak-hizası + üstü açık hava şartı ve 360° 4-köşe kapsül çarpışmasıyla çözülecek.
+   - **(#3) Birkaç Saniyede Bir Anlık FPS Düşüşü:** `16m` chunk geçişindeki senkron Main-Thread `MeshCollider` PhysX pişirmesi (`UpdateNearPlayerColliderRing`), `704m` `DistantHorizon` tek-kare yenilemesi ve `10` alt-chunk bölünmesi arka plan `Physics.BakeMesh` + dilimli yüklemeyle sıfırlanacak.
+   - **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` açıkken enerji kilidi uyarısı ayrıştırılacak ve survival eylemleri sonrası `0.85s` yenilenme gecikmesi eklenecek.
+   - **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`Ctrl+Q` tüm yığın) ve `[I]` çanta örtüsünün dışına sürükleyip bırakma ile 3B fiziksel eşya atma.
+   - **(#9) Önü Kapatan 2 Bilgi Etiketi:** `"Hedef: Çimenli Toprak..."` orta ekrandan kaldırılıp yalnızca `[F3]` paneline alınacak; çanta üst şeridi slotların dışına (üst kenara) taşınacak.
+2. **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde`):**
+   - **(#6) Fiziksel Taş Devri Zanaatı:** Yerden `[E]` ile Çakmaktaşı + Kuru Dal + Bitki Lifi toplama -> Taşı taşa vurarak **Taş Yontma (`Stone Knapping`)** -> Kumaş örtü / kütük üstü fiziksel birleştirmeyle **İlkel Taş Balta, Taş Kazma, Bıçak, Kova ve İlkel Taş Ocak** (ilerideki `16x32x4` Demircilik ve Marangozluk atölyelerinin doğrudan ilkel atası).
+   - **(#7) Madde Kristali Seviye Yükseltme (`Tier 0 -> Tier 1..5`):** Rezonans Kuvarsı ile `Tier 0 -> 1` ilk uyanış; Boss Çekirdekleri / Kadim Zindan Sunağı ile `Tier 2..5` evrimi.
+   - **(#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" Modu:** Bakılan yönde dairesel organik `SurfaceNets` arazi örme fırçası.
+3. **Paket 3 — Mağara Derinlik Sıcaklığı, Katılaşan Sıcak Lav, Yeraltı Gölleri ve Cevher Görünürlüğü (`2 Ana Grup`):**
+   - **(#10) Mağara Fizik Ekolojisi:** Nadir yeraltı su gölleri (`%12–%18`), derine indikçe önce soğuyan ama çekirdeğe yaklaştıkça aşırı ısınan U-eğrisi ve sıcak olmayan bölgelerde katılaşıp ısı + temas hasarı yayan volkanik lav kayası.
+   - **(#12) Ayırt Edici Maden/Cevher Görünümü:** 3B cevher yumru/kristal çıkıntıları + `0 B` VRAM metalik damar parıltısı.
+4. **Paket 4 — Rastgele Büyük Makro-Biyomlar, Köy/Şehir/Harabeler ve Mevsimsel Hava Olayları (`2 Ana Grup`):**
+   - **(#11) Büyük Makro-Biyomlar & Yapılar:** Nadirlik ağırlıklı (`Orman > Amazon / Çöl / Okyanus-Sahil-Ada > Kar / Uçan Adalar > Volkan`) `350m–1400m` rastgele boyutlu biyomlar + Köyler, Şehirler, Harabeler.
+   - **(#14) Mevsim Döngüsü & Hava Olayları:** 4 Mevsim + biyoma göre Yağmur (toprağı ıslatıp çamurlaştıran), Kar, Kum Fırtınası, Volkanik Kül.
+5. **Paket 5 — Zengin Canlı Kadrosu (Yüzey + Mağara) ve Kılıçla Bloklanabilir Çoklu Saldırı AI (`2 Madde`):**
+   - **(#13 & Mağara Canlıları):** Biyom ve mağaralara özgü canlı türleri + her canlıda 3–4 farklı yönden okunabilir, oyuncunun kılıcıyla bloklayıp saptırabileceği (`Block / MasterDeflect`) saldırı kalıpları.
 
 ---
 
@@ -532,10 +636,10 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
 | **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sonsuz Enerji (100 EP), Sınırsız Oksijen ve Sınırsız Blok İnşası açar/kapatır | ✅ Aktif |
-| **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler, Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
+| **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler (Matara, Kova, Kazan dahil), Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
 | **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
 | **`[Insert]` Tuşu** | **3B Savurma Telemetri Gizmosu:** Son 8 savurmanın 3B kabza-uç vektör izlerini ve saplanma/sekme noktalarını açar/kapatır (`Varsayılan: Kapalı`) | ✅ Aktif |
-| **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Matarası (`Su/Lav`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
+| **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Kabı (`Matara / Kova / Kazan`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
 | **`[I]` Tuşu** | **24-Slotlu (`4x6`) Taktik Çanta & 4 Yuvalı "🛡️ ANATOMİK BÖLGESEL ZIRHLAR" Paneli** (Sol Tık: Sürükle-Bırak, Sağ Tık: Zırhı Kuşan / Tüket / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
 | **Hotbar'da Zırh Seçiliyken `RMB` (Sağ Tık)** | Seçili zırhı anında ilgili uzva (Miğfer -> Baş, Göğüslük -> Gövde, vb.) **kuşanır**; eski zırhı hotbar'a takas eder | ✅ Aktif |
 | **`[E]` Tuşu (Ağır Kütük Yanında)** | Yerdeki kesilmiş 2m bağımsız **Ağır Kütüğü** omzuna alır (`+32 kg`, çantaya sığmaz, eller kilitlenir) | ✅ Aktif |
@@ -543,7 +647,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[E]` Tuşu (Yerde Eşya Yanında)** | Yere düşen **Kaba Taş, Moloz, Yarma Odun, Dal, Cevher ve Eşyaları** manuel toplar (`<= 2.4m`, mıknatıs yok) | ✅ Aktif |
 | **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** (CAS versiyon korumalı atomik çekim) | ✅ Aktif |
 | **`[5]` Mikro-Keski (`Chisel`)** | `LMB`: Vokseli `4x4x4` alt-voksel hassasiyetinde yontar \| `RMB`: Mikro-voksel ekler | ✅ Aktif |
-| **`[6]` Sıvı Matarası (`Flask`)** | `LMB`: Göletten Su / Kalderadan Lav doldurur \| `RMB`: Sıvıyı dünyaya döker (`Su + Lav` -> `Obsidyen`) | ✅ Aktif |
+| **`[6]` Sıvı Kapları (`Matara / Kova / Kazan`)** | `LMB`: Göletten Su / Kalderadan Lav doldurur (kapasiteye kadar) \| `RMB`: Kaptaki sıvıyı harcayarak dünyaya döker (`380 / 1275 / 3825` birim; bitince boş kaba döner) | ✅ Aktif |
 | **`[F10]` Tuşu** | **Kılıç Ustası Düellocu NPC & Eğitim Kuklasını** oyuncunun önüne çağırır ve NPC modunu değiştirir (`Aktif Düello` / `Sadece Blok` / `Sadece Saldırı`) | ✅ Aktif |
 | **`RMB` (Sağ Tık) + Fare** | Kılıcın **Yan-Siper (`Crosswise`) Blok / Guard** yönünü ayarlar (son anda ters yöne savurursan **`MasterDeflect` Saptırma** yapar) | ✅ Aktif |
 | **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Dairesel** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
@@ -559,21 +663,15 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
 
-1. **Adım 1 — Devir Raporunu, Açık Sorunlar Dokümanını ve Git Durumunu Doğrula:**
-   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` ve [`docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md`](docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md) dosyalarını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak en son commit'in Devir `#043` ile birebir eşleştiğini doğrula.
+1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
+   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #047` durumuyla eşleştiğini doğrula.
 
-2. **Adım 2 — Öncelikli Olarak `docs/ACIK_SORUNLAR_BALTA_KAZMA_VE_SU_FIZIGI.md` İçindeki 2 Ana Sorun Grubunu Çöz:**
-   - **Sorun Grubu 1 — Balta ve Kazma Yönlü Kurulma vs. Savurma Ayrımı:**
-     - Fareyi sağa çektiğinde baltanın/kazmanın kendi kendine sağ-sol yapıp ağaca seri vurmasını engelle; fare sağa götürüldüğünde alet yalnızca sağa (kurulma/hazırlık konumuna) geçmeli, yalnız hedefe doğru (örn. sola/aşağı) savrulduğunda vuruş yapıp saplanmalı.
-   - **Sorun Grubu 2 — Su 3B Hacmi, Yokuş Aşağı Akış Süresi/Görünürlüğü, Zeminle Temas ve Her Açıdan Su Koyma:**
-     - Suyun hacmini/görsel kalınlığını büyütüp belirgin 3B blok/kütle görünümüne kavuştur.
-     - Suyun anında yokuş altında belirmesi yerine yamaç boyunca görünür bir hızla akmasını sağla.
-     - Suyun havada asılı durmasını giderip arazi yüzeyiyle tam temas etmesini sağla.
-     - Yere her bakış açısından sağ tıkla su koyulduğunda tutarlı şekilde yerleşmesini ve oyuncunun suyu koyduğunu net biçimde görmesini sağla.
+2. **Adım 2 — `Devir #048` 5 İş Paketini (`Paket 1 -> Paket 5`) Sırayla Geliştir:**
+   - [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki 15 maddelik yol haritasından kullanıcının seçtiği paketle (önerilen başlangıç: **Paket 1** — Çamur Rengi, Yukarı Işınlanma, FPS Takılması, Stamina, Eşya Yere Atma ve `[F3]` Bilgi Penceresi Temizliği; büyük paketlerde 4'lü doküman standardına uyarak) devam et.
 
 3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`57/57 PASS`).
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`69/69 PASS`).
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
    - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).

@@ -159,6 +159,10 @@ namespace Stratocraft.Character
         public int CurrentSwingId { get; private set; }
         private int _lastToolVoxelHitSwingId;
         private int _lastActiveHolsterSlot = -1;
+        private ToolChamberTracker _toolChamberTracker;
+        private bool _wasHoldingLmbForToolPullOut;
+        public ToolCockSide CurrentToolCockSide => _toolChamberTracker.CockSide;
+        public float CurrentToolCockCharge01 => _toolChamberTracker.CockCharge01;
         public BallisticSlashPhase CurrentSlashPhase => _slashPhase;
         public BallisticSlashPhase SlashPhase => _slashPhase;
         public float SlashProgress01 => _slashProgress01;
@@ -1101,9 +1105,35 @@ namespace Stratocraft.Character
 
             if (transitionToRechamber)
             {
-                _slashStartAnglesRad = Vector2.ClampMagnitude(_lodgedBladeAnglesRad + pullBackDir * 0.85f, 1.18f);
-                _guardAnglesRad = _slashStartAnglesRad;
-                _targetWristAnglesRad = _slashStartAnglesRad;
+                bool isToolSlot = _lastActiveHolsterSlot == 2 || _lastActiveHolsterSlot == 3;
+                if (isToolSlot)
+                {
+                    float pitchDownDeg = Mathf.Max(0f, _lastCameraPitchDeg);
+                    _toolChamberTracker.EnterCockedFromPullOut(
+                        _lastActiveHolsterSlot,
+                        pitchDownDeg,
+                        pullBackDir.x,
+                        pullBackDir.y,
+                        currentlyHoldingLmb: _wasHoldingLmbForToolPullOut);
+                    ToolChopArcKind kind = ToolChopArcProfile.SelectArcKindPure(_lastActiveHolsterSlot, pitchDownDeg);
+                    ToolChopArcProfile.GetArcEndpointsAndDirection(
+                        kind,
+                        Vector2.zero,
+                        out Vector2 cockStartAngles,
+                        out _,
+                        out _,
+                        _toolChamberTracker.CockSide);
+                    _slashStartAnglesRad = cockStartAngles;
+                    _guardAnglesRad = cockStartAngles;
+                    _targetWristAnglesRad = cockStartAngles;
+                }
+                else
+                {
+                    _slashStartAnglesRad = Vector2.ClampMagnitude(_lodgedBladeAnglesRad + pullBackDir * 0.85f, 1.18f);
+                    _guardAnglesRad = _slashStartAnglesRad;
+                    _targetWristAnglesRad = _slashStartAnglesRad;
+                }
+
                 _rechamberDuration = 0.14f;
                 _rechamberTimer = 0.14f;
                 _preChamberWindowTimer = 1.8f;
@@ -1111,8 +1141,22 @@ namespace Stratocraft.Character
                 _postSwingRecoveryTimer = 0f;
                 TriggerHitStop(0.032f);
                 StatusBannerHighlightTimer = 2.0f;
-                LastCombatActionText =
-                    "⚡ SİLAH SÖKÜLDÜ VE OMUZA KURULDU! (Ön-Kurulum Hazır -> Hemen tekrar savurabilirsiniz!)";
+                if (isToolSlot)
+                {
+                    string sideLabel = _toolChamberTracker.CockSide == ToolCockSide.Left
+                        ? "SOL OMUZA"
+                        : (_toolChamberTracker.CockSide == ToolCockSide.Overhead ? "BAŞ ÜSTÜNE" : "SAĞ OMUZA");
+                    string strikeHint = _toolChamberTracker.CockSide == ToolCockSide.Left
+                        ? "sağa savurun"
+                        : (_toolChamberTracker.CockSide == ToolCockSide.Overhead ? "aşağı savurun" : "sola savurun");
+                    LastCombatActionText =
+                        $"🪓 ALET SÖKÜLDÜ VE {sideLabel} KURULDU! (Vurmak için {strikeHint} veya yeniden tıklayın)";
+                }
+                else
+                {
+                    LastCombatActionText =
+                        "⚡ SİLAH SÖKÜLDÜ VE OMUZA KURULDU! (Ön-Kurulum Hazır -> Hemen tekrar savurabilirsiniz!)";
+                }
             }
             else
             {
@@ -1291,7 +1335,12 @@ namespace Stratocraft.Character
             {
                 _lastActiveHolsterSlot = activeHolsterSlot;
             }
+            else if (activeHolsterSlot != _lastActiveHolsterSlot)
+            {
+                _toolChamberTracker.Reset();
+            }
             bool isToolEquipped = activeHolsterSlot == 2 || activeHolsterSlot == 3;
+            _wasHoldingLmbForToolPullOut = holdingLmb;
             float effGestureX = float.IsNaN(unscaledGestureMouseX) ? rawMouseX : unscaledGestureMouseX;
             float effGestureY = float.IsNaN(unscaledGestureMouseY) ? rawMouseY : unscaledGestureMouseY;
 
@@ -1414,21 +1463,28 @@ namespace Stratocraft.Character
 
             if (!IsClutchEngaged)
             {
-                cameraYawDeg += rawMouseX * 2.35f;
-                cameraPitchDeg = Mathf.Clamp(cameraPitchDeg - rawMouseY * 2.05f, -84f, 84f);
+                float toolChamberCamScale = (isToolEquipped && !IsWeaponLodged &&
+                                             (holdingLmb || holdingRmb) &&
+                                             _slashPhase == BallisticSlashPhase.IdleInGuard)
+                    ? 0.38f
+                    : 1.0f;
+                cameraYawDeg += rawMouseX * 2.35f * toolChamberCamScale;
+                cameraPitchDeg = Mathf.Clamp(cameraPitchDeg - rawMouseY * 2.05f * toolChamberCamScale, -84f, 84f);
                 _thrustExtensionMeters = Mathf.MoveTowards(_thrustExtensionMeters, 0f, dt * 2.4f);
 
                 if (ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw &&
+                    !isToolEquipped &&
                     _slashPhase == BallisticSlashPhase.IdleInGuard &&
                     _preChamberWindowTimer <= 0f)
                 {
                     _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw), dt * 6.5f);
                 }
                 else if (_slashPhase == BallisticSlashPhase.IdleInGuard &&
+                         (!isToolEquipped || (_toolChamberTracker.CockCharge01 <= 0.05f && !holdingLmb && !holdingRmb)) &&
                          _postSlashHoldBeforeVerticalTimer <= 0f &&
                          _preChamberWindowTimer <= 0f)
                 {
-                    // Kesik bittikten ~1 saniye sonra yeni saldırı gelmezse kılıcı yumuşakça dikey varsayılan guard duruşuna döndür
+                    // Kesik bittikten ~1 saniye sonra yeni saldırı gelmezse yumuşakça varsayılan guard duruşuna döndür
                     _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, GetDefaultStanceGuardAngles(ActiveMartialStance), dt * 4.5f);
                 }
             }
@@ -1444,7 +1500,52 @@ namespace Stratocraft.Character
 
             if (IsWeaponLodged)
             {
+                if (isToolEquipped)
+                {
+                    _toolChamberTracker.SyncMouseHoldDuringLodge(holdingLmb);
+                }
                 StepLodgedWeaponPullOut(dt, mouseFlickVec, holdingLmb, holdingRmb, wantPullBoostKey);
+            }
+            else if (isToolEquipped && canEngageCombat)
+            {
+                _gestureAccumulator.Reset();
+                if (_slashPhase == BallisticSlashPhase.IdleInGuard && _overswingStaggerTimer <= 0f)
+                {
+                    bool canStartToolSwing = _postSwingRecoveryTimer <= 0f;
+                    ToolChamberStepResult toolStep = _toolChamberTracker.Step(
+                        activeHolsterSlot,
+                        Mathf.Max(0f, cameraPitchDeg),
+                        effGestureX,
+                        effGestureY,
+                        dt,
+                        holdingLmb,
+                        holdingRmb,
+                        canStartToolSwing);
+
+                    if (toolStep.ShouldTriggerStrike)
+                    {
+                        TriggerToolFixedPlaneChop(
+                            activeHolsterSlot,
+                            cameraPitchDeg,
+                            mouseFlickVec,
+                            weaponMassScale,
+                            toolStep.ActiveCockSide);
+                    }
+                    else if (toolStep.CockCharge01 > 0.02f)
+                    {
+                        Vector2 desiredCockAngles = new Vector2(toolStep.TargetGuardX, toolStep.TargetGuardY);
+                        _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, desiredCockAngles, Mathf.Clamp01(dt * 14.0f));
+                        _targetWristAnglesRad = _guardAnglesRad;
+                        if (toolStep.IsActivelyChambering)
+                        {
+                            _preChamberWindowTimer = Mathf.Max(_preChamberWindowTimer, 1.25f);
+                        }
+                    }
+                }
+                else
+                {
+                    _toolChamberTracker.SyncMouseHoldDuringLodge(holdingLmb);
+                }
             }
             else if (_isParryStance)
             {
@@ -1494,19 +1595,10 @@ namespace Stratocraft.Character
             }
             else if (canEngageCombat && (holdingLmb || releasedLmb) && _slashPhase == BallisticSlashPhase.IdleInGuard && _overswingStaggerTimer <= 0f)
             {
-                if (isToolEquipped)
-                {
-                    // FAZ C1 & C2: Balta (Slot 3) ve Kazma (Slot 2) fare savurması gerektirmez!
-                    // Sol tık (LMB) basıldığı anda sabit düzlemli kırma yayı (Fixed-Plane Chop Arc) başlar!
-                    if (holdingLmb && _postSwingRecoveryTimer <= 0f)
-                    {
-                        TriggerToolFixedPlaneChop(activeHolsterSlot, cameraPitchDeg, mouseFlickVec, weaponMassScale);
-                    }
-                }
-                else if (holdingLmb &&
-                         ActiveMartialStance == CombatMartialStance.Fencing_Punta &&
-                         ActiveWeaponArchetype == CombatWeaponArchetype.Rapier &&
-                         rawMouseY > 0.45f && Mathf.Abs(rawMouseX) < 0.22f && _preChamberWindowTimer <= 0f)
+                if (holdingLmb &&
+                    ActiveMartialStance == CombatMartialStance.Fencing_Punta &&
+                    ActiveWeaponArchetype == CombatWeaponArchetype.Rapier &&
+                    rawMouseY > 0.45f && Mathf.Abs(rawMouseX) < 0.22f && _preChamberWindowTimer <= 0f)
                 {
                     _isThrustMode = true;
                     _thrustExtensionMeters = Mathf.Clamp(_thrustExtensionMeters + rawMouseY * 0.26f, 0.28f, 0.82f);
@@ -1611,33 +1703,43 @@ namespace Stratocraft.Character
             int activeHolsterSlot,
             float cameraPitchDeg,
             Vector2 rawMouseHint,
-            float weaponMassScale)
+            float weaponMassScale,
+            ToolCockSide cockSide = ToolCockSide.Right)
         {
             _lastActiveHolsterSlot = activeHolsterSlot;
             ToolChopArcKind arcKind = ToolChopArcProfile.SelectArcKind(activeHolsterSlot, Mathf.Max(0f, cameraPitchDeg), rawMouseHint);
+            ToolCockSide effectiveSide = cockSide == ToolCockSide.None
+                ? ToolChopArcProfile.GetDefaultCockSide(arcKind)
+                : cockSide;
             ToolChopArcProfile.GetArcEndpointsAndDirection(
                 arcKind,
                 rawMouseHint,
                 out Vector2 startAnglesRad,
                 out Vector2 endAnglesRad,
-                out Vector2 slashDirUnit);
+                out Vector2 slashDirUnit,
+                effectiveSide);
 
             _slashDirUnit = slashDirUnit;
             _peakSlashMouseFlickMag = 1.0f;
             _activeSwingPower01 = 1.0f;
             _lastSlashHadReversalTax = false;
-            _lastSlashWasPreChambered = false;
+            _lastSlashWasPreChambered = _preChamberWindowTimer > 0f;
             _lastSlashWasRiposte = false;
             _lastSlashWasIaidoCharged = false;
             _momentumChainCount = 0;
 
-            _slashStartAnglesRad = startAnglesRad;
+            // Eger oyuncu aleti o omuzda zaten kurmussa (or. CockedRight/Left) mevcut acisindan basla (1 karelik isinlanmayi onle)
+            Vector2 launchStart = Vector2.Distance(_currentBladeAnglesRad, startAnglesRad) <= 0.55f
+                ? _currentBladeAnglesRad
+                : startAnglesRad;
+
+            _slashStartAnglesRad = launchStart;
             _slashEndAnglesRad = endAnglesRad;
-            _currentBladeAnglesRad = startAnglesRad;
-            _targetWristAnglesRad = startAnglesRad;
+            _currentBladeAnglesRad = launchStart;
+            _targetWristAnglesRad = launchStart;
             _guardAnglesRad = startAnglesRad;
 
-            // Sap ekseni etrafında dönme (Roll) %100 kilitlidir!
+            // Sap ekseni etrafinda donme (Roll) %100 kilitlidir!
             _edgeRollRad = 0f;
             _edgeAlignment01 = 1.0f;
 
@@ -2251,7 +2353,8 @@ namespace Stratocraft.Character
                     activeHolsterSlot,
                     new Vector2(gx, gy),
                     _slashProgress01,
-                    _slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
+                    _slashPhase == BallisticSlashPhase.ActiveFullArcSwing,
+                    _slashDirUnit.x)
                 : Quaternion.LookRotation(orthoForward.normalized, bladeTipDirLocal);
 
             GetWeaponStats(ActiveWeaponArchetype, out _, out float gripWMass, out _, out _);
@@ -2580,7 +2683,14 @@ namespace Stratocraft.Character
                 float armArcX = Mathf.Clamp(gx * 0.52f, -0.72f, 0.72f);
                 float armArcY = Mathf.Clamp(gy * 0.44f + Mathf.Min(0.22f, maxFloorLiftNeeded * 0.45f), -0.22f, 0.62f);
                 Vector3 skimmedTipDir = new Vector3(gx * 0.68f, Mathf.Clamp(gy * 0.88f + 0.22f, 0.05f, 0.96f), 0.72f).normalized;
-                Quaternion skimmedRot = Quaternion.LookRotation(Vector3.forward, skimmedTipDir);
+                Quaternion skimmedRot = (activeHolsterSlot == 2 || activeHolsterSlot == 3)
+                    ? ToolChopArcProfile.ComputeLockedRollToolRotation(
+                        activeHolsterSlot,
+                        new Vector2(gx, Mathf.Max(gy, 0.12f)),
+                        _slashProgress01,
+                        _slashPhase == BallisticSlashPhase.ActiveFullArcSwing,
+                        _slashDirUnit.x)
+                    : Quaternion.LookRotation(Vector3.forward, skimmedTipDir);
                 if (isFirstPersonMode && playerCamera != null)
                 {
                     weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.28f + armArcX, -0.22f + armArcY, 0.54f + _smoothedArmReachZ));
@@ -2626,7 +2736,14 @@ namespace Stratocraft.Character
                 float gx = _currentBladeAnglesRad.x, gy = _currentBladeAnglesRad.y;
                 float armArcX = Mathf.Clamp(gx * 0.45f, -0.62f, 0.62f), armArcY = Mathf.Clamp(gy * 0.40f, -0.52f, 0.52f);
                 Vector3 retractedTipDir = new Vector3(gx * 0.55f, Mathf.Clamp(gy * 0.85f + 0.25f, -0.65f, 0.95f), 0.35f).normalized;
-                Quaternion safeRot = Quaternion.LookRotation(Vector3.forward, retractedTipDir);
+                Quaternion safeRot = (activeHolsterSlot == 2 || activeHolsterSlot == 3)
+                    ? ToolChopArcProfile.ComputeLockedRollToolRotation(
+                        activeHolsterSlot,
+                        new Vector2(gx, gy),
+                        _slashProgress01,
+                        _slashPhase == BallisticSlashPhase.ActiveFullArcSwing,
+                        _slashDirUnit.x)
+                    : Quaternion.LookRotation(Vector3.forward, retractedTipDir);
                 if (isFirstPersonMode && playerCamera != null)
                 {
                     weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.26f + armArcX, -0.24f + armArcY, 0.42f + _smoothedArmReachZ));

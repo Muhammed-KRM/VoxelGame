@@ -71,6 +71,7 @@ namespace Stratocraft.Voxel.Jobs
         [ThreadStatic] private static bool[]? _tsSliceHasSolid;
         [ThreadStatic] private static bool[]? _tsSliceAllSolid;
         [ThreadStatic] private static bool[]? _tsSliceHasShape;
+        [ThreadStatic] private static byte[]? _tsPaddedMoisture;
 
         /// <summary>
         /// Komsu chunk apronunu ve istege bagli MicroVoxelPool4096 sozlugunu okuyarak chunk sinirlarinda ve
@@ -82,7 +83,8 @@ namespace Stratocraft.Voxel.Jobs
             IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
             List<FacetedVoxelTriangle> outTriangles,
             IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools,
-            int minY = 0)
+            int minY = 0,
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null)
         {
             if (worldChunks == null) throw new ArgumentNullException(nameof(worldChunks));
             if (!worldChunks.TryGetValue((chunkX, chunkZ), out uint[]? centerChunk) || centerChunk == null) return;
@@ -125,6 +127,29 @@ namespace Stratocraft.Voxel.Jobs
             worldChunks.TryGetValue((chunkX - 1, chunkZ + 1), out uint[]? chunkNW);
             worldChunks.TryGetValue((chunkX + 1, chunkZ + 1), out uint[]? chunkNE);
 
+            byte[]? moistC = null, moistW = null, moistE = null, moistS = null, moistN = null;
+            byte[]? moistSW = null, moistSE = null, moistNW = null, moistNE = null;
+            bool hasAnyNeighborhoodMoisture = false;
+            if (soilMoistureChunks != null && soilMoistureChunks.Count > 0)
+            {
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX, chunkZ), out moistC) && moistC != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX - 1, chunkZ), out moistW) && moistW != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX + 1, chunkZ), out moistE) && moistE != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX, chunkZ - 1), out moistS) && moistS != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX, chunkZ + 1), out moistN) && moistN != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX - 1, chunkZ - 1), out moistSW) && moistSW != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX + 1, chunkZ - 1), out moistSE) && moistSE != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX - 1, chunkZ + 1), out moistNW) && moistNW != null;
+                hasAnyNeighborhoodMoisture |= soilMoistureChunks.TryGetValue((chunkX + 1, chunkZ + 1), out moistNE) && moistNE != null;
+            }
+            byte[]? paddedMoisture = null;
+            if (hasAnyNeighborhoodMoisture)
+            {
+                paddedMoisture = _tsPaddedMoisture ??= new byte[MaxPaddedLength];
+                Array.Clear(paddedMoisture, lowerClearPy * padSliceStride, padSliceStride);
+                Array.Clear(paddedMoisture, (padY - 1) * padSliceStride, padSliceStride);
+            }
+
             // Kita dis sinirlarinda (chunkW/E/S/N == null) 92m derinligindeki 5 katmanli 3B yeralti kesit duvarini (Y=4m..96m) tam or!
             bool clampUnloadedContinentEdges = false;
 
@@ -143,8 +168,16 @@ namespace Stratocraft.Voxel.Jobs
                         uint[]? srcChunk = ResolvePaddedColumnChunk(
                             lx, lz, centerChunk, chunkW, chunkE, chunkS, chunkN, chunkSW, chunkSE, chunkNW, chunkNE,
                             clampUnloadedContinentEdges, out int cLx, out int cLz);
-                        uint raw = srcChunk != null ? srcChunk[yShift | (cLz << 4) | cLx] : 0u;
+                        int cellIndex = yShift | (cLz << 4) | cLx;
+                        uint raw = srcChunk != null ? srcChunk[cellIndex] : 0u;
                         padded[pRow + px] = raw;
+
+                        if (paddedMoisture != null)
+                        {
+                            byte[]? srcMoist = ResolvePaddedMoistureChunk(
+                                lx, lz, moistC, moistW, moistE, moistS, moistN, moistSW, moistSE, moistNW, moistNE);
+                            paddedMoisture[pRow + px] = (srcMoist != null && cellIndex < srcMoist.Length) ? srcMoist[cellIndex] : (byte)0;
+                        }
 
                         byte mat = VoxelBitUtility.GetMaterialId(raw);
                         if (mat == 0) { allSolid = false; }
@@ -200,13 +233,14 @@ namespace Stratocraft.Voxel.Jobs
                     {
                         int wCellX = chunkWorldOffsetX + dx - 1;
                         int insideMask = 0;
-                        byte dominantMat = 0, highestPrio = 0, maxDamage = 0;
+                        byte dominantMat = 0, highestPrio = 0, maxDamage = 0, maxMoisture = 0;
                         float densitySum = 0f;
 
                         for (int c = 0; c < 8; c++)
                         {
                             int ox = c & 1, oz = (c >> 1) & 1, oy = (c >> 2) & 1;
-                            uint rawSdf = channel1Sdf[((dy + oy) * padZ + (dz + oz)) * padX + (dx + ox)];
+                            int pCornerIdx = ((dy + oy) * padZ + (dz + oz)) * padX + (dx + ox);
+                            uint rawSdf = channel1Sdf[pCornerIdx];
                             byte mat = VoxelBitUtility.GetMaterialId(rawSdf);
                             byte dByte = mat == 0 ? (byte)0 : VoxelBitUtility.GetDensityOrLiquid(rawSdf);
 
@@ -218,6 +252,11 @@ namespace Stratocraft.Voxel.Jobs
                                 insideMask |= (1 << c);
                                 byte dmg = VoxelBitUtility.GetDamageState(rawSdf);
                                 if (dmg > maxDamage) maxDamage = dmg;
+                                if (paddedMoisture != null)
+                                {
+                                    byte mByte = paddedMoisture[pCornerIdx];
+                                    if (mByte > maxMoisture) maxMoisture = mByte;
+                                }
                                 byte prio = GetMaterialVisualPriority(mat);
                                 if (prio >= highestPrio) { highestPrio = prio; dominantMat = mat; }
                             }
@@ -261,7 +300,10 @@ namespace Stratocraft.Voxel.Jobs
                         byte resolvedMat = dominantMat != 0 ? dominantMat : MaterialIdCatalog.Stone;
                         dualVertices[dualIdx] = new Vector3((dx - 1) + Quantize256(localPos.X), (dy - 1) + Quantize256(localPos.Y), (dz - 1) + Quantize256(localPos.Z));
                         dualMaterials[dualIdx] = resolvedMat;
-                        dualTemps[dualIdx] = ResolveMaterialDefaultTemperature(resolvedMat);
+                        byte defaultTemp = ResolveMaterialDefaultTemperature(resolvedMat);
+                        dualTemps[dualIdx] = (defaultTemp == 0 && maxMoisture > 0)
+                            ? EncodeSoilMoistureTemp(resolvedMat, maxMoisture)
+                            : defaultTemp;
                         byte cavityAo8 = (byte)Math.Clamp((int)(255f - Math.Clamp(densitySum / (8f * 127f), 0f, 1f) * 76f), 138, 255);
                         dualAo[dualIdx] = PackAoAndWear(cavityAo8, maxDamage);
                         dualValid[dualIdx] = true;
@@ -420,9 +462,39 @@ namespace Stratocraft.Voxel.Jobs
             return null;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte[]? ResolvePaddedMoistureChunk(
+            int lx, int lz, byte[]? moistC,
+            byte[]? moistW, byte[]? moistE, byte[]? moistS, byte[]? moistN,
+            byte[]? moistSW, byte[]? moistSE, byte[]? moistNW, byte[]? moistNE)
+        {
+            if ((uint)lx < 16u && (uint)lz < 16u) return moistC;
+            if (lx < 0) return lz < 0 ? moistSW : (lz >= 16 ? moistNW : moistW);
+            if (lx >= 16) return lz < 0 ? moistSE : (lz >= 16 ? moistNE : moistE);
+            return lz < 0 ? moistS : moistN;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte EncodeSoilMoistureTemp(byte matId, byte moisture)
+        {
+            if (moisture == 0) return 0;
+            bool wettable = matId == MaterialIdCatalog.Dirt ||
+                            matId == MaterialIdCatalog.Grass ||
+                            matId == MaterialIdCatalog.Sand ||
+                            matId == MaterialIdCatalog.Gravel ||
+                            matId == MaterialIdCatalog.LooseRubble ||
+                            matId == MaterialIdCatalog.Clay;
+            if (!wettable) return 0;
+            return (byte)Math.Clamp((moisture * 120 + 127) / 255, 1, 120);
+        }
+
         public static void GenerateSeamlessHybridChunkMesh(
-            int chunkX, int chunkZ, int maxY, IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks, List<FacetedVoxelTriangle> outTriangles, int minY = 0)
-            => GenerateSeamlessHybridChunkMesh(chunkX, chunkZ, maxY, worldChunks, outTriangles, worldMicroPools: null, minY: minY);
+            int chunkX, int chunkZ, int maxY,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
+            List<FacetedVoxelTriangle> outTriangles,
+            int minY = 0,
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null)
+            => GenerateSeamlessHybridChunkMesh(chunkX, chunkZ, maxY, worldChunks, outTriangles, worldMicroPools: null, minY: minY, soilMoistureChunks: soilMoistureChunks);
 
         public static void GenerateHybridChunkMesh(
             ReadOnlySpan<uint> chunkVoxels65536, int maxY, int chunkWorldOffsetX, int chunkWorldOffsetZ, List<FacetedVoxelTriangle> outTriangles)

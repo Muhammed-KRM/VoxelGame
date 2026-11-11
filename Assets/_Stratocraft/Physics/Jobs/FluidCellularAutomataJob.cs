@@ -27,7 +27,10 @@ namespace Stratocraft.Physics.Jobs
         [ThreadStatic] private static int[]? _tlsVisitedStamp;
         [ThreadStatic] private static int[]? _tlsBfsQueue;
         [ThreadStatic] private static byte[]? _tlsActiveNext;
+        [ThreadStatic] private static int _lastStepSiphonTransfers;
         private static int _globalStampCounter = 1;
+
+        public static int LastStepSiphonTransfers => _lastStepSiphonTransfers;
 
         /// <summary>
         /// GAME LOGIC BIBLE v7.0 Bolum 2.7.D.2 Tek Seferlik Stokiyometrik Su + Lav Reaksiyonu:
@@ -102,6 +105,7 @@ namespace Stratocraft.Physics.Jobs
         {
             obsidianFormedCount = 0;
             steamSlagFizzleCount = 0;
+            _lastStepSiphonTransfers = 0;
 
             int totalCells = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalCells || fluids.Length < totalCells)
@@ -144,6 +148,8 @@ namespace Stratocraft.Physics.Jobs
             int startY = Math.Max(1, minFluidY);
             int endY = Math.Min(sizeY - 1, maxFluidY + 1);
 
+            const byte NewlyWetFromGravityFlag = 0x08;
+
             // 1. Gecis: -Y Yercekimi Akisi ve Dikey Su+Lav Temas Kimyasi
             for (int y = startY; y <= endY; y++)
             {
@@ -176,6 +182,7 @@ namespace Stratocraft.Physics.Jobs
                             int space = belowCap - belowCell.Mass;
                             if (space > 0)
                             {
+                                bool belowWasDry = belowCell.Mass == 0;
                                 int maxRate = cell.Type == FluidType.Lava ? Math.Min((int)cell.Mass, 64) : cell.Mass;
                                 int transfer = Math.Min(space, maxRate);
                                 if (transfer > 0)
@@ -185,6 +192,12 @@ namespace Stratocraft.Physics.Jobs
                                     fluids[idx] = FluidCell16.Pack(cell.Type, rem, isSettled: false).RawValue;
                                     MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
                                     MarkChangedWithNeighbors(changedMask, x, y - 1, z, sizeX, sizeY, sizeZ);
+                                    if (belowWasDry)
+                                    {
+                                        // Split-Tick Cascade: Bu tikte yukaridan yeni dusen su ayni tikte yatay sicramaz;
+                                        // boylece selale/basamak inisi gozle gorulur kademeli ilerler!
+                                        changedMask[belowIdx] |= NewlyWetFromGravityFlag;
+                                    }
                                 }
                             }
                         }
@@ -289,7 +302,8 @@ namespace Stratocraft.Physics.Jobs
             int maxY,
             HashSet<(int cx, int cz)> dirtyFluidChunks,
             HashSet<(int cx, int cz)>? dirtySolidChunks = null,
-            IReadOnlyList<(int cx, int cz)>? activeChunks = null)
+            IReadOnlyList<(int cx, int cz)>? activeChunks = null,
+            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null)
         {
             if (worldChunks == null || fluidChunks == null || fluidChunks.Count == 0)
             {
@@ -320,7 +334,8 @@ namespace Stratocraft.Physics.Jobs
                             alongXSeam: true,
                             maxY,
                             dirtyFluidChunks,
-                            dirtySolidChunks);
+                            dirtySolidChunks,
+                            wakeActiveFluidChunks);
                     }
 
                     // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0)
@@ -334,7 +349,8 @@ namespace Stratocraft.Physics.Jobs
                             alongXSeam: true,
                             maxY,
                             dirtyFluidChunks,
-                            dirtySolidChunks);
+                            dirtySolidChunks,
+                            wakeActiveFluidChunks);
                     }
 
                     // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -348,7 +364,8 @@ namespace Stratocraft.Physics.Jobs
                             alongXSeam: false,
                             maxY,
                             dirtyFluidChunks,
-                            dirtySolidChunks);
+                            dirtySolidChunks,
+                            wakeActiveFluidChunks);
                     }
 
                     // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
@@ -362,7 +379,8 @@ namespace Stratocraft.Physics.Jobs
                             alongXSeam: false,
                             maxY,
                             dirtyFluidChunks,
-                            dirtySolidChunks);
+                            dirtySolidChunks,
+                            wakeActiveFluidChunks);
                     }
                 }
 
@@ -391,7 +409,8 @@ namespace Stratocraft.Physics.Jobs
                         alongXSeam: true,
                         maxY,
                         dirtyFluidChunks,
-                        dirtySolidChunks);
+                        dirtySolidChunks,
+                        wakeActiveFluidChunks);
                 }
 
                 // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -407,7 +426,8 @@ namespace Stratocraft.Physics.Jobs
                         alongXSeam: false,
                         maxY,
                         dirtyFluidChunks,
-                        dirtySolidChunks);
+                        dirtySolidChunks,
+                        wakeActiveFluidChunks);
                 }
             }
 
@@ -424,7 +444,8 @@ namespace Stratocraft.Physics.Jobs
             bool alongXSeam,
             int maxY,
             HashSet<(int cx, int cz)>? dirtyFluidChunks,
-            HashSet<(int cx, int cz)>? dirtySolidChunks)
+            HashSet<(int cx, int cz)>? dirtySolidChunks,
+            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null)
         {
             int limitY = Math.Min(maxY, Math.Min(fluidsA.Length >> 8, fluidsB.Length >> 8));
             limitY = Math.Min(limitY, Math.Min(voxelsA.Length >> 8, voxelsB.Length >> 8));
@@ -515,23 +536,16 @@ namespace Stratocraft.Physics.Jobs
                     int headA = bedA + aCell.Mass;
                     int headB = bedB + bCell.Mass;
 
-                    int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
                     if (aCell.Mass > 0 && headA > headB)
                     {
-                        int diffH = headA - headB;
-                        bool isDownhill = bedA > bedB;
-                        int minThreshold = activeType == FluidType.Lava
-                            ? LavaBinghamYieldThreshold
-                            : 1;
-                        if (diffH < minThreshold)
+                        // Durgun gol sinirinda 1-2 birimlik mikro seviye farkinin iki chunk'i sonsuza dek uyanik tutmasini onle
+                        if (bedA <= bedB && (headA - headB) < 3)
                         {
                             continue;
                         }
 
-                        int desired = isDownhill && aCell.Mass <= 16
-                            ? aCell.Mass
-                            : Math.Max(1, diffH / viscosityDiv);
-                        int transfer = Math.Min(desired, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
+                        int transfer = ComputeStableLateralTransfer(
+                            activeType, aCell.Mass, bCell.Mass, bCap, bedA, bedB);
                         if (transfer > 0)
                         {
                             fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false, aCell.PressureHead).RawValue;
@@ -545,20 +559,13 @@ namespace Stratocraft.Physics.Jobs
                     }
                     else if (bCell.Mass > 0 && headB > headA)
                     {
-                        int diffH = headB - headA;
-                        bool isDownhill = bedB > bedA;
-                        int minThreshold = activeType == FluidType.Lava
-                            ? LavaBinghamYieldThreshold
-                            : 1;
-                        if (diffH < minThreshold)
+                        if (bedB <= bedA && (headB - headA) < 3)
                         {
                             continue;
                         }
 
-                        int desired = isDownhill && bCell.Mass <= 16
-                            ? bCell.Mass
-                            : Math.Max(1, diffH / viscosityDiv);
-                        int transfer = Math.Min(desired, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
+                        int transfer = ComputeStableLateralTransfer(
+                            activeType, bCell.Mass, aCell.Mass, aCap, bedB, bedA);
                         if (transfer > 0)
                         {
                             fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false, bCell.PressureHead).RawValue;
@@ -577,6 +584,12 @@ namespace Stratocraft.Physics.Jobs
             {
                 if (dirtyFluidA) dirtyFluidChunks.Add(keyA);
                 if (dirtyFluidB) dirtyFluidChunks.Add(keyB);
+            }
+
+            if (wakeActiveFluidChunks != null)
+            {
+                if (dirtyFluidA) wakeActiveFluidChunks.Add(keyA);
+                if (dirtyFluidB) wakeActiveFluidChunks.Add(keyB);
             }
 
             if (dirtySolidChunks != null)
@@ -708,31 +721,28 @@ namespace Stratocraft.Physics.Jobs
                         int headA = bedA + aCell.Mass;
                         int headB = bedB + bCell.Mass;
 
-                        int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
                         byte axisNewlyWetFlag = alongX ? (byte)0x02 : (byte)0x04;
+                        const byte gravityNewlyWetMask = 0x08;
 
                         if (aCell.Mass > 0 && headA > headB)
                         {
-                            // CFL <= 1 Hucre/Tick Siniri: Bu eksende bu tick icinde yeni islanan oncu hucre ayni tick'te ileri sicrayamaz!
-                            if ((changedMask[aIdx] & axisNewlyWetFlag) != 0)
+                            // CFL <= 1 Hucre/Tick + Split-Tick Cascade: Bu tick icinde yeni islanan veya yukaridan yeni dusen hucre ayni tick'te ileri sicrayamaz!
+                            if ((changedMask[aIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0)
                             {
                                 continue;
                             }
 
-                            int diffH = headA - headB;
-                            bool isDownhill = bedA > bedB;
-                            int minDiffThreshold = activeType == FluidType.Lava
-                                ? LavaBinghamYieldThreshold
-                                : 1;
-                            if (diffH < minDiffThreshold)
+                            EvaluateDonorSlopeRouting(
+                                voxels, fluids, ax, y, az, bedA, headA, sizeX, strideY,
+                                bx, bz, bedB, out bool hasSteeperAlternativeA, out int slopeShare256A);
+                            if (slopeShare256A <= 0)
                             {
                                 continue;
                             }
 
-                            int desired = isDownhill && aCell.Mass <= 16
-                                ? aCell.Mass
-                                : Math.Max(1, diffH / viscosityDiv);
-                            int transfer = Math.Min(desired, Math.Min((int)aCell.Mass, bCap - bCell.Mass));
+                            int transfer = ComputeStableLateralTransfer(
+                                activeType, aCell.Mass, bCell.Mass, bCap, bedA, bedB,
+                                hasSteeperAlternativeA, slopeShare256A);
                             if (transfer > 0)
                             {
                                 bool bWasDry = bCell.Mass == 0;
@@ -748,26 +758,23 @@ namespace Stratocraft.Physics.Jobs
                         }
                         else if (bCell.Mass > 0 && headB > headA)
                         {
-                            // CFL <= 1 Hucre/Tick Siniri: Bu eksende bu tick icinde yeni islanan oncu hucre ayni tick'te ileri sicrayamaz!
-                            if ((changedMask[bIdx] & axisNewlyWetFlag) != 0)
+                            // CFL <= 1 Hucre/Tick + Split-Tick Cascade: Bu tick icinde yeni islanan veya yukaridan yeni dusen hucre ayni tick'te ileri sicrayamaz!
+                            if ((changedMask[bIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0)
                             {
                                 continue;
                             }
 
-                            int diffH = headB - headA;
-                            bool isDownhill = bedB > bedA;
-                            int minDiffThreshold = activeType == FluidType.Lava
-                                ? LavaBinghamYieldThreshold
-                                : 1;
-                            if (diffH < minDiffThreshold)
+                            EvaluateDonorSlopeRouting(
+                                voxels, fluids, bx, y, bz, bedB, headB, sizeX, strideY,
+                                ax, az, bedA, out bool hasSteeperAlternativeB, out int slopeShare256B);
+                            if (slopeShare256B <= 0)
                             {
                                 continue;
                             }
 
-                            int desired = isDownhill && bCell.Mass <= 16
-                                ? bCell.Mass
-                                : Math.Max(1, diffH / viscosityDiv);
-                            int transfer = Math.Min(desired, Math.Min((int)bCell.Mass, aCap - aCell.Mass));
+                            int transfer = ComputeStableLateralTransfer(
+                                activeType, bCell.Mass, aCell.Mass, aCap, bedB, bedA,
+                                hasSteeperAlternativeB, slopeShare256B);
                             if (transfer > 0)
                             {
                                 bool aWasDry = aCell.Mass == 0;
@@ -784,6 +791,241 @@ namespace Stratocraft.Physics.Jobs
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Quinn MFD (Multi-Flow Direction) yamac onceligi:
+        /// Su koyuldugunda once cok hafif bir yastik yayilimi yapar, fakat acik bir yokus asagi (bedDrop &gt; 6) cikisi varsa
+        /// sel gibi 4 yone patlamak yerine akisinin buyuk kismini en dik yokus asagi komsuya yonlendirir.
+        /// </summary>
+        private static void EvaluateDonorSlopeRouting(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> fluids,
+            int sx,
+            int y,
+            int sz,
+            int bedSrc,
+            int headSrc,
+            int sizeX,
+            int strideY,
+            int targetX,
+            int targetZ,
+            int bedTarget,
+            out bool hasSteeperAlternative,
+            out int slopeShare256)
+        {
+            hasSteeperAlternative = false;
+            slopeShare256 = 256;
+
+            int sizeZ = strideY / sizeX;
+            int yBase = y * strideY;
+            int srcIdx = yBase + sz * sizeX + sx;
+            byte srcMass = (byte)(fluids[srcIdx] & 0xFF);
+
+            int maxDownhillDrop = 0;
+            int sumWeights = 0;
+            int targetWeight = 0;
+
+            ReadOnlySpan<int> ndx = stackalloc int[4] { 1, -1, 0, 0 };
+            ReadOnlySpan<int> ndz = stackalloc int[4] { 0, 0, 1, -1 };
+
+            // 1) En dik acik yokus asagi komsuyu tespit et
+            for (int d = 0; d < 4; d++)
+            {
+                int nx = sx + ndx[d];
+                int nz = sz + ndz[d];
+                if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
+                {
+                    continue;
+                }
+
+                int nIdx = yBase + nz * sizeX + nx;
+                byte nCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[nIdx]);
+                byte nMass = (byte)(fluids[nIdx] & 0xFF);
+                if (nCap <= nMass)
+                {
+                    continue;
+                }
+
+                uint belowN = y > 0 ? voxels[nIdx - strideY] : 0u;
+                int bedN = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowN, voxels[nIdx], y);
+                int headN = bedN + nMass;
+                if (headN >= headSrc)
+                {
+                    continue;
+                }
+
+                int drop = bedSrc - bedN;
+                if (drop > maxDownhillDrop)
+                {
+                    maxDownhillDrop = drop;
+                }
+            }
+
+            if (maxDownhillDrop <= 6)
+            {
+                // Duz zemin veya durgun canak: normal esit yanal dengeleme (256/256)
+                return;
+            }
+
+            int targetDrop = bedSrc - bedTarget;
+            if (targetDrop + 6 < maxDownhillDrop)
+            {
+                hasSteeperAlternative = true;
+                // Yamacta baska bir komsu acikca yokus asagiyken, duz/yan komsuya yalnizca ilk dokulme aninda (srcMass >= 135)
+                // cok hafif bir dogal yastik yayilimi ver; su inceldikce (%100 yokus asagi kanalize ol!) yanlara dagilmayi kes!
+                if (srcMass < 135)
+                {
+                    slopeShare256 = 0;
+                    return;
+                }
+            }
+
+            // 2) Yokus agirlikli pay hesapla
+            for (int d = 0; d < 4; d++)
+            {
+                int nx = sx + ndx[d];
+                int nz = sz + ndz[d];
+                if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
+                {
+                    continue;
+                }
+
+                int nIdx = yBase + nz * sizeX + nx;
+                byte nCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[nIdx]);
+                byte nMass = (byte)(fluids[nIdx] & 0xFF);
+                if (nCap <= nMass)
+                {
+                    continue;
+                }
+
+                uint belowN = y > 0 ? voxels[nIdx - strideY] : 0u;
+                int bedN = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowN, voxels[nIdx], y);
+                int headN = bedN + nMass;
+                int dh = headSrc - headN;
+                if (dh <= 0)
+                {
+                    continue;
+                }
+
+                int drop = Math.Max(0, bedSrc - bedN);
+                int w = drop > 6
+                    ? (dh + drop * 3)
+                    : (srcMass >= 135 ? Math.Max(1, dh / 5) : 0);
+
+                sumWeights += w;
+                if (nx == targetX && nz == targetZ)
+                {
+                    targetWeight = w;
+                }
+            }
+
+            if (sumWeights <= 0 || targetWeight <= 0)
+            {
+                slopeShare256 = 0;
+                return;
+            }
+
+            slopeShare256 = Math.Clamp((targetWeight * 256) / sumWeights, 24, 256);
+        }
+
+        /// <summary>
+        /// Asla hedef yuksekligini kaynak yuksekliginin ustune tasirmayan (overshoot = 0), dik egime oncelik veren
+        /// ve 1-birimlik kiyi/golet ping-pong titresimini durduran ortak sanal boru transfer cozucusu.
+        /// </summary>
+        private static int ComputeStableLateralTransfer(
+            FluidType activeType,
+            byte srcMass,
+            byte dstMass,
+            byte dstCap,
+            int bedSrc,
+            int bedDst,
+            bool hasSteeperAlternative = false,
+            int slopeShare256 = 256)
+        {
+            if (srcMass == 0 || dstCap <= dstMass || slopeShare256 <= 0)
+            {
+                return 0;
+            }
+
+            int diffH = (bedSrc + srcMass) - (bedDst + dstMass);
+            if (diffH <= 0)
+            {
+                return 0;
+            }
+
+            if (activeType == FluidType.Lava && diffH < LavaBinghamYieldThreshold)
+            {
+                return 0;
+            }
+
+            int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
+            bool isDownhill = bedSrc > bedDst;
+            int desired;
+
+            if (isDownhill)
+            {
+                int safeDrain = bedSrc - (bedDst + dstMass);
+                if (activeType == FluidType.Water && srcMass <= 24 && safeDrain >= srcMass && !hasSteeperAlternative)
+                {
+                    // Kuru / dusuk seviyeli yamacta ince su filminin takilmadan tamamen asagi suzulmesi
+                    desired = srcMass;
+                }
+                else
+                {
+                    if (diffH < 2)
+                    {
+                        return 0;
+                    }
+
+                    int rawPipe = activeType == FluidType.Water
+                        ? Math.Max(1, (diffH * 102) >> 8) // ~%40 dengeli su akis hizi (sel patlamasi yok)
+                        : diffH / viscosityDiv;
+                    if (rawPipe <= 0)
+                    {
+                        return 0;
+                    }
+
+                    int slopeCap = Math.Max(16, (srcMass * 42) / 100);
+                    desired = Math.Min(rawPipe, slopeCap);
+                    if (slopeShare256 < 256)
+                    {
+                        desired = Math.Max(1, (desired * slopeShare256 + 128) >> 8);
+                    }
+                }
+            }
+            else
+            {
+                if (diffH < 2)
+                {
+                    return 0;
+                }
+
+                // Tam yatay duzlukte mikro-damlaciklarin (< 8 birim) sonsuza dek kuru hucrelere surunmesini engelle
+                if (activeType == FluidType.Water && dstMass == 0 && bedSrc == bedDst && srcMass < 8)
+                {
+                    return 0;
+                }
+
+                if (hasSteeperAlternative)
+                {
+                    // Yokus varken yan tarafa yalnizca ilk koyuldugunda hafif yastik yayilimi (<= 22 birim) yap
+                    desired = Math.Min(22, Math.Max(1, ((diffH / 3) * slopeShare256) >> 8));
+                }
+                else
+                {
+                    desired = activeType == FluidType.Water
+                        ? Math.Min(72, Math.Max(1, (diffH * 112) >> 8)) // Duzlukte kontrollu yayilim (max 72 birim/tik)
+                        : diffH / viscosityDiv;
+                }
+
+                if (desired <= 0)
+                {
+                    return 0;
+                }
+            }
+
+            return Math.Min(desired, Math.Min((int)srcMass, dstCap - dstMass));
         }
 
         private static void UpdateHydrostaticHeadAndSolveUPipes(
@@ -879,6 +1121,7 @@ namespace Stratocraft.Physics.Jobs
                         int bestOutletIdx = -1;
                         int bestOutletY = int.MaxValue;
                         int maxPipeCrestY = y;
+                        int confinedTunnelCells = 0;
 
                         while (qHead < qTail && qTail < 2048)
                         {
@@ -889,6 +1132,10 @@ namespace Stratocraft.Physics.Jobs
                             int cx = rem % sizeX;
 
                             if (cy > maxPipeCrestY) maxPipeCrestY = cy;
+                            if (cy + 1 < sizeY && FluidPorosityUtility.ComputeCellFluidCapacity(voxels[cur + strideY]) == 0)
+                            {
+                                confinedTunnelCells++;
+                            }
 
                             FluidCell16 curCell = new FluidCell16(fluids[cur]);
                             bool hasSameFluidAbove = cy + 1 < sizeY &&
@@ -933,9 +1180,9 @@ namespace Stratocraft.Physics.Jobs
                                     }
                                 }
 
-                                if (dy[d] >= 0 && (nCell.Type == FluidType.None || nCell.Type == pipeType) && nCap >= 128 && (nCap - nCell.Mass) >= 16)
+                                if (dy[d] == 1 && (nCell.Type == FluidType.None || nCell.Type == pipeType) && nCap >= 128 && (nCap - nCell.Mass) >= 16)
                                 {
-                                    // Yukari (+Y) veya yan acik cikis agzi adayi (gercek bosluk tasiyan alcak U-kolu!)
+                                    // Yalnizca yukari (+Y) dikey U-kolu cikis agzi adayi (yanal yayilim RunLateralPairPass ile CFL <= 1 olarak cozulur!)
                                     if (ny < bestOutletY)
                                     {
                                         bestOutletY = ny;
@@ -964,8 +1211,10 @@ namespace Stratocraft.Physics.Jobs
                         }
 
                         // Hidrostatik U-borusu ve <= 10m Sifon Kosulu:
-                        // Kaynak kotu > Cikis kotu VE boru taci (sifon tepesi) kaynak kotundan en fazla 10m yukarida!
-                        if (bestSourceIdx >= 0 &&
+                        // En az 2 hucrelik gercek kapali tavanli borudan gecilmis olmali (tek blokluk sarkan cukur dudagini eler!),
+                        // Kaynak kotu > Cikis kotu VE boru taci <= kaynak + 10m!
+                        if (confinedTunnelCells >= 2 &&
+                            bestSourceIdx >= 0 &&
                             bestOutletIdx >= 0 &&
                             bestSourceIdx != bestOutletIdx &&
                             bestSourceY > bestOutletY &&
@@ -982,6 +1231,7 @@ namespace Stratocraft.Physics.Jobs
                             {
                                 fluids[bestSourceIdx] = FluidCell16.Pack(pipeType, (byte)(srcCell.Mass - transfer), isSettled: false).RawValue;
                                 fluids[bestOutletIdx] = FluidCell16.Pack(pipeType, (byte)(outCell.Mass + transfer), isSettled: false, outCell.PressureHead).RawValue;
+                                _lastStepSiphonTransfers++;
 
                                 int sy = bestSourceIdx / strideY;
                                 int srem = bestSourceIdx % strideY;

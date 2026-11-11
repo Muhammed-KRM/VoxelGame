@@ -13,14 +13,15 @@ namespace Stratocraft.Physics.Systems
     /// </summary>
     public sealed class FluidSimulationSystem
     {
-        public const double FrameBudgetMicroseconds = 100.0;
+        public const double FrameBudgetMicroseconds = 1200.0;
 
         private int _stepCounter;
 
-        public int MaxChunksPerTick { get; private set; } = 8;
+        public int MaxChunksPerTick { get; private set; } = 16;
         public int CurrentTickStride { get; private set; } = 1;
         public double LastStepMicroseconds { get; private set; }
         public long TotalRemainingFluidMass { get; private set; }
+        public int LastStepSiphonTransfers { get; private set; }
 
         public int AdvanceTickParity()
         {
@@ -51,6 +52,7 @@ namespace Stratocraft.Physics.Systems
                 stepParity: parity);
 
             TotalRemainingFluidMass = remainingMass;
+            LastStepSiphonTransfers = FluidCellularAutomataJob.LastStepSiphonTransfers;
 
             long elapsedTicks = Stopwatch.GetTimestamp() - startTicks;
             LastStepMicroseconds = (elapsedTicks * 1_000_000.0) / Stopwatch.Frequency;
@@ -62,7 +64,7 @@ namespace Stratocraft.Physics.Systems
             }
             else if (LastStepMicroseconds > FrameBudgetMicroseconds)
             {
-                MaxChunksPerTick = Math.Max(1, MaxChunksPerTick / 2);
+                MaxChunksPerTick = Math.Max(4, MaxChunksPerTick / 2);
                 CurrentTickStride = Math.Min(20, CurrentTickStride + 2);
             }
 

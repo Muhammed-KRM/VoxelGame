@@ -12,6 +12,7 @@ using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
+using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen.Generators;
 
 namespace Stratocraft.Tests.EditMode
@@ -671,6 +672,120 @@ namespace Stratocraft.Tests.EditMode
                 supportFloorY: 0, Vector3.Zero, Vector3.Zero, clusters, out int naturalCaveCollapsed, VoxelGridMemoryLayout.YMajorChunk);
             Assert.That(naturalCaveCollapsed, Is.EqualTo(0),
                 "Dogal dallanan magaralar kemer ve litostatik kusatma sayesinde kendi kendine asla cokmemelidir!");
+        }
+
+        [Test]
+        public void Devir046_CavesHaveZeroFloatingPillars_RareSurfaceEntrances_AndWatertightSubChunk96Seam()
+        {
+            // 1) Magaralarda havada asili duran ince sutun/kaya parcasi (altinda ve ustunde bosluk olan kopuk parca) olusmamalidir!
+            (int cx, int cz)[] sampleChunks = { (0, 0), (-1, 1), (-3, 2), (2, -2), (-2, -3), (3, 1) };
+            int floatingSliverCount = 0;
+            foreach (var (cx, cz) in sampleChunks)
+            {
+                var (vox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cx, cz);
+                for (int lz = 0; lz < 16; lz++)
+                {
+                    for (int lx = 0; lx < 16; lx++)
+                    {
+                        int wx = cx * 16 + lx;
+                        int wz = cz * 16 + lz;
+                        int maxCaveY = (int)System.MathF.Floor(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz)) - 3;
+                        int col = (lz << 4) | lx;
+                        int y = 6;
+                        while (y <= maxCaveY)
+                        {
+                            if (vox[(y << 8) | col] == 0u) { y++; continue; }
+                            int s0 = y;
+                            bool perm = false;
+                            while (y <= maxCaveY && vox[(y << 8) | col] != 0u)
+                            {
+                                if (VoxelBitUtility.GetOriginState(vox[(y << 8) | col]) == BlokKokenDurumu.KaliciYapi) perm = true;
+                                y++;
+                            }
+                            int s1 = y - 1;
+                            if (!perm && vox[((s0 - 1) << 8) | col] == 0u && vox[((s1 + 1) << 8) | col] == 0u && (s1 - s0 + 1) <= 4)
+                            {
+                                floatingSliverCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            Assert.That(floatingSliverCount, Is.EqualTo(0),
+                "Magaralarda havada duran sutun veya ince kaya parcasi (altinda ve ustunde bosluk olan) asla olusmamalidir!");
+
+            // 2) Yuzeye acilan dogal magara girisleri seyrek olmali, kuru yamacta cikmali ve yeraltina gercek bosluk acmalidir!
+            int activeEntrances = 0;
+            bool verifiedOpenMouthAndDeepRamp = false;
+            for (int mz = -2; mz <= 1; mz++)
+            {
+                for (int mx = -2; mx <= 1; mx++)
+                {
+                    if (StratocraftFloatingIslandWorldGen.TryGetMacroRegionCaveEntrance(
+                            mx, mz, out float mouthX, out float mouthZ, out float dirX, out float dirZ, out float mouthTopH))
+                    {
+                        activeEntrances++;
+                        Assert.That(mouthTopH, Is.GreaterThanOrEqualTo(StratocraftFloatingIslandWorldGen.SeaLevelY + 3.0f),
+                            "Dogal magara girisleri asla su altinda veya gol kiyisinda acilmamalidir!");
+
+                        if (!verifiedOpenMouthAndDeepRamp)
+                        {
+                            int mWx = (int)System.MathF.Round(mouthX + dirX * 2.0f);
+                            int mWz = (int)System.MathF.Round(mouthZ + dirZ * 2.0f);
+                            int mCx = mWx >= 0 ? (mWx >> 4) : -(((-mWx) + 15) >> 4);
+                            int mCz = mWz >= 0 ? (mWz >> 4) : -(((-mWz) + 15) >> 4);
+                            var (mVox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(mCx, mCz);
+                            int mLx = mWx - mCx * 16;
+                            int mLz = mWz - mCz * 16;
+                            int mY = (int)System.MathF.Round(mouthTopH - 0.5f);
+                            Assert.That(VoxelBitUtility.GetMaterialId(mVox[(mY << 8) | (mLz << 4) | mLx]), Is.EqualTo(MaterialIdCatalog.Air),
+                                "Dogal magara girisinin yuzey agzi oyuncunun yuruyerek girebilecegi sekilde acik hava olmalidir!");
+                            verifiedOpenMouthAndDeepRamp = true;
+                        }
+                    }
+                }
+            }
+            Assert.That(activeEntrances, Is.InRange(2, 10),
+                "Dogal yuzey magara girisleri ne sifir olmali ne de her yerde cikacak kadar sik olmalidir!");
+            Assert.That(verifiedOpenMouthAndDeepRamp, Is.True);
+
+            // 3) Y=95..96 alt-chunk sinirinda su emilimi hem subY=5 hem subY=6 maskesini isaretlemeli ve ucgen eksiltmemelidir!
+            var worldMap = new Dictionary<(int cx, int cz), uint[]>();
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var (v, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(dx, dz - 4);
+                    worldMap[(dx, dz - 4)] = v;
+                }
+            }
+            var soilSys = new SoilMoistureAndMudSystem();
+            ushort[] testFluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            // Y=96 (subY=6 alt siniri) uzerine su koyarak Y=95 (subY=5 ust siniri) topragin islanmasini tetikle:
+            int testIdx96 = (96 << 8) | (8 << 4) | 8;
+            worldMap[(0, -4)][(95 << 8) | (8 << 4) | 8] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 96, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+            worldMap[(0, -4)][testIdx96] = 0u;
+            testFluids[testIdx96] = FluidCell16.Pack(FluidType.Water, 180, isSettled: false, pressureHead: 0).RawValue;
+
+            soilSys.StepChunkSoilInfiltration(0, -4, worldMap[(0, -4)], testFluids, 160, out ushort dirtySubMask, out _);
+            Assert.That((dirtySubMask & ((1 << 5) | (1 << 6))), Is.EqualTo((1 << 5) | (1 << 6)),
+                "Y=95/96 alt-chunk sinirindaki toprak islanmasi hem subY=5 hem subY=6 dilimlerini guncellemelidir!");
+
+            var fullTris = new List<FacetedVoxelTriangle>(4096);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                0, -4, 160, worldMap, fullTris, minY: 64, soilMoistureChunks: soilSys.SoilMoistureChunks);
+
+            int slicedTriTotal = 0;
+            var sliceScratch = new List<FacetedVoxelTriangle>(1024);
+            for (int subY = 4; subY < 10; subY++)
+            {
+                sliceScratch.Clear();
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    0, -4, (subY + 1) * 16, worldMap, sliceScratch, minY: subY * 16, soilMoistureChunks: soilSys.SoilMoistureChunks);
+                slicedTriTotal += sliceScratch.Count;
+            }
+            Assert.That(slicedTriTotal, Is.EqualTo(fullTris.Count),
+                "Alt-chunk dilimli orme (subY=4..9) ile tam-gecis orme (64..160) tek bir ucgen bile kaybetmeden birebir eslesmelidir!");
         }
     }
 }

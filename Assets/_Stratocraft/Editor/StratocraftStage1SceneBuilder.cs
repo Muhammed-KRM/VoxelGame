@@ -40,11 +40,14 @@ namespace Stratocraft.EditorTools
         private const int ChunkMin = -10;
         private const int ChunkMax = 9; // [-10..9] -> [-160m .. +160m] 20x20 = 400 Gercek 3B Hacimsel (16x16x160m) VoxelChunk (5 Yeralti Katmani + Magaralar + 12 Biyom)
         private static bool _autoSyncInProgress;
+        private static double _nextSentinelCheckTime;
+        private static GameObject? _cachedOuterSentinelChunk;
 
         static StratocraftStage1SceneBuilder()
         {
             EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
             EditorSceneManager.sceneOpened += (_, _) => EditorApplication.delayCall += EnsureEditorSceneContinentUpToDate;
+            EditorApplication.update += PollOuterChunkMeshSentinel;
             EditorApplication.playModeStateChanged += state =>
             {
                 if (state == PlayModeStateChange.EnteredEditMode)
@@ -54,9 +57,39 @@ namespace Stratocraft.EditorTools
             };
         }
 
+        private static void PollOuterChunkMeshSentinel()
+        {
+            if (_autoSyncInProgress || Application.isBatchMode || Application.isPlaying ||
+                EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
+            {
+                return;
+            }
+
+            double now = EditorApplication.timeSinceStartup;
+            if (now < _nextSentinelCheckTime) return;
+            _nextSentinelCheckTime = now + 1.5;
+
+            Scene activeScene = SceneManager.GetActiveScene();
+            if (!activeScene.IsValid() || !activeScene.isLoaded) return;
+            if (!string.Equals(activeScene.name, "StratocraftStage1Showcase", StringComparison.OrdinalIgnoreCase)) return;
+
+            if (_cachedOuterSentinelChunk == null)
+            {
+                _cachedOuterSentinelChunk = GameObject.Find("VoxelChunk_-10_-10_Seamless3DIsland");
+            }
+
+            if (_cachedOuterSentinelChunk != null &&
+                _cachedOuterSentinelChunk.TryGetComponent<MeshFilter>(out var sentinelMf) &&
+                (sentinelMf.sharedMesh == null || sentinelMf.sharedMesh.name.StartsWith("DynamicSeamlessChunk_", StringComparison.Ordinal)))
+            {
+                EnsureEditorSceneContinentUpToDate();
+            }
+        }
+
         private static void EnsureEditorSceneContinentUpToDate()
         {
-            if (_autoSyncInProgress || Application.isBatchMode || EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
+            if (_autoSyncInProgress || Application.isBatchMode || Application.isPlaying ||
+                EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
             {
                 return;
             }
@@ -65,15 +98,38 @@ namespace Stratocraft.EditorTools
             if (!activeScene.IsValid() || !activeScene.isLoaded) return;
             if (!string.Equals(activeScene.name, "StratocraftStage1Showcase", StringComparison.OrdinalIgnoreCase)) return;
 
-            var filters = UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsInactive.Exclude);
+            var filters = UnityEngine.Object.FindObjectsByType<MeshFilter>(FindObjectsInactive.Include);
             int totalVoxelChunkObjects = 0;
             int validVoxelChunkMeshes = 0;
             bool hasLegacyMismatchedShells = false;
+            var runtimeLeftoversToDestroy = new List<GameObject>();
+
             for (int i = 0; i < filters.Length; i++)
             {
-                string n = filters[i].gameObject.name;
+                if (filters[i] == null) continue;
+                GameObject go = filters[i].gameObject;
+                string n = go.name;
+                if (n.StartsWith("VoxelChunk_Pooled_", StringComparison.Ordinal) ||
+                    n.StartsWith("DistantHorizon_ClipmapRing_", StringComparison.Ordinal))
+                {
+                    runtimeLeftoversToDestroy.Add(go);
+                    continue;
+                }
+
                 if (n.StartsWith("VoxelChunk_", StringComparison.Ordinal))
                 {
+                    string[] parts = n.Split('_');
+                    if (parts.Length >= 3 && int.TryParse(parts[1], out int cx) && int.TryParse(parts[2], out int cz))
+                    {
+                        if (cx < ChunkMin || cx > ChunkMax || cz < ChunkMin || cz > ChunkMax)
+                        {
+                            runtimeLeftoversToDestroy.Add(go);
+                            continue;
+                        }
+                        if (!go.activeSelf) go.SetActive(true);
+                        if (go.TryGetComponent<MeshRenderer>(out var mr) && mr != null && !mr.enabled) mr.enabled = true;
+                    }
+
                     totalVoxelChunkObjects++;
                     if (filters[i].sharedMesh != null &&
                         filters[i].sharedMesh.vertexCount >= 3 &&
@@ -82,9 +138,18 @@ namespace Stratocraft.EditorTools
                         validVoxelChunkMeshes++;
                     }
                 }
-                else if (n.StartsWith("DistantHorizon", StringComparison.Ordinal))
+                else if (n.StartsWith("DistantHorizonShell_", StringComparison.Ordinal) ||
+                         n.StartsWith("DistantHorizonMega_", StringComparison.Ordinal))
                 {
                     hasLegacyMismatchedShells = true;
+                }
+            }
+
+            for (int i = 0; i < runtimeLeftoversToDestroy.Count; i++)
+            {
+                if (runtimeLeftoversToDestroy[i] != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(runtimeLeftoversToDestroy[i]);
                 }
             }
 
@@ -126,10 +191,15 @@ namespace Stratocraft.EditorTools
             var chunkEntries = new List<(int cx, int cz, MeshFilter mf)>(400);
             for (int i = 0; i < filters.Length; i++)
             {
+                if (filters[i] == null) continue;
                 string n = filters[i].gameObject.name;
                 if (!n.StartsWith("VoxelChunk_", StringComparison.Ordinal)) continue;
                 string[] p = n.Split('_');
-                if (p.Length >= 3 && int.TryParse(p[1], out int cx) && int.TryParse(p[2], out int cz))
+                if (p.Length >= 3 &&
+                    int.TryParse(p[1], out int cx) &&
+                    int.TryParse(p[2], out int cz) &&
+                    cx >= ChunkMin && cx <= ChunkMax &&
+                    cz >= ChunkMin && cz <= ChunkMax)
                 {
                     chunkEntries.Add((cx, cz, filters[i]));
                 }
@@ -172,23 +242,51 @@ namespace Stratocraft.EditorTools
                 var sTris = solidTriLists[i];
                 if (sTris == null) continue;
                 var (cx, cz, mf) = chunkEntries[i];
-                Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_V5Underground_{cx}_{cz}");
-                m.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
-                mf.sharedMesh = m;
-                if (mf.TryGetComponent<MeshCollider>(out var mc) && mc != null && mc.enabled && sTris.Count >= 1)
+                if (mf == null) continue;
+                bool hasSavedDiskAsset = mf.sharedMesh != null && AssetDatabase.Contains(mf.sharedMesh);
+                if (hasSavedDiskAsset)
                 {
-                    mc.sharedMesh = m;
+                    // Disk varligi olan merkez 4x4 chunk'i YERINDE (in-place) guncelle ki dis chunk'larla 0.000m dikissiz kalsin!
+                    HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, mf.sharedMesh!.name, mf.sharedMesh);
+                    if (mf.TryGetComponent<MeshCollider>(out var coreMc) && coreMc != null && coreMc.enabled && sTris.Count >= 1)
+                    {
+                        coreMc.sharedMesh = null;
+                        coreMc.sharedMesh = mf.sharedMesh;
+                    }
+                }
+                else
+                {
+                    Mesh m = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(sTris, $"Mesh_SeamlessIslandChunk_V5Underground_{cx}_{cz}");
+                    m.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                    mf.sharedMesh = m;
+                    if (mf.TryGetComponent<MeshCollider>(out var mc) && mc != null && sTris.Count >= 1)
+                    {
+                        if (mc.enabled) mc.sharedMesh = m;
+                    }
                 }
 
                 var fTris = fluidTriLists[i];
-                if (fTris != null && fTris.Count > 0)
+                Transform? fTr = mf.transform.Find($"FluidSurface_{cx}_{cz}");
+                if (fTr != null && fTr.TryGetComponent<MeshFilter>(out var fMf))
                 {
-                    Transform? fTr = mf.transform.Find($"FluidSurface_{cx}_{cz}");
-                    if (fTr != null && fTr.TryGetComponent<MeshFilter>(out var fMf))
+                    if (fTris != null && fTris.Count > 0)
                     {
-                        Mesh fm = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, $"Mesh_FluidSurfaceChunk_{cx}_{cz}");
-                        fm.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
-                        fMf.sharedMesh = fm;
+                        bool hasSavedFluidAsset = fMf.sharedMesh != null && AssetDatabase.Contains(fMf.sharedMesh);
+                        if (hasSavedFluidAsset)
+                        {
+                            HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, fMf.sharedMesh!.name, fMf.sharedMesh);
+                        }
+                        else
+                        {
+                            Mesh fm = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fTris, $"Mesh_FluidSurfaceChunk_{cx}_{cz}");
+                            fm.hideFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+                            fMf.sharedMesh = fm;
+                        }
+                        if (fTr.TryGetComponent<MeshRenderer>(out var fMr) && fMr != null) fMr.enabled = true;
+                    }
+                    else
+                    {
+                        if (fTr.TryGetComponent<MeshRenderer>(out var fMr) && fMr != null) fMr.enabled = false;
                     }
                 }
             }
@@ -360,6 +458,17 @@ namespace Stratocraft.EditorTools
                         fluidMat,
                         addCollider: false);
                 }
+                else
+                {
+                    GameObject emptyFluidGo = new GameObject($"FluidSurface_{cx}_{cz}");
+                    emptyFluidGo.transform.SetParent(chunkGo.transform, false);
+                    emptyFluidGo.transform.localPosition = Vector3.zero;
+                    emptyFluidGo.AddComponent<MeshFilter>();
+                    MeshRenderer emptyFluidMr = emptyFluidGo.AddComponent<MeshRenderer>();
+                    emptyFluidMr.sharedMaterial = fluidMat;
+                    emptyFluidMr.shadowCastingMode = ShadowCastingMode.Off;
+                    emptyFluidMr.enabled = false;
+                }
 
                 builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], mf, mc);
             }
@@ -512,10 +621,13 @@ namespace Stratocraft.EditorTools
             // 7. Ana Kamera ve Editor SceneView Kamerasini Hem 3B Falez/Alt Govdeyi Hem Yerlesimi Gosterecek Aciya Odakla
             PositionMainCameraAndSceneView(playerRig.transform);
 
-            AssetDatabase.SaveAssets();
-            EditorSceneManager.MarkSceneDirty(activeScene);
-            EditorSceneManager.SaveScene(activeScene, SceneAssetPath);
-            AddSceneToBuildSettings(SceneAssetPath);
+            if (!Application.isPlaying && !EditorApplication.isPlaying && !EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                AssetDatabase.SaveAssets();
+                EditorSceneManager.MarkSceneDirty(activeScene);
+                EditorSceneManager.SaveScene(activeScene, SceneAssetPath);
+                AddSceneToBuildSettings(SceneAssetPath);
+            }
 
             Debug.Log("[Stratocraft] URP 17 Forward+, 0.000m Dikissiz 3B Hacimsel Ada ve Blender 4.2 Low-Poly Varlik Sahnesi kuruldu: " + SceneAssetPath);
         }

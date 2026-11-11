@@ -5,6 +5,7 @@ using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
+using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 #if UNITY_5_3_OR_NEWER
 using UnityEngine;
@@ -38,6 +39,117 @@ namespace Stratocraft.Character
             return !(overlapsX && overlapsY && overlapsZ);
         }
 
+        /// <summary>
+        /// Oyuncu suya girdiginde veya hizla yuzdugunde merkez hucredeki suyun kucuk bir kismini (maxPushUnits)
+        /// komsu acik hucrelere esit dagitarak %100 kutle korunumlu (net degisim = 0) fiziksel calkanti dalgasi olusturur.
+        /// </summary>
+        public static int ApplyMassConservingSwimmerSurge(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Dictionary<(int cx, int cz), ushort[]> fluidChunks,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            HashSet<(int cx, int cz)>? activeFluidChunks,
+            int wx,
+            int wy,
+            int wz,
+            int maxPushUnits = 16)
+        {
+            if (wy < 1 || wy >= 254 || maxPushUnits <= 0)
+            {
+                return 0;
+            }
+
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? centerFluids) || centerFluids == null)
+            {
+                return 0;
+            }
+
+            int lx = wx - cx * 16;
+            int lz = wz - cz * 16;
+            int centerIdx = (wy << 8) | (lz << 4) | lx;
+            if ((uint)centerIdx >= (uint)centerFluids.Length)
+            {
+                return 0;
+            }
+
+            FluidCell16 src = new FluidCell16(centerFluids[centerIdx]);
+            if (src.Type != FluidType.Water || src.Mass < 24)
+            {
+                return 0;
+            }
+
+            int budget = Math.Min(maxPushUnits, src.Mass - 12);
+            if (budget <= 0)
+            {
+                return 0;
+            }
+
+            ReadOnlySpan<int> dx = stackalloc int[4] { 1, -1, 0, 0 };
+            ReadOnlySpan<int> dz = stackalloc int[4] { 0, 0, 1, -1 };
+            int perDir = Math.Max(2, budget / 4);
+            int totalMoved = 0;
+
+            for (int d = 0; d < 4 && totalMoved < budget; d++)
+            {
+                int nwx = wx + dx[d];
+                int nwz = wz + dz[d];
+                int ncx = nwx >= 0 ? (nwx >> 4) : -(((-nwx) + 15) >> 4);
+                int ncz = nwz >= 0 ? (nwz >> 4) : -(((-nwz) + 15) >> 4);
+                if (!fluidChunks.TryGetValue((ncx, ncz), out ushort[]? nFluids) || nFluids == null ||
+                    !worldChunks.TryGetValue((ncx, ncz), out uint[]? nSolids) || nSolids == null)
+                {
+                    continue;
+                }
+
+                int nlx = nwx - ncx * 16;
+                int nlz = nwz - ncz * 16;
+                int nIdx = (wy << 8) | (nlz << 4) | nlx;
+                if ((uint)nIdx >= (uint)nFluids.Length || (uint)nIdx >= (uint)nSolids.Length)
+                {
+                    continue;
+                }
+
+                byte cap = FluidPorosityUtility.ComputeCellFluidCapacity(nSolids[nIdx]);
+                if (cap == 0)
+                {
+                    continue;
+                }
+
+                FluidCell16 dst = new FluidCell16(nFluids[nIdx]);
+                if (dst.Type != FluidType.None && dst.Type != FluidType.Water)
+                {
+                    continue;
+                }
+
+                int space = cap - dst.Mass;
+                if (space <= 0)
+                {
+                    continue;
+                }
+
+                int move = Math.Min(perDir, Math.Min(budget - totalMoved, space));
+                if (move <= 0)
+                {
+                    continue;
+                }
+
+                nFluids[nIdx] = FluidCell16.Pack(FluidType.Water, (byte)(dst.Mass + move), isSettled: false, dst.PressureHead).RawValue;
+                totalMoved += move;
+                dirtyFluidChunks?.Add((ncx, ncz));
+                activeFluidChunks?.Add((ncx, ncz));
+            }
+
+            if (totalMoved > 0)
+            {
+                centerFluids[centerIdx] = FluidCell16.Pack(FluidType.Water, (byte)(src.Mass - totalMoved), isSettled: false, src.PressureHead).RawValue;
+                dirtyFluidChunks?.Add((cx, cz));
+                activeFluidChunks?.Add((cx, cz));
+            }
+
+            return totalMoved;
+        }
+
 #if UNITY_5_3_OR_NEWER
         private const float VoidRescueThresholdY = -14.0f;
         private const float MaxStepUpHeightMeters = 0.65f;
@@ -61,6 +173,15 @@ namespace Stratocraft.Character
         private float _dodgeCooldownSec;
         private Vector3 _dodgeDirectionWorld;
         private float _lowCeilingDebounceSec;
+        private bool _wasTouchingWaterLastFrame;
+        private float _swimmerSurgeCooldownSec;
+
+        /// <summary>Oyuncu-su etkilesimi dunya konumu (_StratocraftSwimmerPos.xyz).</summary>
+        public Vector3 WaterInteractionWorldPos { get; private set; }
+        /// <summary>Oyuncu-su dalga etkilesim siddeti 0..1 (_StratocraftSwimmerPos.w).</summary>
+        public float WaterInteractionStrength01 { get; private set; }
+        /// <summary>Suya atlama / hizli giris sicrama darbesi 0..1 (_StratocraftSwimmerVel.w).</summary>
+        public float WaterSplashPulse01 { get; private set; }
 
         /// <summary>Anlik fiziksel karakter hareket durumu (Stance, Hiz, Kapsul Boyutu, Stamina Kilidi).</summary>
         public ref CharacterMovementState MovementState => ref _movementState;
@@ -111,7 +232,10 @@ namespace Stratocraft.Character
             Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks, Vector2 moveInput,
             bool wantSprint, bool wantCrouch, bool wantProne, bool jumpOrMantlePressed, bool isBackpackOpen,
             float equippedMassKg, float deltaTime, out string statusFeedback,
-            Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null)
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null,
+            SoilMoistureAndMudSystem? soilMoistureSystem = null,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks = null,
+            HashSet<(int cx, int cz)>? activeFluidChunks = null)
         {
             statusFeedback = string.Empty;
             _movementState.EquippedMassKg = equippedMassKg;
@@ -286,7 +410,27 @@ namespace Stratocraft.Character
 
             ApplyJumpOrMantleVerticalImpulse(
                 playerTransform, forwardFlat, jumpOrMantlePressed, grounded || _coyoteGroundedTimer > 0f, hasLedgeAhead, ledgeTopY, ref statusFeedback);
-            StepFluidBuoyancyAndHazards(playerTransform, fluidChunks, deltaTime, ref statusFeedback);
+            StepFluidBuoyancyAndHazards(
+                playerTransform, worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, deltaTime, ref statusFeedback);
+
+            // WP-N1: Doygunlasmis islak camur zeminde (%15 - %35) gercekci hareket yavaslamasi
+            if (grounded && _movementState.IsSubmergedInFluid == 0 && _dodgeRemainingSec <= 0f && soilMoistureSystem != null)
+            {
+                float mudMult = soilMoistureSystem.SampleGroundMudSlowdownMultiplier(
+                    worldChunks, pos.x, pos.y, pos.z, out byte mudMoisture);
+                if (mudMult < 0.995f)
+                {
+                    _movementState.CurrentSpeedMetersPerSec *= mudMult;
+                    _movementState.VelocityX *= mudMult;
+                    _movementState.VelocityZ *= mudMult;
+                    if (string.IsNullOrEmpty(statusFeedback) && wishDir.sqrMagnitude > 0.02f)
+                    {
+                        int slowPct = Mathf.RoundToInt((1f - mudMult) * 100f);
+                        statusFeedback = $"Camurlu Toprak (Nem %{(mudMoisture * 100) / 255}): Adimlar %{slowPct} Agirlasti";
+                    }
+                }
+            }
+
             IntegrateHorizontalAndVerticalMotion(playerTransform, worldChunks, _dodgeRemainingSec > 0f ? _dodgeDirectionWorld : wishDir, deltaTime);
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
         }
@@ -370,12 +514,26 @@ namespace Stratocraft.Character
         }
 
         private void StepFluidBuoyancyAndHazards(
-            Transform playerTransform, Dictionary<(int cx, int cz), ushort[]>? fluidChunks, float dt, ref string statusFeedback)
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            HashSet<(int cx, int cz)>? activeFluidChunks,
+            float dt,
+            ref string statusFeedback)
         {
+            WaterSplashPulse01 = Mathf.Max(0f, WaterSplashPulse01 - dt * 1.65f);
+            if (_swimmerSurgeCooldownSec > 0f)
+            {
+                _swimmerSurgeCooldownSec = Mathf.Max(0f, _swimmerSurgeCooldownSec - dt);
+            }
+
             if (fluidChunks == null)
             {
                 _vitals.SubmergedDepthMeters = 0f;
                 _movementState.IsSubmergedInFluid = 0;
+                WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 3.0f);
+                _wasTouchingWaterLastFrame = false;
                 return;
             }
             Vector3 pos = playerTransform.position;
@@ -385,6 +543,8 @@ namespace Stratocraft.Character
             {
                 _vitals.SubmergedDepthMeters = 0f;
                 _movementState.IsSubmergedInFluid = 0;
+                WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 3.0f);
+                _wasTouchingWaterLastFrame = false;
                 return;
             }
 
@@ -399,9 +559,60 @@ namespace Stratocraft.Character
             bool inLava = (feetCell.Type == FluidType.Lava && feetCell.Mass >= 36) || (waistCell.Type == FluidType.Lava && waistCell.Mass >= 24);
             bool inAcid = (feetCell.Type == FluidType.Acid && feetCell.Mass >= 36) || (waistCell.Type == FluidType.Acid && waistCell.Mass >= 24);
             bool inWater = waistCell.Type == FluidType.Water && waistCell.Mass >= 40;
+            bool wadingWater = feetCell.Type == FluidType.Water && feetCell.Mass >= 14;
+            bool touchingWater = inWater || wadingWater;
             bool headSubmerged = headCell.Type != FluidType.None && headCell.Mass >= 48;
 
             _movementState.IsSubmergedInFluid = (inWater || inLava || inAcid) ? (byte)1 : (byte)0;
+
+            if (touchingWater)
+            {
+                int surfaceWy = inWater ? waistWy : feetWy;
+                for (int sy = surfaceWy; sy <= Mathf.Min(253, surfaceWy + 6); sy++)
+                {
+                    FluidCell16 c = new FluidCell16(f[(sy << 8) | (lz << 4) | lx]);
+                    if (c.Type == FluidType.Water && c.Mass > 0)
+                    {
+                        surfaceWy = sy;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                float horizSpd = Mathf.Sqrt(_movementState.VelocityX * _movementState.VelocityX + _movementState.VelocityZ * _movementState.VelocityZ);
+                WaterInteractionWorldPos = new Vector3(pos.x, surfaceWy + 0.55f, pos.z);
+                float targetStrength = Mathf.Clamp01((inWater ? 0.52f : 0.30f) + horizSpd * 0.14f + Mathf.Abs(_verticalVelocity) * 0.06f);
+                WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, targetStrength, dt * 6.5f);
+
+                if (!_wasTouchingWaterLastFrame)
+                {
+                    float impactSpeed = Mathf.Max(horizSpd * 0.5f, -_verticalVelocity);
+                    WaterSplashPulse01 = Mathf.Clamp01(0.45f + impactSpeed * 0.11f);
+                    if (inWater && _verticalVelocity < -3.0f)
+                    {
+                        // Suya yukaridan atlayinca su direnci dususu yumusatir
+                        _verticalVelocity *= 0.45f;
+                    }
+
+                    int splashUnits = Mathf.Clamp(Mathf.RoundToInt(8f + impactSpeed * 2.2f), 8, 22);
+                    ApplyMassConservingSwimmerSurge(
+                        worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, wx, surfaceWy, wz, splashUnits);
+                    _swimmerSurgeCooldownSec = 0.24f;
+                }
+                else if (horizSpd > 0.65f && _swimmerSurgeCooldownSec <= 0f)
+                {
+                    ApplyMassConservingSwimmerSurge(
+                        worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, wx, surfaceWy, wz, maxPushUnits: 10);
+                    _swimmerSurgeCooldownSec = 0.28f;
+                }
+            }
+            else
+            {
+                WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 2.4f);
+            }
+            _wasTouchingWaterLastFrame = touchingWater;
 
             if (headSubmerged)
             {

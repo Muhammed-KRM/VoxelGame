@@ -38,7 +38,9 @@ namespace Stratocraft.Character
         FoodCookedMeat = 20,
         FoodWildBerries = 21,
         FoodCleanWater = 22,
-        PlaceableCampfire = 23
+        PlaceableCampfire = 23,
+        ToolFluidBucket = 24,
+        ToolFluidCauldron = 25
     }
 
     /// <summary>
@@ -60,7 +62,8 @@ namespace Stratocraft.Character
             return Kind == InventoryItemKind.VoxelBlock ||
                    Kind == InventoryItemKind.OreChunk ||
                    Kind == InventoryItemKind.MetalIngot ||
-                   Kind == InventoryItemKind.ToolFluidFlask ||
+                   (Kind == InventoryItemKind.ToolFluidFlask && SubId == 0) ||
+                   (Kind == InventoryItemKind.ToolFluidBucket && SubId == 0) ||
                    Kind == InventoryItemKind.RoughStoneChunk ||
                    Kind == InventoryItemKind.LooseDirtClod ||
                    Kind == InventoryItemKind.SplitFirewood ||
@@ -182,7 +185,9 @@ namespace Stratocraft.Character
             InventoryItemKind.OreChunk => 6,
             InventoryItemKind.MetalIngot => 16,
             InventoryItemKind.VoxelBlock => 8,
-            InventoryItemKind.ToolFluidFlask => 16,
+            InventoryItemKind.ToolFluidFlask => subId == 0 ? 4 : 1,
+            InventoryItemKind.ToolFluidBucket => subId == 0 ? 2 : 1,
+            InventoryItemKind.ToolFluidCauldron => 1,
             InventoryItemKind.PotionHealth => 8,
             InventoryItemKind.PotionStamina => 8,
             InventoryItemKind.MedicalBandage => 12,
@@ -559,27 +564,94 @@ namespace Stratocraft.Character
             ChannelLabel = string.Empty;
         }
 
-        /// <summary>Secili matara slotunun sivi turunu dondurur (0=Bos, 1=Su, 2=Lav).</summary>
+        public static bool IsFluidContainerKind(InventoryItemKind kind) =>
+            kind == InventoryItemKind.ToolFluidFlask ||
+            kind == InventoryItemKind.ToolFluidBucket ||
+            kind == InventoryItemKind.ToolFluidCauldron;
+
+        public static int GetFluidContainerMaxUnits(InventoryItemKind kind) => kind switch
+        {
+            InventoryItemKind.ToolFluidFlask => 380,
+            InventoryItemKind.ToolFluidBucket => 1275,
+            InventoryItemKind.ToolFluidCauldron => 3825,
+            _ => 0
+        };
+
+        public static int GetSlotStoredFluidUnits(in VisualInventorySlot slot)
+        {
+            if (!IsFluidContainerKind(slot.Kind) || slot.SubId == 0) return 0;
+            int maxU = GetFluidContainerMaxUnits(slot.Kind);
+            float ratio = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
+            return Mathf.Clamp(Mathf.RoundToInt(maxU * ratio), 1, maxU);
+        }
+
+        /// <summary>Secili sivi kabinin (Matara/Kova/Kazan) sivi turunu dondurur (0=Bos, 1=Su, 2=Lav).</summary>
         public byte GetSelectedFlaskFluidType()
         {
             if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount &&
-                HotbarSlots[SelectedHotbarIndex].Kind == InventoryItemKind.ToolFluidFlask)
+                IsFluidContainerKind(HotbarSlots[SelectedHotbarIndex].Kind))
             {
                 return HotbarSlots[SelectedHotbarIndex].SubId;
             }
             return 0;
         }
 
-        /// <summary>Secili matara slotunun sivi turunu ve kullanim adedini gunceller.</summary>
-        public void SetSelectedFlaskFluidType(byte fluidSubId, int countDelta = 0)
+        /// <summary>Secili sivi kabinin kalan sivi birimini (veya bos durumunu) gunceller; sivi biterse Bos Kaba (SubId=0) donusturur.</summary>
+        public void UpdateSelectedFluidContainerUnits(byte fluidSubId, int newStoredUnits)
         {
             if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return;
             ref VisualInventorySlot slot = ref HotbarSlots[SelectedHotbarIndex];
-            if (slot.Kind != InventoryItemKind.ToolFluidFlask) return;
+            if (!IsFluidContainerKind(slot.Kind)) return;
+
+            int maxU = GetFluidContainerMaxUnits(slot.Kind);
+            if (fluidSubId == 0 || newStoredUnits <= 0 || maxU <= 0)
+            {
+                if (slot.Count > 1)
+                {
+                    slot.Count--;
+                    var emptyOne = new VisualInventorySlot { Kind = slot.Kind, SubId = 0, Count = 1, Durability01 = 0f };
+                    if (!TryMergeOrPlaceIntoArray(in emptyOne, HotbarSlots))
+                    {
+                        TryMergeOrPlaceIntoArray(in emptyOne, BackpackSlots);
+                    }
+                }
+                else
+                {
+                    slot.SubId = 0;
+                    slot.Count = 1;
+                    slot.Durability01 = 0f;
+                }
+                return;
+            }
+
+            if (slot.SubId == 0 && slot.Count > 1)
+            {
+                // Bos kap yiginindan 1 adedini doldur, kalan boslari yan yuvaya ayir
+                int extraEmpty = slot.Count - 1;
+                slot.Count = 1;
+                slot.SubId = fluidSubId;
+                slot.Durability01 = Mathf.Clamp01(newStoredUnits / (float)maxU);
+                var leftoverEmpty = new VisualInventorySlot { Kind = slot.Kind, SubId = 0, Count = extraEmpty, Durability01 = 0f };
+                if (!TryMergeOrPlaceIntoArray(in leftoverEmpty, HotbarSlots))
+                {
+                    TryMergeOrPlaceIntoArray(in leftoverEmpty, BackpackSlots);
+                }
+                return;
+            }
 
             slot.SubId = fluidSubId;
-            slot.Count = Mathf.Clamp(slot.Count + countDelta, 1, 16);
-            if (slot.SubId == 0) slot.Count = 1;
+            slot.Count = 1;
+            slot.Durability01 = Mathf.Clamp01(newStoredUnits / (float)maxU);
+        }
+
+        /// <summary>Geriye donuk uyumluluk: Secili sivi kabinin sivi turunu gunceller.</summary>
+        public void SetSelectedFlaskFluidType(byte fluidSubId, int countDelta = 0)
+        {
+            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return;
+            VisualInventorySlot cur = HotbarSlots[SelectedHotbarIndex];
+            if (!IsFluidContainerKind(cur.Kind)) return;
+            int maxU = GetFluidContainerMaxUnits(cur.Kind);
+            UpdateSelectedFluidContainerUnits(fluidSubId, fluidSubId == 0 ? 0 : maxU);
         }
 
         /// <summary>Kilic slotunu bulup secer (F8/F10/G kisayollari icin).</summary>
@@ -1260,7 +1332,9 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolPickaxe => "Kazma",
             InventoryItemKind.ToolAxe => "Balta",
             InventoryItemKind.ToolMicroChisel => "Keski",
-            InventoryItemKind.ToolFluidFlask => slot.SubId == 2 ? "LavMtr" : (slot.SubId == 1 ? "SuMtr" : "Matara"),
+            InventoryItemKind.ToolFluidFlask => slot.SubId == 2 ? "LavMtr" : (slot.SubId == 1 ? "SuMtr" : "BoşMtr"),
+            InventoryItemKind.ToolFluidBucket => slot.SubId == 2 ? "LavKova" : (slot.SubId == 1 ? "SuKova" : "BoşKova"),
+            InventoryItemKind.ToolFluidCauldron => slot.SubId == 2 ? "LavKzn" : (slot.SubId == 1 ? "SuKazan" : "BoşKzn"),
             InventoryItemKind.MetalIngot => slot.SubId == 1 ? "Bakır" : (slot.SubId == 2 ? "Demir" : "Mithril"),
             InventoryItemKind.OreChunk => GetShortMaterialBadgeName(slot.SubId),
             InventoryItemKind.VoxelBlock => GetShortMaterialBadgeName(slot.SubId),
@@ -1538,6 +1612,20 @@ namespace Stratocraft.Character
                     GUI.DrawTexture(barFg, _whitePixelTex!);
                     GUI.color = prev;
                 }
+                else if (IsFluidContainerKind(slot.Kind) && slot.SubId != 0)
+                {
+                    float fill01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
+                    Rect barBg = new Rect(rect.x + 6f, rect.yMax - 6f, rect.width - 12f, 4f);
+                    Rect barFg = new Rect(rect.x + 6f, rect.yMax - 6f, (rect.width - 12f) * fill01, 4f);
+                    Color prev = GUI.color;
+                    GUI.color = new Color(0.08f, 0.10f, 0.14f, 0.90f);
+                    GUI.DrawTexture(barBg, _whitePixelTex!);
+                    GUI.color = slot.SubId == 2
+                        ? new Color(1.0f, 0.45f, 0.12f, 1.0f)
+                        : new Color(0.22f, 0.72f, 1.0f, 1.0f);
+                    GUI.DrawTexture(barFg, _whitePixelTex!);
+                    GUI.color = prev;
+                }
             }
 
             if (!string.IsNullOrEmpty(keyLabel))
@@ -1571,6 +1659,14 @@ namespace Stratocraft.Character
                 return $"[{SelectedHotbarIndex + 1}] BOS KILIF YUVASI — [I] 3B Kumas Cantayi acip bu yuvaya 3B esya surukleyin!";
             }
 
+            if (IsFluidContainerKind(slot.Kind))
+            {
+                int stored = GetSlotStoredFluidUnits(in slot);
+                int maxU = GetFluidContainerMaxUnits(slot.Kind);
+                string capInfo = slot.SubId == 0 ? $"BOŞ (Kapasite: {maxU} Br)" : $"{stored}/{maxU} Birim";
+                return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} [{capInfo}] — {GetSlotUsageHint(in slot)}";
+            }
+
             return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)}";
         }
 
@@ -1582,9 +1678,21 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolMicroChisel => "Mimari Mikro-Keski (4x4x4 Yontma)",
             InventoryItemKind.ToolFluidFlask => slot.SubId switch
             {
-                1 => "Kristal Su Matarasi (Akiskan Su)",
-                2 => "Volkanik Lav Matarasi (Akiskan Lav)",
-                _ => "Bos Kristal Matara"
+                1 => "Kristal Su Matarasi (Az Su - 380 Br)",
+                2 => "Volkanik Lav Matarasi (Az Lav - 380 Br)",
+                _ => "Bos Kristal Matara (380 Br)"
+            },
+            InventoryItemKind.ToolFluidBucket => slot.SubId switch
+            {
+                1 => "Demir Cemberli Su Kovasi (Bol Su - 1275 Br)",
+                2 => "Bazalt Zirhli Lav Kovasi (Bol Lav - 1275 Br)",
+                _ => "Bos Sivi Kovasi (1275 Br)"
+            },
+            InventoryItemKind.ToolFluidCauldron => slot.SubId switch
+            {
+                1 => "Tasinabilir Su Kazani (Dev Hacim - 3825 Br)",
+                2 => "Tasinabilir Magma Kazani (Dev Hacim - 3825 Br)",
+                _ => "Bos Tasinabilir Kazan (3825 Br)"
             },
             InventoryItemKind.VoxelBlock or InventoryItemKind.OreChunk => Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId),
             InventoryItemKind.MetalIngot => slot.SubId switch
@@ -1638,7 +1746,15 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolPickaxe => "[Sol Tik+Fare] Kaya ve Cevher Damari Kirma",
             InventoryItemKind.ToolAxe => "[Sol Tik+Fare] Agac Govdesi Devirme & Ahsap Kirma",
             InventoryItemKind.ToolMicroChisel => "[Sol Tik] 4x4x4 Mikro-Voksel Yont | [Sag Tik] Mikro-Voksel Ekle",
-            InventoryItemKind.ToolFluidFlask => "[Sol Tik] Su/Lav Doldur | [Sag Tik] Dunyaya Akiskan Su/Lav Dok",
+            InventoryItemKind.ToolFluidFlask => slot.SubId == 0
+                ? "[Sol Tik] Gol/Nehirden Su veya Lav Doldur (380 Br)"
+                : "[Sag Tik] Dunyaya Az Su/Lav Dok (Dokunce Bosalir!) | [Sol Tik] Eksigi Tamamla",
+            InventoryItemKind.ToolFluidBucket => slot.SubId == 0
+                ? "[Sol Tik] Gol/Nehirden Bol Su veya Lav Doldur (1275 Br = 5 Blok)"
+                : "[Sag Tik] Dunyaya 1 Kova Bol Su/Lav Dok (Dokunce Bosalir!)",
+            InventoryItemKind.ToolFluidCauldron => slot.SubId == 0
+                ? "[Sol Tik] Havzadan Dev Kazan Doldur (3825 Br = 15 Blok)"
+                : "[Sag Tik] Cukur/Hendek Icine Dev Su/Lav Kutlesi Bosalt (Dokunce Bosalir!)",
             InventoryItemKind.VoxelBlock => "[Sag Tik] Dunyaya Blok Yerlestir | [V] Mimari Sekil Degistir | [R] 24-Yon Dondur",
             InventoryItemKind.OreChunk => "[Sag Tik] Dunyaya Cevher Koy veya Ors/Izabe Ocaginda Islet",
             InventoryItemKind.MetalIngot => "[Sag Tik] Dunyaya Kulce Koy veya 16x32x4 Ors Uzerinde Silah/Zirh Dov",
@@ -1892,6 +2008,8 @@ namespace Stratocraft.Character
                 case InventoryItemKind.ToolAxe: DrawAxeIcon(tex); break;
                 case InventoryItemKind.ToolMicroChisel: DrawChiselIcon(tex); break;
                 case InventoryItemKind.ToolFluidFlask: DrawFluidFlaskIcon(tex, slot.SubId); break;
+                case InventoryItemKind.ToolFluidBucket: DrawFluidBucketIcon(tex, slot.SubId); break;
+                case InventoryItemKind.ToolFluidCauldron: DrawFluidCauldronIcon(tex, slot.SubId); break;
                 case InventoryItemKind.VoxelBlock: DrawIsometricVoxelCubeIcon(tex, slot.SubId); break;
                 case InventoryItemKind.OreChunk: DrawOreChunkIcon(tex, slot.SubId); break;
                 case InventoryItemKind.MetalIngot: DrawIngotIcon(tex, slot.SubId); break;
@@ -2014,6 +2132,71 @@ namespace Stratocraft.Character
             {
                 FillRect(tex, 14, 10, 20, 16, liquid);
                 FillRect(tex, 16, 22, 6, 3, Color.Lerp(liquid, Color.white, 0.45f));
+            }
+        }
+
+        private static void DrawFluidBucketIcon(Texture2D tex, byte subId)
+        {
+            Color wood = new Color(0.56f, 0.36f, 0.18f, 1f);
+            Color ironHoop = new Color(0.52f, 0.56f, 0.64f, 1f);
+            Color handleCol = new Color(0.74f, 0.78f, 0.84f, 1f);
+            Color liquid = subId == 1
+                ? new Color(0.16f, 0.62f, 1.0f, 1f)
+                : (subId == 2 ? new Color(1.0f, 0.40f, 0.06f, 1f) : new Color(0.18f, 0.14f, 0.10f, 1f));
+
+            // Ust tel kulp
+            DrawThickLine(tex, 11, 31, 18, 41, 2, handleCol);
+            DrawThickLine(tex, 18, 41, 30, 41, 2, handleCol);
+            DrawThickLine(tex, 30, 41, 37, 31, 2, handleCol);
+
+            // Konik ahsap/demir kova govdesi
+            for (int y = 7; y <= 31; y++)
+            {
+                int halfW = 9 + (y - 7) / 4;
+                bool isHoop = (y >= 11 && y <= 13) || (y >= 24 && y <= 26);
+                for (int x = 24 - halfW; x <= 24 + halfW; x++)
+                {
+                    Color c = isHoop ? ironHoop : wood;
+                    if (!isHoop && ((x - 24) % 4 == 0)) c *= 0.84f;
+                    c.a = 1f;
+                    tex.SetPixel(x, y, c);
+                }
+            }
+
+            // Kova ust agzi (doluysa mavi su / turuncu lav parlamasi, bossa koyu ic bosluk)
+            FillRect(tex, 12, 29, 24, 5, liquid);
+            if (subId != 0)
+            {
+                FillRect(tex, 15, 31, 10, 2, Color.Lerp(liquid, Color.white, 0.48f));
+            }
+        }
+
+        private static void DrawFluidCauldronIcon(Texture2D tex, byte subId)
+        {
+            Color castIron = new Color(0.24f, 0.27f, 0.32f, 1f);
+            Color rimBronze = new Color(0.68f, 0.52f, 0.26f, 1f);
+            Color liquid = subId == 1
+                ? new Color(0.14f, 0.66f, 1.0f, 1f)
+                : (subId == 2 ? new Color(1.0f, 0.44f, 0.08f, 1f) : new Color(0.12f, 0.14f, 0.18f, 1f));
+
+            // Ayaklar
+            FillRect(tex, 12, 5, 5, 5, castIron);
+            FillRect(tex, 31, 5, 5, 5, castIron);
+
+            // Genis kazan gobegi
+            FillCircle(tex, 24, 21, 15, castIron);
+            FillCircle(tex, 24, 22, 12, castIron * 1.18f);
+
+            // Yan tasima halkalari
+            FillRect(tex, 6, 21, 4, 7, rimBronze);
+            FillRect(tex, 38, 21, 4, 7, rimBronze);
+
+            // Genis agiz cemberi ve ic sivi havuzu
+            FillRect(tex, 10, 31, 28, 6, rimBronze);
+            FillRect(tex, 12, 32, 24, 6, liquid);
+            if (subId != 0)
+            {
+                FillRect(tex, 15, 35, 12, 2, Color.Lerp(liquid, Color.white, 0.50f));
             }
         }
 
@@ -2411,7 +2594,7 @@ namespace Stratocraft.Character
         private static readonly string[] CreativeCategoryNames =
         {
             "🧱 Bloklar (24)",
-            "⚔️ Silah & Aletler (10)",
+            "⚔️ Silah & Aletler (16)",
             "🛡️ Zırhlar (12)",
             "🧪 İksir & Tıp (3)",
             "🍖 Yemek & Yaşam (9)"
@@ -2454,6 +2637,12 @@ namespace Stratocraft.Character
             (InventoryItemKind.ToolFluidFlask, 0),
             (InventoryItemKind.ToolFluidFlask, 1),
             (InventoryItemKind.ToolFluidFlask, 2),
+            (InventoryItemKind.ToolFluidBucket, 0),
+            (InventoryItemKind.ToolFluidBucket, 1),
+            (InventoryItemKind.ToolFluidBucket, 2),
+            (InventoryItemKind.ToolFluidCauldron, 0),
+            (InventoryItemKind.ToolFluidCauldron, 1),
+            (InventoryItemKind.ToolFluidCauldron, 2),
             (InventoryItemKind.MetalIngot, 1),
             (InventoryItemKind.MetalIngot, 2),
             (InventoryItemKind.MetalIngot, 3)

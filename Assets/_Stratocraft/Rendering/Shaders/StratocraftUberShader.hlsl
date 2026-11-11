@@ -218,6 +218,17 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float sharpnessOrTone = input.tempSharpAo.y;
     float cavityAo = lerp(0.42, 1.0, input.tempSharpAo.z);
 
+    // Dogal emici zemin malzemeleri (Dirt=2, Grass=3, Sand=4, Gravel=9, LooseRubble=15, Clay=16) icin
+    // Temp kanalinin kor olmayan alt bandi (1..120 -> 0.003..0.50) Toprak Nem/Camur Doygunlugunu tasir!
+    bool isWettableSoilMat = (input.matId == 2u || input.matId == 3u || input.matId == 4u ||
+                              input.matId == 9u || input.matId == 15u || input.matId == 16u);
+    float soilWetness01 = 0.0;
+    if (isWettableSoilMat && heatNorm > 0.002 && heatNorm <= 0.50)
+    {
+        soilWetness01 = saturate(heatNorm / (120.0 / 255.0));
+        heatNorm = 0.0;
+    }
+
     float3 albedo;
     float roughness = 0.72;
     float metallic = 0.0;
@@ -255,6 +266,16 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     {
         albedo = input.directColorAndFog.rgb;
         roughness = saturate(0.75 - sharpnessOrTone * 0.35);
+    }
+
+    // Toprak islakligi ve camurlasma kararmasi: nem arttikca renk koyulasir, doygunlukta koyu kahve camur ve islak parlama olusur
+    if (soilWetness01 > 0.01)
+    {
+        float3 richMudLinear = ConvertLutSrgbToActiveColorSpace(float3(0.24, 0.16, 0.10));
+        float mudColorShift = smoothstep(0.30, 0.88, soilWetness01);
+        albedo = lerp(albedo, richMudLinear, mudColorShift * 0.78);
+        albedo *= lerp(1.0, 0.46, soilWetness01);
+        roughness = lerp(roughness, 0.14, soilWetness01 * 0.85);
     }
 
     // Yukseklik bazli hafif jeolojik derinlik gradyani (magara ve falez tabanlarina hacim katar)
