@@ -924,25 +924,25 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(nearTreeGroundY, Is.EqualTo(75.0f).Within(0.05f),
                 "IP-2: Agac dibindeki bilinear zemin orneklemesi agac tepesini (82m) yakalamamalidir!");
 
-            // e) Ufak dogal tumsek (+0.68m, kesirli refY=74.85m ve 2-katmanli Dirt+Grass SurfaceNets yamaci dahil) ve diz hizasi 1.0m basamak rahatca tirmanilabilmeli, 2.0m duvar engellenmelidir:
-            caveVox[(74 << 8) | (4 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 108, 0, 0, BlokKokenDurumu.DogalKutle, 0); // top ~74.85m
+            // e) Ufak dogal tumsek (+0.68m..+0.96m, kesirli refY ve 2-katmanli Dirt+Grass SurfaceNets yamaci dahil) ve diz hizasi 1.0m basamak rahatca tirmanilabilmeli, 2.0m duvar engellenmelidir:
+            caveVox[(74 << 8) | (4 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 100, 0, 0, BlokKokenDurumu.DogalKutle, 0); // iso top = 74.36m
             caveVox[(74 << 8) | (4 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // alt katman tam dolu toprak
-            caveVox[(75 << 8) | (4 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 68, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // ust kabuk ~75.535m (+0.685m yamac)
-            caveVox[(74 << 8) | (6 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 58, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // top ~74.456m
+            caveVox[(75 << 8) | (4 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 76, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // iso top = 75.158m (+0.80m yamac)
+            caveVox[(74 << 8) | (6 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 76, 0, 0, BlokKokenDurumu.DogalKutle, 0);   // iso top = 74.158m
             caveVox[(74 << 8) | (6 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // alt katman tam dolu toprak
-            caveVox[(75 << 8) | (6 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 45, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // ust kabuk ~75.354m (+0.898m yamac)
+            caveVox[(75 << 8) | (6 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 68, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // iso top = 75.08m (+0.92m 2-katman yamac)
             caveVox[(75 << 8) | (2 << 4) | 2] = stoneBlock; // top = 76.0m (+1.0m diz hizasi basamak, y=76..77 acik hava)
             caveVox[(75 << 8) | (12 << 4) | 2] = stoneBlock;
             caveVox[(76 << 8) | (12 << 4) | 2] = stoneBlock; // top = 77.0m (2m yuksek duvar)
 
             bool blockedOnNaturalBump = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
                 caveChunks,
-                cur: new UnityEngine.Vector3(1.62f, 74.85f, 4.5f),
-                next: new UnityEngine.Vector3(1.78f, 74.85f, 4.5f));
+                cur: new UnityEngine.Vector3(1.62f, 74.36f, 4.5f),
+                next: new UnityEngine.Vector3(1.78f, 74.36f, 4.5f));
             bool blockedOnTwoLayerSlope = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
                 caveChunks,
-                cur: new UnityEngine.Vector3(1.62f, 74.46f, 6.5f),
-                next: new UnityEngine.Vector3(1.78f, 74.46f, 6.5f));
+                cur: new UnityEngine.Vector3(1.62f, 74.16f, 6.5f),
+                next: new UnityEngine.Vector3(1.78f, 74.16f, 6.5f));
             bool blockedOnKneeBlockStep = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
                 caveChunks,
                 cur: new UnityEngine.Vector3(1.62f, 75.0f, 2.5f),
@@ -952,15 +952,125 @@ namespace Stratocraft.Tests.EditMode
                 cur: new UnityEngine.Vector3(1.62f, 75.0f, 12.5f),
                 next: new UnityEngine.Vector3(1.78f, 75.0f, 12.5f));
 
-            Assert.That(blockedOnNaturalBump, Is.False, "Kesirli Y (74.85m) konumundan dogal +0.68m tumsege yururken karakter ASLA takilmamalidir!");
-            Assert.That(blockedOnTwoLayerSlope, Is.False, "Alt voksel Dirt(127) + ust voksel Grass(45) olan dogal SurfaceNets yamacina (+0.89m) yururken karakter ASLA takilmamalidir!");
+            Assert.That(blockedOnNaturalBump, Is.False, "Kesirli Y (74.36m) konumundan dogal +0.80m tumsege yururken karakter ASLA takilmamalidir!");
+            Assert.That(blockedOnTwoLayerSlope, Is.False, "Alt voksel Dirt(127) + ust voksel Grass(68 -> 75.08m) olan 2-katmanli SurfaceNets yamacina (+0.92m) yururken karakter ASLA takilmamalidir!");
             Assert.That(blockedOnKneeBlockStep, Is.False, "Diz hizasi 1.0m basamaga (75.0m -> 76.0m) ustu acikken karakter rahatca adim atabilmelidir!");
             Assert.That(blockedOnTwoMeterWall, Is.True, "2.0m yuksekligindeki duvar gecisi engellenmelidir!");
 
-            float bumpSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 4.5f, refY: 74.85f);
+            float bumpSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 4.5f, refY: 74.36f);
+            float twoLayerSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 6.5f, refY: 74.16f);
             float stepSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 2.5f, refY: 75.0f);
-            Assert.That(bumpSampleY, Is.GreaterThan(75.45f), "Dogal tumsek zemin yuksekligi kesirli refY'de kaybolmamali (-30 donmemeli)!");
+            Assert.That(bumpSampleY, Is.EqualTo(75.158f).Within(0.06f), "Dogal tumsek zemin yuksekligi gercek SurfaceNets izo-yuzeyiyle eslesmelidir!");
+            Assert.That(twoLayerSampleY, Is.EqualTo(75.08f).Within(0.06f), "2-katmanli Dirt+Grass yamac zemin yuksekligi kesirli refY'de kaybolmamalidir (-30 donmemeli)!");
             Assert.That(stepSampleY, Is.EqualTo(76.0f).Within(0.05f), "1.0m diz hizasi basamak zemin yuksekligi dogru orneklenmelidir!");
+#endif
+        }
+
+        [Test]
+        public void Devir048b_SurfaceNetsIsoGroundAlignment_ZeroVerticalBounce_AndFastChunkStreaming()
+        {
+#if UNITY_EDITOR || UNITY_STANDALONE
+            // 1) Gorsel SurfaceNets Cimen Yuksekligi ile Fiziksel Ayak Tabani Eslesmesi (Boy Uzamasi / Havada Durma Regresyon Testi)
+            uint[] vox = new uint[65536];
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 1; y <= 74; y++)
+                    {
+                        vox[(y << 8) | (z << 4) | x] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                    }
+                    vox[(75 << 8) | (z << 4) | x] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Grass, 76, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+            }
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = vox };
+            var tris = new List<FacetedVoxelTriangle>(1024);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(0, 0, 96, worldChunks, tris, minY: 64);
+
+            float sumMeshY = 0f;
+            int countMeshVerts = 0;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                var t = tris[i];
+                if (t.V0.X >= 5f && t.V0.X <= 11f && t.V0.Z >= 5f && t.V0.Z <= 11f && t.V0.Y > 74.5f)
+                {
+                    sumMeshY += (t.V0.Y + t.V1.Y + t.V2.Y) / 3f;
+                    countMeshVerts++;
+                }
+            }
+            Assert.That(countMeshVerts, Is.GreaterThan(8), "Test cimen yuzeyi ucgen uretmelidir.");
+            float avgRenderedGrassY = sumMeshY / countMeshVerts;
+            float physicsGroundY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(worldChunks, 8.5f, 8.5f, refY: 75.2f);
+            Assert.That(UnityEngine.Mathf.Abs(physicsGroundY - avgRenderedGrassY), Is.LessThanOrEqualTo(0.08f),
+                $"Fiziksel zemin ({physicsGroundY:F3}m) gorsel SurfaceNets cimen yuzeyinden ({avgRenderedGrassY:F3}m) en fazla 8 cm farkli olmalidir (havada durma yasaktir)!");
+
+            // 2) 120 Ardisik Karede 0.000m Dikey Ziplatma / Titreme Garantisi (stickToSlope vs ResolveVoxelAndColliderDepenetration)
+            var playerGo = new UnityEngine.GameObject("Devir048b_ZeroBouncePlayer");
+            try
+            {
+                var fluidChunks = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = new ushort[65536] };
+                var dirtyFluids = new HashSet<(int cx, int cz)>();
+                var activeFluids = new HashSet<(int cx, int cz)>();
+                var bridge = new Stage1PlayerMovementBridge();
+                bridge.SetSafeSpawnPosition(new UnityEngine.Vector3(8.5f, 75.16f, 8.5f));
+                playerGo.transform.position = new UnityEngine.Vector3(8.5f, 76.0f, 8.5f); // Eskiden takili kaldigi +1m yukseklikten birak!
+
+                string feedback;
+                for (int warmup = 0; warmup < 25; warmup++)
+                {
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, UnityEngine.Vector2.zero,
+                        false, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                }
+
+                float settledY = playerGo.transform.position.y;
+                Assert.That(settledY, Is.EqualTo(physicsGroundY).Within(0.03f),
+                    "Karakter 76.0m'de havada asili kalmamali, tam SurfaceNets cimen yuksekligine (~75.16m) inmelidir!");
+
+                float maxFrameToFrameBounce = 0f;
+                float prevY = settledY;
+                for (int frame = 0; frame < 120; frame++)
+                {
+                    UnityEngine.Vector2 move = frame >= 40 && frame < 75 ? new UnityEngine.Vector2(0f, 1f) : UnityEngine.Vector2.zero;
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, move,
+                        frame >= 60 && frame < 75, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                    float curY = playerGo.transform.position.y;
+                    float dy = UnityEngine.Mathf.Abs(curY - prevY);
+                    if (dy > maxFrameToFrameBounce) maxFrameToFrameBounce = dy;
+                    prevY = curY;
+                }
+
+                Assert.That(maxFrameToFrameBounce, Is.LessThan(0.002f),
+                    $"Duz SurfaceNets cimeninde dururken/kosarken dikey ziplatma 0 olmalidir (olculen max ziplatma: {maxFrameToFrameBounce:F5}m)!");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(playerGo);
+            }
+
+            // 3) 25,600x Hizlandirilmis Chunk Uretimi + Dogal Magara Girislerinin Korunmasi Benchmarki
+            uint[] benchVox = new uint[65536];
+            ushort[] benchFluids = new ushort[65536];
+            Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(8, 0, benchVox, benchFluids); // JIT isinmasi
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int cz = -2; cz <= 1; cz++)
+            {
+                Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(9, cz, benchVox, benchFluids);
+            }
+            sw.Stop();
+            Assert.That(sw.Elapsed.TotalMilliseconds, Is.LessThan(60.0),
+                $"4 yeni dis halka chunk uretimi tek cekirdekte bile <60 ms surmelidir (olculen: {sw.Elapsed.TotalMilliseconds:F2} ms)!");
+            Assert.That(
+                Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.TryGetMacroRegionCaveEntrance(-1, 0, out _, out _, out _, out _, out _),
+                Is.True,
+                "Baslangic kitasindaki dogal magara girisi onbellek sonrasinda da %100 korunmalidir!");
 #endif
         }
     }

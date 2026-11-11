@@ -118,6 +118,8 @@ namespace Stratocraft.Core.Logging
             _sqliteDbPath = Path.Combine(baseDir, "telemetry_logs.db");
             string dateStamp = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
             _rollingTextLogPath = Path.Combine(textLogDir, $"stratocraft-{dateStamp}.log");
+            RotateOversizedLogFileIfNeeded(_sqliteDbPath, 64L * 1024L * 1024L, rotateWalCompanions: true);
+            RotateOversizedLogFileIfNeeded(_rollingTextLogPath, 32L * 1024L * 1024L, rotateWalCompanions: false);
 
             try
             {
@@ -513,6 +515,32 @@ namespace Stratocraft.Core.Logging
         private static string FormatTraceId(ulong traceId)
         {
             return traceId.ToString("X16", CultureInfo.InvariantCulture);
+        }
+
+        private static void RotateOversizedLogFileIfNeeded(string path, long maxBytes, bool rotateWalCompanions)
+        {
+            try
+            {
+                if (!File.Exists(path)) return;
+                var info = new FileInfo(path);
+                if (info.Length <= maxBytes) return;
+
+                string prevPath = path + ".prev";
+                if (File.Exists(prevPath)) File.Delete(prevPath);
+                File.Move(path, prevPath);
+
+                if (rotateWalCompanions)
+                {
+                    string wal = path + "-wal";
+                    string shm = path + "-shm";
+                    if (File.Exists(wal)) File.Delete(wal);
+                    if (File.Exists(shm)) File.Delete(shm);
+                }
+            }
+            catch
+            {
+                // Dosya baska surec tarafindan aciksa sessizce gec
+            }
         }
     }
 }

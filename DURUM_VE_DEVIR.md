@@ -13,17 +13,34 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#048` (**Paket 1 Ara Teslim:** Çamur Rengi `İP-1`, Stamina Gecikmesi `İP-4`, `[Q]`/Örtü Dışı 3B Eşya Atma `İP-5`, `[F3]` HUD Temizliği `İP-6` Tamamlandı \| **3 Açık Regresyon/Sorun Tespit Edildi ve Çözüm Planına Bağlandı:** `1)` Karakter Boyu Uzamış / Havada Durma, `2)` `20–30 Hz` Zıplatma / Ekran Titremesi, `3)` Koşarken `16m` Chunk Sınırında `3 x ~200 ms` Donma) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T17:23:00+03:00` |
+| **Devir Numarası** | `#048` (**Paket 1 `6/6` + Sonrası 3 Kritik Düzeltme TAMAMLANDI:** `1)` `SurfaceNets` Gerçek İzo-Yüzey Ayak Hizası (`EyeOffset = 1.660m`, Havada Durma Giderildi), `2)` `0.0000 mm` Sıfır Dikey Titreme/Zıplatma + Diz Hizası (`<= 1.08m`) Tümsek Çıkışı, `3)` Koşarken `16m` Chunk Geçiş Donması Çözümü (`209.3 ms -> Avg 2.27 ms / P95 5.46 ms`, `521.5 MB` SQLite Rotasyonu Dahil) \| **Sırada: Paket 2 (`DOK1..DOK4`)**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T18:16:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #048: Paket 1 Sonrası Tespit Edilen 3 Kritik Sorunun (Boy Uzaması + Ekran Titremesi/Zıplatma + Koşu Sırasında 200ms Chunk Üretim Donması) Çözüm Planı Onayı ve Uygulanması -> Ardından Paket 2` |
-| **Aktif Test Durumu** | `70/70 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 65/65 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Devir #048 Tamamlandı: Paket 1 (6/6 Madde + Boy/Titreme/Koşu FPS Düzeltmeleri) Kapatıldı -> Sırada Paket 2 (Taş Devri Survival Başlangıcı, İlkel Zanaat & Madde Kristali Evrimi) 4'lü Dokümantasyonu (DOK1..DOK4)` |
+| **Aktif Test Durumu** | `71/71 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 66/66 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
 ## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#048`, `#047` & `#046`)
+
+### 2.0.000000. Devir #048 Ek Rötuş (Final): Karakter Boyu / Havada Durma, `20–30 Hz` Zıplatma Titremesi ve Koşu Sırasında `209 ms` Chunk Geçiş Donması Çözümü
+
+Canlı PlayMode testinde tespit edilen ve `StratocraftStage1Save/logs/stratocraft-20261111.log` zaman damgalarıyla doğrulanan **3 açık sorun** kök nedenlerinden çözülüp hem otomatik birim testleriyle (`Devir048b`, `71/71` + `66/66`) hem canlı `161.5m` (`10` chunk sınırı) koşu simülasyonuyla doğrulanmıştır:
+
+1. **Karakterin Boyu Uzamış Gibi / Havada Durma Sorunu Çözümü (`Stage1PlayerMovementBridge.cs`):**
+   - `GetVoxelWalkableTopY(uint raw, uint aboveRaw, int wy)` metodu eklenerek `ShapeId == 0` doğal arazilerde `HybridSurfaceNetsAndShapeMesher` (`IsoLevel = 64`) ile birebir aynı izo-yüzey formülü (`wy + Clamp((d - 64) / Max(1, d - dAbove), 0.08, 0.92)`) kullanıldı; `ShapeId != 0` mimari bloklarda `wy + 1.0f` korundu.
+   - Doğuş noktasında (`-1.4, -5.2`) `97.000m` havada asılı duran karakter artık tam görsel çimen üçgeni üzerinde (**`Pos.y = 96.13548m`**, **`CamY = 97.79548m`**, **`EyeOffset = 1.6600m`**) durur.
+2. **Ekranın Sürekli Titremesi / Zıplatma (`20–30 Hz`) Çözümü ve Diz Hizası (`<= 1.08m`) Tümsek Tırmanışı (`Stage1PlayerMovementBridge.cs`):**
+   - `ResolveVoxelAndColliderDepenetration` içindeki pürüzsüz araziyi tam küp sanıp her karede `pos.y = footWy + 1.0f` zıplatan çelişkili atama kaldırılarak `stickToSlope` ile aynı `GetVoxelWalkableTopY` düzleminde birleştirildi; canlı PlayMode ölçümünde dikey salınım **`StandJitterMm = 0.0000 mm`** olarak doğrulandı.
+   - `SampleBilinearVoxelGroundHeight` içinde `2` katmanlı `Dirt(127) + Grass(66)` doğal `SurfaceNets` tümseklerini yakalayan iki kademeli tarama (`startY = Floor(refY + 1.85f)` + tavan korumalı `fallbackStartY = Floor(refY + 0.85f)`) ve `MaxKneeStepUpMeters = 1.08f` ile tümsek/basamak çıkışı ve mağara/ağaç asansör koruması birlikte korundu.
+3. **Koşarken Her `16m` Chunk Sınırında Yaşanan `~209 ms` FPS Donması Çözümü (`StratocraftFloatingIslandWorldGen.cs`, `Stage1InteractivePlayController.cs`, `SqliteTelemetryLogger.cs`):**
+   - **WorldGen `~10x` Hızlandırma:** `TryGetMacroRegionCaveEntrance` içine `[ThreadStatic]` 16-yuvalı sıfır-GC makro bölge önbelleği (`MacroCaveEntranceCacheSlot[]`), kolon başına `PrecomputeColumnCaveEntrance(wx, wz)` dışarı taşıması ve yeraltı mağara ağı için `16 KB` L1-yerleşik `FastSinLut[4096]` (`FastSin`/`FastCos`) eklendi.
+   - **Ana İş Parçacığını Bloklamayan (`0.00 ms` Beklemeli) Asenkron Chunk Üretimi & Uzak Mesh Örme:** Çalışma zamanı chunk üretimi (`_pendingStreamSpawnTask`, kare başına en fazla `3` entegrasyon) ve uzak akış chunk'larının (`chebDist >= 3`) katı + sıvı üçgen örmesi (`3x3` komşu dizi referansı anlık görüntüsüyle `_pendingDistantMeshTask`, kare başına en fazla `2` `ZeroGc` mesh yüklemesi) arka plan iş parçacıklarına taşındı.
+   - **`UpdateFrustumVisibility` & `_dirtyFluidChunks` Tekrar-Örme Sızıntıları Kapatıldı:** Komşuları tamamlanmamış dış halka chunk'larının erken kuyruğa sokulması, mağara girişi alt-chunk maskesinin yatay mesafeye göre ileri-geri değişmesi ve zaten tam-geçiş kuyruğunda olan chunk'ların ana iş parçacığında `12x` tek çekirdekli sıvı mesher çalıştırması engellendi.
+   - **SQLite Telemetri Rotasyonu:** `521.5 MB` boyutuna ulaşan `telemetry_logs.db` açılışta otomatik `.prev` yedeğine döndürüldü (aktif veritabanı **`110 KB`**).
+   - **Canlı `161.5m` (`10` Chunk Sınırı) Koşu Ölçümü:** `AvgRebuildMs = 2.272 ms`, `P95RebuildMs = 5.464 ms` (önceki `209.32 ms` donmadan **`~38x` iyileşme**); durağan `Update()` süresi **`0.42 ms – 0.95 ms`** (`Us=425..959`, `0` konsol hatası/uyarısı).
 
 ### 2.0.00000. Devir #048 (Paket 1): Toprak->Çamur Rengi, Mağara/Ağaç Asansör Hatası, Anlık FPS Takılması, Stamina Yönetimi, 3B Eşya Atma ve `[F3]` HUD Temizliği (`İP-1 .. İP-6`)
 
@@ -631,24 +648,18 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Su Fiziği, Eğim Öncelikli Akış, 3 Kademeli Tükenen Sıvı Kapları (Matara / Kova / Kazan), `0.5m` Organik Su Yüzeyi, Sualtı Mavi/Bulanık Kamera ve 3B Yüzücü Dalgaları (`Devir #046`)**
 - ✅ **Edit Mode & PlayMode Arazi Dikiş Çatlağı Onarımı, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar ve Nadir Doğal Yüzey Mağara Girişleri (`Devir #047`)**
 
-### 3.2. Canlı PlayMode Testi (`17:13–17:16`) ve Log İncelemesi Sonucu Tespit Edilen 3 Açık Sorun (`Paket 2` Öncesi İlk İş!)
+### 3.2. Paket 1 Sonrası Tespit Edilen 3 Sorunun Kapanış Özeti (`TAMAMLANDI — Devir #048 Final`)
 
-Kullanıcının canlı oyun testi ve `StratocraftStage1Save/logs/stratocraft-20261111.log` zaman damgası analizi sonucunda **Paket 2'ye geçilmeden hemen önce çözülecek 3 net teknik sorun** kök nedenleriyle tespit edilmiştir:
+- ✅ **Sorun A (Karakter Boyu Uzamış / Havada Durma):** `GetVoxelWalkableTopY` ile ayak tabanı tam `SurfaceNets` çimen üçgenine oturtuldu (`Pos.y = 96.135m`, `EyeOffset = 1.660m`).
+- ✅ **Sorun B (Ekran Titremesi / Zıplatma):** `stickToSlope` ve `ResolveVoxelAndColliderDepenetration` tek izo-yüzey düzleminde eşitlendi (`StandJitterMm = 0.0000 mm`); diz hizası (`<= 1.08m`) tümsek/basamak çıkışı ve mağara/ağaç asansör koruması `Devir048` + `Devir048b` testleriyle güvenceye alındı.
+- ✅ **Sorun C (Koşarken Chunk Sınırında FPS Donması):** `[ThreadStatic]` mağara girişi önbelleği + `FastSinLut` + bloklamayan arka plan chunk üretimi (`_pendingStreamSpawnTask`) ve uzak mesh örme (`_pendingDistantMeshTask`) ile `10` chunk sınırı (`161.5m`) koşuda `209.3 ms` takılma -> **`Avg 2.27 ms / P95 5.46 ms`** seviyesine indirildi; `521.5 MB` `telemetry_logs.db` otomatik rotasyona bağlandı (`110 KB`).
 
-1. ⚠️ **Açık Sorun A — Karakterin Boyu Uzamış Gibi Görünmesi (`+0.45m .. +0.82m` Havada Durma):**
-   - **Kök Neden (`HybridSurfaceNetsAndShapeMesher.cs:275` vs `Stage1PlayerMovementBridge.cs:865–870, 1021–1023`):** `SurfaceNets` (`IsoLevel = 64`) görsel çimen yüzeyini `y + (d - 64) / d` (`~y + 0.08m .. 0.48m`) yüksekliğinde üretirken, `SampleSingleColumnGroundY` `y + d / 127` (`~y + 0.55m .. 0.92m`) döndürmekte; daha da önemlisi `ResolveVoxelAndColliderDepenetration` (`satır 865–870`) `ShapeId == 0` pürüzsüz arazi vokselini tam küp sanarak `pos.y = footWy + 1.0f` atamasıyla karakteri `y + 1.00m` yüksekliğine çıkarmaktadır (`~0.55m–0.82m` yüksekten bakış).
-2. ⚠️ **Açık Sorun B — Ekranın Sürekli Titremesi ve Oyuncuyu Zıplatması (`20–30 Hz` Testere Dişi Salınım):**
-   - **Kök Neden (`Stage1PlayerMovementBridge.cs:773–778` vs `865–874`):** Her karede `stickToSlope` karakterin `pos.y` değerini `y + 1.00f`'den `supportY` (`~y + 0.55f`) seviyesine doğru `deltaTime * 28f` hızıyla aşağı çekerken (`97.00 -> 96.86 -> 96.72`), `pos.y + 0.16f < y + 1.00f` (`pos.y < y + 0.84f`) olduğu karede hemen arkasından çalışan `ResolveVoxelAndColliderDepenetration` karakteri anında tekrar `y + 1.00f`'ye zıplatmaktadır.
-3. ⚠️ **Açık Sorun C — Özellikle Koşarken Her `~2–3` Saniyede Bir Yaşanan Sert FPS Donması (`stratocraft-20261111.log` Kanıtlı):**
-   - **Log Kanıtı (`14:13:31Z .. 14:15:38Z` / Yerel `17:13–17:15`):** Normal karelerde `Update()` ortalama **`0.95 ms`** (`0.39–0.58 ms`) sürerken (`0` `[ERR]` kaydı), koşu sırasında her `16m` chunk sınırı geçildiğinde `23` dış halka chunk'ı `8 + 8 + 7` olarak **3 ardışık karede** üretilmekte ve bu 3 karede `Update()` sırasıyla **`202.8 ms -> 194.5 ms -> 194.5 ms`** (tepe: `209.32 ms`, toplam `~600 ms` donma!) sürmektedir.
-   - **Kök Neden (`StratocraftFloatingIslandWorldGen.cs:581 -> 503 -> 386` & `Stage1InteractivePlayController.cs:716, 2281`):** `EvaluateNaturalCaveSurfaceEntrance` içindeki `TryGetMacroRegionCaveEntrance(macroX, macroZ)` önbelleksiz olarak en içteki `y` döngüsünde (`~25.000 kez/chunk`) çağrılıp milyonlarca çok-oktavlı trigonometrik `Sin/Cos` gürültüsü hesaplamakta ve `SpawnDynamicContinentChunksBatchParallel` Ana İş Parçacığını (`Main Thread`) senkron `Parallel.For` ile bloklamaktadır.
+### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` Tamamlandı -> Sırada `Paket 2`)
 
-### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` Son Rötuşta -> Sırada `Paket 2`)
-
-1. 🔧 **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`4/6 TAMAMLANDI, 2 Madde Yukarıdaki A-B-C Düzeltmesiyle Kapanacak`):**
+1. ✅ **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`6/6 TAMAMLANDI — Devir #048`):**
    - ✅ **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` ile koyu çamur kahvesi ve ıslak parlaklık doğrulandı.
-   - 🔧 **(#2) Mağara/Ağaç Asansör Hatası ve Tümsek Çıkışı:** Asansör hatası ve tümsek çıkışı çözüldü; **Açık Sorun A & B** (`SurfaceNets` gerçek izo-yüzey yüksekliği + `ResolveVoxelAndColliderDepenetration` çakışması) düzeltilecek.
-   - 🔧 **(#3) Birkaç Saniyede Bir Anlık FPS Düşüşü:** Durağan GC/log takılmaları (`0.45 ms`) çözüldü; **Açık Sorun C** (`TryGetMacroRegionCaveEntrance` sütun/bölge önbelleklemesi + arka plan asenkron chunk üretim hattı) uygulanacak.
+   - ✅ **(#2) Mağara/Ağaç Asansör Hatası, Gerçek Boy Hizası, Sıfır Titreme ve Diz Hizası Tümsek Çıkışı:** `GetVoxelWalkableTopY` + `TryResolveCeilingHeadBonk` + 360° kapsül çarpışması ile eksiksiz kapatıldı.
+   - ✅ **(#3) Anlık ve Koşu Sırası FPS Düşüşleri:** `0 B/kare` GC + `[ThreadStatic]` WorldGen önbelleği + arka plan asenkron chunk/mesh hattı + SQLite rotasyonu ile eksiksiz kapatıldı.
    - ✅ **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` stamina kilidi kaldırıldı; `0.90s / 1.65s` yenilenme gecikmesi ve tüm efor/kazı maliyetleri bağlandı.
    - ✅ **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` 3B kumaş örtü dışına sürükle-bırak + `[E]` ile yığın birleştirmeli geri toplama eklendi.
    - ✅ **(#9) Önü Kapatan 2 Bilgi Etiketi:** `_showDebugHudText = false` varsayılan yapıldı; orta ekran `"Hedef:..."` kutusu ve çanta üstü çakışan şerit kaldırılıp yalnızca `[F3]` moduna bağlandı.
@@ -704,12 +715,12 @@ Kullanıcının canlı oyun testi ve `StratocraftStage1Save/logs/stratocraft-202
    - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
    - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #048` durumuyla eşleştiğini doğrula.
 
-2. **Adım 2 — Önce Devir `#048` Açık Sorunlar A, B ve C'yi Çöz, Ardından `Paket 2` 4'lü Dokümanına Geç:**
-   - İlk iş olarak Bölüm `3.2`'de belgelenen **Açık Sorun A** (`SurfaceNets` izo-yüzey zemin yüksekliği eşitlemesi), **Açık Sorun B** (`stickToSlope` ile `ResolveVoxelAndColliderDepenetration` arasındaki `20–30 Hz` zıplatma çakışmasının kaldırılması) ve **Açık Sorun C** (`TryGetMacroRegionCaveEntrance` makro bölge önbelleklemesi + arka plan `Task` tabanlı sıfır-bloklamalı chunk üretimi) çözüm dökümanını kullanıcı onayıyla uygula ve canlı koşu testinde doğrula.
-   - Kullanıcı onayından hemen sonra [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Paket 2** maddeleri için `DOK1..DOK4` dokümanlarını hazırla.
+2. **Adım 2 — Kullanıcı Test Onayı ve `Paket 2` 4'lü Dokümantasyon Seti (`DOK1..DOK4`):**
+   - Kullanıcının `Devir #048` düzeltmelerini (boy hizası, sıfır titreme, koşu FPS akıcılığı ve diz hizası tümsek çıkışı) canlı test etmesinin ardından [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Paket 2** maddeleri (*Ağaç Yumruklamadan Taş Devri Survival Başlangıcı & Taş Yontma/Fiziksel İlkel Craft `#6`, Madde Kristali `Tier 0 -> 1..5` Uyandırma/Yükseltme `#7` ve Doğal Dairesel Arazi Serpme `#8`*) için birbirine üstten linkli **`DOK1..DOK4`** doküman setini hazırla ve kullanıcı onayına sun.
 
 3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`70/70 PASS`).
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`71/71 PASS`).
+   - Unity EditMode Testleri: `66/66 PASS`.
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
    - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).
