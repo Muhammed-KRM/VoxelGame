@@ -268,14 +268,17 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
         roughness = saturate(0.75 - sharpnessOrTone * 0.35);
     }
 
-    // Toprak islakligi ve camurlasma kararmasi: nem arttikca renk koyulasir, doygunlukta koyu kahve camur ve islak parlama olusur
-    if (soilWetness01 > 0.01)
+    // Toprak islakligi ve camurlasma kararmasi: nem arttikca gozenekli renk koyulasir, doygunlukta koyu kahve camur ve islak parlama olusur
+    if (soilWetness01 > 0.005)
     {
-        float3 richMudLinear = ConvertLutSrgbToActiveColorSpace(float3(0.24, 0.16, 0.10));
-        float mudColorShift = smoothstep(0.30, 0.88, soilWetness01);
-        albedo = lerp(albedo, richMudLinear, mudColorShift * 0.78);
-        albedo *= lerp(1.0, 0.46, soilWetness01);
-        roughness = lerp(roughness, 0.14, soilWetness01 * 0.85);
+        float dampFactor = saturate(soilWetness01 * 2.35);
+        albedo *= lerp(1.0, 0.52, dampFactor);
+
+        float3 richMudLinear = ConvertLutSrgbToActiveColorSpace(float3(0.21, 0.125, 0.065));
+        float mudColorShift = smoothstep(0.14, 0.72, soilWetness01);
+        albedo = lerp(albedo, richMudLinear, mudColorShift * 0.92);
+
+        roughness = lerp(roughness, 0.11, smoothstep(0.08, 0.80, soilWetness01));
     }
 
     // Yukseklik bazli hafif jeolojik derinlik gradyani (magara ve falez tabanlarina hacim katar)

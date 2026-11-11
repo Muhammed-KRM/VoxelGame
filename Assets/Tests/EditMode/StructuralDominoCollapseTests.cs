@@ -787,5 +787,181 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(slicedTriTotal, Is.EqualTo(fullTris.Count),
                 "Alt-chunk dilimli orme (subY=4..9) ile tam-gecis orme (64..160) tek bir ucgen bile kaybetmeden birebir eslesmelidir!");
         }
+
+        [Test]
+        public void Devir048_MudMoistureVertexTransfer_AntiElevatorCollision_AndStaminaRegenDelay_OperateCorrectly()
+        {
+            // 1) IP-1: Islanan Grass/Dirt hucrelerinin doygunlugu (1..120) Dual Contouring arazi ucgenlerinin Temperature kanalina tasinmalidir!
+            var worldMap = new Dictionary<(int cx, int cz), uint[]>();
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    uint[] flatVox = new uint[StratocraftConstants.VoxelsPerChunk];
+                    for (int lz = 0; lz < 16; lz++)
+                    {
+                        for (int lx = 0; lx < 16; lx++)
+                        {
+                            int col = (lz << 4) | lx;
+                            for (int y = 70; y <= 79; y++)
+                            {
+                                flatVox[(y << 8) | col] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                            }
+                            flatVox[(80 << 8) | col] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 96, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                        }
+                    }
+                    worldMap[(dx, dz)] = flatVox;
+                }
+            }
+
+            var soilSys = new SoilMoistureAndMudSystem();
+            ushort[] fluids = new ushort[StratocraftConstants.VoxelsPerChunk];
+            for (int lz = 6; lz <= 9; lz++)
+            {
+                for (int lx = 6; lx <= 9; lx++)
+                {
+                    fluids[(81 << 8) | (lz << 4) | lx] = FluidCell16.Pack(FluidType.Water, 220, isSettled: false, pressureHead: 0).RawValue;
+                }
+            }
+            for (int tick = 0; tick < 8; tick++)
+            {
+                soilSys.StepChunkSoilInfiltration(0, 0, worldMap[(0, 0)], fluids, 96, out _, out _);
+            }
+
+            var terrainTris = new List<FacetedVoxelTriangle>(1024);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                0, 0, 96, worldMap, terrainTris, minY: 64, soilMoistureChunks: soilSys.SoilMoistureChunks);
+
+            byte maxMudTemp = 0;
+            for (int i = 0; i < terrainTris.Count; i++)
+            {
+                if ((terrainTris[i].MaterialId == MaterialIdCatalog.Grass || terrainTris[i].MaterialId == MaterialIdCatalog.Dirt) &&
+                    terrainTris[i].Temperature <= 120 && terrainTris[i].Temperature > maxMudTemp)
+                {
+                    maxMudTemp = terrainTris[i].Temperature;
+                }
+            }
+            Assert.That(maxMudTemp, Is.GreaterThanOrEqualTo(40),
+                "IP-1: Su emen Grass/Dirt arazi ucgenleri Temperature=0 kalmamali; camur doygunlugu (1..120) ucgenlere aktarilmalidir!");
+
+            // 2) IP-4: Stamina harcamasi (Sprint / Slide) aninda dolmamali; StaminaRegenDelaySeconds suresi boyunca bekleyip ardindan yenilenmelidir!
+            var controller = new PhysicalCharacterControllerSystem();
+            var vitals = CharacterVitalsComponent.CreateDefault();
+            var moveState = CharacterMovementState.CreateDefault();
+            bool slideOk = PhysicalCharacterControllerSystem.TryInitiateSlide(ref moveState, ref vitals, (0f, 1f));
+            Assert.That(slideOk, Is.True);
+            float afterSlideStamina = vitals.Stamina;
+            Assert.That(afterSlideStamina, Is.EqualTo(85.0f).Within(0.01f));
+            Assert.That(vitals.StaminaRegenDelaySeconds, Is.GreaterThanOrEqualTo(0.85f));
+
+            // Kayma bittikten sonra 0.40 sn dinlenmede gecikme sayaci henuz sifirlanmadigi icin stamina sabit kalmalidir:
+            moveState.SlideRemainingSeconds = 0f;
+            moveState.Stance = CharacterStance.Standing;
+            controller.StepMovement(ref moveState, ref vitals, CharacterStance.Standing, (0f, 0f), availableVoxelHeadroomBlocks: 3, deltaTime: 0.40f);
+            Assert.That(vitals.Stamina, Is.EqualTo(afterSlideStamina).Within(0.01f),
+                "IP-4: Efor sonrasinda StaminaRegenDelaySeconds dolmadan stamina aninda dolmaya baslamamalidir!");
+
+            // 1.20 sn daha dinlenildiginde gecikme biter ve stamina yukselir:
+            controller.StepMovement(ref moveState, ref vitals, CharacterStance.Standing, (0f, 0f), availableVoxelHeadroomBlocks: 3, deltaTime: 1.20f);
+            Assert.That(vitals.Stamina, Is.GreaterThan(afterSlideStamina + 4.0f),
+                "IP-4: Dinlenme gecikmesi dolduktan sonra stamina normal hizda yenilenmelidir!");
+
+#if UNITY_5_3_OR_NEWER
+            // 3) IP-2: Alçak magara tavanina ziplarken ve agac govdesine ileri/geri yururken tepeye isinlanma ("Asansor Bug'i") yasanmamalidir!
+            var caveChunks = new Dictionary<(int cx, int cz), uint[]>();
+            uint[] caveVox = new uint[StratocraftConstants.VoxelsPerChunk];
+            uint stoneBlock = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+            uint woodBlock = VoxelBitUtility.PackStandard(MaterialIdCatalog.OakWood, 127, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx <= 15; lx++)
+                {
+                    int col = (lz << 4) | lx;
+                    caveVox[(74 << 8) | col] = stoneBlock; // Zemin ust yuzeyi = 75.0
+                    // Y=75 ve Y=76 koridor boslugu (2m yukseklik); Y=77..90 kalin magara tavani (Y=90 ustu yuzey):
+                    if (lx >= 6)
+                    {
+                        for (int y = 77; y <= 90; y++)
+                        {
+                            caveVox[(y << 8) | col] = stoneBlock;
+                        }
+                    }
+                }
+            }
+            // (x=4, z=8) konumuna Y=75..81 arasi 7m yuksekliginde 1x1 agac govdesi dik:
+            for (int y = 75; y <= 81; y++)
+            {
+                caveVox[(y << 8) | (8 << 4) | 4] = woodBlock;
+            }
+            caveChunks[(0, 0)] = caveVox;
+
+            // a) Tavan altinda ziplayan oyuncu (refY = 76.2) icin zemin yuksekligi ASLA tavanin ustu (91.0) olmamali, koridor tabani (75.0) kalmalidir!
+            float corridorGroundY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 7.5f, 8.5f, refY: 76.2f);
+            Assert.That(corridorGroundY, Is.EqualTo(75.0f).Within(0.05f),
+                "IP-2: Dolu magara tavaninin ic kesiti asla zemin sanilip oyuncuyu yukari cekmemelidir!");
+
+            // b) Tavana kafa carpma kontrolu (TryResolveCeilingHeadBonk) oyuncuyu Y=77 tavaninin altinda sinirlamalidir:
+            var risingPos = new UnityEngine.Vector3(7.5f, 75.35f, 8.5f);
+            bool hitCeiling = Stage1PlayerMovementBridge.TryResolveCeilingHeadBonk(caveChunks, ref risingPos, 1.8f, 0.34f);
+            Assert.That(hitCeiling, Is.True);
+            Assert.That(risingPos.y + 1.8f, Is.LessThanOrEqualTo(77.0f),
+                "IP-2: Ziplayan oyuncunun basi Y=77 tavaninin icine girmemeli, tavan altinda tutulmalidir!");
+
+            // c) Agac govdesine (x=4..5, z=8..9) hem ileri (+Z) hem geri (-Z) yururken IsHorizontalStepBlocked simetrik olarak gecisi engellemelidir:
+            bool blockedForwardIntoTree = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(4.5f, 75.0f, 7.60f),
+                next: new UnityEngine.Vector3(4.5f, 75.0f, 7.75f));
+            bool blockedBackwardIntoTree = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(4.5f, 75.0f, 9.40f),
+                next: new UnityEngine.Vector3(4.5f, 75.0f, 9.25f));
+            Assert.That(blockedForwardIntoTree, Is.True, "IP-2: Agaca ileri (W) yururken govde icine sizma engellenmelidir!");
+            Assert.That(blockedBackwardIntoTree, Is.True, "IP-2: Agaca geri geri (S) yururken govde icine sizma ve tepeye isinlanma engellenmelidir!");
+
+            // d) Agac dibinde duran oyuncunun zemini agac tepesi (82.0) degil, gercek toprak zemini (75.0) olmalidir:
+            float nearTreeGroundY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 4.5f, 7.68f, refY: 75.0f);
+            Assert.That(nearTreeGroundY, Is.EqualTo(75.0f).Within(0.05f),
+                "IP-2: Agac dibindeki bilinear zemin orneklemesi agac tepesini (82m) yakalamamalidir!");
+
+            // e) Ufak dogal tumsek (+0.68m, kesirli refY=74.85m ve 2-katmanli Dirt+Grass SurfaceNets yamaci dahil) ve diz hizasi 1.0m basamak rahatca tirmanilabilmeli, 2.0m duvar engellenmelidir:
+            caveVox[(74 << 8) | (4 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 108, 0, 0, BlokKokenDurumu.DogalKutle, 0); // top ~74.85m
+            caveVox[(74 << 8) | (4 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // alt katman tam dolu toprak
+            caveVox[(75 << 8) | (4 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 68, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // ust kabuk ~75.535m (+0.685m yamac)
+            caveVox[(74 << 8) | (6 << 4) | 1] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 58, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // top ~74.456m
+            caveVox[(74 << 8) | (6 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // alt katman tam dolu toprak
+            caveVox[(75 << 8) | (6 << 4) | 2] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Grass, 45, 0, 0, BlokKokenDurumu.DogalKutle, 0);  // ust kabuk ~75.354m (+0.898m yamac)
+            caveVox[(75 << 8) | (2 << 4) | 2] = stoneBlock; // top = 76.0m (+1.0m diz hizasi basamak, y=76..77 acik hava)
+            caveVox[(75 << 8) | (12 << 4) | 2] = stoneBlock;
+            caveVox[(76 << 8) | (12 << 4) | 2] = stoneBlock; // top = 77.0m (2m yuksek duvar)
+
+            bool blockedOnNaturalBump = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(1.62f, 74.85f, 4.5f),
+                next: new UnityEngine.Vector3(1.78f, 74.85f, 4.5f));
+            bool blockedOnTwoLayerSlope = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(1.62f, 74.46f, 6.5f),
+                next: new UnityEngine.Vector3(1.78f, 74.46f, 6.5f));
+            bool blockedOnKneeBlockStep = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(1.62f, 75.0f, 2.5f),
+                next: new UnityEngine.Vector3(1.78f, 75.0f, 2.5f));
+            bool blockedOnTwoMeterWall = Stage1PlayerMovementBridge.IsHorizontalStepBlocked(
+                caveChunks,
+                cur: new UnityEngine.Vector3(1.62f, 75.0f, 12.5f),
+                next: new UnityEngine.Vector3(1.78f, 75.0f, 12.5f));
+
+            Assert.That(blockedOnNaturalBump, Is.False, "Kesirli Y (74.85m) konumundan dogal +0.68m tumsege yururken karakter ASLA takilmamalidir!");
+            Assert.That(blockedOnTwoLayerSlope, Is.False, "Alt voksel Dirt(127) + ust voksel Grass(45) olan dogal SurfaceNets yamacina (+0.89m) yururken karakter ASLA takilmamalidir!");
+            Assert.That(blockedOnKneeBlockStep, Is.False, "Diz hizasi 1.0m basamaga (75.0m -> 76.0m) ustu acikken karakter rahatca adim atabilmelidir!");
+            Assert.That(blockedOnTwoMeterWall, Is.True, "2.0m yuksekligindeki duvar gecisi engellenmelidir!");
+
+            float bumpSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 4.5f, refY: 74.85f);
+            float stepSampleY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(caveChunks, 2.5f, 2.5f, refY: 75.0f);
+            Assert.That(bumpSampleY, Is.GreaterThan(75.45f), "Dogal tumsek zemin yuksekligi kesirli refY'de kaybolmamali (-30 donmemeli)!");
+            Assert.That(stepSampleY, Is.EqualTo(76.0f).Within(0.05f), "1.0m diz hizasi basamak zemin yuksekligi dogru orneklenmelidir!");
+#endif
+        }
     }
 }

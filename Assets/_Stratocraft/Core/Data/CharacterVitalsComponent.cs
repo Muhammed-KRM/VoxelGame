@@ -45,6 +45,7 @@ namespace Stratocraft.Character.Data
         public float BleedOutTimerSeconds;  // 0 HP'de 30.0 sn geri sayim
         public float Wetness01;             // 0.0 (kuru) .. 1.0 (sirilsiklam -> sogukta 3x isi kaybi!)
         public float SubmergedDepthMeters;  // Sualti derinligi (Boyle-Mariotte O2 tuketimi ve >50m ezilme hasari)
+        public float StaminaRegenDelaySeconds; // Efor/aksiyon sonrasi enerji dolumunun baslamasi icin kalan gecikme (sn)
         public byte ActiveDiseaseFlags;
         public byte EquippedHelmetTier;     // 0: Yok, 1: Deri/Bez (%30), 2: Kemik/Tahta (%45), 3: Bakir (%60), 4: Demir (%75), 5: Mithril (%90)
         public byte EquippedChestplateTier; // 0: Yok, 1..5

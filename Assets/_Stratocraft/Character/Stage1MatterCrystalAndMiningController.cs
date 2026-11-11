@@ -48,7 +48,7 @@ namespace Stratocraft.Character
         private byte _customSelectedMaterialId;
         private byte _lastGhostMat, _lastGhostShape, _lastGhostColorCode, _lastGhostRot;
         private int _brushRadiusIdx, _materialIdx, _shapeIdx = 1;
-        private float _actionCooldown, _miningDamageAccumulator;
+        private float _actionCooldown, _miningDamageAccumulator, _pendingMiningStaminaDrain;
         private int _lastToolSwingId;
         private int _lastActiveToolHolsterSlot = -1;
         private Vector3Int _lastMinedVoxelCoord = new(int.MinValue, int.MinValue, int.MinValue);
@@ -88,6 +88,13 @@ namespace Stratocraft.Character
         public string LastFeedbackText { get; set; } = "Hazir ([C] Kristal | [1-9/0] Alet & Kilif | [V] Sekil | [R] 24-Yon | [B/I] Malzeme)";
         public bool HasAimHit { get; private set; }
         public RaycastHit AimHit { get; private set; }
+
+        public float ConsumePendingMiningStaminaDrain()
+        {
+            float v = _pendingMiningStaminaDrain;
+            _pendingMiningStaminaDrain = 0f;
+            return v;
+        }
         public Vector3Int AimVoxelCoord { get; private set; }
         public Vector3Int PlacementVoxelCoord { get; private set; }
         private bool _hasExactMeshSurfaceHit;
@@ -759,6 +766,11 @@ namespace Stratocraft.Character
             {
                 CurrentToolDurability = Mathf.Max(0f, CurrentToolDurability - 0.5f * Stage1GameSettings.ToolDurabilityLossMultiplier);
                 holsterCtrl?.InventoryUi.UpdateSelectedToolDurability(ToolDurability01);
+                _pendingMiningStaminaDrain += 4.0f;
+            }
+            else
+            {
+                _pendingMiningStaminaDrain += 3.5f;
             }
 
             // Fiziksel darbe toklugu / hit-stop: Darbe aninda micro-freeze vererek vurus agirligini hissettir

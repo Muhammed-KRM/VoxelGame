@@ -666,35 +666,40 @@ namespace Stratocraft.Voxel.Jobs
                 {
                     dualVertices[i0] = dualVertices[i1] + dualVertices[i3] - dualVertices[i2];
                     dualMaterials[i0] = SelectDominantMaterial(dualMaterials[i1], dualMaterials[i2], dualMaterials[i3]);
-                    dualTemps[i0] = ResolveMaterialDefaultTemperature(dualMaterials[i0]);
+                    byte neighTemp = Math.Max(dualTemps[i1], Math.Max(dualTemps[i2], dualTemps[i3]));
+                    dualTemps[i0] = ResolveQuadVertexTemperature(dualMaterials[i0], neighTemp);
                     dualAo[i0] = dualAo[i1];
                 }
                 else if (!val1)
                 {
                     dualVertices[i1] = dualVertices[i0] + dualVertices[i2] - dualVertices[i3];
                     dualMaterials[i1] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);
-                    dualTemps[i1] = ResolveMaterialDefaultTemperature(dualMaterials[i1]);
+                    byte neighTemp = Math.Max(dualTemps[i0], Math.Max(dualTemps[i2], dualTemps[i3]));
+                    dualTemps[i1] = ResolveQuadVertexTemperature(dualMaterials[i1], neighTemp);
                     dualAo[i1] = dualAo[i0];
                 }
                 else if (!val2)
                 {
                     dualVertices[i2] = dualVertices[i1] + dualVertices[i3] - dualVertices[i0];
                     dualMaterials[i2] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i3]);
-                    dualTemps[i2] = ResolveMaterialDefaultTemperature(dualMaterials[i2]);
+                    byte neighTemp = Math.Max(dualTemps[i0], Math.Max(dualTemps[i1], dualTemps[i3]));
+                    dualTemps[i2] = ResolveQuadVertexTemperature(dualMaterials[i2], neighTemp);
                     dualAo[i2] = dualAo[i1];
                 }
                 else
                 {
                     dualVertices[i3] = dualVertices[i0] + dualVertices[i2] - dualVertices[i1];
                     dualMaterials[i3] = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i2]);
-                    dualTemps[i3] = ResolveMaterialDefaultTemperature(dualMaterials[i3]);
+                    byte neighTemp = Math.Max(dualTemps[i0], Math.Max(dualTemps[i1], dualTemps[i2]));
+                    dualTemps[i3] = ResolveQuadVertexTemperature(dualMaterials[i3], neighTemp);
                     dualAo[i3] = dualAo[i0];
                 }
             }
             Vector3 v0 = dualVertices[i0], v1 = dualVertices[i1], v2 = dualVertices[i2], v3 = dualVertices[i3];
             byte matA = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i1], dualMaterials[i2]);
             byte matB = SelectDominantMaterial(dualMaterials[i0], dualMaterials[i2], dualMaterials[i3]);
-            byte tempA = ResolveMaterialDefaultTemperature(matA), tempB = ResolveMaterialDefaultTemperature(matB);
+            byte quadMaxTemp = Math.Max(Math.Max(dualTemps[i0], dualTemps[i1]), Math.Max(dualTemps[i2], dualTemps[i3]));
+            byte tempA = ResolveQuadVertexTemperature(matA, quadMaxTemp), tempB = ResolveQuadVertexTemperature(matB, quadMaxTemp);
             byte aoA = AveragePackedAoWear(dualAo[i0], dualAo[i1], dualAo[i2]), aoB = AveragePackedAoWear(dualAo[i0], dualAo[i2], dualAo[i3]);
             byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245);
             byte shadeB = (byte)Math.Clamp(shadeA + ((int)((seedHash >> 7) & 0x0Fu) - 8), 72, 245);
@@ -1076,6 +1081,17 @@ namespace Stratocraft.Voxel.Jobs
             MaterialIdCatalog.FiniteLavaSurface => 242, MaterialIdCatalog.MagmaBlock => 195,
             MaterialIdCatalog.CampfireBlock => 210, MaterialIdCatalog.StarCore => 170, _ => 0
         };
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte ResolveQuadVertexTemperature(byte matId, byte cornerSoilTempMax)
+        {
+            byte defaultTemp = ResolveMaterialDefaultTemperature(matId);
+            if (defaultTemp != 0) return defaultTemp;
+            bool isWettable = matId == MaterialIdCatalog.Dirt || matId == MaterialIdCatalog.Grass ||
+                              matId == MaterialIdCatalog.Sand || matId == MaterialIdCatalog.Gravel ||
+                              matId == MaterialIdCatalog.LooseRubble || matId == MaterialIdCatalog.Clay;
+            return (isWettable && cornerSoilTempMax > 0 && cornerSoilTempMax <= 120) ? cornerSoilTempMax : (byte)0;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte GetMaterialVisualPriority(byte matId)

@@ -13,17 +13,41 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#047` (Edit Mode & PlayMode `Y = 96.0m` Sub-Chunk Dikiş Çatlağı Çözümü, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar & Havada Parça Temizliği, Nadir Doğal Yüzey Mağara Girişleri, PlayMode `MarkSceneDirty` Koruması \| Su Fiziği & Saplanma Onaylandı \| `69/69` Standalone + `25/25` Unity EditMode Test PASS, `0 Error / 0 Warning`) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T15:27:00+03:00` |
+| **Devir Numarası** | `#048` (**Paket 1 Ara Teslim:** Çamur Rengi `İP-1`, Stamina Gecikmesi `İP-4`, `[Q]`/Örtü Dışı 3B Eşya Atma `İP-5`, `[F3]` HUD Temizliği `İP-6` Tamamlandı \| **3 Açık Regresyon/Sorun Tespit Edildi ve Çözüm Planına Bağlandı:** `1)` Karakter Boyu Uzamış / Havada Durma, `2)` `20–30 Hz` Zıplatma / Ekran Titremesi, `3)` Koşarken `16m` Chunk Sınırında `3 x ~200 ms` Donma) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T17:23:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #047 TAMAMLANDI & KULLANICI TARAFINDAN ONAYLANDI (Yönlü Dövüş, Saplanma, Su Fiziği, Sualtı Kamerası, Arazi Çatlağı Onarımı, Mağara Sütunları ve Yüzey Mağara Girişleri Onaylandı) -> Sıradaki Aşama: Devir #048 15 Maddelik Eksikler ve Taş Devri Zanaat Yol Haritası` |
-| **Aktif Test Durumu** | `69/69 Standalone Core Test PASS`, `Unity EditMode FluidConservationTests: 25/25 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Devir #048: Paket 1 Sonrası Tespit Edilen 3 Kritik Sorunun (Boy Uzaması + Ekran Titremesi/Zıplatma + Koşu Sırasında 200ms Chunk Üretim Donması) Çözüm Planı Onayı ve Uygulanması -> Ardından Paket 2` |
+| **Aktif Test Durumu** | `70/70 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 65/65 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#047` & `#046`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#048`, `#047` & `#046`)
+
+### 2.0.00000. Devir #048 (Paket 1): Toprak->Çamur Rengi, Mağara/Ağaç Asansör Hatası, Anlık FPS Takılması, Stamina Yönetimi, 3B Eşya Atma ve `[F3]` HUD Temizliği (`İP-1 .. İP-6`)
+
+Kullanıcının onayladığı 4'lü mimari ve geliştirme planı (`DOK1..DOK4`) doğrultusunda **Paket 1 kapsamındaki 6 maddenin tamamı** dondurulan dövüş/saplanma ve su fiziği sistemlerine dokunulmadan kodlanmış, canlı görsel ve otomatik testlerle doğrulanmıştır:
+
+1. **`İP-1` — Toprak Islanınca Koyu Çamur Rengine Dönüşmesi (`HybridSurfaceNetsAndShapeMesher.cs`, `StratocraftUberShader.hlsl`):**
+   - `EmitDualQuadAsFacetedTriangles` içinde daha önce ezilen `dualTemps[i0..i3]` dizisi `ResolveQuadVertexTemperature(matId, quadMaxTemp)` üzerinden her arazi üçgeninin `Color32.g` (`1..120`) kanalına bağlandı.
+   - `StratocraftUberShader.hlsl` içinde ıslanan `Dirt`/`Grass`/`Sand`/`Gravel`/`LooseRubble`/`Clay` yüzeyler iki aşamalı gözenekli kararma + `sRGB(0.21, 0.125, 0.065)` zengin koyu çamur kahvesi ve ıslak parlama (`roughness -> 0.11`) geçişine kavuştu (`0 B` ek VRAM).
+2. **`İP-2` — Mağara Koridoruna Zıplarken / Ağaca Yürürken Yukarı Işınlanma ("Asansör Bug'ı") Çözümü ve Diz Hizası (`<= 1.04m`) Tümsek/Basamak Tırmanışı (`Stage1PlayerMovementBridge.cs`):**
+   - `SampleSingleColumnGroundY` içine **üstü açık hava şartı (`!IsHardCollisionVoxel(y + 1)`)** eklendi; `SampleBilinearVoxelGroundHeight` tarama başlangıcı her kesirli Y konumunda tümsekleri yakalayabilmesi için `refY + 1.06f` yapılırken `centerH > refY + MaxKneeStepUpMeters` (`1.04m`) olduğunda tavan yakalamayı önleyen kelepçe eklendi.
+   - Zıplama yükselme fazında (`_verticalVelocity > 0f`) `TryResolveCeilingHeadBonk` tavan çarpışması eklenerek `ResolveVoxelAndColliderDepenetration`'ın yükseliş sırasında çalışması kapatıldı.
+   - `IsHorizontalStepBlocked` bakış yönünden bağımsız **360° simetrik 8-noktalı kapsül çevre kontrolünde** sütundaki en üst katı yüzey yüksekliğini (`columnStepTopY`) ve onun üzerindeki gerçek baş üstü açıklığını (`topSolidWy + 1 .. Floor(columnStepTopY + topOffset)`) ölçecek şekilde rafine edildi: ufak doğal tümseklere (`Dirt+Grass` 2-katmanlı `SurfaceNets` yamaçları dahil) ve diz hizası (`<= 1.04m`) basamaklara takılmadan çıkılırken ağaç gövdelerine ve alçak tavanlara sızıp tepeye ışınlanma `%100` engellendi.
+3. **`İP-3` — Birkaç Saniyede Bir Yaşanan Anlık FPS Düşüşü / Takılma Çözümü (`Stage1InteractivePlayController.cs`, `FluidTraceRecorder.cs`, `SwingTraceRecorder.cs`, `DistantHorizonLodSystem.cs`):**
+   - Her karede çağrılan `EnsureDistantHorizonShellsInitialized` başına `O(1)` erken dönüş koruması eklenerek `968` `MeshRenderer` üzerinde saniyede `~5.6 MB` çöp üreten `GetComponentsInChildren<MeshRenderer>` + `gameObject.name` taraması `0 B/kare`'ye indirildi.
+   - `EnsureChunksInitialized` ve `RebuildAllDirtyChunks` içindeki `Parallel.For` işçileri katı araziyi doğrudan `16m` alt-chunk dilimleri (`SubChunkTriangles[0..9]`, `IsConsolidatedFullPass = false`) halinde örecek şekilde güncellendi; böylece `8 Hz` su emilimi ve güneşle kuruma adımlarında `96m` tam-chunk yerine yalnızca tek `16x16x16` alt-chunk (`~0.78 ms`) yenilenir.
+   - `Update()` içindeki her kare `2x` SQLite WAL + `File.AppendAllText` yazımı `256` karede bire seyreltildi; `FluidTraceRecorder` ve `SwingTraceRecorder` senkron disk yazımları yalnızca `[Insert]` telemetri modu açıkken çalışacak şekilde kapatıldı; `_chunkPool` başlangıçta `96` hazır slotla ısıtıldı ve kirli chunk sıralamasındaki closure tahsisi kaldırıldı.
+4. **`İP-4` — Staminanın Sınırsız Gibi Davranması Çözümü (`CharacterVitalsComponent.cs`, `PhysicalCharacterControllerSystem.cs`, `Stage1PlayerMovementBridge.cs`, `Stage1MatterCrystalAndMiningController.cs`, `Stage1InteractivePlayController.cs`):**
+   - `[F4]` Yaratıcı Test Modunda ölümsüzlük ve `[Tab]` eşya menüsü korunurken zorunlu `Stamina = MaxStamina` kilidi kaldırıldı.
+   - `ConsumeStamina` ve kare hızından bağımsız (`dt-invariant`) `StaminaRegenDelaySeconds` (`0.90s` normal efor / `1.65s` `0 EP` tükenme gecikmesi) eklendi; depar (`10.5 EP/s`), zıplama (`8 EP`), kayma (`15 EP`), kaçınma (`18 EP`), tırmanma (`15 EP`), silah savurma/saplanan aleti çekme (`8 EP`) ve kazma/balta kazı darbeleri (`3.5–4.0 EP`) gerçek zamanlı stamina tüketir.
+5. **`İP-5` — Eşyayı Yere Atma (`Item Drop`) Mekanikleri (`Stage1HolsterAndBackpackController.cs`, `Stage1VisualHotbarAndInventoryUi.cs`):**
+   - Oyun içindeyken **`[Q]`** seçili Hotbar slotundan `1` adet (`[Ctrl+Q]` veya `[X]` tüm yığını) oyuncunun önüne yerçekimli 3B fiziksel dünya nesnesi olarak fırlatır; **`[I]` 3B Kumaş Çanta** açıkken eşyayı kumaş örtünün dışına sürükleyip bırakmak veya yuva üzerinde `[Q]`/`[Ctrl+Q]` basmak da 3B model olarak yere bırakır; **`[E]`** ile yerden yığın birleştirerek ve `CrystalStorage` senkronlu geri toplanır.
+6. **`İP-6` — Önü Kapatan 2 Bilgi Penceresinin Taşınması ve `[F3]` Şartına Bağlanması (`Stage1InteractivePlayController.cs`, `Stage1VisualHotbarAndInventoryUi.cs`):**
+   - Başlangıçta `_showDebugHudText = false` yapıldı (`[F3]` ile açılır/kapanır). Nişangahın altındaki orta ekran `"Hedef: Çimenli Toprak (Yoğunluk:76 Hasar:0/15)"` kutusu tamamen kaldırılıp yoğunluk/hasar/mesafe detayı yalnızca `[F3]` sağ üst debug paneline taşındı.
+   - `[I]` çantasında üst slotları ve zırh panelini kapatan `820 px` genişliğindeki örtü bilgi kutusu kaldırılıp yalnızca `[F3]` açıkken ekranın en üst kenarında (`y = 8f`) ince bilgi satırı olarak gösterilmesi sağlandı.
 
 ### 2.0.0000. Devir #047: Edit Mode & PlayMode Arazi Görünmez Üçgen/Çatlak Çözümü, Mağara İçi Sıfır Havada Sütun Garantisi ve Nadir Doğal Yüzey Mağara Girişleri
 
@@ -607,16 +631,28 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Su Fiziği, Eğim Öncelikli Akış, 3 Kademeli Tükenen Sıvı Kapları (Matara / Kova / Kazan), `0.5m` Organik Su Yüzeyi, Sualtı Mavi/Bulanık Kamera ve 3B Yüzücü Dalgaları (`Devir #046`)**
 - ✅ **Edit Mode & PlayMode Arazi Dikiş Çatlağı Onarımı, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar ve Nadir Doğal Yüzey Mağara Girişleri (`Devir #047`)**
 
-### 3.2. Sıradaki 5 İş Paketi (Toplam 15 Madde — Kök Nedenleri Tespit Edildi, Uygulama Onayı Bekleniyor)
+### 3.2. Canlı PlayMode Testi (`17:13–17:16`) ve Log İncelemesi Sonucu Tespit Edilen 3 Açık Sorun (`Paket 2` Öncesi İlk İş!)
 
-1. **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`6 Madde`):**
-   - **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `HybridSurfaceNetsAndShapeMesher.cs:697` (`EmitDualQuadAsFacetedTriangles`) hesaplanan `dualTemps` nem dizisini okumayıp `0` ile eziyor; `dualTemps` aktarılıp doygunlukla yeşilden/topraktan koyu kahverengi çamura dönüşecek.
-   - **(#2) Mağara Koridoruna Zıplarken ve Ağaca Geri Geri Yürürken Yukarı Işınlanma ("Asansör Hatası"):** `Stage1PlayerMovementBridge.cs:913` (`startY = refY + 1.35f`) zıplarken koridor tavanını ve ağaç dalını "zemin" sanıp `ResolveVoxelAndColliderDepenetration` ile oyuncuyu yukarı ışınlıyor; ayak-hizası + üstü açık hava şartı ve 360° 4-köşe kapsül çarpışmasıyla çözülecek.
-   - **(#3) Birkaç Saniyede Bir Anlık FPS Düşüşü:** `16m` chunk geçişindeki senkron Main-Thread `MeshCollider` PhysX pişirmesi (`UpdateNearPlayerColliderRing`), `704m` `DistantHorizon` tek-kare yenilemesi ve `10` alt-chunk bölünmesi arka plan `Physics.BakeMesh` + dilimli yüklemeyle sıfırlanacak.
-   - **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` açıkken enerji kilidi uyarısı ayrıştırılacak ve survival eylemleri sonrası `0.85s` yenilenme gecikmesi eklenecek.
-   - **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`Ctrl+Q` tüm yığın) ve `[I]` çanta örtüsünün dışına sürükleyip bırakma ile 3B fiziksel eşya atma.
-   - **(#9) Önü Kapatan 2 Bilgi Etiketi:** `"Hedef: Çimenli Toprak..."` orta ekrandan kaldırılıp yalnızca `[F3]` paneline alınacak; çanta üst şeridi slotların dışına (üst kenara) taşınacak.
-2. **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde`):**
+Kullanıcının canlı oyun testi ve `StratocraftStage1Save/logs/stratocraft-20261111.log` zaman damgası analizi sonucunda **Paket 2'ye geçilmeden hemen önce çözülecek 3 net teknik sorun** kök nedenleriyle tespit edilmiştir:
+
+1. ⚠️ **Açık Sorun A — Karakterin Boyu Uzamış Gibi Görünmesi (`+0.45m .. +0.82m` Havada Durma):**
+   - **Kök Neden (`HybridSurfaceNetsAndShapeMesher.cs:275` vs `Stage1PlayerMovementBridge.cs:865–870, 1021–1023`):** `SurfaceNets` (`IsoLevel = 64`) görsel çimen yüzeyini `y + (d - 64) / d` (`~y + 0.08m .. 0.48m`) yüksekliğinde üretirken, `SampleSingleColumnGroundY` `y + d / 127` (`~y + 0.55m .. 0.92m`) döndürmekte; daha da önemlisi `ResolveVoxelAndColliderDepenetration` (`satır 865–870`) `ShapeId == 0` pürüzsüz arazi vokselini tam küp sanarak `pos.y = footWy + 1.0f` atamasıyla karakteri `y + 1.00m` yüksekliğine çıkarmaktadır (`~0.55m–0.82m` yüksekten bakış).
+2. ⚠️ **Açık Sorun B — Ekranın Sürekli Titremesi ve Oyuncuyu Zıplatması (`20–30 Hz` Testere Dişi Salınım):**
+   - **Kök Neden (`Stage1PlayerMovementBridge.cs:773–778` vs `865–874`):** Her karede `stickToSlope` karakterin `pos.y` değerini `y + 1.00f`'den `supportY` (`~y + 0.55f`) seviyesine doğru `deltaTime * 28f` hızıyla aşağı çekerken (`97.00 -> 96.86 -> 96.72`), `pos.y + 0.16f < y + 1.00f` (`pos.y < y + 0.84f`) olduğu karede hemen arkasından çalışan `ResolveVoxelAndColliderDepenetration` karakteri anında tekrar `y + 1.00f`'ye zıplatmaktadır.
+3. ⚠️ **Açık Sorun C — Özellikle Koşarken Her `~2–3` Saniyede Bir Yaşanan Sert FPS Donması (`stratocraft-20261111.log` Kanıtlı):**
+   - **Log Kanıtı (`14:13:31Z .. 14:15:38Z` / Yerel `17:13–17:15`):** Normal karelerde `Update()` ortalama **`0.95 ms`** (`0.39–0.58 ms`) sürerken (`0` `[ERR]` kaydı), koşu sırasında her `16m` chunk sınırı geçildiğinde `23` dış halka chunk'ı `8 + 8 + 7` olarak **3 ardışık karede** üretilmekte ve bu 3 karede `Update()` sırasıyla **`202.8 ms -> 194.5 ms -> 194.5 ms`** (tepe: `209.32 ms`, toplam `~600 ms` donma!) sürmektedir.
+   - **Kök Neden (`StratocraftFloatingIslandWorldGen.cs:581 -> 503 -> 386` & `Stage1InteractivePlayController.cs:716, 2281`):** `EvaluateNaturalCaveSurfaceEntrance` içindeki `TryGetMacroRegionCaveEntrance(macroX, macroZ)` önbelleksiz olarak en içteki `y` döngüsünde (`~25.000 kez/chunk`) çağrılıp milyonlarca çok-oktavlı trigonometrik `Sin/Cos` gürültüsü hesaplamakta ve `SpawnDynamicContinentChunksBatchParallel` Ana İş Parçacığını (`Main Thread`) senkron `Parallel.For` ile bloklamaktadır.
+
+### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` Son Rötuşta -> Sırada `Paket 2`)
+
+1. 🔧 **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`4/6 TAMAMLANDI, 2 Madde Yukarıdaki A-B-C Düzeltmesiyle Kapanacak`):**
+   - ✅ **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` ile koyu çamur kahvesi ve ıslak parlaklık doğrulandı.
+   - 🔧 **(#2) Mağara/Ağaç Asansör Hatası ve Tümsek Çıkışı:** Asansör hatası ve tümsek çıkışı çözüldü; **Açık Sorun A & B** (`SurfaceNets` gerçek izo-yüzey yüksekliği + `ResolveVoxelAndColliderDepenetration` çakışması) düzeltilecek.
+   - 🔧 **(#3) Birkaç Saniyede Bir Anlık FPS Düşüşü:** Durağan GC/log takılmaları (`0.45 ms`) çözüldü; **Açık Sorun C** (`TryGetMacroRegionCaveEntrance` sütun/bölge önbelleklemesi + arka plan asenkron chunk üretim hattı) uygulanacak.
+   - ✅ **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` stamina kilidi kaldırıldı; `0.90s / 1.65s` yenilenme gecikmesi ve tüm efor/kazı maliyetleri bağlandı.
+   - ✅ **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` 3B kumaş örtü dışına sürükle-bırak + `[E]` ile yığın birleştirmeli geri toplama eklendi.
+   - ✅ **(#9) Önü Kapatan 2 Bilgi Etiketi:** `_showDebugHudText = false` varsayılan yapıldı; orta ekran `"Hedef:..."` kutusu ve çanta üstü çakışan şerit kaldırılıp yalnızca `[F3]` moduna bağlandı.
+2. ⏳ **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde — SIRADAKİ PAKET`):**
    - **(#6) Fiziksel Taş Devri Zanaatı:** Yerden `[E]` ile Çakmaktaşı + Kuru Dal + Bitki Lifi toplama -> Taşı taşa vurarak **Taş Yontma (`Stone Knapping`)** -> Kumaş örtü / kütük üstü fiziksel birleştirmeyle **İlkel Taş Balta, Taş Kazma, Bıçak, Kova ve İlkel Taş Ocak** (ilerideki `16x32x4` Demircilik ve Marangozluk atölyelerinin doğrudan ilkel atası).
    - **(#7) Madde Kristali Seviye Yükseltme (`Tier 0 -> Tier 1..5`):** Rezonans Kuvarsı ile `Tier 0 -> 1` ilk uyanış; Boss Çekirdekleri / Kadim Zindan Sunağı ile `Tier 2..5` evrimi.
    - **(#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" Modu:** Bakılan yönde dairesel organik `SurfaceNets` arazi örme fırçası.
@@ -635,9 +671,10 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sonsuz Enerji (100 EP), Sınırsız Oksijen ve Sınırsız Blok İnşası açar/kapatır | ✅ Aktif |
+| **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sınırsız Oksijen, Kırılmaz Alet ve Sınırsız Blok İnşası açar/kapatır (Stamina gerçekçi test için tükenmeye devam eder) | ✅ Aktif |
 | **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler (Matara, Kova, Kazan dahil), Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
-| **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli:** FPS, Seed, XYZ koordinat, Chunk bilgisi, Biyom, Sıcaklık, Vücut ısısı, Can, Enerji, Silah/Stil/Dojo duruşu | ✅ Aktif |
+| **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli (Varsayılan: Kapalı):** FPS, Seed, XYZ koordinat, Chunk bilgisi, Hedef Blok Yoğunluk/Hasar/Mesafe, Biyom, Sıcaklık, Can, Enerji, Silah/Stil duruşu | ✅ Aktif |
+| **`[Q]` / `[Ctrl+Q]`** | **Fiziksel 3B Eşya Atma (`Item Drop`):** Seçili Hotbar slotundan `[Q]` ile `1` adet, `[Ctrl+Q]` ile tüm yığını yere atar; `[I]` çanta örtüsü dışına sürükleyip bırakarak da atılır (`[E]` ile geri alınır) | ✅ Aktif |
 | **`[Insert]` Tuşu** | **3B Savurma Telemetri Gizmosu:** Son 8 savurmanın 3B kabza-uç vektör izlerini ve saplanma/sekme noktalarını açar/kapatır (`Varsayılan: Kapalı`) | ✅ Aktif |
 | **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Kabı (`Matara / Kova / Kazan`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
 | **`[I]` Tuşu** | **24-Slotlu (`4x6`) Taktik Çanta & 4 Yuvalı "🛡️ ANATOMİK BÖLGESEL ZIRHLAR" Paneli** (Sol Tık: Sürükle-Bırak, Sağ Tık: Zırhı Kuşan / Tüket / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
@@ -665,13 +702,14 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
    - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #047` durumuyla eşleştiğini doğrula.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #048` durumuyla eşleştiğini doğrula.
 
-2. **Adım 2 — `Devir #048` 5 İş Paketini (`Paket 1 -> Paket 5`) Sırayla Geliştir:**
-   - [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki 15 maddelik yol haritasından kullanıcının seçtiği paketle (önerilen başlangıç: **Paket 1** — Çamur Rengi, Yukarı Işınlanma, FPS Takılması, Stamina, Eşya Yere Atma ve `[F3]` Bilgi Penceresi Temizliği; büyük paketlerde 4'lü doküman standardına uyarak) devam et.
+2. **Adım 2 — Önce Devir `#048` Açık Sorunlar A, B ve C'yi Çöz, Ardından `Paket 2` 4'lü Dokümanına Geç:**
+   - İlk iş olarak Bölüm `3.2`'de belgelenen **Açık Sorun A** (`SurfaceNets` izo-yüzey zemin yüksekliği eşitlemesi), **Açık Sorun B** (`stickToSlope` ile `ResolveVoxelAndColliderDepenetration` arasındaki `20–30 Hz` zıplatma çakışmasının kaldırılması) ve **Açık Sorun C** (`TryGetMacroRegionCaveEntrance` makro bölge önbelleklemesi + arka plan `Task` tabanlı sıfır-bloklamalı chunk üretimi) çözüm dökümanını kullanıcı onayıyla uygula ve canlı koşu testinde doğrula.
+   - Kullanıcı onayından hemen sonra [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Paket 2** maddeleri için `DOK1..DOK4` dokümanlarını hazırla.
 
 3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`69/69 PASS`).
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`70/70 PASS`).
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
    - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).

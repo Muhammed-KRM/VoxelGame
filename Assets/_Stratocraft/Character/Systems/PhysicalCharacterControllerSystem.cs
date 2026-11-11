@@ -192,11 +192,7 @@ namespace Stratocraft.Character.Systems
             }
 
             float inv = 1.0f / MathF.Sqrt(lenSq);
-            vitals.Stamina = MathF.Max(0f, vitals.Stamina - SlideStaminaCostEp);
-            if (vitals.Stamina <= 0.01f)
-            {
-                movement.IsExhaustedStaminaLock = 1;
-            }
+            ConsumeStamina(ref vitals, ref movement, SlideStaminaCostEp);
 
             movement.Stance = CharacterStance.Sliding;
             movement.CapsuleHeightMeters = GetStanceCapsuleHeight(CharacterStance.Sliding);
@@ -353,21 +349,59 @@ namespace Stratocraft.Character.Systems
                 movement.VelocityY -= 9.81f * deltaTime;
             }
 
-            // Depar stamina tuketimi ve %15 tukenme kilidi
+            // Depar stamina tuketimi, eylem sonrasi dolum gecikmesi (0.90s / 1.65s) ve %15 tukenme kilidi
             if (movement.Stance == CharacterStance.Sprinting && dirLenSq > 0.01f)
             {
-                vitals.Stamina = MathF.Max(0.0f, vitals.Stamina - 8.5f * deltaTime);
-                if (vitals.Stamina <= 0.01f)
+                ConsumeStamina(ref vitals, ref movement, 10.5f * deltaTime);
+                if (movement.IsExhaustedStaminaLock != 0)
                 {
-                    vitals.Stamina = 0.0f;
-                    movement.IsExhaustedStaminaLock = 1;
                     movement.Stance = CharacterStance.Standing;
                     movement.CurrentSpeedMetersPerSec = BaseStandingSpeed * (movement.IsBackpackOverlayOpen != 0 ? BackpackOpenSpeedMultiplier : 1.0f);
                 }
             }
             else
             {
-                vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 7.5f * deltaTime);
+                float regenDt = deltaTime;
+                if (vitals.StaminaRegenDelaySeconds > 0.0f)
+                {
+                    if (deltaTime <= vitals.StaminaRegenDelaySeconds)
+                    {
+                        vitals.StaminaRegenDelaySeconds -= deltaTime;
+                        regenDt = 0.0f;
+                    }
+                    else
+                    {
+                        regenDt = deltaTime - vitals.StaminaRegenDelaySeconds;
+                        vitals.StaminaRegenDelaySeconds = 0.0f;
+                    }
+                }
+
+                if (regenDt > 0.0f)
+                {
+                    vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 9.0f * regenDt);
+                }
+            }
+        }
+
+        public const float DefaultStaminaRegenDelaySeconds = 0.90f;
+        public const float ExhaustedStaminaRegenDelaySeconds = 1.65f;
+
+        public static void ConsumeStamina(
+            ref CharacterVitalsComponent vitals,
+            ref CharacterMovementState movement,
+            float amount)
+        {
+            if (amount <= 0.0f) return;
+            vitals.Stamina = MathF.Max(0.0f, vitals.Stamina - amount);
+            if (vitals.Stamina <= 0.01f)
+            {
+                vitals.Stamina = 0.0f;
+                movement.IsExhaustedStaminaLock = 1;
+                vitals.StaminaRegenDelaySeconds = MathF.Max(vitals.StaminaRegenDelaySeconds, ExhaustedStaminaRegenDelaySeconds);
+            }
+            else
+            {
+                vitals.StaminaRegenDelaySeconds = MathF.Max(vitals.StaminaRegenDelaySeconds, DefaultStaminaRegenDelaySeconds);
             }
         }
     }

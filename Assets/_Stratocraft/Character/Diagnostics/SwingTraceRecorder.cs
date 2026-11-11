@@ -234,7 +234,7 @@ namespace Stratocraft.Character.Diagnostics
 
             if (!isSwingingOrLodged && _activeSwingId != -1)
             {
-                if (writeToDisk)
+                if (writeToDisk && ShowVisualGizmos)
                 {
                     FlushToCsvAndTelemetry(holsterSlot);
                 }

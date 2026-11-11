@@ -955,6 +955,83 @@ namespace Stratocraft.Character
             ReturnCursorHeldItemToInventory(miningCtrl);
         }
 
+        public VisualInventorySlot ConsumeCursorHeldItemForDrop(Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            VisualInventorySlot dropped = CursorHeldSlot;
+            CursorHeldSlot = default;
+            DragOriginSlotIndex = -1;
+            PushUiCountsToCrystalStorage(miningCtrl);
+            return dropped;
+        }
+
+        /// <summary>
+        /// Yerden [E] ile alinan 3B esyayi varsa ayni tur yigina birlestirir, yoksa secili/bos Hotbar veya Canta yuvasina yerlestirir.
+        /// </summary>
+        public bool TryInsertPickedUpSlot(
+            in VisualInventorySlot item,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            out bool placedInHotbar,
+            out int placedIndex)
+        {
+            placedInHotbar = false;
+            placedIndex = -1;
+            if (item.IsEmpty || item.Count <= 0) return false;
+
+            for (int h = 0; h < HotbarSlotCount; h++)
+            {
+                if (HotbarSlots[h].CanStackWith(in item))
+                {
+                    HotbarSlots[h].Count += item.Count;
+                    placedInHotbar = true;
+                    placedIndex = h;
+                    PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+            for (int b = 0; b < BackpackSlotCount; b++)
+            {
+                if (BackpackSlots[b].CanStackWith(in item))
+                {
+                    BackpackSlots[b].Count += item.Count;
+                    placedInHotbar = false;
+                    placedIndex = b;
+                    PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+            if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount && HotbarSlots[SelectedHotbarIndex].IsEmpty)
+            {
+                HotbarSlots[SelectedHotbarIndex] = item;
+                placedInHotbar = true;
+                placedIndex = SelectedHotbarIndex;
+                PushUiCountsToCrystalStorage(miningCtrl);
+                return true;
+            }
+            for (int h = 0; h < HotbarSlotCount; h++)
+            {
+                if (HotbarSlots[h].IsEmpty)
+                {
+                    HotbarSlots[h] = item;
+                    placedInHotbar = true;
+                    placedIndex = h;
+                    PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+            for (int b = 0; b < BackpackSlotCount; b++)
+            {
+                if (BackpackSlots[b].IsEmpty)
+                {
+                    BackpackSlots[b] = item;
+                    placedInHotbar = false;
+                    placedIndex = b;
+                    PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// <summary>
         /// Ekranin en altinda kompakt [0..9] Kemer/Kilif Durum Barini cizer ve [I] 3B Kumas Canta Ortusu acikken
         /// ortu uzerindeki 3B esyalarin diyajetik Dunya->Ekran (WorldToScreenPoint) 3B bilgi etiketini gosterir.
@@ -973,7 +1050,8 @@ namespace Stratocraft.Character
             bool isExhaustedLock = false,
             float lungOxygenPercent = 100f,
             bool isSubmerged = false,
-            float coreBodyTemp = 37.0f)
+            float coreBodyTemp = 37.0f,
+            bool showDebugHints = false)
         {
             EnsureTexturesAndStyles();
             Event ev = Event.current;
@@ -1066,13 +1144,16 @@ namespace Stratocraft.Character
                 // 🛡️ ANATOMİK BÖLGESEL ZIRHLAR Paneli (Kafa, Gövde, Kollar, Bacaklar)
                 DrawEquippedArmorPanel(screenW, screenH, barY, ev, mousePos, miningCtrl, onActiveSlotChanged);
 
-                // Ust ince diyajetik rehber seridi (3B Kumas Canta Ortusunun ustunu ASLA kapatmaz!)
-                Rect matBannerRect = new Rect(screenW * 0.5f - 410f, 178f, 820f, 28f);
-                GUI.DrawTexture(matBannerRect, _windowBgTex!);
-                GUI.Label(
-                    matBannerRect,
-                    "✦ [I] 3B FİZİKSEL KUMAŞ ÇANTA ÖRTÜSÜ (Kamera Kilitli) — 3B Eşyaları Fareyle Tutup Örtüde İstediğin Bölmeye veya Kılıf [1..9] Şeridine Sürükle & Bırak!",
-                    _slotTitleBannerStyle!);
+                // Ust rehber seridi YALNIZCA [F3] (showDebugHints) acikken ekranin en ust kenarinda (Zirh paneline ve 3B ortuye hic degmeden) gosterilir
+                if (showDebugHints)
+                {
+                    Rect matBannerRect = new Rect(screenW * 0.5f - 250f, 8f, 500f, 24f);
+                    GUI.DrawTexture(matBannerRect, _windowBgTex!);
+                    GUI.Label(
+                        matBannerRect,
+                        "[I] 3B Çanta: Bölmeye Sürükle | Örtü Dışına Bırak veya [Q] Yere At",
+                        _slotTitleBannerStyle!);
+                }
 
                 if (IsChannelActive)
                 {

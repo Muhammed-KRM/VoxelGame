@@ -286,7 +286,8 @@ namespace Stratocraft.Voxel.Systems
             List<FacetedVoxelTriangle> outSolidTriangles,
             List<FacetedVoxelTriangle> outFluidTriangles,
             Func<float, float, float>? customTopSurfaceSampler = null,
-            Func<float, float, float, (float r, float g, float b, byte matId)>? customBiomeColorSampler = null)
+            Func<float, float, float, (float r, float g, float b, byte matId)>? customBiomeColorSampler = null,
+            float[]? scratchCornerHeights = null)
         {
             outSolidTriangles.Clear();
             outFluidTriangles.Clear();
@@ -297,9 +298,17 @@ namespace Stratocraft.Voxel.Systems
             int maxCz = centerChunkZ + outerRadiusChunks;
             int cornerSpan = (maxCx - minCx) + 2;
             int totalCorners = cornerSpan * cornerSpan;
-            float[] cornerHeights = _tsClipmapCornerHeights != null && _tsClipmapCornerHeights.Length >= totalCorners
-                ? _tsClipmapCornerHeights
-                : (_tsClipmapCornerHeights = new float[Math.Max(totalCorners, 16384)]);
+            float[] cornerHeights;
+            if (scratchCornerHeights != null && scratchCornerHeights.Length >= totalCorners)
+            {
+                cornerHeights = scratchCornerHeights;
+            }
+            else
+            {
+                cornerHeights = _tsClipmapCornerHeights != null && _tsClipmapCornerHeights.Length >= totalCorners
+                    ? _tsClipmapCornerHeights
+                    : (_tsClipmapCornerHeights = new float[Math.Max(totalCorners, 16384)]);
+            }
 
             for (int gz = 0; gz < cornerSpan; gz++)
             {

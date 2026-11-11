@@ -19,7 +19,7 @@ namespace Stratocraft.Physics.Diagnostics
         private int _tickCounter;
         private int _flushBatchCounter;
 
-        public bool IsEnabled { get; set; } = true;
+        public bool IsEnabled { get; set; } = false;
 
         public void RecordTick(
             string logsRootDirectory,

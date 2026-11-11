@@ -387,8 +387,7 @@ namespace Stratocraft.Character
                 canCrouch115 &&
                 _vitals.Stamina >= effectiveDodgeCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - effectiveDodgeCost);
-                if (_vitals.Stamina <= 0.01f && staminaDrainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                if (staminaDrainMult > 0.01f) PhysicalCharacterControllerSystem.ConsumeStamina(ref _vitals, ref _movementState, effectiveDodgeCost);
                 _dodgeDirectionWorld = wishDir.sqrMagnitude > 0.01f ? wishDir.normalized : -forwardFlat;
                 _dodgeRemainingSec = DodgeDurationSeconds;
                 _dodgeCooldownSec = DodgeCooldownSeconds;
@@ -694,8 +693,7 @@ namespace Stratocraft.Character
             float mantleCost = 15.0f * drainMult;
             if (hasLedgeAhead && !_isMantling && _vitals.Stamina >= mantleCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - mantleCost);
-                if (_vitals.Stamina <= 0.01f && drainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                if (drainMult > 0.01f) PhysicalCharacterControllerSystem.ConsumeStamina(ref _vitals, ref _movementState, mantleCost);
 
                 Vector3 pos = playerTransform.position;
                 Vector3 targetPos = pos + forwardFlat * 0.68f;
@@ -714,16 +712,15 @@ namespace Stratocraft.Character
                 return;
             }
 
-            float jumpCost = 6.0f * drainMult;
+            float jumpCost = 8.0f * drainMult;
             if (canJumpFromGround && _vitals.Stamina >= jumpCost)
             {
-                _vitals.Stamina = MathF.Max(0f, _vitals.Stamina - jumpCost);
-                if (_vitals.Stamina <= 0.01f && drainMult > 0.01f) _movementState.IsExhaustedStaminaLock = 1;
+                if (drainMult > 0.01f) PhysicalCharacterControllerSystem.ConsumeStamina(ref _vitals, ref _movementState, jumpCost);
                 _verticalVelocity = 6.45f * Stage1GameSettings.PlayerJumpMultiplier;
                 _jumpLaunchTimer = 0.20f;
                 _coyoteGroundedTimer = 0f;
                 _movementState.IsGrounded = 0;
-                statusFeedback = "Ziplama (-6 EP)";
+                statusFeedback = "Ziplama (-8 EP)";
             }
         }
 
@@ -741,9 +738,11 @@ namespace Stratocraft.Character
                 horizVel = wishDir * _movementState.CurrentSpeedMetersPerSec;
             }
 
+            float capHeight = _movementState.CapsuleHeightMeters;
+            float capRadius = _movementState.CapsuleRadiusMeters;
             Vector3 stepDelta = horizVel * deltaTime;
             Vector3 candidatePos = new Vector3(pos.x + stepDelta.x, pos.y, pos.z + stepDelta.z);
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters))
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capHeight, capRadius))
             {
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
@@ -753,14 +752,14 @@ namespace Stratocraft.Character
                 // Capraz duvar/agac temasinda oyuncunun tamamen takilip durmasini onlemek icin X ve Z eksenlerinde ayri kayma (Wall-Slide)
                 Vector3 candidateX = new Vector3(pos.x + stepDelta.x, pos.y, pos.z);
                 if (Mathf.Abs(stepDelta.x) > 0.0001f &&
-                    !IsHorizontalStepBlocked(worldChunks, pos, candidateX, _movementState.CapsuleHeightMeters))
+                    !IsHorizontalStepBlocked(worldChunks, pos, candidateX, capHeight, capRadius))
                 {
                     pos.x = candidateX.x;
                 }
 
                 Vector3 candidateZ = new Vector3(pos.x, pos.y, pos.z + stepDelta.z);
                 if (Mathf.Abs(stepDelta.z) > 0.0001f &&
-                    !IsHorizontalStepBlocked(worldChunks, pos, candidateZ, _movementState.CapsuleHeightMeters))
+                    !IsHorizontalStepBlocked(worldChunks, pos, candidateZ, capHeight, capRadius))
                 {
                     pos.z = candidateZ.z;
                 }
@@ -770,12 +769,12 @@ namespace Stratocraft.Character
             bool stickToSlope = _jumpLaunchTimer <= 0.001f &&
                                 (_movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f) &&
                                 _verticalVelocity <= 0.10f &&
-                                (nextGroundY - pos.y) <= 1.45f &&
-                                (pos.y - nextGroundY) <= 1.15f;
+                                (nextGroundY - pos.y) <= MaxKneeStepUpMeters &&
+                                (pos.y - nextGroundY) <= 1.05f;
             if (stickToSlope)
             {
                 float diff = nextGroundY - pos.y;
-                pos.y = Mathf.Abs(diff) < 0.05f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 24f);
+                pos.y = Mathf.Abs(diff) < 0.05f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 28f);
                 _verticalVelocity = 0f;
                 _movementState.IsGrounded = 1;
                 _coyoteGroundedTimer = 0.16f;
@@ -784,7 +783,16 @@ namespace Stratocraft.Character
             {
                 _verticalVelocity -= StratocraftConstants.GravityAcceleration * deltaTime;
                 pos.y += _verticalVelocity * deltaTime;
-                if (_jumpLaunchTimer <= 0.001f && pos.y <= nextGroundY)
+
+                // Yukari ziplama esnasinda magara tavani veya agac dali carpismasi (Anti-Asansor Tavan Kenetlemesi)
+                if (_verticalVelocity > 0f &&
+                    TryResolveCeilingHeadBonk(worldChunks, ref pos, capHeight, capRadius))
+                {
+                    _verticalVelocity = 0f;
+                    _jumpLaunchTimer = 0f;
+                }
+
+                if (_jumpLaunchTimer <= 0.001f && _verticalVelocity <= 0.05f && pos.y <= nextGroundY)
                 {
                     pos.y = nextGroundY;
                     _verticalVelocity = 0f;
@@ -811,10 +819,10 @@ namespace Stratocraft.Character
 
             Vector3 pos = playerTransform.position;
             Vector3 candidatePos = pos + worldHorizontalDelta;
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters))
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters, _movementState.CapsuleRadiusMeters))
             {
                 float nextGroundY = SampleSupportGroundHeight(worldChunks, candidatePos);
-                if (nextGroundY - pos.y > 1.25f)
+                if (nextGroundY - pos.y > MaxKneeStepUpMeters)
                 {
                     return;
                 }
@@ -830,18 +838,36 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>Oyuncu kapsulunun kati voksel icine girmesini tespit edip guvenli ust yuzeye cikarir (egimli arazide asla havaya ziplatmaz!).</summary>
+        /// <summary>Oyuncu kapsulunun kati voksel icine girmesini tespit edip guvenli ust yuzeye cikarir (magara tavani ve agaclarda ASLA yukari isinlamaz!).</summary>
         public void ResolveVoxelAndColliderDepenetration(Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
-            if (_jumpLaunchTimer > 0.001f) return;
+            // Yukari ziplarken asla zemin yakalama calistirma (magara tavanina tutunup yukari cekmeyi %100 engeller)
+            if (_jumpLaunchTimer > 0.001f || _verticalVelocity > 0.05f) return;
+
             Vector3 pos = playerTransform.position;
             float supportY = SampleSupportGroundHeight(worldChunks, pos);
-            if (pos.y < supportY - 0.005f)
+            if (pos.y < supportY - 0.005f && (supportY - pos.y) <= MaxKneeStepUpMeters)
             {
                 float burialDepth = supportY - pos.y;
-                pos.y = burialDepth <= 0.15f || burialDepth > 1.35f
+                pos.y = burialDepth <= 0.15f
                     ? supportY
                     : Mathf.MoveTowards(pos.y, supportY, 0.35f);
+                if (_verticalVelocity < 0f) _verticalVelocity = 0f;
+                _movementState.IsGrounded = 1;
+                _coyoteGroundedTimer = 0.16f;
+                playerTransform.position = pos;
+                return;
+            }
+
+            // Yalnizca oyuncunun gercek ayak bilegi (pos.y + 0.16f) kati blok icinde gomulduyse (orn. altina blok koyma / kum dusmesi)
+            // ve hemen ustte acik bas ustu bosluk varsa en fazla 1 blok yukari kurtar (dolu tavanin icinden ASLA tirmanmaz!)
+            int footWx = Mathf.FloorToInt(pos.x), footWz = Mathf.FloorToInt(pos.z);
+            int footWy = Mathf.FloorToInt(pos.y + 0.16f);
+            if (footWy >= 1 && footWy < Stage1InteractivePlayController.MaxEditableVoxelY - 3 &&
+                IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, footWx, footWy, footWz)) &&
+                !IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, footWx, footWy + 1, footWz)))
+            {
+                pos.y = footWy + 1.0f;
                 if (_verticalVelocity < 0f) _verticalVelocity = 0f;
                 _movementState.IsGrounded = 1;
                 _coyoteGroundedTimer = 0.16f;
@@ -849,29 +875,117 @@ namespace Stratocraft.Character
             }
         }
 
-        private static bool IsHorizontalStepBlocked(
-            Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 cur, Vector3 next, float capsuleHeightMeters = 1.8f)
+        public static bool TryResolveCeilingHeadBonk(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            ref Vector3 pos,
+            float capsuleHeightMeters,
+            float capsuleRadiusMeters)
+        {
+            float effH = Mathf.Clamp(capsuleHeightMeters, 0.45f, 1.85f);
+            float effR = Mathf.Clamp(capsuleRadiusMeters * 0.80f, 0.16f, 0.28f);
+            int crownWy = Mathf.FloorToInt(pos.y + effH + 0.03f);
+            int chestWy = Mathf.FloorToInt(pos.y + effH * 0.45f);
+            if (crownWy <= chestWy || crownWy < 2 || crownWy >= Stage1InteractivePlayController.MaxEditableVoxelY)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<float> ox = stackalloc float[5] { 0f, effR, -effR, 0f, 0f };
+            ReadOnlySpan<float> oz = stackalloc float[5] { 0f, 0f, 0f, effR, -effR };
+            for (int i = 0; i < 5; i++)
+            {
+                int wx = Mathf.FloorToInt(pos.x + ox[i]);
+                int wz = Mathf.FloorToInt(pos.z + oz[i]);
+                if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, crownWy, wz)) &&
+                    !IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, chestWy, wz)))
+                {
+                    float maxAllowedFeetY = crownWy - effH - 0.025f;
+                    if (pos.y > maxAllowedFeetY)
+                    {
+                        pos.y = Mathf.Max(pos.y - 0.35f, maxAllowedFeetY);
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Oyuncunun ziplamadan diz boyu dogal tumsek ve 1 blokluk basamaklara rahatca cikabilecegi maksimum yukseklik (metre).</summary>
+        public const float MaxKneeStepUpMeters = 1.04f;
+
+        public static bool IsHorizontalStepBlocked(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 cur,
+            Vector3 next,
+            float capsuleHeightMeters = 1.8f,
+            float capsuleRadiusMeters = 0.34f)
         {
             Vector2 step2D = new Vector2(next.x - cur.x, next.z - cur.z);
             if (step2D.sqrMagnitude < 1e-7f) return false;
-            Vector2 dir2D = step2D.normalized;
 
-            int curWx = Mathf.FloorToInt(cur.x), curWz = Mathf.FloorToInt(cur.z);
-            int probeWx = Mathf.FloorToInt(next.x + dir2D.x * 0.28f);
-            int probeWz = Mathf.FloorToInt(next.z + dir2D.y * 0.28f);
+            float r = Mathf.Clamp(capsuleRadiusMeters, 0.20f, 0.34f);
+            const float diag = 0.70710678f;
+            float d = r * diag;
 
-            // Oyuncunun halihazirda icinde bulundugu voksel kolonunda hareketi ASLA kilitleme (sikismayi %100 onler)
-            if (probeWx == curWx && probeWz == curWz) return false;
+            float topOffset = Mathf.Clamp(capsuleHeightMeters - 0.12f, 0.45f, 1.68f);
+            int minBodyWy = Mathf.Max(1, Mathf.FloorToInt(cur.y + 0.16f));
+            int maxBodyWy = Mathf.Min(Stage1InteractivePlayController.MaxEditableVoxelY - 3, Mathf.FloorToInt(cur.y + topOffset));
 
-            float topOffset = Mathf.Clamp(capsuleHeightMeters - 0.15f, 0.58f, 1.65f);
-            float waistOffset = Mathf.Clamp(topOffset * 0.78f, 0.52f, 1.28f);
-            int waistY = Mathf.FloorToInt(cur.y + waistOffset);
-            int headY = Mathf.FloorToInt(cur.y + topOffset);
+            // 360° Simetrik 8-Noktali Kapsul Cevre Kontrolu:
+            // Ileri (W), Geri (S), Yana (A/D) ve Wall-Slide adimlarinin tamaminda agac govdesi ve magara duvarina sizmayi onler;
+            // hangi kesirli Y yuksekliginde olunursa olunsun diz boyunu (<=1.04m) asmayan ve ustu acik tumsek/basamaklara cikilmasina izin verir!
+            ReadOnlySpan<float> ringX = stackalloc float[8] { r, -r, 0f, 0f, d, -d, d, -d };
+            ReadOnlySpan<float> ringZ = stackalloc float[8] { 0f, 0f, r, -r, d, d, -d, -d };
 
-            // <= 1.25m egimler ve basamaklar bel/bas hizasinin (waistY / headY) altinda kaldigi icin puruzsuz cikilir;
-            // >= 1.30m dik duvarlar, agac govdeleri ve alcak kirisler bel/bas hizasinda kati voksel barindirir ve engellenir.
-            return IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, probeWx, waistY, probeWz)) ||
-                   IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, probeWx, headY, probeWz));
+            for (int i = 0; i < 8; i++)
+            {
+                int nextWx = Mathf.FloorToInt(next.x + ringX[i]);
+                int nextWz = Mathf.FloorToInt(next.z + ringZ[i]);
+                int curWx = Mathf.FloorToInt(cur.x + ringX[i]);
+                int curWz = Mathf.FloorToInt(cur.z + ringZ[i]);
+
+                if (nextWx == curWx && nextWz == curWz) continue;
+
+                int topSolidWy = -1;
+                uint topSolidRaw = 0u;
+                for (int wy = minBodyWy; wy <= maxBodyWy; wy++)
+                {
+                    uint nextRaw = ReadWorldVoxelRaw(worldChunks, nextWx, wy, nextWz);
+                    if (!IsHardCollisionVoxel(nextRaw)) continue;
+
+                    // Eger oyuncu zaten mevcut konumunda ayni Y seviyesinde kati voksel icindeyse sikismamasi icin bu katmani atla
+                    if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, curWx, wy, curWz))) continue;
+
+                    topSolidWy = wy;
+                    topSolidRaw = nextRaw;
+                }
+
+                if (topSolidWy < 0) continue;
+
+                float columnStepTopY = VoxelBitUtility.GetShapeId(topSolidRaw) == 0
+                    ? topSolidWy + Mathf.Clamp(VoxelBitUtility.GetDensityOrLiquid(topSolidRaw) / 127f, 0.35f, 0.92f)
+                    : topSolidWy + 1.0f;
+
+                // Sutundaki en ust kati vokselin yuzeyi diz hizasi basamak sinirini (>1.04m) asiyorsa gercek duvar / agac / alcak tavandir!
+                if ((columnStepTopY - cur.y) > MaxKneeStepUpMeters)
+                {
+                    return true;
+                }
+
+                // Diz hizasi veya daha alcak tumsek/yamac/basamagin uzerine cikildiginda ustunde kapsul boyu kadar acik hava olmali!
+                int headCheckMinWy = topSolidWy + 1;
+                int headCheckMaxWy = Mathf.Min(
+                    Stage1InteractivePlayController.MaxEditableVoxelY - 2,
+                    Mathf.FloorToInt(columnStepTopY + topOffset));
+                for (int hy = headCheckMinWy; hy <= headCheckMaxWy; hy++)
+                {
+                    if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, nextWx, hy, nextWz)))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private static bool DetectClimbableLedgeAhead(
@@ -893,13 +1007,21 @@ namespace Stratocraft.Character
             return false;
         }
 
-        private static float SampleSingleColumnGroundY(
+        public static float SampleSingleColumnGroundY(
             Dictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wz, int startY)
         {
-            for (int y = startY; y >= 1; y--)
+            int clampedStart = Mathf.Clamp(startY, 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+            for (int y = clampedStart; y >= 1; y--)
             {
                 uint raw = ReadWorldVoxelRaw(worldChunks, wx, y, wz);
                 if (!IsHardCollisionVoxel(raw)) continue;
+
+                // KRITIK FIZIK INVARYANTI (Anti-Asansor):
+                // Ustunde acik hava boslugu olmayan (y + 1 dolu olan) hicbir voksel "yurunebilir zemin" degildir;
+                // bir magara tavaninin, duvarin veya agac govdesinin ic kesitidir!
+                uint aboveRaw = ReadWorldVoxelRaw(worldChunks, wx, y + 1, wz);
+                if (IsHardCollisionVoxel(aboveRaw)) continue;
+
                 return VoxelBitUtility.GetShapeId(raw) == 0
                     ? y + Mathf.Clamp(VoxelBitUtility.GetDensityOrLiquid(raw) / 127f, 0.35f, 0.92f)
                     : y + 1.0f;
@@ -907,12 +1029,18 @@ namespace Stratocraft.Character
             return -30f;
         }
 
-        private static float SampleBilinearVoxelGroundHeight(
+        public static float SampleBilinearVoxelGroundHeight(
             Dictionary<(int cx, int cz), uint[]> worldChunks, float worldX, float worldZ, float refY)
         {
-            int startY = Mathf.Clamp(Mathf.FloorToInt(refY + 1.35f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
+            // Diz boyu tumsek ve 1 blokluk basamaklari (+1.04m) her kesirli Y konumunda yakalayabilmek icin refY + 1.06m'den tara;
+            // fakat bulunan yuzey refY + MaxKneeStepUpMeters sinirini asarsa (orn. ziplanan ince tavan ustu) asla yukari cekme!
+            int startY = Mathf.Clamp(Mathf.FloorToInt(refY + 1.06f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
             int centerWx = Mathf.FloorToInt(worldX), centerWz = Mathf.FloorToInt(worldZ);
             float centerH = SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, startY);
+            if (centerH > refY + MaxKneeStepUpMeters)
+            {
+                centerH = SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, Mathf.Clamp(Mathf.FloorToInt(refY + 0.25f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3));
+            }
             if (centerH <= -20f) return centerH;
 
             int x0 = Mathf.FloorToInt(worldX - 0.5f);
@@ -925,12 +1053,12 @@ namespace Stratocraft.Character
             float h01 = SampleSingleColumnGroundY(worldChunks, x0, z0 + 1, startY);
             float h11 = SampleSingleColumnGroundY(worldChunks, x0 + 1, z0 + 1, startY);
 
-            // Ucurum kenarlarinda (>1.5m fark) komsu bosluga dusmemek icin merkez sutun yuksekligini koru;
-            // normal egimli arazide (<=1.5m fark) 4 kose arasinda C0 surekli bilineer gecis uygula!
-            if (Mathf.Abs(h00 - centerH) > 1.5f) h00 = centerH;
-            if (Mathf.Abs(h10 - centerH) > 1.5f) h10 = centerH;
-            if (Mathf.Abs(h01 - centerH) > 1.5f) h01 = centerH;
-            if (Mathf.Abs(h11 - centerH) > 1.5f) h11 = centerH;
+            // Ucurum kenarlarinda veya komsu dik duvar/agac sutunlarinda (>1.15m fark veya refY + MaxKneeStepUpMeters ustu) merkez sutunu koru;
+            // dogal tumsek ve egimli yamaçlarda (<=1.15m fark) 4 kose arasinda puruzsuz C0 bilineer gecis uygula!
+            if (h00 <= -20f || h00 > refY + MaxKneeStepUpMeters || Mathf.Abs(h00 - centerH) > 1.15f) h00 = centerH;
+            if (h10 <= -20f || h10 > refY + MaxKneeStepUpMeters || Mathf.Abs(h10 - centerH) > 1.15f) h10 = centerH;
+            if (h01 <= -20f || h01 > refY + MaxKneeStepUpMeters || Mathf.Abs(h01 - centerH) > 1.15f) h01 = centerH;
+            if (h11 <= -20f || h11 > refY + MaxKneeStepUpMeters || Mathf.Abs(h11 - centerH) > 1.15f) h11 = centerH;
 
             float hx0 = Mathf.Lerp(h00, h10, tx);
             float hx1 = Mathf.Lerp(h01, h11, tx);

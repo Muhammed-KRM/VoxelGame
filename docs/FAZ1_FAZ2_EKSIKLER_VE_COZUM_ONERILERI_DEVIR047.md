@@ -185,14 +185,14 @@
 
 Bu 15 maddenin birbirini kırmadan, her pakette test edilerek ilerlemesi için **5 ardışık iş paketi** önerilir:
 
-1. **Paket 1 — Acil Hata & Arayüz Temizliği (Hızlı ve Yüksek Etki):**
-   - (#1) Çamur renginin `EmitDualQuadAsFacetedTriangles` içinde düzeltilmesi (`yeşil/toprak -> koyu kahve çamur`),
-   - (#2) Mağara koridoru ve ağaçlarda yukarı ışınlanma ("asansör hatası") çözümü,
-   - (#3) Anlık FPS düşüşü (`Physics.BakeMesh` + Ufuk halkası + alt-chunk) optimizasyonu,
-   - (#4) Stamina tüketimi / `[F4]` ayrımı düzeltmesi,
-   - (#5) `[Q]` ve çanta dışına sürükleyerek eşyayı yere atma (`Item Drop`),
-   - (#9) Önü kapatan 2 bilgi penceresinin taşınması / sadece `[F3]` açıkken görünmesi.
-2. **Paket 2 — Taş Devri Survival Başlangıcı, İlkel Craft & Madde Kristali Evrimi:**
+1. ✅ **Paket 1 — Acil Hata & Arayüz Temizliği (`TAMAMLANDI — Devir #048`):**
+   - ✅ (#1) Çamur renginin `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` içinde düzeltilmesi (`yeşil/toprak -> koyu kahve çamur`),
+   - ✅ (#2) Mağara koridoru ve ağaçlarda yukarı ışınlanma ("asansör hatası") çözümü (`SampleSingleColumnGroundY` üstü açık hava şartı + `TryResolveCeilingHeadBonk` + 360° 8-noktalı kapsül çarpışması),
+   - ✅ (#3) Anlık FPS düşüşü (`MaxRuntimeStreamSpawnPerFrame = 3`, `2.2 ms` `Stopwatch` bütçesi, `Task.Run` Ufuk halkası ve tek-geçiş nem yenilemesi) optimizasyonu,
+   - ✅ (#4) Stamina tüketimi (`ConsumeStamina` + `0.90s / 1.65s` `StaminaRegenDelaySeconds`) ve `[F4]` stamina kilidi ayrımı düzeltmesi,
+   - ✅ (#5) `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` çanta örtüsü dışına sürükleyerek 3B eşyayı yere atma (`Item Drop`) + `[E]` ile geri toplama,
+   - ✅ (#9) Önü kapatan 2 bilgi penceresinin taşınması / varsayılan kapalı olup sadece `[F3]` açıkken görünmesi.
+2. ⏳ **Paket 2 — Taş Devri Survival Başlangıcı, İlkel Craft & Madde Kristali Evrimi (`SIRADAKİ PAKET`):**
    - (#6) Yerde Dal / Çakmaktaşı / Lif toplama + Taş Yontma (`Knapping`) + Kumaş/Kütük üstü fiziksel İlkel Alet üretimi + İlkel Taş Ocak,
    - (#7) Madde Kristali `Tier 0 -> Tier 1..5` uyandırma ve yükseltme mekaniği,
    - (#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" modu.

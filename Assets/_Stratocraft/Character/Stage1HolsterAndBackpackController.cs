@@ -26,8 +26,12 @@ namespace Stratocraft.Character
         public struct DroppedWorldItemRecord
         {
             public GameObject VisualObject;
+            public VisualInventorySlot SlotData;
             public int OriginalSlotIndex;
             public UniqueEquipmentInstance Equipment;
+            public Vector3 Velocity;
+            public float RestGroundY;
+            public bool IsSettled;
             public string DisplayName;
         }
 
@@ -183,7 +187,7 @@ namespace Stratocraft.Character
 
                 EnsureDynamic3DMatSlotsInitialized(backpackMatRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat);
                 InventoryUi.SyncWithCrystalStorage(miningCtrl);
-                UpdateBackpackMatClickInteraction(dt, playerCamera, backpackMatRoot, miningCtrl, combatBridge);
+                UpdateBackpackMatClickInteraction(dt, playerTransform, playerCamera, backpackMatRoot, sharedVoxelMat, miningCtrl, combatBridge);
                 SyncDynamic3DMatVisuals(dt, sharedVoxelMat);
             }
             else
@@ -197,6 +201,7 @@ namespace Stratocraft.Character
             HandleQuickDropAndInteractHotkeys(
                 playerTransform, playerBodyRoot, playerCamera, chestLidTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual,
                 sharedVoxelMat, miningCtrl, combatBridge, collapseBridge);
+            StepDroppedWorldItemsPhysics(dt);
             SyncHandAndBodyHolsterVisuals(
                 playerBodyRoot, playerCamera, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat,
                 miningCtrl.SelectedMaterialId, miningCtrl.IsCrystalActive);
@@ -932,6 +937,41 @@ namespace Stratocraft.Character
                     break;
                 }
 
+                case InventoryItemKind.ArmorHelmet:
+                case InventoryItemKind.ArmorChestplate:
+                case InventoryItemKind.ArmorVambrace:
+                case InventoryItemKind.ArmorGreaves:
+                {
+                    byte armorMat = slot.SubId switch
+                    {
+                        1 => MaterialIdCatalog.OakWood,
+                        2 => MaterialIdCatalog.Ironwood,
+                        3 => MaterialIdCatalog.Bronze,
+                        4 => MaterialIdCatalog.Steel,
+                        5 => MaterialIdCatalog.MithrilOre,
+                        _ => MaterialIdCatalog.Steel
+                    };
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), armorMat, 6, 0, 0, _matMeshTris);
+                    break;
+                }
+
+                case InventoryItemKind.PotionHealth:
+                case InventoryItemKind.PotionStamina:
+                case InventoryItemKind.MedicalBandage:
+                case InventoryItemKind.FoodCookedMeat:
+                case InventoryItemKind.FoodWildBerries:
+                case InventoryItemKind.FoodCleanWater:
+                case InventoryItemKind.PlaceableCampfire:
+                {
+                    byte consMat = slot.Kind == InventoryItemKind.PlaceableCampfire
+                        ? MaterialIdCatalog.CampfireBlock
+                        : (slot.Kind == InventoryItemKind.PotionHealth ? MaterialIdCatalog.RedDiamondGem : MaterialIdCatalog.AstralOre);
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), consMat, 6, 0, 0, _matMeshTris);
+                    break;
+                }
+
                 default: // VoxelBlock
                 {
                     byte blockMat = slot.SubId != 0 ? slot.SubId : MaterialIdCatalog.Stone;
@@ -1020,8 +1060,10 @@ namespace Stratocraft.Character
 
         private void UpdateBackpackMatClickInteraction(
             float dt,
+            Transform playerTransform,
             UnityEngine.Camera? cam,
             Transform? matRoot,
+            Material? sharedVoxelMat,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge)
         {
@@ -1035,9 +1077,10 @@ namespace Stratocraft.Character
                 InventoryUi.HasHovered3DMatSlot = false;
                 HoveredBackpackTooltip = string.Empty;
 
-                if (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode)
+                if (!InventoryUi.CursorHeldSlot.IsEmpty &&
+                    ((_isClickCarryMode && Input.GetMouseButtonDown(0)) || (!_isClickCarryMode && Input.GetMouseButtonUp(0))))
                 {
-                    InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
+                    DropCursorHeldItemOutsideMat(playerTransform, cam, sharedVoxelMat, miningCtrl, combatBridge);
                 }
                 return;
             }
@@ -1049,9 +1092,9 @@ namespace Stratocraft.Character
             if (!InventoryUi.CursorHeldSlot.IsEmpty && _dragged3DItemNode.SlotRoot != null)
             {
                 Vector3 clampedLocal = new Vector3(
-                    Mathf.Clamp(local.x, -0.64f, 0.64f),
+                    Mathf.Clamp(local.x, -0.82f, 0.82f),
                     0.095f,
-                    Mathf.Clamp(local.z, -0.45f, 0.42f));
+                    Mathf.Clamp(local.z, -0.60f, 0.56f));
                 _dragged3DItemNode.SlotRoot.localPosition = Vector3.Lerp(
                     _dragged3DItemNode.SlotRoot.localPosition,
                     clampedLocal,
@@ -1063,12 +1106,34 @@ namespace Stratocraft.Character
             {
                 _hoveredMatSlotIndex = -1;
                 InventoryUi.HasHovered3DMatSlot = false;
-                HoveredBackpackTooltip = string.Empty;
+                HoveredBackpackTooltip = !InventoryUi.CursorHeldSlot.IsEmpty
+                    ? "[Ortu Disina Birak] Esyayi Yere At"
+                    : string.Empty;
 
-                if (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode)
+                if (!InventoryUi.CursorHeldSlot.IsEmpty &&
+                    ((_isClickCarryMode && Input.GetMouseButtonDown(0)) || (!_isClickCarryMode && Input.GetMouseButtonUp(0))))
                 {
-                    InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
-                    miningCtrl.LastFeedbackText = "3B Esya ortu disina birakildigi icin alindigi 3B yuvaya geri konuldu.";
+                    DropCursorHeldItemOutsideMat(playerTransform, cam, sharedVoxelMat, miningCtrl, combatBridge);
+                }
+                return;
+            }
+
+            // [I] 3B Canta uzerinde bir yuvanin ustundeyken [Q] (1 Adet) veya [Ctrl+Q] (Tum Yigin) ile hizli yere atma
+            if (Input.GetKeyDown(KeyCode.Q) && InventoryUi.CursorHeldSlot.IsEmpty)
+            {
+                bool dropAllStack = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                VisualInventorySlot[] srcArr = isHotbar ? InventoryUi.HotbarSlots : InventoryUi.BackpackSlots;
+                if ((uint)slotIdx < (uint)srcArr.Length && !srcArr[slotIdx].IsEmpty)
+                {
+                    int dropCount = dropAllStack ? srcArr[slotIdx].Count : 1;
+                    VisualInventorySlot toDrop = srcArr[slotIdx];
+                    toDrop.Count = dropCount;
+                    srcArr[slotIdx].Count -= dropCount;
+                    if (srcArr[slotIdx].Count <= 0) srcArr[slotIdx] = default;
+                    SyncDroppedSpecialItemState(in toDrop, srcArr[slotIdx].IsEmpty, miningCtrl);
+                    InventoryUi.PushUiCountsToCrystalStorage(miningCtrl);
+                    if (isHotbar) ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    SpawnDroppedSlotInWorld(in toDrop, playerTransform, cam, sharedVoxelMat, combatBridge, miningCtrl);
                 }
                 return;
             }
@@ -1092,7 +1157,7 @@ namespace Stratocraft.Character
                 InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
                 InventoryUi.Hovered3DMatTitle = $"{zoneHeader}  {itemName}  [Adet: x{hoveredSlot.Count}]";
                 InventoryUi.Hovered3DMatDetail =
-                    "[Sol Tik Basili Tut & Surukle] 3B Ortude Yerini Degistir | [Sag Tik] Yariya Bol | [Shift+Sol Tik] Kilif 1..9 <-> Canta";
+                    "[Sol Tik & Surukle] Bolme Degistir | [Ortu Disina Birak / Q] Yere At | [Sag Tik] Yariya Bol | [Shift+Sol Tik] Hizli Aktar";
             }
             else if (!InventoryUi.CursorHeldSlot.IsEmpty)
             {
@@ -1238,10 +1303,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            bool combatConsumingQ = combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ;
-            bool sheatheKey = Input.GetKeyDown(Stage1GameSettings.KeyFeintOrSheathe) || Input.GetKeyDown(KeyCode.Q);
-            if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.H) ||
-                (!combatConsumingQ && sheatheKey && (ActiveHolsterSlot != 0 || miningCtrl.IsCrystalActive)))
+            if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.H))
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
@@ -1330,63 +1392,38 @@ namespace Stratocraft.Character
                 return;
             }
 
-            bool quickDropPressed = Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop) ||
+            bool combatConsumingQ = combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ;
+            bool qDropPressed = !BackpackSystem.IsBackpackOpen && !combatConsumingQ && Input.GetKeyDown(KeyCode.Q);
+            bool quickDropPressed = !BackpackSystem.IsBackpackOpen && (
+                                    Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop) ||
                                     Input.GetKeyDown(KeyCode.X) ||
                                     ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
-                                     (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)));
-            if (quickDropPressed && ActiveHolsterSlot != 0)
+                                     (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))));
+            if (qDropPressed || quickDropPressed)
             {
-                int prevSlot = ActiveHolsterSlot;
-                HolsterMachine.ExecuteQuickDropG(out UniqueEquipmentInstance dropped);
-                if (dropped.InstanceGuid == 0UL)
+                int selIdx = InventoryUi.SelectedHotbarIndex;
+                if (selIdx >= 0 && selIdx < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount &&
+                    !InventoryUi.HotbarSlots[selIdx].IsEmpty)
                 {
-                    dropped = new UniqueEquipmentInstance { InstanceGuid = (ulong)(1000 + prevSlot), ArchetypeItemId = (ushort)(100 + prevSlot), MassKg = 1.5f, SharpnessOrHardness01 = 0.9f };
+                    bool dropAll = quickDropPressed || Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                    int dropCount = dropAll ? InventoryUi.HotbarSlots[selIdx].Count : 1;
+                    VisualInventorySlot toDrop = InventoryUi.HotbarSlots[selIdx];
+                    toDrop.Count = dropCount;
+                    InventoryUi.HotbarSlots[selIdx].Count -= dropCount;
+                    bool slotEmptied = InventoryUi.HotbarSlots[selIdx].Count <= 0;
+                    if (slotEmptied) InventoryUi.HotbarSlots[selIdx] = default;
+
+                    SyncDroppedSpecialItemState(in toDrop, slotEmptied, miningCtrl);
+                    InventoryUi.PushUiCountsToCrystalStorage(miningCtrl);
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    SpawnDroppedSlotInWorld(in toDrop, playerTransform, playerCamera, sharedVoxelMat, combatBridge, miningCtrl);
+                    return;
                 }
-                ActiveHolsterSlot = 0;
-                InventoryUi.SelectHotbarSlot(-1);
-
-                string weaponName = GetActiveSlotWeaponName(prevSlot);
-                GameObject droppedGo = new GameObject($"Dropped_{weaponName}_Slot{prevSlot}_{_droppedWorldItems.Count}");
-                float scatterAngle = (_droppedWorldItems.Count * 42f) * Mathf.Deg2Rad;
-                Vector3 scatterOffset = new Vector3(Mathf.Sin(scatterAngle) * 0.28f, 0.12f, Mathf.Cos(scatterAngle) * 0.28f);
-                droppedGo.transform.position = playerTransform.position + playerTransform.forward * 1.05f + scatterOffset;
-                droppedGo.transform.rotation = Quaternion.Euler(85f, playerTransform.eulerAngles.y + 35f + _droppedWorldItems.Count * 25f, 15f);
-
-                MeshFilter? sourceMf = prevSlot switch
+                else if (qDropPressed)
                 {
-                    1 => swordVisual != null ? swordVisual.GetComponentInChildren<MeshFilter>() : null,
-                    2 => pickaxeVisual != null ? pickaxeVisual.GetComponentInChildren<MeshFilter>() : null,
-                    3 => axeVisual != null ? axeVisual.GetComponentInChildren<MeshFilter>() : null,
-                    _ => _heldMaterialBlockMf
-                };
-
-                if (sourceMf != null && sourceMf.sharedMesh != null)
-                {
-                    var mf = droppedGo.AddComponent<MeshFilter>();
-                    mf.sharedMesh = sourceMf.sharedMesh;
-                    var mr = droppedGo.AddComponent<MeshRenderer>();
-                    var origRenderer = sourceMf.GetComponent<Renderer>();
-                    mr.sharedMaterial = origRenderer != null && origRenderer.sharedMaterial != null ? origRenderer.sharedMaterial : sharedVoxelMat;
-                    droppedGo.transform.localScale = sourceMf.transform.lossyScale;
+                    miningCtrl.LastFeedbackText = "Yere atmak icin [1..9] ile dolu bir yuva secin ([Q] 1 Adet | [Ctrl+Q] Tum Yigin).";
+                    return;
                 }
-                else
-                {
-                    var fallback = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    if (fallback.TryGetComponent<Collider>(out var c)) UnityEngine.Object.Destroy(c);
-                    fallback.transform.SetParent(droppedGo.transform, false);
-                    fallback.transform.localScale = new Vector3(0.08f, 0.08f, 0.75f);
-                    if (sharedVoxelMat != null && fallback.TryGetComponent<Renderer>(out var r)) r.sharedMaterial = sharedVoxelMat;
-                }
-
-                _droppedWorldItems.Add(new DroppedWorldItemRecord
-                {
-                    VisualObject = droppedGo,
-                    OriginalSlotIndex = prevSlot,
-                    Equipment = dropped,
-                    DisplayName = weaponName
-                });
-
-                miningCtrl.LastFeedbackText = $"0.0s Quick-Drop: {weaponName} yere atildi! (Yerdeki Kalici Esya: {_droppedWorldItems.Count}) [E] ile geri alin.";
             }
 
             if (!Input.GetKeyDown(Stage1GameSettings.KeyInteract) && !Input.GetKeyDown(KeyCode.E)) return;
@@ -1409,7 +1446,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            // [E] ONCELIK 1: Yerdeki fiziksel silah/aleti geri alma (<= 3.2m)
+            // [E] ONCELIK 1: Yerdeki fiziksel 3B esyayi (silah/alet/blok/kap/cevher/tas) geri alma (<= 3.2m)
             int nearestIdx = -1;
             float bestDist = 3.2f;
             for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
@@ -1430,16 +1467,34 @@ namespace Stratocraft.Character
             if (nearestIdx >= 0)
             {
                 DroppedWorldItemRecord rec = _droppedWorldItems[nearestIdx];
+                VisualInventorySlot pickedSlot = rec.SlotData;
+                if (pickedSlot.IsEmpty)
+                {
+                    pickedSlot = new VisualInventorySlot
+                    {
+                        Kind = rec.OriginalSlotIndex == 2 ? InventoryItemKind.ToolPickaxe : (rec.OriginalSlotIndex == 3 ? InventoryItemKind.ToolAxe : InventoryItemKind.WeaponSword),
+                        Count = 1,
+                        Durability01 = 1.0f
+                    };
+                }
+
+                if (!InventoryUi.TryInsertPickedUpSlot(in pickedSlot, miningCtrl, out bool placedInHotbar, out int placedIdx))
+                {
+                    miningCtrl.LastFeedbackText = "CANTA DOLU! Yerdeki esyayi almak icin once [I] cantada veya [Q] ile yer acin.";
+                    return;
+                }
+
                 _droppedWorldItems.RemoveAt(nearestIdx);
                 if (rec.VisualObject != null) UnityEngine.Object.Destroy(rec.VisualObject);
 
-                int restoreSlot = Mathf.Clamp(rec.OriginalSlotIndex, 1, 4);
-                HolsterSlotIndex slotEnum = (HolsterSlotIndex)restoreSlot;
-                HolsterMachine.AssignHolsterSlot(slotEnum, rec.Equipment);
-                HolsterMachine.RequestDrawSlot(slotEnum);
-                ActiveHolsterSlot = restoreSlot;
-                InventoryUi.SelectHotbarSlot(restoreSlot - 1);
-                miningCtrl.LastFeedbackText = $"Yerdeki {rec.DisplayName} geri alindi (Kilif {restoreSlot} | Kalan Yerdeki Esya: {_droppedWorldItems.Count})!";
+                RestorePickedUpSpecialItemState(in pickedSlot, rec.Equipment);
+                if (placedInHotbar && (InventoryUi.SelectedHotbarIndex < 0 || InventoryUi.SelectedHotbarIndex == placedIdx))
+                {
+                    InventoryUi.SelectHotbarSlot(placedIdx);
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                }
+
+                miningCtrl.LastFeedbackText = $"Yerden Alindi [E]: {rec.DisplayName} x{pickedSlot.Count} (Kalan Yerdeki Esya: {_droppedWorldItems.Count})";
                 return;
             }
 
@@ -2001,6 +2056,214 @@ namespace Stratocraft.Character
             string s4 = ActiveHolsterSlot == 4 ? $">>[6-9: {matName}]<<" : $"[4: Keski] [5: Matara] [6-9: {matName}]";
             string drawInfo = HolsterTransitionRemaining > 0.01f ? $" (Cekiliyor: {HolsterTransitionRemaining:0.1}s)" : string.Empty;
             return $"{s0}  {s1}  {s2}  {s3}  {s4}{drawInfo}";
+        }
+
+        private void DropCursorHeldItemOutsideMat(
+            Transform playerTransform,
+            UnityEngine.Camera? cam,
+            Material? sharedVoxelMat,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge)
+        {
+            if (InventoryUi.CursorHeldSlot.IsEmpty) return;
+
+            VisualInventorySlot droppedSlot = InventoryUi.ConsumeCursorHeldItemForDrop(miningCtrl);
+            _isClickCarryMode = false;
+
+            SyncDroppedSpecialItemState(in droppedSlot, slotCompletelyEmptied: true, miningCtrl);
+            ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+            SpawnDroppedSlotInWorld(in droppedSlot, playerTransform, cam, sharedVoxelMat, combatBridge, miningCtrl);
+        }
+
+        private void SyncDroppedSpecialItemState(
+            in VisualInventorySlot droppedSlot,
+            bool slotCompletelyEmptied,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (droppedSlot.Kind == InventoryItemKind.MetalIngot)
+            {
+                if (droppedSlot.SubId == 1) CopperIngotCount = Mathf.Max(0, CopperIngotCount - droppedSlot.Count);
+                else if (droppedSlot.SubId == 2) IronIngotCount = Mathf.Max(0, IronIngotCount - droppedSlot.Count);
+                else if (droppedSlot.SubId == 3) MithrilIngotCount = Mathf.Max(0, MithrilIngotCount - droppedSlot.Count);
+            }
+            if (!slotCompletelyEmptied) return;
+
+            if (droppedSlot.Kind == InventoryItemKind.WeaponSword && !HasAnyItemOfKindInInventory(InventoryItemKind.WeaponSword))
+            {
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistLeft_Slot1, default);
+                if (ActiveHolsterSlot == 1) ActiveHolsterSlot = 0;
+            }
+            else if (droppedSlot.Kind == InventoryItemKind.ToolPickaxe && !HasAnyItemOfKindInInventory(InventoryItemKind.ToolPickaxe))
+            {
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistRight_Slot2, default);
+                if (ActiveHolsterSlot == 2) ActiveHolsterSlot = 0;
+            }
+            else if (droppedSlot.Kind == InventoryItemKind.ToolAxe && !HasAnyItemOfKindInInventory(InventoryItemKind.ToolAxe))
+            {
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.BackLeft_Slot3, default);
+                if (ActiveHolsterSlot == 3) ActiveHolsterSlot = 0;
+            }
+            miningCtrl.IsCrystalActive = false;
+        }
+
+        private void RestorePickedUpSpecialItemState(in VisualInventorySlot pickedSlot, UniqueEquipmentInstance eq)
+        {
+            if (pickedSlot.Kind == InventoryItemKind.MetalIngot)
+            {
+                if (pickedSlot.SubId == 1) CopperIngotCount += pickedSlot.Count;
+                else if (pickedSlot.SubId == 2) IronIngotCount += pickedSlot.Count;
+                else if (pickedSlot.SubId == 3) MithrilIngotCount += pickedSlot.Count;
+            }
+            else if (pickedSlot.Kind == InventoryItemKind.WeaponSword &&
+                     HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
+            {
+                UniqueEquipmentInstance swordEq = eq.InstanceGuid != 0UL
+                    ? eq
+                    : new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f };
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistLeft_Slot1, swordEq);
+            }
+            else if (pickedSlot.Kind == InventoryItemKind.ToolPickaxe &&
+                     HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistRight_Slot2).InstanceGuid == 0UL)
+            {
+                UniqueEquipmentInstance pickEq = eq.InstanceGuid != 0UL
+                    ? eq
+                    : new UniqueEquipmentInstance { InstanceGuid = 1002UL, ArchetypeItemId = 102, MassKg = 2.40f, SharpnessOrHardness01 = 1.0f };
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistRight_Slot2, pickEq);
+            }
+            else if (pickedSlot.Kind == InventoryItemKind.ToolAxe &&
+                     HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.BackLeft_Slot3).InstanceGuid == 0UL)
+            {
+                UniqueEquipmentInstance axeEq = eq.InstanceGuid != 0UL
+                    ? eq
+                    : new UniqueEquipmentInstance { InstanceGuid = 1003UL, ArchetypeItemId = 103, MassKg = 2.10f, SharpnessOrHardness01 = 1.0f };
+                HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.BackLeft_Slot3, axeEq);
+            }
+        }
+
+        private bool HasAnyItemOfKindInInventory(InventoryItemKind kind)
+        {
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
+            {
+                if (InventoryUi.HotbarSlots[i].Kind == kind && InventoryUi.HotbarSlots[i].Count > 0) return true;
+            }
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; i++)
+            {
+                if (InventoryUi.BackpackSlots[i].Kind == kind && InventoryUi.BackpackSlots[i].Count > 0) return true;
+            }
+            return false;
+        }
+
+        private void SpawnDroppedSlotInWorld(
+            in VisualInventorySlot droppedSlot,
+            Transform playerTransform,
+            UnityEngine.Camera? cam,
+            Material? sharedVoxelMat,
+            Stage1DirectionalCombatBridge? combatBridge,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (droppedSlot.IsEmpty || droppedSlot.Count <= 0) return;
+
+            string displayName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in droppedSlot, combatBridge);
+            int seq = _droppedWorldItems.Count;
+            GameObject droppedGo = new GameObject($"DroppedWorldItem_{droppedSlot.Kind}_{seq}");
+
+            Vector3 fwd = cam != null
+                ? Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up)
+                : Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up);
+            if (fwd.sqrMagnitude < 0.001f) fwd = playerTransform.forward;
+            fwd.Normalize();
+
+            float scatterRad = (seq * 37f) * Mathf.Deg2Rad;
+            Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+            Vector3 spawnPos = playerTransform.position + Vector3.up * 1.08f + fwd * 0.72f + right * (Mathf.Sin(scatterRad) * 0.18f);
+            Vector3 launchVel = fwd * 2.35f + Vector3.up * 1.25f + right * (Mathf.Cos(scatterRad) * 0.35f);
+
+            float groundY = playerTransform.position.y + 0.14f;
+            int terrainMask = LayerMask.GetMask("VoxelTerrain");
+            int castMask = terrainMask != 0 ? terrainMask : UnityEngine.Physics.DefaultRaycastLayers;
+            Vector3 landingProbe = playerTransform.position + fwd * 1.25f + Vector3.up * 1.6f;
+            if (UnityEngine.Physics.Raycast(landingProbe, Vector3.down, out RaycastHit hit, 12f, castMask, QueryTriggerInteraction.Ignore))
+            {
+                groundY = hit.point.y + 0.14f;
+            }
+
+            droppedGo.transform.position = spawnPos;
+            GetSlot3DPoseAndScale(in droppedSlot, isHotbarSlot: false, out _, out Quaternion baseRot, out Vector3 matScale);
+            float worldScaleFactor = droppedSlot.Kind switch
+            {
+                InventoryItemKind.WeaponSword or InventoryItemKind.ToolPickaxe or InventoryItemKind.ToolAxe => 3.2f,
+                InventoryItemKind.VoxelBlock => 3.4f,
+                _ => 2.8f
+            };
+            droppedGo.transform.localScale = matScale * worldScaleFactor;
+            droppedGo.transform.rotation = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * baseRot;
+
+            Mesh itemMesh = GetOrCreate3DMatMeshForSlot(in droppedSlot);
+            var mf = droppedGo.AddComponent<MeshFilter>();
+            mf.sharedMesh = itemMesh;
+            var mr = droppedGo.AddComponent<MeshRenderer>();
+            if (sharedVoxelMat != null) mr.sharedMaterial = sharedVoxelMat;
+
+            UniqueEquipmentInstance eq = default;
+            int origSlot = 4;
+            if (droppedSlot.Kind == InventoryItemKind.WeaponSword)
+            {
+                origSlot = 1;
+                eq = new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f };
+            }
+            else if (droppedSlot.Kind == InventoryItemKind.ToolPickaxe)
+            {
+                origSlot = 2;
+                eq = new UniqueEquipmentInstance { InstanceGuid = 1002UL, ArchetypeItemId = 102, MassKg = 2.40f, SharpnessOrHardness01 = 1.0f };
+            }
+            else if (droppedSlot.Kind == InventoryItemKind.ToolAxe)
+            {
+                origSlot = 3;
+                eq = new UniqueEquipmentInstance { InstanceGuid = 1003UL, ArchetypeItemId = 103, MassKg = 2.10f, SharpnessOrHardness01 = 1.0f };
+            }
+
+            _droppedWorldItems.Add(new DroppedWorldItemRecord
+            {
+                VisualObject = droppedGo,
+                SlotData = droppedSlot,
+                OriginalSlotIndex = origSlot,
+                Equipment = eq,
+                Velocity = launchVel,
+                RestGroundY = groundY,
+                IsSettled = false,
+                DisplayName = displayName
+            });
+
+            miningCtrl.LastFeedbackText = $"Yere Atildi: {displayName} x{droppedSlot.Count} -> Yaklasip [E] ile geri alabilirsiniz.";
+        }
+
+        private void StepDroppedWorldItemsPhysics(float dt)
+        {
+            if (_droppedWorldItems.Count == 0 || dt <= 0f) return;
+            for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
+            {
+                DroppedWorldItemRecord rec = _droppedWorldItems[i];
+                if (rec.VisualObject == null)
+                {
+                    _droppedWorldItems.RemoveAt(i);
+                    continue;
+                }
+                if (rec.IsSettled) continue;
+
+                rec.Velocity.y -= 9.81f * dt;
+                rec.Velocity.x *= Mathf.Max(0f, 1f - 2.2f * dt);
+                rec.Velocity.z *= Mathf.Max(0f, 1f - 2.2f * dt);
+
+                Vector3 nextPos = rec.VisualObject.transform.position + rec.Velocity * dt;
+                if (nextPos.y <= rec.RestGroundY)
+                {
+                    nextPos.y = rec.RestGroundY;
+                    rec.Velocity = Vector3.zero;
+                    rec.IsSettled = true;
+                }
+                rec.VisualObject.transform.position = nextPos;
+                _droppedWorldItems[i] = rec;
+            }
         }
     }
 }
