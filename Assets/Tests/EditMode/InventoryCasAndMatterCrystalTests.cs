@@ -549,5 +549,183 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(mining.IsCrystalActive, Is.True);
         }
 #endif
+
+        [Test]
+        public void Faz22_StoneKnapping_PerfectOutline_Yields100PercentQuality()
+        {
+            StoneKnappingState state = StoneKnappingSessionSystem.BeginSession(KnappingTemplateId.PickaxeHead);
+
+            // Dis fazlalik hucrelerinin (~TemplateMask64) tamamini cakmaktasi vuruslariyla temizle
+            for (int z = 0; z < 8; z++)
+            {
+                for (int x = 0; x < 8; x++)
+                {
+                    ulong bit = 1UL << (z * 8 + x);
+                    if ((state.TemplateMask64 & bit) == 0UL && (state.CurrentMask64 & bit) != 0UL)
+                    {
+                        StoneKnappingSessionSystem.ApplyFlintStrike(ref state, x, z, out _);
+                    }
+                }
+            }
+
+            Assert.That(state.IsShattered, Is.False);
+            Assert.That(state.CanFinishHarvest, Is.True);
+            Assert.That(state.CurrentMask64, Is.EqualTo(state.TemplateMask64));
+            Assert.That(state.Quality01, Is.EqualTo(1.0f).Within(0.001f));
+        }
+
+        [Test]
+        public void Faz22_StoneKnapping_SloppyCoreHits_StillProducesWeakUsableHead()
+        {
+            StoneKnappingState state = StoneKnappingSessionSystem.BeginSession(KnappingTemplateId.PickaxeHead);
+
+            // 1) Dis fazlaliklarin tamamini temizle
+            for (int z = 0; z < 8; z++)
+            {
+                for (int x = 0; x < 8; x++)
+                {
+                    ulong bit = 1UL << (z * 8 + x);
+                    if ((state.TemplateMask64 & bit) == 0UL && (state.CurrentMask64 & bit) != 0UL)
+                    {
+                        StoneKnappingSessionSystem.ApplyFlintStrike(ref state, x, z, out _);
+                    }
+                }
+            }
+
+            // 2) Hayalet cizgi icindeki cekirdek kalibin ~%35'ine (26 hucreden 9 tanesine) yanlislikla vur!
+            // Cekirdek >= %50 kaldigi icin tas parcalanmamali; yamuk ama kullanilabilir dusuk kaliteli (%35..%75) baslik cikmalidir!
+            int coreHits = 0;
+            for (int z = 0; z < 8 && coreHits < 9; z++)
+            {
+                for (int x = 0; x < 8 && coreHits < 9; x++)
+                {
+                    ulong bit = 1UL << (z * 8 + x);
+                    if ((state.TemplateMask64 & bit) != 0UL && (state.CurrentMask64 & bit) != 0UL)
+                    {
+                        StoneKnappingSessionSystem.ApplyFlintStrike(ref state, x, z, out _);
+                        coreHits++;
+                    }
+                }
+            }
+
+            Assert.That(state.IsShattered, Is.False, "Cekirdek %50 ustunde kaldigi surece tas parcalanmamalidir!");
+            Assert.That(state.CanFinishHarvest, Is.True, "Yamuk yontulan baslik yine de alinabilmelidir!");
+            Assert.That(state.Quality01, Is.GreaterThanOrEqualTo(0.35f).And.LessThan(0.78f));
+        }
+
+        [Test]
+        public void Faz22_StoneKnapping_OverHalfCoreDestroyed_ShattersStone()
+        {
+            StoneKnappingState state = StoneKnappingSessionSystem.BeginSession(KnappingTemplateId.AxeHead);
+            int totalCore = StoneKnappingSessionSystem.PopCount64(state.TemplateMask64);
+            int strikesNeededToShatter = (totalCore / 2) + 2;
+
+            int hits = 0;
+            for (int z = 0; z < 8 && hits < strikesNeededToShatter && !state.IsShattered; z++)
+            {
+                for (int x = 0; x < 8 && hits < strikesNeededToShatter && !state.IsShattered; x++)
+                {
+                    ulong bit = 1UL << (z * 8 + x);
+                    if ((state.TemplateMask64 & bit) != 0UL)
+                    {
+                        StoneKnappingSessionSystem.ApplyFlintStrike(ref state, x, z, out _);
+                        hits++;
+                    }
+                }
+            }
+
+            Assert.That(state.IsShattered, Is.True, "Cekirdek kalibin yarisindan fazlasi kirildiginda tas parcalanmalidir!");
+            Assert.That(state.CanFinishHarvest, Is.False);
+            Assert.That(state.Quality01, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void Faz22_ClothMatCrafting_TransfersKnapMaskAndQualityToCraftedTools()
+        {
+            ulong customMask = StoneKnappingSessionSystem.GetTemplateMask(KnappingTemplateId.PickaxeHead) & ~(1UL << 18) & ~(1UL << 19);
+            var sloppyHeadDna = new PhysicalItemShapeDna(
+                shapeSeed: 0xABCD1234u,
+                knapMask64: customMask,
+                quality01: 0.44f,
+                thermalTempByte: 0,
+                flags: PhysicalItemShapeDna.FlagCustomKnapMask);
+
+            ReadOnlySpan<ClothCenterInputItem> centerItems = stackalloc ClothCenterInputItem[3]
+            {
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.KnappedPickaxeHead, Count = 1, ShapeDna = sloppyHeadDna },
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.NaturalStick, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(11u, 100) },
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.PlantFiber, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(22u, 100) }
+            };
+
+            ClothCenterCraftEvaluation eval = ClothMatCraftingSystem.EvaluateCenterPile(centerItems);
+
+            Assert.That(eval.IsReadyToBind, Is.True);
+            Assert.That(eval.Output, Is.EqualTo(ClothCenterCraftOutput.StonePickaxe));
+            Assert.That(eval.InheritedOutputDna.KnapMask64, Is.EqualTo(customMask));
+            Assert.That(eval.InheritedOutputDna.QualityPct, Is.EqualTo(44));
+            Assert.That((eval.InheritedOutputDna.Flags & PhysicalItemShapeDna.FlagCustomKnapMask) != 0, Is.True);
+
+            ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(44, out float weakDur, out float weakPow);
+            ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(100, out float masterDur, out float masterPow);
+
+            Assert.That(weakDur, Is.LessThan(masterDur));
+            Assert.That(weakPow, Is.LessThan(masterPow));
+            Assert.That(masterDur, Is.EqualTo(85.0f).Within(0.01f));
+            Assert.That(masterPow, Is.EqualTo(1.15f).Within(0.01f));
+        }
+
+#if UNITY_5_3_OR_NEWER
+        [Test]
+        public void Faz22_GroundScaleAndAutoEquipFlint_SupportsPlayerDroppedAndWorldStones()
+        {
+            // 1) Yerdeki esya gorunurluk olcegi (toprak, tas, cakmaktasi, dal vb.) belirgin bicimde buyutulmus olmalidir
+            UnityEngine.Vector3 stoneScale = PhysicalItemMeshFactory.GetWorldGroundScale(
+                PhysicalItemArchetype.RoughStone, UnityEngine.Vector3.one);
+            UnityEngine.Vector3 dirtScale = PhysicalItemMeshFactory.GetWorldGroundScale(
+                PhysicalItemArchetype.DirtClod, UnityEngine.Vector3.one);
+            UnityEngine.Vector3 stickScale = PhysicalItemMeshFactory.GetWorldGroundScale(
+                PhysicalItemArchetype.NaturalStick, UnityEngine.Vector3.one);
+
+            Assert.That(stoneScale.x, Is.GreaterThan(1.75f));
+            Assert.That(dirtScale.y, Is.GreaterThan(1.75f));
+            Assert.That(stickScale.z, Is.GreaterThan(1.45f));
+
+            // 2) Hem RoughStoneChunk hem de Stone/Cobblestone/Basalt VoxelBlock yontulabilir tas olarak taninmalidir
+            Assert.That(
+                Stage1MatterCrystalAndMiningController.IsKnappableStoneItem(
+                    InventoryItemKind.RoughStoneChunk, MaterialIdCatalog.Stone),
+                Is.True);
+            Assert.That(
+                Stage1MatterCrystalAndMiningController.IsKnappableStoneItem(
+                    InventoryItemKind.VoxelBlock, MaterialIdCatalog.Stone),
+                Is.True);
+            Assert.That(
+                Stage1MatterCrystalAndMiningController.IsKnappableStoneItem(
+                    InventoryItemKind.VoxelBlock, MaterialIdCatalog.Dirt),
+                Is.False);
+
+            // 3) Oyuncu elinde bos el (Slot 0) varken cantada Cakmaktasi tasiyorsa [R] yontma icin otomatik eline kusanmalidir
+            var mining = new Stage1MatterCrystalAndMiningController();
+            var holster = new Stage1HolsterAndBackpackController();
+            holster.InventoryUi.SelectHotbarSlot(-1);
+
+            Assert.That(holster.OwnsAnyFlintStone(), Is.False);
+            Assert.That(holster.TryAutoEquipFlintForKnapping(mining, null), Is.False);
+
+            holster.InventoryUi.BackpackSlots[4] = new VisualInventorySlot
+            {
+                Kind = InventoryItemKind.FlintStone,
+                SubId = MaterialIdCatalog.Gravel,
+                Count = 2,
+                Durability01 = 1f,
+                ShapeDna = PhysicalItemShapeDna.CreateNatural(777u, 100)
+            };
+
+            Assert.That(holster.OwnsAnyFlintStone(), Is.True);
+            Assert.That(holster.TryAutoEquipFlintForKnapping(mining, null), Is.True);
+            Assert.That(holster.InventoryUi.GetActiveHotbarSlot().Kind, Is.EqualTo(InventoryItemKind.FlintStone));
+            Assert.That(holster.InventoryUi.GetActiveHotbarSlot().Count, Is.EqualTo(2));
+        }
+#endif
     }
 }

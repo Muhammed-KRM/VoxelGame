@@ -205,6 +205,7 @@ namespace Stratocraft.Character
         private readonly Stage1StructuralCollapseBridge _collapseBridge = new();
         private readonly Stage1MatterCrystalAndMiningController _miningCtrl = new();
         private readonly Stage1HolsterAndBackpackController _holsterCtrl = new();
+        private readonly Stage1StoneKnappingController _stoneKnappingCtrl = new();
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
@@ -1340,10 +1341,10 @@ namespace Stratocraft.Character
 
         private void StepMovementAndOxygen(float dt)
         {
-            bool menuOpen = _escapeMenuCtrl.IsMenuOpen;
+            bool menuOpen = _escapeMenuCtrl.IsMenuOpen || _stoneKnappingCtrl.IsBusy;
             Vector2 moveInput = menuOpen ? Vector2.zero : new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
             bool wantSprint = !menuOpen && Input.GetKey(KeyCode.LeftShift);
-            bool wantCrouch = !menuOpen && Input.GetKey(KeyCode.LeftControl);
+            bool wantCrouch = _stoneKnappingCtrl.ForcePlayerCrouch || (!menuOpen && Input.GetKey(KeyCode.LeftControl));
             if (!menuOpen && (Input.GetKeyDown(Stage1GameSettings.KeyProne) || Input.GetKeyDown(KeyCode.Z)))
             {
                 _isUserProneToggled = !_isUserProneToggled;
@@ -1558,7 +1559,7 @@ namespace Stratocraft.Character
 
         private void StepHolsterBackpackAndMining(float dt)
         {
-            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.IsCarryingShoulderLog || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
+            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.IsCarryingShoulderLog || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy;
             bool consumedBushInteract = false;
             if (!uiBlocked && (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)))
             {
@@ -1569,7 +1570,7 @@ namespace Stratocraft.Character
             }
 
             GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
-            if (!_escapeMenuCtrl.IsMenuOpen && !consumedBushInteract)
+            if (!_escapeMenuCtrl.IsMenuOpen && !_stoneKnappingCtrl.IsBusy && !consumedBushInteract)
             {
                 _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
@@ -1617,7 +1618,7 @@ namespace Stratocraft.Character
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
+            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy;
             if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsCarryingShoulderLog &&
                 _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
             {
@@ -1704,12 +1705,28 @@ namespace Stratocraft.Character
                 _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
             }
 
+            UnityEngine.Camera? rigCam = (_stoneKnappingCtrl.IsBusy && _stoneKnappingCtrl.Phase != Stage1StoneKnappingController.KnappingSessionPhase.RadialTemplateMenu)
+                ? null
+                : PlayerCamera;
             _rigAnimator.StepRigAnimation(
-                transform, PlayerBodyRoot, PlayerCamera, LeftWristCrystalTransform,
+                transform, PlayerBodyRoot, rigCam, LeftWristCrystalTransform,
                 in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
                 _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
                 _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
                 _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01);
+
+            if (!_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+            {
+                _stoneKnappingCtrl.Step(dt, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, _dirtyChunks);
+                float knapStam = _stoneKnappingCtrl.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
+                if (knapStam > 0f)
+                {
+                    PhysicalCharacterControllerSystem.ConsumeStamina(
+                        ref _movementBridge.Vitals,
+                        ref _movementBridge.MovementState,
+                        knapStam);
+                }
+            }
         }
 
         /// <summary>FPS modunda kask/basi ShadowsOnly yapar, TPS modunda (F5) tam gorunur kilar; eklemli rig kuruldugunda statik kok heykeli gizler.</summary>
@@ -1734,6 +1751,7 @@ namespace Stratocraft.Character
 
         private void HandleCameraModeAndPersistenceHotkeys()
         {
+            if (_stoneKnappingCtrl.IsBusy) return;
             bool isBagOpen = _holsterCtrl.IsBackpackOpen;
             _escapeMenuCtrl.StepEscapeKeyAndRebind(
                 ref isBagOpen,
@@ -3848,7 +3866,7 @@ namespace Stratocraft.Character
                 _nextHudStringRefreshTime = nowUnscaled + 0.10f;
             }
 
-            if (!_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+            if (!_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_stoneKnappingCtrl.IsBusy)
             {
                 string reticle = _miningCtrl.IsCrystalActive
                     ? "◎"
@@ -3870,10 +3888,24 @@ namespace Stratocraft.Character
                 }
                 else
                 {
-                    int aimedDropIdx = _miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f);
+                    int aimedDropIdx = _miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 3.15f);
+                    int playerDropIdx = aimedDropIdx < 0
+                        ? _holsterCtrl.FindAimedPlayerDroppedItemIndex(PlayerCamera, transform.position, 3.15f)
+                        : -1;
+
                     if (aimedDropIdx >= 0 && _miningCtrl.TryGetDroppedWorldItemLabel(aimedDropIdx, out string dropLabel, out int dropCnt))
                     {
-                        prompt = dropCnt > 1 ? $"[E] Al: {dropLabel} (x{dropCnt})" : $"[E] Al: {dropLabel}";
+                        string baseTake = dropCnt > 1 ? $"[E] Al: {dropLabel} (x{dropCnt})" : $"[E] Al: {dropLabel}";
+                        prompt = _stoneKnappingCtrl.HasAimedGroundStone
+                            ? $"🪨 [R] Çakmaktaşı ile Taşı Yont   |   {baseTake}"
+                            : baseTake;
+                    }
+                    else if (playerDropIdx >= 0 && _holsterCtrl.TryGetPlayerDroppedItemLabel(playerDropIdx, out string pDropLabel, out int pDropCnt))
+                    {
+                        string baseTake = pDropCnt > 1 ? $"[E] Al: {pDropLabel} (x{pDropCnt})" : $"[E] Al: {pDropLabel}";
+                        prompt = _stoneKnappingCtrl.HasAimedGroundStone
+                            ? $"🪨 [R] Çakmaktaşı ile Taşı Yont   |   {baseTake}"
+                            : baseTake;
                     }
                     else
                     {
@@ -3885,6 +3917,10 @@ namespace Stratocraft.Character
                                 ? "Böğürtlenli Yabani Çalı"
                                 : (b.IsDryDesert ? "Kuru Çöl Çalısı" : (b.IsSwampReed ? "Bataklık Sazlığı" : "Yabani Çalı"));
                             prompt = $"[Sol Tık / E] {bName} Topla";
+                        }
+                        else if (_stoneKnappingCtrl.HasAimedGroundStone)
+                        {
+                            prompt = "🪨 [R] Çakmaktaşı ile Kayayı Yont";
                         }
                         else if (_miningCtrl.CurrentCrystalTier == 0)
                         {
@@ -3932,6 +3968,11 @@ namespace Stratocraft.Character
             if (_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
             {
                 _holsterCtrl.InventoryUi.DrawCreativeCatalogGUI(Screen.width, Screen.height, _miningCtrl);
+            }
+
+            if (_stoneKnappingCtrl.IsBusy || _stoneKnappingCtrl.HasVisibleToast)
+            {
+                _stoneKnappingCtrl.DrawOnGui(_miningCtrl, _holsterCtrl, _combatBridge);
             }
 
             if (_showDebugHudText)

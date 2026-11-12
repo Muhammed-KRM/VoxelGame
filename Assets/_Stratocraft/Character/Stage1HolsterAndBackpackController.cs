@@ -38,18 +38,24 @@ namespace Stratocraft.Character
             public string DisplayName;
         }
 
+        private const int MaxPileVisualInstances = 16;
+
         private struct MatSlot3DVisualNode
         {
             public Transform SlotRoot;
-            public MeshFilter PadMeshFilter;
+            public MeshFilter? PadMeshFilter;
             public Transform ItemTransform;
             public MeshFilter ItemMeshFilter;
             public MeshRenderer ItemMeshRenderer;
+            public Transform[]? PileTransforms;
+            public MeshFilter[]? PileMeshFilters;
+            public MeshRenderer[]? PileMeshRenderers;
             public Vector3 BaseLocalPos;
             public InventoryItemKind CachedKind;
             public byte CachedSubId;
             public int CachedCount;
             public uint CachedShapeSeed;
+            public ulong CachedKnapMask;
         }
 
         public readonly BodyHolsterStateMachine HolsterMachine = new();
@@ -76,30 +82,40 @@ namespace Stratocraft.Character
         private GameObject? _holsteredBeltPickaxeProxy;
         private GameObject? _holsteredBackAxeProxy;
 
-        // 3B Kumas Canta Ortusu (The Forest + Serbest 3B Drag & Drop + 3+1 Fiziksel Birlestirme Padi) Dugumleri
+        // 3B Kumas Canta Ortusu (Karesiz The Forest Yiginlar + Merkez Uretim Cemberi + Sol Ust 3B Zirh Kosesi)
         private enum MatHitZone : byte
         {
             None = 0,
             Hotbar = 1,
             Backpack = 2,
-            AssemblyInput = 3,
-            AssemblyOutput = 4
+            CenterCraft = 3,
+            Armor = 4
         }
 
         private Transform? _initializedMatRoot;
         private Transform? _dynamicMatSlotsContainer;
         private readonly MatSlot3DVisualNode[] _hotbar3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.HotbarSlotCount];
         private readonly MatSlot3DVisualNode[] _backpack3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.BackpackSlotCount];
-        private readonly MatSlot3DVisualNode[] _assemblyInput3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount];
-        private MatSlot3DVisualNode _assemblyOutput3DMatNode;
+        private readonly MatSlot3DVisualNode[] _centerCraft3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount];
+        private readonly MatSlot3DVisualNode[] _armor3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.ArmorSlotCount];
+        private MatSlot3DVisualNode _centerPreview3DNode;
         private MatSlot3DVisualNode _dragged3DItemNode;
+        private GameObject? _centerLeatherRingGo;
+        private GameObject? _lashingFiberAnimGo;
+        private float _centerBindingAnimTimer;
+        private bool _centerCraftRequestedFromGui;
         private Mesh? _padNormalMesh;
         private Mesh? _padHoveredMesh;
         private Mesh? _padSelectedHolsterMesh;
         private Mesh? _padCraftReadyMesh;
+        private Mesh? _beltLoopStrapMesh;
+        private Mesh? _centerRingMesh;
         private Mesh? _cachedSwordMesh;
         private Mesh? _cachedPickaxeMesh;
         private Mesh? _cachedAxeMesh;
+        private Material? _cachedSwordMat;
+        private Material? _cachedPickaxeMat;
+        private Material? _cachedAxeMat;
 
         private int _hoveredMatSlotIndex = -1;
         private MatHitZone _hoveredMatZone = MatHitZone.None;
@@ -164,6 +180,7 @@ namespace Stratocraft.Character
             // Oyuncu oyuna Bos El (Slot 0) ile baslar; aletler bel/sirt kilifinda asilidir!
             ActiveHolsterSlot = 0;
             InventoryUi.SelectHotbarSlot(-1);
+            InventoryUi.OnCenterCraftGuiTriggerRequested = () => _centerCraftRequestedFromGui = true;
 
             ChestCasSystem.InitializeSlot(0, itemId: 201, count: 8);
             ChestCasSystem.InitializeSlot(1, itemId: 202, count: 6);
@@ -284,6 +301,7 @@ namespace Stratocraft.Character
             switch (slot.Kind)
             {
                 case InventoryItemKind.WeaponSword:
+                {
                     if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
                     {
                         HolsterMachine.AssignHolsterSlot(
@@ -292,9 +310,21 @@ namespace Stratocraft.Character
                     }
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
                     ActiveHolsterSlot = 1;
+                    if (slot.SubId == 1)
+                    {
+                        ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(
+                            slot.GetEffectiveShapeDna().EffectiveQualityPct, out float maxKnifeDur, out float knifePow);
+                        miningCtrl.MaxToolDurability = maxKnifeDur;
+                        miningCtrl.CurrentToolQualityMultiplier = knifePow;
+                    }
+                    else
+                    {
+                        miningCtrl.CurrentToolQualityMultiplier = 1.0f;
+                    }
                     string wepName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {wepName} cekildi.";
+                    miningCtrl.LastFeedbackText = $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {wepName} çekildi.";
                     break;
+                }
 
                 case InventoryItemKind.ToolPickaxe:
                 {
@@ -308,11 +338,23 @@ namespace Stratocraft.Character
                     ActiveHolsterSlot = 2;
                     bool isPrimPick = slot.SubId == 1;
                     miningCtrl.CurrentToolTier = isPrimPick ? 1 : Mathf.Max(2, slot.SubId >= 2 ? slot.SubId : 2);
-                    miningCtrl.MaxToolDurability = isPrimPick ? 60f : (miningCtrl.CurrentToolTier >= 3 ? 180f : 120f);
+                    if (isPrimPick)
+                    {
+                        ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(
+                            slot.GetEffectiveShapeDna().EffectiveQualityPct, out float maxPickDur, out float pickPow);
+                        miningCtrl.MaxToolDurability = maxPickDur;
+                        miningCtrl.CurrentToolQualityMultiplier = pickPow;
+                    }
+                    else
+                    {
+                        miningCtrl.MaxToolDurability = miningCtrl.CurrentToolTier >= 3 ? 180f : 120f;
+                        miningCtrl.CurrentToolQualityMultiplier = 1.0f;
+                    }
                     float pickDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
                     miningCtrl.CurrentToolDurability = pickDur01 * miningCtrl.MaxToolDurability;
                     string pickLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {pickLabel} cekildi (Kademe T{miningCtrl.CurrentToolTier} | [Sol Tik+Fare] Kaya & Cevher Kirma).";
+                    miningCtrl.LastFeedbackText =
+                        $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {pickLabel} çekildi (Güç: x{miningCtrl.CurrentToolQualityMultiplier:0.00} | Max Dayanıklılık: {miningCtrl.MaxToolDurability:0}).";
                     break;
                 }
 
@@ -328,11 +370,23 @@ namespace Stratocraft.Character
                     ActiveHolsterSlot = 3;
                     bool isPrimAxe = slot.SubId == 1;
                     miningCtrl.CurrentToolTier = isPrimAxe ? 1 : Mathf.Max(2, slot.SubId >= 2 ? slot.SubId : 2);
-                    miningCtrl.MaxToolDurability = isPrimAxe ? 60f : 120f;
+                    if (isPrimAxe)
+                    {
+                        ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(
+                            slot.GetEffectiveShapeDna().EffectiveQualityPct, out float maxAxeDur, out float axePow);
+                        miningCtrl.MaxToolDurability = maxAxeDur;
+                        miningCtrl.CurrentToolQualityMultiplier = axePow;
+                    }
+                    else
+                    {
+                        miningCtrl.MaxToolDurability = 120f;
+                        miningCtrl.CurrentToolQualityMultiplier = 1.0f;
+                    }
                     float axeDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
                     miningCtrl.CurrentToolDurability = axeDur01 * miningCtrl.MaxToolDurability;
                     string axeLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {axeLabel} cekildi ([Sol Tik+Fare] Agac Devirme & Kutuk Kirma).";
+                    miningCtrl.LastFeedbackText =
+                        $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {axeLabel} çekildi (Güç: x{miningCtrl.CurrentToolQualityMultiplier:0.00} | [Sol Tık+Fare] Ağaç & Kütük Kırma).";
                     break;
                 }
 
@@ -381,7 +435,18 @@ namespace Stratocraft.Character
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 7;
                     miningCtrl.CurrentToolTier = slot.SubId == 1 ? 1 : 2;
-                    miningCtrl.MaxToolDurability = slot.SubId == 1 ? 65f : 140f;
+                    if (slot.SubId == 1)
+                    {
+                        ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(
+                            slot.GetEffectiveShapeDna().EffectiveQualityPct, out float maxHamDur, out float hamPow);
+                        miningCtrl.MaxToolDurability = maxHamDur;
+                        miningCtrl.CurrentToolQualityMultiplier = hamPow;
+                    }
+                    else
+                    {
+                        miningCtrl.MaxToolDurability = 140f;
+                        miningCtrl.CurrentToolQualityMultiplier = 1.0f;
+                    }
                     float hamDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
                     miningCtrl.CurrentToolDurability = hamDur01 * miningCtrl.MaxToolDurability;
                     string hamLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
@@ -560,19 +625,26 @@ namespace Stratocraft.Character
 
                     EnsureDynamic3DMatSlotsInitialized(backpackMatRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat);
                     InventoryUi.SyncWithCrystalStorage(miningCtrl);
+                    InventoryUi.RefreshCenterCraftEvaluation();
                     SyncDynamic3DMatVisuals(0.016f, sharedVoxelMat, forceInstant: true);
                 }
-                miningCtrl.LastFeedbackText = "[I] 3B Kumas Canta Ortusu serildi! 3B esyalari fareyle tutup istedigin bolmeye veya Kilif [1..9] seridine surukle.";
+                miningCtrl.LastFeedbackText =
+                    "[I] The Forest Çanta Örtüsü açıldı! Yığınlara [Sol Tık] ile ortaya parça koyun, [R] ile iple bağlayın, [1..9] ile kemere takın, [Q] ile yere bırakın.";
             }
             else
             {
+                _centerBindingAnimTimer = 0f;
+                _centerCraftRequestedFromGui = false;
                 InventoryUi.IsChestWindowOpen = false;
                 InventoryUi.HasHovered3DMatSlot = false;
                 if (!InventoryUi.CursorHeldSlot.IsEmpty)
                 {
                     InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
                 }
-                InventoryUi.ReturnAssemblyInputsToInventory(miningCtrl);
+                InventoryUi.ReturnAllCenterItemsToInventory(
+                    miningCtrl,
+                    playerTransform.position + playerTransform.forward * 0.85f,
+                    sharedVoxelMat);
                 cameraPitch = pitchBeforeBackpack;
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
@@ -581,24 +653,50 @@ namespace Stratocraft.Character
         }
 
         // ====================================================================================================
-        // THE FOREST TARZI 3B KUMAS CANTA ORTUSU + 24+9 DINAMIK 3B ESYA VE SERBEST 3B SURUKLE-BIRAK MOTORU
+        // KARESIZ THE FOREST 3B KUMAS CANTA ORTUSU + COKLU 3B FIZIKSEL YIGINLAR + MERKEZ 0.85SN BAGLAMA MOTORU
         // ====================================================================================================
 
-        public static Vector3 GetHotbarMatSlotLocalPos(int index) =>
-            new Vector3(-0.52f + index * 0.13f, 0.042f, -0.36f);
+        private static readonly Vector3 CenterCraftLocalOrigin = new Vector3(0.02f, 0.036f, 0.05f);
 
-        public static Vector3 GetBackpackMatSlotLocalPos(int index)
+        private static readonly Vector3[] OrganicBackpackPileAnchors =
         {
-            int col = index % 6;
-            int row = index / 6;
-            return new Vector3(-0.48f + col * 0.192f, 0.042f, 0.32f - row * 0.155f);
+            // Üst kenar (Dallar, Odunlar, Yapraklar, Lifler için geniş doğal alanlar)
+            new(-0.34f, 0.036f, 0.37f), new(-0.14f, 0.036f, 0.39f), new(0.08f, 0.036f, 0.39f),
+            new(0.30f, 0.036f, 0.38f),  new(0.50f, 0.036f, 0.35f),  new(0.64f, 0.036f, 0.25f),
+            // Sağ kanat (Taşlar, Çakmaktaşları, Yontulmuş Başlıklar, Cevherler)
+            new(0.66f, 0.036f, 0.08f),  new(0.64f, 0.036f, -0.09f), new(0.54f, 0.036f, -0.21f),
+            new(0.46f, 0.036f, 0.20f),  new(0.48f, 0.036f, 0.02f),  new(0.42f, 0.036f, -0.15f),
+            // Sol kanat (Zırh köşesinin altı ve iç sol — Yemekler, İksirler, Deri, Kil, Kum, Toprak)
+            new(-0.38f, 0.036f, 0.21f), new(-0.42f, 0.036f, 0.04f), new(-0.40f, 0.036f, -0.14f),
+            new(-0.58f, 0.036f, -0.04f),new(-0.56f, 0.036f, -0.19f),new(-0.24f, 0.036f, -0.19f),
+            // İç çember çevresi yedek yığın noktaları (Merkez dairesine taşmadan!)
+            new(-0.24f, 0.036f, 0.24f), new(0.27f, 0.036f, 0.24f),  new(0.28f, 0.036f, -0.18f),
+            new(-0.08f, 0.036f, -0.21f),new(0.11f, 0.036f, -0.21f), new(0.66f, 0.036f, -0.23f)
+        };
+
+        public static Vector3 GetHotbarMatSlotLocalPos(int index) =>
+            new Vector3(-0.52f + index * 0.13f, 0.038f, -0.37f);
+
+        public static Vector3 GetBackpackMatSlotLocalPos(int index) =>
+            OrganicBackpackPileAnchors[Mathf.Clamp(index, 0, OrganicBackpackPileAnchors.Length - 1)];
+
+        public static Vector3 GetArmorCornerSlotLocalPos(int armorIndex) => armorIndex switch
+        {
+            0 => new Vector3(-0.62f, 0.040f, 0.37f), // Kafa (Miğfer)
+            1 => new Vector3(-0.62f, 0.040f, 0.23f), // Gövde (Göğüslük)
+            2 => new Vector3(-0.49f, 0.040f, 0.37f), // Kollar (Kolçak)
+            _ => new Vector3(-0.49f, 0.040f, 0.23f)  // Bacaklar (Dizlik)
+        };
+
+        public static Vector3 GetCenterCraftSlotLocalPos(int centerIdx)
+        {
+            float angle = (centerIdx / (float)Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount) * Mathf.PI * 2f + 0.35f;
+            const float r = 0.095f;
+            return CenterCraftLocalOrigin + new Vector3(Mathf.Cos(angle) * r, 0.006f, Mathf.Sin(angle) * r * 0.85f);
         }
 
-        public static Vector3 GetAssemblyInputMatSlotLocalPos(int index) =>
-            new Vector3(0.69f, 0.048f, 0.28f - Mathf.Clamp(index, 0, 2) * 0.165f);
-
-        public static Vector3 GetAssemblyOutputMatSlotLocalPos() =>
-            new Vector3(0.69f, 0.054f, -0.27f);
+        public static Vector3 GetAssemblyInputMatSlotLocalPos(int index) => GetCenterCraftSlotLocalPos(index);
+        public static Vector3 GetAssemblyOutputMatSlotLocalPos() => CenterCraftLocalOrigin;
 
         private void EnsureDynamic3DMatSlotsInitialized(
             Transform? backpackMatRoot,
@@ -612,7 +710,6 @@ namespace Stratocraft.Character
 
             _initializedMatRoot = backpackMatRoot;
 
-            // Eski sabit (hardcoded) MatZone0..4 nesnelerini gizle (TacticalClothMat_140x100cm zemin kumasi kalir!)
             for (int i = 0; i < backpackMatRoot.childCount; i++)
             {
                 Transform ch = backpackMatRoot.GetChild(i);
@@ -629,26 +726,12 @@ namespace Stratocraft.Character
                 else UnityEngine.Object.DestroyImmediate(existingContainer.gameObject);
             }
 
-            if (swordVisual != null)
-            {
-                MeshFilter? mf = swordVisual.GetComponentInChildren<MeshFilter>(true);
-                if (mf != null && mf.sharedMesh != null) _cachedSwordMesh = mf.sharedMesh;
-            }
-            if (pickaxeVisual != null)
-            {
-                MeshFilter? mf = pickaxeVisual.GetComponentInChildren<MeshFilter>(true);
-                if (mf != null && mf.sharedMesh != null) _cachedPickaxeMesh = mf.sharedMesh;
-            }
-            if (axeVisual != null)
-            {
-                MeshFilter? mf = axeVisual.GetComponentInChildren<MeshFilter>(true);
-                if (mf != null && mf.sharedMesh != null) _cachedAxeMesh = mf.sharedMesh;
-            }
+            CacheOriginalHandWeaponMeshesAndMaterials(swordVisual, pickaxeVisual, axeVisual);
 
-            _padNormalMesh ??= BuildSlotPadMesh(MaterialIdCatalog.Ironwood, "Mesh_3DMatPad_Normal");
-            _padHoveredMesh ??= BuildSlotPadMesh(MaterialIdCatalog.GoldOre, "Mesh_3DMatPad_Hovered");
-            _padSelectedHolsterMesh ??= BuildSlotPadMesh(MaterialIdCatalog.CopperOre, "Mesh_3DMatPad_SelectedHolster");
-            _padCraftReadyMesh ??= BuildSlotPadMesh(MaterialIdCatalog.GlowingMoss, "Mesh_3DMatPad_CraftReady");
+            _beltLoopStrapMesh ??= BuildThinLeatherStrapMesh(MaterialIdCatalog.OakWood, "Mesh_3DBeltLoop_Normal");
+            _padHoveredMesh ??= BuildThinLeatherStrapMesh(MaterialIdCatalog.GoldOre, "Mesh_3DBeltLoop_Hovered");
+            _padSelectedHolsterMesh ??= BuildThinLeatherStrapMesh(MaterialIdCatalog.CopperOre, "Mesh_3DBeltLoop_Selected");
+            _centerRingMesh ??= BuildStitchedCenterCircleRingMesh("Mesh_3DCenterCraftRing");
 
             GameObject containerGo = new GameObject("Dynamic3DMatSlotsRoot");
             containerGo.transform.SetParent(backpackMatRoot, false);
@@ -656,68 +739,165 @@ namespace Stratocraft.Character
             containerGo.transform.localRotation = Quaternion.identity;
             _dynamicMatSlotsContainer = containerGo.transform;
 
-            // 1) On Deri Kilif Seridi: 9 adet 3B Yuva (HotbarSlots[0..8] -> Tus 1..9)
+            // Merkez Üretim Çemberi İnce Deri Dikiş Halkası (Kare DEĞİL, dairesel dikiş izi!)
+            _centerLeatherRingGo = new GameObject("CenterCraftingLeatherRing");
+            _centerLeatherRingGo.transform.SetParent(_dynamicMatSlotsContainer, false);
+            _centerLeatherRingGo.transform.localPosition = CenterCraftLocalOrigin + new Vector3(0f, -0.028f, 0f);
+            _centerLeatherRingGo.transform.localRotation = Quaternion.identity;
+            _centerLeatherRingGo.transform.localScale = Vector3.one;
+            _centerLeatherRingGo.AddComponent<MeshFilter>().sharedMesh = _centerRingMesh;
+            MeshRenderer ringMr = _centerLeatherRingGo.AddComponent<MeshRenderer>();
+            if (sharedMat != null) ringMr.sharedMaterial = sharedMat;
+
+            // 0.85sn Fiziksel İp Bağlama Animasyonu İçin 3B Bitki Lifi Sarımı
+            _lashingFiberAnimGo = new GameObject("CenterLashingFiberAnim3D");
+            _lashingFiberAnimGo.transform.SetParent(_dynamicMatSlotsContainer, false);
+            MeshFilter lashMf = _lashingFiberAnimGo.AddComponent<MeshFilter>();
+            MeshRenderer lashMr = _lashingFiberAnimGo.AddComponent<MeshRenderer>();
+            var lashDna = PhysicalItemShapeDna.CreateNatural(0x77AA31u, 100);
+            lashMf.sharedMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.PlantFiber, 0, in lashDna, out _);
+            if (sharedMat != null) lashMr.sharedMaterial = sharedMat;
+            _lashingFiberAnimGo.SetActive(false);
+
+            // 1) Ön İnce Deri Kemer Halkaları (HotbarSlots[0..8] -> Tuş 1..9)
             for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
             {
-                Vector3 localPos = GetHotbarMatSlotLocalPos(i);
                 _hotbar3DMatNodes[i] = CreateMatSlot3DNode(
                     _dynamicMatSlotsContainer,
-                    $"MatHolsterSlot_{i + 1}",
-                    localPos,
-                    new Vector3(0.112f, 0.010f, 0.112f),
+                    $"MatBeltLoop_{i + 1}",
+                    GetHotbarMatSlotLocalPos(i),
+                    showLeatherStrap: true,
+                    enableMultiPile: true,
                     sharedMat);
             }
 
-            // 2) Ana Kumas Canta Bolmeleri: 6x4 = 24 adet 3B Yuva (BackpackSlots[0..23])
+            // 2) Karesiz Doğal Kumaş Yığınları (BackpackSlots[0..23] — Boşken hiçbir kare/pad görünmez!)
             for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; i++)
             {
-                Vector3 localPos = GetBackpackMatSlotLocalPos(i);
                 _backpack3DMatNodes[i] = CreateMatSlot3DNode(
                     _dynamicMatSlotsContainer,
-                    $"MatBackpackSlot_{i}",
-                    localPos,
-                    new Vector3(0.158f, 0.008f, 0.128f),
+                    $"MatOrganicPile_{i}",
+                    GetBackpackMatSlotLocalPos(i),
+                    showLeatherStrap: false,
+                    enableMultiPile: true,
                     sharedMat);
             }
 
-            // 2b) Fiziksel 3B Birlestirme Girdi Padleri (3 Adet) + 1 Cikti Padi (Sag Kenar x = +0.69)
-            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount; i++)
+            // 3) Sol Üst 3B Zırh Köşesi (4 Zırh Yuvası — 2B Zırh penceresinin yerini alır!)
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.ArmorSlotCount; i++)
             {
-                Vector3 localPos = GetAssemblyInputMatSlotLocalPos(i);
-                _assemblyInput3DMatNodes[i] = CreateMatSlot3DNode(
+                _armor3DMatNodes[i] = CreateMatSlot3DNode(
                     _dynamicMatSlotsContainer,
-                    $"MatAssemblyInput_{i + 1}",
-                    localPos,
-                    new Vector3(0.148f, 0.012f, 0.132f),
+                    $"MatArmorCorner_{i}",
+                    GetArmorCornerSlotLocalPos(i),
+                    showLeatherStrap: true,
+                    enableMultiPile: false,
                     sharedMat);
             }
 
-            _assemblyOutput3DMatNode = CreateMatSlot3DNode(
+            // 4) Merkez Üretim Dairesi Parçaları (CenterCraftSlots[0..5]) + Hazır Önizleme Modeli
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount; i++)
+            {
+                _centerCraft3DMatNodes[i] = CreateMatSlot3DNode(
+                    _dynamicMatSlotsContainer,
+                    $"MatCenterPiece_{i}",
+                    GetCenterCraftSlotLocalPos(i),
+                    showLeatherStrap: false,
+                    enableMultiPile: true,
+                    sharedMat);
+            }
+
+            _centerPreview3DNode = CreateMatSlot3DNode(
                 _dynamicMatSlotsContainer,
-                "MatAssemblyOutput_Result",
-                GetAssemblyOutputMatSlotLocalPos(),
-                new Vector3(0.172f, 0.016f, 0.156f),
+                "MatCenterReadyPreview",
+                CenterCraftLocalOrigin + new Vector3(0f, 0.042f, 0f),
+                showLeatherStrap: false,
+                enableMultiPile: false,
                 sharedMat);
 
-            // 3) Fareyle Havada Suruklenen 3B Esya Modeli (_dragged3DItemNode)
+            // 5) Fareyle Havada Sürüklenen 3B Eşya Modeli (_dragged3DItemNode)
             _dragged3DItemNode = CreateMatSlot3DNode(
                 _dynamicMatSlotsContainer,
                 "MatDragged3DItemProxy",
                 new Vector3(0f, 0.095f, 0f),
-                Vector3.zero,
+                showLeatherStrap: false,
+                enableMultiPile: false,
                 sharedMat);
-            if (_dragged3DItemNode.PadMeshFilter != null)
-            {
-                _dragged3DItemNode.PadMeshFilter.gameObject.SetActive(false);
-            }
             _dragged3DItemNode.SlotRoot.gameObject.SetActive(false);
+        }
+
+        private void CacheOriginalHandWeaponMeshesAndMaterials(
+            GameObject? swordVisual,
+            GameObject? pickaxeVisual,
+            GameObject? axeVisual)
+        {
+            if (swordVisual != null && _cachedSwordMesh == null)
+            {
+                MeshFilter? mf = swordVisual.GetComponentInChildren<MeshFilter>(true);
+                if (mf != null && mf.sharedMesh != null) _cachedSwordMesh = mf.sharedMesh;
+                MeshRenderer? mr = swordVisual.GetComponentInChildren<MeshRenderer>(true);
+                if (mr != null) _cachedSwordMat = mr.sharedMaterial;
+            }
+            if (pickaxeVisual != null && _cachedPickaxeMesh == null)
+            {
+                MeshFilter? mf = pickaxeVisual.GetComponentInChildren<MeshFilter>(true);
+                if (mf != null && mf.sharedMesh != null) _cachedPickaxeMesh = mf.sharedMesh;
+                MeshRenderer? mr = pickaxeVisual.GetComponentInChildren<MeshRenderer>(true);
+                if (mr != null) _cachedPickaxeMat = mr.sharedMaterial;
+            }
+            if (axeVisual != null && _cachedAxeMesh == null)
+            {
+                MeshFilter? mf = axeVisual.GetComponentInChildren<MeshFilter>(true);
+                if (mf != null && mf.sharedMesh != null) _cachedAxeMesh = mf.sharedMesh;
+                MeshRenderer? mr = axeVisual.GetComponentInChildren<MeshRenderer>(true);
+                if (mr != null) _cachedAxeMat = mr.sharedMaterial;
+            }
+        }
+
+        private static void ApplyCustomKnappedOrMetalMeshToToolVisual(
+            GameObject toolRoot,
+            bool isCustomKnappedPrimitive,
+            PhysicalItemArchetype primitiveArchetype,
+            in PhysicalItemShapeDna dna,
+            Mesh? cachedMetalMesh,
+            Material? cachedMetalMat,
+            Material? sharedVoxelMat)
+        {
+            MeshFilter? mf = toolRoot.GetComponentInChildren<MeshFilter>(true);
+            if (mf == null) return;
+            MeshRenderer? mr = mf.GetComponent<MeshRenderer>();
+
+            if (isCustomKnappedPrimitive)
+            {
+                Mesh customMesh = PhysicalItemMeshFactory.GetOrCreateMesh(primitiveArchetype, 1, in dna, out _);
+                if (mf.sharedMesh != customMesh)
+                {
+                    mf.sharedMesh = customMesh;
+                }
+                if (mr != null && sharedVoxelMat != null && mr.sharedMaterial != sharedVoxelMat)
+                {
+                    mr.sharedMaterial = sharedVoxelMat;
+                }
+            }
+            else if (cachedMetalMesh != null)
+            {
+                if (mf.sharedMesh != cachedMetalMesh)
+                {
+                    mf.sharedMesh = cachedMetalMesh;
+                }
+                if (mr != null && cachedMetalMat != null && mr.sharedMaterial != cachedMetalMat)
+                {
+                    mr.sharedMaterial = cachedMetalMat;
+                }
+            }
         }
 
         private MatSlot3DVisualNode CreateMatSlot3DNode(
             Transform parent,
             string name,
             Vector3 localPos,
-            Vector3 padScale,
+            bool showLeatherStrap,
+            bool enableMultiPile,
             Material? sharedMat)
         {
             GameObject rootGo = new GameObject(name);
@@ -725,30 +905,49 @@ namespace Stratocraft.Character
             rootGo.transform.localPosition = localPos;
             rootGo.transform.localRotation = Quaternion.identity;
 
-            GameObject padGo = new GameObject("SlotPad3D");
-            padGo.transform.SetParent(rootGo.transform, false);
-            padGo.transform.localPosition = Vector3.zero;
-            padGo.transform.localScale = padScale;
-            MeshFilter padMf = padGo.AddComponent<MeshFilter>();
-            padMf.sharedMesh = _padNormalMesh;
-            MeshRenderer padMr = padGo.AddComponent<MeshRenderer>();
-            if (sharedMat != null) padMr.sharedMaterial = sharedMat;
+            MeshFilter? padMf = null;
+            if (showLeatherStrap)
+            {
+                GameObject strapGo = new GameObject("LeatherBeltStrap3D");
+                strapGo.transform.SetParent(rootGo.transform, false);
+                strapGo.transform.localPosition = new Vector3(0f, -0.026f, 0f);
+                strapGo.transform.localScale = new Vector3(0.092f, 0.004f, 0.024f);
+                padMf = strapGo.AddComponent<MeshFilter>();
+                padMf.sharedMesh = _beltLoopStrapMesh;
+                MeshRenderer padMr = strapGo.AddComponent<MeshRenderer>();
+                if (sharedMat != null) padMr.sharedMaterial = sharedMat;
+            }
 
-            GameObject itemGo = new GameObject("Item3DModel");
-            itemGo.transform.SetParent(rootGo.transform, false);
-            itemGo.transform.localPosition = new Vector3(0f, 0.032f, 0f);
-            MeshFilter itemMf = itemGo.AddComponent<MeshFilter>();
-            MeshRenderer itemMr = itemGo.AddComponent<MeshRenderer>();
-            if (sharedMat != null) itemMr.sharedMaterial = sharedMat;
-            itemGo.SetActive(false);
+            int instCount = enableMultiPile ? MaxPileVisualInstances : 1;
+            Transform[] pileTr = new Transform[instCount];
+            MeshFilter[] pileMf = new MeshFilter[instCount];
+            MeshRenderer[] pileMr = new MeshRenderer[instCount];
+
+            for (int k = 0; k < instCount; k++)
+            {
+                GameObject itemGo = new GameObject(k == 0 ? "Item3DModel_0" : $"PileItem3D_{k}");
+                itemGo.transform.SetParent(rootGo.transform, false);
+                itemGo.transform.localPosition = new Vector3(0f, 0.028f, 0f);
+                MeshFilter mf = itemGo.AddComponent<MeshFilter>();
+                MeshRenderer mr = itemGo.AddComponent<MeshRenderer>();
+                if (sharedMat != null) mr.sharedMaterial = sharedMat;
+                itemGo.SetActive(false);
+
+                pileTr[k] = itemGo.transform;
+                pileMf[k] = mf;
+                pileMr[k] = mr;
+            }
 
             return new MatSlot3DVisualNode
             {
                 SlotRoot = rootGo.transform,
                 PadMeshFilter = padMf,
-                ItemTransform = itemGo.transform,
-                ItemMeshFilter = itemMf,
-                ItemMeshRenderer = itemMr,
+                ItemTransform = pileTr[0],
+                ItemMeshFilter = pileMf[0],
+                ItemMeshRenderer = pileMr[0],
+                PileTransforms = pileTr,
+                PileMeshFilters = pileMf,
+                PileMeshRenderers = pileMr,
                 BaseLocalPos = localPos,
                 CachedKind = InventoryItemKind.Empty,
                 CachedSubId = 0,
@@ -756,7 +955,7 @@ namespace Stratocraft.Character
             };
         }
 
-        private Mesh BuildSlotPadMesh(byte matId, string meshName)
+        private Mesh BuildThinLeatherStrapMesh(byte matId, string meshName)
         {
             _matMeshTris.Clear();
             HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
@@ -769,9 +968,39 @@ namespace Stratocraft.Character
             return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, meshName);
         }
 
+        private Mesh BuildStitchedCenterCircleRingMesh(string meshName)
+        {
+            _matMeshTris.Clear();
+            const int segs = 20;
+            const float rInner = 0.175f;
+            const float rOuter = 0.192f;
+            const float yTop = 0.004f;
+
+            for (int i = 0; i < segs; i++)
+            {
+                if ((i & 1) == 1) continue; // Kesikli deri dikiş halkası estetiği!
+                float a0 = (i / (float)segs) * Mathf.PI * 2f;
+                float a1 = ((i + 0.72f) / segs) * Mathf.PI * 2f;
+
+                var p0 = new System.Numerics.Vector3(Mathf.Cos(a0) * rInner, yTop, Mathf.Sin(a0) * rInner);
+                var p1 = new System.Numerics.Vector3(Mathf.Cos(a0) * rOuter, yTop, Mathf.Sin(a0) * rOuter);
+                var p2 = new System.Numerics.Vector3(Mathf.Cos(a1) * rOuter, yTop, Mathf.Sin(a1) * rOuter);
+                var p3 = new System.Numerics.Vector3(Mathf.Cos(a1) * rInner, yTop, Mathf.Sin(a1) * rInner);
+
+                HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(p0, p2, p1, MaterialIdCatalog.OakWood, 195, 220, _matMeshTris);
+                HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(p0, p3, p2, MaterialIdCatalog.OakWood, 195, 220, _matMeshTris);
+            }
+            return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, meshName);
+        }
+
         private void SyncDynamic3DMatVisuals(float dt, Material? sharedMat, bool forceInstant = false)
         {
             if (_dynamicMatSlotsContainer == null) return;
+
+            if (_initializedMatRoot != null)
+            {
+                InventoryUi.CenterCraftWorldPos = _initializedMatRoot.TransformPoint(CenterCraftLocalOrigin);
+            }
 
             for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
             {
@@ -782,7 +1011,7 @@ namespace Stratocraft.Character
                     in InventoryUi.HotbarSlots[i],
                     isHovered,
                     isSelected,
-                    isHotbarSlot: true,
+                    isCompactZone: true,
                     dt,
                     sharedMat,
                     forceInstant);
@@ -796,44 +1025,87 @@ namespace Stratocraft.Character
                     in InventoryUi.BackpackSlots[i],
                     isHovered,
                     isSelected: false,
-                    isHotbarSlot: false,
+                    isCompactZone: false,
                     dt,
                     sharedMat,
                     forceInstant);
             }
 
-            InventoryUi.RefreshAssemblyPreview();
-            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount; i++)
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.ArmorSlotCount; i++)
             {
-                bool isHovered = _hoveredMatZone == MatHitZone.AssemblyInput && _hoveredMatSlotIndex == i;
+                bool isHovered = _hoveredMatZone == MatHitZone.Armor && _hoveredMatSlotIndex == i;
                 UpdateSingleMatSlot3DNode(
-                    ref _assemblyInput3DMatNodes[i],
-                    in InventoryUi.AssemblyInputSlots[i],
+                    ref _armor3DMatNodes[i],
+                    in InventoryUi.EquippedArmorSlots[i],
                     isHovered,
-                    isSelected: !InventoryUi.AssemblyInputSlots[i].IsEmpty,
-                    isHotbarSlot: false,
+                    isSelected: !InventoryUi.EquippedArmorSlots[i].IsEmpty,
+                    isCompactZone: true,
                     dt,
                     sharedMat,
                     forceInstant);
             }
 
-            bool outHovered = _hoveredMatZone == MatHitZone.AssemblyOutput;
-            bool outReady = !InventoryUi.AssemblyPreviewSlot.IsEmpty;
+            InventoryUi.RefreshCenterCraftEvaluation();
+            float bindProgress01 = _centerBindingAnimTimer > 0f
+                ? 1f - Mathf.Clamp01(_centerBindingAnimTimer / 0.85f)
+                : 0f;
+
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount; i++)
+            {
+                bool isHovered = _hoveredMatZone == MatHitZone.CenterCraft && _hoveredMatSlotIndex == i;
+                Vector3 baseCenterPos = GetCenterCraftSlotLocalPos(i);
+                if (_centerCraft3DMatNodes[i].SlotRoot != null)
+                {
+                    Vector3 converged = Vector3.Lerp(
+                        baseCenterPos,
+                        CenterCraftLocalOrigin + new Vector3(0f, 0.025f, 0f),
+                        Mathf.SmoothStep(0f, 1f, bindProgress01));
+                    _centerCraft3DMatNodes[i].SlotRoot.localPosition = converged;
+                }
+
+                UpdateSingleMatSlot3DNode(
+                    ref _centerCraft3DMatNodes[i],
+                    in InventoryUi.CenterCraftSlots[i],
+                    isHovered,
+                    isSelected: false,
+                    isCompactZone: false,
+                    dt,
+                    sharedMat,
+                    forceInstant);
+            }
+
+            if (_lashingFiberAnimGo != null)
+            {
+                if (_centerBindingAnimTimer > 0f)
+                {
+                    _lashingFiberAnimGo.SetActive(true);
+                    float spinRad = bindProgress01 * Mathf.PI * 6f;
+                    float orbitR = Mathf.Lerp(0.088f, 0.014f, bindProgress01);
+                    _lashingFiberAnimGo.transform.localPosition = CenterCraftLocalOrigin + new Vector3(
+                        Mathf.Cos(spinRad) * orbitR,
+                        0.048f + Mathf.Sin(bindProgress01 * Mathf.PI) * 0.022f,
+                        Mathf.Sin(spinRad) * orbitR);
+                    _lashingFiberAnimGo.transform.localRotation = Quaternion.Euler(35f, bindProgress01 * 1080f, 20f);
+                    _lashingFiberAnimGo.transform.localScale = Vector3.one * Mathf.Lerp(0.32f, 0.16f, bindProgress01);
+                }
+                else if (_lashingFiberAnimGo.activeSelf)
+                {
+                    _lashingFiberAnimGo.SetActive(false);
+                }
+            }
+
+            bool centerReady = InventoryUi.ActiveCenterCraftEval.IsCraftable && !InventoryUi.CenterCraftPreviewSlot.IsEmpty && _centerBindingAnimTimer <= 0f;
+            VisualInventorySlot previewToShow = centerReady ? InventoryUi.CenterCraftPreviewSlot : default;
             UpdateSingleMatSlot3DNode(
-                ref _assemblyOutput3DMatNode,
-                in InventoryUi.AssemblyPreviewSlot,
-                outHovered || outReady,
-                isSelected: outReady,
-                isHotbarSlot: false,
+                ref _centerPreview3DNode,
+                in previewToShow,
+                isHovered: _hoveredMatZone == MatHitZone.CenterCraft,
+                isSelected: centerReady,
+                isCompactZone: false,
                 dt,
                 sharedMat,
                 forceInstant);
-            if (_assemblyOutput3DMatNode.PadMeshFilter != null && outReady && !outHovered && _padCraftReadyMesh != null)
-            {
-                _assemblyOutput3DMatNode.PadMeshFilter.sharedMesh = _padCraftReadyMesh;
-            }
 
-            // Fareyle suruklenen 3B esya modeli (_dragged3DItemNode)
             if (!InventoryUi.CursorHeldSlot.IsEmpty)
             {
                 _dragged3DItemNode.SlotRoot.gameObject.SetActive(true);
@@ -842,7 +1114,7 @@ namespace Stratocraft.Character
                     in InventoryUi.CursorHeldSlot,
                     isHovered: true,
                     isSelected: false,
-                    isHotbarSlot: false,
+                    isCompactZone: false,
                     dt,
                     sharedMat,
                     forceInstant: true);
@@ -858,7 +1130,7 @@ namespace Stratocraft.Character
             in VisualInventorySlot slot,
             bool isHovered,
             bool isSelected,
-            bool isHotbarSlot,
+            bool isCompactZone,
             float dt,
             Material? sharedMat,
             bool forceInstant)
@@ -867,64 +1139,160 @@ namespace Stratocraft.Character
             {
                 node.PadMeshFilter.sharedMesh = isHovered
                     ? _padHoveredMesh
-                    : (isSelected ? _padSelectedHolsterMesh : _padNormalMesh);
+                    : (isSelected ? _padSelectedHolsterMesh : _beltLoopStrapMesh);
             }
 
-            if (slot.IsEmpty)
+            Transform[]? pileTr = node.PileTransforms;
+            MeshFilter[]? pileMf = node.PileMeshFilters;
+            MeshRenderer[]? pileMr = node.PileMeshRenderers;
+            if (pileTr == null || pileMf == null || pileMr == null) return;
+
+            if (slot.IsEmpty || slot.Count <= 0)
             {
-                if (node.ItemTransform.gameObject.activeSelf)
+                for (int k = 0; k < pileTr.Length; k++)
                 {
-                    node.ItemTransform.gameObject.SetActive(false);
+                    if (pileTr[k].gameObject.activeSelf) pileTr[k].gameObject.SetActive(false);
                 }
                 node.CachedKind = InventoryItemKind.Empty;
                 node.CachedSubId = 0;
                 node.CachedCount = 0;
                 node.CachedShapeSeed = 0u;
+                node.CachedKnapMask = 0UL;
                 return;
             }
 
-            if (!node.ItemTransform.gameObject.activeSelf)
-            {
-                node.ItemTransform.gameObject.SetActive(true);
-            }
+            PhysicalItemShapeDna baseDna = slot.GetEffectiveShapeDna();
+            uint effSeed = baseDna.EffectiveSeed;
+            ulong effMask = baseDna.KnapMask64;
+            int visibleInstances = Mathf.Clamp(slot.Count, 1, pileTr.Length);
+            bool needRebuildMeshes = node.CachedKind != slot.Kind ||
+                                     node.CachedSubId != slot.SubId ||
+                                     node.CachedShapeSeed != effSeed ||
+                                     node.CachedKnapMask != effMask ||
+                                     node.CachedCount != visibleInstances ||
+                                     pileMf[0].sharedMesh == null;
 
-            uint effSeed = slot.GetEffectiveShapeDna().EffectiveSeed;
-            if (node.CachedKind != slot.Kind || node.CachedSubId != slot.SubId || node.CachedShapeSeed != effSeed || node.ItemMeshFilter.sharedMesh == null)
+            if (needRebuildMeshes)
             {
                 node.CachedKind = slot.Kind;
                 node.CachedSubId = slot.SubId;
                 node.CachedShapeSeed = effSeed;
-                node.ItemMeshFilter.sharedMesh = GetOrCreate3DMatMeshForSlot(in slot);
-                if (sharedMat != null && node.ItemMeshRenderer != null && node.ItemMeshRenderer.sharedMaterial == null)
+                node.CachedKnapMask = effMask;
+                node.CachedCount = visibleInstances;
+
+                PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
+                bool hasPerPieceDna = physArch != PhysicalItemArchetype.None && physArch != PhysicalItemArchetype.ArchitecturalBlock;
+
+                for (int k = 0; k < visibleInstances; k++)
                 {
-                    node.ItemMeshRenderer.sharedMaterial = sharedMat;
+                    if (hasPerPieceDna && k > 0)
+                    {
+                        PhysicalItemShapeDna pieceDna = baseDna.DeriveStackInstance(k);
+                        pileMf[k].sharedMesh = PhysicalItemMeshFactory.GetOrCreateMesh(physArch, slot.SubId, in pieceDna, out _);
+                    }
+                    else
+                    {
+                        pileMf[k].sharedMesh = GetOrCreate3DMatMeshForSlot(in slot);
+                    }
+
+                    if (sharedMat != null && pileMr[k] != null && pileMr[k].sharedMaterial == null)
+                    {
+                        pileMr[k].sharedMaterial = sharedMat;
+                    }
                 }
             }
-            node.CachedCount = slot.Count;
 
-            GetSlot3DPoseAndScale(in slot, isHotbarSlot, out Vector3 restOffset, out Quaternion restRot, out Vector3 baseScale);
+            GetSlot3DPoseAndScale(in slot, isCompactZone, out Vector3 restOffset, out Quaternion restRot, out Vector3 baseScale);
+            float hoverLiftY = isHovered ? 0.024f : 0f;
+            float hoverScaleMult = isHovered ? 1.12f : 1.0f;
 
-            float hoverLiftY = isHovered ? 0.028f : 0f;
-            float hoverScaleMult = isHovered ? 1.18f : 1.0f;
-            Vector3 targetPos = restOffset + new Vector3(0f, hoverLiftY, 0f);
-            Vector3 targetScale = baseScale * hoverScaleMult;
-            Quaternion targetRot = isHovered
-                ? restRot * Quaternion.Euler(0f, Mathf.Sin(Time.unscaledTime * 4.5f) * 10f, 0f)
-                : restRot;
-
-            if (forceInstant)
+            for (int k = 0; k < pileTr.Length; k++)
             {
-                node.ItemTransform.localPosition = targetPos;
-                node.ItemTransform.localRotation = targetRot;
-                node.ItemTransform.localScale = targetScale;
+                if (k >= visibleInstances)
+                {
+                    if (pileTr[k].gameObject.activeSelf) pileTr[k].gameObject.SetActive(false);
+                    continue;
+                }
+
+                if (!pileTr[k].gameObject.activeSelf) pileTr[k].gameObject.SetActive(true);
+
+                ComputeNaturalPileInstanceOffset(slot.Kind, k, visibleInstances, isCompactZone, out Vector3 pileOff, out Quaternion pileRot);
+                Vector3 targetPos = restOffset + pileOff + new Vector3(0f, hoverLiftY, 0f);
+                Quaternion targetRot = restRot * pileRot;
+                if (isHovered && k == visibleInstances - 1)
+                {
+                    targetRot = targetRot * Quaternion.Euler(0f, Mathf.Sin(Time.unscaledTime * 4.5f) * 8f, 0f);
+                }
+                Vector3 targetScale = baseScale * hoverScaleMult;
+
+                if (forceInstant)
+                {
+                    pileTr[k].localPosition = targetPos;
+                    pileTr[k].localRotation = targetRot;
+                    pileTr[k].localScale = targetScale;
+                }
+                else
+                {
+                    float t = Mathf.Clamp01(dt * 16f);
+                    pileTr[k].localPosition = Vector3.Lerp(pileTr[k].localPosition, targetPos, t);
+                    pileTr[k].localRotation = Quaternion.Slerp(pileTr[k].localRotation, targetRot, t);
+                    pileTr[k].localScale = Vector3.Lerp(pileTr[k].localScale, targetScale, t);
+                }
             }
-            else
+        }
+
+        private static void ComputeNaturalPileInstanceOffset(
+            InventoryItemKind kind,
+            int instanceIndex,
+            int totalShown,
+            bool isCompactZone,
+            out Vector3 localOffset,
+            out Quaternion localRotDelta)
+        {
+            if (instanceIndex <= 0 || totalShown <= 1)
             {
-                float t = Mathf.Clamp01(dt * 16f);
-                node.ItemTransform.localPosition = Vector3.Lerp(node.ItemTransform.localPosition, targetPos, t);
-                node.ItemTransform.localRotation = Quaternion.Slerp(node.ItemTransform.localRotation, targetRot, t);
-                node.ItemTransform.localScale = Vector3.Lerp(node.ItemTransform.localScale, targetScale, t);
+                localOffset = Vector3.zero;
+                localRotDelta = Quaternion.identity;
+                return;
             }
+
+            float spreadScale = isCompactZone ? 0.45f : 1.0f;
+            if (kind == InventoryItemKind.Stick || kind == InventoryItemKind.SplitFirewood)
+            {
+                // Dal ve yarma odunlar The Forest gibi yan yana ve üst üste piramit demet halinde dizilir!
+                int row = instanceIndex / 4;
+                int col = instanceIndex % 4;
+                float xOff = ((col - 1.5f) * 0.022f + (row & 1) * 0.009f) * spreadScale;
+                float yOff = row * 0.015f;
+                float zOff = (((instanceIndex * 37) % 5) - 2) * 0.006f * spreadScale;
+                float yaw = (((instanceIndex * 53) % 15) - 7) * 1.4f;
+                localOffset = new Vector3(xOff, yOff, zOff);
+                localRotDelta = Quaternion.Euler(0f, yaw, 0f);
+                return;
+            }
+
+            if (kind == InventoryItemKind.LeafPile || kind == InventoryItemKind.PlantFiber || kind == InventoryItemKind.RawHide)
+            {
+                float golden = instanceIndex * 2.39996f;
+                float rad = 0.016f * Mathf.Sqrt(instanceIndex) * spreadScale;
+                localOffset = new Vector3(Mathf.Cos(golden) * rad, instanceIndex * 0.0045f, Mathf.Sin(golden) * rad);
+                localRotDelta = Quaternion.Euler(0f, (instanceIndex * 47f) % 360f, 0f);
+                return;
+            }
+
+            // Taşlar, çakmaktaşları, cevherler, toprak, meyveler: doğal altın-açı kümesi halinde üst üste öbeklenir!
+            float gAngle = instanceIndex * 2.39996f;
+            int layer = instanceIndex / 6;
+            int inLayer = instanceIndex % 6;
+            float r = (0.021f * Mathf.Sqrt(inLayer + 1) * (1f - layer * 0.18f)) * spreadScale;
+            localOffset = new Vector3(
+                Mathf.Cos(gAngle) * r,
+                layer * 0.018f + (inLayer & 1) * 0.003f,
+                Mathf.Sin(gAngle) * r);
+            localRotDelta = Quaternion.Euler(
+                ((instanceIndex * 19) % 14) - 7f,
+                (instanceIndex * 67f) % 360f,
+                ((instanceIndex * 29) % 14) - 7f);
         }
 
         private static void GetSlot3DPoseAndScale(
@@ -1226,33 +1594,13 @@ namespace Stratocraft.Character
             slotIndex = -1;
             slotLocalCenter = Vector3.zero;
 
-            if (localHit.x < -0.68f || localHit.x > 0.86f || Mathf.Abs(localHit.z) > 0.52f)
+            if (localHit.x < -0.74f || localHit.x > 0.78f || localHit.z < -0.50f || localHit.z > 0.50f)
             {
                 return false;
             }
 
-            // 0) Sag Kenar Fiziksel 3B Birlestirme Padleri (x in [0.59 .. 0.84])
-            if (localHit.x >= 0.59f && localHit.x <= 0.84f)
-            {
-                if (localHit.z <= -0.16f && localHit.z >= -0.40f)
-                {
-                    zone = MatHitZone.AssemblyOutput;
-                    slotIndex = 0;
-                    slotLocalCenter = GetAssemblyOutputMatSlotLocalPos();
-                    return true;
-                }
-                if (localHit.z > -0.15f && localHit.z <= 0.40f)
-                {
-                    int aIdx = Mathf.Clamp(Mathf.RoundToInt((0.28f - localHit.z) / 0.165f), 0, Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount - 1);
-                    zone = MatHitZone.AssemblyInput;
-                    slotIndex = aIdx;
-                    slotLocalCenter = GetAssemblyInputMatSlotLocalPos(aIdx);
-                    return true;
-                }
-            }
-
-            // 1) On Deri Kilif Seridi: local.z in [-0.46 .. -0.25] -> HotbarSlots[0..8]
-            if (localHit.z <= -0.25f && localHit.z >= -0.46f && Mathf.Abs(localHit.x) <= 0.58f)
+            // 1) Ön Deri Kemer Şeridi: HotbarSlots[0..8] -> Tuş 1..9
+            if (localHit.z <= -0.28f && localHit.z >= -0.48f && Mathf.Abs(localHit.x) <= 0.60f)
             {
                 int idx = Mathf.Clamp(Mathf.RoundToInt((localHit.x - (-0.52f)) / 0.13f), 0, Stage1VisualHotbarAndInventoryUi.HotbarSlotCount - 1);
                 zone = MatHitZone.Hotbar;
@@ -1261,19 +1609,143 @@ namespace Stratocraft.Character
                 return true;
             }
 
-            // 2) Ana Kumas Canta Bolmeleri (6x4 = 24 Yuva): local.z in [-0.24 .. +0.42] -> BackpackSlots[0..23]
-            if (localHit.z > -0.25f && localHit.z <= 0.44f && Mathf.Abs(localHit.x) <= 0.58f)
+            // 2) Sol Üst 3B Zırh Köşesi (4 Zırh Yuvası)
+            if (localHit.x <= -0.43f && localHit.z >= 0.16f)
             {
-                int col = Mathf.Clamp(Mathf.RoundToInt((localHit.x - (-0.48f)) / 0.192f), 0, 5);
-                int row = Mathf.Clamp(Mathf.RoundToInt((0.32f - localHit.z) / 0.155f), 0, 3);
-                int idx = row * 6 + col;
+                int bestArm = 0;
+                float bestArmDist = float.MaxValue;
+                for (int a = 0; a < Stage1VisualHotbarAndInventoryUi.ArmorSlotCount; a++)
+                {
+                    Vector3 ap = GetArmorCornerSlotLocalPos(a);
+                    float d = Vector2.Distance(new Vector2(localHit.x, localHit.z), new Vector2(ap.x, ap.z));
+                    if (d < bestArmDist)
+                    {
+                        bestArmDist = d;
+                        bestArm = a;
+                    }
+                }
+                if (bestArmDist <= 0.11f)
+                {
+                    zone = MatHitZone.Armor;
+                    slotIndex = bestArm;
+                    slotLocalCenter = GetArmorCornerSlotLocalPos(bestArm);
+                    return true;
+                }
+            }
+
+            // 3) Merkez Üretim Çemberi (Dairesel Deri Dikiş Alanı)
+            float distToCenterCircle = Vector2.Distance(
+                new Vector2(localHit.x, localHit.z),
+                new Vector2(CenterCraftLocalOrigin.x, CenterCraftLocalOrigin.z));
+            if (distToCenterCircle <= 0.205f)
+            {
+                int bestCenterIdx = 0;
+                float bestCenterDist = float.MaxValue;
+                for (int c = 0; c < Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount; c++)
+                {
+                    Vector3 cp = GetCenterCraftSlotLocalPos(c);
+                    float d = Vector2.Distance(new Vector2(localHit.x, localHit.z), new Vector2(cp.x, cp.z));
+                    if (!InventoryUi.CenterCraftSlots[c].IsEmpty) d *= 0.72f;
+                    if (d < bestCenterDist)
+                    {
+                        bestCenterDist = d;
+                        bestCenterIdx = c;
+                    }
+                }
+                zone = MatHitZone.CenterCraft;
+                slotIndex = bestCenterIdx;
+                slotLocalCenter = !InventoryUi.CenterCraftSlots[bestCenterIdx].IsEmpty
+                    ? GetCenterCraftSlotLocalPos(bestCenterIdx)
+                    : CenterCraftLocalOrigin;
+                return true;
+            }
+
+            // 4) Karesiz Doğal Kumaş Yığınları (Dolu yığınlara öncelik ver, sürükleme sırasında boş noktalara da bırakılabilsin!)
+            int bestPile = -1;
+            float bestPileScore = float.MaxValue;
+            bool draggingAnything = !InventoryUi.CursorHeldSlot.IsEmpty;
+
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; i++)
+            {
+                bool occupied = !InventoryUi.BackpackSlots[i].IsEmpty;
+                if (!occupied && !draggingAnything) continue;
+
+                Vector3 pp = GetBackpackMatSlotLocalPos(i);
+                float d = Vector2.Distance(new Vector2(localHit.x, localHit.z), new Vector2(pp.x, pp.z));
+                float hitRadius = occupied ? 0.135f : 0.145f;
+                if (d > hitRadius) continue;
+
+                float score = occupied ? d * 0.78f : d;
+                if (score < bestPileScore)
+                {
+                    bestPileScore = score;
+                    bestPile = i;
+                }
+            }
+
+            if (bestPile >= 0)
+            {
                 zone = MatHitZone.Backpack;
-                slotIndex = idx;
-                slotLocalCenter = GetBackpackMatSlotLocalPos(idx);
+                slotIndex = bestPile;
+                slotLocalCenter = GetBackpackMatSlotLocalPos(bestPile);
                 return true;
             }
 
             return false;
+        }
+
+        private void StartOrCompleteCenterLashing(
+            float dt,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge)
+        {
+            if (_centerCraftRequestedFromGui)
+            {
+                _centerCraftRequestedFromGui = false;
+                if (InventoryUi.ActiveCenterCraftEval.IsCraftable && _centerBindingAnimTimer <= 0f)
+                {
+                    _centerBindingAnimTimer = 0.85f;
+                    miningCtrl.LastFeedbackText = $"🧵 İple Bağlanıyor (0.85sn): {InventoryUi.ActiveCenterCraftEval.ThoughtHint}...";
+                }
+            }
+
+            if (Input.GetKeyDown(KeyCode.R) && InventoryUi.ActiveCenterCraftEval.IsCraftable && _centerBindingAnimTimer <= 0f)
+            {
+                _centerBindingAnimTimer = 0.85f;
+                miningCtrl.LastFeedbackText = $"🧵 İple Bağlanıyor (0.85sn): {InventoryUi.ActiveCenterCraftEval.ThoughtHint}...";
+            }
+
+            if (_centerBindingAnimTimer > 0f)
+            {
+                if (!InventoryUi.ActiveCenterCraftEval.IsCraftable)
+                {
+                    _centerBindingAnimTimer = 0f;
+                    return;
+                }
+
+                _centerBindingAnimTimer -= dt;
+                if (_centerBindingAnimTimer <= 0f)
+                {
+                    _centerBindingAnimTimer = 0f;
+                    if (InventoryUi.TryCommitCenterCraft(miningCtrl, out VisualInventorySlot crafted))
+                    {
+                        // Eğer kemerde yeni bir yuvaya yerleştiyse doğrudan seç ki oyuncu anında elinde görebilsin
+                        for (int h = 0; h < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; h++)
+                        {
+                            if (InventoryUi.HotbarSlots[h].Kind == crafted.Kind &&
+                                InventoryUi.HotbarSlots[h].SubId == crafted.SubId &&
+                                InventoryUi.HotbarSlots[h].ShapeDna.EffectiveSeed == crafted.ShapeDna.EffectiveSeed)
+                            {
+                                InventoryUi.SelectHotbarSlot(h);
+                                break;
+                            }
+                        }
+                        ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                        miningCtrl.LastFeedbackText =
+                            $"🛠️ FİZİKSEL BAĞLAMA TAMAMLANDI: +1 {Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in crafted, combatBridge)}!";
+                    }
+                }
+            }
         }
 
         private void UpdateBackpackMatClickInteraction(
@@ -1285,6 +1757,8 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge)
         {
+            StartOrCompleteCenterLashing(dt, miningCtrl, combatBridge);
+
             if (cam == null || matRoot == null) return;
 
             Ray ray = cam.ScreenPointToRay(Input.mousePosition);
@@ -1307,7 +1781,6 @@ namespace Stratocraft.Character
             Vector3 worldHit = ray.GetPoint(enter);
             Vector3 local = matRoot.InverseTransformPoint(worldHit);
 
-            // Suruklenen 3B esyayi kumas ortu duzleminde (+0.085m yukarida) fareyle puruzsuzce yurut
             if (!InventoryUi.CursorHeldSlot.IsEmpty && _dragged3DItemNode.SlotRoot != null)
             {
                 Vector3 clampedLocal = new Vector3(
@@ -1320,135 +1793,193 @@ namespace Stratocraft.Character
                     Mathf.Clamp01(dt * 24f));
             }
 
+            bool OutsideClothBounds = local.x < -0.74f || local.x > 0.78f || local.z < -0.50f || local.z > 0.50f;
             bool hasSlot = TryHit3DMatSlot(local, out MatHitZone hitZone, out int slotIdx, out Vector3 slotCenterLocal);
             if (!hasSlot)
             {
                 _hoveredMatSlotIndex = -1;
                 _hoveredMatZone = MatHitZone.None;
                 InventoryUi.HasHovered3DMatSlot = false;
-                HoveredBackpackTooltip = !InventoryUi.CursorHeldSlot.IsEmpty
-                    ? "[Ortu Disina Birak] Esyayi Yere At"
+                HoveredBackpackTooltip = (!InventoryUi.CursorHeldSlot.IsEmpty && OutsideClothBounds)
+                    ? "[Örtü Dışına Bırak] Eşyayı Yere Bırak"
                     : string.Empty;
 
                 if (!InventoryUi.CursorHeldSlot.IsEmpty &&
                     ((_isClickCarryMode && Input.GetMouseButtonDown(0)) || (!_isClickCarryMode && Input.GetMouseButtonUp(0))))
                 {
-                    DropCursorHeldItemOutsideMat(playerTransform, cam, sharedVoxelMat, miningCtrl, combatBridge);
+                    if (OutsideClothBounds)
+                    {
+                        DropCursorHeldItemOutsideMat(playerTransform, cam, sharedVoxelMat, miningCtrl, combatBridge);
+                    }
+                    else
+                    {
+                        InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
+                        _isClickCarryMode = false;
+                    }
                 }
                 return;
             }
 
             _hoveredMatSlotIndex = slotIdx;
             _hoveredMatZone = hitZone;
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-            if (hitZone == MatHitZone.AssemblyOutput)
+            // A) Sol Üst 3B Zırh Köşesi Etkileşimi
+            if (hitZone == MatHitZone.Armor)
             {
-                InventoryUi.RefreshAssemblyPreview();
+                VisualInventorySlot armSlot = InventoryUi.EquippedArmorSlots[slotIdx];
+                string armSlotTitle = Stage1VisualHotbarAndInventoryUi.GetArmorSlotName(slotIdx);
                 InventoryUi.HasHovered3DMatSlot = true;
                 InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
-                if (!InventoryUi.AssemblyPreviewSlot.IsEmpty)
+                if (!armSlot.IsEmpty)
                 {
-                    string previewName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in InventoryUi.AssemblyPreviewSlot, combatBridge);
-                    HoveredBackpackTooltip = $"[3B BIRLESTIRME CIKTISI] {previewName} -> [Sol Tik] Lifle Bagla ve Uret!";
-                    InventoryUi.Hovered3DMatTitle = $"🛠️ [HAZIR — SOL TIKLA URET]  {previewName}";
-                    InventoryUi.Hovered3DMatDetail = "Girdi padlerindeki hammaddeler eslesti! [Sol Tik] ile fiziksel baglama (0.8sn) baslatin.";
+                    string armName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in armSlot, combatBridge);
+                    InventoryUi.Hovered3DMatTitle = $"🛡️ {armSlotTitle}: {armName}";
+                    InventoryUi.Hovered3DMatDetail = "[Sol/Sağ Tık] Zırhı Çıkarıp Çanta Örtüsüne Koy";
+                }
+                else
+                {
+                    InventoryUi.Hovered3DMatTitle = $"🛡️ {armSlotTitle} (Zırhsız)";
+                    InventoryUi.Hovered3DMatDetail = "Çantadaki bir zırha tıklayarak veya buraya sürükleyerek kuşanabilirsiniz.";
+                }
 
-                    if (Input.GetMouseButtonDown(0) && InventoryUi.CursorHeldSlot.IsEmpty)
+                if (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1) ||
+                    (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode))
+                {
+                    InventoryUi.HandleArmorSlotClick(slotIdx, Input.GetMouseButtonDown(1) ? 1 : 0, miningCtrl);
+                    _isClickCarryMode = false;
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                }
+                return;
+            }
+
+            // B) Merkez Üretim Çemberi Etkileşimi (The Forest Tarzı Ortada Birleştirme!)
+            if (hitZone == MatHitZone.CenterCraft)
+            {
+                InventoryUi.RefreshCenterCraftEvaluation();
+                InventoryUi.HasHovered3DMatSlot = true;
+                InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(CenterCraftLocalOrigin);
+
+                if (InventoryUi.ActiveCenterCraftEval.IsCraftable && !InventoryUi.CenterCraftPreviewSlot.IsEmpty)
+                {
+                    string previewName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in InventoryUi.CenterCraftPreviewSlot, combatBridge);
+                    InventoryUi.Hovered3DMatTitle = $"🛠️ HAZIR: {previewName}";
+                    InventoryUi.Hovered3DMatDetail = "[Sol Tık veya R] Lifle Sıkıca Bağla (0.85sn)  |  [Sağ Tık] Parçaları Geri Çek";
+                }
+                else if (!InventoryUi.CenterCraftSlots[slotIdx].IsEmpty)
+                {
+                    ref readonly VisualInventorySlot cSlot = ref InventoryUi.CenterCraftSlots[slotIdx];
+                    InventoryUi.Hovered3DMatTitle = $"Merkezdeki Parça: {Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in cSlot, combatBridge)} (x{cSlot.Count})";
+                    InventoryUi.Hovered3DMatDetail = !string.IsNullOrEmpty(InventoryUi.ActiveCenterCraftEval.ThoughtHint)
+                        ? $"{InventoryUi.ActiveCenterCraftEval.ThoughtHint}  |  [Sağ Tık] Yığına Geri Gönder"
+                        : "[Sağ Tık] Yığına Geri Gönder";
+                }
+                else
+                {
+                    InventoryUi.Hovered3DMatTitle = "🧵 Merkez Birleştirme Çemberi";
+                    InventoryUi.Hovered3DMatDetail = "Örtüdeki 3B yığınlara [Sol Tık] basarak parçaları ortaya koyun (Dal + Yontulmuş Taş Başlık + Bitki Lifi).";
+                }
+
+                // Sürüklenen bir eşya merkeze bırakıldıysa merkeze ekle
+                if (!InventoryUi.CursorHeldSlot.IsEmpty &&
+                    ((_isClickCarryMode && Input.GetMouseButtonDown(0)) || (!_isClickCarryMode && Input.GetMouseButtonUp(0))))
+                {
+                    VisualInventorySlot held = InventoryUi.CursorHeldSlot;
+                    InventoryUi.CursorHeldSlot = default;
+                    _isClickCarryMode = false;
+                    // Önce boş merkez yuvasına yerleştir
+                    bool placedInCenter = false;
+                    for (int c = 0; c < Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount; c++)
                     {
-                        if (InventoryUi.TryCraftFromAssemblyOutput(miningCtrl, out VisualInventorySlot crafted))
+                        if (!InventoryUi.CenterCraftSlots[c].IsEmpty && InventoryUi.CenterCraftSlots[c].CanStackWith(in held))
                         {
-                            ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
-                            miningCtrl.LastFeedbackText =
-                                $"🛠️ FİZİKSEL BİRLEŞTİRME TAMAMLANDI: +1 {Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in crafted, combatBridge)} üretildi!";
+                            InventoryUi.CenterCraftSlots[c].Count += held.Count;
+                            placedInCenter = true;
+                            break;
                         }
                     }
-                }
-                else
-                {
-                    HoveredBackpackTooltip = "[3B BIRLESTIRME CIKTI PADI] Ustteki 3 girdi padine hammadde yerlestirin";
-                    InventoryUi.Hovered3DMatTitle = "[3B FIZIKSEL BIRLESTIRME ALANI — TARIFLER]";
-                    InventoryUi.Hovered3DMatDetail =
-                        "Balta: BaltaBasi+Dal+Lif | Kazma: KazmaBasi+Dal+2xLif | Bicak: BicakUcu+Dal+Lif | Kova: 3xOdun+2xLif | Ates: 3xOdun+2xDal+Tas | TasFirin: 3xKabaTas+2xToprak+Lif";
-                }
-                return;
-            }
-
-            if (hitZone == MatHitZone.AssemblyInput)
-            {
-                VisualInventorySlot asmSlot = InventoryUi.AssemblyInputSlots[slotIdx];
-                string asmHeader = $"[BIRLESTIRME GIRDI PADI #{slotIdx + 1}]";
-                InventoryUi.HasHovered3DMatSlot = true;
-                InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
-                if (!asmSlot.IsEmpty)
-                {
-                    string itemName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in asmSlot, combatBridge);
-                    HoveredBackpackTooltip = $"{asmHeader} {itemName} (x{asmSlot.Count})";
-                    InventoryUi.Hovered3DMatTitle = $"{asmHeader}  {itemName}  [Adet: x{asmSlot.Count}]";
-                    InventoryUi.Hovered3DMatDetail = "[Sol Tik] Geri Al / Degistir | [Sag Tik] Yariya Bol / Tekli Birak";
-                }
-                else
-                {
-                    HoveredBackpackTooltip = $"{asmHeader} Bos -> Buraya Dal / Lif / Yontulmus Tas / Odun Surukleyin";
-                    InventoryUi.Hovered3DMatTitle = $"{asmHeader}  Bos Girdi Padi";
-                    InventoryUi.Hovered3DMatDetail = "Cantadan Dal, Bitki Lifi, Yontulmus Tas Baslik, Odun veya Kaba Tas surukleyip birakin.";
-                }
-
-                if (Input.GetMouseButtonDown(1))
-                {
-                    InventoryUi.Handle3DAssemblySlotSecondaryClick(
-                        slotIdx, 1, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
-                    if (!InventoryUi.CursorHeldSlot.IsEmpty)
+                    if (!placedInCenter)
                     {
-                        _isClickCarryMode = true;
-                        if (_dragged3DItemNode.SlotRoot != null)
-                            _dragged3DItemNode.SlotRoot.localPosition = slotCenterLocal + new Vector3(0f, 0.085f, 0f);
+                        for (int c = 0; c < Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount; c++)
+                        {
+                            if (InventoryUi.CenterCraftSlots[c].IsEmpty)
+                            {
+                                InventoryUi.CenterCraftSlots[c] = held;
+                                placedInCenter = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!placedInCenter)
+                    {
+                        InventoryUi.CursorHeldSlot = held;
+                        InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
+                    }
+                    InventoryUi.RefreshCenterCraftEvaluation();
+                    InventoryUi.PushUiCountsToCrystalStorage(miningCtrl);
+                    return;
+                }
+
+                // Sağ Tık: Merkezdeki parçayı yığına geri gönder
+                if (Input.GetMouseButtonDown(1) && InventoryUi.CursorHeldSlot.IsEmpty && _centerBindingAnimTimer <= 0f)
+                {
+                    int targetC = !InventoryUi.CenterCraftSlots[slotIdx].IsEmpty ? slotIdx : -1;
+                    if (targetC < 0)
+                    {
+                        for (int c = Stage1VisualHotbarAndInventoryUi.CenterCraftSlotCount - 1; c >= 0; c--)
+                        {
+                            if (!InventoryUi.CenterCraftSlots[c].IsEmpty) { targetC = c; break; }
+                        }
+                    }
+                    if (targetC >= 0)
+                    {
+                        int retCount = shift ? InventoryUi.CenterCraftSlots[targetC].Count : 1;
+                        InventoryUi.TryReturnCenterItemToPiles(targetC, retCount, miningCtrl);
                     }
                     return;
                 }
 
-                if (Input.GetMouseButtonDown(0))
+                // Sol Tık: Tarif hazırsa 0.85sn 3B ip bağlama animasyonunu başlat!
+                if (Input.GetMouseButtonDown(0) && InventoryUi.CursorHeldSlot.IsEmpty && _centerBindingAnimTimer <= 0f)
                 {
-                    if (!InventoryUi.CursorHeldSlot.IsEmpty)
+                    if (InventoryUi.ActiveCenterCraftEval.IsCraftable)
                     {
-                        InventoryUi.Complete3DAssemblySlotDrop(
-                            slotIdx, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
-                        _isClickCarryMode = false;
-                        return;
+                        _centerBindingAnimTimer = 0.85f;
+                        miningCtrl.LastFeedbackText = $"🧵 İple Bağlanıyor (0.85sn): {InventoryUi.ActiveCenterCraftEval.ThoughtHint}...";
                     }
-                    if (!asmSlot.IsEmpty && InventoryUi.Begin3DAssemblySlotDrag(slotIdx, miningCtrl))
+                    else if (!InventoryUi.CenterCraftSlots[slotIdx].IsEmpty)
                     {
-                        _dragStartMousePos = Input.mousePosition;
-                        _dragStartTime = Time.unscaledTime;
-                        _isClickCarryMode = false;
-                        if (_dragged3DItemNode.SlotRoot != null)
-                            _dragged3DItemNode.SlotRoot.localPosition = slotCenterLocal + new Vector3(0f, 0.085f, 0f);
+                        InventoryUi.TryReturnCenterItemToPiles(slotIdx, 1, miningCtrl);
                     }
-                    return;
-                }
-
-                if (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode)
-                {
-                    bool sameAsmOrigin = InventoryUi.DragOriginIsAssemblyInput && InventoryUi.DragOriginSlotIndex == slotIdx;
-                    bool quick = (Time.unscaledTime - _dragStartTime) < 0.24f &&
-                                 Vector2.Distance(Input.mousePosition, _dragStartMousePos) < 12f;
-                    if (sameAsmOrigin && quick)
-                    {
-                        _isClickCarryMode = true;
-                        return;
-                    }
-                    InventoryUi.Complete3DAssemblySlotDrop(
-                        slotIdx, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
                 }
                 return;
             }
 
+            // C) Doğal 3B Yığınlar (Backpack) ve Ön Deri Kemer Halkaları (Hotbar [1..9])
             bool isHotbar = hitZone == MatHitZone.Hotbar;
+            VisualInventorySlot[] srcArr = isHotbar ? InventoryUi.HotbarSlots : InventoryUi.BackpackSlots;
 
-            // [I] 3B Canta uzerinde bir yuvanin ustundeyken [Q] (1 Adet) veya [Ctrl+Q] (Tum Yigin) ile hizli yere atma
+            // Üzerine gelinen yığındayken [1..9] tuşuna basılırsa doğrudan o kemer halkasına tak/değiştir!
+            if (InventoryUi.CursorHeldSlot.IsEmpty && !isHotbar && (uint)slotIdx < (uint)srcArr.Length && !srcArr[slotIdx].IsEmpty)
+            {
+                for (int k = 0; k < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; k++)
+                {
+                    if (Input.GetKeyDown(KeyCode.Alpha1 + k) || Input.GetKeyDown(KeyCode.Keypad1 + k))
+                    {
+                        VisualInventorySlot swapTmp = InventoryUi.HotbarSlots[k];
+                        InventoryUi.HotbarSlots[k] = srcArr[slotIdx];
+                        srcArr[slotIdx] = swapTmp;
+                        InventoryUi.SelectHotbarSlot(k);
+                        ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                        return;
+                    }
+                }
+            }
+
+            // [Q] (1 Adet) veya [Ctrl+Q] (Tüm Yığın) ile fiziksel olarak dünyaya bırakma (Yerde taş yontmak için çok pratik!)
             if (Input.GetKeyDown(KeyCode.Q) && InventoryUi.CursorHeldSlot.IsEmpty)
             {
                 bool dropAllStack = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-                VisualInventorySlot[] srcArr = isHotbar ? InventoryUi.HotbarSlots : InventoryUi.BackpackSlots;
                 if ((uint)slotIdx < (uint)srcArr.Length && !srcArr[slotIdx].IsEmpty)
                 {
                     int dropCount = dropAllStack ? srcArr[slotIdx].Count : 1;
@@ -1468,9 +1999,7 @@ namespace Stratocraft.Character
                 ? InventoryUi.HotbarSlots[slotIdx]
                 : InventoryUi.BackpackSlots[slotIdx];
 
-            string zoneHeader = isHotbar
-                ? $"[ON KILIF SERIDI — TUS {slotIdx + 1}]"
-                : $"[3B KUMAS CANTA BOLMESI #{slotIdx + 1}]";
+            string zoneHeader = isHotbar ? $"[Kemer Halkası {slotIdx + 1}]" : "[Kumaş Örtü Yığını]";
 
             if (!hoveredSlot.IsEmpty)
             {
@@ -1478,69 +2007,47 @@ namespace Stratocraft.Character
                 HoveredBackpackTooltip = $"{zoneHeader} {itemName} (x{hoveredSlot.Count})";
                 InventoryUi.HasHovered3DMatSlot = true;
                 InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
-                InventoryUi.Hovered3DMatTitle = $"{zoneHeader}  {itemName}  [Adet: x{hoveredSlot.Count}]";
+                InventoryUi.Hovered3DMatTitle = $"{zoneHeader}  {itemName}  [x{hoveredSlot.Count}]";
                 InventoryUi.Hovered3DMatDetail =
-                    "[Sol Tik & Surukle] Bolme Degistir | [Ortu Disina Birak / Q] Yere At | [Sag Tik] Yariya Bol | [Shift+Sol Tik] Hizli Aktar";
-            }
-            else if (!InventoryUi.CursorHeldSlot.IsEmpty)
-            {
-                string heldName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in InventoryUi.CursorHeldSlot, combatBridge);
-                HoveredBackpackTooltip = $"{zoneHeader} Bos 3B Yuva -> {heldName} Birak";
-                InventoryUi.HasHovered3DMatSlot = true;
-                InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
-                InventoryUi.Hovered3DMatTitle = $"{zoneHeader}  Bos 3B Bolme";
-                InventoryUi.Hovered3DMatDetail = $"Tasinan 3B [{heldName} x{InventoryUi.CursorHeldSlot.Count}] esyasini buraya yerlestirmek icin Sol Tik birakin!";
+                    "[Sol Tık] Ortaya 1 Parça Koy | [Sol Tık+Sürükle] Taşı | [1..9] Kemere Tak | [Q] Yere Bırak";
             }
             else
             {
-                HoveredBackpackTooltip = $"{zoneHeader} Bos 3B Yuva";
-                InventoryUi.HasHovered3DMatSlot = false;
-            }
-
-            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-
-            // 1) Shift + Sol Tik: Canta Bolmesi <-> On Kilif Seridi [1..9] Hizli Aktarim
-            if (Input.GetMouseButtonDown(0) && shift)
-            {
-                InventoryUi.Handle3DMatSlotSecondaryOrQuickAction(
-                    isHotbar,
-                    slotIdx,
-                    mouseButton: 0,
-                    isShift: true,
-                    miningCtrl,
-                    ChestCasSystem,
-                    () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
-                return;
-            }
-
-            // 2) Sag Tik: 3B Yigini Yariya Bol veya Tasinan Yigindan 1 Adet Birak
-            if (Input.GetMouseButtonDown(1))
-            {
-                InventoryUi.Handle3DMatSlotSecondaryOrQuickAction(
-                    isHotbar,
-                    slotIdx,
-                    mouseButton: 1,
-                    isShift: false,
-                    miningCtrl,
-                    ChestCasSystem,
-                    () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
-                if (!InventoryUi.CursorHeldSlot.IsEmpty)
+                InventoryUi.HasHovered3DMatSlot = isHotbar && !InventoryUi.CursorHeldSlot.IsEmpty;
+                if (InventoryUi.HasHovered3DMatSlot)
                 {
-                    _isClickCarryMode = true;
-                    if (_dragged3DItemNode.SlotRoot != null)
+                    InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
+                    InventoryUi.Hovered3DMatTitle = $"[Kemer Halkası {slotIdx + 1}] Boş";
+                    InventoryUi.Hovered3DMatDetail = "Sürüklediğiniz eşyayı buraya bırakarak kemere takın.";
+                }
+            }
+
+            // Sağ Tık: Zırh ise kuşan, yığın ise 1 adedini direkt ortaya at
+            if (Input.GetMouseButtonDown(1) && InventoryUi.CursorHeldSlot.IsEmpty && !hoveredSlot.IsEmpty)
+            {
+                if (Stage1VisualHotbarAndInventoryUi.IsArmorKind(hoveredSlot.Kind))
+                {
+                    int armIdx = Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(hoveredSlot.Kind);
+                    if (armIdx >= 0)
                     {
-                        _dragged3DItemNode.SlotRoot.localPosition = slotCenterLocal + new Vector3(0f, 0.085f, 0f);
+                        VisualInventorySlot oldArm = InventoryUi.EquippedArmorSlots[armIdx];
+                        InventoryUi.EquippedArmorSlots[armIdx] = hoveredSlot;
+                        InventoryUi.EquippedArmorSlots[armIdx].Count = 1;
+                        srcArr[slotIdx] = oldArm;
+                        ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                        return;
                     }
                 }
+                InventoryUi.TryMovePileItemToCenter(isHotbar, slotIdx, 1, miningCtrl);
+                if (isHotbar) ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
                 return;
             }
 
-            // 3) Sol Tik Basma (Grab / Start 3D Drag veya Click-Carry Birakma)
-            if (Input.GetMouseButtonDown(0) && !shift)
+            // Sol Tık Basma: Sürükleme başlat (Eğer sürüklemeden hızlı bırakılırsa The Forest gibi ortaya 1 parça koyar!)
+            if (Input.GetMouseButtonDown(0))
             {
                 if (!InventoryUi.CursorHeldSlot.IsEmpty)
                 {
-                    // Click-Carry veya Sag-Tik bolme sonrasinda hedef 3B yuvaya birakma
                     InventoryUi.Complete3DMatSlotDrop(
                         isHotbar,
                         slotIdx,
@@ -1570,30 +2077,49 @@ namespace Stratocraft.Character
                 }
             }
 
-            // 4) Sol Tik Birakma (Drop / Spatial 3D Swap)
+            // Sol Tık Bırakma: Hızlı tek tık ise ortaya parça gönder (veya kemerdeki aletse kuşan); sürüklendiyse hedefe bırak!
             if (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode)
             {
                 bool sameSlotAsOrigin = (isHotbar == InventoryUi.DragOriginIsHotbar) && (slotIdx == InventoryUi.DragOriginSlotIndex);
-                bool wasQuickClick = (Time.unscaledTime - _dragStartTime) < 0.24f &&
-                                     Vector2.Distance(Input.mousePosition, _dragStartMousePos) < 12f;
+                bool wasQuickClick = (Time.unscaledTime - _dragStartTime) < 0.26f &&
+                                     Vector2.Distance(Input.mousePosition, _dragStartMousePos) < 14f;
 
                 if (sameSlotAsOrigin && wasQuickClick)
                 {
-                    if (isHotbar)
+                    // Önce yuvaya geri koy
+                    InventoryUi.Complete3DMatSlotDrop(
+                        targetIsHotbar: isHotbar,
+                        targetSlotIndex: slotIdx,
+                        miningCtrl,
+                        () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
+
+                    VisualInventorySlot restored = srcArr[slotIdx];
+                    if (Stage1VisualHotbarAndInventoryUi.IsArmorKind(restored.Kind))
                     {
-                        // On Kilif Seridindeki [1..9] 3B esyaya hizlica tek tiklandiysa: Yuvaya geri koy ve o kilifi sec/kusan!
-                        InventoryUi.Complete3DMatSlotDrop(
-                            targetIsHotbar: true,
-                            targetSlotIndex: slotIdx,
-                            miningCtrl,
-                            () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
+                        int armIdx = Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(restored.Kind);
+                        if (armIdx >= 0)
+                        {
+                            VisualInventorySlot oldArm = InventoryUi.EquippedArmorSlots[armIdx];
+                            InventoryUi.EquippedArmorSlots[armIdx] = restored;
+                            InventoryUi.EquippedArmorSlots[armIdx].Count = 1;
+                            srcArr[slotIdx] = oldArm;
+                        }
+                    }
+                    else if (isHotbar && !shift &&
+                             (restored.Kind == InventoryItemKind.ToolPickaxe ||
+                              restored.Kind == InventoryItemKind.ToolAxe ||
+                              restored.Kind == InventoryItemKind.WeaponSword ||
+                              restored.Kind == InventoryItemKind.ToolStoneHammer ||
+                              restored.Kind == InventoryItemKind.FlintStone))
+                    {
                         InventoryUi.SelectHotbarSlot(slotIdx);
                         ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
                     }
                     else
                     {
-                        // Ana kumas bolmesindeki esyaya tek tiklandiysa: Farede tasimaya (Click-then-Click) devam et!
-                        _isClickCarryMode = true;
+                        int moveCount = shift ? Mathf.Min(restored.Count, 3) : 1;
+                        InventoryUi.TryMovePileItemToCenter(isHotbar, slotIdx, moveCount, miningCtrl);
+                        if (isHotbar) ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
                     }
                     return;
                 }
@@ -1603,8 +2129,6 @@ namespace Stratocraft.Character
                     slotIdx,
                     miningCtrl,
                     () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
-                string destLabel = isHotbar ? $"Kilif [{slotIdx + 1}]" : $"Canta Bolmesi #{slotIdx + 1}";
-                miningCtrl.LastFeedbackText = $"3B Kumas Canta: Esya {destLabel} yuvasina yerlestirildi!";
             }
         }
 
@@ -2269,15 +2793,37 @@ namespace Stratocraft.Character
             float drawDropY = (1f - drawProgress01) * -0.28f;
             float drawPitchAdd = (1f - drawProgress01) * 42f;
 
+            CacheOriginalHandWeaponMeshesAndMaterials(swordVisual, pickaxeVisual, axeVisual);
+            VisualInventorySlot activeHandSlot = InventoryUi.GetActiveHotbarSlot();
+
             if (swordVisual != null)
             {
                 swordVisual.SetActive(shownSlot == 1);
+                if (shownSlot == 1)
+                {
+                    ApplyCustomKnappedOrMetalMeshToToolVisual(
+                        swordVisual,
+                        activeHandSlot.Kind == InventoryItemKind.WeaponSword && activeHandSlot.SubId == 1,
+                        PhysicalItemArchetype.ToolPrimitiveKnife,
+                        activeHandSlot.GetEffectiveShapeDna(),
+                        _cachedSwordMesh,
+                        _cachedSwordMat,
+                        sharedVoxelMat);
+                }
             }
             if (pickaxeVisual != null)
             {
                 pickaxeVisual.SetActive(shownSlot == 2);
                 if (shownSlot == 2)
                 {
+                    ApplyCustomKnappedOrMetalMeshToToolVisual(
+                        pickaxeVisual,
+                        activeHandSlot.Kind == InventoryItemKind.ToolPickaxe && activeHandSlot.SubId == 1,
+                        PhysicalItemArchetype.ToolPrimitivePickaxe,
+                        activeHandSlot.GetEffectiveShapeDna(),
+                        _cachedPickaxeMesh,
+                        _cachedPickaxeMat,
+                        sharedVoxelMat);
                     EnsureToolHandGauntlet(pickaxeVisual.transform, ref _pickaxeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
                     if (HolsterTransitionRemaining > 0.01f)
                     {
@@ -2290,6 +2836,14 @@ namespace Stratocraft.Character
                 axeVisual.SetActive(shownSlot == 3);
                 if (shownSlot == 3)
                 {
+                    ApplyCustomKnappedOrMetalMeshToToolVisual(
+                        axeVisual,
+                        activeHandSlot.Kind == InventoryItemKind.ToolAxe && activeHandSlot.SubId == 1,
+                        PhysicalItemArchetype.ToolPrimitiveAxe,
+                        activeHandSlot.GetEffectiveShapeDna(),
+                        _cachedAxeMesh,
+                        _cachedAxeMat,
+                        sharedVoxelMat);
                     EnsureToolHandGauntlet(axeVisual.transform, ref _axeHandGloveGo, sharedVoxelMat, new Vector3(0f, -0.10f, 0.04f));
                     if (HolsterTransitionRemaining > 0.01f)
                     {
@@ -2756,7 +3310,7 @@ namespace Stratocraft.Character
                                dropPhysArch == PhysicalItemArchetype.ToolPrimitiveHammer;
                 Quaternion restPose = layFlat ? Quaternion.Euler(86f, 0f, 0f) : Quaternion.identity;
                 flatYawRot = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * restPose;
-                droppedGo.transform.localScale = naturalScale;
+                droppedGo.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(dropPhysArch, naturalScale);
                 droppedGo.transform.rotation = flatYawRot;
             }
             else
@@ -2870,6 +3424,260 @@ namespace Stratocraft.Character
             rotation = Quaternion.identity;
             isSettled = false;
             return false;
+        }
+
+        public bool OwnsAnyFlintStone()
+        {
+            return HasAnyItemOfKindInInventory(InventoryItemKind.FlintStone);
+        }
+
+        /// <summary>
+        /// Oyuncu yerdeki bir tasa bakip [R] tusuna bastiginda elinde degilse ama kemerinde ([1..9]) veya
+        /// cantasinda ([I]) Cakmaktasi varsa otomatik olarak eline ceker ve yontmayi puruzsuz baslatir!
+        /// </summary>
+        public bool TryAutoEquipFlintForKnapping(
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            if (InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.FlintStone)
+            {
+                miningCtrl.IsCrystalActive = false;
+                return true;
+            }
+
+            // 1) Kemerde [1..9] Cakmaktasi varsa dogrudan o yuvayi sec
+            for (int h = 0; h < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; h++)
+            {
+                if (InventoryUi.HotbarSlots[h].Kind == InventoryItemKind.FlintStone && InventoryUi.HotbarSlots[h].Count > 0)
+                {
+                    InventoryUi.SelectHotbarSlot(h);
+                    miningCtrl.IsCrystalActive = false;
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    return true;
+                }
+            }
+
+            // 2) Cantada [I] Cakmaktasi varsa bos bir kemer yuvasina (yoksa secili/son kemer yuvasina takasla) cek ve sec
+            for (int b = 0; b < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; b++)
+            {
+                if (InventoryUi.BackpackSlots[b].Kind == InventoryItemKind.FlintStone && InventoryUi.BackpackSlots[b].Count > 0)
+                {
+                    int targetHotbar = -1;
+                    for (int h = 0; h < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; h++)
+                    {
+                        if (InventoryUi.HotbarSlots[h].IsEmpty)
+                        {
+                            targetHotbar = h;
+                            break;
+                        }
+                    }
+                    if (targetHotbar < 0)
+                    {
+                        targetHotbar = InventoryUi.SelectedHotbarIndex >= 0
+                            ? InventoryUi.SelectedHotbarIndex
+                            : (Stage1VisualHotbarAndInventoryUi.HotbarSlotCount - 1);
+                    }
+
+                    VisualInventorySlot prevHotbar = InventoryUi.HotbarSlots[targetHotbar];
+                    InventoryUi.HotbarSlots[targetHotbar] = InventoryUi.BackpackSlots[b];
+                    InventoryUi.BackpackSlots[b] = prevHotbar;
+                    InventoryUi.SelectHotbarSlot(targetHotbar);
+                    miningCtrl.IsCrystalActive = false;
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public int FindAimedPlayerDroppedItemIndex(UnityEngine.Camera? cam, Vector3 playerPos, float maxReach = 3.25f)
+        {
+            if (_droppedWorldItems.Count == 0) return -1;
+            Vector3 rayOrigin = cam != null ? cam.transform.position : playerPos + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = cam != null ? cam.transform.forward : Vector3.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
+            {
+                DroppedWorldItemRecord rec = _droppedWorldItems[i];
+                if (rec.VisualObject == null) continue;
+
+                Vector3 itemPos = rec.VisualObject.transform.position;
+                float distToPlayer = Vector3.Distance(playerPos + new Vector3(0f, 0.85f, 0f), itemPos);
+                float distToCam = Vector3.Distance(rayOrigin, itemPos);
+                if (distToPlayer > maxReach && distToCam > maxReach + 0.50f) continue;
+
+                Vector3 toItem = itemPos - rayOrigin;
+                float along = Vector3.Dot(toItem, rayDir);
+                if (along < -0.20f || along > maxReach + 0.60f) continue;
+
+                Vector3 closestOnRay = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perpDist = Vector3.Distance(closestOnRay, itemPos);
+                float allowedRadius = distToPlayer <= 1.55f ? 0.78f : 0.62f;
+                if (perpDist > allowedRadius) continue;
+
+                float score = perpDist * 2.2f + Mathf.Max(0f, along) * 0.30f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx;
+        }
+
+        public bool TryGetPlayerDroppedItemLabel(int index, out string label, out int count)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count || _droppedWorldItems[index].VisualObject == null)
+            {
+                label = string.Empty;
+                count = 0;
+                return false;
+            }
+            DroppedWorldItemRecord rec = _droppedWorldItems[index];
+            label = rec.DisplayName;
+            count = Mathf.Max(1, rec.SlotData.Count);
+            return true;
+        }
+
+        public bool TryFindAimedPlayerDroppedStone(
+            UnityEngine.Camera? cam,
+            Vector3 playerPos,
+            float maxReach,
+            out int bestIdx,
+            out float bestScore)
+        {
+            bestIdx = -1;
+            bestScore = float.MaxValue;
+            if (_droppedWorldItems.Count == 0) return false;
+
+            Vector3 rayOrigin = cam != null ? cam.transform.position : playerPos + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = cam != null ? cam.transform.forward : Vector3.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
+            {
+                DroppedWorldItemRecord rec = _droppedWorldItems[i];
+                if (rec.VisualObject == null) continue;
+                if (!Stage1MatterCrystalAndMiningController.IsKnappableStoneItem(rec.SlotData.Kind, rec.SlotData.SubId)) continue;
+
+                Vector3 itemPos = rec.VisualObject.transform.position;
+                float distToPlayer = Vector3.Distance(playerPos + new Vector3(0f, 0.85f, 0f), itemPos);
+                float distToCam = Vector3.Distance(rayOrigin, itemPos);
+                if (distToPlayer > maxReach && distToCam > maxReach + 0.55f) continue;
+
+                Vector3 toItem = itemPos - rayOrigin;
+                float along = Vector3.Dot(toItem, rayDir);
+                if (along < -0.20f || along > maxReach + 0.65f) continue;
+
+                Vector3 closestOnRay = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perpDist = Vector3.Distance(closestOnRay, itemPos);
+                float allowedRadius = distToPlayer <= 1.65f ? 0.85f : 0.72f;
+                if (perpDist > allowedRadius) continue;
+
+                float score = perpDist * 2.1f + Mathf.Max(0f, along) * 0.30f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx >= 0;
+        }
+
+        public bool TryGetPlayerDroppedStoneInfo(
+            int index,
+            out Vector3 worldPos,
+            out byte matId,
+            out PhysicalItemShapeDna dna)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count || _droppedWorldItems[index].VisualObject == null)
+            {
+                worldPos = Vector3.zero;
+                matId = MaterialIdCatalog.Stone;
+                dna = default;
+                return false;
+            }
+            DroppedWorldItemRecord rec = _droppedWorldItems[index];
+            worldPos = rec.VisualObject.transform.position;
+            matId = rec.SlotData.SubId != 0 ? rec.SlotData.SubId : MaterialIdCatalog.Stone;
+            dna = rec.SlotData.GetEffectiveShapeDna();
+            return true;
+        }
+
+        public void SetPlayerDroppedItemVisibility(int index, bool visible)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            GameObject? go = _droppedWorldItems[index].VisualObject;
+            if (go != null)
+            {
+                MeshRenderer? mr = go.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = visible;
+            }
+        }
+
+        public void SavePartialKnappingOnPlayerDroppedStone(int index, PhysicalItemShapeDna updatedDna)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            DroppedWorldItemRecord rec = _droppedWorldItems[index];
+            rec.SlotData.ShapeDna = updatedDna;
+            if (rec.VisualObject != null)
+            {
+                MeshRenderer? mr = rec.VisualObject.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = true;
+                if ((updatedDna.Flags & PhysicalItemShapeDna.FlagCustomKnapMask) != 0 &&
+                    updatedDna.KnapMask64 != 0UL &&
+                    updatedDna.KnapMask64 != ulong.MaxValue)
+                {
+                    MeshFilter? mf = rec.VisualObject.GetComponent<MeshFilter>();
+                    if (mf != null)
+                    {
+                        byte stoneMat = rec.SlotData.SubId != 0 ? rec.SlotData.SubId : MaterialIdCatalog.Stone;
+                        mf.sharedMesh = PhysicalItemMeshFactory.BuildInteractiveKnappingSlabMesh(
+                            updatedDna.KnapMask64, 0UL, stoneMat, -1, -1, 0f);
+                        rec.VisualObject.transform.localScale = Vector3.one;
+                    }
+                }
+            }
+            _droppedWorldItems[index] = rec;
+        }
+
+        public void ConsumeOnePlayerDroppedStoneAt(int index)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            DroppedWorldItemRecord rec = _droppedWorldItems[index];
+            if (rec.SlotData.Count > 1 && rec.VisualObject != null)
+            {
+                rec.SlotData.Count -= 1;
+                rec.SlotData.ShapeDna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                    Mathf.RoundToInt(rec.VisualObject.transform.position.x * 4f),
+                    Mathf.RoundToInt(rec.VisualObject.transform.position.y * 4f),
+                    Mathf.RoundToInt(rec.VisualObject.transform.position.z * 4f),
+                    (uint)(index * 997 + rec.SlotData.Count));
+                byte stoneMat = rec.SlotData.SubId != 0 ? rec.SlotData.SubId : MaterialIdCatalog.Stone;
+                PhysicalItemShapeDna dna = rec.SlotData.ShapeDna;
+                Mesh freshMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
+                    PhysicalItemArchetype.RoughStone, stoneMat, in dna, out Vector3 natScale);
+                MeshFilter? mf = rec.VisualObject.GetComponent<MeshFilter>();
+                if (mf != null) mf.sharedMesh = freshMesh;
+                MeshRenderer? mr = rec.VisualObject.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = true;
+                rec.VisualObject.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(PhysicalItemArchetype.RoughStone, natScale);
+                _droppedWorldItems[index] = rec;
+                return;
+            }
+
+            if (rec.VisualObject != null)
+            {
+                UnityEngine.Object.Destroy(rec.VisualObject);
+            }
+            _droppedWorldItems.RemoveAt(index);
         }
 
         private void StepDroppedWorldItemsPhysics(float dt)

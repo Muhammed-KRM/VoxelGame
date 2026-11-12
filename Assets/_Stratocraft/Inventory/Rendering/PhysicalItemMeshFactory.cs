@@ -38,19 +38,29 @@ namespace Stratocraft.Inventory.Rendering
             naturalScale = new Vector3(sv.X, sv.Y, sv.Z);
 
             byte resolvedMat = ResolvePrimaryMaterialId(archetype, subMaterialId);
-            if (dna.HasCustomKnapMask && IsKnappedHeadArchetype(archetype))
+            if (dna.HasCustomKnapMask && (IsKnappedHeadArchetype(archetype) || IsCustomKnappedToolArchetype(archetype)))
             {
-                ulong knapKey = dna.KnapMask64 ^ ((ulong)resolvedMat * 0x9E3779B97F4A7C15UL) ^ ((ulong)dna.ThermalTempByte << 48);
+                ulong knapKey = dna.KnapMask64
+                              ^ ((ulong)archetype * 0xBF58476D1CE4E5B9UL)
+                              ^ ((ulong)resolvedMat * 0x9E3779B97F4A7C15UL)
+                              ^ ((ulong)dna.ThermalTempByte << 48);
                 if (CustomKnapMeshCache.TryGetValue(knapKey, out Mesh? cachedKnap) && cachedKnap != null)
                 {
                     return cachedKnap;
                 }
 
                 SharedBuildTris.Clear();
-                EmitKnappedMaskSlab(dna.KnapMask64, resolvedMat, dna.ThermalTempByte, SharedBuildTris);
+                if (IsKnappedHeadArchetype(archetype))
+                {
+                    EmitKnappedMaskSlab(dna.KnapMask64, resolvedMat, dna.ThermalTempByte, SharedBuildTris);
+                }
+                else
+                {
+                    EmitArchetypeTriangles(archetype, resolvedMat, in dna, SharedBuildTris);
+                }
                 Mesh builtKnap = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
-                    SharedBuildTris, $"Mesh_CustomKnap_{resolvedMat}_{dna.KnapMask64:X16}");
-                if (CustomKnapMeshCache.Count >= 128)
+                    SharedBuildTris, $"Mesh_CustomKnap_{archetype}_{resolvedMat}_{dna.KnapMask64:X16}");
+                if (CustomKnapMeshCache.Count >= 160)
                 {
                     CustomKnapMeshCache.Clear();
                 }
@@ -77,6 +87,62 @@ namespace Stratocraft.Inventory.Rendering
             StandardMeshCache[key] = built;
             return built;
         }
+
+        /// <summary>
+        /// Dunyada yerde duran (dogal olusan, kazidan dusen veya [Q] ile atilan) tum fiziksel esyalarin
+        /// uzaktan ve cimenlerin arasinda net gorunmesi icin dunya zemin olcegini dondurur.
+        /// ([I] Canta bezi ise kendi dar yigin olcegini korur, boylece bez uzerinde ust uste tasma olmaz.)
+        /// </summary>
+        public static Vector3 GetWorldGroundScale(PhysicalItemArchetype archetype, Vector3 naturalScale)
+        {
+            return archetype switch
+            {
+                PhysicalItemArchetype.ArchitecturalBlock => new Vector3(0.46f, 0.46f, 0.46f),
+                PhysicalItemArchetype.DirtClod or
+                PhysicalItemArchetype.SandMound or
+                PhysicalItemArchetype.ClayLump or
+                PhysicalItemArchetype.RoughStone or
+                PhysicalItemArchetype.FlintStone or
+                PhysicalItemArchetype.LeafPile or
+                PhysicalItemArchetype.PlantFiber or
+                PhysicalItemArchetype.WildBerryCluster or
+                PhysicalItemArchetype.CharcoalChunk or
+                PhysicalItemArchetype.CrushedOreGravel or
+                PhysicalItemArchetype.SlagGlassShard => naturalScale * 1.82f,
+
+                PhysicalItemArchetype.OreBearingRock or
+                PhysicalItemArchetype.QuartzCrystalCluster or
+                PhysicalItemArchetype.RoastedCrackedOre or
+                PhysicalItemArchetype.KnappedAxeHead or
+                PhysicalItemArchetype.KnappedPickaxeHead or
+                PhysicalItemArchetype.KnappedKnifeBlade or
+                PhysicalItemArchetype.KnappedHammerHead or
+                PhysicalItemArchetype.RawMeatCut or
+                PhysicalItemArchetype.CookedMeatCut or
+                PhysicalItemArchetype.BurntCharredMeat or
+                PhysicalItemArchetype.RawHideRoll or
+                PhysicalItemArchetype.ClayTuyerePipe or
+                PhysicalItemArchetype.ClayCruciblePot or
+                PhysicalItemArchetype.IronBloomSponge or
+                PhysicalItemArchetype.WroughtIronBar or
+                PhysicalItemArchetype.MetalIngotBar => naturalScale * 1.68f,
+
+                PhysicalItemArchetype.NaturalStick or
+                PhysicalItemArchetype.SplitFirewood or
+                PhysicalItemArchetype.LeatherBellows or
+                PhysicalItemArchetype.WoodenWheel => naturalScale * 1.50f,
+
+                PhysicalItemArchetype.ToolPrimitiveAxe or
+                PhysicalItemArchetype.ToolPrimitivePickaxe or
+                PhysicalItemArchetype.ToolPrimitiveKnife or
+                PhysicalItemArchetype.ToolPrimitiveHammer => naturalScale * 1.38f,
+
+                PhysicalItemArchetype.WildBushFoliage or
+                PhysicalItemArchetype.WildBushBareRoots => naturalScale * 1.15f,
+
+                _ => naturalScale * 1.65f
+            };
+        }
 #endif
 
         public static bool IsKnappedHeadArchetype(PhysicalItemArchetype archetype)
@@ -85,6 +151,14 @@ namespace Stratocraft.Inventory.Rendering
                    archetype == PhysicalItemArchetype.KnappedPickaxeHead ||
                    archetype == PhysicalItemArchetype.KnappedKnifeBlade ||
                    archetype == PhysicalItemArchetype.KnappedHammerHead;
+        }
+
+        public static bool IsCustomKnappedToolArchetype(PhysicalItemArchetype archetype)
+        {
+            return archetype == PhysicalItemArchetype.ToolPrimitiveAxe ||
+                   archetype == PhysicalItemArchetype.ToolPrimitivePickaxe ||
+                   archetype == PhysicalItemArchetype.ToolPrimitiveKnife ||
+                   archetype == PhysicalItemArchetype.ToolPrimitiveHammer;
         }
 
         public static byte ResolvePrimaryMaterialId(PhysicalItemArchetype archetype, byte subMaterialId)
@@ -181,7 +255,7 @@ namespace Stratocraft.Inventory.Rendering
                     break;
 
                 case PhysicalItemArchetype.RoughStone:
-                    EmitIrregularRiverCobble(vSeed, primaryMatId, temp, 0.125f, 0.068f, 0.105f, outTris);
+                    EmitIrregularRiverCobble(vSeed, primaryMatId, temp, 0.148f, 0.088f, 0.128f, outTris);
                     break;
 
                 case PhysicalItemArchetype.FlintStone:
@@ -199,7 +273,7 @@ namespace Stratocraft.Inventory.Rendering
                         ? MaterialIdCatalog.Cobblestone
                         : MaterialIdCatalog.Stone;
                     byte effectiveTemp = archetype == PhysicalItemArchetype.RoastedCrackedOre && temp < 35 ? (byte)35 : temp;
-                    EmitIrregularRiverCobble(vSeed, rockHostMat, effectiveTemp, 0.125f, 0.088f, 0.112f, outTris);
+                    EmitIrregularRiverCobble(vSeed, rockHostMat, effectiveTemp, 0.150f, 0.105f, 0.134f, outTris);
                     EmitOreVeinNuggetsOnRock(vSeed, primaryMatId, effectiveTemp, outTris);
                     break;
                 }
@@ -211,7 +285,7 @@ namespace Stratocraft.Inventory.Rendering
                 case PhysicalItemArchetype.DirtClod:
                 case PhysicalItemArchetype.SandMound:
                 case PhysicalItemArchetype.ClayLump:
-                    EmitSoftEarthMound(vSeed, primaryMatId, temp, archetype == PhysicalItemArchetype.SandMound ? 0.055f : 0.075f, outTris);
+                    EmitSoftEarthMound(vSeed, primaryMatId, temp, archetype == PhysicalItemArchetype.SandMound ? 0.082f : 0.104f, outTris);
                     break;
 
                 case PhysicalItemArchetype.KnappedAxeHead:
@@ -294,21 +368,44 @@ namespace Stratocraft.Inventory.Rendering
                 case PhysicalItemArchetype.ToolPrimitiveKnife:
                 case PhysicalItemArchetype.ToolPrimitiveHammer:
                 {
-                    float shaftHalf = archetype == PhysicalItemArchetype.ToolPrimitiveKnife ? 0.14f : 0.28f;
+                    float shaftHalf = archetype == PhysicalItemArchetype.ToolPrimitiveKnife ? 0.14f : 0.30f;
                     EmitHollowTubeSegment(new SysVec3(0f, -shaftHalf, 0f), new SysVec3(0f, shaftHalf, 0f), 0.024f, 0.021f, MaterialIdCatalog.OakWood, temp, outTris, sides: 6);
-                    EmitHollowTubeSegment(new SysVec3(0f, shaftHalf - 0.045f, 0f), new SysVec3(0f, shaftHalf + 0.015f, 0f), 0.030f, 0.030f, MaterialIdCatalog.GlowingMoss, temp, outTris, sides: 6);
-                    byte stoneMat = primaryMatId != 0 ? primaryMatId : MaterialIdCatalog.Basalt;
-                    SysVec3 headExt = archetype switch
+                    // Capraz bitki lifi dugumu
+                    EmitHollowTubeSegment(new SysVec3(0f, shaftHalf - 0.055f, 0f), new SysVec3(0f, shaftHalf + 0.015f, 0f), 0.031f, 0.031f, MaterialIdCatalog.GlowingMoss, temp, outTris, sides: 6);
+                    EmitOrientedBox(new SysVec3(0f, shaftHalf - 0.020f, 0f), new SysVec3(0.035f, 0.022f, 0.035f),
+                        SysVec3.Normalize(new SysVec3(1f, 0.35f, 0f)), SysVec3.Normalize(new SysVec3(-0.35f, 1f, 0f)), SysVec3.UnitZ,
+                        MaterialIdCatalog.GlowingMoss, temp, outTris);
+
+                    byte stoneMat = (primaryMatId != 0 && primaryMatId != 1) ? primaryMatId : MaterialIdCatalog.Cobblestone;
+                    if (dna.HasCustomKnapMask)
                     {
-                        PhysicalItemArchetype.ToolPrimitivePickaxe => new SysVec3(0.16f, 0.028f, 0.028f),
-                        PhysicalItemArchetype.ToolPrimitiveHammer => new SysVec3(0.095f, 0.052f, 0.055f),
-                        PhysicalItemArchetype.ToolPrimitiveKnife => new SysVec3(0.024f, 0.12f, 0.012f),
-                        _ => new SysVec3(0.095f, 0.055f, 0.022f)
-                    };
-                    SysVec3 headPos = archetype == PhysicalItemArchetype.ToolPrimitiveKnife
-                        ? new SysVec3(0f, shaftHalf + 0.10f, 0f)
-                        : new SysVec3(archetype == PhysicalItemArchetype.ToolPrimitiveAxe ? 0.045f : 0f, shaftHalf - 0.015f, 0f);
-                    EmitOrientedBox(headPos, headExt, SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, stoneMat, temp, outTris);
+                        // Oyuncunun bizzat yonttugu 8x8 KnapMask64 tas basligini aletin ucuna dikey duzlemde monte et!
+                        SysVec3 mountPos = archetype == PhysicalItemArchetype.ToolPrimitiveKnife
+                            ? new SysVec3(0f, shaftHalf + 0.10f, 0f)
+                            : new SysVec3(archetype == PhysicalItemArchetype.ToolPrimitiveAxe ? 0.035f : 0f, shaftHalf - 0.015f, 0f);
+                        float scaleMult = archetype == PhysicalItemArchetype.ToolPrimitivePickaxe ? 1.18f : 0.96f;
+                        // Slab normali Z eksenine baksin, X genisligi yatay/dikey alet agzi olsun
+                        EmitKnappedMaskSlabTransformed(
+                            dna.KnapMask64, stoneMat, temp, mountPos,
+                            axisRight: SysVec3.UnitX * scaleMult,
+                            axisThickness: SysVec3.UnitZ * (archetype == PhysicalItemArchetype.ToolPrimitiveHammer ? 1.65f : 0.85f),
+                            axisForward: SysVec3.UnitY * scaleMult,
+                            outTris);
+                    }
+                    else
+                    {
+                        SysVec3 headExt = archetype switch
+                        {
+                            PhysicalItemArchetype.ToolPrimitivePickaxe => new SysVec3(0.16f, 0.028f, 0.028f),
+                            PhysicalItemArchetype.ToolPrimitiveHammer => new SysVec3(0.095f, 0.052f, 0.055f),
+                            PhysicalItemArchetype.ToolPrimitiveKnife => new SysVec3(0.024f, 0.12f, 0.012f),
+                            _ => new SysVec3(0.095f, 0.055f, 0.022f)
+                        };
+                        SysVec3 headPos = archetype == PhysicalItemArchetype.ToolPrimitiveKnife
+                            ? new SysVec3(0f, shaftHalf + 0.10f, 0f)
+                            : new SysVec3(archetype == PhysicalItemArchetype.ToolPrimitiveAxe ? 0.045f : 0f, shaftHalf - 0.015f, 0f);
+                        EmitOrientedBox(headPos, headExt, SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, stoneMat, temp, outTris);
+                    }
                     break;
                 }
 
@@ -321,9 +418,29 @@ namespace Stratocraft.Inventory.Rendering
 
         public static void EmitKnappedMaskSlab(ulong mask64, byte matId, byte temp, List<FacetedVoxelTriangle> outTris)
         {
+            EmitKnappedMaskSlabTransformed(mask64, matId, temp, SysVec3.Zero, SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, outTris);
+        }
+
+        public static void EmitKnappedMaskSlabTransformed(
+            ulong mask64,
+            byte matId,
+            byte temp,
+            SysVec3 originOffset,
+            SysVec3 axisRight,
+            SysVec3 axisThickness,
+            SysVec3 axisForward,
+            List<FacetedVoxelTriangle> outTris)
+        {
             const float cellSize = 0.032f;
             const float halfSpan = cellSize * 4f;
             const float halfThick = 0.024f;
+
+            float rightLen = axisRight.Length();
+            float thickLen = axisThickness.Length();
+            float fwdLen = axisForward.Length();
+            SysVec3 uR = rightLen > 0.0001f ? (axisRight / rightLen) : SysVec3.UnitX;
+            SysVec3 uT = thickLen > 0.0001f ? (axisThickness / thickLen) : SysVec3.UnitY;
+            SysVec3 uF = fwdLen > 0.0001f ? (axisForward / fwdLen) : SysVec3.UnitZ;
 
             for (int cz = 0; cz < 8; cz++)
             {
@@ -338,13 +455,157 @@ namespace Stratocraft.Inventory.Rendering
                                     (mask64 & (1UL << ((cz - 1) * 8 + cx))) == 0UL ||
                                     (mask64 & (1UL << ((cz + 1) * 8 + cx))) == 0UL;
 
-                    float bevelH = edgeCell ? halfThick * 0.62f : halfThick;
-                    SysVec3 c = new SysVec3(-halfSpan + (cx + 0.5f) * cellSize, 0f, -halfSpan + (cz + 0.5f) * cellSize);
-                    EmitOrientedBox(c, new SysVec3(cellSize * 0.49f, bevelH, cellSize * 0.49f),
-                        SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, matId, temp, outTris);
+                    float microRelief = (((cx * 17 + cz * 31) % 5) - 2) * 0.0018f;
+                    float bevelH = (edgeCell ? halfThick * 0.64f : halfThick) + microRelief;
+                    float localX = -halfSpan + (cx + 0.5f) * cellSize;
+                    float localZ = -halfSpan + (cz + 0.5f) * cellSize;
+                    SysVec3 c = originOffset + axisRight * localX + axisForward * localZ;
+                    EmitOrientedBox(
+                        c,
+                        new SysVec3(cellSize * 0.495f * rightLen, bevelH * thickLen, cellSize * 0.495f * fwdLen),
+                        uR, uT, uF, matId, temp, outTris);
                 }
             }
         }
+
+#if UNITY_5_3_OR_NEWER
+        public const float KnappingSlabCellSizeMeters = 0.052f;
+        public const float KnappingSlabHalfSpanMeters = KnappingSlabCellSizeMeters * 4f; // 0.208m -> 0.416m x 0.416m dolgun yer tasi
+
+        /// <summary>
+        /// Faz 2.2 (Asama 2.2): Yerdeki aktif yontulan tasin 3B modelini, ustundeki tebesir/cizik hayalet kalip cizgisini
+        /// (outlineDrawProgress01: 0..1) ve farenin ustunde durdugu hucre vurgusunu sifir doku VRAM ile uretir.
+        /// </summary>
+        public static Mesh BuildInteractiveKnappingSlabMesh(
+            ulong currentMask64,
+            ulong templateMask64,
+            byte stoneMatId,
+            int hoveredCellX,
+            int hoveredCellZ,
+            float outlineDrawProgress01)
+        {
+            SharedBuildTris.Clear();
+            byte baseMat = stoneMatId != 0 ? stoneMatId : MaterialIdCatalog.Stone;
+            const float cellSize = KnappingSlabCellSizeMeters;
+            const float halfSpan = KnappingSlabHalfSpanMeters;
+            const float halfThick = 0.038f;
+
+            // 1) Mevcut 8x8 tas kutlesi + hedef hucre vurgusu
+            for (int cz = 0; cz < 8; cz++)
+            {
+                for (int cx = 0; cx < 8; cx++)
+                {
+                    int bit = cz * 8 + cx;
+                    ulong bitFlag = 1UL << bit;
+                    if ((currentMask64 & bitFlag) == 0UL) continue;
+
+                    bool edgeCell = cx == 0 || cx == 7 || cz == 0 || cz == 7 ||
+                                    (currentMask64 & (1UL << (cz * 8 + (cx - 1)))) == 0UL ||
+                                    (currentMask64 & (1UL << (cz * 8 + (cx + 1)))) == 0UL ||
+                                    (currentMask64 & (1UL << ((cz - 1) * 8 + cx))) == 0UL ||
+                                    (currentMask64 & (1UL << ((cz + 1) * 8 + cx))) == 0UL;
+
+                    bool isHovered = cx == hoveredCellX && cz == hoveredCellZ;
+                    bool isCore = (templateMask64 & bitFlag) != 0UL;
+                    byte cellMat = baseMat;
+                    if (isHovered)
+                    {
+                        // Cizgi disi fazlaliksa yesilimsi-acik vurgu, cizgi ici cekirdekse turuncu uyari vurgusu!
+                        cellMat = isCore ? MaterialIdCatalog.CopperOre : MaterialIdCatalog.GlowingMoss;
+                    }
+                    else if (!isCore && outlineDrawProgress01 >= 0.99f)
+                    {
+                        // Dis fazlalik bolgesini cok hafif koyu tas tonuyla ayirt et ki kalip daha rahat okunsun
+                        cellMat = baseMat == MaterialIdCatalog.Stone ? MaterialIdCatalog.Cobblestone : baseMat;
+                    }
+
+                    float microH = (((cx * 23 + cz * 13) % 5) - 2) * 0.002f;
+                    float h = (edgeCell ? halfThick * 0.72f : halfThick) + microH + (isHovered ? 0.004f : 0f);
+                    SysVec3 c = new SysVec3(-halfSpan + (cx + 0.5f) * cellSize, 0f, -halfSpan + (cz + 0.5f) * cellSize);
+                    EmitOrientedBox(c, new SysVec3(cellSize * 0.495f, h, cellSize * 0.495f),
+                        SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, cellMat, 0, SharedBuildTris);
+                }
+            }
+
+            // 2) Cakmaktasi ile tasin ust yuzeyine cizilen hayalet kalip sinir cizgisi (0..1 ilerlemeli!)
+            if (outlineDrawProgress01 > 0.01f && templateMask64 != 0UL)
+            {
+                int totalEdges = CountTemplateBoundaryEdges(templateMask64);
+                int edgesToDraw = Math.Max(1, (int)MathF.Round(totalEdges * Math.Clamp(outlineDrawProgress01, 0f, 1f)));
+                int drawn = 0;
+                const float lineY = halfThick + 0.0055f;
+                const float lineHalfW = 0.0032f;
+
+                for (int cz = 0; cz < 8 && drawn < edgesToDraw; cz++)
+                {
+                    for (int cx = 0; cx < 8 && drawn < edgesToDraw; cx++)
+                    {
+                        if ((templateMask64 & (1UL << (cz * 8 + cx))) == 0UL) continue;
+                        // Sadece altinda hala tas varsa tebesir cizgisini goster
+                        bool cellIntact = (currentMask64 & (1UL << (cz * 8 + cx))) != 0UL;
+                        float x0 = -halfSpan + cx * cellSize;
+                        float x1 = x0 + cellSize;
+                        float z0 = -halfSpan + cz * cellSize;
+                        float z1 = z0 + cellSize;
+                        float xm = (x0 + x1) * 0.5f;
+                        float zm = (z0 + z1) * 0.5f;
+
+                        // Sol sinir
+                        if (cx == 0 || (templateMask64 & (1UL << (cz * 8 + (cx - 1)))) == 0UL)
+                        {
+                            drawn++;
+                            if (cellIntact)
+                                EmitOrientedBox(new SysVec3(x0, lineY, zm), new SysVec3(lineHalfW, 0.0028f, cellSize * 0.51f),
+                                    SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.QuartzGem, 25, SharedBuildTris);
+                        }
+                        // Sag sinir
+                        if (drawn < edgesToDraw && (cx == 7 || (templateMask64 & (1UL << (cz * 8 + (cx + 1)))) == 0UL))
+                        {
+                            drawn++;
+                            if (cellIntact)
+                                EmitOrientedBox(new SysVec3(x1, lineY, zm), new SysVec3(lineHalfW, 0.0028f, cellSize * 0.51f),
+                                    SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.QuartzGem, 25, SharedBuildTris);
+                        }
+                        // Alt sinir
+                        if (drawn < edgesToDraw && (cz == 0 || (templateMask64 & (1UL << ((cz - 1) * 8 + cx))) == 0UL))
+                        {
+                            drawn++;
+                            if (cellIntact)
+                                EmitOrientedBox(new SysVec3(xm, lineY, z0), new SysVec3(cellSize * 0.51f, 0.0028f, lineHalfW),
+                                    SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.QuartzGem, 25, SharedBuildTris);
+                        }
+                        // Ust sinir
+                        if (drawn < edgesToDraw && (cz == 7 || (templateMask64 & (1UL << ((cz + 1) * 8 + cx))) == 0UL))
+                        {
+                            drawn++;
+                            if (cellIntact)
+                                EmitOrientedBox(new SysVec3(xm, lineY, z1), new SysVec3(cellSize * 0.51f, 0.0028f, lineHalfW),
+                                    SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.QuartzGem, 25, SharedBuildTris);
+                        }
+                    }
+                }
+            }
+
+            return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(SharedBuildTris, "Mesh_InteractiveStoneKnappingSlab");
+        }
+
+        private static int CountTemplateBoundaryEdges(ulong templateMask64)
+        {
+            int count = 0;
+            for (int cz = 0; cz < 8; cz++)
+            {
+                for (int cx = 0; cx < 8; cx++)
+                {
+                    if ((templateMask64 & (1UL << (cz * 8 + cx))) == 0UL) continue;
+                    if (cx == 0 || (templateMask64 & (1UL << (cz * 8 + (cx - 1)))) == 0UL) count++;
+                    if (cx == 7 || (templateMask64 & (1UL << (cz * 8 + (cx + 1)))) == 0UL) count++;
+                    if (cz == 0 || (templateMask64 & (1UL << ((cz - 1) * 8 + cx))) == 0UL) count++;
+                    if (cz == 7 || (templateMask64 & (1UL << ((cz + 1) * 8 + cx))) == 0UL) count++;
+                }
+            }
+            return Math.Max(1, count);
+        }
+#endif
 
         private static void EmitBentNaturalBranch(uint seed, byte woodMat, byte temp, bool isBrokenShort, List<FacetedVoxelTriangle> outTris)
         {
@@ -408,7 +669,7 @@ namespace Stratocraft.Inventory.Rendering
                 SysVec3 up = SysVec3.Normalize(SysVec3.Cross(fwd, right));
 
                 byte leafMat = (i & 1) == 0 ? MaterialIdCatalog.Grass : MaterialIdCatalog.GlowingMoss;
-                EmitSingleDiamondLeaf(center, right, up, fwd, 0.068f, 0.115f, leafMat, temp, outTris);
+                EmitSingleDiamondLeaf(center, right, up, fwd, 0.084f, 0.138f, leafMat, temp, outTris);
             }
         }
 
@@ -437,8 +698,8 @@ namespace Stratocraft.Inventory.Rendering
         private static void EmitBraidedFiberCoil(uint seed, byte temp, List<FacetedVoxelTriangle> outTris)
         {
             const int segments = 8;
-            float ringR = 0.078f + Rand01(ref seed) * 0.012f;
-            float strandR = 0.019f;
+            float ringR = 0.092f + Rand01(ref seed) * 0.014f;
+            float strandR = 0.024f;
             for (int s = 0; s < segments; s++)
             {
                 float a0 = (s / (float)segments) * MathF.PI * 2f;
@@ -460,9 +721,9 @@ namespace Stratocraft.Inventory.Rendering
 
         private static void EmitSharpFlintCore(uint seed, byte matId, byte temp, List<FacetedVoxelTriangle> outTris)
         {
-            float len = 0.105f + Rand01(ref seed) * 0.025f;
-            float wid = 0.072f + Rand01(ref seed) * 0.018f;
-            float hgt = 0.042f + Rand01(ref seed) * 0.012f;
+            float len = 0.128f + Rand01(ref seed) * 0.026f;
+            float wid = 0.088f + Rand01(ref seed) * 0.020f;
+            float hgt = 0.056f + Rand01(ref seed) * 0.014f;
 
             SysVec3 tipF = new SysVec3((Rand01(ref seed) - 0.5f) * 0.02f, -0.005f, len);
             SysVec3 buttB = new SysVec3(0f, 0f, -len * 0.85f);
@@ -524,7 +785,7 @@ namespace Stratocraft.Inventory.Rendering
 
         private static void EmitSoftEarthMound(uint seed, byte matId, byte temp, float height, List<FacetedVoxelTriangle> outTris)
         {
-            EmitDeformedOctaSphere(seed, new SysVec3(0f, -0.01f, 0f), 0.115f, height, 0.110f, flattenBottom: 0.88f, sharpnessJitter: 0.16f, matId, temp, outTris);
+            EmitDeformedOctaSphere(seed, new SysVec3(0f, -0.008f, 0f), 0.142f, height, 0.138f, flattenBottom: 0.85f, sharpnessJitter: 0.18f, matId, temp, outTris);
         }
 
         private static void EmitOrganicMeatCut(uint seed, byte meatMat, bool showRawBone, byte temp, List<FacetedVoxelTriangle> outTris)

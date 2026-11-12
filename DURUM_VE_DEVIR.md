@@ -13,17 +13,65 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#052` (**Paket 2 Faz 2.1 + Su Üstü Yüzme Oksijen Çözümü TAMAMLANDI & ONAYLANDI:** `1)` `16-Byte` `PhysicalItemShapeDna` + `PhysicalItemMeshFactory` ile Yerde == Elde == `[I]` Çantada == `[Q]` Geri Atıldığında `1:1` 3B Model Eşitliği, `2)` `[E]` ile `0.0sn` Anında Eşya Alma + Görünmez Ganimet Sandığı Kaldırıldı, `3)` 12 Biyom Ekolojik Flora & 3B Kırılabilir Çalılar, `4)` Avuçla Toprak/Kum/Kil Kazma, `5)` Çıplak El Yalnızca Canlılara İsabet Mekanizması, `6)` `1/3 -> 3/3` Kuvars ile Kristal Uyanışı \| **Sırada: Faz 2.2 Fiziksel Taş Yontma Oturuşu & The Forest 3B Kumaş Çanta**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T16:28:30+03:00` |
+| **Devir Numarası** | `#053` (**Paket 2 Faz 2.2 KODLANDI + KULLANICI GERİ BİLDİRİM DÜZELTMELERİ TAMAMLANDI:** `1)` Karesiz *The Forest* 3B Kumaş Çanta Bezi (`[I]`) + Merkezde 3B İple Bağlama Alet Üretimi (`[R]` / Sol Tık) kullanıcı tarafından **test edilip onaylandı**, `2)` `[R]` Fiziksel 3B Taş Yontma sistemi doğa taşları + `[Q]` ile atılan taşlar + taş vokselleri için tek havuzda birleştirildi, çantadan otomatik Çakmaktaşı kuşanma ve ekran ortası yönlendirme tostları eklendi, `3)` Yerdeki tüm doğal/atılan eşyaların (toprak, taş, kum, kil, çakmaktaşı, dal, yaprak, lif, cevher, alet) dünya ölçeği `GetWorldGroundScale` (`1.50x..1.82x` + dolgun 3B mesh) ile büyütüldü \| **Sırada: Faz 2.2 Düzeltmelerinin Kısa PlayMode Doğrulaması -> Faz 2.3 `[T]` Zihin İnşa, Kamp Ateşi & Yemek Pişirme -> Faz 2.4 Gerçekçi Bloomery Demircilik (`1200°C`) & El Arabası**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T17:48:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #052 Tamamlandı (Faz 2.1 PlayMode Testi Kullanıcı Tarafından Onaylandı) -> Şimdi Paket 2 Faz 2.2 (Yerdeki Taşa Çakmaktaşı ile [R] Oturuşlu 8x8 Fiziksel Taş Yontma + The Forest Tarzı Bireysel Fiziksel 3B Kumaş Çanta ve İple Bağlama Animasyonlu Alet Üretimi) Geliştiriliyor` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 76/76 PASS (Faz21 Dahil)`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1 Onaylandı, Faz 2.2 Çanta/Craft Onaylandı ve [R] Taş Yontma + Yer Eşyası Boyutu Düzeltildi -> Kullanıcı Doğrulaması Sonrası Doğrudan Faz 2.3'e Geçilecek` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 81/81 PASS (Faz21 + Faz22 Dahil)`, `Standalone .NET 10 Core: 84/84 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#052` & `#050`)
+## 1.5. Biz Ne Yapıyorduk ve Nereye Gidiyoruz? (Paket 2 Büyük Resim Özeti)
+
+> 📂 **Taşınabilir 8 Parçalı Paket 2 Mimari ve Faz Dokümanları (Git İçi Göreceli Bağlantılar):**
+> - [`docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md`](docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md) — **Biz Ne Yapmak İstiyoruz?** (Tüm oyun kuralları, kullanıcı kararları ve kabul kriterleri)
+> - [`docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md`](docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md) — **Eski Sistemde Neler Hatalıydı?** (Kök neden ve veri akışı analizi)
+> - [`docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md) — **Endüstri ve Gerçek Hayat Araştırması** (*Vintage Story* knapping, *The Forest / Sons of the Forest* çanta & fiziksel inşa, gerçek dünya Bloomery metalürjisi)
+> - [`docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) — **Ana Faz Yol Haritası** ve 4 Alt Faz Uygulama Dokümanları:
+>   1. ✅ [`DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md) (**TAMAMLANDI & ONAYLANDI**)
+>   2. 🧪 [`DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md) (**KODLANDI — Çanta/Craft Onaylandı; `[R]` Taş Yontma & Yer Ölçeği Düzeltmesi Test Bekliyor**)
+>   3. ⏭️ [`DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) (**SIRADAKİ FAZ**)
+>   4. ⏭️ [`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) (**FAZ 2.3 SONRASI FAZ**)
+
+### Temel Tasarım İlkelerimiz (Asla Bozulmayacak Kurallar)
+1. **Gerçekçi Fiziksel Şekil Korunumu (`Yerde == Elde == Çantada == İnşada`):**
+   - Oyuncunun kazmayla kırdığı veya yerden aldığı taş, toprak, kum, kil, dal, yaprak, çakmaktaşı ve cevher **asla Minecraft küpü gibi blok olarak konmaz**. Her eşya `16-Byte PhysicalItemShapeDna` (`ShapeSeed`, `KnapMask64`, `QualityPct`, `ThermalTempByte`, `Flags`) taşır; doğada rastgele ama türüne özgü 3B şekillerde bulunur (ör. dal ince uzun ama her dal biraz farklı eğimde/boyda, taş düzensiz kaya parçası). Oyuncu bu eşyayı eline aldığında da, `[I]` çantasında gördüğünde de, yere koyduğunda da **aynı 3B şekliyle** durur. (İleride eklenecek yontma tezgâhlarında şekil verilirse o şekliyle konulur).
+   - Dünyaya düzgün mimari blok/küp yerleştirme gücü yalnızca **Madde Kristali (`[C]`)** uyandırıldıktan sonra kristale özgüdür.
+2. **Madde Kristali (`[C]`) Uyanışı ve Gelişimi:**
+   - Oyun başında Madde Kristali **uykudadır (`Tier 0`, `0` kapasite)**. Doğadan bulunan **Doğal Kuvars** ele alınıp `[C]` veya `Sağ Tık` ile tek tek `3` kez yedirilerek (`1/3 -> 2/3 -> 3/3`) `Tier 1` (`500` blok kapasite) seviyesinde uyandırılır. Sonraki `Tier 2..5` yükseltmeleri sıradan madenlerle değil, yalnızca **Canlılardan ve Bosslardan düşen Rezonans Kristalleri** ile yapılacaktır.
+3. **Karesiz *The Forest* Çanta Bezi ve Dokunsal Zanaat:**
+   - `[I]` çantasında yapay envanter kareleri yoktur; her eşya türü yere serilen keten/deri örtü üzerindeki kendi bölgesinde gerçek 3B modelleriyle (`ShapeDna` varyasyonlarını koruyarak) fiziksel yığın halinde durur. Ortadaki birleştirme alanına parçalar dizilip iple bağlama animasyonuyla alet üretilir.
+4. **Fiziksel Dünya Üstü Taş Yontma (`[R]`):**
+   - Yerdeki bir taşa Çakmaktaşı ile bakıp `[R]` tuşuna basıldığında kalıp seçilir (`Kazma Başı`, `Balta Başı`, `Bıçak Ağzı`, `Mızrak/Kürek Ağzı`), karakter taşın başına çömelir, kamera yaklaşır, taşın üstüne çakmaktaşıyla hayalet kalıp çizilir ve kenarlarına vurularak taş yontulur. Kusursuz yontulursa **en güçlü taş alet** (`%100` kalite), çizgi içine taşırılıp yamuk yontulursa **yine çalışan ama şekli yamuk ve gücü/dayanıklılığı düşük bir alet** üretilir (`> %50` çekirdek kırılırsa taş parçalanır).
+5. **Fiziksel İnşa (`[T]` Zihin Menüsü), Ateş, Yemek ve Gerçekçi `1200°C` Demircilik (`Faz 2.3` & `Faz 2.4`):**
+   - Yapılar yere hayalet tarif koyup `[E]` basarak değil, *Sons of the Forest* mantığına yakın biçimde malzemeleri gerçekten yere kırıp/dizip **`[T]` Zihin Menüsünden** hayali silüet ipucuyla kontrol edilerek (`~2m` toleransla, oyuncunun dizdiği şekli bozmadan yapıya etiketlenerek) kurulacak.
+   - Kamp ateşi 2 Çakmaktaşı kıvılcımıyla yakılacak; etler `[Sağ Tık]` ile üstüne dizilecek, pişince rengi/şekli değişecek (`[E]` ile alınmazsa yanıp kömürleşecek).
+   - İlkel taş fırın tek başına maden eritemeyecek; [`docs/demircilik.txt`](docs/demircilik.txt) kurallarına göre önce üstü toprakla kapatılan odun yığınından **Odun Kömürü** yapılacak, cevher kavrulup kırılacak, **Kil Üfleme Borusu + Pota + Deri Körük** ile hava pompalanarak `1200°C`'ye çıkılacak ve çıkan akkor **Sünger Demir (`Bloom`)** örste dövülerek cürufundan arındırılıp külçe yapılacak. Çok miktarda toprak/kum/cevher taşımak için **Ahşap El Arabası** eklenecek.
+
+---
+
+## 2. Tamamlanan İşler Geçmişi (Devir `#053` .. `#042`)
+
+### 2.0.000000000. Devir #053 (Paket 2 Faz 2.2 + Kullanıcı Testi Sonrası 2 Kritik Düzeltme): Fiziksel 3B Taş Yontma (`8x8`), Karesiz *The Forest* 3B Çanta Bezi & Merkez Craft ve Büyütülmüş Yer Eşyası Ölçeği
+
+1. **Karesiz *The Forest* 3B Kumaş Çanta Bezi ve Merkezde 3B İple Bağlama Alet Üretimi (`ClothMatCraftingSystem.cs`, `Stage1VisualHotbarAndInventoryUi.cs`, `Stage1HolsterAndBackpackController.cs`) — *(Kullanıcı Tarafından PlayMode'da Test Edildi & Onaylandı)*:**
+   - `[I]` çantasındaki kahverengi kare ped ızgaraları ve sağdaki "Girdi 1/2/3 - Çıktı Padi" kutuları tamamen kaldırıldı; yerine doğal keten/deri zemin örtüsü üzerinde kategori bölgelerine dizilen gerçek 3B fiziksel eşya kümeleri (`ShapeDna` varyasyonlu, kapasite dengeli) kuruldu.
+   - Örtünün tam ortasında karesiz birleştirme alanı oluşturuldu: `Yontulmuş Taş Başlık + Kuru Dal + Bitki Lifi` (veya `Taş Çekiç`, `İlkel Mızrak`, `Taş Kürek`, `2x Yaprak -> Bitki Lifi`) dizildiğinde `[R]` veya `Sol Tık` ile `0.85sn` 3B birleştirme/iple sarma animasyonu oynar; yontulan taşın `KnapMask64` şekli ve `QualityPct` kalitesi doğrudan üretilen aletin 3B kafasına, dayanıklılığına (`28..85`) ve kazı/hasar gücüne (`0.55x..1.15x`) aktarılır.
+2. **Fiziksel 3B Taş Yontma Sistemi (`StoneKnappingSessionSystem.cs`, `Stage1StoneKnappingController.cs`, `PhysicalItemMeshFactory.cs`):**
+   - `8x8` (`64-bit KnapMask64`) hücresel taş yontma matematiği (`PopCount64`, 4 kalıp maskesi: `Kazma Başı`, `Balta Başı`, `Bıçak Ağzı`, `Mızrak/Kürek Ağzı`, dış cüruf ve iç çekirdek vuruş analizi, `>= %50` çekirdek korundukça yamuk/güçsüz ama kullanılabilir başlık üretimi) yazıldı.
+   - Seçim sonrası karakter çömelir (`ForcePlayerCrouch`), kamera taşa yaklaşır, çakmaktaşıyla taşın üst yüzeyine turkuaz hayalet kalıp çizgisi çizilir (`0.92sn`), her `Sol Tık` darbesinde 3B taş kıymıkları fırlar ve `[E]` ile yontulmuş başlık alınır (`Sağ Tık / ESC` ile iptal edilirse yarım yontulmuş taş o şekliyle yerde kalır!).
+3. **Kullanıcı Geri Bildirimi Düzeltmesi #1 — `[R]` Fiziksel Taş Yontmanın Çalışmaması Kök Neden Çözümü (`Stage1StoneKnappingController.cs`, `Stage1MatterCrystalAndMiningController.cs`, `Stage1HolsterAndBackpackController.cs`, `Stage1InteractivePlayController.cs`):**
+   - **Kök Nedenler:** (a) `[Q]` veya `[I]` çantadan yere bırakılan taşlar `Stage1HolsterAndBackpackController._droppedWorldItems` listesine düşerken yontma sistemi yalnızca `Stage1MatterCrystalAndMiningController._droppedWorldItems` listesine bakıyordu; (b) `Stage1MatterCrystalAndMiningController.HandleHotkeysAndAim` içinde Madde Kristali kapalıyken bile `[R]` tuşu 24-yönlü mimari döndürme tarafından tüketiliyordu; (c) Çakmaktaşı kemerde/çantada olsa bile o an aktif elde seçili değilse sessizce çıkıyordu; (d) `RoughStoneChunk` yanı sıra `VoxelBlock(Stone/Cobblestone/Basalt)` taşları kapsam dışı kalabiliyordu.
+   - **Uygulanan Kesin Çözüm:**
+     - `TryResolveBestAimedKnappableStone` ile **3 taş kaynağı tek çatı altında birleştirildi**: (1) Doğadaki taşlar (`MiningWorldDrop`), (2) Oyuncunun `[Q]` / `[I]` ile yere attığı taşlar (`HolsterPlayerDrop`), (3) Yere konmuş taş vokselleri / açık kaya (`WorldStoneVoxel`, `<= 3.15m`).
+     - Yerdeki herhangi bir taşa bakıldığında nişangâhta anında **`🪨 [R] Çakmaktaşı ile Taşı Yont | [E] Al: ...`** yazar.
+     - `[R]` basıldığında çakmaktaşı kemerde veya `[I]` çantasında varsa **`TryAutoEquipFlintForKnapping`** ile otomatik olarak oyuncunun eline alınır ve 4'lü kalıp menüsü anında açılır!
+     - Oyuncuda hiç çakmaktaşı yoksa veya taş hâlâ oyuncunun elindeyse (`[Q]` ile yere bırakması gerekiyorsa), sessiz kalmak yerine ekran ortasında `3.4sn` boyunca belirgin Türkçe yönlendirme tostu (`HasVisibleToast`) gösterilir.
+     - Mimari 24-yön `[R]` döndürmesi yalnızca `IsCrystalActive == true` iken çalışacak şekilde sınırlandırıldı.
+4. **Kullanıcı Geri Bildirimi Düzeltmesi #2 — Yerdeki Toprak, Taş ve Genel Eşyaların Çok Ufak Görünmesi Çözümü (`PhysicalItemMeshFactory.cs`, `Stage1MatterCrystalAndMiningController.cs`, `Stage1HolsterAndBackpackController.cs`):**
+   - `PhysicalItemMeshFactory.GetWorldGroundScale` eklendi ve temel prosedürel 3B mesh kalınlıkları/yarıçapları dolgunlaştırıldı: dünya zeminine düşen veya `[Q]` ile atılan eşyalar `[I]` çanta bezi istif düzenini bozmadan arazide **~`2.0x – 2.4x` daha dolgun ve okunaklı** hale getirildi (`Toprak/Kum/Kil/Taş/Çakmaktaşı/Yaprak/Lif/Böğürtlen/Kömür: 1.82x`, `Cevher/Kuvars/Yontulmuş Başlık/Et/Külçe: 1.68x`, `Dal/Odun/Körük/Tekerlek: 1.50x`, `Aletler: 1.38x`, `Yontma Tablası: 0.416m`).
 
 ### 2.0.00000000. Devir #052 (Paket 2 Faz 2.1 + Yüzme Oksijen): Fiziksel 3B Doğal Eşya Özdeşliği, 12 Biyom Ekoloji & 3B Çalılar, Avuçla Kazma, Çıplak El Mekaniği ve Tekli Kuvars Uyanışı
 
@@ -679,38 +727,73 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
       - **2) Halka-Öncelikli (`Ring-First`) Chunk Akışı ve Tek-Geçişli (`5x` Hızlı) Tam-Chunk Örme (`Stage1InteractivePlayController.cs`):** `StepDynamicContinentChunkStreaming` içinde `r` halkası dış döngü, `pass (0..1)` iç döngü yapılarak oyuncuya yakın halkaların (`r = 0..3`) 8 komşusu eksiksiz tamamlanmadan uzak halkalara geçilmesi engellendi. `_chunkPool` havuzundan geri alınan chunk'ların eski `sharedMesh` referansı temizlendi, henüz mesh'i olmayan yeni chunk'lara `_sortedDirtyChunks` içinde öncelik verildi ve tam-chunk yenilemelerinde (`dirtyMask == AllSubChunksMask`) tek geçişli (`minY = 0, maxY = 160`) örme kullanılarak yenileme süresi `5x` hızlandırıldı.
       - **3) Sınır Apron Simetrisi ve Su Geçirmez (`Watertight`) Kuad Emniyeti (`HybridSurfaceNetsAndShapeMesher.cs`):** `BuildEffectiveChannel1SdfGrid` içinde apron sınırındaki (`px = 0, 17`, `pz = 0, 17`) mimari/ağaç şekillerinin komşu chunk'taki doğal araziyi `ResolvePaddedColumnChunk` üzerinden okuması sağlandı ve `EmitDualQuadAsFacetedTriangles` içine 3 geçerli köşeden 4. köşeyi tamamlayan su geçirmez sınır emniyeti eklendi.
       - **4) Matematiksel Manifold / Açık Kenar Testi (`SeamlessSurfaceNetsMesherTests.cs`):** `DynamicStreamingCornerIntersection_AtXNeg160_ZNeg64_WeldsWithZeroSeamInBothFullAndSubChunkModes` testi ile hem Görsel 1 ($X = -160\,\text{m}, Z = -64\,\text{m}$) hem Görsel 2 ($X = -176\,\text{m}, Z = -64\,\text{m}$) 4-chunk kesişimlerinde `openCrackEdges == 0` olduğu ve `47/47` testin geçtiği doğrulandı.
-## 3. Onaylanan Sistemler ve Sıradaki 15 Maddelik Eksikler & Çözüm Yol Haritası (`Devir #047 -> #048`)
+## 3. Test Durumu (Test Edilmiş & Onaylanmış Olanlar vs. Şimdi Test Edilecekler) ve Sonraki Fazların Ayrıntılı Planı
 
-> 📄 **Tam Detaylı Kök Neden ve Çözüm Tasarım Raporu:** [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md)
+### 3.1. Kullanıcı Tarafından Canlı PlayMode'da Test Edilip Onaylanan Sistemler (`✅ TAMAMEN ONAYLANDI — KORUNACAK`)
+1. ✅ **Temel Fizik, Su, Arazi ve Dövüş Sistemleri (`Devir #044 – #050`):**
+   - Balta (`Slot 3`) ve Kazma (`Slot 2`) saplanma, çekip çıkarma ve yönlü savurma mekaniği.
+   - Su fiziği, eğim öncelikli akış, toprağın ıslanınca çamurlaşması/kuruması, 3 kademeli sıvı kapları (`Matara / Kova / Kazan`), `0.5m` organik su yüzeyi, sualtı kamerası ve su üstünde yüzerken oksijenin düşmemesi.
+   - `VoxelSurfaceNetsGroundSampler` ile eğimli yamaçlarda sıfır gömülme, sıfır ekran titremesi, mağara/ağaç asansör hatası koruması ve arka plan asenkron chunk/mesh akışı (`0 B/kare` GC).
+2. ✅ **Paket 2 — Faz 2.1 Doğal 3B Eşya Özdeşliği, Biyom Çalıları, Avuçla Kazma, Yumruk ve Kuvars Uyanışı (`Devir #052`):**
+   - Yerdeki eşya == eldeki eşya == `[I]` çantadaki eşya == `[Q]` ile geri atılan eşya `1:1` 3B model eşitliği (`ShapeDna`).
+   - `[E]` ile `0.0sn` anında eşya toplama ve görünmez ganimet sandıklarının kaldırılması.
+   - 12 biyoma duyarlı ekolojik flora (ağaçlı/yeşil biyomlarda kırılabilir 3B çalılar, dal, yaprak, lif; çölde kuru diken; çorak biyomlarda sıfır yaprak/çalı).
+   - Çömelerek/aşağı bakarak `[E]` basılı tutup avuçla toprak/kum/kil kazma; boş elle araziye tıklayınca boşa enerji gitmemesi; yalnızca canlılara isabet eden çıplak el yumruğu.
+   - Doğal Kuvars'ı ele alıp `[C]` / `Sağ Tık` ile `3` kez tek tek yedirerek (`1/3 -> 2/3 -> 3/3`) Madde Kristalini `Tier 1`'de uyandırma.
+3. ✅ **Paket 2 — Faz 2.2 Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkezde 3B Craft (`Devir #053`):**
+   - `[I]` tuşuyla açılan karesiz doğal çanta örtüsü, kategori bölgelerinde bireysel 3B eşya yığınları ve ortadaki birleştirme alanında `Yontulmuş Başlık + Dal + Lif -> Taş Kazma / Taş Balta / Taş Bıçak / Mızrak / Kürek` üretimi kullanıcı tarafından test edilip onaylandı.
 
-### 3.1. Canlı PlayMode Testinde Kullanıcı Tarafından Onaylanan Sistemler (Donduruldu — Bozma!)
-- ✅ **Balta (`Slot 3`) ve Kazma (`Slot 2`) Saplanma, Çekip Çıkarma ve Yönlü Savurma (`Devir #044–#045`)**
-- ✅ **Su Fiziği, Eğim Öncelikli Akış, 3 Kademeli Tükenen Sıvı Kapları (Matara / Kova / Kazan), `0.5m` Organik Su Yüzeyi, Sualtı Mavi/Bulanık Kamera ve 3B Yüzücü Dalgaları (`Devir #046`)**
-- ✅ **Edit Mode & PlayMode Arazi Dikiş Çatlağı Onarımı, Mağara İçi `%100` Taban-Tavan Bütünleşik Sütunlar ve Nadir Doğal Yüzey Mağara Girişleri (`Devir #047`)**
+---
 
-### 3.2. Paket 1 Sonrası Tespit Edilen 3 Sorunun Kapanış Özeti (`TAMAMLANDI — Devir #048 Final`)
+### 3.2. Kullanıcı Tarafından Henüz Canlı PlayMode'da Test Edilmemiş / Şimdi Test Edilecek Noktalar (`🧪 SIRADAKİ CANLI TEST LİSTESİ`)
 
-- ✅ **Sorun A (Karakter Boyu Uzamış / Havada Durma):** `GetVoxelWalkableTopY` ile ayak tabanı tam `SurfaceNets` çimen üçgenine oturtuldu (`Pos.y = 96.135m`, `EyeOffset = 1.660m`).
-- ✅ **Sorun B (Ekran Titremesi / Zıplatma):** `stickToSlope` ve `ResolveVoxelAndColliderDepenetration` tek izo-yüzey düzleminde eşitlendi (`StandJitterMm = 0.0000 mm`); diz hizası (`<= 1.08m`) tümsek/basamak çıkışı ve mağara/ağaç asansör koruması `Devir048` + `Devir048b` testleriyle güvenceye alındı.
-- ✅ **Sorun C (Koşarken Chunk Sınırında FPS Donması):** `[ThreadStatic]` mağara girişi önbelleği + `FastSinLut` + bloklamayan arka plan chunk üretimi (`_pendingStreamSpawnTask`) ve uzak mesh örme (`_pendingDistantMeshTask`) ile `10` chunk sınırı (`161.5m`) koşuda `209.3 ms` takılma -> **`Avg 2.27 ms / P95 5.46 ms`** seviyesine indirildi; `521.5 MB` `telemetry_logs.db` otomatik rotasyona bağlandı (`110 KB`).
+> **Not:** Otomatik testlerin tamamı (**`81/81` Unity EditMode** + **`84/84` Standalone .NET 10** + **`0 Error / 0 Warning`**) geçmiştir. Bir sonraki oturum başında kullanıcı Play tuşuna basarak şu **4 maddeyi** hızlıca doğrulayabilir:
 
-### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` ve `Paket 1.5` Tamamlandı -> Sırada `Paket 2`)
+1. 🧪 **Test 1 — Büyütülmüş Yer Eşyası Görünürlüğü (Toprak, Taş, Çakmaktaşı, Dal, Yaprak, Lif, Cevher):**
+   - Doğada yerde duran taş/çakmaktaşı/dal/yaprakların, avuçla kazıp `[Q]` ile yere bıraktığınız toprak/kum/kil öbeklerinin ve çalı kırdığınızda düşen eşyaların artık otların içinde kaybolmadığını, arazide rahatça seçilen dolgun 3B boyutta durduğunu kontrol edin.
+   - `[I]` tuşuna basıp çanta bezini açtığınızda ise eşyaların çanta örtüsü üzerinde taşma yapmadan derli toplu dizilmeye devam ettiğini doğrulayın.
+2. 🧪 **Test 2 — Doğadaki Taşta ve `[Q]` ile Atılan Taşta `[R]` Fiziksel 3B Taş Yontma:**
+   - Yerden en az `1` adet koyu gri sivri **Çakmaktaşı** alın (`[E]`) — elinizde tutmanız şart değil, kemerde veya `[I]` çantanızda durması yeterli!
+   - Doğada yerde duran **veya** çantanızdan `[Q]` ile önünüze attığınız bir **Ham Taşa** bakın: nişangâh altında **`🪨 [R] Çakmaktaşı ile Taşı Yont   |   [E] Al: ...`** yazısını görün.
+   - **`[R]`** tuşuna basın: karakter çakmaktaşını otomatik eline alacak ve ekranda 4'lü kalıp menüsü (`[1] Taş Kazma Başı`, `[2] Taş Balta Başı`, `[3] Taş Bıçak Ağzı`, `[4] Mızrak / Kürek Ağzı`) açılacak.
+   - Bir kalıp seçin (`1..4` veya tıklama): karakter taşın başına çömelecek, kamera yaklaşacak ve çakmaktaşıyla taşın üst yüzeyine turkuaz hayalet kalıp çizgisini çizecek.
+   - **`Sol Tık`** ile çizginin dışındaki kenar parçalarına vurarak taşı yontun (taş kıymıkları fırlayacak) ve hazır olduğunda **`[E]`** tuşuyla yontulmuş taş başlığı elinize/çantanıza alın!
+3. 🧪 **Test 3 — Doğru vs. Yamuk Yontma Kalitesi (`%Kalite`) ve Üretilen Alet Gücü:**
+   - Bir taşı sadece dış fazlalıklarını kırarak **kusursuz (`%100` Kalite)** yontun; ikinci bir taşı ise hayalet çizginin içindeki çekirdekten birkaç parçayı bilerek kırarak **yamuk (`%45–%75` Kalite)** yontun (`[E]` ile alın).
+   - `[I]` çanta bezinde her ikisini de `Dal + Bitki Lifi` ile birleştirip (`[R]` / Sol Tık) oluşan iki aletin hem kafa geometrisinin yonttuğunuz şekli koruduğunu hem de kusursuz olanın çok daha yüksek dayanıklılık/güç verdiğini doğrulayın. (Çekirdeğin yarısından fazlasını kırarsanız taşın parçalanıp moloza dönüştüğünü de görebilirsiniz).
+4. 🧪 **Test 4 — Çakmaktaşı Yokken / Taş Eldeyken `[R]` Uyarı Tostu:**
+   - Üzerinizde hiç Çakmaktaşı yokken yerdeki taşa bakıp `[R]` bastığınızda veya taş elinizdeyken `[R]` bastığınızda ekran ortasında ne yapmanız gerektiğini anlatan sarı uyarı kutusunun çıktığını doğrulayın.
 
-1. ✅ **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`6/6 TAMAMLANDI — Devir #048`):**
-   - ✅ **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` ile koyu çamur kahvesi ve ıslak parlaklık doğrulandı.
-   - ✅ **(#2) Mağara/Ağaç Asansör Hatası, Gerçek Boy Hizası, Sıfır Titreme ve Diz Hizası Tümsek Çıkışı:** `GetVoxelWalkableTopY` + `TryResolveCeilingHeadBonk` + 360° kapsül çarpışması ile eksiksiz kapatıldı.
-   - ✅ **(#3) Anlık ve Koşu Sırası FPS Düşüşleri:** `0 B/kare` GC + `[ThreadStatic]` WorldGen önbelleği + arka plan asenkron chunk/mesh hattı + SQLite rotasyonu ile eksiksiz kapatıldı.
-   - ✅ **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` stamina kilidi kaldırıldı; `0.90s / 1.65s` yenilenme gecikmesi ve tüm efor/kazı maliyetleri bağlandı.
-   - ✅ **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` 3B kumaş örtü dışına sürükle-bırak + `[E]` ile yığın birleştirmeli geri toplama eklendi.
-   - ✅ **(#9) Önü Kapatan 2 Bilgi Etiketi:** `_showDebugHudText = false` varsayılan yapıldı; orta ekran `"Hedef:..."` kutusu ve çanta üstü çakışan şerit kaldırılıp yalnızca `[F3]` moduna bağlandı.
-2. ✅ **Paket 1.5 — Araziye Gömülme & Yeryüzü Meshinin Silinip Yeraltının Görünmesi Çözümü (`TAMAMLANDI — Devir #050`):**
-   - ✅ **Yamaç İçi Gömülme (`Standing`, `ProneCrawling`, Canlılar, Kopan Uzuvlar, `[Q]` Eşyaları ve `[I]` Çanta Matı):** `VoxelSurfaceNetsGroundSampler.cs` sıfır-GC 3B analitik raycast motoruyla tam GPU üçgen hizalaması sağlandı.
-   - ✅ **Yeryüzünün Kaybolup Mağaraların Görünmesi (ve Kazınca Düzelmesi):** `DistributeConsolidatedTrianglesIntoSubChunks` ile uzak ve konsolide chunk üretiminde üçgenlerin tek sepete yığılması kaldırıldı; 0..9 alt-chunk dilimlerine birebir dağıtılarak `0x03FF -> 0x03F0` maske daralması ve kısmi güncellemeler güvenceye alındı; kıyı şeridi tavan delinmesi engellendi.
-3. ⏳ **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde — SIRADAKİ BÜYÜK PAKET`):**
-   - **(#6) Fiziksel Taş Devri Zanaatı:** Yerden `[E]` ile Çakmaktaşı + Kuru Dal + Bitki Lifi toplama -> Taşı taşa vurarak **Taş Yontma (`Stone Knapping`)** -> Kumaş örtü / kütük üstü fiziksel birleştirmeyle **İlkel Taş Balta, Taş Kazma, Bıçak, Kova ve İlkel Taş Ocak** (ilerideki `16x32x4` Demircilik ve Marangozluk atölyelerinin doğrudan ilkel atası).
-   - **(#7) Madde Kristali Seviye Yükseltme (`Tier 0 -> Tier 1..5`):** Rezonans Kuvarsı ile `Tier 0 -> 1` ilk uyanış; Boss Çekirdekleri / Kadim Zindan Sunağı ile `Tier 2..5` evrimi.
-   - **(#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" Modu:** Bakılan yönde dairesel organik `SurfaceNets` arazi örme fırçası.
-   - *(Ek Madde #16: Kafa suyun dışındayken yüzerken oksijenin tükenmesi düzeltmesi).*
+---
+
+### 3.3. Sırada Ne Yapacağız? (`Faz 2.3` ve `Faz 2.4` Ayrıntılı Geliştirme Yol Haritası)
+
+Kullanıcı yukarıdaki `Faz 2.2` düzeltmelerini onayladığı anda sırasıyla şu iki faz kodlanacaktır:
+
+#### ⏭️ AŞAMA A: Paket 2 — Faz 2.3: Fiziksel Yerleştirme, `[T]` Zihin İnşa Menüsü, Kamp Ateşi ve Yemek Pişirme
+*(Tam Teknik Plan: [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md))*
+1. ***Sons of the Forest* Tarzı Fiziksel Malzeme Dizme:**
+   - Elde **Kuru Dal** varken yere bakıp `Sağ Tık` -> karakter dalı dizinde ikiye kırıp yere çadır/çapraz açıyla yerleştirir; altına **Yaprak / Bitki Lifi** kav olarak bırakılır; çevresine **Ham Taşlar** ve **Kil / Çamur Topakları** serbestçe dizilir (hiçbir yerde `[E]` basmalı sahte mavi taslak kutusu olmayacak!).
+2. **`[T]` Zihin İnşa Menüsü & Hayali Silüet İpucu (`MindConstructionValidatorSystem`):**
+   - Oyuncu **`[T]`** (Düşünme / Zihin) tuşuna bastığında yapabileceği yapıların zihin menüsü açılır (*Kamp Ateşi*, *İlkel Taş Fırın / Ocak*, *Odun Kömürü Yığını*, *Taş Örs*, *Kurutma Askısı*).
+   - Bir yapı seçildiğinde zeminde zorlayıcı olmayan yarı saydam **hayali silüet ipucu** görünür (neyi nasıl dizeceğini gösterir).
+   - Oyuncu kendi dizdiği ~`1.5m – 2.2m` çapındaki taş/dal/kil kümesine bakıp `[T]` menüsünden yapıyı onayladığında sistem malzeme sayılarını ve kaba geometrik uyumu toleranslı biçimde (`<= 2.2m` yarıçap) denetler; uygunsa karakter kısa bir son dokunuş animasyonu yapar ve **oyuncunun dizdiği taşların/dalların doğal şeklini bozmadan** o kümeyi çalışan gerçek bir **Kamp Ateşi** veya **İlkel Taş Fırın** yapısına etiketler!
+3. **2 Çakmaktaşı ile Kıvılcım Çakarak Ateş Yakma & Üstünde Yemek Pişirme:**
+   - Kamp ateşine bakıp 2 Çakmaktaşı (veya Çakmaktaşı + sert taş) birbirine vurularak kıvılcımla ateş yakılır; dal/odun eklenerek ateş beslenir.
+   - Elde **Çiğ Et / Böğürtlen / Yiyecek** varken yanan kamp ateşine **`Sağ Tık`** yapıldığında yiyecek fiziksel olarak ateşin üstüne yerleşir: zamanla rengi ve 3B şekli **`Çiğ (Kırmızı) -> Pişmiş (Kızarmış Kahve, Dumanlı) -> Yanmış (Siyah Kömür)`** olarak değişir. Piştiğinde **`[E]`** ile alınır; zamanında alınmazsa yanar!
+
+#### ⏭️ AŞAMA B: Paket 2 — Faz 2.4: Gerçekçi `1200°C` Bloomery Demircilik Döngüsü ve Fiziksel El Arabası
+*(Tam Teknik Plan: [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) & Referans: [`docs/demircilik.txt`](docs/demircilik.txt))*
+1. **Toprak Örtülü Odun Kömürü Yığını (`Charcoal Clamp`):**
+   - Normal kuru odun ateşi yalnızca `~600–700°C` ısı üretir ve bakır/demiri eritemez! Oyuncu odunları yığıp üstünü avuçla/kürekle kazdığı **Toprak / Çamur** ile kapatarak havasız ortamda için için yanan kömür ocağı kurar ve yüksek kalorili **Odun Kömürü (`Charcoal`)** elde eder.
+2. **Cevher Hazırlama (Kavurma & Taş Çekiçle Kırma):**
+   - Doğadan/mağaradan çıkarılan ham cevher kayaları ateşte kavrulup nem/kükürtten arındırılır ve taş çekiçle fındık boyutu **Kırılmış Cevher Parçalarına** ayrılır.
+3. **Kil Üfleme Borusu (`Tuyere`), Pota ve Deri Körük (`Bellows`) ile `1200°C` Hava Pompalama:**
+   - İlkel Taş Fırın tek başına yakıldığında `~700°C`'de kalır (maden erimez!). Fırının alt deliğine kilden şekillendirilip pişirilmiş **Üfleme Borusu (`Tuyere`)** takılır ve yanına **El Yapımı Deri/Ahşap Körük** bağlanır.
+   - Oyuncu fırına `Odun Kömürü + Kırılmış Cevher` katmanlarını yükleyip körüğü fiziksel olarak pompaladıkça fırın ısısı `700°C -> 1085°C (Bakır) -> 1200°C+ (Demir Süngeri)` bandına yükselir!
+   - Erimiş cüruf alt delikten akıtılır; içeride oluşan akkor **Sünger Demir (`Bloom`)** maşa ile çıkarılıp soğumadan **Taş/Demir Örs** üzerinde çekiçle dövülerek cürufu fırlatılır ve saf metal külçeye / alet kafasına dönüştürülür.
+4. **Fiziksel Ahşap El Arabası (`Wheelbarrow`):**
+   - Oyuncunun kürekle/kazmayla kazdığı çok miktardaki toprak, kum, kil, taş, odun ve ağır cevherleri tek seferde gerçek 3B yığın görünümüyle taşıyabilmesi için iki kolundan tutulup sürülen tekerlekli fiziksel **El Arabası** eklenecektir.
 
 ---
 
@@ -718,48 +801,29 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[F4]` Tuşu** | **Yaratıcı Test Modu:** Ölümsüzlük (100 HP), Sınırsız Oksijen, Kırılmaz Alet ve Sınırsız Blok İnşası açar/kapatır (Stamina gerçekçi test için tükenmeye devam eder) | ✅ Aktif |
-| **`[Tab]` Tuşu** | **5-Sekmeli Eşya Kataloğu:** Bloklar, Aletler (Matara, Kova, Kazan dahil), Zırhlar, İksirler/Yemek, Hammaddeler arasından tek tıkla test eşyası alma | ✅ Aktif |
-| **`[F3]` Tuşu** | **Minecraft Tarzı Sade Bilgi Paneli (Varsayılan: Kapalı):** FPS, Seed, XYZ koordinat, Chunk bilgisi, Hedef Blok Yoğunluk/Hasar/Mesafe, Biyom, Sıcaklık, Can, Enerji, Silah/Stil duruşu | ✅ Aktif |
-| **`[Q]` / `[Ctrl+Q]`** | **Fiziksel 3B Eşya Atma (`Item Drop`):** Seçili Hotbar slotundan `[Q]` ile `1` adet, `[Ctrl+Q]` ile tüm yığını yere atar; `[I]` çanta örtüsü dışına sürükleyip bırakarak da atılır (`[E]` ile geri alınır) | ✅ Aktif |
-| **`[Insert]` Tuşu** | **3B Savurma Telemetri Gizmosu:** Son 8 savurmanın 3B kabza-uç vektör izlerini ve saplanma/sekme noktalarını açar/kapatır (`Varsayılan: Kapalı`) | ✅ Aktif |
-| **`[1..9]` veya `Fare Tekerleği`** | **Minecraft/ARK Tarzı 9'lu Kare Slot Bar:** `1`: Kılıç, `2`: Kazma, `3`: Balta, `4`: İnşa Bloğu, `5`: `4x4x4` Mikro-Keski, `6`: Sıvı Kabı (`Matara / Kova / Kazan`), `7..9`: Ek Blok/Malzeme Slotları, `0`: Boş El | ✅ Aktif |
-| **`[I]` Tuşu** | **24-Slotlu (`4x6`) Taktik Çanta & 4 Yuvalı "🛡️ ANATOMİK BÖLGESEL ZIRHLAR" Paneli** (Sol Tık: Sürükle-Bırak, Sağ Tık: Zırhı Kuşan / Tüket / Böl, `Shift+Tık`: Hızlı Aktar) | ✅ Aktif |
-| **Hotbar'da Zırh Seçiliyken `RMB` (Sağ Tık)** | Seçili zırhı anında ilgili uzva (Miğfer -> Baş, Göğüslük -> Gövde, vb.) **kuşanır**; eski zırhı hotbar'a takas eder | ✅ Aktif |
-| **`[E]` Tuşu (Ağır Kütük Yanında)** | Yerdeki kesilmiş 2m bağımsız **Ağır Kütüğü** omzuna alır (`+32 kg`, çantaya sığmaz, eller kilitlenir) | ✅ Aktif |
-| **`[E]`, `[G]` veya `[X]` (Kütük Omuzdaken)** | Omuzdaki ağır kütüğü yere bırakır, elleri ve silahları serbest bırakır | ✅ Aktif |
-| **`[E]` Tuşu (Yerde Eşya Yanında)** | Yere düşen **Kaba Taş, Moloz, Yarma Odun, Dal, Cevher ve Eşyaları** manuel toplar (`<= 2.4m`, mıknatıs yok) | ✅ Aktif |
-| **`[E]` Tuşu (Sandık Yanında)** | **16-Slotlu (`4x4`) Görsel CAS Sandık Arayüzü** (CAS versiyon korumalı atomik çekim) | ✅ Aktif |
-| **`[5]` Mikro-Keski (`Chisel`)** | `LMB`: Vokseli `4x4x4` alt-voksel hassasiyetinde yontar \| `RMB`: Mikro-voksel ekler | ✅ Aktif |
-| **`[6]` Sıvı Kapları (`Matara / Kova / Kazan`)** | `LMB`: Göletten Su / Kalderadan Lav doldurur (kapasiteye kadar) \| `RMB`: Kaptaki sıvıyı harcayarak dünyaya döker (`380 / 1275 / 3825` birim; bitince boş kaba döner) | ✅ Aktif |
-| **`[F10]` Tuşu** | **Kılıç Ustası Düellocu NPC & Eğitim Kuklasını** oyuncunun önüne çağırır ve NPC modunu değiştirir (`Aktif Düello` / `Sadece Blok` / `Sadece Saldırı`) | ✅ Aktif |
-| **`RMB` (Sağ Tık) + Fare** | Kılıcın **Yan-Siper (`Crosswise`) Blok / Guard** yönünü ayarlar (son anda ters yöne savurursan **`MasterDeflect` Saptırma** yapar) | ✅ Aktif |
-| **`LMB` (Sol Tık) + Fare Savurması** | Kılıcı/Baltayı/Kazmayı son Guard konumundan hedef yöne **Tam-Yay Dairesel** savurur (`Space` ile havada **`1.40x` Zıpla-Vur**) | ✅ Aktif |
-| **`[G]` Tuşu** | **4 Dövüş Sanatı / Dojo Stili** arasında geçiş (`Şövalye: Usta Kontra 1.85x`, `Iaido: Şimşek Kesiği 1.60x`, `Eskrim: İğne Hamlesi 2.0x`, `Juggernaut: Kasırga Zinciri & Guard Crush`) | ✅ Aktif |
-| **`[1]` (Tekrar Basış) veya `[F8]`** | **4 Kılıç Arketipi** arasında geçiş (`Longsword 1.85kg`, `Greatsword 5.6kg`, `Rapier 0.95kg`, `Katana 1.35kg` — gerçek kütle ölçekli hız!) | ✅ Aktif |
-| **`[F9]` Tuşu** | **Oyuncu Uzuv Kopması Canlı Testi** (`1: Sol Kol Kopar` -> `2: Sağ Bacak Kopar` -> `3: İyileşir`) \| `Shift+F9`: `.sregion` Yükle | ✅ Aktif |
-| **`[F7]` Tuşu** | **Rastgele Harita Tohumu (`Seed`) Üretimi** (`8x8` Büyük Kıta + Ağaçlar + Kule + Tapınak + Kemer yeniden üretilir) | ✅ Aktif |
-| **`[X]` veya `[Shift+G]`** | Eldeki silahı/aleti `0.0s` sürede fiziksel olarak yere atar (`Quick-Drop`) | ✅ Aktif |
-| **`[C]` Tuşu** | Sol Bilek **Madde Kristali** modunu açar/kapatır (uzaktan helisel vakum ışınıyla çeker) | ✅ Aktif |
-| **`[F5]` / `[F6]`** | `F5`: FPS / TPS Kamera Değiştir \| `F6`: `.sregion` Kaydet | ✅ Aktif |
+| **`[R]` Tuşu (Yerdeki Taşa Bakarken)** | **Fiziksel 3B Taş Yontma (`Stone Knapping`):** Çakmaktaşını otomatik ele alır -> `1..4` kalıp seçtirir -> taşın başına çömelip hayalet çizgi çizer -> `Sol Tık` ile kenarları kırar -> `[E]` ile yontulmuş başlığı alır | 🧪 Faz 2.2 (Test Bekliyor) |
+| **`[I]` Tuşu** | **Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkez 3B Craft:** Eşyaları gerçek 3B modelleriyle örtü üstünde gösterir; merkeze konan malzemeleri `[R]` / `Sol Tık` ile iple bağlayarak alet üretir | ✅ Onaylandı |
+| **`[E]` Tuşu (Tek Basış — Eşya/Çalı)** | Yerdeki tüm doğal eşyaları (`<= 3.15m`) anında toplar; çalıları kırıp dal/yaprak/lif/böğürtlen düşürür | ✅ Onaylandı |
+| **`[E]` Tuşu (`0.60sn` Basılı — Çömelip Yere Bakarken)** | Boş elle yumuşak Toprak / Kum / Kil zemininden avuçla gerçek 3B öbek kazar | ✅ Onaylandı |
+| **`[C]` veya `Sağ Tık` (Elde Kuvars Varken)** | Uyuyan (`Tier 0`) Madde Kristaline tek tek Kuvars yedirir (`3/3` olduğunda `Tier 1` uyanır; açıkken `[C]` kristal modunu açar/kapatır) | ✅ Onaylandı |
+| **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
+| **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
+| **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
+| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 5-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar ve yontulmuş taş başlıklar dahil) | ✅ Aktif |
+| **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Aktif |
 
 ---
 
-## 5. Sıradaki İlk İş (Yeni Oturum / Yeni Sohbet İçin)
+## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #050` durumuyla eşleştiğini doğrula.
-
-2. **Adım 2 — Paket 2 Dokümantasyon Seti (`DOK1..DOK4`) veya #16 Oksijen Düzeltmesi:**
-   - Kullanıcının tercihine göre:
-     - Ya [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Madde 16** (su yüzeyinde yüzerken kafanın açık havada nefes alabilmesi / boğulma algısı düzeltmesi) hızlıca kodlanır,
-     - Ya da doğrudan **Paket 2** (*Ağaç Yumruklamadan Taş Devri Survival Başlangıcı & Taş Yontma/Fiziksel İlkel Craft `#6`, Madde Kristali `Tier 0 -> 1..5` Uyandırma/Yükseltme `#7` ve Doğal Dairesel Arazi Serpme `#8`*) için birbirine üstten linkli **`DOK1..DOK4`** doküman seti hazırlanıp kullanıcı onayına sunulur.
-
-3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`74/74 PASS`).
-   - Unity EditMode Testleri: `69/69 PASS (Devir048..Devir050 Dahil)`.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #053`** ile birebir eşleştiğini doğrula.
+2. **Adım 2 — Kullanıcıdan `Faz 2.2` Düzeltme Testi Geri Bildirimini Al veya Doğrudan `Faz 2.3`'e Başla:**
+   - Kullanıcı **Bölüm 3.2**'deki 4 testi (`[R]` Fiziksel 3B Taş Yontma + büyütülmüş yer eşyası görünürlüğü) denediyse geri bildirimini al; onayladıysa **hiç vakit kaybetmeden** [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) planına göre **Faz 2.3** (*Fiziksel dal/taş dizme, `[T]` Zihin İnşa Menüsü + hayali silüet ipucu, 2 Çakmaktaşı ile Kamp Ateşi yakma ve üstünde `Çiğ -> Pişmiş -> Yanmış` yemek pişirme*) geliştirmesine başla; ardından **Faz 2.4** ([`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md)) aşamasına geç.
+3. **Adım 3 — Korunacak Teknik Bütçeler:**
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`84/84 PASS`).
+   - Unity EditMode Testleri: `81/81 PASS`.
    - Unity Konsolu: `0 Error / 0 Warning`.
-   - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
-   - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).
-   - Taşınabilirlik: Sıfır mutlak yol (`$PSScriptRoot` / göreceli yol) ve saf ASCII `.ps1` dosyaları.
+   - VRAM Bütçesi: `< 16.0 MB` (`4.14 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
+   - GC Bütçesi: `0 B/kare` çalışma zamanı tahsisi.
+   - Taşınabilirlik: Hiçbir kod, doküman veya `.ps1` betiğinde sabit sürücü/kullanıcı yolu kullanma; daima göreceli yol kullan.

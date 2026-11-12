@@ -87,6 +87,8 @@ namespace Stratocraft.Character
         public int CurrentToolTier = 1;
         public float CurrentToolDurability = 60f;
         public float MaxToolDurability = 60f;
+        public float CurrentToolQualityMultiplier { get; set; } = 1.0f;
+        public Material? SharedVoxelMaterial => _lastSharedVoxelMat;
 
         public float ToolDurability01 => Mathf.Clamp01(CurrentToolDurability / Mathf.Max(1f, MaxToolDurability));
         public int ActiveDroppedItemCount => _droppedWorldItems.Count;
@@ -313,27 +315,15 @@ namespace Stratocraft.Character
                     _shapeIdx = (_shapeIdx + 1) % ShapeWheelCycle.Length;
                     LastFeedbackText = $"Insa Modu [V]: {GetShapeDisplayName(SelectedShapeId)} (0=Dogal Dairesel Arazi Sacilimi, 1..7=Mimari Sekil, 63=Mikro)";
                 }
-                if (Input.GetKeyDown(KeyCode.R))
+                if (Input.GetKeyDown(KeyCode.R) && IsCrystalActive)
                 {
-                    bool holdingFlint = !IsCrystalActive && holsterCtrl != null &&
-                                        holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.FlintStone;
-                    if (holdingFlint)
-                    {
-                        CurrentKnappingPattern = PrimitiveSurvivalCraftingCatalog.CycleKnappingPattern(CurrentKnappingPattern);
-                        _knappingStrikeProgress = 0;
-                        LastFeedbackText =
-                            $"🪨 TAŞ YONTMA KALIBI [R]: {PrimitiveSurvivalCraftingCatalog.GetKnappingPatternDisplayName(CurrentKnappingPattern)} -> Sert kayaya bakıp [Sağ Tık] ile 3 kez vurun!";
-                    }
-                    else
-                    {
-                        bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                        _selectedRotation24 = shift
-                            ? (byte)((_selectedRotation24 + 1) & 3)
-                            : (byte)((_selectedRotation24 + 1) % 24);
-                        LastFeedbackText = shift
-                            ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
-                            : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
-                    }
+                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    _selectedRotation24 = shift
+                        ? (byte)((_selectedRotation24 + 1) & 3)
+                        : (byte)((_selectedRotation24 + 1) % 24);
+                    LastFeedbackText = shift
+                        ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
+                        : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
                 }
                 if (Input.GetKeyDown(KeyCode.B))
                 {
@@ -505,7 +495,8 @@ namespace Stratocraft.Character
                 if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0))
                 {
                     _actionCooldown = 0.22f;
-                    ExecuteFlintStoneKnappingStrike(holsterCtrl, combatBridge, sharedMat);
+                    LastFeedbackText =
+                        "🪨 FİZİKSEL TAŞ YONTMA: Yerdeki bir Ham Taş Parçasına (veya [Q] ile yere bıraktığınız taşa) bakıp Çakmaktaşı ile [R] tuşuna basın!";
                     return;
                 }
             }
@@ -917,6 +908,11 @@ namespace Stratocraft.Character
             // Fiziksel darbe toklugu / hit-stop: Darbe aninda micro-freeze vererek vurus agirligini hissettir
             combatBridge?.TriggerHitStop(0.055f);
 
+            if (slot != 0)
+            {
+                toolPower *= Mathf.Clamp(CurrentToolQualityMultiplier, 0.35f, 1.35f);
+            }
+
             float strikeGain = (slot == 0
                 ? (toolPower / hardness) * 0.14f
                 : (toolPower / hardness) * 0.34f * Mathf.Max(0.75f, impactMultiplier)) * Stage1GameSettings.MiningSpeedMultiplier;
@@ -1191,10 +1187,11 @@ namespace Stratocraft.Character
             var tempSlot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = Mathf.Max(1, count), Durability01 = 1f, ShapeDna = dna };
             PhysicalItemArchetype archetype = tempSlot.MapToPhysicalArchetype();
             Mesh itemMesh;
-            Vector3 naturalScale;
+            Vector3 worldScale;
             if (archetype != PhysicalItemArchetype.None)
             {
-                itemMesh = PhysicalItemMeshFactory.GetOrCreateMesh(archetype, subId, in dna, out naturalScale);
+                itemMesh = PhysicalItemMeshFactory.GetOrCreateMesh(archetype, subId, in dna, out Vector3 naturalScale);
+                worldScale = PhysicalItemMeshFactory.GetWorldGroundScale(archetype, naturalScale);
             }
             else
             {
@@ -1209,7 +1206,7 @@ namespace Stratocraft.Character
                     _droppedItemMeshCache[meshKey] = cachedMesh;
                 }
                 itemMesh = cachedMesh;
-                naturalScale = new Vector3(0.28f, 0.28f, 0.28f);
+                worldScale = new Vector3(0.46f, 0.46f, 0.46f);
             }
 
             string displayLabel = !string.IsNullOrEmpty(customLabel)
@@ -1224,10 +1221,10 @@ namespace Stratocraft.Character
             Quaternion baseYaw = Quaternion.Euler(0f, yawDeg, 0f);
             go.transform.position = worldPos;
             go.transform.rotation = baseYaw;
-            go.transform.localScale = naturalScale;
+            go.transform.localScale = worldScale;
 
             Bounds localB = itemMesh != null ? itemMesh.bounds : new Bounds(Vector3.zero, new Vector3(0.2f, 0.1f, 0.2f));
-            float bottomClearance = Mathf.Max(0.025f, (localB.extents.y - localB.center.y) * naturalScale.y + 0.012f);
+            float bottomClearance = Mathf.Max(0.055f, (localB.extents.y - localB.center.y) * worldScale.y + 0.025f);
 
             float angle = ((dna.EffectiveSeed & 0xFFu) / 255f) * Mathf.PI * 2f;
             Vector3 popVel = isNaturalRestingSpawn
@@ -1279,7 +1276,7 @@ namespace Stratocraft.Character
 
                 Vector3 closestOnRay = rayOrigin + rayDir * Mathf.Max(0f, along);
                 float perpDist = Vector3.Distance(closestOnRay, itemPos);
-                float allowedRadius = distToPlayer <= 1.25f ? 0.62f : 0.48f;
+                float allowedRadius = distToPlayer <= 1.45f ? 0.75f : 0.60f;
                 if (perpDist > allowedRadius) continue;
 
                 float score = perpDist * 2.4f + along * 0.35f;
@@ -1291,6 +1288,224 @@ namespace Stratocraft.Character
             }
 
             return bestIdx;
+        }
+
+        public static bool IsKnappableStoneItem(InventoryItemKind kind, byte subId)
+        {
+            if (kind == InventoryItemKind.RoughStoneChunk) return true;
+            if (kind == InventoryItemKind.VoxelBlock &&
+                (subId == 0 ||
+                 subId == MaterialIdCatalog.Stone ||
+                 subId == MaterialIdCatalog.Cobblestone ||
+                 subId == MaterialIdCatalog.Basalt))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public static bool IsKnappableStoneVoxelMaterial(byte matId)
+        {
+            return matId == MaterialIdCatalog.Stone ||
+                   matId == MaterialIdCatalog.Cobblestone ||
+                   matId == MaterialIdCatalog.Basalt;
+        }
+
+        public int FindAimedGroundRoughStoneIndex(UnityEngine.Camera? cam, Vector3 playerPos, float maxReach = 3.35f)
+        {
+            return TryFindAimedGroundStone(cam, playerPos, maxReach, out int idx, out _) ? idx : -1;
+        }
+
+        public bool TryFindAimedGroundStone(
+            UnityEngine.Camera? cam,
+            Vector3 playerPos,
+            float maxReach,
+            out int bestIdx,
+            out float bestScore)
+        {
+            bestIdx = -1;
+            bestScore = float.MaxValue;
+            if (_droppedWorldItems.Count == 0) return false;
+
+            Vector3 rayOrigin = cam != null ? cam.transform.position : playerPos + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = cam != null ? cam.transform.forward : Vector3.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
+            {
+                DroppedWorldItem item = _droppedWorldItems[i];
+                if (item.VisualGo == null) continue;
+                ResolveDroppedItemKindAndSubId(item.ExplicitKind, item.MaterialId, item.CustomLabel, out InventoryItemKind kind, out byte subId);
+                if (!IsKnappableStoneItem(kind, subId)) continue;
+
+                Vector3 itemPos = item.VisualGo.transform.position;
+                float distToPlayer = Vector3.Distance(playerPos + new Vector3(0f, 0.85f, 0f), itemPos);
+                float distToCam = Vector3.Distance(rayOrigin, itemPos);
+                if (distToPlayer > maxReach && distToCam > maxReach + 0.55f) continue;
+
+                Vector3 toItem = itemPos - rayOrigin;
+                float along = Vector3.Dot(toItem, rayDir);
+                if (along < -0.20f || along > maxReach + 0.65f) continue;
+
+                Vector3 closestOnRay = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perpDist = Vector3.Distance(closestOnRay, itemPos);
+                float allowedRadius = distToPlayer <= 1.65f ? 0.85f : 0.72f;
+                if (perpDist > allowedRadius) continue;
+
+                float score = perpDist * 2.1f + Mathf.Max(0f, along) * 0.30f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx >= 0;
+        }
+
+        public bool TryConsumeOrChipKnappedStoneVoxel(
+            Vector3Int cell,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            HashSet<(int cx, int cz)>? dirtyChunks)
+        {
+            if (worldChunks == null) return false;
+            int wx = cell.x, wy = Mathf.Clamp(cell.y, 1, 254), wz = cell.z;
+            int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
+
+            int idx = (wy << 8) | (lz << 4) | lx;
+            uint raw = voxels[idx];
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            if (!IsKnappableStoneVoxelMaterial(mat)) return false;
+
+            BlokKokenDurumu origin = VoxelBitUtility.GetOriginState(raw);
+            int curDens = VoxelBitUtility.GetDensityOrLiquid(raw);
+            int nextDens = origin == BlokKokenDurumu.OyuncuItemBlogu ? (curDens - 128) : (curDens - 64);
+            if (nextDens <= 32)
+            {
+                voxels[idx] = 0u;
+            }
+            else
+            {
+                voxels[idx] = VoxelBitUtility.PackStandard(
+                    mat,
+                    (byte)nextDens,
+                    VoxelBitUtility.GetShapeId(raw),
+                    VoxelBitUtility.GetRotationState(raw),
+                    origin,
+                    VoxelBitUtility.GetDamageState(raw));
+            }
+            if (dirtyChunks != null)
+            {
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirtyChunks, worldChunks, wy);
+            }
+            return true;
+        }
+
+        public bool TryGetDroppedWorldItemInfo(
+            int index,
+            out Vector3 worldPos,
+            out Quaternion worldRot,
+            out byte matId,
+            out PhysicalItemShapeDna dna,
+            out GameObject? visualGo)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count)
+            {
+                worldPos = Vector3.zero;
+                worldRot = Quaternion.identity;
+                matId = MaterialIdCatalog.Stone;
+                dna = default;
+                visualGo = null;
+                return false;
+            }
+
+            DroppedWorldItem item = _droppedWorldItems[index];
+            if (item.VisualGo == null)
+            {
+                worldPos = Vector3.zero;
+                worldRot = Quaternion.identity;
+                matId = MaterialIdCatalog.Stone;
+                dna = default;
+                visualGo = null;
+                return false;
+            }
+
+            worldPos = item.VisualGo.transform.position;
+            worldRot = item.VisualGo.transform.rotation;
+            matId = item.MaterialId != 0 ? item.MaterialId : MaterialIdCatalog.Stone;
+            dna = item.ShapeDna;
+            visualGo = item.VisualGo;
+            return true;
+        }
+
+        public void SetDroppedWorldItemVisibility(int index, bool visible)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            DroppedWorldItem item = _droppedWorldItems[index];
+            if (item.VisualGo != null)
+            {
+                MeshRenderer? mr = item.VisualGo.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = visible;
+            }
+        }
+
+        public void SavePartialKnappingOnDroppedStone(int index, PhysicalItemShapeDna updatedDna)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            DroppedWorldItem item = _droppedWorldItems[index];
+            item.ShapeDna = updatedDna;
+            if (item.VisualGo != null)
+            {
+                MeshRenderer? mr = item.VisualGo.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = true;
+                if ((updatedDna.Flags & PhysicalItemShapeDna.FlagCustomKnapMask) != 0 &&
+                    updatedDna.KnapMask64 != 0UL &&
+                    updatedDna.KnapMask64 != ulong.MaxValue)
+                {
+                    MeshFilter? mf = item.VisualGo.GetComponent<MeshFilter>();
+                    if (mf != null)
+                    {
+                        byte stoneMat = item.MaterialId != 0 ? item.MaterialId : MaterialIdCatalog.Stone;
+                        mf.sharedMesh = PhysicalItemMeshFactory.BuildInteractiveKnappingSlabMesh(
+                            updatedDna.KnapMask64, 0UL, stoneMat, -1, -1, 0f);
+                        item.VisualGo.transform.localScale = Vector3.one;
+                    }
+                }
+            }
+            _droppedWorldItems[index] = item;
+        }
+
+        public void ConsumeOneDroppedWorldItemAt(int index)
+        {
+            if ((uint)index >= (uint)_droppedWorldItems.Count) return;
+            DroppedWorldItem item = _droppedWorldItems[index];
+            if (item.Count > 1 && item.VisualGo != null)
+            {
+                item.Count -= 1;
+                item.ShapeDna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                    Mathf.RoundToInt(item.Position.x * 4f),
+                    Mathf.RoundToInt(item.Position.y * 4f),
+                    Mathf.RoundToInt(item.Position.z * 4f),
+                    ++_worldDropSeedCounter);
+                byte stoneMat = item.MaterialId != 0 ? item.MaterialId : MaterialIdCatalog.Stone;
+                Mesh freshMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
+                    PhysicalItemArchetype.RoughStone, stoneMat, in item.ShapeDna, out Vector3 natScale);
+                MeshFilter? mf = item.VisualGo.GetComponent<MeshFilter>();
+                if (mf != null) mf.sharedMesh = freshMesh;
+                MeshRenderer? mr = item.VisualGo.GetComponent<MeshRenderer>();
+                if (mr != null) mr.enabled = true;
+                item.VisualGo.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(PhysicalItemArchetype.RoughStone, natScale);
+                _droppedWorldItems[index] = item;
+                return;
+            }
+
+            if (item.VisualGo != null)
+            {
+                UnityEngine.Object.Destroy(item.VisualGo);
+            }
+            _droppedWorldItems.RemoveAt(index);
         }
 
         public bool TryPickupAimedDroppedWorldItemInstant(
