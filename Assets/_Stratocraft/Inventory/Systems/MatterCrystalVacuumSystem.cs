@@ -300,6 +300,49 @@ namespace Stratocraft.Inventory.Systems
         }
 
         /// <summary>
+        /// Paket 2 (IP-3) — Dogal Dairesel Arazi Serpistirme Fircasi (Natural Scatter Brush) yogunluk profili:
+        /// Basik elipsoidal mesafe + deterministik 3B uzaysal gurultu ile merkezde 127, kenarlarda >= 72 (> SdfIsoLevel=64)
+        /// yumusak gecisli SurfaceNets yogunlugu doner. Yaricap disindaki hucreler icin 0 doner.
+        /// </summary>
+        public static byte ComputeNaturalScatterTargetDensity(
+            int wx,
+            int wy,
+            int wz,
+            float centerX,
+            float centerY,
+            float centerZ,
+            float radiusXZ,
+            float radiusY)
+        {
+            if (radiusXZ <= 0.2f || radiusY <= 0.2f) return 0;
+
+            float dx = (wx + 0.5f) - centerX;
+            float dy = (wy + 0.5f) - centerY;
+            float dz = (wz + 0.5f) - centerZ;
+
+            float normDistSq = (dx * dx + dz * dz) / (radiusXZ * radiusXZ) + (dy * dy) / (radiusY * radiusY);
+            if (normDistSq > 1.26f) return 0;
+
+            float u = MathF.Sqrt(normDistSq);
+            // Deterministik 3B hash gurultusu [-0.12 .. +0.12]: mukemmel yapay kure gorunumunu kirip dogal tepecik uretir
+            uint h = (uint)(wx * 73856093) ^ (uint)(wy * 19349663) ^ (uint)(wz * 83492791);
+            h ^= h >> 13;
+            h *= 1274126177u;
+            h ^= h >> 16;
+            float organicJitter = ((h & 0xFFu) / 255.0f - 0.5f) * 0.24f;
+
+            // Merkez cekirdekte (u < 0.35) gurultuyu bastir ki tam merkez her zaman dolgun kalsin
+            float jitterWeight = Math.Clamp((u - 0.25f) / 0.65f, 0f, 1f);
+            float uPerturbed = u + organicJitter * jitterWeight;
+            if (uPerturbed > 1.0f) return 0;
+
+            float uClamped = Math.Clamp(uPerturbed, 0f, 1f);
+            float falloff = 1.0f - (uClamped * uClamped);
+            int targetDens = (int)MathF.Round(72.0f + 55.0f * falloff);
+            return (byte)Math.Clamp(targetDens, 72, 127);
+        }
+
+        /// <summary>
         /// Madde Kristali 0.25m Mikro-Keski (4x4x4 = 64 alt-kup; her alt-kup tam 4 Q24.8 kutle birimi!):
         /// Dogal blogu 0.25m hassasiyetle oyar veya doldurur; OriginState DAIMA DogalKutle (0) kalir.
         /// </summary>

@@ -37,10 +37,13 @@ namespace Stratocraft.Inventory.Data
 
         public static CrystalMassStorageData CreateDefault(int maxTotalBlocksCapacity = 16384, byte crystalTier = 1)
         {
-            uint clampedBlocks = (uint)Math.Clamp(maxTotalBlocksCapacity, 64, 16_000_000);
+            byte clampedTier = (byte)Math.Clamp((int)crystalTier, 0, 5);
+            uint clampedBlocks = (clampedTier == 0 && maxTotalBlocksCapacity <= 0)
+                ? 0u
+                : (uint)Math.Clamp(maxTotalBlocksCapacity, 64, 16_000_000);
             return new CrystalMassStorageData
             {
-                CrystalTier = (byte)Math.Clamp((int)crystalTier, 1, 4),
+                CrystalTier = clampedTier,
                 ActiveBucketCount = 0,
                 ReservedHeader = 0,
                 MaxCapacityQ24_8 = clampedBlocks * OneBlockQ24_8
@@ -88,7 +91,44 @@ namespace Stratocraft.Inventory.Data
         public byte CrystalTier
         {
             get => Data.CrystalTier;
-            set => Data.CrystalTier = (byte)Math.Clamp((int)value, 1, 4);
+            set
+            {
+                byte clamped = (byte)Math.Clamp((int)value, 0, 5);
+                Data.CrystalTier = clamped;
+                if (clamped >= 1 && Data.MaxCapacityQ24_8 == 0u)
+                {
+                    Data.MaxCapacityQ24_8 = (uint)GetCanonicalBlockCapacityForTier(clamped) * CrystalMassStorageData.OneBlockQ24_8;
+                }
+            }
+        }
+
+        /// <summary>
+        /// GAME LOGIC BIBLE Bolum 2.2.C kanonik Madde Kristali maksimum depolama hacmi (blok birimi):
+        /// Tier 0 (Uyuyan) = 0, Tier 1 = 500, Tier 2 = 1.500, Tier 3 = 4.000, Tier 4 = 12.000, Tier 5 = 50.000.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static int GetCanonicalBlockCapacityForTier(byte crystalTier) => crystalTier switch
+        {
+            0 => 0,
+            1 => 500,
+            2 => 1_500,
+            3 => 4_000,
+            4 => 12_000,
+            5 => 50_000,
+            _ => 0
+        };
+
+        /// <summary>
+        /// Kristal kademesini (0..5) ve kanonik blok kapasitesini gunceller; iceride mevcut kutle varsa
+        /// veri kaybini onlemek icin kapasiteyi mevcut kutlenin altina dusurmez.
+        /// </summary>
+        public void SetTierAndCanonicalCapacity(byte newTier)
+        {
+            byte clamped = (byte)Math.Clamp((int)newTier, 0, 5);
+            Data.CrystalTier = clamped;
+            uint targetQ24_8 = (uint)GetCanonicalBlockCapacityForTier(clamped) * CrystalMassStorageData.OneBlockQ24_8;
+            uint storedQ24_8 = Data.GetTotalStoredMassQ24_8();
+            Data.MaxCapacityQ24_8 = Math.Max(targetQ24_8, storedQ24_8);
         }
 
         public int MaxTotalBlocksCapacity => (int)(Data.MaxCapacityQ24_8 / CrystalMassStorageData.OneBlockQ24_8);

@@ -219,6 +219,9 @@ namespace Stratocraft.Core.Constants
         /// <summary>Kamp Atesi / Mesale Blogu (166 - Isitir ancak kapali odada O2 tuketir).</summary>
         public const byte CampfireBlock = 166;
 
+        /// <summary>Ilkel Tas Firin / Ocak Blogu (167 - Bakir cevheri izabesi ve kil pisirme + cevre isitma).</summary>
+        public const byte PrimitiveStoneKilnBlock = 167;
+
         /// <summary>Boss Trofe Yapi Bloklari Baslangici (180..195).</summary>
         public const byte BossTrophyBlockStart = 180;
 

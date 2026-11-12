@@ -13,17 +13,32 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#050` (**Paket 1.5 Araziye Gömülme & Yeryüzü Kaybolma Hataları TAMAMLANDI:** `1)` `VoxelSurfaceNetsGroundSampler` ile Ayakta, Sürünmede, Canlılarda, Uzuvlarda ve `[Q]` Eşyalarında Yamaç İçi Gömülme Çözüldü, `2)` `DistributeConsolidatedTrianglesIntoSubChunks` ile Yeryüzü Meshinin Silinip Yeraltının Görünmesi Hatası Kalıcı Kapatıldı, `3)` Kıyı Tavan Koruması Eklendi \| **Sırada: Paket 2 (`DOK1..DOK4`) + #16 Yüzme Oksijen Düzeltmesi**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T11:30:00+03:00` |
+| **Devir Numarası** | `#052` (**Paket 2 Faz 2.1 + Su Üstü Yüzme Oksijen Çözümü TAMAMLANDI & ONAYLANDI:** `1)` `16-Byte` `PhysicalItemShapeDna` + `PhysicalItemMeshFactory` ile Yerde == Elde == `[I]` Çantada == `[Q]` Geri Atıldığında `1:1` 3B Model Eşitliği, `2)` `[E]` ile `0.0sn` Anında Eşya Alma + Görünmez Ganimet Sandığı Kaldırıldı, `3)` 12 Biyom Ekolojik Flora & 3B Kırılabilir Çalılar, `4)` Avuçla Toprak/Kum/Kil Kazma, `5)` Çıplak El Yalnızca Canlılara İsabet Mekanizması, `6)` `1/3 -> 3/3` Kuvars ile Kristal Uyanışı \| **Sırada: Faz 2.2 Fiziksel Taş Yontma Oturuşu & The Forest 3B Kumaş Çanta**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T16:28:30+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #050 Tamamlandı: Dünyanın Oluşumundaki ve Yeryüzü Görünümündeki Hatalar (Yamaç Gömülmesi + Yeraltı Görünmesi) Kapatıldı -> Sırada Paket 2 (Taş Devri Survival Başlangıcı, İlkel Zanaat & Madde Kristali Evrimi) 4'lü Dokümantasyonu + #16 Yüzerken Oksijen Tükenmesi Düzeltmesi` |
-| **Aktif Test Durumu** | `74/74 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 69/69 PASS (Devir048..Devir050 Dahil)`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
-| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
+| **Mevcut Çalışma Aşaması** | `Devir #052 Tamamlandı (Faz 2.1 PlayMode Testi Kullanıcı Tarafından Onaylandı) -> Şimdi Paket 2 Faz 2.2 (Yerdeki Taşa Çakmaktaşı ile [R] Oturuşlu 8x8 Fiziksel Taş Yontma + The Forest Tarzı Bireysel Fiziksel 3B Kumaş Çanta ve İple Bağlama Animasyonlu Alet Üretimi) Geliştiriliyor` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 76/76 PASS (Faz21 Dahil)`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#050`, `#049` & `#048`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#052` & `#050`)
+
+### 2.0.00000000. Devir #052 (Paket 2 Faz 2.1 + Yüzme Oksijen): Fiziksel 3B Doğal Eşya Özdeşliği, 12 Biyom Ekoloji & 3B Çalılar, Avuçla Kazma, Çıplak El Mekaniği ve Tekli Kuvars Uyanışı
+
+1. **`16-Byte` `PhysicalItemShapeDna` & `PhysicalItemMeshFactory` (`1:1` 3B Görsel Özdeşlik):**
+   - Her fiziksel eşya için `ShapeSeed`, `KnapMask64`, `QualityPct`, `ThermalTempByte` ve `Flags` taşıyan `16-Byte` yapı ve arketip başına `12` doğal varyasyon üreten prosedürel 3B fabrika kuruldu; yerde duran eşya, elde tutulan eşya, `[I]` çanta bezindeki eşya ve `[Q]` ile geri atılan eşya %100 aynı 3B mesh oldu (havada dönme ve küp görünümü kaldırıldı).
+2. **`[E]` Anında Eşya Toplama & Hayalet Sandık Temizliği:**
+   - Taşa bakıp `[E]` basıldığında alakasız *Kadim Mermer / Altın / Mithril / Ametist* veren görünmez yapı ganimet sandığı silindi; yerdeki eşyalara bakıp `[E]` basıldığında `0.0sn` anında ele/çantaya alma bağlandı.
+3. **12 Biyom Ekolojik Flora, Yüzey Taşları ve 3B Kırılabilir Çalılar:**
+   - Yeşil biyomlarda (`0, 1, 10`) 3B kırılabilir yabani/böğürtlenli çalılar, dal, yaprak demeti, lif, çakmaktaşı ve kuvars; bataklıkta (`3`) sazlık ve kil; çölde (`6`) seyrek kuru diken çalısı ve kum; çorak biyomlarda (`2, 4, 5, 7, 8, 9, 11`) ise **sıfır çalı ve sıfır yaprak** kuralı getirildi. Çalılar kırıldığında yapraksız kök gövdesine dönüşüp 3B fiziksel eşyalar saçıyor.
+4. **Avuçla Toprak / Kum / Kil Kazma & Boş El Tıklama Koruması:**
+   - Boş elle araziye sol tıklayınca boşa enerji gitmesi kapatıldı; çömelerek veya dik aşağı bakarak `[E]` `0.60sn` basılı tutulduğunda avuçla toprak/kum/kil alma ve voksel yoğunluğunu azaltma eklendi.
+5. **Çıplak El Darbe Sistemi & Yüzerken Oksijen Düzeltmesi:**
+   - Boş elle (`[0]`) sol tıklama 1. ve 3. şahıs sağ/sol kol hamlesi oynatır; yalnızca canlı varlıklara isabet ettiğinde etki, `-4.5 EP` enerji ve `-1.5 HP` el geri tepmesi uygular. Su üstünde yüzerken ağız/burun kotu alt-voksel su yüzeyinin üstündeyken oksijenin düşmesi hatası (`ComputeBreathSubmersionState`) kalıcı olarak giderildi.
+6. **Tekli Kuvars (`1/3 -> 2/3 -> 3/3`) Madde Kristali Uyanışı & Yaratıcı Katalog:**
+   - Elde Kuvars varken `[C]` veya `Sağ Tık` ile tek tek 3 Kuvars yedirilerek `Tier 0 -> Tier 1 (500 Blok)` uyanışı sağlandı; tüm yeni fiziksel eşyalar (`32..49`) `[F4] -> [Tab]` Yaratıcı Kataloğa eklendi.
 
 ### 2.0.0000000. Devir #050 (Paket 1.5 - Ara Hata Paketi): Dünyanın Oluşumundaki ve Yeryüzü Görünümündeki Hataların Çözümü, Yamaç İçi Gömülme & Yeraltı Görünmesi
 

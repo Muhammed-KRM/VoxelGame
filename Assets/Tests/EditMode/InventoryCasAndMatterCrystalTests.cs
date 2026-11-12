@@ -1,14 +1,22 @@
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
+using Stratocraft.Character;
 using Stratocraft.Character.Data;
 using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
+using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
+using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
+using Stratocraft.Voxel.Jobs;
 using Stratocraft.Voxel.Systems;
+using Stratocraft.WorldGen;
+using Stratocraft.WorldGen.Generators;
 
 namespace Stratocraft.Tests.EditMode
 {
@@ -255,5 +263,291 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(dirtSlot.ItemId, Is.EqualTo((ushort)MaterialIdCatalog.Dirt));
             Assert.That(dirtSlot.Count, Is.EqualTo(8));
         }
+
+        [Test]
+        public void Devir051_CrystalMassStorage_CanonicalTier0To5Capacities_AndStructLayoutPreserved()
+        {
+            Assert.That(Unsafe.SizeOf<CrystalMassStorageData>(), Is.EqualTo(264));
+
+            var storage = new CrystalMassStorage(maxTotalBlocksCapacity: 0, crystalTier: 0);
+            Assert.That(storage.CrystalTier, Is.EqualTo(0));
+            Assert.That(storage.MaxTotalBlocksCapacity, Is.EqualTo(0));
+            Assert.That(storage.TryDepositMassQ24_8(MaterialIdCatalog.Stone, CrystalMassStorageData.OneBlockQ24_8), Is.False);
+
+            int[] expectedCaps = { 0, 500, 1500, 4000, 12000, 50000 };
+            for (byte tier = 0; tier <= 5; tier++)
+            {
+                storage.SetTierAndCanonicalCapacity(tier);
+                Assert.That(storage.CrystalTier, Is.EqualTo(tier));
+                Assert.That(storage.MaxTotalBlocksCapacity, Is.EqualTo(expectedCaps[tier]));
+            }
+        }
+
+        [Test]
+        public void Devir051_PrimitiveSurvivalCraftingCatalog_AllSixClothMatRecipes_OrderIndependent_AndCrystalEvolutionTable()
+        {
+            // 1) Tas yontma kalibi dongusu
+            StoneKnappingPattern p0 = StoneKnappingPattern.AxeHead;
+            StoneKnappingPattern p1 = PrimitiveSurvivalCraftingCatalog.CycleKnappingPattern(p0);
+            StoneKnappingPattern p2 = PrimitiveSurvivalCraftingCatalog.CycleKnappingPattern(p1);
+            StoneKnappingPattern p3 = PrimitiveSurvivalCraftingCatalog.CycleKnappingPattern(p2);
+            Assert.That(p1, Is.EqualTo(StoneKnappingPattern.PickaxeHead));
+            Assert.That(p2, Is.EqualTo(StoneKnappingPattern.KnifeBlade));
+            Assert.That(p3, Is.EqualTo(StoneKnappingPattern.AxeHead));
+
+            // 2) Sira bagimsiz 6 fiziksel bez-ortu birlestirme tarifi
+            ReadOnlySpan<CraftIngredientToken> axePads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.PlantFiber, CraftIngredientToken.KnappedAxeHead, CraftIngredientToken.Stick
+            };
+            ReadOnlySpan<int> oneCounts = stackalloc int[3] { 1, 1, 1 };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(axePads, oneCounts, out ClothMatCraftMatch mAxe), Is.True);
+            Assert.That(mAxe.OutputId, Is.EqualTo(PrimitiveCraftOutputId.PrimitiveFlintAxe));
+
+            ReadOnlySpan<CraftIngredientToken> pickPads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.Stick, CraftIngredientToken.PlantFiber, CraftIngredientToken.KnappedPickaxeHead
+            };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(pickPads, oneCounts, out ClothMatCraftMatch mPick), Is.True);
+            Assert.That(mPick.OutputId, Is.EqualTo(PrimitiveCraftOutputId.PrimitiveStonePickaxe));
+
+            ReadOnlySpan<CraftIngredientToken> knifePads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.KnappedKnifeBlade, CraftIngredientToken.Stick, CraftIngredientToken.PlantFiber
+            };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(knifePads, oneCounts, out ClothMatCraftMatch mKnife), Is.True);
+            Assert.That(mKnife.OutputId, Is.EqualTo(PrimitiveCraftOutputId.PrimitiveFlintKnife));
+
+            ReadOnlySpan<CraftIngredientToken> bucketPads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.PlantFiber, CraftIngredientToken.None, CraftIngredientToken.SplitFirewood
+            };
+            ReadOnlySpan<int> bucketCounts = stackalloc int[3] { 2, 0, 2 };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(bucketPads, bucketCounts, out ClothMatCraftMatch mBucket), Is.True);
+            Assert.That(mBucket.OutputId, Is.EqualTo(PrimitiveCraftOutputId.PrimitiveWoodenBucket));
+
+            ReadOnlySpan<CraftIngredientToken> firePads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.FlintStone, CraftIngredientToken.PlantFiber, CraftIngredientToken.Stick
+            };
+            ReadOnlySpan<int> fireCounts = stackalloc int[3] { 2, 1, 3 };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(firePads, fireCounts, out ClothMatCraftMatch mFire), Is.True);
+            Assert.That(mFire.OutputId, Is.EqualTo(PrimitiveCraftOutputId.CampfireKit));
+
+            ReadOnlySpan<CraftIngredientToken> kilnPads = stackalloc CraftIngredientToken[3]
+            {
+                CraftIngredientToken.LooseDirtClod, CraftIngredientToken.Stick, CraftIngredientToken.RoughStoneChunk
+            };
+            ReadOnlySpan<int> kilnCounts = stackalloc int[3] { 1, 2, 5 };
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryMatchClothMatRecipe(kilnPads, kilnCounts, out ClothMatCraftMatch mKiln), Is.True);
+            Assert.That(mKiln.OutputId, Is.EqualTo(PrimitiveCraftOutputId.PrimitiveStoneKilnKit));
+
+            // 3) Kanonik Madde Kristali Rezonans Evrim Tablosu (Tier 0 -> 1..5)
+            for (byte t = 0; t <= 4; t++)
+            {
+                Assert.That(PrimitiveSurvivalCraftingCatalog.TryGetNextCrystalEvolution(t, out CrystalEvolutionRequirement req), Is.True);
+                Assert.That(req.TargetTier, Is.EqualTo((byte)(t + 1)));
+                Assert.That(req.RequiredCountA, Is.GreaterThan((byte)0));
+            }
+            Assert.That(PrimitiveSurvivalCraftingCatalog.TryGetNextCrystalEvolution(5, out _), Is.False);
+        }
+
+        [Test]
+        public void Devir051_NaturalTerrainScatterBrush_GeneratesWatertightEllipsoidAboveIsoLevel_WithLosslessMassAccounting()
+        {
+            var storage = new CrystalMassStorage(maxTotalBlocksCapacity: 500, crystalTier: 1);
+            uint initialMass = 40u * CrystalMassStorageData.OneBlockQ24_8;
+            Assert.That(storage.TryDepositMassQ24_8(MaterialIdCatalog.Dirt, initialMass), Is.True);
+
+            float cx = 10.5f, cy = 20.5f, cz = 10.5f;
+            float rXz = 2.0f;
+            float rY = 1.3f;
+
+            byte centerDens = MatterCrystalVacuumSystem.ComputeNaturalScatterTargetDensity(10, 20, 10, cx, cy, cz, rXz, rY);
+            Assert.That(centerDens, Is.EqualTo(VoxelBitUtility.FullDensity));
+
+            byte farDens = MatterCrystalVacuumSystem.ComputeNaturalScatterTargetDensity(20, 20, 20, cx, cy, cz, rXz, rY);
+            Assert.That(farDens, Is.EqualTo(0));
+
+            uint worldDepositedMass = 0u;
+            int solidCount = 0;
+            for (int y = 18; y <= 23; y++)
+            {
+                for (int z = 7; z <= 14; z++)
+                {
+                    for (int x = 7; x <= 14; x++)
+                    {
+                        byte targetDens = MatterCrystalVacuumSystem.ComputeNaturalScatterTargetDensity(x, y, z, cx, cy, cz, rXz, rY);
+                        if (targetDens == 0) continue;
+
+                        Assert.That(targetDens, Is.GreaterThanOrEqualTo((byte)72), "SDF deligi olusmamasi icin hedef yogunluk daima IsoLevel(64) ustunde olmalidir!");
+                        uint reqMass = CrystalMassStorage.MassQ24_8FromDensity7(targetDens);
+                        Assert.That(storage.TryWithdrawMassQ24_8(MaterialIdCatalog.Dirt, reqMass, out _), Is.True);
+                        worldDepositedMass += reqMass;
+                        solidCount++;
+                    }
+                }
+            }
+
+            Assert.That(solidCount, Is.GreaterThan(8));
+            Assert.That(storage.GetMassQ24_8(MaterialIdCatalog.Dirt) + worldDepositedMass, Is.EqualTo(initialMass));
+        }
+
+        [Test]
+        public void Devir051_BreathSubmersionState_HeadAboveSubVoxelWaterSurface_DoesNotTriggerFalseDrowning()
+        {
+            ushort[] fluids = new ushort[16 * 16 * 256];
+            uint[] solids = new uint[16 * 16 * 256];
+            const int lx = 5;
+            const int lz = 5;
+            int col = (lz << 4) | lx;
+
+            // Derin gol senaryosu: y=89 kati taban, y=90..91 tam dolu su (Mass=255), y=92 yuzey hucresinde yarim su (Mass=110 -> surfY ~ 92.46)!
+            solids[(89 << 8) | col] = VoxelBitUtility.PackStandard(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+            fluids[(90 << 8) | col] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: 2).RawValue;
+            fluids[(91 << 8) | col] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: 1).RawValue;
+            fluids[(92 << 8) | col] = FluidCell16.Pack(FluidType.Water, 110, isSettled: true, pressureHead: 0).RawValue;
+
+            // Senaryo 1: Oyuncu yuzuyor; ayak pos.y = 91.20 -> agiz/burun = 92.72 (> surfY ~ 92.46),
+            // eski hatali FloorToInt(91.20 + 1.45) = 92 yuzunden boguluyor sayiliyordu!
+            Stage1PlayerMovementBridge.ComputeBreathSubmersionState(
+                fluids, solids, playerFeetY: 91.20f, lx, lz, chunkHeight: 256, previouslyHeadSubmerged: false,
+                out bool headSubAbove, out float subDepthAbove, out int airWyAbove);
+
+            Assert.That(headSubAbove, Is.False, "Agiz/burun kotu (92.72) su yuzeyinin (~92.46) ustundeyken bogulma tetiklenmemelidir!");
+            Assert.That(subDepthAbove, Is.EqualTo(0f));
+            Assert.That(airWyAbove, Is.EqualTo(93), "Kismi su hucresinin ustundeki acik hava hucresi (93) orneklenmelidir.");
+
+            // Senaryo 2: Oyuncu su altina daldi (ayak pos.y = 90.65 -> agiz/burun = 92.17 < surfY ~ 92.46)
+            Stage1PlayerMovementBridge.ComputeBreathSubmersionState(
+                fluids, solids, playerFeetY: 90.65f, lx, lz, chunkHeight: 256, previouslyHeadSubmerged: false,
+                out bool headSubDiving, out float subDepthDiving, out _);
+
+            Assert.That(headSubDiving, Is.True, "Agiz/burun kotu su yuzeyinin altina indiginde su alti tespiti aktif olmalidir!");
+            Assert.That(subDepthDiving, Is.GreaterThan(0.10f));
+        }
+
+        [Test]
+        public void Faz21_PhysicalItemShapeDna_16ByteFootprint_AndDeterministic12VariantFactoryMeshes()
+        {
+            Assert.That(Unsafe.SizeOf<PhysicalItemShapeDna>(), Is.EqualTo(16), "PhysicalItemShapeDna tam 16 Byte olmalidir!");
+
+            PhysicalItemShapeDna dnaA = PhysicalItemShapeDna.CreateFromWorldCoord(14, 92, -22, 7u);
+            PhysicalItemShapeDna dnaB = PhysicalItemShapeDna.CreateFromWorldCoord(14, 92, -22, 7u);
+            Assert.That(dnaA.ShapeSeed, Is.EqualTo(dnaB.ShapeSeed));
+            Assert.That(dnaA.EffectiveSeed, Is.Not.EqualTo(0u));
+            Assert.That((int)(dnaA.EffectiveSeed % PhysicalItemMeshFactory.VariantsPerArchetype), Is.InRange(0, 11));
+
+            var tris = new List<FacetedVoxelTriangle>(128);
+            PhysicalItemArchetype[] sampleArchetypes =
+            {
+                PhysicalItemArchetype.NaturalStick,
+                PhysicalItemArchetype.LeafPile,
+                PhysicalItemArchetype.PlantFiber,
+                PhysicalItemArchetype.RoughStone,
+                PhysicalItemArchetype.FlintStone,
+                PhysicalItemArchetype.QuartzCrystalCluster,
+                PhysicalItemArchetype.ClayLump,
+                PhysicalItemArchetype.WildBushFoliage,
+                PhysicalItemArchetype.WildBushBareRoots
+            };
+
+            foreach (PhysicalItemArchetype arch in sampleArchetypes)
+            {
+                tris.Clear();
+                byte mat = PhysicalItemMeshFactory.ResolvePrimaryMaterialId(arch, 0);
+                PhysicalItemMeshFactory.EmitArchetypeTriangles(arch, mat, in dnaA, tris);
+                Assert.That(tris.Count, Is.GreaterThan(0), $"{arch} arketipi bos olmayan 3B ucgen geometrisi uretmelidir!");
+            }
+        }
+
+        [Test]
+        public void Faz21_BiomeEcologicalInvariants_BarrenBiomesHaveZeroBushesZeroLeavesAndZeroSticks()
+        {
+            int[] barrenBiomes = { 2, 4, 5, 7, 8, 9, 11 };
+            foreach (int b in barrenBiomes)
+            {
+                Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(b), Is.False, $"Corak biyom {b} cali icermemelidir!");
+                Assert.That(StratocraftFloatingIslandWorldGen.IsLushLeafBiome(b), Is.False, $"Corak biyom {b} yesil yaprak icermemelidir!");
+            }
+
+            Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(0), Is.True);
+            Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(1), Is.True);
+            Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(3), Is.True);
+            Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(10), Is.True);
+
+            const int seed = 12345;
+            int checkedBarrenForageNodes = 0;
+            for (int cz = -60; cz <= 60; cz += 4)
+            {
+                for (int cx = -60; cx <= 60; cx += 4)
+                {
+                    for (int bushSlot = 0; bushSlot < 3; bushSlot++)
+                    {
+                        if (StratocraftFloatingIslandWorldGen.TryGetBiomeBushNode(cx, cz, seed, bushSlot, out int bwx, out int bwz, out _, out _, out _))
+                        {
+                            int biome = StratocraftFloatingIslandWorldGen.GetBiomeId(bwx, bwz);
+                            Assert.That(StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(biome), Is.True,
+                                $"Corak biyomda (biome={biome}) cali uretilmemelidir!");
+                        }
+                    }
+
+                    for (int slot = 0; slot < 5; slot++)
+                    {
+                        if (StratocraftFloatingIslandWorldGen.TryGetBiomeForageNode(
+                                cx, cz, seed, slot, out int wx, out int wz,
+                                out StratocraftFloatingIslandWorldGen.BiomeForageDropKind drop))
+                        {
+                            int biome = StratocraftFloatingIslandWorldGen.GetBiomeId(wx, wz);
+                            if (!StratocraftFloatingIslandWorldGen.IsVegetatedBushBiome(biome))
+                            {
+                                checkedBarrenForageNodes++;
+                                Assert.That(drop, Is.Not.EqualTo(StratocraftFloatingIslandWorldGen.BiomeForageDropKind.Stick));
+                                Assert.That(drop, Is.Not.EqualTo(StratocraftFloatingIslandWorldGen.BiomeForageDropKind.LeafPile));
+                                Assert.That(drop, Is.Not.EqualTo(StratocraftFloatingIslandWorldGen.BiomeForageDropKind.PlantFiber));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Assert.That(checkedBarrenForageNodes, Is.GreaterThan(10), "Corak biyom yuzey dugumleri orneklenmis olmalidir.");
+        }
+
+#if UNITY_5_3_OR_NEWER
+        [Test]
+        public void Faz21_SingleQuartzAwakening_Requires3IndividualFeeds_ToUnlockTier1Capacity500()
+        {
+            var holster = new Stage1HolsterAndBackpackController();
+            var mining = new Stage1MatterCrystalAndMiningController();
+
+            Assert.That(mining.CurrentCrystalTier, Is.EqualTo(0));
+            Assert.That(mining.FedAwakeningQuartzCount, Is.EqualTo(0));
+            Assert.That(mining.CrystalStorage.MaxTotalBlocksCapacity, Is.EqualTo(0));
+
+            // 3 adet Kuvars cevher parcasini oyuncunun hotbarina yerlestir
+            var quartzDna = PhysicalItemShapeDna.CreateFromWorldCoord(5, 80, 5, 1u);
+            Assert.That(holster.InventoryUi.TryAddHarvestedWorldItem(
+                InventoryItemKind.OreChunk, MaterialIdCatalog.QuartzGem, 3, mining, quartzDna), Is.True);
+            holster.InventoryUi.SelectHotbarSlot(0);
+
+            // 1. Kuvars besleme -> 1/3 (Hala Tier 0)
+            Assert.That(mining.TryFeedQuartzToAwakenCrystal(holster), Is.True);
+            Assert.That(mining.FedAwakeningQuartzCount, Is.EqualTo(1));
+            Assert.That(mining.CurrentCrystalTier, Is.EqualTo(0));
+
+            // 2. Kuvars besleme -> 2/3 (Hala Tier 0)
+            Assert.That(mining.TryFeedQuartzToAwakenCrystal(holster), Is.True);
+            Assert.That(mining.FedAwakeningQuartzCount, Is.EqualTo(2));
+            Assert.That(mining.CurrentCrystalTier, Is.EqualTo(0));
+
+            // 3. Kuvars besleme -> 3/3 -> UYANIS! (Tier 1, 500 Blok Kapasite, Aktif Mod!)
+            Assert.That(mining.TryFeedQuartzToAwakenCrystal(holster), Is.True);
+            Assert.That(mining.FedAwakeningQuartzCount, Is.EqualTo(3));
+            Assert.That(mining.CurrentCrystalTier, Is.EqualTo(1));
+            Assert.That(mining.CrystalStorage.MaxTotalBlocksCapacity, Is.EqualTo(500));
+            Assert.That(mining.IsCrystalActive, Is.True);
+        }
+#endif
     }
 }

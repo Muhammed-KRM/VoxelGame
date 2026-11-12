@@ -1,0 +1,33 @@
+Çoğu oyunun atladığı en büyük gerçek şu: İnsanoğlu binlerce yıl boyunca demiri eritebilecek sıcaklığa (1538 °C) ulaşamadı. Bu yüzden gerçek bir hayatta kalma (survival) ortamında taş ve kilden yaptığın ilkel bir fırına cevher atıp içinden **sıvı metal akmasını ve kalıba dökülüp külçe çıkmasını bekleyemezsin**.
+
+İlkel şartlarda demir üretimi **eritmeyle değil**, kimyasal indirgeme ve dövmeyle (tarihsel adıyla **Bloomery / Sünger Demir** yöntemiyle) yapılır. Gerçekçi bir oyun mekaniği için bu süreci şu 5 aşamaya bölebilirsin:
+
+**1. Cevher ve Yakıt Hazırlığı (Sadece Odun Yetmez)**
+
+* **Odun Kömürü (Charcoal):** Normal kamp ateşi veya kuru odun en fazla 600-800 °C ısı verir; bu da demir cevherini sadece ısıtır. Önce odunları havasız ortamda (toprak altı çukuru veya kil yığını içinde) saatlerce için için yakarak saf karbon olan **odun kömürü** elde etmen gerekir.
+* **Kavurma ve Kırma (Roasting & Crushing):** Madenden veya dere yatağından (bataklık demiri / hematit / manyetit) çıkan cevher kayaları önce ateşte kavrulur. Bu işlem taşın içindeki nemi ve kükürdü atar, taşı çatlatıp kırılgan hale getirir. Ardından taşla vurularak bezelye/ceviz büyüklüğünde parçalara ayrılır (yüzey alanını artırmak için).
+
+**2. İlkel İzabe Ocağı ve Körük (Bloomery Furnace)**
+
+* Kil, kum ve samandan (çatlamayı önlemek için) yaklaşık 1-1,5 metre yüksekliğinde baca şeklinde silindirik bir fırın inşa edilir.
+* Alt kısmına hava üflemek için kilden bir boru (**tuyere**) ve buna bağlı deri/ahşap bir **körük (bellows)** takılır. Körük olmadan gereken 1200 °C sıcaklığa çıkılamaz.
+
+**3. İzabe Süreci (Eritme Değil, İndirgeme)**
+
+* Fırın yakılır ve üstten sırayla bir kat odun kömürü, bir kat kırılmış cevher atılır. Saatlerce aralıksız körük basılır.
+* Yanan kömürden çıkan karbonmonoksit gazı, cevherin içindeki oksijeni çalar (kimyasal indirgeme).
+* Sıcaklık ~1200-1250 °C civarındadır. Bu sıcaklıkta **taş ve kum erir** (buna **cüruf / slag** denir ve fırının altından lav gibi akar), ancak **demir erimez**. Demir parçacıkları hamur gibi yumuşayıp birbirine yapışarak fırının dibinde birikir.
+
+**4. Sünger Demirin (Bloom) Çıkarılması**
+
+* Saatler süren yanmanın sonunda fırının ön duvarı kırılır ve içeriden kor halinde, gözenekli, içi erimiş taş (cüruf) dolu, süngere benzeyen ağır bir kütle çıkarılır. Buna **sünger demir (iron bloom)** denir.
+* Bu kütle doğrudan kullanılamaz; çekicin altında vurulsa dağılır veya kırılır.
+
+**5. Dövme ve Katlama (Wrought Iron / Dövme Demir)**
+
+* Kor halindeki sünger demir hemen bir örsün (veya düz, sert bir granit kayanın) üzerine alınır ve çekiçle dövülür.
+* Her darbede gözeneklerin içindeki sıvı cüruf (taş artıkları) etrafa kıvılcımlar saçarak fışkırır ve demir lifleri birbirine kaynar.
+* Kütle soğudukça tekrar ocağa sokulur, ısıtılır, dövülür, uzatılır ve kendi üzerine katlanır. Ancak defalarca tekrarlanan bu işlemden sonra elinde alet veya silah yapabileceğin sağlam bir **dövme demir bar (külçe değil, dövülmüş çubuk/lama)** kalır.
+
+**Oyun Tasarımı İçin İpucu (Neden Külçe Yok?):**
+Eğer demiri gerçekten sıvılaştırıp kalıba dökerek "külçe" yapmak istersen (1500+ °C, yani yüksek fırın), demir aşırı miktarda karbon emer ve **pik demir (dökme demir)** olur. Dökme demir tencere yapmak için harikadır ama çok kırılgandır; ondan balta veya bıçak yapıp ağaca vurursan cam gibi tuzla buz olur. Oyunda oyuncuya fırından çıkardığı "Sünger Demiri" (Bloom) örste mini-game veya dayanıklılık (stamina) harcayarak dövdürüp cürufundan arındırtman hem çok özgün hem de tarihsel/bilimsel olarak %100 gerçekçi bir mekanik olur.

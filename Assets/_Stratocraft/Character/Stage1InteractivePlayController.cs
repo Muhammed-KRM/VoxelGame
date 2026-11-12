@@ -6,8 +6,11 @@ using System.IO;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Diagnostics;
 using Stratocraft.Character.Systems;
+using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
 using Stratocraft.Core.Persistence;
+using Stratocraft.Inventory.Data;
+using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Diagnostics;
@@ -228,8 +231,28 @@ namespace Stratocraft.Character
         private int _lastConnectedAirVoxels = EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
         private Vector3 _weaponBaseLocalPos = new Vector3(0.32f, -0.24f, 0.52f);
         private Quaternion _weaponBaseLocalRot = Quaternion.Euler(18f, -14f, -10f);
-        private GUIStyle? _hudBoxStyle, _hudRightBoxStyle, _crosshairStyle, _tooltipStyle, _hotbarStyle, _thermalAlertStyle;
+        private GUIStyle? _hudBoxStyle, _hudRightBoxStyle, _crosshairStyle, _tooltipStyle, _hotbarStyle, _thermalAlertStyle, _interactionPromptStyle;
         private readonly List<(int cx, int cz)> _chunksToUnloadScratch = new(32);
+        private readonly HashSet<(int cx, int cz)> _spawnedForageChunks = new();
+        private readonly HashSet<(int cx, int cz)> _spawnedBushChunks = new();
+        private readonly List<WorldBushInstance> _worldBushes = new(96);
+        private Transform? _worldFloraContainer;
+        private readonly List<Vector3Int> _placedThermalStations = new(16);
+
+        private sealed class WorldBushInstance
+        {
+            public GameObject? RootGo;
+            public MeshFilter? MeshFilter;
+            public Vector3 WorldCenter;
+            public PhysicalItemShapeDna ShapeDna;
+            public int ChunkX;
+            public int ChunkZ;
+            public byte SubMaterialId;
+            public bool HasBerries;
+            public bool IsDryDesert;
+            public bool IsSwampReed;
+            public bool IsHarvested;
+        }
 
         /// <summary>Sahnedeki bir voksel chunk'ini canli CSG, Domino ve .sregion sistemlerine kaydeder.</summary>
         public void RegisterEditableChunk(
@@ -568,7 +591,10 @@ namespace Stratocraft.Character
             HandleCameraModeAndPersistenceHotkeys();
             if (_holsterCtrl.IsCreativeMode)
             {
-                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                if (_movementBridge.Vitals.CurrentHp < 35f)
+                {
+                    _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                }
                 _movementBridge.Vitals.LungOxygenPercent = 100f;
                 _miningCtrl.CurrentToolDurability = _miningCtrl.MaxToolDurability;
             }
@@ -591,6 +617,7 @@ namespace Stratocraft.Character
             int pCx = Mathf.FloorToInt(transform.position.x / 16f);
             int pCz = Mathf.FloorToInt(transform.position.z / 16f);
             UpdateNearPlayerColliderRing(pCx, pCz);
+            PopulateNearbySurfaceForagePickups(pCx, pCz);
 
             // 1. Oyuncunun arkada biraktigi uzaktaki dinamik chunk'lari Destroy() etmeden Sifir-GC _chunkPool havuzuna geri al
             // (Arka planda calisan uzak mesh orme gorevi dizi referanslarini okuyorsa 1 kare bekle ki havuz tamponu ezilmesin)
@@ -1249,10 +1276,7 @@ namespace Stratocraft.Character
                     }
                     else if (curCell.Type != FluidType.None && curCell.Mass > 0)
                     {
-                        int bed255 = FluidPorosityUtility.ComputeCellBedElevationUnits255(
-                            vox[((wy - 1) << 8) | col], vox[(wy << 8) | col], wy);
-                        float bedY = bed255 / 255.0f;
-                        float surfY = Mathf.Min(wy + 0.98f, bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness(curCell.Mass, 255));
+                        Stage1PlayerMovementBridge.ComputeEffectiveFluidSurfaceAndBed(fl.AsSpan(), vox.AsSpan(), col, wy, out _, out float surfY);
                         if (camPos.y < surfY + 0.05f)
                         {
                             camSubmersion01 = Mathf.Clamp01((surfY + 0.05f - camPos.y) / 0.22f);
@@ -1465,15 +1489,69 @@ namespace Stratocraft.Character
                     }
                 }
             }
-            else if (_holsterCtrl.ActiveHolsterSlot == 10)
+            else if (_holsterCtrl.ActiveHolsterSlot == 10 || _holsterCtrl.ActiveHolsterSlot == 11)
             {
-                if (Input.GetMouseButtonDown(1) && _miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 4.0f)
+                if (Input.GetMouseButtonDown(1) && _miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 4.5f)
                 {
-                    if (!_holsterCtrl.IsCreativeMode)
+                    bool isKiln = _holsterCtrl.ActiveHolsterSlot == 11;
+                    Vector3Int placeCoord = _miningCtrl.PlacementVoxelCoord;
+                    int wx = placeCoord.x, wy = placeCoord.y, wz = placeCoord.z;
+                    if (wy <= 1 || wy >= MaxEditableVoxelY - 1)
                     {
-                        _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
+                        _miningCtrl.LastFeedbackText = "Yükseklik sınırı dışında kurulum yapılamaz!";
+                        return;
                     }
-                    _miningCtrl.LastFeedbackText = "Kamp Ateşi Kuruldu! Isınma ve Pişirme Alanı Aktif.";
+
+                    if (!Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(
+                            wx, wy, wz,
+                            transform.position.x, transform.position.y, transform.position.z,
+                            _movementBridge.MovementState.CapsuleHeightMeters))
+                    {
+                        _miningCtrl.LastFeedbackText = "KENDİ GÖVDENİZİN İÇİNE İSTASYON KURAMAZSINIZ! Bir adım geri çekilin.";
+                        return;
+                    }
+
+                    int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+                    int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+                    int lx = wx - cx * 16;
+                    int lz = wz - cz * 16;
+                    if (_worldChunks.TryGetValue((cx, cz), out uint[]? vox) && vox != null)
+                    {
+                        int cellIdx = (wy << 8) | (lz << 4) | lx;
+                        if (VoxelBitUtility.GetMaterialId(vox[cellIdx]) != MaterialIdCatalog.Air)
+                        {
+                            _miningCtrl.LastFeedbackText = "Hedef hücre dolu! Açık bir zemin üstüne sağ tıklayın.";
+                            return;
+                        }
+
+                        byte stationMat = isKiln ? MaterialIdCatalog.PrimitiveStoneKilnBlock : MaterialIdCatalog.CampfireBlock;
+                        byte stationShape = isKiln ? (byte)1 : (byte)6;
+                        vox[cellIdx] = VoxelBitUtility.PackStandard(
+                            stationMat, VoxelBitUtility.FullDensity, stationShape, 0, BlokKokenDurumu.OyuncuItemBlogu, 0);
+
+                        _dirtyChunks.Add((cx, cz));
+                        if (lx == 0) _dirtyChunks.Add((cx - 1, cz));
+                        if (lx == 15) _dirtyChunks.Add((cx + 1, cz));
+                        if (lz == 0) _dirtyChunks.Add((cx, cz - 1));
+                        if (lz == 15) _dirtyChunks.Add((cx, cz + 1));
+                        WakeChunkAndNeighborsFluid((cx, cz));
+
+                        Vector3Int coord = new Vector3Int(wx, wy, wz);
+                        if (!_placedThermalStations.Contains(coord))
+                        {
+                            _placedThermalStations.Add(coord);
+                        }
+
+                        if (!_holsterCtrl.IsCreativeMode)
+                        {
+                            _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
+                            _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge);
+                        }
+
+                        _miningCtrl.LastFeedbackText = isKiln
+                            ? "🔥 İLKEL TAŞ İZABE FIRINI KURULDU! (+24°C Isı | Yanında [E] ile 2x Bakır/Demir Cevheri + Yakıt eritin!)"
+                            : "🔥 KAMP ATEŞİ KURULDU! (+18°C Termal Koruma ve Kurutma Alanı Aktif!)";
+                    }
                 }
             }
         }
@@ -1481,8 +1559,17 @@ namespace Stratocraft.Character
         private void StepHolsterBackpackAndMining(float dt)
         {
             bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.IsCarryingShoulderLog || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
+            bool consumedBushInteract = false;
+            if (!uiBlocked && (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)))
+            {
+                if (_miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f) < 0)
+                {
+                    consumedBushInteract = TryHarvestAimedWorldBush();
+                }
+            }
+
             GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
-            if (!_escapeMenuCtrl.IsMenuOpen)
+            if (!_escapeMenuCtrl.IsMenuOpen && !consumedBushInteract)
             {
                 _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
@@ -1497,6 +1584,10 @@ namespace Stratocraft.Character
                 transform.position, _movementBridge.MovementState.CapsuleHeightMeters,
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
                 _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl);
+            _miningCtrl.StepHandSoilScooping(
+                dt, PlayerCamera, transform.position,
+                _movementBridge.MovementState.Stance == CharacterStance.Crouching,
+                _worldChunks, _fluidChunks, _dirtyChunks, _holsterCtrl, _combatBridge);
             _miningCtrl.StepDroppedWorldItems(dt, transform.position, _worldChunks, _holsterCtrl);
         }
 
@@ -1527,6 +1618,21 @@ namespace Stratocraft.Character
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
             bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
+            if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsCarryingShoulderLog &&
+                _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
+            {
+                if (slot == 0)
+                {
+                    if (!TryHarvestAimedWorldBush())
+                    {
+                        _combatBridge.TryTriggerBareFistPunch(_rigAnimator.PlayerLeftArmSevered);
+                    }
+                }
+                else if (slot == 1 || slot == 3)
+                {
+                    TryHarvestAimedWorldBush();
+                }
+            }
             float sens = Stage1GameSettings.MouseSensitivity;
             float ySign = Stage1GameSettings.InvertMouseY ? -1.0f : 1.0f;
             float rawMouseX = lockCamForUi ? 0f : Input.GetAxis("Mouse X");
@@ -1566,11 +1672,17 @@ namespace Stratocraft.Character
                 ? PickaxeVisualRoot.transform
                 : (slot == 3 && AxeVisualRoot != null
                     ? AxeVisualRoot.transform
-                    : ((slot >= 4 && slot <= 6) && _holsterCtrl.HeldMaterialBlockTransform != null
+                    : (((slot >= 4 && slot <= 7) || slot == 10 || slot == 11) && _holsterCtrl.HeldMaterialBlockTransform != null
                         ? _holsterCtrl.HeldMaterialBlockTransform
                         : (slot == 1 ? WeaponPivot : null)));
             _combatBridge.ApplyInertialWeaponTransform(
                 activeTool, PlayerCamera, _weaponBaseLocalPos, _weaponBaseLocalRot, _isFirstPersonMode, _worldChunks, slot);
+            _combatBridge.StepFirstPersonBareFistVisuals(
+                PlayerCamera, SharedVoxelMaterial, _isFirstPersonMode, slot, _miningCtrl.IsCrystalActive);
+            _creatureBridge.EvaluateBareFistPunch(
+                _combatBridge, PlayerCamera, transform,
+                ref _movementBridge.Vitals, ref _movementBridge.MovementState,
+                _miningCtrl, _worldChunks, SharedVoxelMaterial, _feedbackArenaBridge);
 
             if (canCombat)
             {
@@ -1596,7 +1708,8 @@ namespace Stratocraft.Character
                 transform, PlayerBodyRoot, PlayerCamera, LeftWristCrystalTransform,
                 in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
                 _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
-                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks);
+                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
+                _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01);
         }
 
         /// <summary>FPS modunda kask/basi ShadowsOnly yapar, TPS modunda (F5) tam gorunur kilar; eklemli rig kuruldugunda statik kok heykeli gizler.</summary>
@@ -1882,7 +1995,11 @@ namespace Stratocraft.Character
                 _dirtyFluidChunks.Add(keys[i]);
             }
             RebuildDistantHorizonShellsForCurrentCenter(0, 0);
-            _miningCtrl.LastFeedbackText = $"[F7] YENI RASTGELE HARITA TOHUMU URETILDI (Seed={nextSeed} | {keys.Count} Gercek 3B VoxelChunk + 100x Ufuk Guncellendi)";
+            _spawnedForageChunks.Clear();
+            _spawnedBushChunks.Clear();
+            ClearAllWorldBushes();
+            _miningCtrl.ClearAllDroppedWorldItems();
+            _miningCtrl.LastFeedbackText = $"[F7] YENI RASTGELE HARITA TOHUMU URETILDI (Seed={nextSeed} | {keys.Count} Gercek 3B VoxelChunk + Biyom Florasi Guncellendi)";
         }
 
         private void SaveAllChunksToRegionStore()
@@ -1942,8 +2059,12 @@ namespace Stratocraft.Character
             if (_oxygenSampleTimer <= 0f)
             {
                 _oxygenSampleTimer = 0.30f;
-                Vector3 head = transform.position + Vector3.up * 1.4f;
-                int wx = Mathf.FloorToInt(head.x), wy = Mathf.Clamp(Mathf.FloorToInt(head.y), 0, 255), wz = Mathf.FloorToInt(head.z);
+                Vector3 head = transform.position + Vector3.up * 1.52f;
+                int wx = Mathf.FloorToInt(head.x);
+                int wy = _movementBridge.LastBreathAirVoxelY > 0
+                    ? Mathf.Clamp(_movementBridge.LastBreathAirVoxelY, 0, 255)
+                    : Mathf.Clamp(Mathf.FloorToInt(head.y), 0, 255);
+                int wz = Mathf.FloorToInt(head.z);
                 int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
                 if (_worldChunks.TryGetValue((cx, cz), out uint[]? raw))
                 {
@@ -1996,6 +2117,37 @@ namespace Stratocraft.Character
             // Paket 4: A-Kararli Analitik Ustel (Exponential) Vucut Cekirdek Isisi & Islaklik (ThermalAndBiologySystem)
             float lavaDist = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(8.5f, -7.2f));
             float heatBonus = lavaDist < 7.5f ? (1f - lavaDist / 7.5f) * 26f : 0f;
+            if (_placedThermalStations.Count > 0)
+            {
+                Vector3 pPos = transform.position + Vector3.up * 0.8f;
+                for (int i = _placedThermalStations.Count - 1; i >= 0; i--)
+                {
+                    Vector3Int st = _placedThermalStations[i];
+                    int scx = st.x >= 0 ? (st.x >> 4) : -(((-st.x) + 15) >> 4);
+                    int scz = st.z >= 0 ? (st.z >> 4) : -(((-st.z) + 15) >> 4);
+                    if (_worldChunks.TryGetValue((scx, scz), out uint[]? stVox) && stVox != null)
+                    {
+                        byte stMat = VoxelBitUtility.GetMaterialId(stVox[(st.y << 8) | ((st.z - scz * 16) << 4) | (st.x - scx * 16)]);
+                        if (stMat != MaterialIdCatalog.CampfireBlock && stMat != MaterialIdCatalog.PrimitiveStoneKilnBlock)
+                        {
+                            _placedThermalStations.RemoveAt(i);
+                            continue;
+                        }
+
+                        float dist = Vector3.Distance(pPos, new Vector3(st.x + 0.5f, st.y + 0.5f, st.z + 0.5f));
+                        if (dist < 5.8f)
+                        {
+                            float peak = stMat == MaterialIdCatalog.PrimitiveStoneKilnBlock ? 24.0f : 18.0f;
+                            float bonus = (1f - dist / 5.8f) * peak;
+                            if (bonus > heatBonus) heatBonus = bonus;
+                            if (dist < 3.5f && _movementBridge.Vitals.SubmergedDepthMeters <= 0.05f)
+                            {
+                                _movementBridge.Vitals.Wetness01 = Mathf.Max(0f, _movementBridge.Vitals.Wetness01 - 0.14f * dt);
+                            }
+                        }
+                    }
+                }
+            }
             bool isEnclosedCave = _lastConnectedAirVoxels < EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
             float biomeBaseTemp = StratocraftFloatingIslandWorldGen.SampleBiomeAmbientTemperatureCelsius(
                 transform.position.x, transform.position.y, transform.position.z);
@@ -2036,6 +2188,308 @@ namespace Stratocraft.Character
 
             // Usume veya sicaklama yuzunden karakterin HP'si 0'a inip yere dusmesi (BleedOutCrawl) ve bir daha kalkamamasi engellenir!
             _movementBridge.Vitals.CurrentHp = Mathf.Max(20.0f, _movementBridge.Vitals.CurrentHp);
+        }
+
+        private void ClearAllWorldBushes()
+        {
+            for (int i = 0; i < _worldBushes.Count; i++)
+            {
+                if (_worldBushes[i].RootGo != null)
+                {
+                    UnityEngine.Object.Destroy(_worldBushes[i].RootGo);
+                }
+            }
+            _worldBushes.Clear();
+        }
+
+        private void PopulateNearbySurfaceForagePickups(int pCx, int pCz)
+        {
+            int seed = StratocraftFloatingIslandWorldGen.ActiveWorldSeed;
+
+            // Uzakta kalan (> 7 chunk) çalıları temizle ki bellek sabit kalsın ve geri dönüldüğünde yenilenebilsin
+            for (int i = _worldBushes.Count - 1; i >= 0; i--)
+            {
+                WorldBushInstance b = _worldBushes[i];
+                if (Mathf.Abs(b.ChunkX - pCx) > 7 || Mathf.Abs(b.ChunkZ - pCz) > 7)
+                {
+                    if (b.RootGo != null) UnityEngine.Object.Destroy(b.RootGo);
+                    _spawnedBushChunks.Remove((b.ChunkX, b.ChunkZ));
+                    _worldBushes.RemoveAt(i);
+                }
+            }
+
+            if (_worldFloraContainer == null)
+            {
+                var containerGo = GameObject.Find("01_Faz2_BiomeFlora_And_WildBushes");
+                if (containerGo == null) containerGo = new GameObject("01_Faz2_BiomeFlora_And_WildBushes");
+                _worldFloraContainer = containerGo.transform;
+            }
+
+            for (int dz = -2; dz <= 2; dz++)
+            {
+                for (int dx = -2; dx <= 2; dx++)
+                {
+                    int cx = pCx + dx;
+                    int cz = pCz + dz;
+                    if (!_worldChunks.ContainsKey((cx, cz))) continue;
+
+                    // 1) Yüzey Doğal Fiziksel Eşyaları (Taş, Çakmaktaşı, Dal, Yaprak, Lif, Kil, Kum, Kuvars)
+                    if (!_spawnedForageChunks.Contains((cx, cz)) && _miningCtrl.ActiveDroppedWorldItemCount < 168)
+                    {
+                        _spawnedForageChunks.Add((cx, cz));
+                        for (int slot = 0; slot < 5; slot++)
+                        {
+                            if (_miningCtrl.ActiveDroppedWorldItemCount >= 176) break;
+                            if (!StratocraftFloatingIslandWorldGen.TryGetBiomeForageNode(
+                                    cx, cz, seed, slot, out int wx, out int wz,
+                                    out StratocraftFloatingIslandWorldGen.BiomeForageDropKind dropKind))
+                            {
+                                continue;
+                            }
+
+                            float estY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+                            float spawnY = estY + 0.18f;
+                            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                                    wx + 0.5f, wz + 0.5f, estY + 0.6f, 3.8f, _worldChunks, out float exactSurfY, out _))
+                            {
+                                spawnY = exactSurfY + 0.10f;
+                            }
+
+                            (InventoryItemKind kind, byte subMat, int count) = dropKind switch
+                            {
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.FlintStone =>
+                                    (InventoryItemKind.FlintStone, MaterialIdCatalog.Basalt, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.Stick =>
+                                    (InventoryItemKind.Stick, MaterialIdCatalog.OakWood, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.LeafPile =>
+                                    (InventoryItemKind.LeafPile, MaterialIdCatalog.Grass, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.PlantFiber =>
+                                    (InventoryItemKind.PlantFiber, MaterialIdCatalog.GlowingMoss, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.RoughStone =>
+                                    (InventoryItemKind.RoughStoneChunk, MaterialIdCatalog.Stone, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.BasaltStone =>
+                                    (InventoryItemKind.RoughStoneChunk, MaterialIdCatalog.Basalt, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.ClayLump =>
+                                    (InventoryItemKind.ClayLump, MaterialIdCatalog.Clay, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.SandPile =>
+                                    (InventoryItemKind.SandPile, MaterialIdCatalog.Sand, 1),
+                                StratocraftFloatingIslandWorldGen.BiomeForageDropKind.QuartzCluster =>
+                                    (InventoryItemKind.OreChunk, MaterialIdCatalog.QuartzGem, 1),
+                                _ => (InventoryItemKind.Empty, (byte)0, 0)
+                            };
+                            if (kind == InventoryItemKind.Empty) continue;
+
+                            PhysicalItemShapeDna dna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                                wx, Mathf.RoundToInt(spawnY * 2f), wz, (uint)(seed ^ (slot * 7919)));
+                            float jitterX = ((dna.EffectiveSeed & 0x3Fu) / 63f - 0.5f) * 0.45f;
+                            float jitterZ = (((dna.EffectiveSeed >> 6) & 0x3Fu) / 63f - 0.5f) * 0.45f;
+                            _miningCtrl.SpawnPhysicalWorldItem(
+                                new Vector3(wx + 0.5f + jitterX, spawnY, wz + 0.5f + jitterZ),
+                                kind,
+                                subMat,
+                                count,
+                                dna,
+                                SharedVoxelMaterial,
+                                customLabel: null,
+                                isNaturalRestingSpawn: true);
+                        }
+                    }
+
+                    // 2) Kırılabilir 3B Yabani Çalılar (Çorak Biyomlarda 0 Adet!)
+                    if (!_spawnedBushChunks.Contains((cx, cz)) && _worldBushes.Count < 88)
+                    {
+                        _spawnedBushChunks.Add((cx, cz));
+                        for (int bushSlot = 0; bushSlot < 3; bushSlot++)
+                        {
+                            if (_worldBushes.Count >= 92) break;
+                            if (!StratocraftFloatingIslandWorldGen.TryGetBiomeBushNode(
+                                    cx, cz, seed, bushSlot, out int bwx, out int bwz,
+                                    out bool hasBerries, out bool isDryDesert, out bool isSwampReed))
+                            {
+                                continue;
+                            }
+
+                            float estY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(bwx, bwz);
+                            float surfY = estY;
+                            Vector3 surfNormal = Vector3.up;
+                            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                                    bwx + 0.5f, bwz + 0.5f, estY + 0.6f, 4.0f, _worldChunks, out float exactY, out Vector3 exactN))
+                            {
+                                surfY = exactY;
+                                surfNormal = exactN;
+                            }
+
+                            byte bushSubMat = isDryDesert
+                                ? MaterialIdCatalog.OakWood
+                                : (isSwampReed ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Grass);
+                            uint flags = hasBerries ? PhysicalItemShapeDna.FlagHasBerries : 0u;
+                            var bushDna = new PhysicalItemShapeDna(
+                                (uint)Mathf.Abs((bwx * 73856093) ^ (bwz * 19349663) ^ seed ^ (bushSlot * 12582917)) | 1u,
+                                0UL,
+                                1.0f,
+                                20,
+                                flags);
+
+                            Mesh bushMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
+                                PhysicalItemArchetype.WildBushFoliage, bushSubMat, in bushDna, out Vector3 bushScale);
+                            if (isDryDesert) bushScale *= 0.78f;
+                            else if (isSwampReed) bushScale = new Vector3(bushScale.x * 0.72f, bushScale.y * 1.28f, bushScale.z * 0.72f);
+
+                            Vector3 pos = new Vector3(bwx + 0.5f, surfY + bushScale.y * 0.36f, bwz + 0.5f);
+                            var bushGo = new GameObject($"WildBush_{cx}_{cz}_{bushSlot}");
+                            bushGo.transform.SetParent(_worldFloraContainer, false);
+                            var mf = bushGo.AddComponent<MeshFilter>();
+                            mf.sharedMesh = bushMesh;
+                            var mr = bushGo.AddComponent<MeshRenderer>();
+                            if (SharedVoxelMaterial != null) mr.sharedMaterial = SharedVoxelMaterial;
+
+                            float yaw = bushDna.EffectiveSeed % 360u;
+                            Quaternion slopeAlign = Quaternion.FromToRotation(Vector3.up, Vector3.Slerp(Vector3.up, surfNormal, 0.45f));
+                            bushGo.transform.SetPositionAndRotation(pos, slopeAlign * Quaternion.Euler(0f, yaw, 0f));
+                            bushGo.transform.localScale = bushScale;
+
+                            _worldBushes.Add(new WorldBushInstance
+                            {
+                                RootGo = bushGo,
+                                MeshFilter = mf,
+                                WorldCenter = pos,
+                                ShapeDna = bushDna,
+                                ChunkX = cx,
+                                ChunkZ = cz,
+                                SubMaterialId = bushSubMat,
+                                HasBerries = hasBerries,
+                                IsDryDesert = isDryDesert,
+                                IsSwampReed = isSwampReed,
+                                IsHarvested = false
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        private int FindAimedUnharvestedBushIndex(float maxReach = 2.75f)
+        {
+            if (_worldBushes.Count == 0) return -1;
+            Vector3 rayOrigin = PlayerCamera != null ? PlayerCamera.transform.position : transform.position + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = PlayerCamera != null ? PlayerCamera.transform.forward : transform.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            Vector3 playerChest = transform.position + new Vector3(0f, 0.9f, 0f);
+
+            for (int i = 0; i < _worldBushes.Count; i++)
+            {
+                WorldBushInstance b = _worldBushes[i];
+                if (b.IsHarvested || b.RootGo == null) continue;
+
+                float distPlayer = Vector3.Distance(playerChest, b.WorldCenter);
+                float distCam = Vector3.Distance(rayOrigin, b.WorldCenter);
+                if (distPlayer > maxReach && distCam > maxReach + 0.45f) continue;
+
+                Vector3 toBush = b.WorldCenter - rayOrigin;
+                float along = Vector3.Dot(toBush, rayDir);
+                if (along < -0.1f || along > maxReach + 0.55f) continue;
+
+                Vector3 closest = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perp = Vector3.Distance(closest, b.WorldCenter);
+                if (perp > 0.72f) continue;
+
+                float score = perp * 2.1f + along * 0.35f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        private bool TryHarvestAimedWorldBush()
+        {
+            int idx = FindAimedUnharvestedBushIndex(2.75f);
+            if (idx < 0) return false;
+
+            WorldBushInstance bush = _worldBushes[idx];
+            bush.IsHarvested = true;
+            if (bush.MeshFilter != null && bush.RootGo != null)
+            {
+                Mesh bareMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
+                    PhysicalItemArchetype.WildBushBareRoots, MaterialIdCatalog.OakWood, in bush.ShapeDna, out Vector3 rootScale);
+                bush.MeshFilter.sharedMesh = bareMesh;
+                bush.RootGo.transform.localScale = rootScale;
+                bush.RootGo.transform.position = new Vector3(
+                    bush.WorldCenter.x,
+                    bush.WorldCenter.y - 0.16f,
+                    bush.WorldCenter.z);
+            }
+
+            PhysicalCharacterControllerSystem.ConsumeStamina(
+                ref _movementBridge.Vitals,
+                ref _movementBridge.MovementState,
+                1.5f * Stage1GameSettings.StaminaDrainMultiplier);
+
+            Vector3 baseSpawn = bush.WorldCenter + new Vector3(0f, 0.18f, 0f);
+            int wx = Mathf.RoundToInt(baseSpawn.x);
+            int wy = Mathf.RoundToInt(baseSpawn.y);
+            int wz = Mathf.RoundToInt(baseSpawn.z);
+            uint s = bush.ShapeDna.EffectiveSeed;
+
+            if (bush.IsDryDesert)
+            {
+                var stickDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx, wy, wz, s ^ 0x11u);
+                _miningCtrl.SpawnPhysicalWorldItem(baseSpawn, InventoryItemKind.Stick, MaterialIdCatalog.OakWood, 1, stickDna, SharedVoxelMaterial);
+                _miningCtrl.LastFeedbackText = "🌿 KURU ÇALI KIRILDI (-1.5 EP): Yere 1x Kuru Dal düştü ([E] ile al)!";
+            }
+            else if (bush.IsSwampReed)
+            {
+                for (int k = 0; k < 2; k++)
+                {
+                    var fibDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx + k, wy, wz, s ^ (uint)(0x21 + k * 17));
+                    _miningCtrl.SpawnPhysicalWorldItem(
+                        baseSpawn + new Vector3((k - 0.5f) * 0.18f, 0.05f, 0f),
+                        InventoryItemKind.PlantFiber, MaterialIdCatalog.GlowingMoss, 1, fibDna, SharedVoxelMaterial);
+                }
+                var stickDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx, wy, wz + 1, s ^ 0x55u);
+                _miningCtrl.SpawnPhysicalWorldItem(baseSpawn, InventoryItemKind.Stick, MaterialIdCatalog.OakWood, 1, stickDna, SharedVoxelMaterial);
+                _miningCtrl.LastFeedbackText = "🌿 SAZLIK ÇALISI YOLUNDU (-1.5 EP): Yere 2x Bitki Lifi + 1x Dal düştü ([E] ile al)!";
+            }
+            else
+            {
+                for (int k = 0; k < 2; k++)
+                {
+                    var stickDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx + k, wy, wz, s ^ (uint)(0x31 + k * 19));
+                    _miningCtrl.SpawnPhysicalWorldItem(
+                        baseSpawn + new Vector3((k - 0.5f) * 0.20f, 0.04f, 0.06f),
+                        InventoryItemKind.Stick, MaterialIdCatalog.OakWood, 1, stickDna, SharedVoxelMaterial);
+
+                    var leafDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx, wy + k, wz + k, s ^ (uint)(0x71 + k * 23));
+                    _miningCtrl.SpawnPhysicalWorldItem(
+                        baseSpawn + new Vector3(0.06f, 0.06f, (k - 0.5f) * 0.20f),
+                        InventoryItemKind.LeafPile, MaterialIdCatalog.Grass, 1, leafDna, SharedVoxelMaterial);
+                }
+
+                var fiberDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx - 1, wy, wz, s ^ 0x99u);
+                _miningCtrl.SpawnPhysicalWorldItem(baseSpawn, InventoryItemKind.PlantFiber, MaterialIdCatalog.GlowingMoss, 1, fiberDna, SharedVoxelMaterial);
+
+                if (bush.HasBerries)
+                {
+                    var berryDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx, wy + 1, wz - 1, s ^ 0xBBu);
+                    _miningCtrl.SpawnPhysicalWorldItem(
+                        baseSpawn + new Vector3(0f, 0.10f, 0f),
+                        InventoryItemKind.FoodWildBerries, MaterialIdCatalog.Grass, 1, berryDna, SharedVoxelMaterial);
+                    _miningCtrl.LastFeedbackText = "🍓 BÖĞÜRTLENLİ ÇALI YOLUNDU (-1.5 EP): Dal, Yaprak, Lif ve Yabani Böğürtlen yere saçıldı ([E] ile al)!";
+                }
+                else
+                {
+                    _miningCtrl.LastFeedbackText = "🌿 YABANİ ÇALI YOLUNDU (-1.5 EP): Kuru Dal, Yaprak Demeti ve Bitki Lifi yere saçıldı ([E] ile al)!";
+                }
+            }
+
+            return true;
         }
 
         private void UpdateNearPlayerColliderRing(int pCx, int pCz)
@@ -3400,6 +3854,58 @@ namespace Stratocraft.Character
                     ? "◎"
                     : (_combatBridge.IsChamberingOrSwinging ? $"✦ ({_combatBridge.EdgeAlignment01 * 100f:0}%)" : "+");
                 GUI.Label(new Rect(cx - 45f, cy - 15f, 90f, 30f), reticle, _crosshairStyle);
+
+                _interactionPromptStyle ??= new GUIStyle(GUI.skin.label)
+                {
+                    alignment = TextAnchor.UpperCenter,
+                    fontSize = 13,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(0.96f, 0.94f, 0.72f, 0.96f) }
+                };
+
+                string? prompt = null;
+                if (_miningCtrl.HandScoopProgress01 > 0.02f)
+                {
+                    prompt = $"🤲 Avuçla Toprak Kazılıyor: %{Mathf.RoundToInt(_miningCtrl.HandScoopProgress01 * 100f)} ([E] Basılı Tutun)";
+                }
+                else
+                {
+                    int aimedDropIdx = _miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f);
+                    if (aimedDropIdx >= 0 && _miningCtrl.TryGetDroppedWorldItemLabel(aimedDropIdx, out string dropLabel, out int dropCnt))
+                    {
+                        prompt = dropCnt > 1 ? $"[E] Al: {dropLabel} (x{dropCnt})" : $"[E] Al: {dropLabel}";
+                    }
+                    else
+                    {
+                        int bushIdx = FindAimedUnharvestedBushIndex(2.75f);
+                        if (bushIdx >= 0)
+                        {
+                            WorldBushInstance b = _worldBushes[bushIdx];
+                            string bName = b.HasBerries
+                                ? "Böğürtlenli Yabani Çalı"
+                                : (b.IsDryDesert ? "Kuru Çöl Çalısı" : (b.IsSwampReed ? "Bataklık Sazlığı" : "Yabani Çalı"));
+                            prompt = $"[Sol Tık / E] {bName} Topla";
+                        }
+                        else if (_miningCtrl.CurrentCrystalTier == 0)
+                        {
+                            int sel = _holsterCtrl.InventoryUi.SelectedHotbarIndex;
+                            if (sel >= 0 && sel < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount)
+                            {
+                                VisualInventorySlot hs = _holsterCtrl.InventoryUi.HotbarSlots[sel];
+                                if ((hs.Kind == InventoryItemKind.OreChunk || hs.Kind == InventoryItemKind.VoxelBlock) &&
+                                    hs.SubId == MaterialIdCatalog.QuartzGem && hs.Count > 0)
+                                {
+                                    prompt = $"[C / Sağ Tık] Madde Kristaline Kuvars Yedir ({_miningCtrl.FedAwakeningQuartzCount}/{Stage1MatterCrystalAndMiningController.RequiredQuartzToAwaken})";
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(prompt))
+                {
+                    GUI.Label(new Rect(cx - 260f, cy + 18f, 520f, 28f), prompt, _interactionPromptStyle);
+                }
             }
 
             // Paket 1: Minecraft/ARK Tarzi 9'lu Kare Hotbar + 24-Slot Envanter ([I]/Tab) + 16-Slot Sandik ([E]) + Canli Vitals HUD Barlari

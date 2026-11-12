@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
+using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
@@ -48,6 +49,7 @@ namespace Stratocraft.Character
             public InventoryItemKind CachedKind;
             public byte CachedSubId;
             public int CachedCount;
+            public uint CachedShapeSeed;
         }
 
         public readonly BodyHolsterStateMachine HolsterMachine = new();
@@ -60,7 +62,6 @@ namespace Stratocraft.Character
         private readonly List<DroppedWorldItemRecord> _droppedWorldItems = new(16);
         private IReadOnlyDictionary<(int cx, int cz), uint[]>? _lastWorldChunks;
         private readonly Dictionary<int, Mesh> _matItemMeshCache = new(32);
-        private readonly HashSet<(int cx, int cz)> _lootedWorldStructureChests = new();
 
         private GameObject? _heldMaterialBlockGo;
         private MeshFilter? _heldMaterialBlockMf;
@@ -69,26 +70,39 @@ namespace Stratocraft.Character
         private GameObject? _axeHandGloveGo;
         private byte _lastHeldBlockMat;
         private int _lastHeldVisualMode;
+        private uint _lastHeldShapeSeed;
 
         private GameObject? _holsteredBeltSwordProxy;
         private GameObject? _holsteredBeltPickaxeProxy;
         private GameObject? _holsteredBackAxeProxy;
 
-        // 3B Kumas Canta Ortusu (The Forest + Serbest 3B Drag & Drop) Dugumleri
+        // 3B Kumas Canta Ortusu (The Forest + Serbest 3B Drag & Drop + 3+1 Fiziksel Birlestirme Padi) Dugumleri
+        private enum MatHitZone : byte
+        {
+            None = 0,
+            Hotbar = 1,
+            Backpack = 2,
+            AssemblyInput = 3,
+            AssemblyOutput = 4
+        }
+
         private Transform? _initializedMatRoot;
         private Transform? _dynamicMatSlotsContainer;
         private readonly MatSlot3DVisualNode[] _hotbar3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.HotbarSlotCount];
         private readonly MatSlot3DVisualNode[] _backpack3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.BackpackSlotCount];
+        private readonly MatSlot3DVisualNode[] _assemblyInput3DMatNodes = new MatSlot3DVisualNode[Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount];
+        private MatSlot3DVisualNode _assemblyOutput3DMatNode;
         private MatSlot3DVisualNode _dragged3DItemNode;
         private Mesh? _padNormalMesh;
         private Mesh? _padHoveredMesh;
         private Mesh? _padSelectedHolsterMesh;
+        private Mesh? _padCraftReadyMesh;
         private Mesh? _cachedSwordMesh;
         private Mesh? _cachedPickaxeMesh;
         private Mesh? _cachedAxeMesh;
 
         private int _hoveredMatSlotIndex = -1;
-        private bool _hoveredMatSlotIsHotbar;
+        private MatHitZone _hoveredMatZone = MatHitZone.None;
         private Vector2 _dragStartMousePos;
         private float _dragStartTime;
         private bool _isClickCarryMode;
@@ -117,20 +131,27 @@ namespace Stratocraft.Character
         private GameObject? _shoulderTimberLogProxyGo;
 
         public bool IsCreativeMode { get; set; }
+        private int _survivalEarnedCrystalTier;
 
         public void ToggleCreativeMode(Stage1MatterCrystalAndMiningController miningCtrl)
         {
             IsCreativeMode = !IsCreativeMode;
             if (IsCreativeMode)
             {
-                miningCtrl.CurrentCrystalTier = 3;
-                miningCtrl.IsCrystalActive = true;
-                miningCtrl.LastFeedbackText = "★ [F4] YARATICI MOD AKTİF: Ölümsüzlük, Sınırsız İnşa ve [Tab] ile 54 Eşyalık Eşya Kataloğu açıldı!";
+                _survivalEarnedCrystalTier = miningCtrl.CurrentCrystalTier;
+                miningCtrl.LastFeedbackText =
+                    "★ [F4] YARATICI MOD AKTİF: [Tab] Eşya Kataloğu açıldı! (Kuvars ile [C] kristal uyandırmayı test edebilir veya anında T3 Kristal için [Shift+C] basabilirsiniz)";
             }
             else
             {
                 InventoryUi.IsCreativeCatalogOpen = false;
-                miningCtrl.LastFeedbackText = "[F4] HAYATTA KALMA MODU AKTİF: Standart hayatta kalma ve malzeme kuralları geçerli.";
+                miningCtrl.AwakenOrUpgradeCrystalToTier(_survivalEarnedCrystalTier);
+                if (miningCtrl.CurrentCrystalTier <= 0)
+                {
+                    miningCtrl.IsCrystalActive = false;
+                }
+                miningCtrl.LastFeedbackText =
+                    $"[F4] HAYATTA KALMA MODU AKTİF: Gerçek kristal kademeniz (T{miningCtrl.CurrentCrystalTier}) ve hayatta kalma kuralları devrede.";
             }
         }
 
@@ -267,24 +288,53 @@ namespace Stratocraft.Character
                     {
                         HolsterMachine.AssignHolsterSlot(
                             HolsterSlotIndex.WaistLeft_Slot1,
-                            new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = Mathf.Clamp01(slot.Durability01 <= 0f ? 1.0f : slot.Durability01) });
+                            new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = slot.SubId == 1 ? 0.55f : 1.85f, SharpnessOrHardness01 = Mathf.Clamp01(slot.Durability01 <= 0f ? 1.0f : slot.Durability01) });
                     }
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
                     ActiveHolsterSlot = 1;
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {(combatBridge != null ? combatBridge.GetWeaponDisplayName() : "Kilic")} cekildi.";
+                    string wepName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {wepName} cekildi.";
                     break;
 
                 case InventoryItemKind.ToolPickaxe:
+                {
+                    if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistRight_Slot2).InstanceGuid == 0UL)
+                    {
+                        HolsterMachine.AssignHolsterSlot(
+                            HolsterSlotIndex.WaistRight_Slot2,
+                            new UniqueEquipmentInstance { InstanceGuid = 1002UL, ArchetypeItemId = 102, MassKg = slot.SubId == 1 ? 1.65f : 2.40f, SharpnessOrHardness01 = 0.95f });
+                    }
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistRight_Slot2);
                     ActiveHolsterSlot = 2;
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Demir Kazma cekildi ([Sol Tik+Fare] Kaya & Cevher Kirma).";
+                    bool isPrimPick = slot.SubId == 1;
+                    miningCtrl.CurrentToolTier = isPrimPick ? 1 : Mathf.Max(2, slot.SubId >= 2 ? slot.SubId : 2);
+                    miningCtrl.MaxToolDurability = isPrimPick ? 60f : (miningCtrl.CurrentToolTier >= 3 ? 180f : 120f);
+                    float pickDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
+                    miningCtrl.CurrentToolDurability = pickDur01 * miningCtrl.MaxToolDurability;
+                    string pickLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {pickLabel} cekildi (Kademe T{miningCtrl.CurrentToolTier} | [Sol Tik+Fare] Kaya & Cevher Kirma).";
                     break;
+                }
 
                 case InventoryItemKind.ToolAxe:
+                {
+                    if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.BackLeft_Slot3).InstanceGuid == 0UL)
+                    {
+                        HolsterMachine.AssignHolsterSlot(
+                            HolsterSlotIndex.BackLeft_Slot3,
+                            new UniqueEquipmentInstance { InstanceGuid = 1003UL, ArchetypeItemId = 103, MassKg = slot.SubId == 1 ? 1.35f : 2.10f, SharpnessOrHardness01 = 0.95f });
+                    }
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackLeft_Slot3);
                     ActiveHolsterSlot = 3;
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Demir Balta cekildi ([Sol Tik+Fare] Agac Devirme & Odun Kirma).";
+                    bool isPrimAxe = slot.SubId == 1;
+                    miningCtrl.CurrentToolTier = isPrimAxe ? 1 : Mathf.Max(2, slot.SubId >= 2 ? slot.SubId : 2);
+                    miningCtrl.MaxToolDurability = isPrimAxe ? 60f : 120f;
+                    float axeDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
+                    miningCtrl.CurrentToolDurability = axeDur01 * miningCtrl.MaxToolDurability;
+                    string axeLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {axeLabel} cekildi ([Sol Tik+Fare] Agac Devirme & Kutuk Kirma).";
                     break;
+                }
 
                 case InventoryItemKind.ToolMicroChisel:
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.BackRight_Slot4);
@@ -316,18 +366,74 @@ namespace Stratocraft.Character
                         miningCtrl.SelectMaterial(matToSelect);
                     }
                     string matLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {matLabel} (x{slot.Count}) Elde — [Sag Tik] Dunyaya Koy | [V] Sekil Degistir.";
+                    if (slot.Kind == InventoryItemKind.VoxelBlock && slot.SubId == MaterialIdCatalog.QuartzGem)
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {matLabel} (x{slot.Count}) Elde — [C] veya [Sağ Tık] ile Uyuyan Madde Kristalini Uyandır (3 Kuvars)!";
+                    }
+                    else
+                    {
+                        miningCtrl.LastFeedbackText = $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {matLabel} (x{slot.Count}) Elde — [Sağ Tık] Dünyaya Koy | [V] Şekil Değiştir.";
+                    }
+                    break;
+
+                case InventoryItemKind.ToolStoneHammer:
+                    HolsterMachine.RequestSheatheToEmptyHands();
+                    ActiveHolsterSlot = 7;
+                    miningCtrl.CurrentToolTier = slot.SubId == 1 ? 1 : 2;
+                    miningCtrl.MaxToolDurability = slot.SubId == 1 ? 65f : 140f;
+                    float hamDur01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
+                    miningCtrl.CurrentToolDurability = hamDur01 * miningCtrl.MaxToolDurability;
+                    string hamLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    miningCtrl.LastFeedbackText =
+                        $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {hamLabel} Elde — [Sol Tık] Kavrulmuş Cevheri Kır veya Sıcak Sünger Demiri Döv!";
                     break;
 
                 case InventoryItemKind.RoughStoneChunk:
                 case InventoryItemKind.LooseDirtClod:
+                case InventoryItemKind.SandPile:
+                case InventoryItemKind.ClayLump:
+                case InventoryItemKind.LeafPile:
                 case InventoryItemKind.SplitFirewood:
                 case InventoryItemKind.Stick:
+                case InventoryItemKind.FlintStone:
+                case InventoryItemKind.PlantFiber:
+                case InventoryItemKind.KnappedAxeHead:
+                case InventoryItemKind.KnappedPickaxeHead:
+                case InventoryItemKind.KnappedKnifeBlade:
+                case InventoryItemKind.KnappedHammerHead:
                 case InventoryItemKind.OreChunk:
+                case InventoryItemKind.FoodRawMeat:
+                case InventoryItemKind.FoodBurntMeat:
+                case InventoryItemKind.RawHide:
+                case InventoryItemKind.CharcoalChunk:
+                case InventoryItemKind.RoastedOreChunk:
+                case InventoryItemKind.CrushedOrePowder:
+                case InventoryItemKind.ClayTuyerePipe:
+                case InventoryItemKind.LeatherBellows:
+                case InventoryItemKind.ClayCruciblePot:
+                case InventoryItemKind.IronBloomSponge:
+                case InventoryItemKind.WroughtIronBar:
+                case InventoryItemKind.SlagShard:
+                case InventoryItemKind.WoodenWheel:
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 7;
                     string rawLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) Elde — Kaba hammadde dogrudan blok yapilamaz! Tezgahta isleyin veya [Q]/[G] ile yere atin.";
+                    if (slot.Kind == InventoryItemKind.FlintStone)
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) — Yerdeki bir taşa bakıp [R] ile Fiziksel Taş Yontma başlatın!";
+                    }
+                    else if (slot.Kind == InventoryItemKind.OreChunk && slot.SubId == MaterialIdCatalog.QuartzGem)
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) — [C] veya [Sağ Tık] ile Uyuyan Madde Kristaline Yedir ({miningCtrl.AwakeningQuartzFedCount}/3)!";
+                    }
+                    else
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) Elde — {Stage1VisualHotbarAndInventoryUi.GetSlotUsageHint(in slot)}";
+                    }
                     break;
 
                 case InventoryItemKind.PotionHealth:
@@ -339,7 +445,7 @@ namespace Stratocraft.Character
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 8;
                     string consLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {consLabel} (x{slot.Count}) Elde — [Sag Tik] Tuket / Kullan.";
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {consLabel} (x{slot.Count}) Elde — [Sol/Sag Tik] Tuket / Kullan.";
                     break;
 
                 case InventoryItemKind.ArmorHelmet:
@@ -355,7 +461,13 @@ namespace Stratocraft.Character
                 case InventoryItemKind.PlaceableCampfire:
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 10;
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Kamp Atesi Kiti (x{slot.Count}) Elde — [Sag Tik] Zemine Yerlestir.";
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Kamp Atesi Kiti (x{slot.Count}) Elde — [Sag Tik] Zemine Gercek Kamp Atesi Blogu Kur.";
+                    break;
+
+                case InventoryItemKind.PlaceableStoneKiln:
+                    HolsterMachine.RequestSheatheToEmptyHands();
+                    ActiveHolsterSlot = 11;
+                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: Ilkel Tas Izabe Firini Kiti (x{slot.Count}) Elde — [Sag Tik] Zemine Kur, yaninda [E] ile Bakir Erit!";
                     break;
             }
         }
@@ -460,6 +572,7 @@ namespace Stratocraft.Character
                 {
                     InventoryUi.ReturnCursorHeldItemToOriginOrInventory(miningCtrl);
                 }
+                InventoryUi.ReturnAssemblyInputsToInventory(miningCtrl);
                 cameraPitch = pitchBeforeBackpack;
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
@@ -480,6 +593,12 @@ namespace Stratocraft.Character
             int row = index / 6;
             return new Vector3(-0.48f + col * 0.192f, 0.042f, 0.32f - row * 0.155f);
         }
+
+        public static Vector3 GetAssemblyInputMatSlotLocalPos(int index) =>
+            new Vector3(0.69f, 0.048f, 0.28f - Mathf.Clamp(index, 0, 2) * 0.165f);
+
+        public static Vector3 GetAssemblyOutputMatSlotLocalPos() =>
+            new Vector3(0.69f, 0.054f, -0.27f);
 
         private void EnsureDynamic3DMatSlotsInitialized(
             Transform? backpackMatRoot,
@@ -529,6 +648,7 @@ namespace Stratocraft.Character
             _padNormalMesh ??= BuildSlotPadMesh(MaterialIdCatalog.Ironwood, "Mesh_3DMatPad_Normal");
             _padHoveredMesh ??= BuildSlotPadMesh(MaterialIdCatalog.GoldOre, "Mesh_3DMatPad_Hovered");
             _padSelectedHolsterMesh ??= BuildSlotPadMesh(MaterialIdCatalog.CopperOre, "Mesh_3DMatPad_SelectedHolster");
+            _padCraftReadyMesh ??= BuildSlotPadMesh(MaterialIdCatalog.GlowingMoss, "Mesh_3DMatPad_CraftReady");
 
             GameObject containerGo = new GameObject("Dynamic3DMatSlotsRoot");
             containerGo.transform.SetParent(backpackMatRoot, false);
@@ -559,6 +679,25 @@ namespace Stratocraft.Character
                     new Vector3(0.158f, 0.008f, 0.128f),
                     sharedMat);
             }
+
+            // 2b) Fiziksel 3B Birlestirme Girdi Padleri (3 Adet) + 1 Cikti Padi (Sag Kenar x = +0.69)
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount; i++)
+            {
+                Vector3 localPos = GetAssemblyInputMatSlotLocalPos(i);
+                _assemblyInput3DMatNodes[i] = CreateMatSlot3DNode(
+                    _dynamicMatSlotsContainer,
+                    $"MatAssemblyInput_{i + 1}",
+                    localPos,
+                    new Vector3(0.148f, 0.012f, 0.132f),
+                    sharedMat);
+            }
+
+            _assemblyOutput3DMatNode = CreateMatSlot3DNode(
+                _dynamicMatSlotsContainer,
+                "MatAssemblyOutput_Result",
+                GetAssemblyOutputMatSlotLocalPos(),
+                new Vector3(0.172f, 0.016f, 0.156f),
+                sharedMat);
 
             // 3) Fareyle Havada Suruklenen 3B Esya Modeli (_dragged3DItemNode)
             _dragged3DItemNode = CreateMatSlot3DNode(
@@ -636,7 +775,7 @@ namespace Stratocraft.Character
 
             for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
             {
-                bool isHovered = _hoveredMatSlotIndex == i && _hoveredMatSlotIsHotbar;
+                bool isHovered = _hoveredMatZone == MatHitZone.Hotbar && _hoveredMatSlotIndex == i;
                 bool isSelected = InventoryUi.SelectedHotbarIndex == i;
                 UpdateSingleMatSlot3DNode(
                     ref _hotbar3DMatNodes[i],
@@ -651,7 +790,7 @@ namespace Stratocraft.Character
 
             for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; i++)
             {
-                bool isHovered = _hoveredMatSlotIndex == i && !_hoveredMatSlotIsHotbar;
+                bool isHovered = _hoveredMatZone == MatHitZone.Backpack && _hoveredMatSlotIndex == i;
                 UpdateSingleMatSlot3DNode(
                     ref _backpack3DMatNodes[i],
                     in InventoryUi.BackpackSlots[i],
@@ -661,6 +800,37 @@ namespace Stratocraft.Character
                     dt,
                     sharedMat,
                     forceInstant);
+            }
+
+            InventoryUi.RefreshAssemblyPreview();
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount; i++)
+            {
+                bool isHovered = _hoveredMatZone == MatHitZone.AssemblyInput && _hoveredMatSlotIndex == i;
+                UpdateSingleMatSlot3DNode(
+                    ref _assemblyInput3DMatNodes[i],
+                    in InventoryUi.AssemblyInputSlots[i],
+                    isHovered,
+                    isSelected: !InventoryUi.AssemblyInputSlots[i].IsEmpty,
+                    isHotbarSlot: false,
+                    dt,
+                    sharedMat,
+                    forceInstant);
+            }
+
+            bool outHovered = _hoveredMatZone == MatHitZone.AssemblyOutput;
+            bool outReady = !InventoryUi.AssemblyPreviewSlot.IsEmpty;
+            UpdateSingleMatSlot3DNode(
+                ref _assemblyOutput3DMatNode,
+                in InventoryUi.AssemblyPreviewSlot,
+                outHovered || outReady,
+                isSelected: outReady,
+                isHotbarSlot: false,
+                dt,
+                sharedMat,
+                forceInstant);
+            if (_assemblyOutput3DMatNode.PadMeshFilter != null && outReady && !outHovered && _padCraftReadyMesh != null)
+            {
+                _assemblyOutput3DMatNode.PadMeshFilter.sharedMesh = _padCraftReadyMesh;
             }
 
             // Fareyle suruklenen 3B esya modeli (_dragged3DItemNode)
@@ -709,6 +879,7 @@ namespace Stratocraft.Character
                 node.CachedKind = InventoryItemKind.Empty;
                 node.CachedSubId = 0;
                 node.CachedCount = 0;
+                node.CachedShapeSeed = 0u;
                 return;
             }
 
@@ -717,10 +888,12 @@ namespace Stratocraft.Character
                 node.ItemTransform.gameObject.SetActive(true);
             }
 
-            if (node.CachedKind != slot.Kind || node.CachedSubId != slot.SubId || node.ItemMeshFilter.sharedMesh == null)
+            uint effSeed = slot.GetEffectiveShapeDna().EffectiveSeed;
+            if (node.CachedKind != slot.Kind || node.CachedSubId != slot.SubId || node.CachedShapeSeed != effSeed || node.ItemMeshFilter.sharedMesh == null)
             {
                 node.CachedKind = slot.Kind;
                 node.CachedSubId = slot.SubId;
+                node.CachedShapeSeed = effSeed;
                 node.ItemMeshFilter.sharedMesh = GetOrCreate3DMatMeshForSlot(in slot);
                 if (sharedMat != null && node.ItemMeshRenderer != null && node.ItemMeshRenderer.sharedMaterial == null)
                 {
@@ -762,6 +935,23 @@ namespace Stratocraft.Character
             out Vector3 localScale)
         {
             float slotScaleFactor = isHotbarSlot ? 0.84f : 1.0f;
+            PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
+            if (physArch != PhysicalItemArchetype.None && physArch != PhysicalItemArchetype.ArchitecturalBlock)
+            {
+                System.Numerics.Vector3 nat = PhysicalItemMeshFactory.ComputeNaturalVariantScale(physArch, slot.GetEffectiveShapeDna());
+                Vector3 natScale = new Vector3(nat.X, nat.Y, nat.Z);
+                float yaw = ((slot.GetEffectiveShapeDna().EffectiveSeed % 9u) * 14f) - 42f;
+                bool isLongTool = physArch == PhysicalItemArchetype.ToolPrimitiveAxe ||
+                                  physArch == PhysicalItemArchetype.ToolPrimitivePickaxe ||
+                                  physArch == PhysicalItemArchetype.ToolPrimitiveKnife ||
+                                  physArch == PhysicalItemArchetype.ToolPrimitiveHammer;
+                localOffset = new Vector3(0f, 0.032f, 0f);
+                localRot = isLongTool ? Quaternion.Euler(84f, 28f + yaw * 0.25f, 0f) : Quaternion.Euler(6f, 24f + yaw, -4f);
+                float fitFactor = isLongTool ? 0.28f : 0.38f;
+                localScale = natScale * (fitFactor * slotScaleFactor);
+                return;
+            }
+
             switch (slot.Kind)
             {
                 case InventoryItemKind.WeaponSword:
@@ -806,49 +996,7 @@ namespace Stratocraft.Character
                     localScale = new Vector3(0.118f, 0.102f, 0.118f) * slotScaleFactor;
                     break;
 
-                case InventoryItemKind.MetalIngot:
-                    localOffset = new Vector3(0f, 0.016f, 0f);
-                    localRot = Quaternion.Euler(0f, 18f, 0f);
-                    float ingotStackScale = Mathf.Lerp(0.42f, 0.62f, Mathf.Clamp01(slot.Count / 16f));
-                    localScale = Vector3.one * (ingotStackScale * slotScaleFactor);
-                    break;
-
-                case InventoryItemKind.OreChunk:
-                    localOffset = new Vector3(0f, 0.042f, 0f);
-                    localRot = Quaternion.Euler(14f, 35f, 10f);
-                    float oreScale = Mathf.Lerp(0.068f, 0.096f, Mathf.Clamp01(slot.Count / 16f));
-                    localScale = Vector3.one * (oreScale * slotScaleFactor);
-                    break;
-
-                case InventoryItemKind.RoughStoneChunk:
-                    localOffset = new Vector3(0f, 0.038f, 0f);
-                    localRot = Quaternion.Euler(22f, 40f, -12f);
-                    float stoneScale = Mathf.Lerp(0.065f, 0.092f, Mathf.Clamp01(slot.Count / 6f));
-                    localScale = Vector3.one * (stoneScale * slotScaleFactor);
-                    break;
-
-                case InventoryItemKind.LooseDirtClod:
-                    localOffset = new Vector3(0f, 0.032f, 0f);
-                    localRot = Quaternion.Euler(15f, 25f, -8f);
-                    float dirtScale = Mathf.Lerp(0.062f, 0.088f, Mathf.Clamp01(slot.Count / 8f));
-                    localScale = Vector3.one * (dirtScale * slotScaleFactor);
-                    break;
-
-                case InventoryItemKind.SplitFirewood:
-                    localOffset = new Vector3(0f, 0.032f, 0f);
-                    localRot = Quaternion.Euler(85f, 28f, -15f);
-                    float woodScale = Mathf.Lerp(0.08f, 0.12f, Mathf.Clamp01(slot.Count / 6f));
-                    localScale = new Vector3(woodScale * 0.55f, woodScale, woodScale * 0.55f) * slotScaleFactor;
-                    break;
-
-                case InventoryItemKind.Stick:
-                    localOffset = new Vector3(0f, 0.022f, 0f);
-                    localRot = Quaternion.Euler(88f, 42f, 5f);
-                    float stickScale = Mathf.Lerp(0.03f, 0.05f, Mathf.Clamp01(slot.Count / 16f));
-                    localScale = new Vector3(stickScale * 0.35f, stickScale * 3.2f, stickScale * 0.35f) * slotScaleFactor;
-                    break;
-
-                default: // VoxelBlock
+                default: // VoxelBlock ve diger mimari bloklar
                     float stackHeightMult = Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01(slot.Count / 24f));
                     localOffset = new Vector3(0f, 0.042f * stackHeightMult, 0f);
                     localRot = Quaternion.Euler(0f, 24f, 0f);
@@ -859,9 +1007,15 @@ namespace Stratocraft.Character
 
         private Mesh GetOrCreate3DMatMeshForSlot(in VisualInventorySlot slot)
         {
-            if (slot.Kind == InventoryItemKind.WeaponSword && _cachedSwordMesh != null) return _cachedSwordMesh;
-            if (slot.Kind == InventoryItemKind.ToolPickaxe && _cachedPickaxeMesh != null) return _cachedPickaxeMesh;
-            if (slot.Kind == InventoryItemKind.ToolAxe && _cachedAxeMesh != null) return _cachedAxeMesh;
+            if (slot.Kind == InventoryItemKind.WeaponSword && slot.SubId == 0 && _cachedSwordMesh != null) return _cachedSwordMesh;
+            if (slot.Kind == InventoryItemKind.ToolPickaxe && slot.SubId == 0 && _cachedPickaxeMesh != null) return _cachedPickaxeMesh;
+            if (slot.Kind == InventoryItemKind.ToolAxe && slot.SubId == 0 && _cachedAxeMesh != null) return _cachedAxeMesh;
+
+            PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
+            if (physArch != PhysicalItemArchetype.None && physArch != PhysicalItemArchetype.ArchitecturalBlock)
+            {
+                return PhysicalItemMeshFactory.GetOrCreateMesh(physArch, slot.SubId, slot.GetEffectiveShapeDna(), out _);
+            }
 
             int cacheKey = ((int)slot.Kind << 8) | slot.SubId;
             if (_matItemMeshCache.TryGetValue(cacheKey, out Mesh? cached) && cached != null)
@@ -874,14 +1028,18 @@ namespace Stratocraft.Character
             {
                 case InventoryItemKind.WeaponSword:
                     HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.DamascusSteel, 7, 0, 0, _matMeshTris);
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
+                        slot.SubId == 1 ? MaterialIdCatalog.Basalt : MaterialIdCatalog.DamascusSteel,
+                        7, 0, 0, _matMeshTris);
                     break;
 
                 case InventoryItemKind.ToolPickaxe:
                 case InventoryItemKind.ToolAxe:
                 case InventoryItemKind.ToolMicroChisel:
                     HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.Steel, 7, 0, 0, _matMeshTris);
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
+                        slot.SubId == 1 ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Steel,
+                        7, 0, 0, _matMeshTris);
                     break;
 
                 case InventoryItemKind.ToolFluidFlask:
@@ -949,6 +1107,31 @@ namespace Stratocraft.Character
                     byte stickMat = slot.SubId != 0 ? slot.SubId : MaterialIdCatalog.Ironwood;
                     HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
                         new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), stickMat, 63, 0, 0, _matMeshTris);
+                    break;
+                }
+
+                case InventoryItemKind.FlintStone:
+                case InventoryItemKind.KnappedAxeHead:
+                case InventoryItemKind.KnappedPickaxeHead:
+                case InventoryItemKind.KnappedKnifeBlade:
+                {
+                    byte flintMat = slot.Kind == InventoryItemKind.KnappedPickaxeHead ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Basalt;
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), flintMat, 6, 0, 0, _matMeshTris);
+                    break;
+                }
+
+                case InventoryItemKind.PlantFiber:
+                {
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.GlowingMoss, 63, 0, 0, _matMeshTris);
+                    break;
+                }
+
+                case InventoryItemKind.PlaceableStoneKiln:
+                {
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.PrimitiveStoneKilnBlock, 7, 0, 0, _matMeshTris);
                     break;
                 }
 
@@ -1037,34 +1220,54 @@ namespace Stratocraft.Character
             }
         }
 
-        private bool TryHit3DMatSlot(Vector3 localHit, out bool isHotbar, out int slotIndex, out Vector3 slotLocalCenter)
+        private bool TryHit3DMatSlot(Vector3 localHit, out MatHitZone zone, out int slotIndex, out Vector3 slotLocalCenter)
         {
-            isHotbar = false;
+            zone = MatHitZone.None;
             slotIndex = -1;
             slotLocalCenter = Vector3.zero;
 
-            if (Mathf.Abs(localHit.x) > 0.68f || Mathf.Abs(localHit.z) > 0.52f)
+            if (localHit.x < -0.68f || localHit.x > 0.86f || Mathf.Abs(localHit.z) > 0.52f)
             {
                 return false;
             }
 
+            // 0) Sag Kenar Fiziksel 3B Birlestirme Padleri (x in [0.59 .. 0.84])
+            if (localHit.x >= 0.59f && localHit.x <= 0.84f)
+            {
+                if (localHit.z <= -0.16f && localHit.z >= -0.40f)
+                {
+                    zone = MatHitZone.AssemblyOutput;
+                    slotIndex = 0;
+                    slotLocalCenter = GetAssemblyOutputMatSlotLocalPos();
+                    return true;
+                }
+                if (localHit.z > -0.15f && localHit.z <= 0.40f)
+                {
+                    int aIdx = Mathf.Clamp(Mathf.RoundToInt((0.28f - localHit.z) / 0.165f), 0, Stage1VisualHotbarAndInventoryUi.AssemblyInputSlotCount - 1);
+                    zone = MatHitZone.AssemblyInput;
+                    slotIndex = aIdx;
+                    slotLocalCenter = GetAssemblyInputMatSlotLocalPos(aIdx);
+                    return true;
+                }
+            }
+
             // 1) On Deri Kilif Seridi: local.z in [-0.46 .. -0.25] -> HotbarSlots[0..8]
-            if (localHit.z <= -0.25f && localHit.z >= -0.46f && Mathf.Abs(localHit.x) <= 0.60f)
+            if (localHit.z <= -0.25f && localHit.z >= -0.46f && Mathf.Abs(localHit.x) <= 0.58f)
             {
                 int idx = Mathf.Clamp(Mathf.RoundToInt((localHit.x - (-0.52f)) / 0.13f), 0, Stage1VisualHotbarAndInventoryUi.HotbarSlotCount - 1);
-                isHotbar = true;
+                zone = MatHitZone.Hotbar;
                 slotIndex = idx;
                 slotLocalCenter = GetHotbarMatSlotLocalPos(idx);
                 return true;
             }
 
             // 2) Ana Kumas Canta Bolmeleri (6x4 = 24 Yuva): local.z in [-0.24 .. +0.42] -> BackpackSlots[0..23]
-            if (localHit.z > -0.25f && localHit.z <= 0.44f && Mathf.Abs(localHit.x) <= 0.60f)
+            if (localHit.z > -0.25f && localHit.z <= 0.44f && Mathf.Abs(localHit.x) <= 0.58f)
             {
                 int col = Mathf.Clamp(Mathf.RoundToInt((localHit.x - (-0.48f)) / 0.192f), 0, 5);
                 int row = Mathf.Clamp(Mathf.RoundToInt((0.32f - localHit.z) / 0.155f), 0, 3);
                 int idx = row * 6 + col;
-                isHotbar = false;
+                zone = MatHitZone.Backpack;
                 slotIndex = idx;
                 slotLocalCenter = GetBackpackMatSlotLocalPos(idx);
                 return true;
@@ -1089,6 +1292,7 @@ namespace Stratocraft.Character
             if (!matPlane.Raycast(ray, out float enter) || enter > 6.5f)
             {
                 _hoveredMatSlotIndex = -1;
+                _hoveredMatZone = MatHitZone.None;
                 InventoryUi.HasHovered3DMatSlot = false;
                 HoveredBackpackTooltip = string.Empty;
 
@@ -1107,7 +1311,7 @@ namespace Stratocraft.Character
             if (!InventoryUi.CursorHeldSlot.IsEmpty && _dragged3DItemNode.SlotRoot != null)
             {
                 Vector3 clampedLocal = new Vector3(
-                    Mathf.Clamp(local.x, -0.82f, 0.82f),
+                    Mathf.Clamp(local.x, -0.82f, 0.84f),
                     0.095f,
                     Mathf.Clamp(local.z, -0.60f, 0.56f));
                 _dragged3DItemNode.SlotRoot.localPosition = Vector3.Lerp(
@@ -1116,10 +1320,11 @@ namespace Stratocraft.Character
                     Mathf.Clamp01(dt * 24f));
             }
 
-            bool hasSlot = TryHit3DMatSlot(local, out bool isHotbar, out int slotIdx, out Vector3 slotCenterLocal);
+            bool hasSlot = TryHit3DMatSlot(local, out MatHitZone hitZone, out int slotIdx, out Vector3 slotCenterLocal);
             if (!hasSlot)
             {
                 _hoveredMatSlotIndex = -1;
+                _hoveredMatZone = MatHitZone.None;
                 InventoryUi.HasHovered3DMatSlot = false;
                 HoveredBackpackTooltip = !InventoryUi.CursorHeldSlot.IsEmpty
                     ? "[Ortu Disina Birak] Esyayi Yere At"
@@ -1132,6 +1337,112 @@ namespace Stratocraft.Character
                 }
                 return;
             }
+
+            _hoveredMatSlotIndex = slotIdx;
+            _hoveredMatZone = hitZone;
+
+            if (hitZone == MatHitZone.AssemblyOutput)
+            {
+                InventoryUi.RefreshAssemblyPreview();
+                InventoryUi.HasHovered3DMatSlot = true;
+                InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
+                if (!InventoryUi.AssemblyPreviewSlot.IsEmpty)
+                {
+                    string previewName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in InventoryUi.AssemblyPreviewSlot, combatBridge);
+                    HoveredBackpackTooltip = $"[3B BIRLESTIRME CIKTISI] {previewName} -> [Sol Tik] Lifle Bagla ve Uret!";
+                    InventoryUi.Hovered3DMatTitle = $"🛠️ [HAZIR — SOL TIKLA URET]  {previewName}";
+                    InventoryUi.Hovered3DMatDetail = "Girdi padlerindeki hammaddeler eslesti! [Sol Tik] ile fiziksel baglama (0.8sn) baslatin.";
+
+                    if (Input.GetMouseButtonDown(0) && InventoryUi.CursorHeldSlot.IsEmpty)
+                    {
+                        if (InventoryUi.TryCraftFromAssemblyOutput(miningCtrl, out VisualInventorySlot crafted))
+                        {
+                            ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                            miningCtrl.LastFeedbackText =
+                                $"🛠️ FİZİKSEL BİRLEŞTİRME TAMAMLANDI: +1 {Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in crafted, combatBridge)} üretildi!";
+                        }
+                    }
+                }
+                else
+                {
+                    HoveredBackpackTooltip = "[3B BIRLESTIRME CIKTI PADI] Ustteki 3 girdi padine hammadde yerlestirin";
+                    InventoryUi.Hovered3DMatTitle = "[3B FIZIKSEL BIRLESTIRME ALANI — TARIFLER]";
+                    InventoryUi.Hovered3DMatDetail =
+                        "Balta: BaltaBasi+Dal+Lif | Kazma: KazmaBasi+Dal+2xLif | Bicak: BicakUcu+Dal+Lif | Kova: 3xOdun+2xLif | Ates: 3xOdun+2xDal+Tas | TasFirin: 3xKabaTas+2xToprak+Lif";
+                }
+                return;
+            }
+
+            if (hitZone == MatHitZone.AssemblyInput)
+            {
+                VisualInventorySlot asmSlot = InventoryUi.AssemblyInputSlots[slotIdx];
+                string asmHeader = $"[BIRLESTIRME GIRDI PADI #{slotIdx + 1}]";
+                InventoryUi.HasHovered3DMatSlot = true;
+                InventoryUi.Hovered3DMatWorldPos = matRoot.TransformPoint(slotCenterLocal);
+                if (!asmSlot.IsEmpty)
+                {
+                    string itemName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in asmSlot, combatBridge);
+                    HoveredBackpackTooltip = $"{asmHeader} {itemName} (x{asmSlot.Count})";
+                    InventoryUi.Hovered3DMatTitle = $"{asmHeader}  {itemName}  [Adet: x{asmSlot.Count}]";
+                    InventoryUi.Hovered3DMatDetail = "[Sol Tik] Geri Al / Degistir | [Sag Tik] Yariya Bol / Tekli Birak";
+                }
+                else
+                {
+                    HoveredBackpackTooltip = $"{asmHeader} Bos -> Buraya Dal / Lif / Yontulmus Tas / Odun Surukleyin";
+                    InventoryUi.Hovered3DMatTitle = $"{asmHeader}  Bos Girdi Padi";
+                    InventoryUi.Hovered3DMatDetail = "Cantadan Dal, Bitki Lifi, Yontulmus Tas Baslik, Odun veya Kaba Tas surukleyip birakin.";
+                }
+
+                if (Input.GetMouseButtonDown(1))
+                {
+                    InventoryUi.Handle3DAssemblySlotSecondaryClick(
+                        slotIdx, 1, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
+                    if (!InventoryUi.CursorHeldSlot.IsEmpty)
+                    {
+                        _isClickCarryMode = true;
+                        if (_dragged3DItemNode.SlotRoot != null)
+                            _dragged3DItemNode.SlotRoot.localPosition = slotCenterLocal + new Vector3(0f, 0.085f, 0f);
+                    }
+                    return;
+                }
+
+                if (Input.GetMouseButtonDown(0))
+                {
+                    if (!InventoryUi.CursorHeldSlot.IsEmpty)
+                    {
+                        InventoryUi.Complete3DAssemblySlotDrop(
+                            slotIdx, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
+                        _isClickCarryMode = false;
+                        return;
+                    }
+                    if (!asmSlot.IsEmpty && InventoryUi.Begin3DAssemblySlotDrag(slotIdx, miningCtrl))
+                    {
+                        _dragStartMousePos = Input.mousePosition;
+                        _dragStartTime = Time.unscaledTime;
+                        _isClickCarryMode = false;
+                        if (_dragged3DItemNode.SlotRoot != null)
+                            _dragged3DItemNode.SlotRoot.localPosition = slotCenterLocal + new Vector3(0f, 0.085f, 0f);
+                    }
+                    return;
+                }
+
+                if (Input.GetMouseButtonUp(0) && !InventoryUi.CursorHeldSlot.IsEmpty && !_isClickCarryMode)
+                {
+                    bool sameAsmOrigin = InventoryUi.DragOriginIsAssemblyInput && InventoryUi.DragOriginSlotIndex == slotIdx;
+                    bool quick = (Time.unscaledTime - _dragStartTime) < 0.24f &&
+                                 Vector2.Distance(Input.mousePosition, _dragStartMousePos) < 12f;
+                    if (sameAsmOrigin && quick)
+                    {
+                        _isClickCarryMode = true;
+                        return;
+                    }
+                    InventoryUi.Complete3DAssemblySlotDrop(
+                        slotIdx, miningCtrl, () => ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge));
+                }
+                return;
+            }
+
+            bool isHotbar = hitZone == MatHitZone.Hotbar;
 
             // [I] 3B Canta uzerinde bir yuvanin ustundeyken [Q] (1 Adet) veya [Ctrl+Q] (Tum Yigin) ile hizli yere atma
             if (Input.GetKeyDown(KeyCode.Q) && InventoryUi.CursorHeldSlot.IsEmpty)
@@ -1152,9 +1463,6 @@ namespace Stratocraft.Character
                 }
                 return;
             }
-
-            _hoveredMatSlotIndex = slotIdx;
-            _hoveredMatSlotIsHotbar = isHotbar;
 
             VisualInventorySlot hoveredSlot = isHotbar
                 ? InventoryUi.HotbarSlots[slotIdx]
@@ -1482,7 +1790,13 @@ namespace Stratocraft.Character
                 }
             }
 
-            // [E] ONCELIK 1: Yerdeki fiziksel 3B esyayi (silah/alet/blok/kap/cevher/tas) geri alma (<= 3.2m)
+            // [E] ONCELIK 0.5: Oyuncunun dogrudan baktigi yerdeki dogal/dusmus 3B esyayi ANINDA (0.0s gecikmesiz) ele/cantaya alma
+            if (miningCtrl.TryPickupAimedDroppedWorldItemInstant(playerCamera, playerTransform.position, this, combatBridge))
+            {
+                return;
+            }
+
+            // [E] ONCELIK 1: Yerdeki fiziksel 3B esyayi ([Q] ile birakilan silah/alet/blok/esya) geri alma (<= 2.95m)
             int nearestIdx = -1;
             float bestDist = 3.2f;
             for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
@@ -1534,13 +1848,19 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // [E] ONCELIK 2: Ors Bakim, Kademe Yukseltme ve 4:1 Tas Moloz Geri Donusumu (<= 3.8m)
+            // [E] ONCELIK 1.5: Dunyaya Yerlestirilmis Ilkel Tas Izabe Firini (167) & Kamp Atesi (166) Etkilesimi (<= 3.6m)
+            if (TryInteractWithNearbyPlacedKilnOrCampfire(playerTransform.position, sharedVoxelMat, miningCtrl))
+            {
+                return;
+            }
+
+            // [E] ONCELIK 2: Ors Bakim, Katalizorlu Madde Kristali Rezonans Evrimi (T1..T5) ve Kulce ile Alet Dovme (<= 3.8m)
             bool nearAnvil = anvilTransform != null && Vector3.Distance(playerTransform.position, anvilTransform.position) <= 3.8f;
             if (nearAnvil)
             {
                 miningCtrl.CurrentToolDurability = miningCtrl.MaxToolDurability;
                 InventoryUi.UpdateSelectedToolDurability(1.0f);
-                if (miningCtrl.LooseRubbleShardCount >= 4)
+                if (miningCtrl.LooseRubbleShardCount >= 4 && miningCtrl.CrystalStorage.MaxTotalBlocksCapacity > 0)
                 {
                     miningCtrl.LooseRubbleShardCount -= 4;
                     miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Stone, CrystalMassStorageData.OneBlockQ24_8);
@@ -1548,75 +1868,36 @@ namespace Stratocraft.Character
                     miningCtrl.LastFeedbackText = $"ORS GERI DONUSUMU (4:1 Kutle Korunumu): 4x Tas Moloz -> +1 Ham Tas! (Kalan Moloz: {miningCtrl.LooseRubbleShardCount})";
                     return;
                 }
-                if (miningCtrl.CurrentCrystalTier < 4 || miningCtrl.CurrentToolTier < 4)
+
+                if (IsCreativeMode && miningCtrl.CurrentCrystalTier < 5)
                 {
-                    miningCtrl.CurrentCrystalTier = Mathf.Min(4, miningCtrl.CurrentCrystalTier + 1);
-                    miningCtrl.CurrentToolTier = Mathf.Min(4, miningCtrl.CurrentToolTier + 1);
+                    miningCtrl.AwakenOrUpgradeCrystalToTier(miningCtrl.CurrentCrystalTier + 1);
+                    miningCtrl.LastFeedbackText =
+                        $"★ [YARATICI ÖRS EVRİMİ]: Madde Kristali Kademe T{miningCtrl.CurrentCrystalTier} ({miningCtrl.CrystalStorage.MaxTotalBlocksCapacity} Blok) seviyesine yükseltildi!";
+                    return;
                 }
-                miningCtrl.LastFeedbackText = $"ORS BAKIM & REZONANS YUKSELTMESI: Alet Dayanikliligi %100 Onarildi | Kristal: T{miningCtrl.CurrentCrystalTier} | Kazma: T{miningCtrl.CurrentToolTier}!";
+
+                // Secili Alet Yukseltme (Ilkel T1 Aleti 2x Bakir/Demir Kulce ile T2 Metale Dovme veya T2 -> T3/T4)
+                if (TryUpgradeSelectedToolAtAnvil(miningCtrl, combatBridge, out string toolUpgradeMsg))
+                {
+                    miningCtrl.LastFeedbackText = toolUpgradeMsg;
+                    return;
+                }
+
+                string crystalHint = miningCtrl.CurrentCrystalTier <= 0
+                    ? "Madde Kristali Uykuda (Elinize Doğal Kuvars alıp [C] ile 3 Kuvars yedirerek uyandırın!)"
+                    : "Madde Kristali T2..T5 yükseltmeleri yalnızca Canlı ve Boss Rezonans Kristalleri ile yapılır.";
+                miningCtrl.LastFeedbackText =
+                    $"🔨 ÖRS BAKIMI: Alet Dayanıklılığı %100 Onarıldı! | {crystalHint}";
                 return;
             }
 
-            // [E] ONCELIK 3: Fiziksel 3B CAS Sandigi Etkilesimi (YALNIZCA <= 3.5m Mesafedeyken! ASLA 2B pencere veya [I] Canta acmaz!)
+            // [E] ONCELIK 3: Fiziksel 3B CAS Sandigi Etkilesimi (YALNIZCA <= 3.5m Mesafedeyken! ASLA gorunmez harabe sandigi uretmez!)
             bool nearChest = chestLidTransform != null && Vector3.Distance(playerTransform.position, chestLidTransform.position) <= 3.5f;
             if (!nearChest)
             {
-                // [E] ONCELIK 4: Dunyadaki Koy / Tapinak / Harabe Yapilarinin 3B Hazine Sandiklari (<= 4.8m)
-                int pCx = Mathf.FloorToInt(playerTransform.position.x / 16f);
-                int pCz = Mathf.FloorToInt(playerTransform.position.z / 16f);
-                for (int dz = -1; dz <= 1; dz++)
-                {
-                    for (int dx = -1; dx <= 1; dx++)
-                    {
-                        int scx = pCx + dx;
-                        int scz = pCz + dz;
-                        if (StratocraftFloatingIslandWorldGen.TryGetStructureLootChestInChunk(
-                                scx, scz, out int chX, out int chY, out int chZ, out string stName))
-                        {
-                            StratocraftFloatingIslandWorldGen.TryGetProceduralStructureTypeForChunk(scx, scz, out int stType, out _);
-                            float distToStructChest = Vector3.Distance(playerTransform.position, new Vector3(chX + 0.5f, chY + 0.5f, chZ + 0.5f));
-                            if (distToStructChest <= 4.8f)
-                            {
-                                if (_lootedWorldStructureChests.Contains((scx, scz)))
-                                {
-                                    miningCtrl.LastFeedbackText = $"{stName} (Chunk {scx},{scz}) zaten yagmalandi! Diger koy, tapinak ve harabeleri kesfedin.";
-                                    return;
-                                }
-
-                                _lootedWorldStructureChests.Add((scx, scz));
-                                uint fullBlock = CrystalMassStorageData.OneBlockQ24_8;
-                                if (stType == 0)
-                                {
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.OakWood, fullBlock * 16u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Cobblestone, fullBlock * 16u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.CopperOre, fullBlock * 8u);
-                                    InventoryUi.SyncWithCrystalStorage(miningCtrl);
-                                    miningCtrl.LastFeedbackText = $"★ {stName} ACILDI! Ganimet: +16 Mese Odunu, +16 Kiriktas, +8 Bakir Cevheri!";
-                                }
-                                else if (stType == 1)
-                                {
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Marble, fullBlock * 20u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.GoldOre, fullBlock * 10u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.MithrilOre, fullBlock * 6u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.Ironwood, fullBlock * 8u);
-                                    InventoryUi.SyncWithCrystalStorage(miningCtrl);
-                                    miningCtrl.LastFeedbackText = $"★ {stName} ACILDI! Ganimet: +20 Kadim Mermer, +10 Altin Cevheri, +6 Mitril Cevheri, +8 Demiragac!";
-                                }
-                                else
-                                {
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.StoneBrick, fullBlock * 16u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.IronOre, fullBlock * 10u);
-                                    miningCtrl.CrystalStorage.TryDepositMassQ24_8(MaterialIdCatalog.NaturalObsidian, fullBlock * 8u);
-                                    InventoryUi.SyncWithCrystalStorage(miningCtrl);
-                                    miningCtrl.LastFeedbackText = $"★ {stName} ACILDI! Ganimet: +16 Tas Tugla, +10 Demir Cevheri, +8 Dogal Obsidyen!";
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                miningCtrl.LastFeedbackText = "Etkilesim [E]: Yakinda yerdeki silah (<=3.2m), Ors (<=3.8m), Atolye CAS Sandigi (<=3.5m) veya Koy/Tapinak/Harabe Sandigi (<=4.8m) yok.";
+                miningCtrl.LastFeedbackText =
+                    "Etkileşim [E]: Yerdeki bir eşyaya doğrudan bakıp [E]'ye basın (<=2.85m) veya Çömelip [Ctrl+E Basılı Tut] ile avuçla toprak/kum/kil kazın.";
                 return;
             }
 
@@ -1720,6 +2001,195 @@ namespace Stratocraft.Character
 
             ChestCasSystem.SetLidOpen(false);
             miningCtrl.LastFeedbackText = "3B CAS Sandik Kapagi Kapatildi.";
+        }
+
+        private bool TryInteractWithNearbyPlacedKilnOrCampfire(
+            Vector3 playerPos,
+            Material? sharedVoxelMat,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (_lastWorldChunks == null) return false;
+
+            int baseWx = Mathf.FloorToInt(playerPos.x);
+            int baseWy = Mathf.FloorToInt(playerPos.y + 0.7f);
+            int baseWz = Mathf.FloorToInt(playerPos.z);
+
+            float bestKilnDistSq = 3.6f * 3.6f;
+            bool foundKiln = false;
+            Vector3 bestKilnCenter = Vector3.zero;
+
+            float bestFireDistSq = 3.6f * 3.6f;
+            bool foundFire = false;
+
+            for (int dy = -2; dy <= 2; dy++)
+            {
+                int wy = baseWy + dy;
+                if ((uint)wy >= 255u) continue;
+                for (int dz = -3; dz <= 3; dz++)
+                {
+                    int wz = baseWz + dz;
+                    int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+                    int lz = wz - cz * 16;
+                    for (int dx = -3; dx <= 3; dx++)
+                    {
+                        int wx = baseWx + dx;
+                        int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+                        int lx = wx - cx * 16;
+                        if (!_lastWorldChunks.TryGetValue((cx, cz), out uint[]? vox) || vox == null) continue;
+
+                        byte mat = VoxelBitUtility.GetMaterialId(vox[(wy << 8) | (lz << 4) | lx]);
+                        if (mat != MaterialIdCatalog.PrimitiveStoneKilnBlock && mat != MaterialIdCatalog.CampfireBlock) continue;
+
+                        Vector3 c = new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f);
+                        float dSq = (c - playerPos).sqrMagnitude;
+                        if (mat == MaterialIdCatalog.PrimitiveStoneKilnBlock && dSq < bestKilnDistSq)
+                        {
+                            bestKilnDistSq = dSq;
+                            foundKiln = true;
+                            bestKilnCenter = c;
+                        }
+                        else if (mat == MaterialIdCatalog.CampfireBlock && dSq < bestFireDistSq)
+                        {
+                            bestFireDistSq = dSq;
+                            foundFire = true;
+                        }
+                    }
+                }
+            }
+
+            if (foundKiln)
+            {
+                byte ingotSubId = 0;
+                byte oreMatId = 0;
+                if (InventoryUi.CountItemInInventory(InventoryItemKind.OreChunk, MaterialIdCatalog.CopperOre) >= 2)
+                {
+                    ingotSubId = 1;
+                    oreMatId = MaterialIdCatalog.CopperOre;
+                }
+                else if (InventoryUi.CountItemInInventory(InventoryItemKind.OreChunk, MaterialIdCatalog.IronOre) >= 2)
+                {
+                    ingotSubId = 2;
+                    oreMatId = MaterialIdCatalog.IronOre;
+                }
+
+                int fuelMode = 0; // 1=Coal, 2=SplitFirewood, 3=2xStick
+                if (InventoryUi.CountItemInInventory(InventoryItemKind.OreChunk, MaterialIdCatalog.Coal) >= 1) fuelMode = 1;
+                else if (InventoryUi.CountItemInInventory(InventoryItemKind.SplitFirewood, 0, ignoreSubId: true) >= 1) fuelMode = 2;
+                else if (InventoryUi.CountItemInInventory(InventoryItemKind.Stick, 0, ignoreSubId: true) >= 2) fuelMode = 3;
+
+                if (ingotSubId != 0 && fuelMode != 0)
+                {
+                    InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.OreChunk, oreMatId, 2, miningCtrl);
+                    if (fuelMode == 1) InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.OreChunk, MaterialIdCatalog.Coal, 1, miningCtrl);
+                    else if (fuelMode == 2) InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.SplitFirewood, 0, 1, miningCtrl, ignoreSubId: true);
+                    else InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.Stick, 0, 2, miningCtrl, ignoreSubId: true);
+
+                    VisualInventorySlot ingotSlot = new VisualInventorySlot
+                    {
+                        Kind = InventoryItemKind.MetalIngot,
+                        SubId = ingotSubId,
+                        Count = 1,
+                        Durability01 = 0f
+                    };
+
+                    if (ingotSubId == 1) CopperIngotCount++;
+                    else IronIngotCount++;
+
+                    string metalName = ingotSubId == 1 ? "Bakır" : "Demir";
+                    if (!InventoryUi.TryInsertPickedUpSlot(in ingotSlot, miningCtrl, out _, out _))
+                    {
+                        miningCtrl.SpawnDroppedWorldItem(
+                            bestKilnCenter + Vector3.up * 0.85f,
+                            oreMatId,
+                            shape: 63,
+                            count: 1,
+                            sharedVoxelMat,
+                            $"Saf {metalName} Külçesi");
+                    }
+
+                    miningCtrl.LastFeedbackText =
+                        $"🔥 TAŞ İZABE FIRINI: 2x {metalName} Cevheri + Yakıt eritildi -> +1x Saf {metalName} Külçesi üretildi!";
+                    return true;
+                }
+
+                miningCtrl.LastFeedbackText =
+                    "🔥 TAŞ İZABE FIRINI (+24°C Isı): Eritmek için [2x Bakır/Demir Cevheri] + [1x Kömür / 1x Yarma Odun / 2x Kuru Dal] ile [E] basın!";
+                return true;
+            }
+
+            if (foundFire)
+            {
+                miningCtrl.LastFeedbackText =
+                    "🔥 KAMP ATEŞİ AKTİF (+18°C Termal Koruma): Vücut ısınız korunuyor ve ıslaklığınız hızla kuruyor!";
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryUpgradeSelectedToolAtAnvil(
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge? combatBridge,
+            out string msg)
+        {
+            msg = string.Empty;
+            int sel = InventoryUi.SelectedHotbarIndex;
+            if ((uint)sel >= Stage1VisualHotbarAndInventoryUi.HotbarSlotCount) return false;
+
+            ref VisualInventorySlot slot = ref InventoryUi.HotbarSlots[sel];
+            if (slot.IsEmpty) return false;
+            if (slot.Kind != InventoryItemKind.ToolPickaxe &&
+                slot.Kind != InventoryItemKind.ToolAxe &&
+                slot.Kind != InventoryItemKind.WeaponSword)
+            {
+                return false;
+            }
+
+            // Ilkel T1 Aleti (SubId=1) -> 2x Demir veya 2x Bakir Kulce ile T2 Metal Alete (SubId=0) dov
+            if (slot.SubId == 1)
+            {
+                byte ingotSub = 0;
+                if (InventoryUi.CountItemInInventory(InventoryItemKind.MetalIngot, 2) >= 2) ingotSub = 2;
+                else if (InventoryUi.CountItemInInventory(InventoryItemKind.MetalIngot, 1) >= 2) ingotSub = 1;
+                if (ingotSub == 0) return false;
+
+                InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.MetalIngot, ingotSub, 2, miningCtrl);
+                if (ingotSub == 1) CopperIngotCount = Mathf.Max(0, CopperIngotCount - 2);
+                else IronIngotCount = Mathf.Max(0, IronIngotCount - 2);
+
+                slot.SubId = 0;
+                slot.Durability01 = 1.0f;
+                ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                msg = $"🔨 METAL DÖVME TAMAMLANDI: İlkel alet 2x {(ingotSub == 1 ? "Bakır" : "Demir")} Külçe ile T2 Metal Alete yükseltildi!";
+                return true;
+            }
+
+            // T2 Kazmayi (SubId=0) -> 3x Demir Kulce ile T3 Celik Kazmaya (SubId=3) veya T3 -> 3x Mithril Kulce ile T4 Mithril Kazmaya (SubId=4) yukselt
+            if (slot.Kind == InventoryItemKind.ToolPickaxe)
+            {
+                if (slot.SubId == 0 && InventoryUi.CountItemInInventory(InventoryItemKind.MetalIngot, 2) >= 3)
+                {
+                    InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.MetalIngot, 2, 3, miningCtrl);
+                    IronIngotCount = Mathf.Max(0, IronIngotCount - 3);
+                    slot.SubId = 3;
+                    slot.Durability01 = 1.0f;
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    msg = "🔨 ÇELİK KAZMA DÖVÜLDÜ: 3x Demir Külçe tüketildi -> Kademe T3 Kazma (Ametist, Yakut, Mithril kazılabilir)!";
+                    return true;
+                }
+                if ((slot.SubId == 0 || slot.SubId == 3) && InventoryUi.CountItemInInventory(InventoryItemKind.MetalIngot, 3) >= 3)
+                {
+                    InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.MetalIngot, 3, 3, miningCtrl);
+                    MithrilIngotCount = Mathf.Max(0, MithrilIngotCount - 3);
+                    slot.SubId = 4;
+                    slot.Durability01 = 1.0f;
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    msg = "🔨 MİTHRİL KAZMA DÖVÜLDÜ: 3x Mithril Külçe tüketildi -> Kademe T4 Kazma (Obsidyen, Astral ve Kızıl Elmas kazılabilir)!";
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void StepPendingBackpackChannel(
@@ -1830,7 +2300,7 @@ namespace Stratocraft.Character
 
             UpdateBodyHolsteredWeaponProxies(playerBodyRoot, playerCamera, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat, shownSlot);
 
-            if (shownSlot != 4 && shownSlot != 5 && shownSlot != 6)
+            if (shownSlot != 4 && shownSlot != 5 && shownSlot != 6 && shownSlot != 7 && shownSlot != 8 && shownSlot != 9 && shownSlot != 10 && shownSlot != 11)
             {
                 if (_heldMaterialBlockGo != null) _heldMaterialBlockGo.SetActive(false);
                 return;
@@ -1846,9 +2316,50 @@ namespace Stratocraft.Character
                 if (sharedVoxelMat != null) mr.sharedMaterial = sharedVoxelMat;
             }
             _heldMaterialBlockGo.SetActive(true);
-            EnsureToolHandGauntlet(_heldMaterialBlockGo.transform, ref _heldBlockHandGloveGo, sharedVoxelMat, new Vector3(0.08f, -0.35f, -0.22f));
+            EnsureToolHandGauntlet(_heldMaterialBlockGo.transform, ref _heldBlockHandGloveGo, sharedVoxelMat, new Vector3(0.04f, -0.14f, -0.08f));
 
             VisualInventorySlot activeUiSlot = InventoryUi.GetActiveHotbarSlot();
+            PhysicalItemArchetype heldPhysArch = activeUiSlot.MapToPhysicalArchetype();
+            if (shownSlot != 5 && shownSlot != 6 && heldPhysArch != PhysicalItemArchetype.None && heldPhysArch != PhysicalItemArchetype.ArchitecturalBlock)
+            {
+                PhysicalItemShapeDna heldDna = activeUiSlot.GetEffectiveShapeDna();
+                Mesh physMesh = PhysicalItemMeshFactory.GetOrCreateMesh(heldPhysArch, activeUiSlot.SubId, in heldDna, out Vector3 naturalScale);
+                if (_heldMaterialBlockMf != null &&
+                    (_heldMaterialBlockMf.sharedMesh != physMesh || _lastHeldShapeSeed != heldDna.EffectiveSeed))
+                {
+                    _heldMaterialBlockMf.sharedMesh = physMesh;
+                    _lastHeldShapeSeed = heldDna.EffectiveSeed;
+                    _lastHeldVisualMode = -1;
+                }
+
+                bool isStickOrHammer = heldPhysArch == PhysicalItemArchetype.NaturalStick ||
+                                       heldPhysArch == PhysicalItemArchetype.ToolPrimitiveHammer ||
+                                       heldPhysArch == PhysicalItemArchetype.ClayTuyerePipe;
+                if (isStickOrHammer)
+                {
+                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.56f);
+                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(58f + drawPitchAdd, -14f, 10f);
+                }
+                else
+                {
+                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.31f, -0.21f + drawDropY, 0.54f);
+                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 28f, -6f);
+                }
+                _heldMaterialBlockGo.transform.localScale = naturalScale;
+                if (_heldBlockHandGloveGo != null)
+                {
+                    _heldBlockHandGloveGo.transform.localPosition = new Vector3(0.03f, -0.11f, -0.06f);
+                    _heldBlockHandGloveGo.transform.localScale = new Vector3(0.11f, 0.14f, 0.12f);
+                }
+                return;
+            }
+
+            if (_heldBlockHandGloveGo != null)
+            {
+                _heldBlockHandGloveGo.transform.localPosition = new Vector3(0.08f, -0.35f, -0.22f);
+                _heldBlockHandGloveGo.transform.localScale = new Vector3(0.14f, 0.22f, 0.16f);
+            }
+
             byte emptyContMat = activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron
                 ? MaterialIdCatalog.Bronze
                 : (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket ? MaterialIdCatalog.OakWood : MaterialIdCatalog.Marble);
@@ -1857,7 +2368,9 @@ namespace Stratocraft.Character
                 : (shownSlot == 6
                     ? (activeUiSlot.SubId == 2 ? MaterialIdCatalog.MagmaBlock : (activeUiSlot.SubId == 1 ? MaterialIdCatalog.AstralOre : emptyContMat))
                     : selectedMat);
-            byte displayShape = shownSlot == 5 ? (byte)7 : (shownSlot == 6 ? (byte)6 : (byte)1);
+            byte displayShape = shownSlot == 5
+                ? (byte)7
+                : (shownSlot == 6 ? (byte)6 : (byte)1);
 
             if (shownSlot == 5)
             {
@@ -2230,18 +2743,37 @@ namespace Stratocraft.Character
             }
 
             droppedGo.transform.position = spawnPos;
-            GetSlot3DPoseAndScale(in droppedSlot, isHotbarSlot: false, out _, out Quaternion baseRot, out Vector3 matScale);
-            float worldScaleFactor = droppedSlot.Kind switch
+            PhysicalItemArchetype dropPhysArch = droppedSlot.MapToPhysicalArchetype();
+            Mesh itemMesh;
+            Quaternion flatYawRot;
+            if (dropPhysArch != PhysicalItemArchetype.None && dropPhysArch != PhysicalItemArchetype.ArchitecturalBlock)
             {
-                InventoryItemKind.WeaponSword or InventoryItemKind.ToolPickaxe or InventoryItemKind.ToolAxe => 3.2f,
-                InventoryItemKind.VoxelBlock => 3.4f,
-                _ => 2.8f
-            };
-            Quaternion flatYawRot = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * baseRot;
-            droppedGo.transform.localScale = matScale * worldScaleFactor;
-            droppedGo.transform.rotation = flatYawRot;
+                PhysicalItemShapeDna dropDna = droppedSlot.GetEffectiveShapeDna();
+                itemMesh = PhysicalItemMeshFactory.GetOrCreateMesh(dropPhysArch, droppedSlot.SubId, in dropDna, out Vector3 naturalScale);
+                bool layFlat = dropPhysArch == PhysicalItemArchetype.ToolPrimitiveAxe ||
+                               dropPhysArch == PhysicalItemArchetype.ToolPrimitivePickaxe ||
+                               dropPhysArch == PhysicalItemArchetype.ToolPrimitiveKnife ||
+                               dropPhysArch == PhysicalItemArchetype.ToolPrimitiveHammer;
+                Quaternion restPose = layFlat ? Quaternion.Euler(86f, 0f, 0f) : Quaternion.identity;
+                flatYawRot = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * restPose;
+                droppedGo.transform.localScale = naturalScale;
+                droppedGo.transform.rotation = flatYawRot;
+            }
+            else
+            {
+                GetSlot3DPoseAndScale(in droppedSlot, isHotbarSlot: false, out _, out Quaternion baseRot, out Vector3 matScale);
+                float worldScaleFactor = droppedSlot.Kind switch
+                {
+                    InventoryItemKind.WeaponSword or InventoryItemKind.ToolPickaxe or InventoryItemKind.ToolAxe => 3.2f,
+                    InventoryItemKind.VoxelBlock => 3.4f,
+                    _ => 2.8f
+                };
+                flatYawRot = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * baseRot;
+                droppedGo.transform.localScale = matScale * worldScaleFactor;
+                droppedGo.transform.rotation = flatYawRot;
+                itemMesh = GetOrCreate3DMatMeshForSlot(in droppedSlot);
+            }
 
-            Mesh itemMesh = GetOrCreate3DMatMeshForSlot(in droppedSlot);
             var mf = droppedGo.AddComponent<MeshFilter>();
             mf.sharedMesh = itemMesh;
             var mr = droppedGo.AddComponent<MeshRenderer>();

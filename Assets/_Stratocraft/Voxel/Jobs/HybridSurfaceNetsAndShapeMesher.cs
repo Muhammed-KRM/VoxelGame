@@ -1079,7 +1079,8 @@ namespace Stratocraft.Voxel.Jobs
         public static byte ResolveMaterialDefaultTemperature(byte matId) => matId switch
         {
             MaterialIdCatalog.FiniteLavaSurface => 242, MaterialIdCatalog.MagmaBlock => 195,
-            MaterialIdCatalog.CampfireBlock => 210, MaterialIdCatalog.StarCore => 170, _ => 0
+            MaterialIdCatalog.CampfireBlock => 210, MaterialIdCatalog.PrimitiveStoneKilnBlock => 192,
+            MaterialIdCatalog.StarCore => 170, _ => 0
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

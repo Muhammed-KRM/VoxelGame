@@ -148,6 +148,27 @@ namespace Stratocraft.Character
         private float _kickActiveTimer, _kickCooldownTimer;
         private bool _isPommelBashActive;
 
+        // Faz 2.1 (Asama 1.5) — Ciplak El Sag/Sol Yumruk Durumu
+        public const float BareFistPunchDuration = 0.30f;
+        public const float BareFistReachMeters = 1.95f;
+        private float _fistPunchTimer, _fistPunchCooldown;
+        private bool _nextPunchRightHand = true;
+        private GameObject? _fpsRightFistGo, _fpsLeftFistGo;
+        private Mesh? _cachedBareFistMesh;
+
+        public bool IsBareFistPunchActive => _fistPunchTimer > 0f;
+        public bool IsCurrentPunchRightHand { get; private set; } = true;
+        public int CurrentFistPunchId { get; private set; }
+        public float CurrentFistProgress01 => _fistPunchTimer > 0f
+            ? Mathf.Clamp01(1.0f - (_fistPunchTimer / BareFistPunchDuration))
+            : 0f;
+        public float CurrentRightFistExtend01 => (_fistPunchTimer > 0f && IsCurrentPunchRightHand)
+            ? Mathf.Sin(CurrentFistProgress01 * Mathf.PI)
+            : 0f;
+        public float CurrentLeftFistExtend01 => (_fistPunchTimer > 0f && !IsCurrentPunchRightHand)
+            ? Mathf.Sin(CurrentFistProgress01 * Mathf.PI)
+            : 0f;
+
         public CombatWeaponArchetype ActiveWeaponArchetype { get; private set; } = CombatWeaponArchetype.Longsword;
         public Vector3 PendingBodyMomentumLocalVel => _bodyMomentumLocalVel;
         public bool IsActiveDeflectWindow => _deflectFlickTimer > 0f;
@@ -697,6 +718,162 @@ namespace Stratocraft.Character
                 ? "🔨 KABZA DARBESİ (POMMEL BASH [RMB+F] -18 EP)! Rakibin gardını kırar ve 0.8sn sersemletir!"
                 : "🦵 FİZİKSEL TEKME (KICK [F] -15 EP | 1.85m Menzil)! Rakibin bloğunu yarar ve geriye iter!";
             return true;
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.5): Ciplak el (Slot 0) ile sag direkt / sol kroşe donusumlu yumruk baslatir.
+        /// Bosa veya araziye/agaca/kayaya savruldugunda 0 enerji ve 0 oz-hasar harcar; yalnizca canliya isabet edince tuketilir!
+        /// </summary>
+        public bool TryTriggerBareFistPunch(bool leftArmSevered = false)
+        {
+            if (_fistPunchCooldown > 0f || IsPlayerExhaustedLock) return false;
+
+            bool useRight = leftArmSevered || _nextPunchRightHand;
+            IsCurrentPunchRightHand = useRight;
+            if (!leftArmSevered) _nextPunchRightHand = !_nextPunchRightHand;
+
+            _fistPunchTimer = BareFistPunchDuration;
+            _fistPunchCooldown = 0.24f;
+            CurrentFistPunchId++;
+            _cameraImpactKickDeg += new Vector2(useRight ? -0.95f : 0.95f, -0.65f);
+            _hasPendingSwingWhoosh = true;
+            _pendingWhooshMassKg = 0.85f;
+            _pendingWhooshSpeedMult = 1.30f;
+            return true;
+        }
+
+        /// <summary>
+        /// FPS modunda ciplak el yumruk savrulurken ekranda prosedurel sag/sol yumruk hamlesini cizer (0 doku VRAM!).
+        /// </summary>
+        public void StepFirstPersonBareFistVisuals(
+            UnityEngine.Camera? playerCamera,
+            Material? sharedMat,
+            bool isFirstPersonMode,
+            int activeHolsterSlot,
+            bool isCrystalActive)
+        {
+            bool showFist = isFirstPersonMode && activeHolsterSlot == 0 && !isCrystalActive && _fistPunchTimer > 0f && playerCamera != null;
+            if (!showFist)
+            {
+                if (_fpsRightFistGo != null && _fpsRightFistGo.activeSelf) _fpsRightFistGo.SetActive(false);
+                if (_fpsLeftFistGo != null && _fpsLeftFistGo.activeSelf) _fpsLeftFistGo.SetActive(false);
+                return;
+            }
+
+            EnsureFirstPersonBareFistObjects(playerCamera!.transform, sharedMat);
+            float p = CurrentFistProgress01;
+            // Hizli ileri firlama (0..0.38) ve yumusak geri cekilme (0.38..1.0) egrisi
+            float thrust01 = p < 0.38f
+                ? Mathf.Sin((p / 0.38f) * (Mathf.PI * 0.5f))
+                : Mathf.Cos(((p - 0.38f) / 0.62f) * (Mathf.PI * 0.5f));
+
+            if (IsCurrentPunchRightHand)
+            {
+                if (_fpsLeftFistGo != null && _fpsLeftFistGo.activeSelf) _fpsLeftFistGo.SetActive(false);
+                if (_fpsRightFistGo != null)
+                {
+                    if (!_fpsRightFistGo.activeSelf) _fpsRightFistGo.SetActive(true);
+                    _fpsRightFistGo.transform.localPosition = Vector3.Lerp(
+                        new Vector3(0.26f, -0.27f, 0.32f),
+                        new Vector3(0.05f, -0.09f, 0.78f),
+                        thrust01);
+                    _fpsRightFistGo.transform.localRotation = Quaternion.Euler(
+                        Mathf.Lerp(58f, 84f, thrust01),
+                        Mathf.Lerp(-10f, -22f, thrust01),
+                        Mathf.Lerp(-12f, -38f, thrust01));
+                }
+            }
+            else
+            {
+                if (_fpsRightFistGo != null && _fpsRightFistGo.activeSelf) _fpsRightFistGo.SetActive(false);
+                if (_fpsLeftFistGo != null)
+                {
+                    if (!_fpsLeftFistGo.activeSelf) _fpsLeftFistGo.SetActive(true);
+                    _fpsLeftFistGo.transform.localPosition = Vector3.Lerp(
+                        new Vector3(-0.26f, -0.27f, 0.32f),
+                        new Vector3(-0.05f, -0.09f, 0.78f),
+                        thrust01);
+                    _fpsLeftFistGo.transform.localRotation = Quaternion.Euler(
+                        Mathf.Lerp(58f, 84f, thrust01),
+                        Mathf.Lerp(10f, 22f, thrust01),
+                        Mathf.Lerp(12f, 38f, thrust01));
+                }
+            }
+        }
+
+        private void EnsureFirstPersonBareFistObjects(Transform camTr, Material? sharedMat)
+        {
+            if (_cachedBareFistMesh == null)
+            {
+                var verts = new List<Vector3>(32);
+                var colors = new List<Color32>(32);
+                var tris = new List<int>(72);
+                static void AddPart(List<Vector3> v, List<Color32> c, List<int> t, Vector3 center, Vector3 he, Color32 bCol, Color32 tCol)
+                {
+                    int b = v.Count;
+                    v.Add(center + new Vector3(-he.x, -he.y, -he.z));
+                    v.Add(center + new Vector3(he.x, -he.y, -he.z));
+                    v.Add(center + new Vector3(he.x, -he.y, he.z));
+                    v.Add(center + new Vector3(-he.x, -he.y, he.z));
+                    v.Add(center + new Vector3(-he.x, he.y, -he.z));
+                    v.Add(center + new Vector3(he.x, he.y, -he.z));
+                    v.Add(center + new Vector3(he.x, he.y, he.z));
+                    v.Add(center + new Vector3(-he.x, he.y, he.z));
+                    for (int i = 0; i < 4; i++) c.Add(bCol);
+                    for (int i = 0; i < 4; i++) c.Add(tCol);
+                    ReadOnlySpan<int> idx = stackalloc int[36]
+                    {
+                        0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3,
+                        3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2
+                    };
+                    for (int i = 0; i < idx.Length; i++) t.Add(b + idx[i]);
+                }
+
+                Color32 forearmWrap = new(96, 68, 44, 255);
+                Color32 skinShadow = new(184, 136, 102, 255);
+                Color32 skinKnuckle = new(224, 174, 136, 255);
+                // On kol sargisi + Siki yumruk + Bogum cikintilari
+                AddPart(verts, colors, tris, new(0f, -0.14f, 0f), new(0.042f, 0.12f, 0.042f), forearmWrap, forearmWrap);
+                AddPart(verts, colors, tris, new(0f, 0.02f, 0.005f), new(0.052f, 0.055f, 0.048f), skinShadow, skinKnuckle);
+                AddPart(verts, colors, tris, new(0f, 0.075f, 0.014f), new(0.048f, 0.018f, 0.032f), skinKnuckle, skinKnuckle);
+
+                _cachedBareFistMesh = new Mesh { name = "ProceduralBareFistMesh" };
+                _cachedBareFistMesh.SetVertices(verts);
+                _cachedBareFistMesh.SetColors(colors);
+                _cachedBareFistMesh.SetTriangles(tris, 0);
+                _cachedBareFistMesh.RecalculateNormals();
+                _cachedBareFistMesh.RecalculateBounds();
+            }
+
+            if (_fpsRightFistGo == null)
+            {
+                _fpsRightFistGo = new GameObject("FPS_BareFist_Right");
+                _fpsRightFistGo.transform.SetParent(camTr, false);
+                _fpsRightFistGo.AddComponent<MeshFilter>().sharedMesh = _cachedBareFistMesh;
+                var mr = _fpsRightFistGo.AddComponent<MeshRenderer>();
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                if (sharedMat != null) mr.sharedMaterial = sharedMat;
+                _fpsRightFistGo.SetActive(false);
+            }
+            else if (_fpsRightFistGo.transform.parent != camTr)
+            {
+                _fpsRightFistGo.transform.SetParent(camTr, false);
+            }
+
+            if (_fpsLeftFistGo == null)
+            {
+                _fpsLeftFistGo = new GameObject("FPS_BareFist_Left");
+                _fpsLeftFistGo.transform.SetParent(camTr, false);
+                _fpsLeftFistGo.AddComponent<MeshFilter>().sharedMesh = _cachedBareFistMesh;
+                var mr = _fpsLeftFistGo.AddComponent<MeshRenderer>();
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                if (sharedMat != null) mr.sharedMaterial = sharedMat;
+                _fpsLeftFistGo.SetActive(false);
+            }
+            else if (_fpsLeftFistGo.transform.parent != camTr)
+            {
+                _fpsLeftFistGo.transform.SetParent(camTr, false);
+            }
         }
 
         public float ComputeCurrentAttackImpulseNs(bool playerMissingArm = false)
@@ -1362,6 +1539,8 @@ namespace Stratocraft.Character
             if (_reboundTimer > 0f) _reboundTimer = Mathf.Max(0f, _reboundTimer - dt);
             if (_kickActiveTimer > 0f) _kickActiveTimer = Mathf.Max(0f, _kickActiveTimer - dt);
             if (_kickCooldownTimer > 0f) _kickCooldownTimer = Mathf.Max(0f, _kickCooldownTimer - dt);
+            if (_fistPunchTimer > 0f) _fistPunchTimer = Mathf.Max(0f, _fistPunchTimer - dt);
+            if (_fistPunchCooldown > 0f) _fistPunchCooldown = Mathf.Max(0f, _fistPunchCooldown - dt);
             if (_parrySpamDecayTimer > 0f)
             {
                 _parrySpamDecayTimer = Mathf.Max(0f, _parrySpamDecayTimer - dt);

@@ -1304,6 +1304,7 @@ namespace Stratocraft.WorldGen.Generators
                 {
                     if (crystalHash == 1) return MaterialIdCatalog.CopperOre;
                     if (crystalHash == 2) return MaterialIdCatalog.Coal;
+                    if (crystalHash == 3) return MaterialIdCatalog.QuartzGem;
                 }
             }
 
@@ -1336,6 +1337,7 @@ namespace Stratocraft.WorldGen.Generators
             int veinHash = Math.Abs(wx * 73 + y * 37 + wz * 19 + seedXor) & 63;
             if (veinHash == 0) return MaterialIdCatalog.Coal;
             if (veinHash == 1) return MaterialIdCatalog.CopperOre;
+            if (veinHash == 9 && depthFromSurface <= 24) return MaterialIdCatalog.QuartzGem;
             if (veinHash == 2 && depthFromSurface >= 8) return MaterialIdCatalog.TinOre;
             if (veinHash == 3 && depthFromSurface >= 18) return MaterialIdCatalog.IronOre;
             if (veinHash == 4 && depthFromSurface >= 32) return MaterialIdCatalog.SilverOre;
@@ -1699,6 +1701,279 @@ namespace Stratocraft.WorldGen.Generators
                 BuildVoxelTree(voxels, chunkX, chunkZ, 3 + (h1 % 4), 3 + ((h1 >> 4) % 4), trunkHeight: 6 + (h1 % 5), isIronwood: (h1 & 2) != 0);
                 BuildVoxelTree(voxels, chunkX, chunkZ, 9 + ((h1 >> 8) % 4), 9 + ((h1 >> 12) % 4), trunkHeight: 6 + ((h1 >> 3) % 5), isIronwood: (h1 & 4) != 0);
             }
+
+            StampSurfaceStoneAndQuartzOutcrops(voxels, chunkX, chunkZ);
+        }
+
+        private static void StampSurfaceStoneAndQuartzOutcrops(uint[] voxels, int chunkX, int chunkZ)
+        {
+            int h = Math.Abs((chunkX * 83492791) ^ (chunkZ * 297121507) ^ (ActiveWorldSeed * 19349663));
+            // 1) Tas Yontma (Knapping) icin dogal yuzey kaya blogu (sertlik >= 2.0f)
+            int rockLx = 2 + ((h >> 2) % 12);
+            int rockLz = 2 + ((h >> 6) % 12);
+            TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, rockLx, rockLz, MaterialIdCatalog.Stone, shapeId: 1);
+
+            // 2) Her ~2 chunk'tan birinde yuzey Rezonans Kuvarsi (QuartzGem) kristali cikintisi (T1 Tas Kazma ile kirilir!)
+            if ((h & 1) == 0 || (Math.Abs(chunkX) <= 2 && Math.Abs(chunkZ) <= 2))
+            {
+                int qLx = 2 + ((h >> 10) % 12);
+                int qLz = 2 + ((h >> 14) % 12);
+                if (Math.Abs(qLx - rockLx) + Math.Abs(qLz - rockLz) >= 3)
+                {
+                    TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, qLx, qLz, MaterialIdCatalog.QuartzGem, shapeId: 6);
+                }
+            }
+        }
+
+        private static void TryStampSingleSurfaceOutcrop(
+            uint[] voxels, int chunkX, int chunkZ, int lx, int lz, byte matId, byte shapeId)
+        {
+            if ((uint)lx >= 15u || (uint)lz >= 15u || lx < 1 || lz < 1) return;
+            int wx = chunkX * 16 + lx;
+            int wz = chunkZ * 16 + lz;
+            float rSq = wx * wx + wz * wz;
+            if (rSq < 144.0f) return; // Baslangic Atolyesi ve Ors cevresini acik tut
+            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 6.5f)) return;
+
+            float r = MathF.Sqrt(rSq);
+            float coastR = ComputeIslandCoastRadius(wx, wz);
+            float radialMargin = InfiniteProceduralWorldMode ? 64000.0f : (coastR - r);
+            if (radialMargin < 8.0f) return;
+
+            int biomeId = GetBiomeId(wx, wz);
+            EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
+            if (inWater || inLava || inAcid || inWall) return;
+
+            float surfTopY = SampleIslandTopSurfaceY(wx, wz);
+            if (surfTopY < SeaLevelY + 1.2f) return;
+
+            int baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 8);
+            int curIdx = ((baseY + 1) << 8) | (lz << 4) | lx;
+            if (VoxelBitUtility.GetMaterialId(voxels[curIdx]) != MaterialIdCatalog.Air) return;
+
+            EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
+            SetNaturalTreeVoxel(voxels, lx, baseY + 1, lz, matId, shapeId: shapeId, rot: 0);
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.3) — 12 Biyom Ekolojik Yuzey Esyasi turleri.
+        /// </summary>
+        public enum BiomeForageDropKind : byte
+        {
+            None = 0,
+            FlintStone = 1,
+            Stick = 2,
+            PlantFiber = 3,
+            LeafPile = 4,
+            RoughStone = 5,
+            BasaltStone = 6,
+            ClayLump = 7,
+            QuartzCluster = 8,
+            SandPile = 9
+        }
+
+        /// <summary>
+        /// Yalnizca agacli veya bitki ortulu biyomlarda (0: Zumrut Vadi, 1: Demir Agaci Ormani,
+        /// 3: Turba Batakligi, 6: Kizil Kumtasi seyrek kuru diken, 10: Gokyuzu Adalari) cali cikabilir.
+        /// Corak / Buzul / Karst / Kristal / Bazalt / Volkanik / Kul / Hiclik biyomlarinda (2, 4, 5, 7, 8, 9, 11) ASLA cali cikmaz!
+        /// </summary>
+        public static bool IsVegetatedBushBiome(int biomeId)
+        {
+            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 6 || biomeId == 10;
+        }
+
+        /// <summary>Yesil yaprak yigini ve sık dal yalnizca agacli/sulak biyomlarda bulunur.</summary>
+        public static bool IsLushLeafBiome(int biomeId)
+        {
+            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 10;
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.3): 12 biyomun ekolojik kimligine gore deterministik yuzey esyasi uretir.
+        /// Corak biyomlarda (2, 4, 5, 7, 8, 9, 11) ASLA dal, yaprak veya bitki lifi dondurmez!
+        /// </summary>
+        public static bool TryGetBiomeForageNode(
+            int chunkX, int chunkZ, int worldSeed, int slotIndex,
+            out int wx, out int wz, out BiomeForageDropKind dropKind)
+        {
+            wx = 0;
+            wz = 0;
+            dropKind = BiomeForageDropKind.None;
+            if ((uint)slotIndex >= 5u) return false;
+
+            int h = Math.Abs((chunkX * 73856093) ^ (chunkZ * 19349663) ^ (worldSeed * 83492791) ^ ((slotIndex + 1) * 265443576));
+            int lx = 2 + (h % 12);
+            int lz = 2 + ((h >> 5) % 12);
+            wx = chunkX * 16 + lx;
+            wz = chunkZ * 16 + lz;
+
+            float rSq = wx * wx + wz * wz;
+            if (rSq < 49.0f) return false; // Atolye gobeginin tam ustune koyma
+
+            float r = MathF.Sqrt(rSq);
+            float coastR = ComputeIslandCoastRadius(wx, wz);
+            float radialMargin = InfiniteProceduralWorldMode ? 64000.0f : (coastR - r);
+            if (radialMargin < 8.0f) return false;
+
+            int biomeId = GetBiomeId(wx, wz);
+            EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
+            if (inWater || inLava || inAcid || inWall) return false;
+
+            float surfTopY = SampleIslandTopSurfaceY(wx, wz);
+            if (surfTopY < SeaLevelY + 0.55f) return false;
+
+            bool nearWaterShore = surfTopY <= SeaLevelY + 2.35f;
+            int pick = (h >> 9) % 100;
+
+            switch (biomeId)
+            {
+                case 0:  // Zumrut Baslangic Vadisi
+                case 1:  // Demir Agaci Ormani
+                case 10: // Gokyuzu Adalari
+                    if (nearWaterShore && slotIndex == 3)
+                    {
+                        dropKind = BiomeForageDropKind.ClayLump;
+                        return true;
+                    }
+                    dropKind = slotIndex switch
+                    {
+                        0 => BiomeForageDropKind.FlintStone,
+                        1 => BiomeForageDropKind.Stick,
+                        2 => BiomeForageDropKind.LeafPile,
+                        3 => BiomeForageDropKind.RoughStone,
+                        _ => pick < 42 ? BiomeForageDropKind.QuartzCluster : BiomeForageDropKind.Stick
+                    };
+                    return true;
+
+                case 3: // Turba Batakligi (Sazlik lifi, kil, dal, tas)
+                    if (slotIndex >= 4) return false;
+                    dropKind = slotIndex switch
+                    {
+                        0 => BiomeForageDropKind.PlantFiber,
+                        1 => BiomeForageDropKind.ClayLump,
+                        2 => BiomeForageDropKind.Stick,
+                        _ => BiomeForageDropKind.RoughStone
+                    };
+                    return true;
+
+                case 5: // Kristal Kanyon / Kuvars Vadisi (0 dal/yaprak! Bol kuvars + tas + cakmaktasi)
+                    dropKind = slotIndex switch
+                    {
+                        0 => BiomeForageDropKind.QuartzCluster,
+                        1 => BiomeForageDropKind.QuartzCluster,
+                        2 => BiomeForageDropKind.FlintStone,
+                        3 => BiomeForageDropKind.RoughStone,
+                        _ => BiomeForageDropKind.QuartzCluster
+                    };
+                    return true;
+
+                case 6: // Kizil Kumtasi Kanyonu (Kurak: tas, cakmaktasi, kum, cok seyrek %15 kuru dal; 0 yesil yaprak!)
+                    if (slotIndex >= 4) return false;
+                    dropKind = slotIndex switch
+                    {
+                        0 => BiomeForageDropKind.RoughStone,
+                        1 => BiomeForageDropKind.FlintStone,
+                        2 => BiomeForageDropKind.SandPile,
+                        _ => pick < 15 ? BiomeForageDropKind.Stick : BiomeForageDropKind.RoughStone
+                    };
+                    return true;
+
+                case 7: // Bazalt Platosu
+                case 8: // Volkanik Kaldera
+                case 9: // Kullu Corak Topraklar (0 bitki!)
+                    if (slotIndex >= 3) return false;
+                    dropKind = (slotIndex == 0) ? BiomeForageDropKind.FlintStone : BiomeForageDropKind.BasaltStone;
+                    return true;
+
+                case 11: // Astral Hiclik Ucurumu (0 bitki!)
+                    if (slotIndex >= 3) return false;
+                    dropKind = (slotIndex == 0) ? BiomeForageDropKind.QuartzCluster : BiomeForageDropKind.BasaltStone;
+                    return true;
+
+                default: // 2: Karstik Kirectasi, 4: Kuzey Buzul Siradaglari (0 bitki!)
+                    if (slotIndex >= 3) return false;
+                    dropKind = (slotIndex == 0) ? BiomeForageDropKind.FlintStone : BiomeForageDropKind.RoughStone;
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.3): Agacli/bitkili biyomlar icin kirilabilir 3B Yabani Cali (WildBush) dugumu uretir.
+        /// Corak biyomlarda (2, 4, 5, 7, 8, 9, 11) daima false doner!
+        /// </summary>
+        public static bool TryGetBiomeBushNode(
+            int chunkX, int chunkZ, int worldSeed, int bushSlot,
+            out int wx, out int wz, out bool hasBerries, out bool isDryDesert, out bool isSwampReed)
+        {
+            wx = 0;
+            wz = 0;
+            hasBerries = false;
+            isDryDesert = false;
+            isSwampReed = false;
+            if ((uint)bushSlot >= 3u) return false;
+
+            int h = Math.Abs((chunkX * 92837111) ^ (chunkZ * 68928749) ^ (worldSeed * 39916801) ^ ((bushSlot + 7) * 15485863));
+            int lx = 2 + (h % 12);
+            int lz = 2 + ((h >> 6) % 12);
+            wx = chunkX * 16 + lx;
+            wz = chunkZ * 16 + lz;
+
+            float rSq = wx * wx + wz * wz;
+            if (rSq < 64.0f) return false; // Atolye meydanini acik birak
+
+            float r = MathF.Sqrt(rSq);
+            float coastR = ComputeIslandCoastRadius(wx, wz);
+            float radialMargin = InfiniteProceduralWorldMode ? 64000.0f : (coastR - r);
+            if (radialMargin < 8.5f) return false;
+
+            int biomeId = GetBiomeId(wx, wz);
+            if (!IsVegetatedBushBiome(biomeId)) return false;
+
+            if (biomeId == 6)
+            {
+                // Col/Kumtasi kanyonunda yalnizca seyrek (%20) tek kuru diken calisi cikar
+                if (bushSlot > 0 || ((h >> 10) % 5) != 0) return false;
+                isDryDesert = true;
+            }
+            else if (biomeId == 3)
+            {
+                if (bushSlot >= 2) return false;
+                isSwampReed = true;
+            }
+            else
+            {
+                if (((h >> 10) % 10) >= 8) return false;
+                hasBerries = ((h >> 14) % 100) < 32;
+            }
+
+            EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
+            if (inWater || inLava || inAcid || inWall) return false;
+
+            float surfTopY = SampleIslandTopSurfaceY(wx, wz);
+            if (surfTopY < SeaLevelY + 0.9f) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Geriye donuk uyumlu yuzey toplama (Foraging) dugumu ureticisi: Corak biyomlarda bitki dondurmez.
+        /// </summary>
+        public static bool TryGetSurfaceForageNode(
+            int chunkX, int chunkZ, int worldSeed, int slotIndex,
+            out int wx, out int wz, out byte forageKind)
+        {
+            forageKind = 0;
+            if (!TryGetBiomeForageNode(chunkX, chunkZ, worldSeed, slotIndex, out wx, out wz, out BiomeForageDropKind drop))
+            {
+                return false;
+            }
+
+            forageKind = drop switch
+            {
+                BiomeForageDropKind.Stick => 1,
+                BiomeForageDropKind.PlantFiber or BiomeForageDropKind.LeafPile => 2,
+                _ => 0
+            };
+            return true;
         }
 
         private static void BuildVoxelTree(uint[] voxels, int chunkX, int chunkZ, int lx, int lz, int trunkHeight, bool isIronwood)
@@ -1714,7 +1989,7 @@ namespace Stratocraft.WorldGen.Generators
 
             int biomeId = GetBiomeId(wx, wz);
             bool isCoreTestChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
-            if (!isCoreTestChunk && (biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)) return;
+            if (!isCoreTestChunk && (biomeId == 2 || biomeId == 4 || biomeId == 5 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)) return;
 
             EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
             if (inWater || inLava || inAcid || inWall) return;

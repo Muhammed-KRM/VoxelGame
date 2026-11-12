@@ -151,6 +151,125 @@ namespace Stratocraft.Character
             return totalMoved;
         }
 
+        public static void ComputeEffectiveFluidSurfaceAndBed(
+            ReadOnlySpan<ushort> fluidCells,
+            ReadOnlySpan<uint> solidVoxels,
+            int col,
+            int fluidWy,
+            out float bedY,
+            out float surfY)
+        {
+            int curIdx = (fluidWy << 8) | col;
+            int belowIdx = ((fluidWy - 1) << 8) | col;
+            FluidCell16 curCell = new FluidCell16(fluidCells[curIdx]);
+            uint belowRaw = fluidWy > 0 && belowIdx < solidVoxels.Length ? solidVoxels[belowIdx] : 0u;
+            uint curRaw = curIdx < solidVoxels.Length ? solidVoxels[curIdx] : 0u;
+
+            // Alt hucre kati degil ama su/sivi ile doluysa (derin gol/deniz sutunu), ustteki hucrenin tabani tam fluidWy kotudur!
+            if (fluidWy > 0 && !VoxelBitUtility.IsPhysicallySolid(belowRaw) && belowIdx < fluidCells.Length)
+            {
+                FluidCell16 belowFluid = new FluidCell16(fluidCells[belowIdx]);
+                if (belowFluid.Type != FluidType.None && belowFluid.Mass >= 16)
+                {
+                    bedY = fluidWy;
+                    surfY = MathF.Min(fluidWy + 0.98f, bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness(curCell.Mass, 255));
+                    return;
+                }
+            }
+
+            bedY = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowRaw, curRaw, fluidWy) / 255.0f;
+            surfY = MathF.Min(fluidWy + 0.98f, bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness(curCell.Mass, 255));
+        }
+
+        /// <summary>
+        /// Paket 2 İP-4 (#16 Kafa Su Üstündeyken Oksijen Hatası Çözümü):
+        /// Tam sayı FloorToInt(pos.y + 1.45f) yerine karakterin ağız/burun kotunu (playerFeetY + 1.52f),
+        /// alt-voksel gerçek görsel sıvı yüzeyi kotu (bedY + ComputeVisualFluidThickness) ve 4cm histerezis bandı
+        /// ile karşılaştırır. Kafa su yüzeyinin üstündeyken headSubmerged=false ve submergedDepthMeters=0 döner.
+        /// </summary>
+        public static void ComputeBreathSubmersionState(
+            ReadOnlySpan<ushort> fluidCells,
+            ReadOnlySpan<uint> solidVoxels,
+            float playerFeetY,
+            int lx,
+            int lz,
+            int chunkHeight,
+            bool previouslyHeadSubmerged,
+            out bool headSubmerged,
+            out float submergedDepthMeters,
+            out int breathAirWy)
+        {
+            float breathY = playerFeetY + 1.52f;
+            int maxValidY = Math.Max(2, chunkHeight - 2);
+            int wy = Math.Clamp((int)MathF.Floor(breathY), 1, maxValidY);
+            breathAirWy = wy;
+            headSubmerged = false;
+            submergedDepthMeters = 0f;
+
+            if ((uint)lx >= 16u || (uint)lz >= 16u) return;
+            int col = (lz << 4) | lx;
+            int curIdx = (wy << 8) | col;
+            int aboveIdx = ((wy + 1) << 8) | col;
+            if (aboveIdx >= fluidCells.Length) return;
+
+            FluidCell16 curCell = new FluidCell16(fluidCells[curIdx]);
+            FluidCell16 aboveCell = new FluidCell16(fluidCells[aboveIdx]);
+
+            if (curCell.Type == FluidType.None || curCell.Mass == 0)
+            {
+                // SurfaceNets kiyi tabaninda (bedY < wy+1) ust hucredeki (wy+1) su katmani alt hucre kotuna sarkabilir
+                if (aboveCell.Type != FluidType.None && aboveCell.Mass > 0)
+                {
+                    ComputeEffectiveFluidSurfaceAndBed(fluidCells, solidVoxels, col, wy + 1, out float aboveBedY, out float aboveSurfY);
+                    float aboveThresholdY = previouslyHeadSubmerged ? (aboveSurfY + 0.015f) : (aboveSurfY - 0.025f);
+                    if (breathY >= aboveBedY - 0.05f && breathY < aboveThresholdY)
+                    {
+                        headSubmerged = true;
+                        submergedDepthMeters = MathF.Max(0.12f, MathF.Max(aboveSurfY - breathY, aboveCell.PressureHead * 2.0f));
+                    }
+                }
+                return;
+            }
+
+            if (aboveCell.Type != FluidType.None && aboveCell.Mass >= 16)
+            {
+                headSubmerged = true;
+                int topFluidWy = wy + 1;
+                int maxScanY = Math.Min(maxValidY, wy + 60);
+                for (int sy = wy + 1; sy <= maxScanY; sy++)
+                {
+                    FluidCell16 c = new FluidCell16(fluidCells[(sy << 8) | col]);
+                    if (c.Type == FluidType.None || c.Mass < 16) break;
+                    topFluidWy = sy;
+                }
+
+                ComputeEffectiveFluidSurfaceAndBed(fluidCells, solidVoxels, col, topFluidWy, out _, out float topSurfY);
+                float columnDepth = MathF.Max(0.20f, topSurfY - breathY);
+                submergedDepthMeters = MathF.Max(columnDepth, curCell.PressureHead * 2.0f);
+                return;
+            }
+
+            ComputeEffectiveFluidSurfaceAndBed(fluidCells, solidVoxels, col, wy, out _, out float surfY);
+            float thresholdY = previouslyHeadSubmerged ? (surfY + 0.015f) : (surfY - 0.025f);
+
+            if (breathY < thresholdY)
+            {
+                headSubmerged = true;
+                submergedDepthMeters = MathF.Max(0.12f, MathF.Max(surfY - breathY, curCell.PressureHead * 2.0f));
+            }
+            else
+            {
+                headSubmerged = false;
+                submergedDepthMeters = 0f;
+                // Ağız/burun su yüzeyinin üstündeyken wy hücresinin tabanında kısmi su varsa,
+                // EnclosedOxygenFloodFillSystem'in üstteki açık havayı ölçmesi için wy+1 hücresini hedefle.
+                if (curCell.Mass >= 48 && aboveIdx < solidVoxels.Length && !VoxelBitUtility.IsPhysicallySolid(solidVoxels[aboveIdx]))
+                {
+                    breathAirWy = wy + 1;
+                }
+            }
+        }
+
 #if UNITY_5_3_OR_NEWER
         private const float VoidRescueThresholdY = -14.0f;
         private const float MaxStepUpHeightMeters = 0.65f;
@@ -175,7 +294,11 @@ namespace Stratocraft.Character
         private Vector3 _dodgeDirectionWorld;
         private float _lowCeilingDebounceSec;
         private bool _wasTouchingWaterLastFrame;
+        private bool _wasHeadSubmergedLastFrame;
         private float _swimmerSurgeCooldownSec;
+
+        /// <summary>Son karede hesaplanan nefes alma (agiz/burun ustu) hava voksel Y kotu.</summary>
+        public int LastBreathAirVoxelY { get; private set; } = -1;
 
         /// <summary>Oyuncu-su etkilesimi dunya konumu (_StratocraftSwimmerPos.xyz).</summary>
         public Vector3 WaterInteractionWorldPos { get; private set; }
@@ -534,6 +657,8 @@ namespace Stratocraft.Character
                 _movementState.IsSubmergedInFluid = 0;
                 WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 3.0f);
                 _wasTouchingWaterLastFrame = false;
+                _wasHeadSubmergedLastFrame = false;
+                LastBreathAirVoxelY = -1;
                 return;
             }
             Vector3 pos = playerTransform.position;
@@ -545,30 +670,39 @@ namespace Stratocraft.Character
                 _movementState.IsSubmergedInFluid = 0;
                 WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 3.0f);
                 _wasTouchingWaterLastFrame = false;
+                _wasHeadSubmergedLastFrame = false;
+                LastBreathAirVoxelY = -1;
                 return;
             }
 
             int lx = wx - cx * 16, lz = wz - cz * 16;
             int feetWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 0.25f), 1, 254);
             int waistWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 0.85f), 1, 254);
-            int headWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 1.45f), 1, 254);
             FluidCell16 feetCell = new FluidCell16(f[(feetWy << 8) | (lz << 4) | lx]);
             FluidCell16 waistCell = new FluidCell16(f[(waistWy << 8) | (lz << 4) | lx]);
-            FluidCell16 headCell = new FluidCell16(f[(headWy << 8) | (lz << 4) | lx]);
 
             bool inLava = (feetCell.Type == FluidType.Lava && feetCell.Mass >= 36) || (waistCell.Type == FluidType.Lava && waistCell.Mass >= 24);
             bool inAcid = (feetCell.Type == FluidType.Acid && feetCell.Mass >= 36) || (waistCell.Type == FluidType.Acid && waistCell.Mass >= 24);
             bool inWater = waistCell.Type == FluidType.Water && waistCell.Mass >= 40;
             bool wadingWater = feetCell.Type == FluidType.Water && feetCell.Mass >= 14;
             bool touchingWater = inWater || wadingWater;
-            bool headSubmerged = headCell.Type != FluidType.None && headCell.Mass >= 48;
+
+            worldChunks.TryGetValue((cx, cz), out uint[]? solidVox);
+            ReadOnlySpan<uint> solidSpan = solidVox != null ? solidVox.AsSpan() : ReadOnlySpan<uint>.Empty;
+            ComputeBreathSubmersionState(
+                f.AsSpan(), solidSpan, pos.y, lx, lz, 256, _wasHeadSubmergedLastFrame,
+                out bool headSubmerged, out float calcSubmergedDepth, out int breathAirWy);
+            _wasHeadSubmergedLastFrame = headSubmerged;
+            LastBreathAirVoxelY = breathAirWy;
+            _vitals.SubmergedDepthMeters = calcSubmergedDepth;
 
             _movementState.IsSubmergedInFluid = (inWater || inLava || inAcid) ? (byte)1 : (byte)0;
 
+            int surfaceWy = inWater ? waistWy : feetWy;
+            float waterTopSurfaceY = surfaceWy + 0.55f;
             if (touchingWater)
             {
-                int surfaceWy = inWater ? waistWy : feetWy;
-                for (int sy = surfaceWy; sy <= Mathf.Min(253, surfaceWy + 6); sy++)
+                for (int sy = surfaceWy; sy <= Mathf.Min(253, surfaceWy + 12); sy++)
                 {
                     FluidCell16 c = new FluidCell16(f[(sy << 8) | (lz << 4) | lx]);
                     if (c.Type == FluidType.Water && c.Mass > 0)
@@ -581,8 +715,11 @@ namespace Stratocraft.Character
                     }
                 }
 
+                int col = (lz << 4) | lx;
+                ComputeEffectiveFluidSurfaceAndBed(f.AsSpan(), solidSpan, col, surfaceWy, out _, out waterTopSurfaceY);
+
                 float horizSpd = Mathf.Sqrt(_movementState.VelocityX * _movementState.VelocityX + _movementState.VelocityZ * _movementState.VelocityZ);
-                WaterInteractionWorldPos = new Vector3(pos.x, surfaceWy + 0.55f, pos.z);
+                WaterInteractionWorldPos = new Vector3(pos.x, waterTopSurfaceY, pos.z);
                 float targetStrength = Mathf.Clamp01((inWater ? 0.52f : 0.30f) + horizSpd * 0.14f + Mathf.Abs(_verticalVelocity) * 0.06f);
                 WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, targetStrength, dt * 6.5f);
 
@@ -613,25 +750,6 @@ namespace Stratocraft.Character
                 WaterInteractionStrength01 = Mathf.MoveTowards(WaterInteractionStrength01, 0f, dt * 2.4f);
             }
             _wasTouchingWaterLastFrame = touchingWater;
-
-            if (headSubmerged)
-            {
-                int waterColumnAbove = 0;
-                int maxScanY = Mathf.Min(254, headWy + 60);
-                for (int sy = headWy + 1; sy <= maxScanY; sy++)
-                {
-                    FluidCell16 above = new FluidCell16(f[(sy << 8) | (lz << 4) | lx]);
-                    if (above.Type == FluidType.None || above.Mass < 32) break;
-                    waterColumnAbove++;
-                }
-                float columnDepth = 1.5f + waterColumnAbove * 1.0f;
-                float pressureHeadDepth = headCell.PressureHead * 2.0f;
-                _vitals.SubmergedDepthMeters = Mathf.Max(columnDepth, pressureHeadDepth);
-            }
-            else
-            {
-                _vitals.SubmergedDepthMeters = 0f;
-            }
 
             if (inLava)
             {
@@ -671,6 +789,24 @@ namespace Stratocraft.Character
                     _jumpLaunchTimer = 0.12f;
                     _movementState.IsGrounded = 0;
                     statusFeedback = "Suda Yuzme (Arsimet Kaldirma Kuvveti + Space)";
+                }
+                else if (Input.GetKey(KeyCode.LeftControl))
+                {
+                    _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, -3.0f, dt * 10.0f);
+                }
+                else
+                {
+                    // Dogal Arsimet yuzey dengesi: Agiz/burun kotunu (pos.y + 1.52) su yuzeyinin ~18cm ustunde tutacak sekilde yumusak yuzdur!
+                    float targetFloatFeetY = waterTopSurfaceY - 1.34f;
+                    float depthBelowFloat = targetFloatFeetY - pos.y;
+                    if (depthBelowFloat > -0.15f)
+                    {
+                        float targetVel = Mathf.Clamp(depthBelowFloat * 3.8f, -0.8f, 2.6f);
+                        _verticalVelocity = Mathf.MoveTowards(
+                            _verticalVelocity,
+                            targetVel + StratocraftConstants.GravityAcceleration * dt,
+                            dt * 26.0f);
+                    }
                 }
             }
             else

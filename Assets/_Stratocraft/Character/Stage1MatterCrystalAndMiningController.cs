@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
+using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
@@ -23,8 +24,8 @@ namespace Stratocraft.Character
     /// </summary>
     public sealed class Stage1MatterCrystalAndMiningController
     {
-        private static readonly float[] BrushRadiusSteps = { 0.5f, 1.15f, 1.85f, 2.85f };
-        private static readonly string[] BrushAreaLabels = { "1x1x1 Tek Blok", "2x2x2 Orta Alan", "3x3x3 Genis Alan", "5x5x5 Dev Kazi" };
+        private static readonly float[] BrushRadiusSteps = { 0.5f, 1.15f, 1.85f, 2.65f, 3.50f };
+        private static readonly string[] BrushAreaLabels = { "1x1x1 Tek Blok", "2x2x2 Orta Alan", "3x3x3 Genis Alan", "5x5x5 Dev Kazi", "7x7x7 Efsanevi Alan" };
         private static readonly byte[] BuildableMaterials =
         {
             MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Sand, MaterialIdCatalog.Basalt,
@@ -39,7 +40,7 @@ namespace Stratocraft.Character
         private readonly List<FacetedVoxelTriangle> _ghostTris = new(64);
         private readonly List<FacetedVoxelTriangle> _beamTris = new(48);
         private readonly List<FacetedVoxelTriangle> _dropItemTris = new(36);
-        private readonly List<DroppedWorldItem> _droppedWorldItems = new(64);
+        private readonly List<DroppedWorldItem> _droppedWorldItems = new(192);
         private readonly Dictionary<int, Mesh> _droppedItemMeshCache = new(32);
         private GameObject? _placementGhostGo, _miningTargetWireframeGo, _vacuumBeamGo;
         private MeshFilter? _placementGhostMf, _vacuumBeamMf;
@@ -47,28 +48,45 @@ namespace Stratocraft.Character
         private byte _selectedRotation24;
         private byte _customSelectedMaterialId;
         private byte _lastGhostMat, _lastGhostShape, _lastGhostColorCode, _lastGhostRot;
-        private int _brushRadiusIdx, _materialIdx, _shapeIdx = 1;
+        private int _brushRadiusIdx, _materialIdx, _shapeIdx = 0;
         private float _actionCooldown, _miningDamageAccumulator, _pendingMiningStaminaDrain;
         private int _lastToolSwingId;
         private int _lastActiveToolHolsterSlot = -1;
         private Vector3Int _lastMinedVoxelCoord = new(int.MinValue, int.MinValue, int.MinValue);
+        private int _knappingStrikeProgress;
+        private Vector3Int _lastKnappedRockCoord = new(int.MinValue, int.MinValue, int.MinValue);
+        private float _handScoopTimer;
+        private Vector3Int _handScoopTargetCell = new(int.MinValue, int.MinValue, int.MinValue);
+        private int _worldDropSeedCounter;
+
+        public const int RequiredQuartzToAwaken = 3;
+        public StoneKnappingPattern CurrentKnappingPattern = StoneKnappingPattern.AxeHead;
+        public int AwakeningQuartzFedCount { get; private set; }
+        public int FedAwakeningQuartzCount => AwakeningQuartzFedCount;
+        public float AwakeningPulseTimer { get; private set; }
+        public float HandScoopProgress01 { get; private set; }
 
         public struct DroppedWorldItem
         {
             public GameObject? VisualGo;
             public Vector3 Position;
             public Vector3 Velocity;
+            public InventoryItemKind ExplicitKind;
             public byte MaterialId;
             public byte ShapeId;
             public int Count;
             public float SpawnAge;
             public string? CustomLabel;
+            public PhysicalItemShapeDna ShapeDna;
+            public Quaternion BaseYawRotation;
+            public float BottomClearanceY;
+            public bool IsSettled;
         }
 
         public int CurrentCrystalTier = 0;
-        public int CurrentToolTier = 2;
-        public float CurrentToolDurability = 120f;
-        public float MaxToolDurability = 120f;
+        public int CurrentToolTier = 1;
+        public float CurrentToolDurability = 60f;
+        public float MaxToolDurability = 60f;
 
         public float ToolDurability01 => Mathf.Clamp01(CurrentToolDurability / Mathf.Max(1f, MaxToolDurability));
         public int ActiveDroppedItemCount => _droppedWorldItems.Count;
@@ -109,10 +127,32 @@ namespace Stratocraft.Character
 
         public Stage1MatterCrystalAndMiningController()
         {
-            // Gercekci Hayatta Kalma: Madde Kristali baslangicta uyuyan durumdadir (Tier 0).
-            // Kristal haznesi 0 blok ile baslar; oyuncu maden ve odunlari 3B cantasinda tasir.
-            CrystalStorage.CrystalTier = (byte)CurrentCrystalTier;
+            // Gercekci Hayatta Kalma: Madde Kristali baslangicta uyuyan durumdadir (Tier 0, 0 Blok Kapasite).
+            // Oyuncu 3x Rezonans Kuvarsi kazip [C] tusuna basarak kristali Kademe 1'e (500 Blok) uyandirir.
+            CrystalStorage.SetTierAndCanonicalCapacity(0);
         }
+
+        public void AwakenOrUpgradeCrystalToTier(int newTier)
+        {
+            CurrentCrystalTier = Mathf.Clamp(newTier, 0, 5);
+            CrystalStorage.SetTierAndCanonicalCapacity((byte)CurrentCrystalTier);
+            int maxBrushIdx = GetMaxBrushIndexForCrystalTier(CurrentCrystalTier);
+            if (_brushRadiusIdx > maxBrushIdx)
+            {
+                _brushRadiusIdx = maxBrushIdx;
+            }
+        }
+
+        public static int GetMaxBrushIndexForCrystalTier(int crystalTier) => Mathf.Clamp(crystalTier - 1, 0, BrushRadiusSteps.Length - 1);
+
+        public static float GetTierScatterRadiusXZ(int crystalTier) => crystalTier switch
+        {
+            <= 1 => 1.50f,
+            2 => 2.00f,
+            3 => 2.50f,
+            4 => 3.00f,
+            _ => 3.50f
+        };
 
         public static ReadOnlySpan<byte> GetCrystalBuildableMaterials() => BuildableMaterials;
 
@@ -162,23 +202,67 @@ namespace Stratocraft.Character
 
         public bool CanCrystalVacuumMaterial(byte mat, out byte requiredTier)
         {
-            CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 4);
+            CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
             requiredTier = MaterialIdCatalog.GetRequiredCrystalTierForTerrain(mat);
-            return requiredTier > 0 && requiredTier <= CurrentCrystalTier;
+            return CurrentCrystalTier >= 1 && requiredTier > 0 && requiredTier <= CurrentCrystalTier;
         }
 
         public static byte GetRequiredToolTierForMaterial(byte mat)
         {
-            if (mat == MaterialIdCatalog.NaturalObsidian || mat == MaterialIdCatalog.MithrilOre ||
-                mat == MaterialIdCatalog.TitaniumOre || mat >= MaterialIdCatalog.OrichalcumOre && mat <= MaterialIdCatalog.VoidMetalOre)
+            if (mat == MaterialIdCatalog.AstralOre || mat == MaterialIdCatalog.RedDiamondGem ||
+                mat == MaterialIdCatalog.NaturalObsidian || mat == MaterialIdCatalog.MithrilOre ||
+                mat == MaterialIdCatalog.RubyGem || mat == MaterialIdCatalog.SapphireGem ||
+                mat == MaterialIdCatalog.TitaniumOre || (mat >= MaterialIdCatalog.OrichalcumOre && mat <= MaterialIdCatalog.VoidMetalOre))
             {
                 return 3;
             }
-            if (mat == MaterialIdCatalog.IronOre || mat == MaterialIdCatalog.GoldOre || mat == MaterialIdCatalog.Basalt || mat == MaterialIdCatalog.MagmaBlock)
+            if (mat == MaterialIdCatalog.IronOre || mat == MaterialIdCatalog.GoldOre ||
+                mat == MaterialIdCatalog.AmethystGem || mat == MaterialIdCatalog.Basalt || mat == MaterialIdCatalog.MagmaBlock)
             {
                 return 2;
             }
             return 1;
+        }
+
+        public bool TryFeedQuartzToAwakenCrystal(
+            Stage1HolsterAndBackpackController? holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            if (CurrentCrystalTier >= 1)
+            {
+                IsCrystalActive = !IsCrystalActive;
+                LastFeedbackText = IsCrystalActive
+                    ? $"💎 MADDE KRİSTALİ AKTİF (Kademe T{CurrentCrystalTier}): [Sol Tık] Vakumla | [Sağ Tık] İnşa Et!"
+                    : "💎 Madde Kristali uyku moduna alındı ([C] ile tekrar açabilirsiniz).";
+                return true;
+            }
+
+            if (holsterCtrl == null || !holsterCtrl.InventoryUi.TryConsumeOneHeldOrInventoryQuartz(this, out string consumedLabel))
+            {
+                return false;
+            }
+
+            AwakeningQuartzFedCount = Mathf.Clamp(AwakeningQuartzFedCount + 1, 1, 3);
+            AwakeningPulseTimer = 0.90f;
+
+            if (holsterCtrl.InventoryUi.SelectedHotbarIndex >= 0 && holsterCtrl.InventoryUi.GetActiveHotbarSlot().IsEmpty)
+            {
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(this, combatBridge);
+            }
+
+            if (AwakeningQuartzFedCount < 3)
+            {
+                LastFeedbackText =
+                    $"💎 REZONANS KUVARSI YEDİRİLDİ ({AwakeningQuartzFedCount}/3 — {consumedLabel}): Bilekteki Madde Kristali parlıyor! Uyandırmak için {3 - AwakeningQuartzFedCount} Kuvars daha yedirin ([C] veya [Sağ Tık]).";
+                return true;
+            }
+
+            AwakenOrUpgradeCrystalToTier(1);
+            IsCrystalActive = true;
+            holsterCtrl.InventoryUi.SyncWithCrystalStorage(this);
+            LastFeedbackText =
+                "✨ MADDE KRİSTALİ UYANDI (3/3 Kuvars -> Kademe T1 | Kapasite: 500 Blok)! [Sol Tık] Arazi Vakumla | [Sağ Tık] İnşa Et | [V] Şekil Seç!";
+            return true;
         }
 
         public void HandleHotkeysAndAim(
@@ -188,25 +272,68 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null)
         {
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
-            CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 4);
+            if (AwakeningPulseTimer > 0f) AwakeningPulseTimer = Mathf.Max(0f, AwakeningPulseTimer - dt);
+            CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
+            if (CurrentCrystalTier <= 0 && IsCrystalActive)
+            {
+                IsCrystalActive = false;
+            }
             if (_actionCooldown > 0f) _actionCooldown = Mathf.Max(0f, _actionCooldown - dt);
             if (!backpackOpen)
             {
-                if (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C)) IsCrystalActive = !IsCrystalActive;
+                if (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C))
+                {
+                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    bool isCreative = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+                    if (CurrentCrystalTier <= 0)
+                    {
+                        if (isCreative && shift)
+                        {
+                            AwakeningQuartzFedCount = 3;
+                            AwakenOrUpgradeCrystalToTier(3);
+                            IsCrystalActive = true;
+                            LastFeedbackText = "★ [YARATICI SHIFT+C]: Madde Kristali doğrudan Kademe T3 olarak aktifleştirildi!";
+                        }
+                        else if (!TryFeedQuartzToAwakenCrystal(holsterCtrl))
+                        {
+                            IsCrystalActive = false;
+                            int haveQuartz = holsterCtrl != null ? holsterCtrl.InventoryUi.CountResonanceQuartzInInventory() : 0;
+                            string creativeTip = isCreative ? " ([F4] Hızlı T3 Kristal için [Shift+C] basabilirsiniz)" : string.Empty;
+                            LastFeedbackText =
+                                $"⚠️ UYUYAN MADDE KRİSTALİ (T0 | Yüklü: {AwakeningQuartzFedCount}/3): Elinize Kuvars alıp [C] veya [Sağ Tık] ile 3 kez yedirin! (Çantada: {haveQuartz}){creativeTip}";
+                        }
+                    }
+                    else
+                    {
+                        IsCrystalActive = !IsCrystalActive;
+                    }
+                }
                 if (Input.GetKeyDown(KeyCode.V))
                 {
                     _shapeIdx = (_shapeIdx + 1) % ShapeWheelCycle.Length;
-                    LastFeedbackText = $"Insa Modu [V]: {GetShapeDisplayName(SelectedShapeId)} (0=Dogal Arazi, 1..7=Mimari Sekil, 63=Mikro)";
+                    LastFeedbackText = $"Insa Modu [V]: {GetShapeDisplayName(SelectedShapeId)} (0=Dogal Dairesel Arazi Sacilimi, 1..7=Mimari Sekil, 63=Mikro)";
                 }
                 if (Input.GetKeyDown(KeyCode.R))
                 {
-                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                    _selectedRotation24 = shift
-                        ? (byte)((_selectedRotation24 + 1) & 3)
-                        : (byte)((_selectedRotation24 + 1) % 24);
-                    LastFeedbackText = shift
-                        ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
-                        : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
+                    bool holdingFlint = !IsCrystalActive && holsterCtrl != null &&
+                                        holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.FlintStone;
+                    if (holdingFlint)
+                    {
+                        CurrentKnappingPattern = PrimitiveSurvivalCraftingCatalog.CycleKnappingPattern(CurrentKnappingPattern);
+                        _knappingStrikeProgress = 0;
+                        LastFeedbackText =
+                            $"🪨 TAŞ YONTMA KALIBI [R]: {PrimitiveSurvivalCraftingCatalog.GetKnappingPatternDisplayName(CurrentKnappingPattern)} -> Sert kayaya bakıp [Sağ Tık] ile 3 kez vurun!";
+                    }
+                    else
+                    {
+                        bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                        _selectedRotation24 = shift
+                            ? (byte)((_selectedRotation24 + 1) & 3)
+                            : (byte)((_selectedRotation24 + 1) % 24);
+                        LastFeedbackText = shift
+                            ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
+                            : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
+                    }
                 }
                 if (Input.GetKeyDown(KeyCode.B))
                 {
@@ -223,9 +350,11 @@ namespace Stratocraft.Character
                 }
                 else if (Input.GetKeyDown(KeyCode.T) || (IsCrystalActive && shiftHeld && Mathf.Abs(scroll) > 0.001f))
                 {
+                    int maxAllowedIdx = GetMaxBrushIndexForCrystalTier(Mathf.Max(1, CurrentCrystalTier));
+                    int allowedCount = maxAllowedIdx + 1;
                     int delta = (IsCrystalActive && shiftHeld && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
-                    _brushRadiusIdx = (_brushRadiusIdx + delta + BrushRadiusSteps.Length) % BrushRadiusSteps.Length;
-                    LastFeedbackText = $"Kristal Vakum Alanı [T / Shift+Tekerlek]: {BrushAreaLabel} (Yarıçap: {BrushRadiusMeters:0.1}m | Kademe: T{CurrentCrystalTier})";
+                    _brushRadiusIdx = (_brushRadiusIdx + delta + allowedCount) % allowedCount;
+                    LastFeedbackText = $"Kristal Vakum Alanı [T / Shift+Tekerlek]: {BrushAreaLabel} (Yarıçap: {BrushRadiusMeters:0.1}m | Kademe Sınırı: T{CurrentCrystalTier})";
                 }
                 else if (IsCrystalActive && Mathf.Abs(scroll) > 0.001f)
                 {
@@ -355,7 +484,31 @@ namespace Stratocraft.Character
                 }
             }
 
+            if (!IsCrystalActive && holsterCtrl != null &&
+                Stage1VisualHotbarAndInventoryUi.IsResonanceQuartzSlot(holsterCtrl.InventoryUi.GetActiveHotbarSlot()) &&
+                Input.GetMouseButtonDown(1))
+            {
+                if (CurrentCrystalTier <= 0)
+                {
+                    _actionCooldown = 0.18f;
+                    TryFeedQuartzToAwakenCrystal(holsterCtrl, combatBridge);
+                    return;
+                }
+            }
+
             if (!HasAimHit || _actionCooldown > 0f || AimHit.distance > 9.5f) return;
+
+            if (!IsCrystalActive && holsterCtrl != null &&
+                holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.FlintStone &&
+                AimHit.distance <= 3.8f)
+            {
+                if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0))
+                {
+                    _actionCooldown = 0.22f;
+                    ExecuteFlintStoneKnappingStrike(holsterCtrl, combatBridge, sharedMat);
+                    return;
+                }
+            }
 
             if (!IsCrystalActive && activeHolsterSlot == 5 && AimHit.distance <= 4.8f)
             {
@@ -411,27 +564,9 @@ namespace Stratocraft.Character
             }
             else if (activeHolsterSlot == 0)
             {
-                UnityEngine.Camera? activeCam = UnityEngine.Camera.main;
-                if (activeCam != null)
-                {
-                    Vector3 fwdXZ = new Vector3(activeCam.transform.forward.x, 0f, activeCam.transform.forward.z);
-                    if (fwdXZ.sqrMagnitude > 0.01f) collapseBridge.PreferredStrikeDirectionXZ = fwdXZ.normalized;
-
-                    if (collapseBridge.TryChopFallenTreeLog(
-                            activeCam.transform.position, activeCam.transform.forward, 3.8f, 0.25f, out string handLogFeedback))
-                    {
-                        _actionCooldown = 0.16f;
-                        LastFeedbackText = handLogFeedback;
-                        return;
-                    }
-                }
-                if (AimHit.distance <= 3.5f)
-                {
-                    _actionCooldown = 0.16f;
-                    ExecutePhysicalToolStrike(
-                        activeHolsterSlot, maxEditableY, worldChunks, dirtyChunks, collapseBridge, sharedMat,
-                        fluidChunks, dirtyFluidChunks, AimVoxelCoord, impactMultiplier: 0.55f, holsterCtrl: holsterCtrl, combatBridge: combatBridge);
-                }
+                // Faz 2.1: Çıplak elle [Sol Tık] ASLA zemin/blok kazmaz ve enerji (EP) tüketmez!
+                // Sol Tık yalnızca çalıları kırar veya canlılara yumruk atar; toprak/kum/kil ise [Çömel + E Basılı Tut] ile avuçlanır.
+                return;
             }
             else if ((activeHolsterSlot == 2 || activeHolsterSlot == 3) && AimHit.distance <= 2.85f &&
                      (combatBridge == null || combatBridge.SlashPhase == BallisticSlashPhase.IdleInGuard))
@@ -721,12 +856,18 @@ namespace Stratocraft.Character
             float toolPower;
             if (slot == 0)
             {
-                if ((!isSoftEarth && !isWood) || hardness >= 2.0f)
+                if (isWood)
                 {
-                    LastFeedbackText = $"BOS EL [0]: {GetMaterialDisplayName(mat)} (Sertlik:{hardness:0.1}) ciplak elle kirilamaz! [2] Kazma cekin.";
+                    LastFeedbackText =
+                        "⛔ ÇIPLAK ELLE AĞAÇ KIRILAMAZ! Yerden [E] ile Çakmaktaşı + Kuru Dal + Bitki Lifi toplayıp kayada yontarak [I] Çantada İlkel Balta üretin!";
                     return;
                 }
-                toolPower = isSoftEarth ? 9.5f : 5.0f;
+                if (!isSoftEarth || hardness >= 2.0f)
+                {
+                    LastFeedbackText = $"BOS EL [0]: {GetMaterialDisplayName(mat)} (Sertlik:{hardness:0.1}) ciplak elle kirilamaz! İlkel Taş Kazma üretin.";
+                    return;
+                }
+                toolPower = 9.5f;
             }
             else if (slot == 3)
             {
@@ -979,53 +1120,371 @@ namespace Stratocraft.Character
             SpawnDroppedWorldItem(worldPos, materialId, shape: 1, count: count, _lastSharedVoxelMat, customLabel);
         }
 
+        public int ActiveDroppedWorldItemCount => _droppedWorldItems.Count;
+
+        public bool TryGetDroppedWorldItemLabel(int index, out string label, out int count)
+        {
+            if (index < 0 || index >= _droppedWorldItems.Count)
+            {
+                label = string.Empty;
+                count = 0;
+                return false;
+            }
+
+            DroppedWorldItem item = _droppedWorldItems[index];
+            label = !string.IsNullOrEmpty(item.CustomLabel) ? item.CustomLabel! : GetMaterialDisplayName(item.MaterialId);
+            count = item.Count;
+            return true;
+        }
+
+        public void ClearAllDroppedWorldItems()
+        {
+            for (int i = 0; i < _droppedWorldItems.Count; i++)
+            {
+                if (_droppedWorldItems[i].VisualGo != null)
+                {
+                    UnityEngine.Object.Destroy(_droppedWorldItems[i].VisualGo);
+                }
+            }
+            _droppedWorldItems.Clear();
+        }
+
         public void SpawnDroppedWorldItem(Vector3 worldPos, byte mat, byte shape, int count, Material? sharedMat, string? customLabel = null)
         {
             if (mat == MaterialIdCatalog.Air) return;
+            ResolveDroppedItemKindAndSubId(InventoryItemKind.Empty, mat, customLabel, out InventoryItemKind resolvedKind, out byte resolvedSubId);
+            PhysicalItemShapeDna dna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                Mathf.RoundToInt(worldPos.x * 4f),
+                Mathf.RoundToInt(worldPos.y * 4f),
+                Mathf.RoundToInt(worldPos.z * 4f),
+                ++_worldDropSeedCounter);
+            SpawnPhysicalWorldItem(worldPos, resolvedKind, resolvedSubId, count, dna, sharedMat, customLabel, isNaturalRestingSpawn: false);
+        }
+
+        public void SpawnPhysicalWorldItem(
+            Vector3 worldPos,
+            InventoryItemKind kind,
+            byte subId,
+            int count,
+            PhysicalItemShapeDna dna,
+            Material? sharedMat,
+            string? customLabel = null,
+            bool isNaturalRestingSpawn = false)
+        {
+            if (kind == InventoryItemKind.Empty) return;
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
-            if (_droppedWorldItems.Count >= 48)
+            if (_droppedWorldItems.Count >= 192)
             {
                 if (_droppedWorldItems[0].VisualGo != null) UnityEngine.Object.Destroy(_droppedWorldItems[0].VisualGo);
                 _droppedWorldItems.RemoveAt(0);
             }
 
-            byte displayMat = mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat;
-            bool isWoodLog = displayMat == MaterialIdCatalog.OakWood || displayMat == MaterialIdCatalog.Ironwood;
-            byte meshShape = shape == VoxelBitUtility.ChiseledMicroVoxelShapeId ? (byte)63 : (isWoodLog ? (byte)7 : (byte)1);
-
-            int meshKey = (displayMat << 8) | meshShape;
-            if (!_droppedItemMeshCache.TryGetValue(meshKey, out Mesh? itemMesh) || itemMesh == null)
+            if (dna.ShapeSeed == 0u)
             {
-                _dropItemTris.Clear();
-                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), displayMat, meshShape, 0, 0, _dropItemTris);
-                itemMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_dropItemTris, $"Mesh_DroppedItem_{displayMat}_{meshShape}");
-                _droppedItemMeshCache[meshKey] = itemMesh;
+                dna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                    Mathf.RoundToInt(worldPos.x * 4f),
+                    Mathf.RoundToInt(worldPos.y * 4f),
+                    Mathf.RoundToInt(worldPos.z * 4f),
+                    ++_worldDropSeedCounter);
             }
 
-            string objName = !string.IsNullOrEmpty(customLabel) ? $"DroppedLoot_{customLabel}" : $"DroppedItem_{GetMaterialDisplayName(displayMat)}";
-            GameObject go = new GameObject(objName);
+            var tempSlot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = Mathf.Max(1, count), Durability01 = 1f, ShapeDna = dna };
+            PhysicalItemArchetype archetype = tempSlot.MapToPhysicalArchetype();
+            Mesh itemMesh;
+            Vector3 naturalScale;
+            if (archetype != PhysicalItemArchetype.None)
+            {
+                itemMesh = PhysicalItemMeshFactory.GetOrCreateMesh(archetype, subId, in dna, out naturalScale);
+            }
+            else
+            {
+                byte displayMat = subId != 0 ? subId : MaterialIdCatalog.Stone;
+                int meshKey = (displayMat << 8) | 1;
+                if (!_droppedItemMeshCache.TryGetValue(meshKey, out Mesh? cachedMesh) || cachedMesh == null)
+                {
+                    _dropItemTris.Clear();
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), displayMat, 1, 0, 0, _dropItemTris);
+                    cachedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_dropItemTris, $"Mesh_DroppedItem_{displayMat}_1");
+                    _droppedItemMeshCache[meshKey] = cachedMesh;
+                }
+                itemMesh = cachedMesh;
+                naturalScale = new Vector3(0.28f, 0.28f, 0.28f);
+            }
+
+            string displayLabel = !string.IsNullOrEmpty(customLabel)
+                ? customLabel!
+                : Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in tempSlot);
+            GameObject go = new GameObject($"WorldItem_{kind}_{_worldDropSeedCounter}");
             go.AddComponent<MeshFilter>().sharedMesh = itemMesh;
             MeshRenderer mr = go.AddComponent<MeshRenderer>();
             if (_lastSharedVoxelMat != null) mr.sharedMaterial = _lastSharedVoxelMat;
 
+            float yawDeg = (dna.EffectiveSeed % 360u);
+            Quaternion baseYaw = Quaternion.Euler(0f, yawDeg, 0f);
             go.transform.position = worldPos;
-            go.transform.localScale = isWoodLog ? new Vector3(0.28f, 0.44f, 0.28f) : new Vector3(0.34f, 0.34f, 0.34f);
+            go.transform.rotation = baseYaw;
+            go.transform.localScale = naturalScale;
 
-            float angle = (_droppedWorldItems.Count * 1.9f) + Time.time * 3.7f;
-            Vector3 popVel = new Vector3(Mathf.Cos(angle) * 1.65f, 3.25f, Mathf.Sin(angle) * 1.65f);
+            Bounds localB = itemMesh != null ? itemMesh.bounds : new Bounds(Vector3.zero, new Vector3(0.2f, 0.1f, 0.2f));
+            float bottomClearance = Mathf.Max(0.025f, (localB.extents.y - localB.center.y) * naturalScale.y + 0.012f);
+
+            float angle = ((dna.EffectiveSeed & 0xFFu) / 255f) * Mathf.PI * 2f;
+            Vector3 popVel = isNaturalRestingSpawn
+                ? new Vector3(0f, -0.25f, 0f)
+                : new Vector3(Mathf.Cos(angle) * 1.15f, 2.25f, Mathf.Sin(angle) * 1.15f);
 
             _droppedWorldItems.Add(new DroppedWorldItem
             {
                 VisualGo = go,
                 Position = worldPos,
                 Velocity = popVel,
-                MaterialId = displayMat,
-                ShapeId = shape,
+                ExplicitKind = kind,
+                MaterialId = subId != 0 ? subId : PhysicalItemMeshFactory.ResolvePrimaryMaterialId(archetype, subId),
+                ShapeId = 63,
                 Count = Mathf.Max(1, count),
-                SpawnAge = 0f,
-                CustomLabel = customLabel
+                SpawnAge = isNaturalRestingSpawn ? 1.0f : 0f,
+                CustomLabel = displayLabel,
+                ShapeDna = dna,
+                BaseYawRotation = baseYaw,
+                BottomClearanceY = bottomClearance,
+                IsSettled = false
             });
+        }
+
+        public int FindBestAimedDroppedWorldItemIndex(UnityEngine.Camera? cam, Vector3 playerPos, float maxReach = 2.95f)
+        {
+            if (_droppedWorldItems.Count == 0) return -1;
+            Vector3 rayOrigin = cam != null ? cam.transform.position : playerPos + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = cam != null ? cam.transform.forward : Vector3.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+
+            for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
+            {
+                DroppedWorldItem item = _droppedWorldItems[i];
+                if (item.VisualGo == null) continue;
+
+                Vector3 itemPos = item.VisualGo.transform.position;
+                float distToPlayer = Vector3.Distance(playerPos + new Vector3(0f, 0.85f, 0f), itemPos);
+                float distToCam = Vector3.Distance(rayOrigin, itemPos);
+                if (distToPlayer > maxReach && distToCam > maxReach + 0.45f) continue;
+
+                Vector3 toItem = itemPos - rayOrigin;
+                float along = Vector3.Dot(toItem, rayDir);
+                if (along < -0.15f || along > maxReach + 0.55f) continue;
+
+                Vector3 closestOnRay = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perpDist = Vector3.Distance(closestOnRay, itemPos);
+                float allowedRadius = distToPlayer <= 1.25f ? 0.62f : 0.48f;
+                if (perpDist > allowedRadius) continue;
+
+                float score = perpDist * 2.4f + along * 0.35f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        public bool TryPickupAimedDroppedWorldItemInstant(
+            UnityEngine.Camera? cam,
+            Vector3 playerPos,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            int idx = FindBestAimedDroppedWorldItemIndex(cam, playerPos, 2.95f);
+            if (idx < 0) return false;
+
+            DroppedWorldItem item = _droppedWorldItems[idx];
+            int prevEmptySelected = holsterCtrl.InventoryUi.SelectedHotbarIndex;
+            if (!TryCollectDroppedWorldItem(in item, holsterCtrl, out string note))
+            {
+                LastFeedbackText = "ÇANTA DOLU: Yerdeki eşyayı almak için önce [I] çantada veya [Q] ile yer açın!";
+                return true;
+            }
+
+            if (item.VisualGo != null) UnityEngine.Object.Destroy(item.VisualGo);
+            _droppedWorldItems.RemoveAt(idx);
+
+            // Eğer oyuncu boş elle (Slot 0) yerden bir eşya aldıysa ve eşya hotbar'a girdiyse, anında elinde de görünsün!
+            if (prevEmptySelected < 0)
+            {
+                ResolveDroppedItemKindAndSubId(item.ExplicitKind, item.MaterialId, item.CustomLabel, out InventoryItemKind pickedKind, out byte pickedSub);
+                for (int h = 0; h < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; h++)
+                {
+                    if (holsterCtrl.InventoryUi.HotbarSlots[h].Kind == pickedKind &&
+                        holsterCtrl.InventoryUi.HotbarSlots[h].SubId == pickedSub &&
+                        holsterCtrl.InventoryUi.HotbarSlots[h].Count > 0)
+                    {
+                        holsterCtrl.InventoryUi.SelectHotbarSlot(h);
+                        holsterCtrl.ApplySelectedInventoryHotbarSlot(this, combatBridge);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(this, combatBridge);
+            }
+
+            LastFeedbackText = $"✋ YERDEN ALINDI [E]: {note}";
+            return true;
+        }
+
+        public void StepHandSoilScooping(
+            float dt,
+            UnityEngine.Camera? cam,
+            Vector3 playerPos,
+            bool isCrouching,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            bool holdE = Input.GetKey(Stage1GameSettings.KeyInteract) || Input.GetKey(KeyCode.E);
+            bool lookingSteeplyDown = cam != null && cam.transform.forward.y <= -0.68f;
+            bool eligibleStance = isCrouching || lookingSteeplyDown;
+
+            if (!holdE ||
+                !eligibleStance ||
+                IsCrystalActive ||
+                holsterCtrl.IsBackpackOpen ||
+                holsterCtrl.ActiveHolsterSlot != 0 ||
+                !HasAimHit ||
+                AimHit.distance > 2.55f ||
+                FindBestAimedDroppedWorldItemIndex(cam, playerPos, 2.85f) >= 0)
+            {
+                _handScoopTimer = 0f;
+                HandScoopProgress01 = 0f;
+                return;
+            }
+
+            Vector3Int cell = AimVoxelCoord;
+            int wx = cell.x, wy = Mathf.Clamp(cell.y, 1, 253), wz = cell.z;
+            int cx = FloorDiv16(wx), cz = FloorDiv16(wz), lx = wx - cx * 16, lz = wz - cz * 16;
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null)
+            {
+                _handScoopTimer = 0f;
+                HandScoopProgress01 = 0f;
+                return;
+            }
+
+            int idx = (wy << 8) | (lz << 4) | lx;
+            uint raw = voxels[idx];
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            if (mat == MaterialIdCatalog.Air && wy > 1)
+            {
+                wy -= 1;
+                cell = new Vector3Int(wx, wy, wz);
+                idx = (wy << 8) | (lz << 4) | lx;
+                raw = voxels[idx];
+                mat = VoxelBitUtility.GetMaterialId(raw);
+            }
+
+            bool isScoopableEarth = mat == MaterialIdCatalog.Dirt ||
+                                    mat == MaterialIdCatalog.Grass ||
+                                    mat == MaterialIdCatalog.Sand ||
+                                    mat == MaterialIdCatalog.Clay;
+            if (!isScoopableEarth)
+            {
+                _handScoopTimer = 0f;
+                HandScoopProgress01 = 0f;
+                return;
+            }
+
+            if (_handScoopTargetCell != cell)
+            {
+                _handScoopTargetCell = cell;
+                _handScoopTimer = 0f;
+            }
+
+            _handScoopTimer += dt;
+            const float ScoopDurationSec = 0.60f;
+            HandScoopProgress01 = Mathf.Clamp01(_handScoopTimer / ScoopDurationSec);
+            if (_handScoopTimer < ScoopDurationSec)
+            {
+                if (_handScoopTimer >= 0.12f)
+                {
+                    LastFeedbackText = $"🤲 AVUÇLA KAZILIYOR (%{Mathf.RoundToInt(HandScoopProgress01 * 100f)}): {GetMaterialDisplayName(mat)} avuçlanıyor...";
+                }
+                return;
+            }
+
+            _handScoopTimer = 0f;
+            HandScoopProgress01 = 0f;
+
+            bool nearWater = IsCellNearWater(wx, wy, wz, fluidChunks);
+            InventoryItemKind scoopedKind = mat == MaterialIdCatalog.Sand
+                ? InventoryItemKind.SandPile
+                : ((mat == MaterialIdCatalog.Clay || nearWater) ? InventoryItemKind.ClayLump : InventoryItemKind.LooseDirtClod);
+
+            byte curDens = VoxelBitUtility.GetDensityOrLiquid(raw);
+            int reduced = (int)curDens - 38;
+            if (reduced <= 26)
+            {
+                voxels[idx] = 0u;
+            }
+            else
+            {
+                byte nextMat = mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat;
+                voxels[idx] = VoxelBitUtility.PackStandard(
+                    nextMat,
+                    (byte)reduced,
+                    VoxelBitUtility.GetShapeId(raw),
+                    VoxelBitUtility.GetRotationState(raw),
+                    VoxelBitUtility.GetOriginState(raw),
+                    VoxelBitUtility.GetDamageState(raw));
+            }
+            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirtyChunks, worldChunks, wy);
+
+            _pendingMiningStaminaDrain += 2.0f;
+            PhysicalItemShapeDna scoopDna = PhysicalItemShapeDna.CreateFromWorldCoord(wx, wy, wz, ++_worldDropSeedCounter);
+            if (holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(scoopedKind, 0, 1, this, scoopDna))
+            {
+                if (holsterCtrl.InventoryUi.SelectedHotbarIndex >= 0)
+                {
+                    holsterCtrl.ApplySelectedInventoryHotbarSlot(this, combatBridge);
+                }
+                string itemName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(
+                    new VisualInventorySlot { Kind = scoopedKind, SubId = 0, Count = 1, ShapeDna = scoopDna });
+                LastFeedbackText = $"🤲 AVUÇLA KAZILDI: +1 {itemName} (Zeminde hafif çukur açıldı, -2 EP)!";
+            }
+            else
+            {
+                SpawnPhysicalWorldItem(new Vector3(wx + 0.5f, wy + 1.05f, wz + 0.5f), scoopedKind, 0, 1, scoopDna, _lastSharedVoxelMat);
+                LastFeedbackText = "🤲 AVUÇLA KAZILDI: Çanta dolu olduğu için kazılan toprak yere bırakıldı!";
+            }
+        }
+
+        private static bool IsCellNearWater(int wx, int wy, int wz, Dictionary<(int cx, int cz), ushort[]>? fluidChunks)
+        {
+            if (fluidChunks == null) return false;
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                int cy = wy + dy;
+                if ((uint)cy >= 255u) continue;
+                for (int dz = -2; dz <= 2; dz++)
+                {
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int nx = wx + dx, nz = wz + dz;
+                        int fcx = FloorDiv16(nx), fcz = FloorDiv16(nz);
+                        if (!fluidChunks.TryGetValue((fcx, fcz), out ushort[]? fl) || fl == null) continue;
+                        int flx = nx - fcx * 16, flz = nz - fcz * 16;
+                        FluidCell16 fc = new FluidCell16(fl[(cy << 8) | (flz << 4) | flx]);
+                        if (fc.Type == FluidType.Water && fc.Mass >= 24) return true;
+                    }
+                }
+            }
+            return false;
         }
 
         public void StepDroppedWorldItems(
@@ -1034,8 +1493,7 @@ namespace Stratocraft.Character
         {
             if (_droppedWorldItems.Count == 0) return;
             Vector3 magnetTarget = playerPos + new Vector3(0f, 0.92f, 0f);
-            bool manualPickupKey = Input.GetKey(Stage1GameSettings.KeyInteract) || Input.GetKey(KeyCode.E);
-            bool vacuumActive = IsCrystalActive && Input.GetMouseButton(0);
+            bool vacuumActive = IsCrystalActive && CurrentCrystalTier >= 1 && Input.GetMouseButton(0);
 
             for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
             {
@@ -1048,67 +1506,182 @@ namespace Stratocraft.Character
 
                 item.SpawnAge += dt;
                 float distToPlayer = Vector3.Distance(item.Position, magnetTarget);
-                // Gercekcilik: Otomatik 2.65m miknatis KALDIRILDI!
-                // Yalnizca oyuncu [E] bastiginda (<= 2.4m) veya Madde Kristali vakum isini ([C]+LMB <= 6.5m) aktifken cekilir.
-                bool canPull = (manualPickupKey && distToPlayer <= 2.4f) || (vacuumActive && distToPlayer <= 6.5f);
 
-                if (item.SpawnAge >= 0.25f && canPull)
+                // Yalnızca aktif Madde Kristali Vakum Işını ([C] + Sol Tık <= 6.5m) eşyaları uzaktan çeker;
+                // normal [E] tuşu ise baktığın eşyayı 0.0s gecikmesiz anında alır!
+                if (item.SpawnAge >= 0.20f && vacuumActive && distToPlayer <= 6.5f)
                 {
+                    item.IsSettled = false;
                     Vector3 toPlayer = (magnetTarget - item.Position).normalized;
-                    item.Velocity = Vector3.Lerp(item.Velocity, toPlayer * 11.5f, Mathf.Clamp01(dt * 14f));
+                    item.Velocity = Vector3.Lerp(item.Velocity, toPlayer * 12.5f, Mathf.Clamp01(dt * 14f));
                     item.Position += item.Velocity * dt;
+                    item.VisualGo.transform.position = item.Position;
 
-                    if (distToPlayer <= 0.88f)
+                    if (distToPlayer <= 0.90f)
                     {
                         if (TryCollectDroppedWorldItem(in item, holsterCtrl, out string note))
                         {
-                            LastFeedbackText = $"YERDEN TOPLANDI: {note}";
+                            LastFeedbackText = $"KRİSTAL VAKUMU: {note}";
                             UnityEngine.Object.Destroy(item.VisualGo);
                             _droppedWorldItems.RemoveAt(i);
                             continue;
                         }
-                        else
-                        {
-                            LastFeedbackText = "CANTA DOLU: Yerdeki esya cantaya sigmaz! [I] ile bosaltin.";
-                            item.Velocity *= 0.2f;
-                        }
+                        item.Velocity *= 0.2f;
                     }
+                    _droppedWorldItems[i] = item;
+                    continue;
                 }
-                else
+
+                if (!item.IsSettled)
                 {
                     item.Velocity.y -= 9.81f * dt;
                     Vector3 nextPos = item.Position + item.Velocity * dt;
-                    float halfScaleY = 0.5f * item.VisualGo.transform.localScale.y + 0.05f;
+                    float clearance = item.BottomClearanceY > 0.01f ? item.BottomClearanceY : 0.06f;
+                    Vector3 surfNormal = Vector3.up;
+                    bool hitFloor = false;
+
                     if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
-                            nextPos.x, nextPos.z, nextPos.y, 1.85f, worldChunks, out float exactSurfY, out _))
+                            nextPos.x, nextPos.z, nextPos.y + 0.35f, 2.25f, worldChunks, out float exactSurfY, out Vector3 exactNormal))
                     {
-                        float floorY = exactSurfY + halfScaleY;
-                        if (nextPos.y < floorY)
+                        float floorY = exactSurfY + clearance;
+                        if (nextPos.y <= floorY)
                         {
                             nextPos.y = floorY;
-                            item.Velocity.y = Mathf.Abs(item.Velocity.y) > 1.2f ? -item.Velocity.y * 0.28f : 0f;
-                            item.Velocity.x *= 0.80f;
-                            item.Velocity.z *= 0.80f;
+                            surfNormal = exactNormal;
+                            hitFloor = true;
                         }
                     }
                     else if (TryReadNonAirVoxel(nextPos + new Vector3(0f, -0.18f, 0f), worldChunks, out Vector3Int groundVc, out _))
                     {
-                        float floorY = groundVc.y + 1.0f + halfScaleY;
-                        if (nextPos.y < floorY)
+                        float floorY = groundVc.y + 1.0f + clearance;
+                        if (nextPos.y <= floorY)
                         {
                             nextPos.y = floorY;
-                            item.Velocity.y = Mathf.Abs(item.Velocity.y) > 1.2f ? -item.Velocity.y * 0.28f : 0f;
-                            item.Velocity.x *= 0.82f;
-                            item.Velocity.z *= 0.82f;
+                            hitFloor = true;
                         }
                     }
+
+                    if (hitFloor)
+                    {
+                        if (Mathf.Abs(item.Velocity.y) > 1.65f)
+                        {
+                            item.Velocity.y = -item.Velocity.y * 0.22f;
+                            item.Velocity.x *= 0.65f;
+                            item.Velocity.z *= 0.65f;
+                        }
+                        else
+                        {
+                            item.Velocity = Vector3.zero;
+                            item.IsSettled = true;
+                        }
+
+                        Quaternion baseYaw = item.BaseYawRotation.w == 0f && item.BaseYawRotation.x == 0f
+                            ? Quaternion.identity
+                            : item.BaseYawRotation;
+                        if (surfNormal.y >= 0.35f)
+                        {
+                            item.VisualGo.transform.rotation = Quaternion.FromToRotation(Vector3.up, surfNormal) * baseYaw;
+                        }
+                    }
+
                     item.Position = nextPos;
+                    item.VisualGo.transform.position = item.Position;
                 }
 
-                float bobOffset = Mathf.Sin(item.SpawnAge * 4.2f + i) * 0.04f;
-                item.VisualGo.transform.position = item.Position + new Vector3(0f, bobOffset, 0f);
-                item.VisualGo.transform.Rotate(0f, 110f * dt, 0f, Space.World);
                 _droppedWorldItems[i] = item;
+            }
+        }
+
+        private static void ResolveDroppedItemKindAndSubId(
+            InventoryItemKind explicitKind,
+            byte materialId,
+            string? customLabel,
+            out InventoryItemKind kind,
+            out byte subId)
+        {
+            if (explicitKind != InventoryItemKind.Empty)
+            {
+                kind = explicitKind;
+                subId = (kind == InventoryItemKind.RoughStoneChunk ||
+                         kind == InventoryItemKind.SplitFirewood ||
+                         kind == InventoryItemKind.OreChunk ||
+                         kind == InventoryItemKind.VoxelBlock ||
+                         kind == InventoryItemKind.MetalIngot ||
+                         kind == InventoryItemKind.RoastedOreChunk ||
+                         kind == InventoryItemKind.CrushedOrePowder)
+                    ? materialId
+                    : (byte)0;
+                return;
+            }
+
+            subId = materialId;
+            if (string.Equals(customLabel, "Kuru Dal", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.Stick;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Çakmaktaşı", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(customLabel, "Cakmaktasi", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.FlintStone;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Bitki Lifi", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.PlantFiber;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Yaprak Öbeği", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.LeafPile;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Çakmaktaşı Balta Başı", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.KnappedAxeHead;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Taş Kazma Başı", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.KnappedPickaxeHead;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Çakmaktaşı Bıçak Ağzı", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = InventoryItemKind.KnappedKnifeBlade;
+                subId = 0;
+            }
+            else if (string.Equals(customLabel, "Yarma Odun", StringComparison.OrdinalIgnoreCase) ||
+                     materialId == MaterialIdCatalog.OakWood || materialId == MaterialIdCatalog.Ironwood ||
+                     materialId == MaterialIdCatalog.SpiritWood)
+            {
+                kind = InventoryItemKind.SplitFirewood;
+                subId = materialId;
+            }
+            else if (materialId == MaterialIdCatalog.Sand)
+            {
+                kind = InventoryItemKind.SandPile;
+                subId = 0;
+            }
+            else if (materialId == MaterialIdCatalog.Clay)
+            {
+                kind = InventoryItemKind.ClayLump;
+                subId = 0;
+            }
+            else if (materialId == MaterialIdCatalog.Dirt || materialId == MaterialIdCatalog.Grass)
+            {
+                kind = InventoryItemKind.LooseDirtClod;
+                subId = 0;
+            }
+            else if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(materialId))
+            {
+                kind = InventoryItemKind.OreChunk;
+                subId = materialId;
+            }
+            else
+            {
+                kind = InventoryItemKind.RoughStoneChunk;
+                subId = materialId != 0 ? materialId : MaterialIdCatalog.Stone;
             }
         }
 
@@ -1118,60 +1691,27 @@ namespace Stratocraft.Character
             out string feedbackNote)
         {
             feedbackNote = string.Empty;
-            // 1) Eger Madde Kristali aktifse ve kristal kademesi >= 1 ise dogrudan kristale cek
-            if (IsCrystalActive && CurrentCrystalTier >= 1)
+            if (IsCrystalActive && CurrentCrystalTier >= 1 &&
+                !MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(item.MaterialId) &&
+                (item.ExplicitKind == InventoryItemKind.Empty ||
+                 item.ExplicitKind == InventoryItemKind.RoughStoneChunk ||
+                 item.ExplicitKind == InventoryItemKind.LooseDirtClod ||
+                 item.ExplicitKind == InventoryItemKind.SandPile ||
+                 item.ExplicitKind == InventoryItemKind.VoxelBlock))
             {
                 feedbackNote = HarvestBrokenVoxel(item.MaterialId, item.ShapeId, item.Count, item.CustomLabel);
                 holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
                 return true;
             }
 
-            // 2) Kristal uyuyan (Tier 0) veya kapaliysa: Dogrudan 3B Fiziksel Sirt Cantasina & Kilifa topla!
             if (holsterCtrl != null)
             {
-                InventoryItemKind kind;
-                byte subId = item.MaterialId;
-
-                if (string.Equals(item.CustomLabel, "Kuru Dal", StringComparison.OrdinalIgnoreCase))
+                ResolveDroppedItemKindAndSubId(item.ExplicitKind, item.MaterialId, item.CustomLabel, out InventoryItemKind kind, out byte subId);
+                if (holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(kind, subId, item.Count, this, item.ShapeDna))
                 {
-                    kind = InventoryItemKind.Stick;
-                    subId = 0;
-                }
-                else if (string.Equals(item.CustomLabel, "Yarma Odun", StringComparison.OrdinalIgnoreCase) ||
-                         item.MaterialId == MaterialIdCatalog.OakWood || item.MaterialId == MaterialIdCatalog.Ironwood ||
-                         item.MaterialId == MaterialIdCatalog.SpiritWood)
-                {
-                    kind = InventoryItemKind.SplitFirewood;
-                    subId = item.MaterialId;
-                }
-                else if (item.MaterialId == MaterialIdCatalog.Stone || item.MaterialId == MaterialIdCatalog.Cobblestone ||
-                         item.MaterialId == MaterialIdCatalog.Basalt || item.MaterialId == MaterialIdCatalog.LooseRubble)
-                {
-                    kind = InventoryItemKind.RoughStoneChunk;
-                    subId = item.MaterialId;
-                }
-                else if (item.MaterialId == MaterialIdCatalog.Dirt || item.MaterialId == MaterialIdCatalog.Grass ||
-                         item.MaterialId == MaterialIdCatalog.Sand)
-                {
-                    kind = InventoryItemKind.LooseDirtClod;
-                    subId = MaterialIdCatalog.Dirt;
-                }
-                else if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(item.MaterialId))
-                {
-                    kind = InventoryItemKind.OreChunk;
-                    subId = item.MaterialId;
-                }
-                else
-                {
-                    kind = InventoryItemKind.RoughStoneChunk;
-                    subId = item.MaterialId;
-                }
-
-                if (holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(kind, subId, item.Count, out int addedCount))
-                {
-                    holsterCtrl.InventoryUi.SyncWithCrystalStorage(this);
-                    string itemName = !string.IsNullOrEmpty(item.CustomLabel) ? item.CustomLabel! : GetMaterialDisplayName(item.MaterialId);
-                    feedbackNote = $"+{addedCount} {itemName} (Cantaya Alindi)";
+                    var dispSlot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = item.Count, ShapeDna = item.ShapeDna };
+                    string itemName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in dispSlot);
+                    feedbackNote = $"+{item.Count} {itemName}";
                     return true;
                 }
                 return false;
@@ -1267,12 +1807,82 @@ namespace Stratocraft.Character
                 LastFeedbackText = "ERR_CRYSTAL_CRAFTED_BLOCK_FORBIDDEN: Oyuncu yapisi bloklar icin [Shift+LMB] veya [2] Kazma kullanin!";
         }
 
+        private void ExecuteFlintStoneKnappingStrike(
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge,
+            Material? sharedMat)
+        {
+            byte mat = AimMaterialId;
+            bool isWood = mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood ||
+                          mat == MaterialIdCatalog.SpiritWood || mat == MaterialIdCatalog.WoodPlank;
+            float hardness = GetMaterialHardness(mat);
+            bool isHardAnvilRock = !isWood && mat != MaterialIdCatalog.Air && hardness >= 2.0f;
+            if (!isHardAnvilRock)
+            {
+                LastFeedbackText =
+                    $"⚠️ TAŞ YONTMA: Çakmaktaşını yontmak için sert bir kayaya (Ham Taş / Kayaç) bakıp [Sağ Tık] vurun! ([R]: {PrimitiveSurvivalCraftingCatalog.GetKnappingPatternDisplayName(CurrentKnappingPattern)})";
+                return;
+            }
+
+            if (_lastKnappedRockCoord != AimVoxelCoord)
+            {
+                _lastKnappedRockCoord = AimVoxelCoord;
+                _knappingStrikeProgress = 0;
+            }
+
+            _knappingStrikeProgress++;
+            _pendingMiningStaminaDrain += 2.5f;
+            combatBridge?.TriggerHitStop(0.035f);
+
+            string patternName = PrimitiveSurvivalCraftingCatalog.GetKnappingPatternDisplayName(CurrentKnappingPattern);
+            if (_knappingStrikeProgress < PrimitiveSurvivalCraftingCatalog.RequiredKnappingStrikes)
+            {
+                LastFeedbackText =
+                    $"✨ ÇAKMAKTAŞI YONTULUYOR ({_knappingStrikeProgress}/{PrimitiveSurvivalCraftingCatalog.RequiredKnappingStrikes}): {patternName} şekilleniyor... (Tekrar [Sağ Tık] vurun | [R] Kalıp)";
+                return;
+            }
+
+            _knappingStrikeProgress = 0;
+            if (!holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1))
+            {
+                return;
+            }
+
+            InventoryItemKind headKind = CurrentKnappingPattern switch
+            {
+                StoneKnappingPattern.PickaxeHead => InventoryItemKind.KnappedPickaxeHead,
+                StoneKnappingPattern.KnifeBlade => InventoryItemKind.KnappedKnifeBlade,
+                _ => InventoryItemKind.KnappedAxeHead
+            };
+
+            if (!holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(headKind, 0, 1, out _))
+            {
+                SpawnDroppedWorldItem(AimHit.point + Vector3.up * 0.25f, MaterialIdCatalog.Stone, 63, 1, sharedMat, patternName);
+            }
+
+            if (holsterCtrl.InventoryUi.GetActiveHotbarSlot().IsEmpty)
+            {
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(this);
+            }
+
+            LastFeedbackText =
+                $"🪨 TAŞ YONTMA TAMAMLANDI (3/3): +1 {patternName}! Şimdi [I] Kumaş Çantayı açıp sağdaki 3B Birleştirme Alanında Kuru Dal + Bitki Lifi ile bağlayın!";
+        }
+
         private void ExecuteCrystalOrRubblePlacement(
             int maxY, Vector3 playerPos, float capsuleH, Dictionary<(int cx, int cz), uint[]> worldChunks,
             HashSet<(int cx, int cz)> dirty, Stage1StructuralCollapseBridge collapseBridge, Material? sharedMat,
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks,
             int activeHolsterSlot = 4, Stage1HolsterAndBackpackController? holsterCtrl = null)
         {
+            if (IsCrystalActive && SelectedShapeId == 0)
+            {
+                ExecuteNaturalTerrainScatterPlacement(
+                    maxY, playerPos, capsuleH, worldChunks, dirty, collapseBridge, sharedMat,
+                    fluidChunks, dirtyFluidChunks, holsterCtrl);
+                return;
+            }
+
             int wx = PlacementVoxelCoord.x, wy = Mathf.Clamp(PlacementVoxelCoord.y, 1, maxY - 2), wz = PlacementVoxelCoord.z;
             if (!Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(wx, wy, wz, playerPos, capsuleH))
             {
@@ -1297,13 +1907,12 @@ namespace Stratocraft.Character
             if (placingFromHandSlot && holsterCtrl != null)
             {
                 VisualInventorySlot activeUiSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
-                if (activeUiSlot.Kind == InventoryItemKind.SplitFirewood ||
-                    activeUiSlot.Kind == InventoryItemKind.Stick ||
-                    activeUiSlot.Kind == InventoryItemKind.RoughStoneChunk ||
-                    activeUiSlot.Kind == InventoryItemKind.LooseDirtClod ||
-                    activeUiSlot.Kind == InventoryItemKind.OreChunk)
+                PhysicalItemArchetype slotPhysArch = activeUiSlot.MapToPhysicalArchetype();
+                if (slotPhysArch != PhysicalItemArchetype.None &&
+                    slotPhysArch != PhysicalItemArchetype.ArchitecturalBlock &&
+                    activeUiSlot.Kind != InventoryItemKind.MetalIngot)
                 {
-                    LastFeedbackText = "KABA HAMMADDE BLOK YAPILAMAZ: Kaba tas, toprak, odun ve ham cevher dogrudan dunya blogu olarak konulamaz! Tezgahta isleyin veya [Q]/[G] ile yere atin.";
+                    LastFeedbackText = "DOĞAL EŞYA KÜP OLARAK KONULAMAZ: Doğal taş/dal/toprak küp blok yapılamaz! (Mimari küp inşa için [C] Madde Kristali kullanın).";
                     return;
                 }
                 placingItemKind = activeUiSlot.Kind;
@@ -1400,6 +2009,139 @@ namespace Stratocraft.Character
             LastFeedbackText = !string.IsNullOrEmpty(msg)
                 ? msg
                 : $"{GetMaterialDisplayName(mat)} ({GetShapeDisplayName(placeShape)} | Yon:{_selectedRotation24} | Hasar:{preservedDmg}/15) Konuldu! (Stres: {CurrentGhostPreviewColor})";
+        }
+
+        private void ExecuteNaturalTerrainScatterPlacement(
+            int maxY,
+            Vector3 playerPos,
+            float capsuleH,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirty,
+            Stage1StructuralCollapseBridge collapseBridge,
+            Material? sharedMat,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks,
+            Stage1HolsterAndBackpackController? holsterCtrl)
+        {
+            bool isCreative = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+            if (!isCreative && CurrentCrystalTier <= 0)
+            {
+                LastFeedbackText = "⚠️ UYUYAN MADDE KRİSTALİ (T0): Önce 3x Rezonans Kuvarsı ile [C] tuşuna basarak kristali uyandırın!";
+                return;
+            }
+
+            if (!isCreative && GetMaterialCountInCrystal(SelectedMaterialId) <= 0)
+            {
+                for (int i = 0; i < BuildableMaterials.Length; i++)
+                {
+                    byte cand = BuildableMaterials[i];
+                    if (GetMaterialCountInCrystal(cand) > 0)
+                    {
+                        SelectMaterial(cand);
+                        break;
+                    }
+                }
+            }
+
+            byte mat = SelectedMaterialId;
+            if (!isCreative && CrystalStorage.GetMassQ24_8(mat) < 32u)
+            {
+                LastFeedbackText = $"Depoda doğal arazi saçılımı için yeterli {GetMaterialDisplayName(mat)} kütlesi yok! ([Sol Tık] ile vakumlayın)";
+                return;
+            }
+
+            Vector3 center = HasAimHit
+                ? AimHit.point + AimHit.normal * 0.18f
+                : new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.35f, PlacementVoxelCoord.z + 0.5f);
+
+            float rXZ = GetTierScatterRadiusXZ(Mathf.Max(1, CurrentCrystalTier));
+            float rY = Mathf.Max(1.15f, 0.65f * rXZ);
+
+            int minWx = Mathf.FloorToInt(center.x - rXZ - 1f);
+            int maxWx = Mathf.CeilToInt(center.x + rXZ + 1f);
+            int minWy = Mathf.Max(1, Mathf.FloorToInt(center.y - rY - 1f));
+            int maxWy = Mathf.Min(maxY - 2, Mathf.CeilToInt(center.y + rY + 1f));
+            int minWz = Mathf.FloorToInt(center.z - rXZ - 1f);
+            int maxWz = Mathf.CeilToInt(center.z + rXZ + 1f);
+
+            uint spentMassQ24_8 = 0u;
+            int modifiedCells = 0;
+            bool blockedByPlayerCapsule = false;
+            (int cx, int cz) lastTouchedChunk = (FloorDiv16(Mathf.FloorToInt(center.x)), FloorDiv16(Mathf.FloorToInt(center.z)));
+
+            for (int wy = minWy; wy <= maxWy; wy++)
+            for (int wz = minWz; wz <= maxWz; wz++)
+            for (int wx = minWx; wx <= maxWx; wx++)
+            {
+                byte targetDens = MatterCrystalVacuumSystem.ComputeNaturalScatterTargetDensity(
+                    wx, wy, wz, center.x, center.y, center.z, rXZ, rY);
+                if (targetDens < StratocraftConstants.SdfIsoLevel) continue;
+
+                if (!Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(wx, wy, wz, playerPos.x, playerPos.y, playerPos.z, capsuleH))
+                {
+                    blockedByPlayerCapsule = true;
+                    continue;
+                }
+
+                int cx = FloorDiv16(wx), cz = FloorDiv16(wz);
+                int lx = wx - cx * 16, lz = wz - cz * 16;
+                if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) continue;
+
+                int idx = (wy << 8) | (lz << 4) | lx;
+                uint curRaw = voxels[idx];
+                byte curMat = VoxelBitUtility.GetMaterialId(curRaw);
+                if (curMat == MaterialIdCatalog.Bedrock) continue;
+
+                byte curShape = VoxelBitUtility.GetShapeId(curRaw);
+                if (curMat != MaterialIdCatalog.Air && curShape != 0) continue;
+
+                byte curDens = curMat == MaterialIdCatalog.Air ? (byte)0 : VoxelBitUtility.GetDensityOrLiquid(curRaw);
+                if (curDens >= targetDens) continue;
+
+                uint oldMass = CrystalMassStorage.MassQ24_8FromDensity7(curDens);
+                uint newMass = CrystalMassStorage.MassQ24_8FromDensity7(targetDens);
+                if (newMass <= oldMass) continue;
+                uint neededQ24_8 = newMass - oldMass;
+
+                byte preservedDmg = 0;
+                if (!isCreative && !CrystalStorage.TryWithdrawMassQ24_8(mat, neededQ24_8, out preservedDmg))
+                {
+                    goto ScatterDone;
+                }
+
+                byte writeMat = curMat == MaterialIdCatalog.Air ? mat : curMat;
+                voxels[idx] = VoxelBitUtility.PackStandard(
+                    writeMat, targetDens, 0, 0, BlokKokenDurumu.DogalKutle, preservedDmg);
+
+                spentMassQ24_8 += neededQ24_8;
+                modifiedCells++;
+                lastTouchedChunk = (cx, cz);
+
+                if (fluidChunks != null && fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) && fluids != null)
+                {
+                    int sliceLen = 16 * maxY * 16;
+                    FluidPorosityUtility.DisplaceExcessFluidOnSolidEdit(voxels.AsSpan(0, sliceLen), fluids.AsSpan(0, sliceLen), 16, maxY, 16, lx, wy, lz);
+                    FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, sliceLen), 16, maxY, 16, lx, wy, lz, radius: 2);
+                    dirtyFluidChunks?.Add((cx, cz));
+                }
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+            }
+
+        ScatterDone:
+            if (modifiedCells > 0)
+            {
+                holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
+                if (worldChunks.TryGetValue(lastTouchedChunk, out uint[]? tv) && tv != null)
+                {
+                    collapseBridge.EvaluateChunkStability(lastTouchedChunk.cx, lastTouchedChunk.cz, tv, maxY, center, sharedMat, dirty, out _);
+                }
+                LastFeedbackText =
+                    $"🌿 DOĞAL ARAZİ SAÇILDI (R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks})";
+            }
+            else if (blockedByPlayerCapsule)
+            {
+                LastFeedbackText = "ANTI-GÖMÜLME KORUMASI: Kendi durduğunuz kapsül alanına arazi dolgusu yapılamaz, biraz uzağa nişan alın!";
+            }
         }
 
         private static byte ResolveSlotBuildableMaterialId(in VisualInventorySlot slot)
@@ -1859,7 +2601,8 @@ namespace Stratocraft.Character
                 isHoldingBuildableBlock = activeSlot == 4;
             }
 
-            bool showBuild = canShow && (isHoldingBuildableBlock || (IsCrystalActive && Input.GetMouseButton(1)));
+            bool isCrystalScatterMode = IsCrystalActive && SelectedShapeId == 0;
+            bool showBuild = canShow && (isHoldingBuildableBlock || isCrystalScatterMode || (IsCrystalActive && Input.GetMouseButton(1)));
             bool showFluidPreview = canShow && !showBuild && !IsCrystalActive && activeSlot == 6;
             bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || activeSlot == 5 || showFluidPreview || IsCrystalActive);
             if (!showBuild && !showMineFrame) { if (_placementGhostGo != null) _placementGhostGo.SetActive(false); return; }
@@ -1906,8 +2649,20 @@ namespace Stratocraft.Character
             }
             if (showBuild)
             {
-                _placementGhostGo.transform.position = new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.5f, PlacementVoxelCoord.z + 0.5f);
-                _placementGhostGo.transform.localScale = effectiveBuildShape == 0 ? new Vector3(0.92f, 0.72f, 0.92f) : new Vector3(0.96f, 0.96f, 0.96f);
+                if (isCrystalScatterMode)
+                {
+                    float rXZ = GetTierScatterRadiusXZ(Mathf.Max(1, CurrentCrystalTier));
+                    Vector3 scatterCenter = HasAimHit
+                        ? AimHit.point + AimHit.normal * 0.14f
+                        : new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.25f, PlacementVoxelCoord.z + 0.5f);
+                    _placementGhostGo.transform.position = scatterCenter;
+                    _placementGhostGo.transform.localScale = new Vector3(rXZ * 1.90f, 0.34f, rXZ * 1.90f);
+                }
+                else
+                {
+                    _placementGhostGo.transform.position = new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.5f, PlacementVoxelCoord.z + 0.5f);
+                    _placementGhostGo.transform.localScale = effectiveBuildShape == 0 ? new Vector3(0.92f, 0.72f, 0.92f) : new Vector3(0.96f, 0.96f, 0.96f);
+                }
             }
             else if (showFluidPreview)
             {
@@ -1951,10 +2706,59 @@ namespace Stratocraft.Character
             }
         }
 
-        public string FormatCrystalStockHudLine() => $"[Kristal:T{CurrentCrystalTier} | Alet:T{CurrentToolTier}(%{ToolDurability01 * 100f:0})] Tas:{CrystalStorage.GetCount(MaterialIdCatalog.Stone)} | Toprak:{CrystalStorage.GetCount(MaterialIdCatalog.Dirt)} | Bazalt:{CrystalStorage.GetCount(MaterialIdCatalog.Basalt)} | Kiriktas:{CrystalStorage.GetCount(MaterialIdCatalog.Cobblestone)} | Odun:{CrystalStorage.GetCount(MaterialIdCatalog.OakWood)} | Moloz:{LooseRubbleShardCount} | Cevher:{HarvestedOreCount}(Cu:{HarvestedCopperCount} Fe:{HarvestedIronCount} Au:{HarvestedGoldCount} Mi:{HarvestedMithrilCount})";
-        public static string GetShapeDisplayName(byte s) => s switch { 0 => "0: Dogal Hal (Organik Arazi)", 1 => "1: Tam Kup Blok", 2 => "2: 45° Rampa", 3 => "3: Ic Kose", 4 => "4: Dis Kose", 5 => "5: Kemer", 6 => "6: Kilit Tasi", 7 => "7: Sekizgen Sutun", 63 => "63: Mikro-Blok", _ => $"Sekil #{s}" };
-        public static float GetMaterialHardness(byte m) => m switch { MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass or MaterialIdCatalog.Sand or MaterialIdCatalog.LooseRubble or MaterialIdCatalog.GlowingMoss => 0.8f, MaterialIdCatalog.OakWood or MaterialIdCatalog.WoodPlank => 1.4f, MaterialIdCatalog.Ironwood => 2.1f, MaterialIdCatalog.Stone or MaterialIdCatalog.Cobblestone or MaterialIdCatalog.StoneBrick or MaterialIdCatalog.Marble => 2.2f, MaterialIdCatalog.CopperOre or MaterialIdCatalog.IronOre or MaterialIdCatalog.GoldOre => 3.4f, MaterialIdCatalog.Basalt or MaterialIdCatalog.MagmaBlock => 3.8f, MaterialIdCatalog.NaturalObsidian or MaterialIdCatalog.MithrilOre or MaterialIdCatalog.TitaniumOre => 6.2f, _ => 3.5f };
-        public static string GetMaterialDisplayName(byte m) => m switch { MaterialIdCatalog.Air => "Hava", MaterialIdCatalog.Bedrock => "Kirilmaz Ana Kaya (Bedrock)", MaterialIdCatalog.Stone => "Ham Tas", MaterialIdCatalog.Dirt => "Toprak", MaterialIdCatalog.Grass => "Cimenli Toprak", MaterialIdCatalog.Sand => "Kum", MaterialIdCatalog.Basalt => "Bazalt", MaterialIdCatalog.NaturalObsidian => "Dogal Obsidyen", MaterialIdCatalog.Cobblestone => "Kiriktas", MaterialIdCatalog.StoneBrick => "Tas Tugla", MaterialIdCatalog.Marble => "Kadim Mermer", MaterialIdCatalog.OakWood => "Mese Odunu", MaterialIdCatalog.Ironwood => "Demiragac Odunu", MaterialIdCatalog.WoodPlank => "Ahsap Kalas", MaterialIdCatalog.GlowingMoss => "Parlayan Yosun Yapragi", MaterialIdCatalog.LooseRubble => "Tas Moloz", MaterialIdCatalog.CopperOre => "Bakir Cevheri", MaterialIdCatalog.IronOre => "Demir Cevheri", MaterialIdCatalog.GoldOre => "Altin Cevheri", MaterialIdCatalog.MithrilOre => "Mithril Cevheri", MaterialIdCatalog.AstralOre => "Astral Cevheri", MaterialIdCatalog.StarCore => "Yildiz Cekirdegi", MaterialIdCatalog.PhoenixFeatherGold => "Anka Altin-Kor Tuyu", MaterialIdCatalog.CreatureFurAsh => "Yaratik Postu", MaterialIdCatalog.BoneIvory => "Canli Kemigi/Disi", _ => $"Materyal #{m}" };
+        public string FormatCrystalStockHudLine() => $"[Kristal:T{CurrentCrystalTier}({CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity}) | Alet:T{CurrentToolTier}(%{ToolDurability01 * 100f:0})] Tas:{CrystalStorage.GetCount(MaterialIdCatalog.Stone)} | Toprak:{CrystalStorage.GetCount(MaterialIdCatalog.Dirt)} | Bazalt:{CrystalStorage.GetCount(MaterialIdCatalog.Basalt)} | Kiriktas:{CrystalStorage.GetCount(MaterialIdCatalog.Cobblestone)} | Odun:{CrystalStorage.GetCount(MaterialIdCatalog.OakWood)} | Moloz:{LooseRubbleShardCount}";
+        public static string GetShapeDisplayName(byte s) => s switch { 0 => "0: Dogal Hal (Dairesel Arazi Sacilimi)", 1 => "1: Tam Kup Blok", 2 => "2: 45° Rampa", 3 => "3: Ic Kose", 4 => "4: Dis Kose", 5 => "5: Kemer", 6 => "6: Kilit Tasi", 7 => "7: Sekizgen Sutun", 63 => "63: Mikro-Blok", _ => $"Sekil #{s}" };
+        public static float GetMaterialHardness(byte m) => m switch
+        {
+            MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass or MaterialIdCatalog.Sand or MaterialIdCatalog.LooseRubble or MaterialIdCatalog.GlowingMoss => 0.8f,
+            MaterialIdCatalog.OakWood or MaterialIdCatalog.WoodPlank or MaterialIdCatalog.CampfireBlock => 1.4f,
+            MaterialIdCatalog.Ironwood => 2.1f,
+            MaterialIdCatalog.Stone or MaterialIdCatalog.Cobblestone or MaterialIdCatalog.StoneBrick or MaterialIdCatalog.Marble or MaterialIdCatalog.PrimitiveStoneKilnBlock or MaterialIdCatalog.Coal => 2.2f,
+            MaterialIdCatalog.QuartzGem or MaterialIdCatalog.CopperOre or MaterialIdCatalog.TinOre => 2.6f,
+            MaterialIdCatalog.IronOre or MaterialIdCatalog.GoldOre or MaterialIdCatalog.AmethystGem => 3.4f,
+            MaterialIdCatalog.Basalt or MaterialIdCatalog.MagmaBlock => 3.8f,
+            MaterialIdCatalog.NaturalObsidian or MaterialIdCatalog.MithrilOre or MaterialIdCatalog.RubyGem or MaterialIdCatalog.SapphireGem or MaterialIdCatalog.TitaniumOre => 6.2f,
+            MaterialIdCatalog.AstralOre or MaterialIdCatalog.RedDiamondGem => 7.5f,
+            _ => 3.5f
+        };
+        public static string GetMaterialDisplayName(byte m) => m switch
+        {
+            MaterialIdCatalog.Air => "Hava",
+            MaterialIdCatalog.Bedrock => "Kirilmaz Ana Kaya (Bedrock)",
+            MaterialIdCatalog.Stone => "Ham Tas",
+            MaterialIdCatalog.Dirt => "Toprak",
+            MaterialIdCatalog.Grass => "Cimenli Toprak",
+            MaterialIdCatalog.Sand => "Kum",
+            MaterialIdCatalog.Basalt => "Bazalt",
+            MaterialIdCatalog.NaturalObsidian => "Dogal Obsidyen",
+            MaterialIdCatalog.Cobblestone => "Kiriktas",
+            MaterialIdCatalog.StoneBrick => "Tas Tugla",
+            MaterialIdCatalog.Marble => "Kadim Mermer",
+            MaterialIdCatalog.OakWood => "Mese Odunu",
+            MaterialIdCatalog.Ironwood => "Demiragac Odunu",
+            MaterialIdCatalog.WoodPlank => "Ahsap Kalas",
+            MaterialIdCatalog.GlowingMoss => "Parlayan Yosun Yapragi",
+            MaterialIdCatalog.LooseRubble => "Tas Moloz",
+            MaterialIdCatalog.Coal => "Tas Komuru",
+            MaterialIdCatalog.CopperOre => "Bakir Cevheri",
+            MaterialIdCatalog.TinOre => "Kalay Cevheri",
+            MaterialIdCatalog.IronOre => "Demir Cevheri",
+            MaterialIdCatalog.GoldOre => "Altin Cevheri",
+            MaterialIdCatalog.MithrilOre => "Mithril Cevheri",
+            MaterialIdCatalog.AstralOre => "Astral Cevheri",
+            MaterialIdCatalog.QuartzGem => "Rezonans Kuvarsi",
+            MaterialIdCatalog.AmethystGem => "Ametist Kristali",
+            MaterialIdCatalog.RubyGem => "Ates Yakutu",
+            MaterialIdCatalog.SapphireGem => "Buzul Safiri",
+            MaterialIdCatalog.RedDiamondGem => "Kizil Elmas",
+            MaterialIdCatalog.StarCore => "Yildiz Cekirdegi",
+            MaterialIdCatalog.CampfireBlock => "Kamp Atesi",
+            MaterialIdCatalog.PrimitiveStoneKilnBlock => "Ilkel Tas Izabe Firini",
+            MaterialIdCatalog.PhoenixFeatherGold => "Anka Altin-Kor Tuyu",
+            MaterialIdCatalog.CreatureFurAsh => "Yaratik Postu",
+            MaterialIdCatalog.BoneIvory => "Canli Kemigi/Disi",
+            _ => $"Materyal #{m}"
+        };
         private static int FloorDiv16(int v) => v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
         private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks, int wy = -1)
         {

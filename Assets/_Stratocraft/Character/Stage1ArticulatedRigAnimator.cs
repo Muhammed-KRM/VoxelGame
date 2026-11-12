@@ -91,7 +91,9 @@ namespace Stratocraft.Character
             float weaponThrustExtensionMeters,
             Material? sharedVoxelMat,
             float deltaTime,
-            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null,
+            float rightFistPunch01 = 0f,
+            float leftFistPunch01 = 0f)
         {
             float horizontalSpeed = Mathf.Sqrt(
                 movementState.VelocityX * movementState.VelocityX +
@@ -183,7 +185,11 @@ namespace Stratocraft.Character
 
                 if (_spineTorsoPivot != null)
                 {
-                    _spineTorsoPivot.localRotation = Quaternion.Euler(_smoothedBodyPitchDeg, strideYawTwist * 0.55f, _smoothedBodyRollDeg * 0.55f);
+                    float fistTorsoTwistYaw = (leftFistPunch01 - rightFistPunch01) * 18.0f;
+                    _spineTorsoPivot.localRotation = Quaternion.Euler(
+                        _smoothedBodyPitchDeg,
+                        strideYawTwist * 0.55f + fistTorsoTwistYaw,
+                        _smoothedBodyRollDeg * 0.55f);
                 }
 
                 StepArticulatedLimbsAndArms(
@@ -196,7 +202,9 @@ namespace Stratocraft.Character
                     weaponThrustExtensionMeters,
                     isMatterCrystalActive,
                     deltaTime,
-                    worldChunks);
+                    worldChunks,
+                    rightFistPunch01,
+                    leftFistPunch01);
             }
 
             UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg);
@@ -677,7 +685,9 @@ namespace Stratocraft.Character
             float weaponThrustExtensionMeters,
             bool isCrystalActive,
             float deltaTime,
-            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks,
+            float rightFistPunch01 = 0f,
+            float leftFistPunch01 = 0f)
         {
             CharacterStance stance = movementState.Stance;
             bool isClimbing = stance == CharacterStance.Climbing;
@@ -774,8 +784,12 @@ namespace Stratocraft.Character
                     ? (-72f + strideSwingDeg * 0.85f)
                     : isClimbing
                         ? (-115f + strideSwingDeg * 1.15f)
-                        : (-35f - weaponSwingPitchRad * Mathf.Rad2Deg * 0.9f - weaponThrustExtensionMeters * 55f);
-                float armYaw = weaponSwingYawRad * Mathf.Rad2Deg * 0.75f;
+                        : rightFistPunch01 > 0.01f
+                            ? Mathf.Lerp(-44f, -88f + cameraPitchDeg * 0.65f, rightFistPunch01)
+                            : (-35f - weaponSwingPitchRad * Mathf.Rad2Deg * 0.9f - weaponThrustExtensionMeters * 55f);
+                float armYaw = rightFistPunch01 > 0.01f
+                    ? Mathf.Lerp(-6f, -18f, rightFistPunch01)
+                    : weaponSwingYawRad * Mathf.Rad2Deg * 0.75f;
                 _rightArmShoulderPivot.localRotation = Quaternion.Euler(armPitch, armYaw, -10f);
 
                 if (_rightElbowPivot != null)
@@ -785,13 +799,15 @@ namespace Stratocraft.Character
                         ? (-68f - strideSwingDeg * 0.45f)
                         : isClimbing
                             ? (-64f - strideSwingDeg * 0.55f)
-                            : (-28f - swingIntensity * 18f + weaponThrustExtensionMeters * 48f);
+                            : rightFistPunch01 > 0.01f
+                                ? Mathf.Lerp(-76f, -6f, rightFistPunch01)
+                                : (-28f - swingIntensity * 18f + weaponThrustExtensionMeters * 48f);
                     _rightElbowPivot.localRotation = Quaternion.Euler(Mathf.Clamp(elbowFlex, -95f, 5f), 0f, 0f);
                 }
 
                 if (_rightWristPivot != null)
                 {
-                    float wristRoll = -weaponSwingYawRad * Mathf.Rad2Deg * 0.45f;
+                    float wristRoll = rightFistPunch01 > 0.01f ? -65f * rightFistPunch01 : (-weaponSwingYawRad * Mathf.Rad2Deg * 0.45f);
                     float wristPitch = -weaponSwingPitchRad * Mathf.Rad2Deg * 0.35f;
                     _rightWristPivot.localRotation = Quaternion.Euler(wristPitch, 0f, wristRoll);
                 }
@@ -803,26 +819,32 @@ namespace Stratocraft.Character
                     ? (-72f - strideSwingDeg * 0.85f)
                     : isClimbing
                         ? (-115f - strideSwingDeg * 1.15f)
-                        : (isCrystalActive ? -52f : (-12f - strideSwingDeg * 0.45f));
-                _leftArmShoulderPivot.localRotation = Quaternion.Euler(leftArmPitch, 0f, 10f);
+                        : leftFistPunch01 > 0.01f
+                            ? Mathf.Lerp(-44f, -88f + cameraPitchDeg * 0.65f, leftFistPunch01)
+                            : (isCrystalActive ? -52f : (-12f - strideSwingDeg * 0.45f));
+                float leftArmYaw = leftFistPunch01 > 0.01f ? Mathf.Lerp(6f, 18f, leftFistPunch01) : 0f;
+                _leftArmShoulderPivot.localRotation = Quaternion.Euler(leftArmPitch, leftArmYaw, 10f);
                 _leftArmShoulderPivot.localScale = PlayerLeftArmSevered
                     ? new Vector3(0.45f, 0.32f, 0.45f)
                     : Vector3.one;
 
                 if (_leftElbowPivot != null)
                 {
-                    float leftElbowFlex = isCrystalActive
-                        ? (-44f + Mathf.Sin(Time.time * 4.5f) * 6f)
-                        : isProne
-                            ? (-68f + strideSwingDeg * 0.45f)
-                            : (-22f - Mathf.Max(0f, strideSwingDeg * 0.35f));
+                    float leftElbowFlex = leftFistPunch01 > 0.01f
+                        ? Mathf.Lerp(-76f, -6f, leftFistPunch01)
+                        : isCrystalActive
+                            ? (-44f + Mathf.Sin(Time.time * 4.5f) * 6f)
+                            : isProne
+                                ? (-68f + strideSwingDeg * 0.45f)
+                                : (-22f - Mathf.Max(0f, strideSwingDeg * 0.35f));
                     _leftElbowPivot.localRotation = Quaternion.Euler(leftElbowFlex, 0f, 0f);
                 }
 
                 if (_leftWristPivot != null)
                 {
                     float crystalTwist = isCrystalActive ? Mathf.Sin(Time.time * 5.0f) * 22f : 0f;
-                    _leftWristPivot.localRotation = Quaternion.Euler(isCrystalActive ? -15f : 0f, crystalTwist, 0f);
+                    float leftWristRoll = leftFistPunch01 > 0.01f ? 65f * leftFistPunch01 : 0f;
+                    _leftWristPivot.localRotation = Quaternion.Euler(isCrystalActive ? -15f : 0f, crystalTwist, leftWristRoll);
                 }
             }
 

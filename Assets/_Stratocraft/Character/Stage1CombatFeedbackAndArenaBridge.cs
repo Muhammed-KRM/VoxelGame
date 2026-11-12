@@ -60,7 +60,7 @@ namespace Stratocraft.Character
         private CombatDirectionQuadrant _duelistGuardDir = CombatDirectionQuadrant.Overhead, _duelistAttackDir = CombatDirectionQuadrant.Right;
         private float _duelistHp = 500f, _duelistStateTimer = 1.8f, _duelistSlashProgress01;
         private const float DuelistMaxHp = 500f;
-        private int _duelistPhase, _duelistLastPlayerSwingId = -1, _duelistLastKickId = -1, _duelistStrikeCounter;
+        private int _duelistPhase, _duelistLastPlayerSwingId = -1, _duelistLastKickId = -1, _duelistLastFistPunchId = -1, _duelistStrikeCounter;
         private Vector2 _duelistCurrentBladeRad = new(0.2f, 0.8f), _duelistTargetBladeRad = new(0.2f, 0.8f);
         private GUIStyle? _popupStyle, _worldLabelStyle;
 
@@ -236,6 +236,61 @@ namespace Stratocraft.Character
             Color popCol = !string.IsNullOrEmpty(severNote) ? new Color(1f, 0.25f, 0.25f) : (damage >= 65f ? new Color(1f, 0.88f, 0.22f) : new Color(1f, 0.52f, 0.22f));
             SpawnFloatingPopup(hitWorldPos + Vector3.up * 0.35f, $"🩸 -{damage:F0} HP [{bladeZone} | {hitSpeedMps:F1}m/s]{bonusLabel}{severNote}", popCol, 1.75f, 15);
             TriggerHitMarker(popCol, $"-{damage:F0} HP ({bladeZone})");
+        }
+
+        public void NotifyBareFistCreatureHitFeedback(Vector3 hitWorldPos, float damage, bool isRightHand)
+        {
+            PlayDummyStrikeThud(false);
+            SpawnImpactBurst(hitWorldPos, isSparks: false, count: 7, speed: 3.4f);
+            string handTag = isRightHand ? "Sağ Direkt" : "Sol Kroşe";
+            Color col = new Color(1f, 0.66f, 0.28f);
+            SpawnFloatingPopup(
+                hitWorldPos + Vector3.up * 0.35f,
+                $"👊 YUMRUK ({handTag}): -{damage:F0} HP (Eliniz Acıdı: -1.5 Can, -4.5 EP)",
+                col,
+                1.55f,
+                14);
+            TriggerHitMarker(col, $"👊 -{damage:F0} HP (-1.5 Can)");
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.5): Baslangic vadisindeki CANLI Kilic Ustasi NPC'ye ciplak elle yumruk isabetini kontrol eder.
+        /// Cansiz Mekanik Kukla (_automatonRoot) kasıtli olarak haric tutulur; yumruk yalnizca canlilara isler!
+        /// </summary>
+        public bool TryResolveBareFistHitOnLivingDuelist(
+            Vector3 eyeOrigin,
+            Vector3 aimForward,
+            int fistPunchId,
+            bool isRightHand,
+            float fistDamage,
+            Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            if (_duelistRoot == null || fistPunchId <= 0 || _duelistLastFistPunchId == fistPunchId) return false;
+
+            Vector3 torsoCenter = _duelistRoot.position + Vector3.up * 1.10f;
+            Vector3 toTarget = torsoCenter - eyeOrigin;
+            float dist = toTarget.magnitude;
+            if (dist > Stage1DirectionalCombatBridge.BareFistReachMeters + 0.35f || dist < 0.05f) return false;
+
+            float dot = Vector3.Dot(aimForward.normalized, toTarget / dist);
+            if (dot < 0.68f) return false;
+
+            _duelistLastFistPunchId = fistPunchId;
+            _duelistHp = Mathf.Max(1f, _duelistHp - fistDamage);
+            if (_duelistHp <= 2f) _duelistHp = DuelistMaxHp;
+            _duelistPhase = 3;
+            _duelistStateTimer = 0.45f;
+
+            Vector3 flatPush = new Vector3(aimForward.x, 0f, aimForward.z);
+            if (flatPush.sqrMagnitude > 0.01f)
+            {
+                Vector3 nextPos = _duelistRoot.position + flatPush.normalized * 0.22f;
+                nextPos.y = SampleGroundY(nextPos.x, nextPos.z, _duelistRoot.position.y, worldChunks);
+                _duelistRoot.position = nextPos;
+            }
+
+            NotifyBareFistCreatureHitFeedback(torsoCenter, fistDamage, isRightHand);
+            return true;
         }
 
         private void StepMechanicalTrainingAutomaton(

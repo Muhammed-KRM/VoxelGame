@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Stratocraft.Character.Data;
+using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.Data;
@@ -113,6 +114,7 @@ namespace Stratocraft.Character
         private Vector3 _lastBiomeSpawnCheckPos = new(float.MinValue, 0f, float.MinValue);
         private int _dynamicSpawnCounter;
         private bool _outerContinentCreaturesSpawned;
+        private int _lastResolvedBareFistPunchId = -1;
 
         public int AgentCount => _agents.Count;
         public int OffScreenAnalyticalAgentCount { get; private set; }
@@ -1346,6 +1348,112 @@ namespace Stratocraft.Character
                 return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Faz 2.1 (Asama 1.5): Ciplak el (Slot 0) yumruk vurusunu YALNIZCA canli varliklara karsi cozumler.
+        /// Havaya, topraga, agaca, kayaya veya cansiz kuklaya vuruldugunda HICBIR sey olmaz (0 EP, 0 oz-hasar).
+        /// Canliya isabet ettiginde 8 kunt hasar verir, -4.5 EP enerji harcar ve el kemikleri acidigi icin -1.5 HP can gider!
+        /// </summary>
+        public bool EvaluateBareFistPunch(
+            Stage1DirectionalCombatBridge combatBridge,
+            UnityEngine.Camera? playerCamera,
+            Transform playerTransform,
+            ref CharacterVitalsComponent playerVitals,
+            ref CharacterMovementState moveState,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Material? sharedMat,
+            Stage1CombatFeedbackAndArenaBridge? feedbackBridge = null)
+        {
+            if (!combatBridge.IsBareFistPunchActive) return false;
+            int punchId = combatBridge.CurrentFistPunchId;
+            if (punchId <= 0 || _lastResolvedBareFistPunchId == punchId) return false;
+
+            float prog = combatBridge.CurrentFistProgress01;
+            if (prog < 0.22f || prog > 0.78f) return false;
+
+            Vector3 eyeOrigin = playerCamera != null
+                ? playerCamera.transform.position
+                : (playerTransform.position + Vector3.up * 1.55f);
+            Vector3 aimFwd = playerCamera != null
+                ? playerCamera.transform.forward
+                : playerTransform.forward;
+            if (aimFwd.sqrMagnitude < 0.001f) aimFwd = Vector3.forward;
+            aimFwd.Normalize();
+
+            float fistDmg = 8.0f * Stage1GameSettings.PlayerCombatDamageMultiplier;
+            bool isRight = combatBridge.IsCurrentPunchRightHand;
+
+            // 1) Baslangic vadisindeki canli Kilic Ustasi NPC kontrolu
+            if (feedbackBridge != null &&
+                feedbackBridge.TryResolveBareFistHitOnLivingDuelist(eyeOrigin, aimFwd, punchId, isRight, fistDmg, worldChunks))
+            {
+                _lastResolvedBareFistPunchId = punchId;
+                ApplyBareFistPlayerRecoilAndStamina(ref playerVitals, ref moveState, miningCtrl, "Kılıç Ustası NPC", fistDmg, isRight);
+                return true;
+            }
+
+            // 2) Dunyadaki tum 3B canli yaratiklar (_agents) kontrolu
+            LiveCreatureAgent? bestAgent = null;
+            float bestDist = Stage1DirectionalCombatBridge.BareFistReachMeters + 0.55f;
+            Vector3 bestHitPos = Vector3.zero;
+
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.Root == null || a.State == CreatureAiState.Dead || a.IsOffScreenAnalytical) continue;
+
+                Vector3 targetCenter = a.Root.position + Vector3.up * 0.92f + a.Root.forward * 0.25f;
+                Vector3 toCreature = targetCenter - eyeOrigin;
+                float d = toCreature.magnitude;
+                if (d > bestDist || d < 0.05f) continue;
+
+                float dot = Vector3.Dot(aimFwd, toCreature / d);
+                if (dot < 0.64f) continue;
+
+                bestDist = d;
+                bestAgent = a;
+                bestHitPos = targetCenter;
+            }
+
+            if (bestAgent == null) return false;
+
+            _lastResolvedBareFistPunchId = punchId;
+            bestAgent.CurrentHp = Mathf.Max(0f, bestAgent.CurrentHp - fistDmg);
+            bestAgent.HitFlinchTimer = 0.28f;
+            bestAgent.AttackCooldown = Mathf.Max(bestAgent.AttackCooldown, 0.55f);
+
+            feedbackBridge?.NotifyBareFistCreatureHitFeedback(bestHitPos, fistDmg, isRight);
+            if (bestAgent.CurrentHp <= 0f)
+            {
+                HandleCreatureZeroHp(bestAgent, sharedMat);
+            }
+            else
+            {
+                LastCreatureEventText =
+                    $"👊 YUMRUK İSABETİ: {bestAgent.DisplayName} sarsıldı (-{fistDmg:F0} HP | Kalan: {bestAgent.CurrentHp:F0}/{bestAgent.MaxHp:F0})";
+            }
+
+            ApplyBareFistPlayerRecoilAndStamina(ref playerVitals, ref moveState, miningCtrl, bestAgent.DisplayName, fistDmg, isRight);
+            return true;
+        }
+
+        private static void ApplyBareFistPlayerRecoilAndStamina(
+            ref CharacterVitalsComponent playerVitals,
+            ref CharacterMovementState moveState,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            string targetName,
+            float dealtDamage,
+            bool isRightHand)
+        {
+            float epCost = 4.5f * Mathf.Max(0.25f, Stage1GameSettings.StaminaDrainMultiplier);
+            PhysicalCharacterControllerSystem.ConsumeStamina(ref playerVitals, ref moveState, epCost);
+            playerVitals.CurrentHp = Mathf.Max(1.0f, playerVitals.CurrentHp - 1.5f);
+
+            string handLabel = isRightHand ? "Sağ Direkt" : "Sol Kroşe";
+            miningCtrl.LastFeedbackText =
+                $"👊 YUMRUK İSABETİ ({handLabel} -> {targetName}): -{dealtDamage:F0} HP künt darbe! (Eliniz acıdı: -1.5 Can, -{epCost:F1} EP)";
         }
 
         private static bool TryFindBestBladeSegmentHit(
