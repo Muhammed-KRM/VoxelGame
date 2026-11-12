@@ -338,11 +338,11 @@ namespace Stratocraft.Character
                     _shapeIdx = (_shapeIdx + delta + ShapeWheelCycle.Length) % ShapeWheelCycle.Length;
                     LastFeedbackText = $"İnşa Şekli [Alt+Tekerlek]: {GetShapeDisplayName(SelectedShapeId)}";
                 }
-                else if (Input.GetKeyDown(KeyCode.T) || (IsCrystalActive && shiftHeld && Mathf.Abs(scroll) > 0.001f))
+                else if (IsCrystalActive && (Input.GetKeyDown(KeyCode.T) || (shiftHeld && Mathf.Abs(scroll) > 0.001f)))
                 {
                     int maxAllowedIdx = GetMaxBrushIndexForCrystalTier(Mathf.Max(1, CurrentCrystalTier));
                     int allowedCount = maxAllowedIdx + 1;
-                    int delta = (IsCrystalActive && shiftHeld && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
+                    int delta = (shiftHeld && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
                     _brushRadiusIdx = (_brushRadiusIdx + delta + allowedCount) % allowedCount;
                     LastFeedbackText = $"Kristal Vakum Alanı [T / Shift+Tekerlek]: {BrushAreaLabel} (Yarıçap: {BrushRadiusMeters:0.1}m | Kademe Sınırı: T{CurrentCrystalTier})";
                 }
@@ -363,15 +363,16 @@ namespace Stratocraft.Character
             HashSet<(int cx, int cz)>? dirtyFluidChunks = null,
             Transform? wristCrystalTransform = null,
             Stage1DirectionalCombatBridge? combatBridge = null,
-            Stage1HolsterAndBackpackController? holsterCtrl = null)
+            Stage1HolsterAndBackpackController? holsterCtrl = null,
+            bool externalMouseConsumed = false)
         {
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
-            bool lmb = !backpackOpen && Input.GetMouseButton(0);
+            bool lmb = !backpackOpen && !externalMouseConsumed && Input.GetMouseButton(0);
             UpdateVacuumBeamVisual(IsCrystalActive && lmb && HasAimHit && AimHit.distance <= 9.5f, wristCrystalTransform, sharedMat);
 
-            if (backpackOpen) return;
+            if (backpackOpen || externalMouseConsumed) return;
 
-            bool isHoldingMaterialBlock = !IsCrystalActive && (activeHolsterSlot == 4 || activeHolsterSlot >= 7);
+            bool isHoldingMaterialBlock = !IsCrystalActive && activeHolsterSlot == 4;
             if (isHoldingMaterialBlock && holsterCtrl != null)
             {
                 VisualInventorySlot activeUiSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
@@ -2497,7 +2498,11 @@ namespace Stratocraft.Character
                 string goName = col.gameObject.name;
                 if (goName.StartsWith("Dropped", StringComparison.Ordinal) ||
                     goName.StartsWith("PlacementGhost", StringComparison.Ordinal) ||
-                    goName.StartsWith("MatterCrystal_", StringComparison.Ordinal))
+                    goName.StartsWith("MatterCrystal_", StringComparison.Ordinal) ||
+                    goName.StartsWith("WorldLoose", StringComparison.Ordinal) ||
+                    goName.StartsWith("MindThought", StringComparison.Ordinal) ||
+                    goName.StartsWith("Campfire_", StringComparison.Ordinal) ||
+                    goName.StartsWith("PhysicalCampfire", StringComparison.Ordinal))
                 {
                     continue;
                 }

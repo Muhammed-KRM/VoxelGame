@@ -727,5 +727,379 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(holster.InventoryUi.GetActiveHotbarSlot().Count, Is.EqualTo(2));
         }
 #endif
+
+        [Test]
+        public void MindStructureValidator_Campfire_RejectsSticksWithoutBottomTinder()
+        {
+            var origin = new System.Numerics.Vector3(4.0f, 12.0f, -2.0f);
+            ReadOnlySpan<LoosePartPoint> sticksOnly = stackalloc LoosePartPoint[4]
+            {
+                new LoosePartPoint { InstanceId = 1, Kind = LooseBuildPartKind.Stick, Position = origin + new System.Numerics.Vector3(0.12f, 0.08f, 0.05f) },
+                new LoosePartPoint { InstanceId = 2, Kind = LooseBuildPartKind.Stick, Position = origin + new System.Numerics.Vector3(-0.14f, 0.09f, 0.08f) },
+                new LoosePartPoint { InstanceId = 3, Kind = LooseBuildPartKind.Stick, Position = origin + new System.Numerics.Vector3(0.02f, 0.08f, -0.15f) },
+                new LoosePartPoint { InstanceId = 4, Kind = LooseBuildPartKind.Stick, Position = origin + new System.Numerics.Vector3(-0.08f, 0.10f, -0.11f) }
+            };
+            Span<int> matched = stackalloc int[16];
+
+            MindValidationResult res = MindStructureClusterValidator.ValidateCluster(
+                MindStructureBlueprintId.Campfire, origin, sticksOnly, matched);
+
+            Assert.That(res.IsValid, Is.False);
+            Assert.That(res.FeedbackMessage, Does.Contain("kav").IgnoreCase);
+        }
+
+        [Test]
+        public void MindStructureValidator_Campfire_AcceptsIrregularPlayerPlacedTinderAndThreeSticks()
+        {
+            var center = new System.Numerics.Vector3(10.25f, 96.0f, -6.40f);
+            Span<LoosePartPoint> parts = stackalloc LoosePartPoint[8];
+            parts[0] = new LoosePartPoint { InstanceId = 10, Kind = LooseBuildPartKind.LeafPile, Position = center };
+            parts[1] = new LoosePartPoint { InstanceId = 11, Kind = LooseBuildPartKind.Stick, Position = center + new System.Numerics.Vector3(0.18f, 0.14f, 0.07f) };
+            parts[2] = new LoosePartPoint { InstanceId = 12, Kind = LooseBuildPartKind.Stick, Position = center + new System.Numerics.Vector3(-0.16f, 0.15f, 0.11f) };
+            parts[3] = new LoosePartPoint { InstanceId = 13, Kind = LooseBuildPartKind.Stick, Position = center + new System.Numerics.Vector3(0.03f, 0.13f, -0.21f) };
+
+            Span<int> matched = stackalloc int[16];
+            MindValidationResult baseRes = MindStructureClusterValidator.ValidateCluster(
+                MindStructureBlueprintId.Campfire, center, parts.Slice(0, 4), matched);
+
+            Assert.That(baseRes.IsValid, Is.True);
+            Assert.That(baseRes.HasStoneRing, Is.False);
+            Assert.That(baseRes.BonusEfficiency01, Is.EqualTo(0f));
+            Assert.That(baseRes.MatchedPartCount, Is.EqualTo(4));
+
+            // Simdi etrafina milimetrik olmayan rastgele 4 kaba tas diz -> +%15 Tas Cember ruzgar/yakit bonusu!
+            parts[4] = new LoosePartPoint { InstanceId = 14, Kind = LooseBuildPartKind.RoughStoneChunk, Position = center + new System.Numerics.Vector3(0.46f, 0.04f, 0.08f) };
+            parts[5] = new LoosePartPoint { InstanceId = 15, Kind = LooseBuildPartKind.RoughStoneChunk, Position = center + new System.Numerics.Vector3(-0.49f, 0.03f, -0.05f) };
+            parts[6] = new LoosePartPoint { InstanceId = 16, Kind = LooseBuildPartKind.RoughStoneChunk, Position = center + new System.Numerics.Vector3(0.06f, 0.05f, 0.51f) };
+            parts[7] = new LoosePartPoint { InstanceId = 17, Kind = LooseBuildPartKind.RoughStoneChunk, Position = center + new System.Numerics.Vector3(-0.09f, 0.04f, -0.44f) };
+
+            MindValidationResult ringRes = MindStructureClusterValidator.ValidateCluster(
+                MindStructureBlueprintId.Campfire, center, parts, matched);
+
+            Assert.That(ringRes.IsValid, Is.True);
+            Assert.That(ringRes.HasStoneRing, Is.True);
+            Assert.That(ringRes.BonusEfficiency01, Is.EqualTo(0.15f).Within(0.001f));
+            Assert.That(ringRes.MatchedPartCount, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void CampfireCookingStateMachine_TransitionsRawToCookedToBurnt()
+        {
+            CampfireStationData fire = CampfireSimulationLogic.CreateUnlitStation(
+                stationId: 1u,
+                clusterCenter: new System.Numerics.Vector3(0f, 10f, 0f),
+                baseY: 10f,
+                efficiencyBonus01: 0f,
+                hasStoneRing: false);
+
+            Assert.That(fire.IsLit, Is.False);
+
+            // 3 Cakmaktasi kivilcim vurusu ile tutusma
+            CampfireSimulationLogic.ApplyFlintSparkStrike(ref fire, out bool ig1);
+            Assert.That(ig1, Is.False);
+            Assert.That(fire.IsLit, Is.False);
+
+            CampfireSimulationLogic.ApplyFlintSparkStrike(ref fire, out bool ig2);
+            Assert.That(ig2, Is.False);
+            Assert.That(fire.IsLit, Is.False);
+
+            CampfireSimulationLogic.ApplyFlintSparkStrike(ref fire, out bool ig3);
+            Assert.That(ig3, Is.True);
+            Assert.That(fire.IsLit, Is.True);
+            Assert.That(fire.RemainingFuelSec, Is.EqualTo(180f).Within(0.01f));
+
+            // 2 parca Cig Et koy: Biri pismisken yakalanacak, digeri yanana kadar bekletilecek
+            var meatDna1 = PhysicalItemShapeDna.CreateNatural(101u, 100);
+            var meatDna2 = PhysicalItemShapeDna.CreateNatural(202u, 100);
+            Assert.That(CampfireSimulationLogic.TryPlaceRawMeat(ref fire, in meatDna1, out int s0), Is.True);
+            Assert.That(CampfireSimulationLogic.TryPlaceRawMeat(ref fire, in meatDna2, out int s1), Is.True);
+            Assert.That(s0, Is.EqualTo(0));
+            Assert.That(s1, Is.EqualTo(1));
+            Assert.That(fire.GetSlot(0).Stage, Is.EqualTo(CookingMeatStage.RawSizzling));
+
+            // 11.0 sn sonra hala Cig (RawSizzling)
+            CampfireSimulationLogic.StepStation(ref fire, 11.0f, out _);
+            Assert.That(fire.GetSlot(0).Stage, Is.EqualTo(CookingMeatStage.RawSizzling));
+
+            // +2.0 sn (Toplam 13.0 sn -> 12..26 sn araligi): Altin-kahverengi Pismis Et (Cooked)!
+            CampfireSimulationLogic.StepStation(ref fire, 2.0f, out byte changedToCookedMask);
+            Assert.That(changedToCookedMask & 0b11, Is.EqualTo(0b11));
+            Assert.That(fire.GetSlot(0).Stage, Is.EqualTo(CookingMeatStage.Cooked));
+            Assert.That(fire.GetSlot(0).ItemDna.StageByte, Is.EqualTo(1));
+
+            // Ilk pismis eti [E] ile al
+            Assert.That(CampfireSimulationLogic.TryCollectBestMeat(ref fire, out int takenIdx, out CookingMeatStage takenStage, out PhysicalItemShapeDna takenDna), Is.True);
+            Assert.That(takenIdx, Is.EqualTo(0));
+            Assert.That(takenStage, Is.EqualTo(CookingMeatStage.Cooked));
+            Assert.That(takenDna.StageByte, Is.EqualTo(1));
+
+            // Kalan ikinci eti +14.0 sn daha beklet (Toplam 27.0 sn > 26.0 sn): Komurlesmis Yanik Et (Burnt)!
+            CampfireSimulationLogic.StepStation(ref fire, 14.0f, out byte changedToBurntMask);
+            Assert.That((changedToBurntMask & (1 << 1)) != 0, Is.True);
+            Assert.That(fire.GetSlot(1).Stage, Is.EqualTo(CookingMeatStage.Burnt));
+            Assert.That(fire.GetSlot(1).ItemDna.StageByte, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void Faz23_WorldLooseBuild_StickNearTinder_SnapsAndTiltsIntoTeepee()
+        {
+            var tinderPos = new System.Numerics.Vector3(2.0f, 50.0f, 3.0f);
+            ReadOnlySpan<LoosePartPoint> existing = stackalloc LoosePartPoint[1]
+            {
+                new LoosePartPoint
+                {
+                    InstanceId = 1,
+                    Kind = LooseBuildPartKind.LeafPile,
+                    Position = tinderPos,
+                    Rotation = System.Numerics.Quaternion.Identity,
+                    ShapeDna = PhysicalItemShapeDna.CreateNatural(55u, 100)
+                }
+            };
+
+            var rawStickDna = PhysicalItemShapeDna.CreateNatural(88u, 100);
+            WorldLoosePlacementMath.ComputePlacementPose(
+                LooseBuildPartKind.Stick,
+                in rawStickDna,
+                tinderPos + new System.Numerics.Vector3(0.22f, 0f, 0f),
+                System.Numerics.Vector3.UnitY,
+                userYawDegrees: 0f,
+                existing,
+                out System.Numerics.Vector3 finalPos,
+                out System.Numerics.Quaternion finalRot,
+                out PhysicalItemShapeDna finalDna,
+                out bool snapped,
+                out _);
+
+            Assert.That(snapped, Is.True, "Kavin yanina konan dal dizde kirilip cadir egimi almalidir!");
+            Assert.That((finalDna.Flags & PhysicalItemShapeDna.FlagBrokenStick) != 0, Is.True);
+            Assert.That(finalPos.Y, Is.GreaterThan(tinderPos.Y + 0.08f));
+
+            System.Numerics.Vector3 stickTipDir = System.Numerics.Vector3.Transform(System.Numerics.Vector3.UnitZ, finalRot);
+            Assert.That(stickTipDir.Y, Is.GreaterThan(0.55f), "Dalin ucu yukariya (cadir tepesine) bakmalidir!");
+            Assert.That(stickTipDir.X, Is.LessThan(-0.55f), "+X kenarindan konan dalin ucu merkeze (-X) dogru egilmelidir!");
+        }
+
+        [Test]
+        public void Faz23_CampfireFuel_AddsStickAndSplitFirewoodWithStoneRingBonus()
+        {
+            CampfireStationData ringFire = CampfireSimulationLogic.CreateUnlitStation(
+                stationId: 2u,
+                clusterCenter: System.Numerics.Vector3.Zero,
+                baseY: 0f,
+                efficiencyBonus01: 0.15f,
+                hasStoneRing: true);
+
+            for (int i = 0; i < 3; i++) CampfireSimulationLogic.ApplyFlintSparkStrike(ref ringFire, out _);
+            Assert.That(ringFire.IsLit, Is.True);
+            // 180 * 1.15 = 207 sn
+            Assert.That(ringFire.RemainingFuelSec, Is.EqualTo(207.0f).Within(0.05f));
+
+            Assert.That(CampfireSimulationLogic.TryAddWoodFuel(ref ringFire, isSplitFirewood: false, out float stickAdded), Is.True);
+            Assert.That(stickAdded, Is.EqualTo(69.0f).Within(0.05f));
+
+            Assert.That(CampfireSimulationLogic.TryAddWoodFuel(ref ringFire, isSplitFirewood: true, out float logAdded), Is.True);
+            Assert.That(logAdded, Is.EqualTo(161.0f).Within(0.05f));
+
+            // Tum yakit tukendiginde ates temizce sonmelidir
+            CampfireSimulationLogic.StepStation(ref ringFire, 500.0f, out _);
+            Assert.That(ringFire.IsLit, Is.False);
+            Assert.That(ringFire.RemainingFuelSec, Is.EqualTo(0f));
+        }
+
+        [Test]
+        public void CharcoalPit_RequiresEarthCoverAndCompletesPyrolysisToCharcoal()
+        {
+            // Toprak ortusuz odun yigini ateslendiginde komur yerine kule donusmelidir (RuinedAsh)
+            CharcoalPitState uncoveredPit = BloomeryThermodynamicsSystem.CreateCharcoalPit(
+                stationId: 10u,
+                center: System.Numerics.Vector3.Zero,
+                baseY: 0f,
+                woodUnits: 5,
+                coverUnits: 1);
+            Assert.That(uncoveredPit.HasEarthCover, Is.False);
+
+            BloomeryThermodynamicsSystem.ApplyCharcoalPitFlintStrike(ref uncoveredPit, out bool uncIgnited1);
+            Assert.That(uncIgnited1, Is.False);
+            BloomeryThermodynamicsSystem.ApplyCharcoalPitFlintStrike(ref uncoveredPit, out bool uncIgnited2);
+            Assert.That(uncIgnited2, Is.False);
+            Assert.That(uncoveredPit.Phase, Is.EqualTo(CharcoalPitPhase.RuinedAsh));
+
+            // En az 4 toprak/kil ortulu yigin 28 sn sonunda Odun Komuru (CharcoalChunk) verir; erken acilirsa yanip kul olur!
+            CharcoalPitState coveredPit = BloomeryThermodynamicsSystem.CreateCharcoalPit(
+                stationId: 11u,
+                center: System.Numerics.Vector3.Zero,
+                baseY: 0f,
+                woodUnits: 6,
+                coverUnits: 6);
+            Assert.That(coveredPit.HasEarthCover, Is.True);
+
+            BloomeryThermodynamicsSystem.ApplyCharcoalPitFlintStrike(ref coveredPit, out _);
+            BloomeryThermodynamicsSystem.ApplyCharcoalPitFlintStrike(ref coveredPit, out bool covIgnited);
+            Assert.That(covIgnited, Is.True);
+            Assert.That(coveredPit.Phase, Is.EqualTo(CharcoalPitPhase.Smoldering));
+
+            BloomeryThermodynamicsSystem.StepCharcoalPit(ref coveredPit, 28.0f);
+            Assert.That(coveredPit.Phase, Is.EqualTo(CharcoalPitPhase.ReadyCharcoal));
+
+            bool harvested = BloomeryThermodynamicsSystem.TryOpenOrHarvestCharcoalPit(
+                ref coveredPit,
+                out int charcoalYield,
+                out bool ruinedEarly);
+            Assert.That(harvested, Is.True);
+            Assert.That(ruinedEarly, Is.False);
+            Assert.That(charcoalYield, Is.InRange(6, 8));
+            Assert.That(coveredPit.Phase, Is.EqualTo(CharcoalPitPhase.Harvested));
+        }
+
+        [Test]
+        public void BloomeryThermodynamics_WoodFuelNeverReachesCopperOrIronMeltingPoint()
+        {
+            BloomeryFurnaceState furnace = BloomeryThermodynamicsSystem.CreateBloomeryFurnace(
+                stationId: 20u,
+                center: System.Numerics.Vector3.Zero,
+                baseY: 0f,
+                hasTuyere: true,
+                hasBellows: true,
+                hasCrucible: true);
+            furnace.WoodFuelUnits = 6;
+            furnace.CrushedOreUnits = 4;
+            furnace.OreMaterialId = BloomeryFurnaceState.CopperMatId;
+            furnace.IsLit = true;
+
+            for (int i = 0; i < 60; i++)
+            {
+                if ((i % 2) == 0)
+                {
+                    BloomeryThermodynamicsSystem.PumpBellows(ref furnace);
+                }
+                BloomeryThermodynamicsSystem.StepBloomery(ref furnace, 0.5f);
+            }
+
+            Assert.That(furnace.TemperatureCelsius, Is.LessThan(850.0f));
+            Assert.That(furnace.HasMoltenCopperReady, Is.False);
+            Assert.That(furnace.HasReadyIronBloom, Is.False);
+        }
+
+        [Test]
+        public void BloomeryThermodynamics_CharcoalWithoutBellowsCapsAt800C_WithBellowsReaches1260CSlagAndBloom()
+        {
+            BloomeryFurnaceState furnace = BloomeryThermodynamicsSystem.CreateBloomeryFurnace(
+                stationId: 21u,
+                center: System.Numerics.Vector3.Zero,
+                baseY: 0f,
+                hasTuyere: true,
+                hasBellows: true,
+                hasCrucible: false);
+            furnace.CharcoalUnits = 8;
+            furnace.CrushedOreUnits = 4;
+            furnace.OreMaterialId = BloomeryFurnaceState.IronMatId;
+            furnace.IsLit = true;
+
+            // Koruk pompalanmadan ~800 C sinirinda takilmalidir
+            for (int i = 0; i < 40; i++)
+            {
+                BloomeryThermodynamicsSystem.StepBloomery(ref furnace, 0.5f);
+            }
+            Assert.That(furnace.TemperatureCelsius, Is.LessThanOrEqualTo(800.0f));
+            Assert.That(furnace.SmeltProgress01, Is.EqualTo(0f));
+            Assert.That(furnace.HasReadyIronBloom, Is.False);
+
+            // Ritmik koruk pompalama (~0.8 sn araliklarla) -> >= 1230 C sicakliga cikip Curuf + Sunger Demir uretir!
+            for (int i = 0; i < 45; i++)
+            {
+                BloomeryThermodynamicsSystem.PumpBellows(ref furnace);
+                BloomeryThermodynamicsSystem.StepBloomery(ref furnace, 0.80f);
+            }
+
+            Assert.That(furnace.TemperatureCelsius, Is.GreaterThanOrEqualTo(1230.0f));
+            Assert.That(furnace.HasReadyIronBloom, Is.True);
+            Assert.That(furnace.HasTappedSlagShard, Is.True);
+            Assert.That(furnace.SlagTappedVisual01, Is.EqualTo(1.0f).Within(0.01f));
+        }
+
+        [Test]
+        public void HotBloomForging_RejectsColdStrikesBelow720C_CompletesAfter8HotStrikes()
+        {
+            var bloomDna = PhysicalItemShapeDna.CreateNatural(0xB100AA11u, 96);
+            HotForgeWorkpieceState wp = BloomeryThermodynamicsSystem.CreateHotBloomWorkpiece(in bloomDna, initialTempC: 1180.0f);
+
+            // Acik havada 40 sn soguma -> < 720 C
+            BloomeryThermodynamicsSystem.StepHotForgeWorkpiece(ref wp, 40.0f);
+            Assert.That(wp.TemperatureCelsius, Is.LessThan(HotForgeWorkpieceState.MinHotForgeCelsius));
+
+            bool coldStrikeOk = BloomeryThermodynamicsSystem.ApplyHotForgeStrike(ref wp, out bool rejectedCold, out _);
+            Assert.That(coldStrikeOk, Is.False);
+            Assert.That(rejectedCold, Is.True);
+            Assert.That(wp.CompletedStrikes, Is.EqualTo(0));
+
+            // Ates/Ocakta tekrar isit -> 8 sicak cekic darbesiyle Dovme Demir Lama (WroughtIronBar) olur
+            BloomeryThermodynamicsSystem.ReheatWorkpiece(ref wp, 1080.0f);
+            Assert.That(wp.TemperatureCelsius, Is.GreaterThanOrEqualTo(1000.0f));
+
+            bool finished = false;
+            for (int hit = 0; hit < HotForgeWorkpieceState.RequiredHotStrikes; hit++)
+            {
+                bool hitOk = BloomeryThermodynamicsSystem.ApplyHotForgeStrike(ref wp, out bool cold, out bool done);
+                Assert.That(hitOk, Is.True);
+                Assert.That(cold, Is.False);
+                finished = done;
+            }
+
+            Assert.That(finished, Is.True);
+            Assert.That(wp.IsCompletedWroughtBar, Is.True);
+            Assert.That(wp.CompletedStrikes, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void WheelbarrowCargo_StoresAndPopsUpTo36PhysicalItemsPreservingShapeDna()
+        {
+            var cargo = new WheelbarrowCargoBuffer();
+            Assert.That(cargo.IsEmpty, Is.True);
+
+            for (int i = 0; i < WheelbarrowCargoBuffer.MaxCapacity; i++)
+            {
+                var dna = new PhysicalItemShapeDna(0xAA000100u + (uint)i * 17u, 0UL, 0.85f, 0, (uint)(i & 1));
+                bool pushed = cargo.TryPush(itemKindByte: (byte)(10 + (i % 4)), subId: (byte)(i % 3), in dna);
+                Assert.That(pushed, Is.True);
+            }
+
+            Assert.That(cargo.IsFull, Is.True);
+            Assert.That(cargo.Count, Is.EqualTo(36));
+
+            var overflowDna = PhysicalItemShapeDna.CreateNatural(999u, 100);
+            Assert.That(cargo.TryPush(10, 0, in overflowDna), Is.False);
+
+            // LIFO sirasi ve tam 16-byte DNA korunumu
+            Assert.That(cargo.TryPop(out WheelbarrowCargoEntry top), Is.True);
+            Assert.That(top.ShapeDna.ShapeSeed, Is.EqualTo(0xAA000100u + 35u * 17u));
+            Assert.That(cargo.Count, Is.EqualTo(35));
+        }
+
+        [Test]
+        public void Faz24_ClothMatCrafting_ShapesClayTuyereAndCraftsT2IronPickaxeFromWroughtIronBar()
+        {
+            // 1) 2x Kil + 1x Kum -> Cig Kil Hava Borusu (FlagUnfiredClay acik!)
+            Span<ClothCenterInputItem> clayInputs = stackalloc ClothCenterInputItem[2]
+            {
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.ClayLump, Count = 2, ShapeDna = PhysicalItemShapeDna.CreateNatural(11u, 100) },
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.SandMound, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(12u, 100) }
+            };
+            ClothCenterCraftEvaluation clayEval = ClothMatCraftingSystem.EvaluateCenterPile(clayInputs);
+            Assert.That(clayEval.IsReadyToBind, Is.True);
+            Assert.That(clayEval.Output, Is.EqualTo(ClothCenterCraftOutput.ClayTuyerePipe));
+            Assert.That((clayEval.InheritedOutputDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0, Is.True);
+
+            // 2) 1x Dovme Demir Lama + 1x Kuru Dal + 1x Bitki Lifi -> T2 Demir Kazma
+            Span<ClothCenterInputItem> ironInputs = stackalloc ClothCenterInputItem[3]
+            {
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.WroughtIronBar, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(21u, 92) },
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.NaturalStick, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(22u, 100) },
+                new ClothCenterInputItem { Archetype = PhysicalItemArchetype.PlantFiber, Count = 1, ShapeDna = PhysicalItemShapeDna.CreateNatural(23u, 100) }
+            };
+            ClothCenterCraftEvaluation ironEval = ClothMatCraftingSystem.EvaluateCenterPile(ironInputs);
+            Assert.That(ironEval.IsReadyToBind, Is.True);
+            Assert.That(ironEval.Output, Is.EqualTo(ClothCenterCraftOutput.IronPickaxe));
+            Assert.That(ironEval.ConsumeWroughtIronBar, Is.EqualTo(1));
+        }
     }
 }

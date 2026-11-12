@@ -13,11 +13,11 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#053` (**Paket 2 Faz 2.2 KODLANDI + KULLANICI GERİ BİLDİRİM DÜZELTMELERİ TAMAMLANDI:** `1)` Karesiz *The Forest* 3B Kumaş Çanta Bezi (`[I]`) + Merkezde 3B İple Bağlama Alet Üretimi (`[R]` / Sol Tık) kullanıcı tarafından **test edilip onaylandı**, `2)` `[R]` Fiziksel 3B Taş Yontma sistemi doğa taşları + `[Q]` ile atılan taşlar + taş vokselleri için tek havuzda birleştirildi, çantadan otomatik Çakmaktaşı kuşanma ve ekran ortası yönlendirme tostları eklendi, `3)` Yerdeki tüm doğal/atılan eşyaların (toprak, taş, kum, kil, çakmaktaşı, dal, yaprak, lif, cevher, alet) dünya ölçeği `GetWorldGroundScale` (`1.50x..1.82x` + dolgun 3B mesh) ile büyütüldü \| **Sırada: Faz 2.2 Düzeltmelerinin Kısa PlayMode Doğrulaması -> Faz 2.3 `[T]` Zihin İnşa, Kamp Ateşi & Yemek Pişirme -> Faz 2.4 Gerçekçi Bloomery Demircilik (`1200°C`) & El Arabası**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T17:48:00+03:00` |
+| **Devir Numarası** | `#055` (**Paket 2 Faz 2.4 TAMAMLANDI:** `1)` Toprak Örtülü Kömür Ocağı Pirolizi (`BloomeryThermodynamicsSystem` + `Stage1BloomeryAndForgingController`: `>=4` odun + `>=4` toprak/kil -> `[T]` `[2]` -> Çakmaktaşı `2` kıvılcım -> `28 sn` için için yanma -> `6–8x CharcoalChunk`; erken açma veya topraksız yakma -> `RuinedAsh`), `2)` Cevher Kavurma & Çekiçle Kırma (`Stage1CampfireAndCookingController`: Kamp ateşinde `10 sn` Bakır/Demir cevheri kavurma -> kaya/örs üstüne `Sağ Tık` + `ToolStoneHammer` ile `3` darbe -> `2x CrushedOrePowder`), `3)` Çiğ Kil Kalıplama & `12 sn` Pişirme (`PhysicalItemShapeDna.FlagUnfiredClay`, `ClothMatCraftingSystem`: `[I]` bez merkezinde `ClayTuyerePipe` & `ClayCruciblePot` -> ateş üstünde `12 sn` pişirme + `LeatherBellows`), `4)` `1250°C` Bloomery İzabe Fırını (`8+` taş + `6+` kil, `>=0.32m` baca -> `[T]` `[3]` -> kil hava borusu + deri körük + kil tıkaç + isteğe bağlı pota; odun `<850°C`, körüksüz kömür `<=795°C`, ritmik körük pompalamayla `1085°C` Bakır külçesi / `1230–1315°C` Cüruf + `1180°C IronBloomSponge`), `5)` Sıcak Sünger Demir Dövme & `T2` Demir Aletler (örste `>=720°C` sıcaklıkta `8` darbe -> `WroughtIronBar` -> `[I]` merkezde `IronPickaxe`, `IronAxe`, `IronHammer`, `IronSword`), `6)` 36 Yuvalı 3B Fiziksel Ahşap El Arabası (`Stage1WheelbarrowController`: `WheelbarrowCargoBuffer`, `Sağ Tık` yükleme, `[E]`/`[ESC]` tutarak `1.35m` önde arazi eğimine göre sürme ve tekerlek dönüşü) \| **Sırada: Faz 2.4 Canlı PlayMode Testi -> Sonraki Paket**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T00:09:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1 Onaylandı, Faz 2.2 Çanta/Craft Onaylandı ve [R] Taş Yontma + Yer Eşyası Boyutu Düzeltildi -> Kullanıcı Doğrulaması Sonrası Doğrudan Faz 2.3'e Geçilecek` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 81/81 PASS (Faz21 + Faz22 Dahil)`, `Standalone .NET 10 Core: 84/84 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1, 2.2, 2.3 Onaylandı; Faz 2.4 Kodlandı ve Tüm Otomatik Testlerden Geçti -> Kullanıcı Canlı PlayMode Testi Bekliyor` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 92/92 PASS (Faz21 + Faz22 + Faz23 + Faz24 Dahil)`, `Standalone .NET 10 Core: 95/95 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
@@ -31,9 +31,9 @@
 > - [`docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md) — **Endüstri ve Gerçek Hayat Araştırması** (*Vintage Story* knapping, *The Forest / Sons of the Forest* çanta & fiziksel inşa, gerçek dünya Bloomery metalürjisi)
 > - [`docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) — **Ana Faz Yol Haritası** ve 4 Alt Faz Uygulama Dokümanları:
 >   1. ✅ [`DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md) (**TAMAMLANDI & ONAYLANDI**)
->   2. 🧪 [`DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md) (**KODLANDI — Çanta/Craft Onaylandı; `[R]` Taş Yontma & Yer Ölçeği Düzeltmesi Test Bekliyor**)
->   3. ⏭️ [`DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) (**SIRADAKİ FAZ**)
->   4. ⏭️ [`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) (**FAZ 2.3 SONRASI FAZ**)
+>   2. 🧪 [`DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md) (**TAMAMLANDI — Çanta/Craft Onaylandı; `[R]` Taş Yontma Düzeltmesi Hazır**)
+>   3. ✅ [`DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) (**TAMAMLANDI & ONAYLANDI**)
+>   4. 🧪 [`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) (**KODLANDI & OTOMATİK TESTLERDEN GEÇTİ — PlayMode Testi Bekliyor**)
 
 ### Temel Tasarım İlkelerimiz (Asla Bozulmayacak Kurallar)
 1. **Gerçekçi Fiziksel Şekil Korunumu (`Yerde == Elde == Çantada == İnşada`):**
@@ -52,7 +52,36 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#053` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#055` .. `#042`)
+
+### 2.0.00000000000. Devir #055 (Paket 2 Faz 2.4): Kömür Ocağı Pirolizi, Cevher Kavurma & Kırma, Kil Pişirme, `1250°C` Körük & Bloomery İzabe Fırını, Sıcak Sünger Demir Dövme, `T2` Demir Aletler ve 3B El Arabası
+
+1. **Çiğ Kil İşareti & Saf Termodinamik Çekirdek (`PhysicalItemShapeDna.cs`, `BloomeryThermodynamicsSystem.cs`):**
+   - `PhysicalItemShapeDna`'ya `FlagUnfiredClay` (`1 << 3`) eklendi (`16-byte` yapı korundu).
+   - `BloomeryThermodynamicsSystem.cs` içinde `CharcoalPitState` (`28 sn` piroliz, erken açmada veya topraksız yakmada `RuinedAsh`), `OreCrushingSpotState` (`3` taş çekiç darbesi), `BloomeryFurnaceState` (odun tavanı `<850°C`, körüksüz kömür doğal çekiş tavanı `795°C`, ritmik körük pompalamayla `1085°C` Bakır ve `1230–1315°C` Demir izabesi), `HotForgeWorkpieceState` (`1180°C` başlangıç, `-16°C/sn` soğuma, `<720°C` ret, `8` sıcak darbe -> `WroughtIronBar`) ve `WheelbarrowCargoBuffer` (`36` fiziksel eşyalı LIFO kasa) sıfır Unity bağımlılığıyla kodlandı.
+2. **Çoklu Kamp Ateşi Yükü & Kavurma / Kil Pişirme / Demir Isıtma (`Stage1CampfireAndCookingController.cs`):**
+   - Kamp ateşinin `3` yuvası `CampfirePayloadKind` (`Meat`, `OreRoast` `10 sn`, `ClayFiring` `12 sn`, `IronReheat` `8 sn`) destekleyecek şekilde genişletildi.
+   - Ham Bakır/Demir cevheri `10 sn`de `RoastedOreChunk` olur; `[I]` bez merkezinde yoğrulan çiğ `ClayTuyerePipe` ve `ClayCruciblePot` (`FlagUnfiredClay`) `12 sn` ateşte pişirilerek bayrağı temizlenir; soğumuş `IronBloomSponge` `8 sn`de yeniden `920°C` dövme sıcaklığına ısıtılabilir.
+3. **Kömür Ocağı, İzabe Fırını, Yüzeyde Cevher Kırma & Örste Sıcak Demir Dövme (`Stage1BloomeryAndForgingController.cs`, `Stage1WorldLooseBuildController.cs`):**
+   - Yerde kurulan `>=4` odun + `>=4` toprak/kil kümesi `[T]` `[2]` ile `CharcoalPit` olur; Çakmaktaşı ile `2` kıvılcımda için için yanar ve `28 sn` sonrası `[E]` ile `6–8x CharcoalChunk` verir.
+   - `>=8` taş + `>=6` kil (`>=0.32m` baca) `[T]` `[3]` ile `BloomeryFurnace` olur; pişmiş `ClayTuyerePipe`, `LeatherBellows` ve bakır için `ClayCruciblePot` monte edilir (`[E]` veya `Sol Tık` ile ritmik körük pompalama, cüruf akışı, kil tıkacı çekiç/kazmayla kırıp `1180°C IronBloomSponge` çıkarma, `ClayLump` ile yeniden sıvamalı tıkaç).
+   - `RoastedOreChunk` / sıcak `IronBloomSponge` örs veya düz kaya üzerine `Sağ Tık` ile konur; çekiç darbeleriyle (`3x` -> `2x CrushedOrePowder`, `8x` sıcak -> `WroughtIronBar`) prosedürel 3B şekil ve sıcaklık parıltısı anlık güncellenir.
+4. **3B Fiziksel Ahşap El Arabası & `T2` Demir Alet Tarifleri (`Stage1WheelbarrowController.cs`, `ClothMatCraftingSystem.cs`, `Stage1VisualHotbarAndInventoryUi.cs`, `MindStructureClusterValidator.cs`):**
+   - `ClothMatCraftingSystem`'e çiğ `ClayTuyerePipe`, `ClayCruciblePot` ve `T2` `IronPickaxe` / `IronAxe` / `IronHammer` / `IronSword` merkez birleştirme tarifleri eklendi.
+   - `Stage1WheelbarrowController`: `[T]` `[4]` ile mühürlenen `1x WoodenWheel + >=2x Firewood + >=2x Stick + toplam >=6 odun + 2x PlantFiber` kümesinden `0` Collider'lı 3B gövde, dönen ön tekerlek (`FrontWheelPivot`) ve `36` görünür kargo yuvası oluşturur. `[E]`/`[ESC]` ile tutulup `1.35m` önde arazi eğimine göre sürülür, yokuş ve yük arttıkça hareket ölçeği düşer (`1.0x -> 0.82x`).
+
+### 2.0.0000000000. Devir #054 (Paket 2 Faz 2.3): Serbest Fiziksel Dünya Dizilimi, `[T]` Zihin İnşa Menüsü + `2.8sn` Düşünce Silüeti, Kıvılcımla Kamp Ateşi Yakma ve 3B Et Pişirme
+
+1. **Serbest Fiziksel Dünya Yerleştirme & *Sons of the Forest* Çadır Dal Kırma (`WorldLooseBuildSystem.cs`, `Stage1WorldLooseBuildController.cs`):**
+   - Madde Kristali kapalıyken (`!IsCrystalActive`) doğal fiziksel eşyalar (`LeafPile`, `PlantFiber`, `Stick`, `SplitFirewood`, `RoughStoneChunk`, `LooseDirtClod`, `ClayLump`, `SandPile`, `WoodenWheel`, `ClayTuyerePipe`, `ClayCruciblePot`, `LeatherBellows` vb.) `VoxelData` küp ızgarasına hiç dokunmadan `Sağ Tık` ile kendi `16-byte PhysicalItemShapeDna` şeklini koruyarak zemine dizilir; 3B hayalet önizleme, `[R]` / `Alt+Tekerlek` açı döndürme ve etiketlenmemiş parçaları (`BoundStationId == 0`) `[E]` ile anında geri toplama eklendi.
+   - Yerdeki bir `LeafPile` / `PlantFiber` kavının veya başka bir dalın `0.58m` yakınına `Stick` yerleştirildiğinde dal dizde ikiye kırılır (`FlagBrokenStick`, `0.25sn` çömelme/kırma hareketi) ve otomatik olarak merkeze doğru `42°` konik çadır (`teepee`) açısıyla yaslanır. Taş ve kil topakları ise birbirinin üstüne hedeflendiğinde baca/ocak örmek için üst üste istiflenir.
+2. **`[T]` Zihin İnşa Menüsü, `2.8sn` Düşünce Silüeti & Esnek Küme Doğrulayıcısı (`MindStructureClusterValidator.cs`, `Stage1MindBuildingController.cs`):**
+   - `[T]` tuşuyla 4 yapılık Zihin İnşa Menüsü (`[1] Kamp Ateşi`, `[2] Odun Kömürü Ocağı`, `[3] İlkel İzabe Fırını`, `[4] Ahşap El Arabası`) açılır. `[Sağ Tık]` veya `[G]` ile seçilen yapının tebeşir-mavisi prosedürel 3B düşünce silüeti zeminde `2.8sn` görünüp kendiliğinden kaybolur (üzerine `[E]` basılmaz, otomatik envanter çekmez).
+   - `[Sol Tık]` veya `[1..4]` ile oyuncunun elleriyle dizdiği `1.85m` yarıçaptaki küme sıfır GC ile denetlenir: eksik parça varsa net Türkçe geri bildirim verilir; kurallar tamamsa karakter `0.75sn` eğilip son dokunuşu yapar ve **oyuncunun koyduğu taşların/dalların yeri ve 3B şekli hiç silinmeden** `BoundStationId` atanarak canlı istasyona dönüştürülür (`>= 4` kaba taş dizildiyse Kamp Ateşi `+%15` rüzgâr/yakıt verim bonusu alır).
+3. **Çakmaktaşı Kıvılcımıyla Kamp Ateşi Yakma, Yakıt Besleme, Yaratık Ganimeti & 3B Et Pişirme (`Stage1CampfireAndCookingController.cs`, `Stage1CreatureSimulationBridge.cs`, `Stage1InteractivePlayController.cs`):**
+   - Yeni etiketlenen Kamp Ateşi **sönük (`20 °C`)** başlar. Elde `FlintStone` varken (ve çantada/kemerde ikinci bir vurucu taş varken) `Sol/Sağ Tık` ile kıvılcım çakılır (`-1 EP`, fırlayan turuncu 3B kıvılcımlar + prosedürel çakmaktaşı sesi); `3.` vuruşta kav tutuşur (`180 sn` yanma süresi, `+18 °C..+21.5 °C` vücut ısısı koruması ve ıslaklık kurutma, dallarda kor ışıması; `Sağ Tık` ile `Stick +60sn` / `SplitFirewood +140sn` fiziksel yakıt ekleme).
+   - Yaratıklar kesildiğinde artık kemik/cevher yanına `1–2x FoodRawMeat` (Çiğ Et) ve `1–2x RawHide` (Ham Post) gerçek 3B fiziksel model olarak düşer.
+   - Yanan Kamp Ateşine `FoodRawMeat` ile `Sağ Tık` yapıldığında et közlerin üzerine yerleşir (3 yuva): `0–12 sn` cızırdayan çiğ et -> `12–26 sn` altın-kahverengi büzülmüş `FoodCookedMeat` (beyaz buhar + `[E]` ile alma; yendiğinde `+35 Can`, `+40 Enerji`, `+0.8 °C` vücut ısısı) -> `> 26 sn` kömürleşmiş siyah `FoodBurntMeat` (`0` besin değeri).
 
 ### 2.0.000000000. Devir #053 (Paket 2 Faz 2.2 + Kullanıcı Testi Sonrası 2 Kritik Düzeltme): Fiziksel 3B Taş Yontma (`8x8`), Karesiz *The Forest* 3B Çanta Bezi & Merkez Craft ve Büyütülmüş Yer Eşyası Ölçeği
 
@@ -740,60 +769,40 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
    - 12 biyoma duyarlı ekolojik flora (ağaçlı/yeşil biyomlarda kırılabilir 3B çalılar, dal, yaprak, lif; çölde kuru diken; çorak biyomlarda sıfır yaprak/çalı).
    - Çömelerek/aşağı bakarak `[E]` basılı tutup avuçla toprak/kum/kil kazma; boş elle araziye tıklayınca boşa enerji gitmemesi; yalnızca canlılara isabet eden çıplak el yumruğu.
    - Doğal Kuvars'ı ele alıp `[C]` / `Sağ Tık` ile `3` kez tek tek yedirerek (`1/3 -> 2/3 -> 3/3`) Madde Kristalini `Tier 1`'de uyandırma.
-3. ✅ **Paket 2 — Faz 2.2 Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkezde 3B Craft (`Devir #053`):**
-   - `[I]` tuşuyla açılan karesiz doğal çanta örtüsü, kategori bölgelerinde bireysel 3B eşya yığınları ve ortadaki birleştirme alanında `Yontulmuş Başlık + Dal + Lif -> Taş Kazma / Taş Balta / Taş Bıçak / Mızrak / Kürek` üretimi kullanıcı tarafından test edilip onaylandı.
+3. ✅ **Paket 2 — Faz 2.2 & Faz 2.3 Karesiz *The Forest* 3B Çanta Bezi, `[R]` Taş Yontma, `[T]` Zihin İnşası & Kamp Ateşinde Et Pişirme (`Devir #053 – #054`):**
+   - `[I]` çanta örtüsü + merkez craft, `[R]` fiziksel 3B taş yontma, serbest dal/taş dizimi, `[T]` Zihin İnşası ve Çakmaktaşı kıvılcımıyla ateş yakıp et pişirme kullanıcı tarafından canlı PlayMode'da test edilip onaylandı.
 
 ---
 
-### 3.2. Kullanıcı Tarafından Henüz Canlı PlayMode'da Test Edilmemiş / Şimdi Test Edilecek Noktalar (`🧪 SIRADAKİ CANLI TEST LİSTESİ`)
+### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 FAZ 2.4 CANLI TEST LİSTESİ`)
 
-> **Not:** Otomatik testlerin tamamı (**`81/81` Unity EditMode** + **`84/84` Standalone .NET 10** + **`0 Error / 0 Warning`**) geçmiştir. Bir sonraki oturum başında kullanıcı Play tuşuna basarak şu **4 maddeyi** hızlıca doğrulayabilir:
+> **Not:** Tüm otomatik doğrulama kapıları (**`92/92` Unity EditMode** + **`95/95` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`4.14 MB` VRAM**) tam olarak geçmiştir.
 
-1. 🧪 **Test 1 — Büyütülmüş Yer Eşyası Görünürlüğü (Toprak, Taş, Çakmaktaşı, Dal, Yaprak, Lif, Cevher):**
-   - Doğada yerde duran taş/çakmaktaşı/dal/yaprakların, avuçla kazıp `[Q]` ile yere bıraktığınız toprak/kum/kil öbeklerinin ve çalı kırdığınızda düşen eşyaların artık otların içinde kaybolmadığını, arazide rahatça seçilen dolgun 3B boyutta durduğunu kontrol edin.
-   - `[I]` tuşuna basıp çanta bezini açtığınızda ise eşyaların çanta örtüsü üzerinde taşma yapmadan derli toplu dizilmeye devam ettiğini doğrulayın.
-2. 🧪 **Test 2 — Doğadaki Taşta ve `[Q]` ile Atılan Taşta `[R]` Fiziksel 3B Taş Yontma:**
-   - Yerden en az `1` adet koyu gri sivri **Çakmaktaşı** alın (`[E]`) — elinizde tutmanız şart değil, kemerde veya `[I]` çantanızda durması yeterli!
-   - Doğada yerde duran **veya** çantanızdan `[Q]` ile önünüze attığınız bir **Ham Taşa** bakın: nişangâh altında **`🪨 [R] Çakmaktaşı ile Taşı Yont   |   [E] Al: ...`** yazısını görün.
-   - **`[R]`** tuşuna basın: karakter çakmaktaşını otomatik eline alacak ve ekranda 4'lü kalıp menüsü (`[1] Taş Kazma Başı`, `[2] Taş Balta Başı`, `[3] Taş Bıçak Ağzı`, `[4] Mızrak / Kürek Ağzı`) açılacak.
-   - Bir kalıp seçin (`1..4` veya tıklama): karakter taşın başına çömelecek, kamera yaklaşacak ve çakmaktaşıyla taşın üst yüzeyine turkuaz hayalet kalıp çizgisini çizecek.
-   - **`Sol Tık`** ile çizginin dışındaki kenar parçalarına vurarak taşı yontun (taş kıymıkları fırlayacak) ve hazır olduğunda **`[E]`** tuşuyla yontulmuş taş başlığı elinize/çantanıza alın!
-3. 🧪 **Test 3 — Doğru vs. Yamuk Yontma Kalitesi (`%Kalite`) ve Üretilen Alet Gücü:**
-   - Bir taşı sadece dış fazlalıklarını kırarak **kusursuz (`%100` Kalite)** yontun; ikinci bir taşı ise hayalet çizginin içindeki çekirdekten birkaç parçayı bilerek kırarak **yamuk (`%45–%75` Kalite)** yontun (`[E]` ile alın).
-   - `[I]` çanta bezinde her ikisini de `Dal + Bitki Lifi` ile birleştirip (`[R]` / Sol Tık) oluşan iki aletin hem kafa geometrisinin yonttuğunuz şekli koruduğunu hem de kusursuz olanın çok daha yüksek dayanıklılık/güç verdiğini doğrulayın. (Çekirdeğin yarısından fazlasını kırarsanız taşın parçalanıp moloza dönüştüğünü de görebilirsiniz).
-4. 🧪 **Test 4 — Çakmaktaşı Yokken / Taş Eldeyken `[R]` Uyarı Tostu:**
-   - Üzerinizde hiç Çakmaktaşı yokken yerdeki taşa bakıp `[R]` bastığınızda veya taş elinizdeyken `[R]` bastığınızda ekran ortasında ne yapmanız gerektiğini anlatan sarı uyarı kutusunun çıktığını doğrulayın.
+1. 🧪 **Test 1 — Toprak Örtülü Kömür Ocağı Pirolizi (`CharcoalPit`):**
+   - En az `4` odun (`SplitFirewood`/`Stick`) ve `4` toprak/kil topağı (`LooseDirtClod`/`ClayLump`) yere `Sağ Tık` ile dizin -> `[T]` -> `[2] Kömür Ocağı` seçin.
+   - `FlintStone` ile `2` kıvılcım çakın ve `28 sn` bekleyip `[E]` ile açın: `6–8x Odun Kömürü (CharcoalChunk)` elde ettiğinizi görün (erken açarsanız `RuinedAsh` yanık küle döner).
+2. 🧪 **Test 2 — Cevher Kavurma/Kırma & Kil Pişirme:**
+   - Yanan Kamp Ateşine `OreChunk` (`Copper`/`Iron`) koyup `10 sn`de `RoastedOreChunk` alın -> düz bir kayaya veya örse `Sağ Tık` ile koyun -> `ToolStoneHammer` ile `3` kez vurup `2x CrushedOrePowder` elde edin.
+   - `[I]` çanta merkezinde `ClayTuyerePipe` (`2 Kil + 1 Kum`) ve `ClayCruciblePot` (`3 Kil + 1 Kum`) üretip `"Çiğ "` eşyaları ateşin üstünde `12 sn` pişirin (`FlagUnfiredClay` temizlenir). Ayrıca `2 Deri + 2 Odun + 2 Lif` ile `LeatherBellows` yapın.
+3. 🧪 **Test 3 — `1250°C` Bloomery İzabe Fırını (Bakır & Sünger Demir):**
+   - Yere `8+` taş ve `6+` kil (`>=0.32m` baca) dizip `[T]` -> `[3] İzabe Fırını` seçin.
+   - Pişmiş `ClayTuyerePipe`, `LeatherBellows` (ve bakır için `ClayCruciblePot`), yakıt (`CharcoalChunk`) ve `CrushedOrePowder` ekleyin -> Çakmaktaşı ile yakın.
+   - Körük olmadan kömürün `~795°C`'de kaldığını; `[E]` veya boş elle `Sol Tık` ile ritmik körük pompalayarak `1085°C` (`Bakır Külçesi`) ve `1230–1315°C` (`Cüruf + 1180°C Sünger Demir`) seviyesine çıktığını doğrulayın -> ön kil tıkacı çekiç/kazmayla kırıp sünger demiri alın, `1 ClayLump` ile tıkacı yeniden sıvayın.
+4. 🧪 **Test 4 — Sıcak Sünger Demir Dövme & `T2` Demir Aletler:**
+   - Fırından çıkan `1180°C IronBloomSponge` soğumadan (`>=720°C`) örs veya düz kaya üstüne `Sağ Tık` ile koyun ve çekiçle `8` kez dövüp `WroughtIronBar` elde edin (soğursa kamp ateşi veya yanan fırında yeniden ısıtın).
+   - `[I]` çanta merkezinde `WroughtIronBar` + `Stick/Wood` + `PlantFiber` ile `IronPickaxe`, `IronAxe`, `IronHammer`, `IronSword` üretin.
+5. 🧪 **Test 5 — 3B Fiziksel Ahşap El Arabası (`WoodenWheelbarrow`):**
+   - `[I]` veya `[F4]->[Tab]` üzerinden `WoodenWheel`, odun/dal ve lifleri dizip `[T]` -> `[4] Ahşap El Arabası` seçin.
+   - `Sağ Tık` (veya `Shift+Sağ Tık` 5'li) ile toprak/kum/kil/cevher/kömür yükleyip `36` yuvada 3B görünümünü izleyin; arka saplara bakıp `[E]` ile sürün (`[WASD]`, arazi eğimi uyumu, yokuşta yük çekişi, `[E]` veya `[ESC]` ile park etme ve kasadan `[E]` ile geri alma).
 
 ---
 
-### 3.3. Sırada Ne Yapacağız? (`Faz 2.3` ve `Faz 2.4` Ayrıntılı Geliştirme Yol Haritası)
+### 3.3. Tamamlanan Faz 2 Yol Haritası & Sıradaki Fazlar
 
-Kullanıcı yukarıdaki `Faz 2.2` düzeltmelerini onayladığı anda sırasıyla şu iki faz kodlanacaktır:
-
-#### ⏭️ AŞAMA A: Paket 2 — Faz 2.3: Fiziksel Yerleştirme, `[T]` Zihin İnşa Menüsü, Kamp Ateşi ve Yemek Pişirme
-*(Tam Teknik Plan: [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md))*
-1. ***Sons of the Forest* Tarzı Fiziksel Malzeme Dizme:**
-   - Elde **Kuru Dal** varken yere bakıp `Sağ Tık` -> karakter dalı dizinde ikiye kırıp yere çadır/çapraz açıyla yerleştirir; altına **Yaprak / Bitki Lifi** kav olarak bırakılır; çevresine **Ham Taşlar** ve **Kil / Çamur Topakları** serbestçe dizilir (hiçbir yerde `[E]` basmalı sahte mavi taslak kutusu olmayacak!).
-2. **`[T]` Zihin İnşa Menüsü & Hayali Silüet İpucu (`MindConstructionValidatorSystem`):**
-   - Oyuncu **`[T]`** (Düşünme / Zihin) tuşuna bastığında yapabileceği yapıların zihin menüsü açılır (*Kamp Ateşi*, *İlkel Taş Fırın / Ocak*, *Odun Kömürü Yığını*, *Taş Örs*, *Kurutma Askısı*).
-   - Bir yapı seçildiğinde zeminde zorlayıcı olmayan yarı saydam **hayali silüet ipucu** görünür (neyi nasıl dizeceğini gösterir).
-   - Oyuncu kendi dizdiği ~`1.5m – 2.2m` çapındaki taş/dal/kil kümesine bakıp `[T]` menüsünden yapıyı onayladığında sistem malzeme sayılarını ve kaba geometrik uyumu toleranslı biçimde (`<= 2.2m` yarıçap) denetler; uygunsa karakter kısa bir son dokunuş animasyonu yapar ve **oyuncunun dizdiği taşların/dalların doğal şeklini bozmadan** o kümeyi çalışan gerçek bir **Kamp Ateşi** veya **İlkel Taş Fırın** yapısına etiketler!
-3. **2 Çakmaktaşı ile Kıvılcım Çakarak Ateş Yakma & Üstünde Yemek Pişirme:**
-   - Kamp ateşine bakıp 2 Çakmaktaşı (veya Çakmaktaşı + sert taş) birbirine vurularak kıvılcımla ateş yakılır; dal/odun eklenerek ateş beslenir.
-   - Elde **Çiğ Et / Böğürtlen / Yiyecek** varken yanan kamp ateşine **`Sağ Tık`** yapıldığında yiyecek fiziksel olarak ateşin üstüne yerleşir: zamanla rengi ve 3B şekli **`Çiğ (Kırmızı) -> Pişmiş (Kızarmış Kahve, Dumanlı) -> Yanmış (Siyah Kömür)`** olarak değişir. Piştiğinde **`[E]`** ile alınır; zamanında alınmazsa yanar!
-
-#### ⏭️ AŞAMA B: Paket 2 — Faz 2.4: Gerçekçi `1200°C` Bloomery Demircilik Döngüsü ve Fiziksel El Arabası
-*(Tam Teknik Plan: [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) & Referans: [`docs/demircilik.txt`](docs/demircilik.txt))*
-1. **Toprak Örtülü Odun Kömürü Yığını (`Charcoal Clamp`):**
-   - Normal kuru odun ateşi yalnızca `~600–700°C` ısı üretir ve bakır/demiri eritemez! Oyuncu odunları yığıp üstünü avuçla/kürekle kazdığı **Toprak / Çamur** ile kapatarak havasız ortamda için için yanan kömür ocağı kurar ve yüksek kalorili **Odun Kömürü (`Charcoal`)** elde eder.
-2. **Cevher Hazırlama (Kavurma & Taş Çekiçle Kırma):**
-   - Doğadan/mağaradan çıkarılan ham cevher kayaları ateşte kavrulup nem/kükürtten arındırılır ve taş çekiçle fındık boyutu **Kırılmış Cevher Parçalarına** ayrılır.
-3. **Kil Üfleme Borusu (`Tuyere`), Pota ve Deri Körük (`Bellows`) ile `1200°C` Hava Pompalama:**
-   - İlkel Taş Fırın tek başına yakıldığında `~700°C`'de kalır (maden erimez!). Fırının alt deliğine kilden şekillendirilip pişirilmiş **Üfleme Borusu (`Tuyere`)** takılır ve yanına **El Yapımı Deri/Ahşap Körük** bağlanır.
-   - Oyuncu fırına `Odun Kömürü + Kırılmış Cevher` katmanlarını yükleyip körüğü fiziksel olarak pompaladıkça fırın ısısı `700°C -> 1085°C (Bakır) -> 1200°C+ (Demir Süngeri)` bandına yükselir!
-   - Erimiş cüruf alt delikten akıtılır; içeride oluşan akkor **Sünger Demir (`Bloom`)** maşa ile çıkarılıp soğumadan **Taş/Demir Örs** üzerinde çekiçle dövülerek cürufu fırlatılır ve saf metal külçeye / alet kafasına dönüştürülür.
-4. **Fiziksel Ahşap El Arabası (`Wheelbarrow`):**
-   - Oyuncunun kürekle/kazmayla kazdığı çok miktardaki toprak, kum, kil, taş, odun ve ağır cevherleri tek seferde gerçek 3B yığın görünümüyle taşıyabilmesi için iki kolundan tutulup sürülen tekerlekli fiziksel **El Arabası** eklenecektir.
+- ✅ **Faz 2.1:** Doğal 3B Eşya Özdeşliği, Biyom Çalıları, Avuçla Kazma, Yumruk & Kuvars Uyanışı
+- ✅ **Faz 2.2:** Fiziksel 3B Taş Yontma (`8x8`) & Karesiz *The Forest* 3B Çanta Bezi
+- ✅ **Faz 2.3:** Serbest Fiziksel Dizilim, `[T]` Zihin İnşası & Kamp Ateşi Yemek Sistemi
+- 🧪 **Faz 2.4:** Kömür Ocağı, Cevher Kavurma/Kırma, Kil Pişirme, `1250°C` Bloomery Demircilik, `T2` Demir Aletler & 3B El Arabası *(Canlı PlayMode testi sonrası onaylanacak)*
 
 ---
 
@@ -801,7 +810,12 @@ Kullanıcı yukarıdaki `Faz 2.2` düzeltmelerini onayladığı anda sırasıyla
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[R]` Tuşu (Yerdeki Taşa Bakarken)** | **Fiziksel 3B Taş Yontma (`Stone Knapping`):** Çakmaktaşını otomatik ele alır -> `1..4` kalıp seçtirir -> taşın başına çömelip hayalet çizgi çizer -> `Sol Tık` ile kenarları kırar -> `[E]` ile yontulmuş başlığı alır | 🧪 Faz 2.2 (Test Bekliyor) |
+| **Sağ Tık / Sol Tık / `[E]` (Bloomery / Kömür Ocağı / Örs)** | **Faz 2.4 Metalürji Etkileşimi:** Çakmaktaşıyla yakma, cevher kavurma (`10 sn`), kil pişirme (`12 sn`), taş/demir çekiçle kırma/sıcak dövme (`>=720°C`, `8` vuruş -> `WroughtIronBar`), körük pompalama (`1230–1315°C`), kil tıkaç kırma/sıvama | 🧪 Faz 2.4 (Test Bekliyor) |
+| **`[E]` / `[ESC]` / `Sağ Tık` (Ahşap El Arabası)** | **Faz 2.4 Fiziksel El Arabası:** Arka saplardan `[E]` ile tutar (`[WASD]` sürer, `[E]`/`[ESC]` park eder); kasa üstünde `Sağ Tık` (`Shift+Sağ Tık` 5'li) eşya yükler (`36` yuva), `[E]` ile LIFO geri alır | 🧪 Faz 2.4 (Test Bekliyor) |
+| **`Sağ Tık` (Elde Doğal Eşya Varken)** | **Serbest 3B Fiziksel Dizilim (`WorldLooseBuild`):** Yaprak, lif, dal (kav yanında dizde kırılıp `42°` çadır eğimi alır), taş ve kil topaklarını `ShapeDna` koruyarak zemine/üst üste dizer (`[R]` döndürür, `[E]` geri alır) | ✅ Onaylandı |
+| **`[T]` Tuşu (Madde Kristali Kapalıyken)** | **Zihin İnşa Menüsü (`Mind Building`):** `[1..4]` / `Sol Tık` ile öndeki fiziksel malzeme kümesini doğrulayıp istasyona etiketler; `Sağ Tık` / `[G]` ile `2.8sn` düşünce silüeti gösterir | ✅ Onaylandı |
+| **Çakmaktaşı + Tık / Çiğ Et + `Sağ Tık`** | **Kamp Ateşi Yakma & 3B Et Pişirme:** Sönük ateşe `3` kez kıvılcım çakarak yakar; yanan ateşe `Çiğ Et` koyar (`12sn` Pişmiş -> `[E]` Al, `>26sn` Yanmış) ve `Dal/Odun` ile besler | ✅ Onaylandı |
+| **`[R]` Tuşu (Yerdeki Taşa Bakarken)** | **Fiziksel 3B Taş Yontma (`Stone Knapping`):** Çakmaktaşını otomatik ele alır -> `1..4` kalıp seçtirir -> taşın başına çömelip hayalet çizgi çizer -> `Sol Tık` ile kenarları kırar -> `[E]` ile yontulmuş başlığı alır | ✅ Onaylandı |
 | **`[I]` Tuşu** | **Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkez 3B Craft:** Eşyaları gerçek 3B modelleriyle örtü üstünde gösterir; merkeze konan malzemeleri `[R]` / `Sol Tık` ile iple bağlayarak alet üretir | ✅ Onaylandı |
 | **`[E]` Tuşu (Tek Basış — Eşya/Çalı)** | Yerdeki tüm doğal eşyaları (`<= 3.15m`) anında toplar; çalıları kırıp dal/yaprak/lif/böğürtlen düşürür | ✅ Onaylandı |
 | **`[E]` Tuşu (`0.60sn` Basılı — Çömelip Yere Bakarken)** | Boş elle yumuşak Toprak / Kum / Kil zemininden avuçla gerçek 3B öbek kazar | ✅ Onaylandı |
@@ -817,12 +831,12 @@ Kullanıcı yukarıdaki `Faz 2.2` düzeltmelerini onayladığı anda sırasıyla
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #053`** ile birebir eşleştiğini doğrula.
-2. **Adım 2 — Kullanıcıdan `Faz 2.2` Düzeltme Testi Geri Bildirimini Al veya Doğrudan `Faz 2.3`'e Başla:**
-   - Kullanıcı **Bölüm 3.2**'deki 4 testi (`[R]` Fiziksel 3B Taş Yontma + büyütülmüş yer eşyası görünürlüğü) denediyse geri bildirimini al; onayladıysa **hiç vakit kaybetmeden** [`docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) planına göre **Faz 2.3** (*Fiziksel dal/taş dizme, `[T]` Zihin İnşa Menüsü + hayali silüet ipucu, 2 Çakmaktaşı ile Kamp Ateşi yakma ve üstünde `Çiğ -> Pişmiş -> Yanmış` yemek pişirme*) geliştirmesine başla; ardından **Faz 2.4** ([`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md)) aşamasına geç.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #055`** ile birebir eşleştiğini doğrula.
+2. **Adım 2 — Kullanıcıdan `Faz 2.4` Canlı PlayMode Test Geri Bildirimini Al:**
+   - Kullanıcı **Bölüm 3.2**'deki 5 adımlı `Faz 2.4` döngüsünü (*Kömür Ocağı pirolizi, Cevher kavurma/kırma + Kil pişirme, `1250°C` Bloomery körük izabesi, Örste sıcak sünger demir dövme + `T2` Demir aletler ve 3B Ahşap El Arabası*) test edip onayladıktan sonra bir sonraki yol haritası adımına geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`84/84 PASS`).
-   - Unity EditMode Testleri: `81/81 PASS`.
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`95/95 PASS`).
+   - Unity EditMode Testleri: `92/92 PASS`.
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (`4.14 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
    - GC Bütçesi: `0 B/kare` çalışma zamanı tahsisi.

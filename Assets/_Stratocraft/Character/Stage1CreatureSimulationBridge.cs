@@ -1560,12 +1560,39 @@ namespace Stratocraft.Character
             if (a.IsBatteryGenerated || MiningControllerForLootDrops == null || a.Root == null) return string.Empty;
             Vector3 basePos = a.Root.position + Vector3.up * 0.45f;
 
+            int wx = Mathf.RoundToInt(basePos.x * 4f);
+            int wy = Mathf.RoundToInt(basePos.y * 4f);
+            int wz = Mathf.RoundToInt(basePos.z * 4f);
+            int meatCount = a.IsPhoenixBoss || a.MaxHp >= 360f ? 2 : 1;
+            int hideCount = a.IsPhoenixBoss || a.MaxHp >= 420f ? 2 : 1;
+
+            for (int m = 0; m < meatCount; m++)
+            {
+                var meatDna = Stratocraft.Inventory.Data.PhysicalItemShapeDna.CreateFromWorldCoord(
+                    wx + m, wy, wz, (uint)(0x5101 + a.ArchetypeId * 17 + m));
+                MiningControllerForLootDrops.SpawnPhysicalWorldItem(
+                    basePos + new Vector3(-0.18f + m * 0.34f, 0.22f, 0.08f),
+                    InventoryItemKind.FoodRawMeat, 0, 1, meatDna, sharedMat);
+            }
+
+            if (!a.IsPhoenixBoss)
+            {
+                for (int h = 0; h < hideCount; h++)
+                {
+                    var hideDna = Stratocraft.Inventory.Data.PhysicalItemShapeDna.CreateFromWorldCoord(
+                        wx, wy + h, wz - h, (uint)(0x7301 + a.ArchetypeId * 23 + h));
+                    MiningControllerForLootDrops.SpawnPhysicalWorldItem(
+                        basePos + new Vector3(0.14f - h * 0.28f, 0.24f, -0.18f),
+                        InventoryItemKind.RawHide, 0, 1, hideDna, sharedMat);
+                }
+            }
+
             if (a.IsPhoenixBoss)
             {
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(-0.3f, 0.2f, 0f), MaterialIdCatalog.PhoenixFeatherGold, 2, "Anka Altin-Kor Tuyu");
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0.3f, 0.3f, 0.2f), MaterialIdCatalog.StarCore, 1, "Anka Kor Kalbi");
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0f, 0.25f, -0.3f), MaterialIdCatalog.GoldOre, 2, "Saf Kor Altini");
-                return " (Ganimet: 2x Anka Tuyu, 1x Anka Kor Kalbi, 2x Kor Altini dustu!)";
+                return $" (Ganimet: {meatCount}x Cig Et, 2x Anka Tuyu, 1x Anka Kor Kalbi, 2x Kor Altini dustu!)";
             }
 
             byte primaryDrop = a.ArchetypeId switch
@@ -1591,7 +1618,7 @@ namespace Stratocraft.Character
             {
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0f, 0.25f, 0.25f), MaterialIdCatalog.CopperOre, 1, "Canli Rezonans Cevheri");
             }
-            return $" (Ganimet: {primaryLabel} + Organ/Cevher yere dustu!)";
+            return $" (Ganimet: {meatCount}x Cig Et, {hideCount}x Ham Post, {primaryLabel} yere dustu!)";
         }
 
         private void AttachSlashWoundScar(

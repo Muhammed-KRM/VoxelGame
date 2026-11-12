@@ -206,6 +206,11 @@ namespace Stratocraft.Character
         private readonly Stage1MatterCrystalAndMiningController _miningCtrl = new();
         private readonly Stage1HolsterAndBackpackController _holsterCtrl = new();
         private readonly Stage1StoneKnappingController _stoneKnappingCtrl = new();
+        private readonly WorldLooseBuildSystem _looseBuildSystem = new();
+        private readonly Stage1MindBuildingController _mindBuildingCtrl = new();
+        private readonly Stage1CampfireAndCookingController _campfireCtrl = new();
+        private readonly Stage1BloomeryAndForgingController _bloomeryCtrl = new();
+        private readonly Stage1WheelbarrowController _wheelbarrowCtrl = new();
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
@@ -1341,10 +1346,13 @@ namespace Stratocraft.Character
 
         private void StepMovementAndOxygen(float dt)
         {
-            bool menuOpen = _escapeMenuCtrl.IsMenuOpen || _stoneKnappingCtrl.IsBusy;
+            bool menuOpen = _escapeMenuCtrl.IsMenuOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen;
             Vector2 moveInput = menuOpen ? Vector2.zero : new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
             bool wantSprint = !menuOpen && Input.GetKey(KeyCode.LeftShift);
-            bool wantCrouch = _stoneKnappingCtrl.ForcePlayerCrouch || (!menuOpen && Input.GetKey(KeyCode.LeftControl));
+            bool wantCrouch = _stoneKnappingCtrl.ForcePlayerCrouch ||
+                              _mindBuildingCtrl.ForcePlayerCrouch ||
+                              _looseBuildSystem.IsKneeSnapAnimActive ||
+                              (!menuOpen && Input.GetKey(KeyCode.LeftControl));
             if (!menuOpen && (Input.GetKeyDown(Stage1GameSettings.KeyProne) || Input.GetKeyDown(KeyCode.Z)))
             {
                 _isUserProneToggled = !_isUserProneToggled;
@@ -1354,6 +1362,16 @@ namespace Stratocraft.Character
                 _isUserProneToggled = false;
             }
             bool wantProne = _isUserProneToggled;
+            if (_wheelbarrowCtrl.IsPushingWheelbarrow)
+            {
+                moveInput *= _wheelbarrowCtrl.CurrentPushMoveInputScale;
+                if (_wheelbarrowCtrl.CurrentPushMoveInputScale < 0.96f)
+                {
+                    wantSprint = false;
+                }
+                _isUserProneToggled = false;
+                wantProne = false;
+            }
             float activeHandheldMass = _holsterCtrl.ActiveHolsterSlot == 0
                 ? 0f
                 : _holsterCtrl.HolsterMachine.GetHolsteredWeapon((HolsterSlotIndex)_holsterCtrl.ActiveHolsterSlot).MassKg;
@@ -1399,7 +1417,7 @@ namespace Stratocraft.Character
 
         private void StepConsumablesAndArmor(float dt)
         {
-            if (_holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen) return;
+            if (_holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _mindBuildingCtrl.IsMindMenuOpen) return;
 
             if (_holsterCtrl.ActiveHolsterSlot == 8)
             {
@@ -1447,10 +1465,10 @@ namespace Stratocraft.Character
                             break;
 
                         case InventoryItemKind.FoodCookedMeat:
-                            _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 30f);
+                            _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 35f);
                             _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 40f);
                             _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Min(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius + 0.8f);
-                            feedback = "Pişmiş Et Yendi (+30 Can, +40 Enerji, Vücut Isındı)";
+                            feedback = "🍖 Pişmiş Et Yendi (+35 Can, +40 Enerji, +0.8°C Vücut Isındı)";
                             consumed = true;
                             break;
 
@@ -1559,18 +1577,45 @@ namespace Stratocraft.Character
 
         private void StepHolsterBackpackAndMining(float dt)
         {
-            bool uiBlocked = _holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.IsCarryingShoulderLog || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy;
-            bool consumedBushInteract = false;
+            bool externalUiBlocked = _holsterCtrl.IsBackpackOpen ||
+                                     _escapeMenuCtrl.IsMenuOpen ||
+                                     _holsterCtrl.IsCarryingShoulderLog ||
+                                     _holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
+                                     _stoneKnappingCtrl.IsBusy;
+
+            _mindBuildingCtrl.Step(
+                dt, PlayerCamera, transform, externalUiBlocked,
+                _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
+                _bloomeryCtrl, _wheelbarrowCtrl);
+
+            bool uiBlocked = externalUiBlocked || _mindBuildingCtrl.IsMindMenuOpen;
+            bool consumedEarlyInteract = false;
             if (!uiBlocked && (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)))
             {
-                if (_miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f) < 0)
+                if (_wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge))
                 {
-                    consumedBushInteract = TryHarvestAimedWorldBush();
+                    consumedEarlyInteract = true;
+                }
+                else if (_bloomeryCtrl.TryHandleInteractKeyE(PlayerCamera, transform.position, AnvilTransform, _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, SharedVoxelMaterial))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (_campfireCtrl.TryHandleInteractKeyE(PlayerCamera, transform.position, _miningCtrl, _holsterCtrl, _combatBridge))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (_looseBuildSystem.TryPickupAimedUnboundPart(PlayerCamera, transform.position, _miningCtrl, _holsterCtrl, _combatBridge))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (_miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f) < 0)
+                {
+                    consumedEarlyInteract = TryHarvestAimedWorldBush();
                 }
             }
 
             GameObject? swordGo = WeaponPivot != null ? WeaponPivot.gameObject : null;
-            if (!_escapeMenuCtrl.IsMenuOpen && !_stoneKnappingCtrl.IsBusy && !consumedBushInteract)
+            if (!_escapeMenuCtrl.IsMenuOpen && !_stoneKnappingCtrl.IsBusy && !_mindBuildingCtrl.IsMindMenuOpen && !consumedEarlyInteract)
             {
                 _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
@@ -1580,11 +1625,56 @@ namespace Stratocraft.Character
             }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
             _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial, _holsterCtrl, _fluidChunks);
+
+            _campfireCtrl.Step(
+                dt, PlayerCamera, transform, uiBlocked,
+                _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, SharedVoxelMaterial,
+                out bool campfireConsumedClick);
+            float fireStam = _campfireCtrl.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
+            if (fireStam > 0f)
+            {
+                PhysicalCharacterControllerSystem.ConsumeStamina(
+                    ref _movementBridge.Vitals,
+                    ref _movementBridge.MovementState,
+                    fireStam);
+            }
+
+            _bloomeryCtrl.Step(
+                dt, PlayerCamera, transform, AnvilTransform, uiBlocked,
+                _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, SharedVoxelMaterial,
+                out bool bloomeryConsumedClick);
+            float bloomeryStam = _bloomeryCtrl.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
+            if (bloomeryStam > 0f)
+            {
+                PhysicalCharacterControllerSystem.ConsumeStamina(
+                    ref _movementBridge.Vitals,
+                    ref _movementBridge.MovementState,
+                    bloomeryStam);
+            }
+
+            _wheelbarrowCtrl.Step(
+                dt, PlayerCamera, transform, uiBlocked,
+                _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
+                out bool wheelbarrowConsumedClick);
+
+            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick;
+            bool suppressLooseBuild = stationConsumedClick ||
+                                      _wheelbarrowCtrl.IsPushingWheelbarrow ||
+                                      _wheelbarrowCtrl.HasAimedWheelbarrow(PlayerCamera, transform.position, out _, out _) ||
+                                      _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform) ||
+                                      _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.20f) >= 0;
+            _looseBuildSystem.Step(
+                dt, PlayerCamera, transform, uiBlocked,
+                _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
+                rightClickConsumedExternally: suppressLooseBuild);
+            bool looseConsumedClick = !suppressLooseBuild && Input.GetMouseButtonDown(1) && _looseBuildSystem.HasValidGhostPlacement;
+
             _miningCtrl.ExecuteMiningOrBuilding(
                 dt, _holsterCtrl.ActiveHolsterSlot, uiBlocked, MaxEditableVoxelY,
                 transform.position, _movementBridge.MovementState.CapsuleHeightMeters,
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
-                _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl);
+                _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl,
+                externalMouseConsumed: stationConsumedClick || looseConsumedClick);
             _miningCtrl.StepHandSoilScooping(
                 dt, PlayerCamera, transform.position,
                 _movementBridge.MovementState.Stance == CharacterStance.Crouching,
@@ -1611,14 +1701,14 @@ namespace Stratocraft.Character
 
             int slot = _holsterCtrl.ActiveHolsterSlot;
             bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
-                             !_holsterCtrl.IsCarryingShoulderLog &&
+                             !_mindBuildingCtrl.IsMindMenuOpen && !_holsterCtrl.IsCarryingShoulderLog &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
             float massScale = slot == 2 ? 1.45f : (slot == 3 ? 1.25f : 1.0f);
             bool isPlayerAirborne = _movementBridge.MovementState.IsGrounded == 0 || Mathf.Abs(_movementBridge.VerticalVelocity) > 1.2f;
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy;
+            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen;
             if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsCarryingShoulderLog &&
                 _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
             {
@@ -1752,6 +1842,11 @@ namespace Stratocraft.Character
         private void HandleCameraModeAndPersistenceHotkeys()
         {
             if (_stoneKnappingCtrl.IsBusy) return;
+            if (Input.GetKeyDown(KeyCode.Escape) && _wheelbarrowCtrl.IsPushingWheelbarrow)
+            {
+                _wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge);
+                return;
+            }
             bool isBagOpen = _holsterCtrl.IsBackpackOpen;
             _escapeMenuCtrl.StepEscapeKeyAndRebind(
                 ref isBagOpen,
@@ -1816,11 +1911,11 @@ namespace Stratocraft.Character
                 _isFirstPersonMode = !_isFirstPersonMode;
                 ApplyFirstPersonVisibility();
             }
-            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && Cursor.lockState != CursorLockMode.Locked)
+            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && Cursor.lockState != CursorLockMode.Locked)
             {
                 Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             }
-            if (_escapeMenuCtrl.IsMenuOpen) return;
+            if (_escapeMenuCtrl.IsMenuOpen || _mindBuildingCtrl.IsMindMenuOpen) return;
 
             if ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
                 !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
@@ -2016,6 +2111,11 @@ namespace Stratocraft.Character
             _spawnedForageChunks.Clear();
             _spawnedBushChunks.Clear();
             ClearAllWorldBushes();
+            _looseBuildSystem.ClearAllLooseParts();
+            _campfireCtrl.ClearAllStations();
+            _bloomeryCtrl.ClearAll();
+            _wheelbarrowCtrl.ClearAll();
+            _mindBuildingCtrl.ClearAll();
             _miningCtrl.ClearAllDroppedWorldItems();
             _miningCtrl.LastFeedbackText = $"[F7] YENI RASTGELE HARITA TOHUMU URETILDI (Seed={nextSeed} | {keys.Count} Gercek 3B VoxelChunk + Biyom Florasi Guncellendi)";
         }
@@ -2135,6 +2235,20 @@ namespace Stratocraft.Character
             // Paket 4: A-Kararli Analitik Ustel (Exponential) Vucut Cekirdek Isisi & Islaklik (ThermalAndBiologySystem)
             float lavaDist = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(8.5f, -7.2f));
             float heatBonus = lavaDist < 7.5f ? (1f - lavaDist / 7.5f) * 26f : 0f;
+            float physicalCampfireHeat = _campfireCtrl.EvaluateThermalBonusAndDrying(
+                transform.position + Vector3.up * 0.8f,
+                dt,
+                _movementBridge.Vitals.SubmergedDepthMeters <= 0.05f,
+                ref _movementBridge.Vitals.Wetness01);
+            if (physicalCampfireHeat > heatBonus)
+            {
+                heatBonus = physicalCampfireHeat;
+            }
+            float bloomeryHeat = _bloomeryCtrl.EvaluateThermalBonus(transform.position + Vector3.up * 0.8f);
+            if (bloomeryHeat > heatBonus)
+            {
+                heatBonus = bloomeryHeat;
+            }
             if (_placedThermalStations.Count > 0)
             {
                 Vector3 pPos = transform.position + Vector3.up * 0.8f;
@@ -3974,6 +4088,21 @@ namespace Stratocraft.Character
             {
                 _stoneKnappingCtrl.DrawOnGui(_miningCtrl, _holsterCtrl, _combatBridge);
             }
+
+            bool hudInteractionBlocked = _holsterCtrl.IsBackpackOpen ||
+                                         _escapeMenuCtrl.IsMenuOpen ||
+                                         _holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
+                                         _stoneKnappingCtrl.IsBusy ||
+                                         _mindBuildingCtrl.IsMindMenuOpen;
+            _campfireCtrl.DrawCrosshairPromptGui(
+                PlayerCamera, transform.position, _showAllHud, hudInteractionBlocked, _holsterCtrl, _looseBuildSystem);
+            _bloomeryCtrl.DrawCrosshairPromptGui(
+                PlayerCamera, transform.position, AnvilTransform, _showAllHud, hudInteractionBlocked);
+            _wheelbarrowCtrl.DrawCrosshairPromptGui(
+                PlayerCamera, transform.position, _showAllHud, hudInteractionBlocked);
+            _mindBuildingCtrl.DrawGui(
+                _showAllHud, PlayerCamera, transform, _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
+                _bloomeryCtrl, _wheelbarrowCtrl);
 
             if (_showDebugHudText)
             {

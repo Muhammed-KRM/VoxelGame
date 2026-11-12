@@ -487,7 +487,22 @@ namespace Stratocraft.Character
                     if (slot.Kind == InventoryItemKind.FlintStone)
                     {
                         miningCtrl.LastFeedbackText =
-                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) — Yerdeki bir taşa bakıp [R] ile Fiziksel Taş Yontma başlatın!";
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) — Yerdeki taşa bakıp [R] ile Taş Yont | Sönük Kamp Ateşine Tıkla: Kıvılcım Çak!";
+                    }
+                    else if (slot.Kind == InventoryItemKind.ClayTuyerePipe || slot.Kind == InventoryItemKind.ClayCruciblePot)
+                    {
+                        bool isUnfired = (slot.GetEffectiveShapeDna().Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0;
+                        string clayHint = isUnfired
+                            ? "ÇİĞ SERAMİK — Yanan Kamp Ateşine [Sağ Tık] ile koyup 12 sn pişir!"
+                            : (slot.Kind == InventoryItemKind.ClayTuyerePipe
+                                ? "Pişmiş Kil Hava Borusu — İzabe Fırınının alt yanına [Sağ Tık] ile tak!"
+                                : "Pişmiş Kil Pota — Bakır izabesi için İzabe Fırınına [Sağ Tık] ile koy!");
+                        miningCtrl.LastFeedbackText = $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) — {clayHint}";
+                    }
+                    else if (WorldLooseBuildSystem.IsLoosePlaceableNaturalItem(slot.Kind))
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {rawLabel} (x{slot.Count}) Elde — [Sağ Tık] Yere/Fırına/El Arabasına Koy | [R] Döndür | [T] Zihin İnşa";
                     }
                     else if (slot.Kind == InventoryItemKind.OreChunk && slot.SubId == MaterialIdCatalog.QuartzGem)
                     {

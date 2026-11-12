@@ -14,7 +14,13 @@ namespace Stratocraft.Inventory.Systems
         LeafBandage = 5,
         LeatherBellows = 6,
         WoodenWheel = 7,
-        WoodenBucket = 8
+        WoodenBucket = 8,
+        ClayTuyerePipe = 9,
+        ClayCruciblePot = 10,
+        IronPickaxe = 11,
+        IronAxe = 12,
+        IronHammer = 13,
+        IronSword = 14
     }
 
     public struct ClothCenterInputItem
@@ -44,6 +50,9 @@ namespace Stratocraft.Inventory.Systems
         public int ConsumePlantFiber;
         public int ConsumeLeafPile;
         public int ConsumeRawHide;
+        public int ConsumeClayLump;
+        public int ConsumeSandPile;
+        public int ConsumeWroughtIronBar;
     }
 
     /// <summary>
@@ -56,7 +65,7 @@ namespace Stratocraft.Inventory.Systems
         public static ClothCenterCraftEvaluation EvaluateCenterPile(ReadOnlySpan<ClothCenterInputItem> centerItems)
         {
             int pickHead = 0, axeHead = 0, hamHead = 0, knifeHead = 0;
-            int sticks = 0, firewood = 0, fibers = 0, leaves = 0, hides = 0, otherCount = 0;
+            int sticks = 0, firewood = 0, fibers = 0, leaves = 0, hides = 0, clay = 0, sand = 0, wroughtBars = 0, otherCount = 0;
 
             PhysicalItemShapeDna headDna = PhysicalItemShapeDna.CreateNatural(0x51A70C22u, 100);
             bool capturedHeadDna = false;
@@ -99,6 +108,16 @@ namespace Stratocraft.Inventory.Systems
                     case PhysicalItemArchetype.RawHideRoll:
                         hides += it.Count;
                         break;
+                    case PhysicalItemArchetype.ClayLump:
+                        clay += it.Count;
+                        break;
+                    case PhysicalItemArchetype.SandMound:
+                        sand += it.Count;
+                        break;
+                    case PhysicalItemArchetype.WroughtIronBar:
+                        wroughtBars += it.Count;
+                        if (!capturedHeadDna) { headDna = it.ShapeDna; capturedHeadDna = true; }
+                        break;
                     default:
                         otherCount += it.Count;
                         break;
@@ -106,7 +125,8 @@ namespace Stratocraft.Inventory.Systems
             }
 
             int totalHeads = pickHead + axeHead + hamHead + knifeHead;
-            if (totalHeads == 0 && sticks == 0 && firewood == 0 && fibers == 0 && leaves == 0 && hides == 0 && otherCount == 0)
+            if (totalHeads == 0 && sticks == 0 && firewood == 0 && fibers == 0 && leaves == 0 &&
+                hides == 0 && clay == 0 && sand == 0 && wroughtBars == 0 && otherCount == 0)
             {
                 return new ClothCenterCraftEvaluation
                 {
@@ -248,7 +268,7 @@ namespace Stratocraft.Inventory.Systems
             }
 
             // 7 & 8) Ahsap Tekerlek (3x Yarma Odun + 2x Lif) veya Ilkel Ahsap Kova (2x Yarma Odun + 2x Lif)
-            if (firewood > 0 && totalHeads == 0 && sticks == 0 && leaves == 0 && hides == 0)
+            if (firewood > 0 && totalHeads == 0 && sticks == 0 && leaves == 0 && hides == 0 && clay == 0 && sand == 0 && wroughtBars == 0)
             {
                 if (firewood >= 3 && fibers >= 2)
                 {
@@ -281,6 +301,127 @@ namespace Stratocraft.Inventory.Systems
                     Output = ClothCenterCraftOutput.None,
                     IsReadyToBind = false,
                     HintOrActionMessage = "💭 Ahşap Kova (2x Odun + 2x Lif) veya El Arabası Tekerleği (3x Odun + 2x Lif) için malzeme ekleyin"
+                };
+            }
+
+            // 9 & 10) Cig Kil Seramik Sekillendirme (Kamp atesinde 12 sn pisirilir):
+            // 2x Kil + 1x Kum -> Kil Hava Borusu (Tuyere) | 3x Kil + 1x Kum (veya 2x Kil + 2x Kum) -> Kil Pota
+            if ((clay > 0 || sand > 0) && totalHeads == 0 && sticks == 0 && firewood == 0 && fibers == 0 && leaves == 0 && hides == 0 && wroughtBars == 0)
+            {
+                if (clay >= 3 && sand >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.ClayCruciblePot,
+                        InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0xC70C1B1Eu, 100).WithFlags(PhysicalItemShapeDna.FlagUnfiredClay),
+                        OutputDisplayName = "Çiğ Kil Pota",
+                        HintOrActionMessage = "🏺 HAZIR: Çiğ Kil Pota — [İple Bağla / R] ile şekillendir (Sonra Kamp Ateşinde 12 sn pişir!)",
+                        IsReadyToBind = true,
+                        ConsumeClayLump = 3,
+                        ConsumeSandPile = 1
+                    };
+                }
+                if (clay >= 2 && sand >= 2)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.ClayCruciblePot,
+                        InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0xC70C1B1Eu, 100).WithFlags(PhysicalItemShapeDna.FlagUnfiredClay),
+                        OutputDisplayName = "Çiğ Kil Pota",
+                        HintOrActionMessage = "🏺 HAZIR: Çiğ Kil Pota — [İple Bağla / R] ile şekillendir (Sonra Kamp Ateşinde 12 sn pişir!)",
+                        IsReadyToBind = true,
+                        ConsumeClayLump = 2,
+                        ConsumeSandPile = 2
+                    };
+                }
+                if (clay >= 2 && sand >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.ClayTuyerePipe,
+                        InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0x70E7E01Au, 100).WithFlags(PhysicalItemShapeDna.FlagUnfiredClay),
+                        OutputDisplayName = "Çiğ Kil Hava Borusu",
+                        HintOrActionMessage = "🏺 HAZIR: Çiğ Kil Hava Borusu — [İple Bağla / R] ile şekillendir (Pota için +1 Kil/Kum ekle | Sonra Ateşte 12 sn pişir!)",
+                        IsReadyToBind = true,
+                        ConsumeClayLump = 2,
+                        ConsumeSandPile = 1
+                    };
+                }
+                return new ClothCenterCraftEvaluation
+                {
+                    Output = ClothCenterCraftOutput.None,
+                    IsReadyToBind = false,
+                    HintOrActionMessage = "💭 Seramik Kalıp: Kil Hava Borusu (2x Kil + 1x Kum) veya Kil Pota (3x Kil + 1x Kum)"
+                };
+            }
+
+            // 11..14) T2 Dovme Demir Aletler & Silah (WroughtIronBar + Dal/Odun + Bitki Lifi)
+            if (wroughtBars > 0 && totalHeads == 0 && clay == 0 && sand == 0 && leaves == 0 && hides == 0)
+            {
+                bool hasHandle = sticks >= 1 || firewood >= 1;
+                if (wroughtBars >= 3 && hasHandle && fibers >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.IronSword,
+                        InheritedOutputDna = headDna.WithTemperature(0),
+                        OutputDisplayName = "Dövme Demir Uzun Kılıç (T2)",
+                        HintOrActionMessage = "⚔️ HAZIR: Dövme Demir Uzun Kılıç — [İple Bağla / R] ile kabzayı sar!",
+                        IsReadyToBind = true,
+                        ConsumeWroughtIronBar = 3,
+                        ConsumeStick = sticks >= 1 ? 1 : 0,
+                        ConsumeFirewood = sticks >= 1 ? 0 : 1,
+                        ConsumePlantFiber = 1
+                    };
+                }
+                if (wroughtBars == 2 && firewood >= 1 && sticks == 0 && fibers >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.IronHammer,
+                        InheritedOutputDna = headDna.WithTemperature(0),
+                        OutputDisplayName = "Dövme Demir Çekiç (T2)",
+                        HintOrActionMessage = "🔨 HAZIR: Dövme Demir Çekiç — [İple Bağla / R] ile bağla!",
+                        IsReadyToBind = true,
+                        ConsumeWroughtIronBar = 2,
+                        ConsumeFirewood = 1,
+                        ConsumePlantFiber = 1
+                    };
+                }
+                if (wroughtBars == 2 && sticks >= 1 && fibers >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.IronAxe,
+                        InheritedOutputDna = headDna.WithTemperature(0),
+                        OutputDisplayName = "Dövme Demir Balta (T2)",
+                        HintOrActionMessage = "🪓 HAZIR: Dövme Demir Balta — [İple Bağla / R] ile bağla!",
+                        IsReadyToBind = true,
+                        ConsumeWroughtIronBar = 2,
+                        ConsumeStick = 1,
+                        ConsumePlantFiber = 1
+                    };
+                }
+                if (wroughtBars == 1 && hasHandle && fibers >= 1)
+                {
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.IronPickaxe,
+                        InheritedOutputDna = headDna.WithTemperature(0),
+                        OutputDisplayName = "Dövme Demir Kazma (T2)",
+                        HintOrActionMessage = "⛏️ HAZIR: Dövme Demir Kazma — [İple Bağla / R] ile bağla!",
+                        IsReadyToBind = true,
+                        ConsumeWroughtIronBar = 1,
+                        ConsumeStick = sticks >= 1 ? 1 : 0,
+                        ConsumeFirewood = sticks >= 1 ? 0 : 1,
+                        ConsumePlantFiber = 1
+                    };
+                }
+                return new ClothCenterCraftEvaluation
+                {
+                    Output = ClothCenterCraftOutput.None,
+                    IsReadyToBind = false,
+                    HintOrActionMessage = "💭 Dövme Demir Alet: 1x Lama + Dal + Lif -> Demir Kazma | 2x Lama + Dal + Lif -> Balta | 2x Lama + Odun + Lif -> Çekiç | 3x Lama + Dal + Lif -> Kılıç"
                 };
             }
 

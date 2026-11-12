@@ -1336,6 +1336,12 @@ namespace Stratocraft.Character
                 ClothCenterCraftOutput.LeatherBellows => new VisualInventorySlot { Kind = InventoryItemKind.LeatherBellows, SubId = 0, Count = 1, Durability01 = 1f },
                 ClothCenterCraftOutput.LeafBandage => new VisualInventorySlot { Kind = InventoryItemKind.MedicalBandage, SubId = 0, Count = 1, Durability01 = 1f },
                 ClothCenterCraftOutput.WoodenWheel => new VisualInventorySlot { Kind = InventoryItemKind.WoodenWheel, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.ClayTuyerePipe => new VisualInventorySlot { Kind = InventoryItemKind.ClayTuyerePipe, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.ClayCruciblePot => new VisualInventorySlot { Kind = InventoryItemKind.ClayCruciblePot, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.IronPickaxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.IronAxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.IronHammer => new VisualInventorySlot { Kind = InventoryItemKind.ToolStoneHammer, SubId = 0, Count = 1, Durability01 = 1f },
+                ClothCenterCraftOutput.IronSword => new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1f },
                 _ => default
             };
             if (!slot.IsEmpty)
@@ -1504,6 +1510,9 @@ namespace Stratocraft.Character
             ConsumeCenterKindCount(InventoryItemKind.PlantFiber, ActiveCenterCraftEval.ConsumePlantFiber);
             ConsumeCenterKindCount(InventoryItemKind.LeafPile, ActiveCenterCraftEval.ConsumeLeafPile);
             ConsumeCenterKindCount(InventoryItemKind.RawHide, ActiveCenterCraftEval.ConsumeRawHide);
+            ConsumeCenterKindCount(InventoryItemKind.ClayLump, ActiveCenterCraftEval.ConsumeClayLump);
+            ConsumeCenterKindCount(InventoryItemKind.SandPile, ActiveCenterCraftEval.ConsumeSandPile);
+            ConsumeCenterKindCount(InventoryItemKind.WroughtIronBar, ActiveCenterCraftEval.ConsumeWroughtIronBar);
 
             RefreshCenterCraftEvaluation();
             PushUiCountsToCrystalStorage(miningCtrl);
@@ -2737,9 +2746,13 @@ namespace Stratocraft.Character
             InventoryItemKind.CharcoalChunk => "Odun Kömürü (1300 °C İzabe Yakıtı)",
             InventoryItemKind.RoastedOreChunk => $"Kavrulmuş Çatlak {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} (Taş Çekiçle Kırılmalı)",
             InventoryItemKind.CrushedOrePowder => $"Kırılmış {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} Cevheri (İzabe Ocağına Hazır)",
-            InventoryItemKind.ClayTuyerePipe => "Pişmiş Kil Hava Borusu (Tuyere)",
+            InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
+                ? "Çiğ Kil Hava Borusu (Ateşte Pişirilmeli)"
+                : "Pişmiş Kil Hava Borusu (Tuyere)",
             InventoryItemKind.LeatherBellows => "El Yapımı Deri Körük (İzabe Hava Pompası)",
-            InventoryItemKind.ClayCruciblePot => "Isıya Dayanıklı Kil Pota (Bakır Eritme)",
+            InventoryItemKind.ClayCruciblePot => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
+                ? "Çiğ Kil Pota (Ateşte Pişirilmeli)"
+                : "Isıya Dayanıklı Kil Pota (Bakır Eritme)",
             InventoryItemKind.IronBloomSponge => "Akkor Sünger Demir Kütlesi (Sıcakken Kayada/Örste Dövülmeli!)",
             InventoryItemKind.WroughtIronBar => "Dövme Demir Lama (Cüruftan Arındırılmış Saf Demir)",
             InventoryItemKind.SlagShard => "Donmuş Cüruf Cam Parçası",
@@ -2795,9 +2808,13 @@ namespace Stratocraft.Character
             InventoryItemKind.CharcoalChunk => "[Sağ Tık] İzabe Bacasına Üstten Doldur (1300 °C Yüksek Isı Yakıtı)",
             InventoryItemKind.RoastedOreChunk => "Düz Kayaya Koyup Taş Çekiçle 3 Kez Vurarak Kırılmış Cevhere Dönüştür",
             InventoryItemKind.CrushedOrePowder => "[Sağ Tık] İzabe Bacasına Kömürle Katmanlı Olarak Doldur",
-            InventoryItemKind.ClayTuyerePipe => "[Sağ Tık] İzabe Bacasının Alt Deliğine Tak (Körük Bağlantısı)",
-            InventoryItemKind.LeatherBellows => "[Sağ Tık] Kil Hava Borusuna Tak ve Ritmik Pompalayarak 1250 °C'ye Çık!",
-            InventoryItemKind.ClayCruciblePot => "İçine Bakır Tozu + Odun Kömürü Konularak Yüksek Isı Fırınında Eritilir",
+            InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
+                ? "Çiğ Kil! [Sağ Tık] ile Yanan Kamp Ateşinde 12 sn Pişir!"
+                : "[Sağ Tık] İzabe Bacasının Alt Deliğine Tak (Körük Bağlantısı)",
+            InventoryItemKind.LeatherBellows => "[Sağ Tık] Kil Hava Borusuna Tak ve [E/Sol Tık] ile Pompalayarak 1250 °C'ye Çık!",
+            InventoryItemKind.ClayCruciblePot => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
+                ? "Çiğ Pota! [Sağ Tık] ile Yanan Kamp Ateşinde 12 sn Pişir!"
+                : "[Sağ Tık] Bakır Eritmek İçin İzabe Fırınına Yerleştir",
             InventoryItemKind.IronBloomSponge => "Sıcakken (>=720 °C) Düz Granit Kayada Çekiçle Döverek Cürufunu At!",
             InventoryItemKind.WroughtIronBar => "Saf Dövme Demir — T2 Demir Alet ve Silah Üretimi",
             InventoryItemKind.SlagShard => "İzabe Fırını veya Demir Dövme Sırasında Ayrışan Cüruf Atığı",

@@ -72,12 +72,13 @@ namespace Stratocraft.Inventory.Data
         /// <summary>Pisirme, kavurma veya kuruma evresi (0..255).</summary>
         public byte StageByte;
 
-        /// <summary>Bit 0: HasCustomKnapMask, Bit 1: IsBrokenStick, Bit 2: HasBerries.</summary>
+        /// <summary>Bit 0: HasCustomKnapMask, Bit 1: IsBrokenStick, Bit 2: HasBerries, Bit 3: IsUnfiredClay.</summary>
         public byte Flags;
 
         public const byte FlagCustomKnapMask = 1 << 0;
         public const byte FlagBrokenStick = 1 << 1;
         public const byte FlagHasBerries = 1 << 2;
+        public const byte FlagUnfiredClay = 1 << 3;
 
         public PhysicalItemShapeDna(uint shapeSeed, ulong knapMask64, float quality01, byte thermalTempByte, uint flags)
         {
@@ -127,6 +128,27 @@ namespace Stratocraft.Inventory.Data
             if (stackPieceIndex <= 0) return this;
             PhysicalItemShapeDna copy = this;
             copy.ShapeSeed = MixHash(EffectiveSeed + (uint)stackPieceIndex * 0x85EBCA6Bu);
+            return copy;
+        }
+
+        public readonly PhysicalItemShapeDna WithTemperature(byte thermalTempByte)
+        {
+            PhysicalItemShapeDna copy = this;
+            copy.ThermalTempByte = thermalTempByte;
+            return copy;
+        }
+
+        public readonly PhysicalItemShapeDna WithStage(byte stageByte)
+        {
+            PhysicalItemShapeDna copy = this;
+            copy.StageByte = stageByte;
+            return copy;
+        }
+
+        public readonly PhysicalItemShapeDna WithFlags(byte flags)
+        {
+            PhysicalItemShapeDna copy = this;
+            copy.Flags = flags;
             return copy;
         }
 
