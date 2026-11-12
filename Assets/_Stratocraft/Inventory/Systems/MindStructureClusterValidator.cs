@@ -93,9 +93,9 @@ namespace Stratocraft.Inventory.Systems
             MindStructureBlueprintId.Campfire =>
                 "En alta kuru yaprak veya bitki lifi (kav), üzerine çadır gibi en az 3 dal diz; çevresine taş dizersen rüzgârdan korunur.",
             MindStructureBlueprintId.CharcoalPit =>
-                "En alta kav koyup üzerine en az 4 odun/dal yığ ve hava almaması için etrafını en az 4 toprak veya kil topağıyla kapat.",
+                "Yere en az 4 odun/dal ve üzerini kapatacak en az 4 toprak veya kil topağı diz; mühürlenince kubbeli kömür ocağına dönüşür.",
             MindStructureBlueprintId.BloomeryFurnace =>
-                "En az 8 taş ve 6 kil topağını üst üste (~0.4m+) baca gibi ör; kil hava borusunu önceden koyabilir veya sonradan takabilirsin.",
+                "Yere en az 8 taş ve 6 kil topağı diz; mühürlenince taş tabanlı silindirik kil izabe fırınına dönüşür (hava borusu ve körük takılır).",
             MindStructureBlueprintId.WoodenWheelbarrow =>
                 "Öne 1 ahşap tekerlek koy, arkasına en az 2 yarılmış odun + 2 dal (toplam 6 ahşap) ve 2 bitki lifi diz.",
             _ => string.Empty
@@ -403,17 +403,7 @@ namespace Stratocraft.Inventory.Systems
                 {
                     IsValid = false,
                     Blueprint = MindStructureBlueprintId.BloomeryFurnace,
-                    FeedbackMessage = $"Fırın duvarlarının ısıyı tutması için taşların arasına en az 6 Kil Topağı sıvamalısın! (Şu an: {clayCount}/6)"
-                };
-            }
-            float heightSpan = maxY - minY;
-            if (heightSpan < 0.32f)
-            {
-                return new MindValidationResult
-                {
-                    IsValid = false,
-                    Blueprint = MindStructureBlueprintId.BloomeryFurnace,
-                    FeedbackMessage = $"Taş ve killeri düz yaymak yerine üst üste baca gibi (~0.4m+) yükseltmelisin! (Yükseklik: {heightSpan:0.2}m)"
+                    FeedbackMessage = $"Fırın duvarlarının ısıyı tutması için taşların yanına/üstüne en az 6 Kil Topağı koymalısın! (Şu an: {clayCount}/6)"
                 };
             }
 

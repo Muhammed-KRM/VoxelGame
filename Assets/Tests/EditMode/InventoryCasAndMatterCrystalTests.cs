@@ -1101,5 +1101,60 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(ironEval.Output, Is.EqualTo(ClothCenterCraftOutput.IronPickaxe));
             Assert.That(ironEval.ConsumeWroughtIronBar, Is.EqualTo(1));
         }
+
+        [Test]
+        public void MindStructureValidator_BloomeryAndCharcoalPit_AcceptNaturalGroundSpreadClusterWithoutTowerStack()
+        {
+            var center = new System.Numerics.Vector3(4.0f, 32.0f, -8.0f);
+            Span<LoosePartPoint> bloomParts = stackalloc LoosePartPoint[14];
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = (i / 8f) * MathF.PI * 2f;
+                bloomParts[i] = new LoosePartPoint
+                {
+                    InstanceId = 100 + i,
+                    Kind = LooseBuildPartKind.RoughStoneChunk,
+                    Position = center + new System.Numerics.Vector3(MathF.Cos(ang) * 0.45f, 0.02f, MathF.Sin(ang) * 0.45f)
+                };
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                float ang = (i / 6f) * MathF.PI * 2f;
+                bloomParts[8 + i] = new LoosePartPoint
+                {
+                    InstanceId = 200 + i,
+                    Kind = LooseBuildPartKind.ClayLump,
+                    Position = center + new System.Numerics.Vector3(MathF.Cos(ang) * 0.25f, 0.04f, MathF.Sin(ang) * 0.25f)
+                };
+            }
+
+            Span<int> matched = stackalloc int[32];
+            MindValidationResult bloomRes = MindStructureClusterValidator.ValidateCluster(
+                MindStructureBlueprintId.BloomeryFurnace, center, bloomParts, matched);
+            Assert.That(bloomRes.IsValid, Is.True);
+            Assert.That(bloomRes.MatchedPartCount, Is.EqualTo(14));
+
+            Span<LoosePartPoint> pitParts = stackalloc LoosePartPoint[8];
+            for (int i = 0; i < 4; i++)
+            {
+                pitParts[i] = new LoosePartPoint
+                {
+                    InstanceId = 300 + i,
+                    Kind = LooseBuildPartKind.SplitFirewood,
+                    Position = center + new System.Numerics.Vector3(0.15f * i - 0.22f, 0.02f, 0f)
+                };
+                pitParts[4 + i] = new LoosePartPoint
+                {
+                    InstanceId = 400 + i,
+                    Kind = LooseBuildPartKind.LooseDirtClod,
+                    Position = center + new System.Numerics.Vector3(0f, 0.05f, 0.15f * i - 0.22f)
+                };
+            }
+
+            MindValidationResult pitRes = MindStructureClusterValidator.ValidateCluster(
+                MindStructureBlueprintId.CharcoalPit, center, pitParts, matched);
+            Assert.That(pitRes.IsValid, Is.True);
+            Assert.That(pitRes.MatchedPartCount, Is.EqualTo(8));
+        }
     }
 }

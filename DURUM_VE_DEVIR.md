@@ -13,11 +13,11 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#055` (**Paket 2 Faz 2.4 TAMAMLANDI:** `1)` Toprak Örtülü Kömür Ocağı Pirolizi (`BloomeryThermodynamicsSystem` + `Stage1BloomeryAndForgingController`: `>=4` odun + `>=4` toprak/kil -> `[T]` `[2]` -> Çakmaktaşı `2` kıvılcım -> `28 sn` için için yanma -> `6–8x CharcoalChunk`; erken açma veya topraksız yakma -> `RuinedAsh`), `2)` Cevher Kavurma & Çekiçle Kırma (`Stage1CampfireAndCookingController`: Kamp ateşinde `10 sn` Bakır/Demir cevheri kavurma -> kaya/örs üstüne `Sağ Tık` + `ToolStoneHammer` ile `3` darbe -> `2x CrushedOrePowder`), `3)` Çiğ Kil Kalıplama & `12 sn` Pişirme (`PhysicalItemShapeDna.FlagUnfiredClay`, `ClothMatCraftingSystem`: `[I]` bez merkezinde `ClayTuyerePipe` & `ClayCruciblePot` -> ateş üstünde `12 sn` pişirme + `LeatherBellows`), `4)` `1250°C` Bloomery İzabe Fırını (`8+` taş + `6+` kil, `>=0.32m` baca -> `[T]` `[3]` -> kil hava borusu + deri körük + kil tıkaç + isteğe bağlı pota; odun `<850°C`, körüksüz kömür `<=795°C`, ritmik körük pompalamayla `1085°C` Bakır külçesi / `1230–1315°C` Cüruf + `1180°C IronBloomSponge`), `5)` Sıcak Sünger Demir Dövme & `T2` Demir Aletler (örste `>=720°C` sıcaklıkta `8` darbe -> `WroughtIronBar` -> `[I]` merkezde `IronPickaxe`, `IronAxe`, `IronHammer`, `IronSword`), `6)` 36 Yuvalı 3B Fiziksel Ahşap El Arabası (`Stage1WheelbarrowController`: `WheelbarrowCargoBuffer`, `Sağ Tık` yükleme, `[E]`/`[ESC]` tutarak `1.35m` önde arazi eğimine göre sürme ve tekerlek dönüşü) \| **Sırada: Faz 2.4 Canlı PlayMode Testi -> Sonraki Paket**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T00:09:00+03:00` |
+| **Devir Numarası** | `#056` (**Paket 2 Faz 2.4 PlayMode Geri Bildirim Düzeltmeleri TAMAMLANDI:** `1)` Su Kıyısında Sınırsız Kil Kazma (`Stage1MatterCrystalAndMiningController`: suya `<=4m` yatay / `<=2m` dikey mesafedeki ıslak kum/toprak/çim zeminde hem `Sol Ctrl + [E]` avuçla kazmada hem de kazma/kürekle kırmada her zaman `ClayLump` düşer; sudan uzak kuru sahilde `SandPile` düşer), `2)` Gerçekçi 3B Kubbeli Toprak Kömür Ocağı Modeli (`Stage1BloomeryAndForgingController`: `>=4` odun + `>=4` toprak/kil `[T]->[2]` ile doğrulandığında dağınık yığın temizlenip tabanından kütük uçları görünen, tepe baca delikli kubbeli 3B toprak tepeciğine dönüşür; yanarken köz parlar, erken açılırsa çökmüş kül yığını olur), `3)` Gerçekçi 3B Taş Kemerli Silindirik Kil İzabe Fırını Modeli & Kule Şartı Kaldırımı (`MindStructureClusterValidator` + `Stage1BloomeryAndForgingController`: `0.32m` kule dikme şartı kaldırıldı; `8+` taş + `6+` kil yere doğal serilip `[T]->[3]` basıldığında önü oyuncuya bakan taş kemerli kaideli, konik silindirik kil bacalı, yan üfleme yuvalı gerçek 3B Bloomery fırınına dönüşür ve sıcaklığa göre korlaşır), `4)` Detaylı Canlı Test Rehberi (`Bölüm 3.2` adım adım genişletildi) \| **Sırada: Faz 2.4 Canlı PlayMode Testi -> Sonraki Paket**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T01:22:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1, 2.2, 2.3 Onaylandı; Faz 2.4 Kodlandı ve Tüm Otomatik Testlerden Geçti -> Kullanıcı Canlı PlayMode Testi Bekliyor` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 92/92 PASS (Faz21 + Faz22 + Faz23 + Faz24 Dahil)`, `Standalone .NET 10 Core: 95/95 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1, 2.2, 2.3 Onaylandı; Faz 2.4 + Devir #056 Görsel/Kil Düzeltmeleri Tüm Otomatik Testlerden Geçti -> Kullanıcı Canlı PlayMode Testi Bekliyor` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 93/93 PASS (Faz21 + Faz22 + Faz23 + Faz24 + Devir056 Dahil)`, `Standalone .NET 10 Core: 96/96 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
@@ -52,7 +52,19 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#055` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#056` .. `#042`)
+
+### 2.0.000000000000. Devir #056 (Paket 2 Faz 2.4 Kullanıcı PlayMode Geri Bildirim Düzeltmeleri): Gerçekçi 3B Kubbeli Kömür Ocağı & Taş Kemerli Silindirik Kil İzabe Fırını Modelleri, Su Kıyısında Kil Kazma Düzeltmesi ve Ayrıntılı Test Rehberi
+
+1. **Su Kenarında Sınırsız Kil (`ClayLump`) Kazma Düzeltmesi (`Stage1MatterCrystalAndMiningController.cs`):**
+   - **Kök Neden:** Sahil bloklarının voksel materyali çoğunlukla `MaterialIdCatalog.Sand` olduğu için `StepHandSoilScooping` içindeki `if (mat == Sand)` kontrolü `nearWater` kontrolünden önce çalışıyor, suya bitişik ıslak sahilde kil yerine kum veriyor ve `IsCellNearWater` tarama yarıçapı yalnızca `2m` ile sınırlı kalıyordu. Ayrıca kazma/kürek ile kırılan sahil blokları `CompleteDeferredVoxelBreakOnPullOut` içinde doğrudan `Dirt` düşürüyordu.
+   - **Çözüm:** `IsCellNearWater` yarıçapı yatayda `4m` (`dx,dz in [-4..4]`), dikeyde `2m` (`dy in [-2..2]`, `Mass >= 16`) olarak genişletildi. Hem `Sol Ctrl + [E]` (`0.60 sn` avuçla kazma) hem de aletle kırma akışında `(mat == Clay || nearWater)` kontrolü en öne alındı: su kenarındaki (`<= 4m`) ıslak kum, toprak veya çim kazıldığında **her seferinde kesintisiz `ClayLump` (`Kil Topağı`)** çıkar; sudan uzak (`> 4m`) kuru sahilde `SandPile` (`Kum Öbeği`), kuru iç arazide `LooseDirtClod` (`Toprak Topağı`) çıkar.
+2. **Zihin İnşası Kule Zorunluluğunun Kaldırılması (`MindStructureClusterValidator.cs`):**
+   - `ValidateBloomeryFurnace` içindeki yapay `heightSpan >= 0.32m` dikey kule istifleme şartı kaldırıldı. Artık oyuncu `8+` taş ve `6+` kili üst üste Jenga kulesi gibi dizmek zorunda kalmadan yere doğal bir küme halinde (`~1.9m` çap içinde) bırakıp `[T] -> [3]` ile doğrulayabilir (`InventoryCasAndMatterCrystalTests` içine yeni birim testi eklendi).
+3. **Gerçekçi 3B Kubbeli Kömür Ocağı & Taş Kemerli Silindirik Kil İzabe Fırını Modelleri (`Stage1BloomeryAndForgingController.cs`):**
+   - `[T]` doğrulaması yapıldığında yerde üst üste duran dağınık ham taş/kil/odun parçaları `RemoveAndDestroyStationParts` ile tüketilip temizlenir ve yerine sıfır ek doku (`0 B` ek VRAM, saf `StratocraftUberShader` `Color32` vertex-lit, `0` Collider) bütünleşik prosedürel 3B istasyon modelleri oluşturulur:
+     - **Kömür Ocağı (`CharcoalPit_EarthMoundBody`):** Tabandan dışarı uzanan `8` radyal odun kütüğü ucu, `12` dilimli kubbeli toprak/kil örtüsü (`r = 0.62m -> 0.17m`, `h = 0.48m`) ve tepe duman bacası (`y = 0.48m`). Yanarken tepe bacasından köz parıltısı ve duman yükselir; piroliz bittiğinde koyu kömürleşmiş tepeciğe, erken açıldığında ise çökmüş gri-siyah kül yığınına dönüşür.
+     - **Bloomery İzabe Fırını (`Bloomery_SculptedChimneyBody`):** Önü oyuncuya (`Camera.main`) dönük `12` taşlı dairesel örme taş kaide, ön yüzde (`+Z`) cüruf/sünger demir alma kemeri ve taş lento + kil tıkaç yuvası, sağ yanda (`+X`) pişmiş kil üfleme borusu (`Tuyere`) ve deri körük soketi, yukarı doğru daralan içi boş silindirik pişmiş kil baca gövdesi (`y = 0.24m -> 0.98m`), `2` yatay kil kuşak ve üst yükleme ağzı. Fırın ısındıkça (`>= 450°C` ılık, `>= 950°C` kor) gövde ve iç köz yatağı kademeli olarak akkorlaşır.
 
 ### 2.0.00000000000. Devir #055 (Paket 2 Faz 2.4): Kömür Ocağı Pirolizi, Cevher Kavurma & Kırma, Kil Pişirme, `1250°C` Körük & Bloomery İzabe Fırını, Sıcak Sünger Demir Dövme, `T2` Demir Aletler ve 3B El Arabası
 
@@ -774,26 +786,47 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ---
 
-### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 FAZ 2.4 CANLI TEST LİSTESİ`)
+### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 FAZ 2.4 + DEVİR #056 AYRINTILI CANLI TEST REHBERİ`)
 
-> **Not:** Tüm otomatik doğrulama kapıları (**`92/92` Unity EditMode** + **`95/95` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`4.14 MB` VRAM**) tam olarak geçmiştir.
+> **Not:** Tüm otomatik doğrulama kapıları (**`93/93` Unity EditMode** + **`96/96` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`4.14 MB` VRAM**) tam olarak geçmiştir. Hızlı malzeme almak isterseniz **`[F4]` -> `[Tab]`** yaratıcı kataloğunu da kullanabilirsiniz.
 
-1. 🧪 **Test 1 — Toprak Örtülü Kömür Ocağı Pirolizi (`CharcoalPit`):**
-   - En az `4` odun (`SplitFirewood`/`Stick`) ve `4` toprak/kil topağı (`LooseDirtClod`/`ClayLump`) yere `Sağ Tık` ile dizin -> `[T]` -> `[2] Kömür Ocağı` seçin.
-   - `FlintStone` ile `2` kıvılcım çakın ve `28 sn` bekleyip `[E]` ile açın: `6–8x Odun Kömürü (CharcoalChunk)` elde ettiğinizi görün (erken açarsanız `RuinedAsh` yanık küle döner).
-2. 🧪 **Test 2 — Cevher Kavurma/Kırma & Kil Pişirme:**
-   - Yanan Kamp Ateşine `OreChunk` (`Copper`/`Iron`) koyup `10 sn`de `RoastedOreChunk` alın -> düz bir kayaya veya örse `Sağ Tık` ile koyun -> `ToolStoneHammer` ile `3` kez vurup `2x CrushedOrePowder` elde edin.
-   - `[I]` çanta merkezinde `ClayTuyerePipe` (`2 Kil + 1 Kum`) ve `ClayCruciblePot` (`3 Kil + 1 Kum`) üretip `"Çiğ "` eşyaları ateşin üstünde `12 sn` pişirin (`FlagUnfiredClay` temizlenir). Ayrıca `2 Deri + 2 Odun + 2 Lif` ile `LeatherBellows` yapın.
-3. 🧪 **Test 3 — `1250°C` Bloomery İzabe Fırını (Bakır & Sünger Demir):**
-   - Yere `8+` taş ve `6+` kil (`>=0.32m` baca) dizip `[T]` -> `[3] İzabe Fırını` seçin.
-   - Pişmiş `ClayTuyerePipe`, `LeatherBellows` (ve bakır için `ClayCruciblePot`), yakıt (`CharcoalChunk`) ve `CrushedOrePowder` ekleyin -> Çakmaktaşı ile yakın.
-   - Körük olmadan kömürün `~795°C`'de kaldığını; `[E]` veya boş elle `Sol Tık` ile ritmik körük pompalayarak `1085°C` (`Bakır Külçesi`) ve `1230–1315°C` (`Cüruf + 1180°C Sünger Demir`) seviyesine çıktığını doğrulayın -> ön kil tıkacı çekiç/kazmayla kırıp sünger demiri alın, `1 ClayLump` ile tıkacı yeniden sıvayın.
-4. 🧪 **Test 4 — Sıcak Sünger Demir Dövme & `T2` Demir Aletler:**
-   - Fırından çıkan `1180°C IronBloomSponge` soğumadan (`>=720°C`) örs veya düz kaya üstüne `Sağ Tık` ile koyun ve çekiçle `8` kez dövüp `WroughtIronBar` elde edin (soğursa kamp ateşi veya yanan fırında yeniden ısıtın).
-   - `[I]` çanta merkezinde `WroughtIronBar` + `Stick/Wood` + `PlantFiber` ile `IronPickaxe`, `IronAxe`, `IronHammer`, `IronSword` üretin.
-5. 🧪 **Test 5 — 3B Fiziksel Ahşap El Arabası (`WoodenWheelbarrow`):**
-   - `[I]` veya `[F4]->[Tab]` üzerinden `WoodenWheel`, odun/dal ve lifleri dizip `[T]` -> `[4] Ahşap El Arabası` seçin.
-   - `Sağ Tık` (veya `Shift+Sağ Tık` 5'li) ile toprak/kum/kil/cevher/kömür yükleyip `36` yuvada 3B görünümünü izleyin; arka saplara bakıp `[E]` ile sürün (`[WASD]`, arazi eğimi uyumu, yokuşta yük çekişi, `[E]` veya `[ESC]` ile park etme ve kasadan `[E]` ile geri alma).
+1. 🧪 **Test 1 — Su Kenarında Sınırsız Kil (`ClayLump`) ve Kuru Sahilde Kum (`SandPile`) Kazma:**
+   - Göl veya deniz kıyısına inin (suya `<= 4m` mesafedeki ıslak kum, toprak veya çim zemin).
+   - **`[0]` Boş El** seçin -> **`Sol Ctrl`** ile çömelip yere bakın -> **`[E]` tuşuna `0.60 sn` basılı tutun**: Her kazışta kesintisiz olarak **`Kil Topağı (ClayLump)`** çıktığını doğrulayın.
+   - Aynı su kıyısını **Kazma veya Kürek (`Sol Tık`)** ile kırın: Kırılan kıyı bloğundan da **`ClayLump`** düştüğünü görün.
+   - Sudan `5–6m` içeri (kuru sahil kumuna) yürüyüp aynı şekilde kazdığınızda **`Kum Öbeği (SandPile)`**, iç çim/toprak arazide ise **`Toprak Topağı (LooseDirtClod)`** çıktığını doğrulayın.
+2. 🧪 **Test 2 — Gerçekçi 3B Kubbeli Toprak Kömür Ocağı (`CharcoalPit`) & Piroliz:**
+   - Yere birbirine yakın (`~1.5m` içinde) en az **`4` Dal/Yarma Odun (`Stick`/`SplitFirewood`)** ve en az **`4` Toprak veya Kil Topağı (`LooseDirtClod`/`ClayLump`)** `Sağ Tık` ile bırakın.
+   - Kümenin üstüne bakıp **`[T]` -> `[2] Kömür Ocağı`** seçin: Dağınık parçaların kaybolup tabanından kütük uçları görünen, tepe baca delikli **bütünleşik 3B kubbeli toprak tepeciğine** dönüştüğünü görün (isterseniz üstüne `Sağ Tık` ile en fazla `12` oduna kadar takviye yapabilirsiniz).
+   - Elinize **`Çakmaktaşı (FlintStone)`** alıp ocağa **`2` kez `Sol/Sağ Tık`** vurarak yakın: Tepe deliğinden köz parıltısı ve duman çıktığını izleyin.
+   - **`28 sn`** bekleyip `[Hazır]` yazısını görünce **`[E]`** ile açın: **`6–8x Odun Kömürü (CharcoalChunk)`** aldığınızı doğrulayın *(İsteğe bağlı negatif test: ikinci bir ocak kurup `28 sn` dolmadan erken `[E]` basarsanız tepeciğin çöküp `RuinedAsh` yanık küle döndüğünü görün).*
+3. 🧪 **Test 3 — Çiğ Kil Ekipman Kalıplama + Ateşte `12 sn` Pişirme + Cevher Kavurma & Kırma:**
+   - **`[I]`** çanta bezini açın; sol taraftaki yığınlardan merkeze `Sol Tık` ile malzeme koyup merkezdeki önizlemeye tıklayarak (veya `[R]` ile) şunları üretin:
+     - **Çiğ Kil Hava Borusu (`ClayTuyerePipe`):** `2x ClayLump + 1x SandPile`
+     - **Çiğ Kil Pota (`ClayCruciblePot` — Bakır eritmek için):** `3x ClayLump + 1x SandPile`
+     - **Deri Körük (`LeatherBellows`):** `2x HidePiece (Deri) + 2x Stick/Wood + 2x PlantFiber`
+     - **Taş Çekiç (`ToolStoneHammer`):** `1x RoughStoneChunk + 1x Stick + 1x PlantFiber`
+   - Yanan bir **Kamp Ateşine** bakıp elinizdeki **`"Çiğ Kil Hava Borusu"`** ve **`"Çiğ Kil Pota"`** eşyalarını **`Sağ Tık`** ile ateşe koyun -> **`12 sn`** pişince **`[E]`** ile alın (artık başındaki `"Çiğ "` ibaresi kalkar ve fırına takılabilir).
+   - Yanan Kamp Ateşine **`Ham Cevher (`OreChunk` — Demir veya Bakır)`** `Sağ Tık` ile koyup **`10 sn`** kavurun -> **`[E]`** ile `Kavrulmuş Cevher (RoastedOreChunk)` alın -> yerdeki düz bir kayaya veya örse `Sağ Tık` ile koyup **`ToolStoneHammer` ile `3` kez `Sol Tık`** vurarak **`2x Kırılmış Cevher Tozu (CrushedOrePowder)`** elde edin.
+4. 🧪 **Test 4 — Kule Yapmadan `8 Taş + 6 Kil` ile 3B Taş Kemerli Silindirik Kil İzabe Fırını (`BloomeryFurnace`):**
+   - Yere üst üste kule yapmaya uğraşmadan, yan yana doğal bir küme halinde en az **`8x Taş (`RoughStoneChunk`)`** ve **`6x Kil (`ClayLump`)`** `Sağ Tık` ile dizin -> kümeye bakıp **`[T]` -> `[3] İzabe Fırını`** seçin.
+   - Dağınık taş/kil yığınının temizlenip ön kemeri size bakan **taş kaideli, konik silindirik kil bacalı, yan üfleme yuvalı gerçek 3B İzabe Fırınına** dönüştüğünü doğrulayın.
+   - Fırına sırasıyla **`Sağ Tık`** ile şunları ekleyin:
+     1. **Pişmiş `ClayTuyerePipe`** (sağ yan yuvaya kil boru takılır),
+     2. **`LeatherBellows`** (borunun ucuna körük monte edilir),
+     3. *(Bakır eritecekseniz)* **Pişmiş `ClayCruciblePot`**,
+     4. **`CharcoalChunk` (Odun Kömürü)** (`4–8` adet; `Shift+Sağ Tık` 4'lü ekler) ve **`CrushedOrePowder` (Kırılmış Cevher Tozu)** (`2–4` adet).
+   - Elinize **`FlintStone`** alıp fırına **`2` kez tıklayarak** yakın:
+     - Körüğe dokunmadan beklediğinizde kömürün doğal çekişle **`~795°C`** civarında takıldığını (demiri eritemediğini) gözlemleyin.
+     - Fırına/körüğe bakıp **`[E]` tuşuna** (veya boş elle `Sol Tık`) saniyede `1–2` kez ritmik basarak hava pompalayın: Sıcaklığın **`1230–1315°C`** aralığına çıktığını, gövdenin korlaştığını ve ön kemerden sıvı cüruf aktığını görün.
+     - **Bakır koyduysanız** `>= 1085°C` sonunda doğrudan `[E]` ile `Bakır Külçesi` alın; **Demir koyduysanız** izabe bittiğinde ön kemerdeki kil tıkaca **Çekiç veya Kazma ile `Sol Tık`** vurup kırarak **`1180°C` akkor `Sünger Demir (IronBloomSponge)`** ve `Cüruf` alın (sonraki döküm için `1x ClayLump` + `Sağ Tık` ile ön tıkacı yeniden sıvayın).
+5. 🧪 **Test 5 — Örste Sıcak Sünger Demir Dövme (`>= 720°C`) & `T2` Demir Aletler:**
+   - Fırından çıkan akkor **`IronBloomSponge`** soğumadan (`>= 720°C` iken; soğursa kamp ateşi veya yanan fırına `Sağ Tık` ile koyup `8 sn`de tekrar `920°C` ısıtabilirsiniz) bir **Örse veya düz kayaya `Sağ Tık`** ile yerleştirin.
+   - Elinizdeki **`ToolStoneHammer` (veya `IronHammer`)** ile **`8` kez `Sol Tık`** vurarak cürufu sıkıp **`Dövme Demir Külçesi (WroughtIronBar)`** elde edin.
+   - **`[I]`** çanta bezi merkezinde `WroughtIronBar` + `Stick/Wood` + `PlantFiber` birleştirerek **`IronPickaxe`**, **`IronAxe`**, **`IronHammer`** ve **`IronSword`** üretin.
+6. 🧪 **Test 6 — `36` Yuvalı 3B Fiziksel Ahşap El Arabası (`WoodenWheelbarrow`):**
+   - `[I]` merkezinde `4x Odun/Dal + 2x Lif` ile **`WoodenWheel (Ahşap Tekerlek)`** üretin -> yere `1x WoodenWheel + 4x Odun/Dal + 2x Lif` dizip **`[T]` -> `[4] Ahşap El Arabası`** kurun.
+   - Kasasına elinizdeki kil/toprak/kum/cevher/kömür ile **`Sağ Tık`** (`Shift+Sağ Tık` 5'li) yaparak `36` yuvaya kadar gerçek 3B yığılmasını izleyin; arka saplara bakıp **`[E]`** ile tutarak **`[WASD]`** ile sürün (arazi eğimi uyumu, tekerlek dönüşü, `[E]` veya `[ESC]` ile bırakma ve kasadan `[E]` ile geri alma).
 
 ---
 
@@ -831,12 +864,12 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #055`** ile birebir eşleştiğini doğrula.
-2. **Adım 2 — Kullanıcıdan `Faz 2.4` Canlı PlayMode Test Geri Bildirimini Al:**
-   - Kullanıcı **Bölüm 3.2**'deki 5 adımlı `Faz 2.4` döngüsünü (*Kömür Ocağı pirolizi, Cevher kavurma/kırma + Kil pişirme, `1250°C` Bloomery körük izabesi, Örste sıcak sünger demir dövme + `T2` Demir aletler ve 3B Ahşap El Arabası*) test edip onayladıktan sonra bir sonraki yol haritası adımına geç.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #056`** ile birebir eşleştiğini doğrula.
+2. **Adım 2 — Kullanıcıdan `Faz 2.4 + Devir #056` Canlı PlayMode Test Geri Bildirimini Al:**
+   - Kullanıcı **Bölüm 3.2**'deki 6 adımlı `Faz 2.4 + Devir #056` döngüsünü (*Su kenarında kil kazma, 3B kubbeli Kömür Ocağı pirolizi, Çiğ kil pişirme + Cevher kavurma/kırma, 3B taş kemerli silindirik kil Bloomery izabesi, Örste sıcak sünger demir dövme + `T2` Demir aletler ve 3B Ahşap El Arabası*) test edip onayladıktan sonra bir sonraki yol haritası adımına geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`95/95 PASS`).
-   - Unity EditMode Testleri: `92/92 PASS`.
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`96/96 PASS`).
+   - Unity EditMode Testleri: `93/93 PASS`.
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (`4.14 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
    - GC Bütçesi: `0 B/kare` çalışma zamanı tahsisi.

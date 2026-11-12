@@ -30,6 +30,7 @@ namespace Stratocraft.Character
         {
             public CharcoalPitState Data;
             public GameObject RootGo = null!;
+            public MeshFilter? MoundMf;
             public Light? WarmPointLight;
             public readonly Transform[] SmokeMotes = new Transform[4];
             public readonly MeshFilter[] SmokeMoteMfs = new MeshFilter[4];
@@ -41,6 +42,7 @@ namespace Stratocraft.Character
         {
             public BloomeryFurnaceState Data;
             public GameObject RootGo = null!;
+            public MeshFilter? FurnaceBodyMf;
             public GameObject FlameGo = null!;
             public GameObject TuyereGo = null!;
             public GameObject BellowsGo = null!;
@@ -53,6 +55,7 @@ namespace Stratocraft.Character
             public float BellowsPumpAnimTimer;
             public SparkParticleBurst SparkBurst = new();
             public byte LastThermalGlowByte = 255;
+            public byte LastBodyTier = 255;
         }
 
         private sealed class SurfaceWorkpieceEntry
@@ -84,6 +87,13 @@ namespace Stratocraft.Character
         private Mesh? _sharedBloomeryFlameMesh;
         private Mesh? _sharedSlagStreamMesh;
         private Mesh? _sharedPlugClayMesh;
+        private Mesh? _sharedCharcoalMoundUnlitMesh;
+        private Mesh? _sharedCharcoalMoundSmolderingMesh;
+        private Mesh? _sharedCharcoalMoundReadyMesh;
+        private Mesh? _sharedCharcoalMoundAshMesh;
+        private Mesh? _sharedBloomeryBodyColdMesh;
+        private Mesh? _sharedBloomeryBodyWarmMesh;
+        private Mesh? _sharedBloomeryBodyHotMesh;
 
         private AudioSource? _sfxSource;
         private AudioClip? _flintStrikeClip;
@@ -141,14 +151,24 @@ namespace Stratocraft.Character
                 woodUnits,
                 coverUnits);
 
+            // Dagilmis/ust uste binmis ham parcalari kaldirip gercekci kubbeli toprak komur ocagi modeline donustur
+            looseBuildSystem.RemoveAndDestroyStationParts(stationId);
+
             Vector3 worldCenter = new Vector3(data.Center.X, data.BaseY, data.Center.Z);
             GameObject root = new GameObject($"CharcoalPit_Station_{stationId}");
             if (_stationsContainer != null) root.transform.SetParent(_stationsContainer, false);
             root.transform.position = worldCenter;
 
+            GameObject moundGo = new GameObject("CharcoalPit_EarthMoundBody");
+            moundGo.transform.SetParent(root.transform, false);
+            MeshFilter moundMf = moundGo.AddComponent<MeshFilter>();
+            moundMf.sharedMesh = _sharedCharcoalMoundUnlitMesh;
+            MeshRenderer moundMr = moundGo.AddComponent<MeshRenderer>();
+            if (sharedVoxelMat != null) moundMr.sharedMaterial = sharedVoxelMat;
+
             GameObject lightGo = new GameObject("CharcoalPit_EmberLight");
             lightGo.transform.SetParent(root.transform, false);
-            lightGo.transform.localPosition = new Vector3(0f, 0.24f, 0f);
+            lightGo.transform.localPosition = new Vector3(0f, 0.56f, 0f);
             Light ptLight = lightGo.AddComponent<Light>();
             ptLight.type = LightType.Point;
             ptLight.color = new Color(1.0f, 0.45f, 0.14f);
@@ -161,6 +181,7 @@ namespace Stratocraft.Character
             {
                 Data = data,
                 RootGo = root,
+                MoundMf = moundMf,
                 WarmPointLight = ptLight,
                 LastRenderedPhase = CharcoalPitPhase.Unlit
             };
@@ -225,17 +246,37 @@ namespace Stratocraft.Character
                 hasBellows,
                 hasCrucible);
 
+            // Ust uste kule olan ham tas/kil parcalarini temizleyip gercekci 3B Tas Kemerli + Silindirik Kil Izabe Firini olustur
+            looseBuildSystem.RemoveAndDestroyStationParts(stationId);
+
             Vector3 worldCenter = new Vector3(data.Center.X, data.BaseY, data.Center.Z);
             GameObject root = new GameObject($"Bloomery_Station_{stationId}");
             if (_stationsContainer != null) root.transform.SetParent(_stationsContainer, false);
             root.transform.position = worldCenter;
+            UnityEngine.Camera? mainCam = UnityEngine.Camera.main;
+            if (mainCam != null)
+            {
+                Vector3 toPlayer = mainCam.transform.position - worldCenter;
+                toPlayer.y = 0f;
+                if (toPlayer.sqrMagnitude > 0.01f)
+                {
+                    root.transform.rotation = Quaternion.LookRotation(toPlayer.normalized, Vector3.up);
+                }
+            }
+
+            GameObject bodyGo = new GameObject("Bloomery_SculptedChimneyBody");
+            bodyGo.transform.SetParent(root.transform, false);
+            MeshFilter bodyMf = bodyGo.AddComponent<MeshFilter>();
+            bodyMf.sharedMesh = _sharedBloomeryBodyColdMesh;
+            MeshRenderer bodyMr = bodyGo.AddComponent<MeshRenderer>();
+            if (sharedVoxelMat != null) bodyMr.sharedMaterial = sharedVoxelMat;
 
             PhysicalItemShapeDna defaultDna = PhysicalItemShapeDna.CreateNatural(stationId ^ 0x4B100u);
 
             // 1) Top CO chimney flame
             GameObject flameGo = new GameObject("Bloomery_ChimneyCOFlame");
             flameGo.transform.SetParent(root.transform, false);
-            flameGo.transform.localPosition = new Vector3(0f, 0.72f, 0f);
+            flameGo.transform.localPosition = new Vector3(0f, 0.96f, 0f);
             MeshFilter flameMf = flameGo.AddComponent<MeshFilter>();
             flameMf.sharedMesh = _sharedBloomeryFlameMesh;
             MeshRenderer flameMr = flameGo.AddComponent<MeshRenderer>();
@@ -248,7 +289,7 @@ namespace Stratocraft.Character
                 PhysicalItemArchetype.ClayTuyerePipe, 0, in defaultDna, out Vector3 tuyereNat);
             GameObject tuyereGo = new GameObject("Bloomery_TuyerePipe");
             tuyereGo.transform.SetParent(root.transform, false);
-            tuyereGo.transform.localPosition = new Vector3(0.30f, 0.14f, 0f);
+            tuyereGo.transform.localPosition = new Vector3(0.42f, 0.16f, 0f);
             tuyereGo.transform.localRotation = Quaternion.Euler(0f, 90f, 0f);
             tuyereGo.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(
                 PhysicalItemArchetype.ClayTuyerePipe, tuyereNat);
@@ -265,7 +306,7 @@ namespace Stratocraft.Character
                 PhysicalItemArchetype.LeatherBellows, bellowsNat);
             GameObject bellowsGo = new GameObject("Bloomery_LeatherBellows");
             bellowsGo.transform.SetParent(root.transform, false);
-            bellowsGo.transform.localPosition = new Vector3(0.58f, 0.15f, 0f);
+            bellowsGo.transform.localPosition = new Vector3(0.72f, 0.17f, 0f);
             bellowsGo.transform.localRotation = Quaternion.Euler(0f, -90f, 0f);
             bellowsGo.transform.localScale = bellowsScale;
             MeshFilter bellowsMf = bellowsGo.AddComponent<MeshFilter>();
@@ -274,24 +315,24 @@ namespace Stratocraft.Character
             if (sharedVoxelMat != null) bellowsMr.sharedMaterial = sharedVoxelMat;
             bellowsGo.SetActive(hasBellows);
 
-            // 4) Interior Clay Crucible Pot
+            // 4) Interior Clay Crucible Pot (visible inside top throat)
             Mesh crucibleMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
                 PhysicalItemArchetype.ClayCruciblePot, 0, in defaultDna, out Vector3 crucibleNat);
             GameObject crucibleGo = new GameObject("Bloomery_ClayCruciblePot");
             crucibleGo.transform.SetParent(root.transform, false);
-            crucibleGo.transform.localPosition = new Vector3(0f, 0.24f, 0f);
+            crucibleGo.transform.localPosition = new Vector3(0f, 0.72f, 0f);
             crucibleGo.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(
-                PhysicalItemArchetype.ClayCruciblePot, crucibleNat);
+                PhysicalItemArchetype.ClayCruciblePot, crucibleNat) * 0.85f;
             MeshFilter crucibleMf = crucibleGo.AddComponent<MeshFilter>();
             crucibleMf.sharedMesh = crucibleMesh;
             MeshRenderer crucibleMr = crucibleGo.AddComponent<MeshRenderer>();
             if (sharedVoxelMat != null) crucibleMr.sharedMaterial = sharedVoxelMat;
             crucibleGo.SetActive(hasCrucible);
 
-            // 5) Front lower Clay Plug
+            // 5) Front lower Clay Plug (sealing the front stone archway)
             GameObject plugGo = new GameObject("Bloomery_FrontClayPlug");
             plugGo.transform.SetParent(root.transform, false);
-            plugGo.transform.localPosition = new Vector3(0f, 0.12f, 0.26f);
+            plugGo.transform.localPosition = new Vector3(0f, 0.12f, 0.39f);
             MeshFilter plugMf = plugGo.AddComponent<MeshFilter>();
             plugMf.sharedMesh = _sharedPlugClayMesh;
             MeshRenderer plugMr = plugGo.AddComponent<MeshRenderer>();
@@ -301,7 +342,7 @@ namespace Stratocraft.Character
             // 6) Bottom Slag Stream
             GameObject slagGo = new GameObject("Bloomery_SlagStream");
             slagGo.transform.SetParent(root.transform, false);
-            slagGo.transform.localPosition = new Vector3(0f, 0.03f, 0.30f);
+            slagGo.transform.localPosition = new Vector3(0f, 0.02f, 0.42f);
             MeshFilter slagMf = slagGo.AddComponent<MeshFilter>();
             slagMf.sharedMesh = _sharedSlagStreamMesh;
             MeshRenderer slagMr = slagGo.AddComponent<MeshRenderer>();
@@ -309,14 +350,14 @@ namespace Stratocraft.Character
             slagMr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             slagGo.SetActive(false);
 
-            // 7) Bottom Glowing Iron Bloom Sponge Core
+            // 7) Bottom Glowing Iron Bloom Sponge Core (visible inside open front arch)
             PhysicalItemShapeDna hotBloomDna = defaultDna.WithTemperature(
                 BloomeryThermodynamicsSystem.TemperatureToUberByte(HotForgeWorkpieceState.InitialBloomTempCelsius));
             Mesh bloomMesh = PhysicalItemMeshFactory.GetOrCreateMesh(
                 PhysicalItemArchetype.IronBloomSponge, 0, in hotBloomDna, out Vector3 bloomNat);
             GameObject bloomGo = new GameObject("Bloomery_ReadyBloomCore");
             bloomGo.transform.SetParent(root.transform, false);
-            bloomGo.transform.localPosition = new Vector3(0f, 0.10f, 0.08f);
+            bloomGo.transform.localPosition = new Vector3(0f, 0.12f, 0.24f);
             bloomGo.transform.localScale = PhysicalItemMeshFactory.GetWorldGroundScale(
                 PhysicalItemArchetype.IronBloomSponge, bloomNat);
             MeshFilter bloomMf = bloomGo.AddComponent<MeshFilter>();
@@ -328,7 +369,7 @@ namespace Stratocraft.Character
             // 8) Warm Point Light (LightShadows.None)
             GameObject lightGo = new GameObject("Bloomery_WarmPointLight");
             lightGo.transform.SetParent(root.transform, false);
-            lightGo.transform.localPosition = new Vector3(0f, 0.56f, 0f);
+            lightGo.transform.localPosition = new Vector3(0f, 1.08f, 0f);
             Light ptLight = lightGo.AddComponent<Light>();
             ptLight.type = LightType.Point;
             ptLight.color = new Color(1.0f, 0.54f, 0.18f);
@@ -341,6 +382,7 @@ namespace Stratocraft.Character
             {
                 Data = data,
                 RootGo = root,
+                FurnaceBodyMf = bodyMf,
                 FlameGo = flameGo,
                 TuyereGo = tuyereGo,
                 BellowsGo = bellowsGo,
@@ -349,7 +391,8 @@ namespace Stratocraft.Character
                 SlagStreamGo = slagGo,
                 BloomCoreGo = bloomGo,
                 WarmPointLight = ptLight,
-                BaseBellowsScale = bellowsScale
+                BaseBellowsScale = bellowsScale,
+                LastBodyTier = 0
             };
 
             InitSparkBurstPool(root.transform, entry.SparkBurst, "Bloomery_SparkShard", sharedVoxelMat);
@@ -445,6 +488,8 @@ namespace Stratocraft.Character
                         looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 0);
                         SetCharcoalPitSmokeActive(pit, false, false);
                         if (pit.WarmPointLight != null) pit.WarmPointLight.enabled = false;
+                        if (pit.MoundMf != null) pit.MoundMf.sharedMesh = _sharedCharcoalMoundAshMesh;
+                        pit.LastRenderedPhase = CharcoalPitPhase.RuinedAsh;
                         miningCtrl.LastFeedbackText =
                             "💥 ERKEN AÇILDI! 28 sn dolmadan oksijen girdiği için odunların tamamı KÜL oldu! ([E] ile temizle)";
                         return true;
@@ -505,7 +550,7 @@ namespace Stratocraft.Character
                         else
                         {
                             miningCtrl.SpawnPhysicalWorldItem(
-                                b.RootGo.transform.position + new Vector3(0.18f * i, 0.35f, 0.36f),
+                                b.RootGo.transform.TransformPoint(new Vector3(0.18f * i, 0.35f, 0.48f)),
                                 InventoryItemKind.MetalIngot, 1, 1, cuDna, sharedVoxelMat);
                         }
                     }
@@ -530,7 +575,7 @@ namespace Stratocraft.Character
                             InventoryItemKind.IronBloomSponge, 0, 1, miningCtrl, bloomDna))
                     {
                         miningCtrl.SpawnPhysicalWorldItem(
-                            b.RootGo.transform.position + new Vector3(0f, 0.25f, 0.42f),
+                            b.RootGo.transform.TransformPoint(new Vector3(0f, 0.25f, 0.50f)),
                             InventoryItemKind.IronBloomSponge, 0, 1, bloomDna, sharedVoxelMat);
                         miningCtrl.LastFeedbackText =
                             "🔥 1180 °C Akkor Sünger Demir çıkarıldı ama çanta dolu — yere düştü! Soğumadan örse/düz kayaya koy!";
@@ -555,7 +600,7 @@ namespace Stratocraft.Character
                             InventoryItemKind.SlagShard, 0, 1, miningCtrl, slagDna))
                     {
                         miningCtrl.SpawnPhysicalWorldItem(
-                            b.RootGo.transform.position + new Vector3(0f, 0.22f, 0.44f),
+                            b.RootGo.transform.TransformPoint(new Vector3(0f, 0.22f, 0.52f)),
                             InventoryItemKind.SlagShard, 0, 1, slagDna, sharedVoxelMat);
                     }
                     else
@@ -1407,18 +1452,26 @@ namespace Stratocraft.Character
                     {
                         SetCharcoalPitSmokeActive(pit, true, isReadyBlue: false);
                         if (pit.WarmPointLight != null) pit.WarmPointLight.enabled = true;
+                        if (pit.MoundMf != null) pit.MoundMf.sharedMesh = _sharedCharcoalMoundSmolderingMesh;
                         looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 135);
                     }
                     else if (pit.Data.Phase == CharcoalPitPhase.ReadyCharcoal)
                     {
                         SetCharcoalPitSmokeActive(pit, true, isReadyBlue: true);
                         if (pit.WarmPointLight != null) pit.WarmPointLight.enabled = false;
+                        if (pit.MoundMf != null) pit.MoundMf.sharedMesh = _sharedCharcoalMoundReadyMesh;
                         looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 65);
                     }
                     else
                     {
                         SetCharcoalPitSmokeActive(pit, false, isReadyBlue: false);
                         if (pit.WarmPointLight != null) pit.WarmPointLight.enabled = false;
+                        if (pit.MoundMf != null)
+                        {
+                            pit.MoundMf.sharedMesh = pit.Data.Phase == CharcoalPitPhase.RuinedAsh
+                                ? _sharedCharcoalMoundAshMesh
+                                : _sharedCharcoalMoundUnlitMesh;
+                        }
                         looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 0);
                     }
                 }
@@ -1433,9 +1486,9 @@ namespace Stratocraft.Character
                     {
                         Transform mt = pit.SmokeMotes[m];
                         float cycle = Mathf.Repeat(timeNow * speed + m * 0.25f, 1.0f);
-                        float swayX = Mathf.Sin(timeNow * 1.9f + m * 1.7f) * (0.05f + cycle * 0.16f);
-                        float swayZ = Mathf.Cos(timeNow * 1.6f + m * 2.1f) * (0.05f + cycle * 0.16f);
-                        mt.localPosition = new Vector3(swayX, 0.28f + cycle * (isBlue ? 1.45f : 1.75f), swayZ);
+                        float swayX = Mathf.Sin(timeNow * 1.9f + m * 1.7f) * (0.04f + cycle * 0.14f);
+                        float swayZ = Mathf.Cos(timeNow * 1.6f + m * 2.1f) * (0.04f + cycle * 0.14f);
+                        mt.localPosition = new Vector3(swayX, 0.50f + cycle * (isBlue ? 1.45f : 1.75f), swayZ);
                         float sc = Mathf.Sin(cycle * Mathf.PI) * baseScale;
                         mt.localScale = new Vector3(sc, sc, sc);
                     }
@@ -1533,6 +1586,20 @@ namespace Stratocraft.Character
                 {
                     b.LastThermalGlowByte = targetGlowByte;
                     looseBuildSystem.UpdateStationAllThermalGlow(b.Data.StationId, targetGlowByte);
+                }
+
+                byte targetBodyTier = !b.Data.IsLit || b.Data.TemperatureCelsius < 500.0f
+                    ? (byte)0
+                    : (b.Data.TemperatureCelsius >= 1060.0f ? (byte)2 : (byte)1);
+                if (targetBodyTier != b.LastBodyTier && b.FurnaceBodyMf != null)
+                {
+                    b.LastBodyTier = targetBodyTier;
+                    b.FurnaceBodyMf.sharedMesh = targetBodyTier switch
+                    {
+                        2 => _sharedBloomeryBodyHotMesh,
+                        1 => _sharedBloomeryBodyWarmMesh,
+                        _ => _sharedBloomeryBodyColdMesh
+                    };
                 }
 
                 StepSparkBurst(b.SparkBurst, dt);
@@ -1943,9 +2010,254 @@ namespace Stratocraft.Character
             if (_sharedPlugClayMesh == null)
             {
                 _meshBuildScratch.Clear();
-                EmitConeTongue(new SysVec3(0f, -0.04f, -0.02f), new SysVec3(0f, 0.04f, 0.06f), 0.095f, MaterialIdCatalog.Clay, 0, _meshBuildScratch);
+                EmitOrientedBox(new SysVec3(0f, 0.0f, 0f), new SysVec3(0.11f, 0.10f, 0.06f), MaterialIdCatalog.Clay, 0, _meshBuildScratch);
+                EmitConeTongue(new SysVec3(0f, -0.05f, 0.02f), new SysVec3(0f, 0.06f, 0.09f), 0.115f, MaterialIdCatalog.Clay, 0, _meshBuildScratch);
                 _sharedPlugClayMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryClayPlug");
             }
+
+            if (_sharedCharcoalMoundUnlitMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitCharcoalClampMound(mode: 0, _meshBuildScratch);
+                _sharedCharcoalMoundUnlitMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Unlit");
+            }
+            if (_sharedCharcoalMoundSmolderingMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitCharcoalClampMound(mode: 1, _meshBuildScratch);
+                _sharedCharcoalMoundSmolderingMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Smoldering");
+            }
+            if (_sharedCharcoalMoundReadyMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitCharcoalClampMound(mode: 2, _meshBuildScratch);
+                _sharedCharcoalMoundReadyMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Ready");
+            }
+            if (_sharedCharcoalMoundAshMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitCharcoalClampMound(mode: 3, _meshBuildScratch);
+                _sharedCharcoalMoundAshMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Ash");
+            }
+
+            if (_sharedBloomeryBodyColdMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitBloomeryChimneyBody(thermalTier: 0, _meshBuildScratch);
+                _sharedBloomeryBodyColdMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Cold");
+            }
+            if (_sharedBloomeryBodyWarmMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitBloomeryChimneyBody(thermalTier: 1, _meshBuildScratch);
+                _sharedBloomeryBodyWarmMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Warm");
+            }
+            if (_sharedBloomeryBodyHotMesh == null)
+            {
+                _meshBuildScratch.Clear();
+                EmitBloomeryChimneyBody(thermalTier: 2, _meshBuildScratch);
+                _sharedBloomeryBodyHotMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Hot");
+            }
+        }
+
+        private static void EmitQuad(
+            SysVec3 v0,
+            SysVec3 v1,
+            SysVec3 v2,
+            SysVec3 v3,
+            byte matId,
+            byte tempByte,
+            List<FacetedVoxelTriangle> outTris)
+        {
+            SysVec3 n = SysVec3.Cross(v1 - v0, v2 - v0);
+            n = n.LengthSquared() > 1e-8f ? SysVec3.Normalize(n) : SysVec3.UnitY;
+            outTris.Add(new FacetedVoxelTriangle
+            {
+                V0 = v0, V1 = v1, V2 = v2, Normal = n,
+                MaterialId = matId, Temperature = tempByte, FacetShade = 228, AmbientOcclusion = 0xE2
+            });
+            outTris.Add(new FacetedVoxelTriangle
+            {
+                V0 = v0, V1 = v2, V2 = v3, Normal = n,
+                MaterialId = matId, Temperature = tempByte, FacetShade = 222, AmbientOcclusion = 0xE2
+            });
+        }
+
+        private static void EmitOrientedBox(
+            SysVec3 center,
+            SysVec3 halfExtents,
+            byte matId,
+            byte tempByte,
+            List<FacetedVoxelTriangle> outTris,
+            float yawRad = 0f)
+        {
+            float c = MathF.Cos(yawRad);
+            float s = MathF.Sin(yawRad);
+            SysVec3 Rot(float lx, float ly, float lz) =>
+                center + new SysVec3(lx * c - lz * s, ly, lx * s + lz * c);
+
+            float hx = halfExtents.X, hy = halfExtents.Y, hz = halfExtents.Z;
+            SysVec3 p000 = Rot(-hx, -hy, -hz);
+            SysVec3 p100 = Rot( hx, -hy, -hz);
+            SysVec3 p101 = Rot( hx, -hy,  hz);
+            SysVec3 p001 = Rot(-hx, -hy,  hz);
+            SysVec3 p010 = Rot(-hx,  hy, -hz);
+            SysVec3 p110 = Rot( hx,  hy, -hz);
+            SysVec3 p111 = Rot( hx,  hy,  hz);
+            SysVec3 p011 = Rot(-hx,  hy,  hz);
+
+            EmitQuad(p010, p011, p111, p110, matId, tempByte, outTris); // +Y
+            EmitQuad(p000, p100, p101, p001, matId, tempByte, outTris); // -Y
+            EmitQuad(p001, p101, p111, p011, matId, tempByte, outTris); // +Z
+            EmitQuad(p100, p000, p010, p110, matId, tempByte, outTris); // -Z
+            EmitQuad(p101, p100, p110, p111, matId, tempByte, outTris); // +X
+            EmitQuad(p000, p001, p011, p010, matId, tempByte, outTris); // -X
+        }
+
+        private static void EmitRingBand(
+            float y0,
+            float y1,
+            float r0,
+            float r1,
+            int sides,
+            byte matId,
+            byte tempByte,
+            List<FacetedVoxelTriangle> outTris,
+            bool inwardNormal = false,
+            int skipSectorA = -1,
+            int skipSectorB = -1)
+        {
+            for (int i = 0; i < sides; i++)
+            {
+                if (i == skipSectorA || i == skipSectorB) continue;
+                float a0 = (i / (float)sides) * MathF.PI * 2f;
+                float a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
+                float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0);
+                float c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
+
+                SysVec3 b0 = new SysVec3(c0 * r0, y0, s0 * r0);
+                SysVec3 b1 = new SysVec3(c1 * r0, y0, s1 * r0);
+                SysVec3 t1 = new SysVec3(c1 * r1, y1, s1 * r1);
+                SysVec3 t0 = new SysVec3(c0 * r1, y1, s0 * r1);
+
+                if (!inwardNormal)
+                {
+                    EmitQuad(b0, b1, t1, t0, matId, tempByte, outTris);
+                }
+                else
+                {
+                    EmitQuad(b1, b0, t0, t1, matId, tempByte, outTris);
+                }
+            }
+        }
+
+        private static void EmitAnnulusTopCap(
+            float y,
+            float innerR,
+            float outerR,
+            int sides,
+            byte matId,
+            byte tempByte,
+            List<FacetedVoxelTriangle> outTris)
+        {
+            for (int i = 0; i < sides; i++)
+            {
+                float a0 = (i / (float)sides) * MathF.PI * 2f;
+                float a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
+                float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0);
+                float c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
+
+                SysVec3 i0 = new SysVec3(c0 * innerR, y, s0 * innerR);
+                SysVec3 i1 = new SysVec3(c1 * innerR, y, s1 * innerR);
+                SysVec3 o1 = new SysVec3(c1 * outerR, y, s1 * outerR);
+                SysVec3 o0 = new SysVec3(c0 * outerR, y, s0 * outerR);
+                EmitQuad(i0, o0, o1, i1, matId, tempByte, outTris);
+            }
+        }
+
+        private static void EmitCharcoalClampMound(int mode, List<FacetedVoxelTriangle> outTris)
+        {
+            const int sides = 12;
+            if (mode == 3)
+            {
+                // RuinedAsh: cokmus gri-siyah kul yigini
+                EmitRingBand(0.00f, 0.10f, 0.58f, 0.36f, sides, MaterialIdCatalog.Basalt, 0, outTris);
+                EmitRingBand(0.10f, 0.16f, 0.36f, 0.08f, sides, MaterialIdCatalog.Coal, 0, outTris);
+                EmitAnnulusTopCap(0.16f, 0.0f, 0.08f, sides, MaterialIdCatalog.Coal, 0, outTris);
+                return;
+            }
+
+            float hMul = mode == 2 ? 0.86f : 1.0f;
+            byte woodTemp = mode == 1 ? (byte)130 : (byte)0;
+            byte clayCollarTemp = mode == 1 ? (byte)85 : (byte)0;
+            byte coreMat = mode == 1 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Coal;
+            byte coreTemp = mode == 1 ? (byte)230 : (mode == 2 ? (byte)55 : (byte)0);
+
+            // Alttan gorunen 8 radyal yarilmis odun ucu
+            for (int k = 0; k < 8; k++)
+            {
+                float ang = (k / 8f) * MathF.PI * 2f + 0.22f;
+                SysVec3 logPos = new SysVec3(MathF.Cos(ang) * 0.50f, 0.06f, MathF.Sin(ang) * 0.50f);
+                byte logMat = mode == 2 ? MaterialIdCatalog.Coal : MaterialIdCatalog.OakWood;
+                EmitOrientedBox(logPos, new SysVec3(0.055f, 0.048f, 0.15f), logMat, woodTemp, outTris, -ang + MathF.PI * 0.5f);
+            }
+
+            // Toprak + Kil kubbe katmanlari
+            EmitRingBand(0.00f, 0.20f * hMul, 0.62f, 0.50f, sides, MaterialIdCatalog.Dirt, 0, outTris);
+            EmitRingBand(0.20f * hMul, 0.38f * hMul, 0.50f, 0.31f, sides, MaterialIdCatalog.Clay, 0, outTris);
+            EmitRingBand(0.38f * hMul, 0.48f * hMul, 0.31f, 0.17f, sides, MaterialIdCatalog.Clay, clayCollarTemp, outTris);
+
+            // Ust duman bacasi agzi ve ic kor cukuru
+            EmitAnnulusTopCap(0.48f * hMul, 0.11f, 0.17f, sides, MaterialIdCatalog.Clay, clayCollarTemp, outTris);
+            EmitRingBand(0.32f * hMul, 0.48f * hMul, 0.11f, 0.11f, sides, coreMat, coreTemp, outTris, inwardNormal: true);
+            EmitAnnulusTopCap(0.32f * hMul, 0.0f, 0.11f, sides, coreMat, coreTemp, outTris);
+        }
+
+        private static void EmitBloomeryChimneyBody(int thermalTier, List<FacetedVoxelTriangle> outTris)
+        {
+            const int sides = 12;
+            byte lowerClayTemp = thermalTier == 2 ? (byte)125 : (thermalTier == 1 ? (byte)60 : (byte)0);
+            byte upperClayTemp = thermalTier == 2 ? (byte)70 : (byte)0;
+            byte innerMat = thermalTier == 0 ? MaterialIdCatalog.Coal : MaterialIdCatalog.MagmaBlock;
+            byte innerTemp = thermalTier == 2 ? (byte)250 : (thermalTier == 1 ? (byte)175 : (byte)0);
+
+            // 1) Dairesel kaba tas temel (12 tas blok, +Z yonunde on curuf/tikac kemeri acik)
+            for (int i = 0; i < sides; i++)
+            {
+                float ang = ((i + 0.5f) / sides) * MathF.PI * 2f;
+                // +Z ekseni MathF.Sin(ang) > 0.85f (i == 2 veya i == 3 civari: 60..120 derece)
+                bool isFrontArchGap = i == 2 || i == 3;
+                if (isFrontArchGap) continue;
+
+                byte stoneMat = (i & 1) == 0 ? MaterialIdCatalog.Stone : MaterialIdCatalog.Cobblestone;
+                SysVec3 stonePos = new SysVec3(MathF.Cos(ang) * 0.41f, 0.13f, MathF.Sin(ang) * 0.41f);
+                EmitOrientedBox(stonePos, new SysVec3(0.115f, 0.13f, 0.115f), stoneMat, 0, outTris, -ang);
+            }
+
+            // On kemer ustu tas lento kirisi (+Z, y=0.22..0.30)
+            EmitOrientedBox(new SysVec3(0f, 0.25f, 0.39f), new SysVec3(0.18f, 0.045f, 0.085f), MaterialIdCatalog.Cobblestone, lowerClayTemp, outTris);
+            // Yan (+X) kil hava borusu giris bilezigi
+            EmitOrientedBox(new SysVec3(0.39f, 0.16f, 0f), new SysVec3(0.06f, 0.075f, 0.075f), MaterialIdCatalog.Clay, lowerClayTemp, outTris);
+
+            // 2) Daralan silindirik kil baca govdesi (y = 0.24m -> 0.98m)
+            EmitRingBand(0.24f, 0.50f, 0.44f, 0.39f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
+            // Alt kil takviye kusagi
+            EmitRingBand(0.46f, 0.51f, 0.415f, 0.410f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
+            EmitAnnulusTopCap(0.51f, 0.39f, 0.410f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
+
+            EmitRingBand(0.50f, 0.76f, 0.39f, 0.33f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
+            // Ust kil takviye kusagi
+            EmitRingBand(0.72f, 0.77f, 0.355f, 0.350f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
+            EmitAnnulusTopCap(0.77f, 0.33f, 0.350f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
+
+            EmitRingBand(0.76f, 0.98f, 0.33f, 0.28f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
+
+            // 3) Baca agzi kalin dudagi ve ici bos kor Bogaz + alt ocak tabani
+            EmitAnnulusTopCap(0.98f, 0.16f, 0.28f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
+            EmitRingBand(0.32f, 0.98f, 0.18f, 0.16f, sides, innerMat, innerTemp, outTris, inwardNormal: true);
+            EmitAnnulusTopCap(0.32f, 0.0f, 0.18f, sides, innerMat, innerTemp, outTris);
+            // On kemer icinden gorunen alt komur/kor yatagi
+            EmitOrientedBox(new SysVec3(0f, 0.08f, 0.12f), new SysVec3(0.22f, 0.08f, 0.22f), innerMat, innerTemp, outTris);
         }
 
         private static void EmitConeTongue(

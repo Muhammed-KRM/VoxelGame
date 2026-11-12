@@ -1027,7 +1027,19 @@ namespace Stratocraft.Character
                 SpawnDroppedWorldItem(dropWorldPos, mat, shape: 63, count: 1, sharedMat, "Kaba Tas Parçasi");
                 harvestNote = "Yere 1x Kaba Tas Parçasi Dustu (Moloz haric dogrudan blok yapilamaz!)";
             }
-            else if (mat == MaterialIdCatalog.Dirt || mat == MaterialIdCatalog.Grass || mat == MaterialIdCatalog.Sand)
+            else if (mat == MaterialIdCatalog.Clay ||
+                     ((mat == MaterialIdCatalog.Dirt || mat == MaterialIdCatalog.Grass || mat == MaterialIdCatalog.Sand) &&
+                      IsCellNearWater(wx, wy, wz, fluidChunks)))
+            {
+                SpawnDroppedWorldItem(dropWorldPos, MaterialIdCatalog.Clay, shape: 63, count: 1, sharedMat);
+                harvestNote = "Su kiyisindan 1x Kil Topagi Dustu!";
+            }
+            else if (mat == MaterialIdCatalog.Sand)
+            {
+                SpawnDroppedWorldItem(dropWorldPos, MaterialIdCatalog.Sand, shape: 63, count: 1, sharedMat);
+                harvestNote = "Yere 1x Kum Yigini Dustu";
+            }
+            else if (mat == MaterialIdCatalog.Dirt || mat == MaterialIdCatalog.Grass)
             {
                 SpawnDroppedWorldItem(dropWorldPos, MaterialIdCatalog.Dirt, shape: 63, count: 1, sharedMat, "Gevsek Toprak");
                 harvestNote = "Yere 1x Gevsek Toprak Yigini Dustu";
@@ -1638,9 +1650,9 @@ namespace Stratocraft.Character
             HandScoopProgress01 = 0f;
 
             bool nearWater = IsCellNearWater(wx, wy, wz, fluidChunks);
-            InventoryItemKind scoopedKind = mat == MaterialIdCatalog.Sand
-                ? InventoryItemKind.SandPile
-                : ((mat == MaterialIdCatalog.Clay || nearWater) ? InventoryItemKind.ClayLump : InventoryItemKind.LooseDirtClod);
+            InventoryItemKind scoopedKind = (mat == MaterialIdCatalog.Clay || nearWater)
+                ? InventoryItemKind.ClayLump
+                : (mat == MaterialIdCatalog.Sand ? InventoryItemKind.SandPile : InventoryItemKind.LooseDirtClod);
 
             byte curDens = VoxelBitUtility.GetDensityOrLiquid(raw);
             int reduced = (int)curDens - 38;
@@ -1683,20 +1695,20 @@ namespace Stratocraft.Character
         private static bool IsCellNearWater(int wx, int wy, int wz, Dictionary<(int cx, int cz), ushort[]>? fluidChunks)
         {
             if (fluidChunks == null) return false;
-            for (int dy = -1; dy <= 1; dy++)
+            for (int dy = -2; dy <= 2; dy++)
             {
                 int cy = wy + dy;
                 if ((uint)cy >= 255u) continue;
-                for (int dz = -2; dz <= 2; dz++)
+                for (int dz = -4; dz <= 4; dz++)
                 {
-                    for (int dx = -2; dx <= 2; dx++)
+                    for (int dx = -4; dx <= 4; dx++)
                     {
                         int nx = wx + dx, nz = wz + dz;
                         int fcx = FloorDiv16(nx), fcz = FloorDiv16(nz);
                         if (!fluidChunks.TryGetValue((fcx, fcz), out ushort[]? fl) || fl == null) continue;
                         int flx = nx - fcx * 16, flz = nz - fcz * 16;
                         FluidCell16 fc = new FluidCell16(fl[(cy << 8) | (flz << 4) | flx]);
-                        if (fc.Type == FluidType.Water && fc.Mass >= 24) return true;
+                        if (fc.Type == FluidType.Water && fc.Mass >= 16) return true;
                     }
                 }
             }
