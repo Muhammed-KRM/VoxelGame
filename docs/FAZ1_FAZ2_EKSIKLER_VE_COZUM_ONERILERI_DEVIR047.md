@@ -181,26 +181,45 @@
 
 ---
 
+### 15. Sualtına İnildiğinde Su Kütlesi İçinde Görünen Dikey Boşluklar / İç Perde Yüzeyleri *(Ertelendi — İzole Adımda Yapılacak)*
+- **Mevcut Gözlem:** Kıyı şeridinde ve sığ-derin su geçişlerinde kamerayla suyun altına inildiğinde, su hacminin içinde basamaklı dikey mavi perde yüzeyleri ve su içi boşluk şeritleri görünüyor.
+- **Ön Teknik Not (Neden Bakılacak):** `FluidSurfaceSkirtMesher.cs` içindeki kıyı pah/yuvarlatma kenarlarının (`EmitBevelSkirtQuad` — `0.96f` içe çekme) ve farklı `Y` katmanlarındaki komşu sıvı prizmalarının (`EmitSideWallIfExposed` / `HasSameFluidAt`) sualtı kamera açısından iç yüzey (internal face) üretip üretmediği incelenecek.
+- **Güvenlik Kuralı:** Mevcut sonlu akışkan (`FluidSimulation`) ve kıyı eteği (`ShorelineSkirt`) sistemini yanlışlıkla bozmamak için, sualtı boşlukları izole bir adımda ele alınacak.
+
+---
+
+### 16. Kafa Suyun Dışındayken Yüzme Sırasında Oksijenin Tükenmesi (Boğulma Algısı Hatası)
+- **Mevcut Gözlem:** Oyuncu gölde veya denizde su yüzeyinde yüzerken (`CharacterStance.Swimming`), gövdesi suyun içinde fakat kafası ve solunum yolu açık havada olmasına rağmen oksijen seviyesi sualtındaymış gibi düşüyor ve boğulma tehlikesi oluşuyor (`media_1794471731220_ae627583.jpg`).
+- **Ön Teknik Analiz:** `Stage1PlayerMovementBridge.cs` içerisindeki `headWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + 1.45f), 1, 254)` tamsayı voksel hücresi taraması ve `SubmergedDepthMeters` hesabı, yüzey suyunun kesirli yüksekliğini (`bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness`) hesaba katmıyor. Su hücresi içinde `pos.y + 1.45f` hücresi dolu görünse bile suyun gerçek serbest yüzeyi kafanın altındaysa (`headPos.y > visualWaterSurfaceY`) oyuncu açık havada nefes alabilmelidir.
+- **Çözüm Yaklaşımı:** `Stage1PlayerMovementBridge.cs` ve `Stage1InteractivePlayController.cs` içerisinde ağız/burun solunum noktası (`headPos = pos + Vector3.up * 1.55f`) ile hücredeki gerçek akışkan seviyesi (`visualFluidTopY`) analitik olarak karşılaştırılacak; kafa su yüzeyinden yukarıdayken `SubmergedDepthMeters = 0` tutularak açık atmosfer oksijeni (`LungOxygenPercent = 100`) sağlanacak.
+
+---
+
 ## BÖLÜM C — Önerilen Uygulama Sırası (Faz Paketleri)
 
-Bu 15 maddenin birbirini kırmadan, her pakette test edilerek ilerlemesi için **5 ardışık iş paketi** önerilir:
+Bu maddelerin birbirini kırmadan, her pakette test edilerek ilerlemesi için ardışık iş paketleri önerilir:
 
-1. ✅ **Paket 1 — Acil Hata & Arayüz Temizliği (`TAMAMLANDI — Devir #048`):**
+1. ✅ **Paket 1 — Acil Hata & Arayüz Temizliği (`TAMAMLANDI — Devir #048-#049`):**
    - ✅ (#1) Çamur renginin `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` içinde düzeltilmesi (`yeşil/toprak -> koyu kahve çamur`),
    - ✅ (#2) Mağara koridoru ve ağaçlarda yukarı ışınlanma ("asansör hatası") çözümü (`SampleSingleColumnGroundY` üstü açık hava şartı + `TryResolveCeilingHeadBonk` + 360° 8-noktalı kapsül çarpışması),
    - ✅ (#3) Anlık FPS düşüşü (`MaxRuntimeStreamSpawnPerFrame = 3`, `2.2 ms` `Stopwatch` bütçesi, `Task.Run` Ufuk halkası ve tek-geçiş nem yenilemesi) optimizasyonu,
    - ✅ (#4) Stamina tüketimi (`ConsumeStamina` + `0.90s / 1.65s` `StaminaRegenDelaySeconds`) ve `[F4]` stamina kilidi ayrımı düzeltmesi,
    - ✅ (#5) `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` çanta örtüsü dışına sürükleyerek 3B eşyayı yere atma (`Item Drop`) + `[E]` ile geri toplama,
    - ✅ (#9) Önü kapatan 2 bilgi penceresinin taşınması / varsayılan kapalı olup sadece `[F3]` açıkken görünmesi.
-2. ⏳ **Paket 2 — Taş Devri Survival Başlangıcı, İlkel Craft & Madde Kristali Evrimi (`SIRADAKİ PAKET`):**
+2. ✅ **Paket 1.5 (Ara Hata Paketi) — Araziye Gömülme (`Terrain Sinking`) ve Yerin İçinin Görünmesi (`Sub-Chunk Surface Disappearance`) Çözümü (`TAMAMLANDI — Devir #050`):**
+   - ✅ Oyuncu karakterinin (`Standing` ve `ProneCrawling`), canlıların, kopan uzuvların ve yere atılan eşyaların eğimli `SurfaceNets` yamaçlarında toprağın/taşın/kumun içine gömülmesinin engellenmesi (`VoxelSurfaceNetsGroundSampler`),
+   - ✅ Su/nem veya görünürlük maskesi değişiminde birleştirilmiş (`IsConsolidatedFullPass`) uzak chunk'ların yüzey üçgenlerinin silinip yeraltı mağaralarının görünmesi hatasının kalıcı olarak kapatılması (`DistributeConsolidatedTrianglesIntoSubChunks`).
+3. ⏳ **Paket 2 — Taş Devri Survival Başlangıcı, İlkel Craft & Madde Kristali Evrimi (`SIRADAKİ BÜYÜK ÖZELLİK PAKETİ`):**
    - (#6) Yerde Dal / Çakmaktaşı / Lif toplama + Taş Yontma (`Knapping`) + Kumaş/Kütük üstü fiziksel İlkel Alet üretimi + İlkel Taş Ocak,
    - (#7) Madde Kristali `Tier 0 -> Tier 1..5` uyandırma ve yükseltme mekaniği,
    - (#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" modu.
-3. **Paket 3 — Mağara Ekolojisi, Cevher Görünürlüğü ve Lav Katılaşması:**
+   - *(Eklenen Hata Maddesi: #16 Kafa suyun dışındayken yüzerken oksijenin tükenmesi düzeltmesi).*
+4. **Paket 3 — Mağara Ekolojisi, Cevher Görünürlüğü ve Lav Katılaşması:**
    - (#10) Mağara derinlik sıcaklık U-eğrisi (önce soğuk, dipte çok sıcak), soğuk yerde katılaşıp ısı/hasar yayan volkanik lav taşı, nadir yeraltı su gölleri,
    - (#12) 3B çıkıntılı ve metalik damar parıltılı ayırt edici maden/cevher görünümü.
-4. **Paket 4 — Büyük Makro-Biyomlar, Köyler/Şehirler/Harabeler ve Mevsimsel Hava Olayları:**
+5. **Paket 4 — Büyük Makro-Biyomlar, Köyler/Şehirler/Harabeler, Mevsimsel Hava Olayları ve Sualtı Görsel İyileştirme:**
    - (#11) Nadirlik ağırlıklı ve rastgele büyük boyutlu 8+ biyom (Volkan, Kar, Orman, Amazon, Çöl, Okyanus, Sahil, Ada, Uçan Adalar) + Köy/Şehir/Harabe yapıları,
-   - (#14) 4 Mevsim döngüsü ve biyoma göre Yağmur (toprağı çamurlaştıran!) / Kar / Kum Fırtınası / Volkanik Kül.
-5. **Paket 5 — Zengin Canlı Kadrosu (Yüzey + Mağara) ve Kılıçla Bloklanabilir Çoklu Saldırı AI:**
+   - (#14) 4 Mevsim döngüsü ve biyoma göre Yağmur (toprağı çamurlaştıran!) / Kar / Kum Fırtınası / Volkanik Kül,
+   - (#15 — İleri Aşama) Sualtına inildiğinde su kütlesi içinde görünen dikey perde/boşluk yüzeylerinin güvenli şekilde temizlenmesi.
+6. **Paket 5 — Zengin Canlı Kadrosu (Yüzey + Mağara) ve Kılıçla Bloklanabilir Çoklu Saldırı AI:**
    - (#13 & #10'un canlı kısmı) Biyomlara ve mağaralara özgü çeşitli canlılar + her canlıda 3–4 farklı yönden okunabilir ve oyuncunun kılıcıyla bloklayıp saptırabileceği (`Block / MasterDeflect`) saldırı kalıpları.

@@ -31,6 +31,8 @@ namespace Stratocraft.Character
             public UniqueEquipmentInstance Equipment;
             public Vector3 Velocity;
             public float RestGroundY;
+            public Quaternion BaseFlatRotation;
+            public float BottomClearanceY;
             public bool IsSettled;
             public string DisplayName;
         }
@@ -56,6 +58,7 @@ namespace Stratocraft.Character
         private readonly List<FacetedVoxelTriangle> _heldBlockTris = new(64);
         private readonly List<FacetedVoxelTriangle> _matMeshTris = new(160);
         private readonly List<DroppedWorldItemRecord> _droppedWorldItems = new(16);
+        private IReadOnlyDictionary<(int cx, int cz), uint[]>? _lastWorldChunks;
         private readonly Dictionary<int, Mesh> _matItemMeshCache = new(32);
         private readonly HashSet<(int cx, int cz)> _lootedWorldStructureChests = new();
 
@@ -159,8 +162,10 @@ namespace Stratocraft.Character
             ref CharacterMovementState movementState, ref float cameraPitch, ref float pitchBeforeBackpack,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge = null,
-            Stage1StructuralCollapseBridge? collapseBridge = null)
+            Stage1StructuralCollapseBridge? collapseBridge = null,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
+            if (worldChunks != null) _lastWorldChunks = worldChunks;
             HolsterMachine.StepHolster(dt);
 
             float lidAngle = ChestCasSystem.StepLidSpring(dt);
@@ -260,9 +265,9 @@ namespace Stratocraft.Character
                 case InventoryItemKind.WeaponSword:
                     if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
                     {
-                        miningCtrl.LastFeedbackText = "Kilic yere atilmis! [E] ile yerden geri alin.";
-                        ActiveHolsterSlot = 0;
-                        return;
+                        HolsterMachine.AssignHolsterSlot(
+                            HolsterSlotIndex.WaistLeft_Slot1,
+                            new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = Mathf.Clamp01(slot.Durability01 <= 0f ? 1.0f : slot.Durability01) });
                     }
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
                     ActiveHolsterSlot = 1;
@@ -412,7 +417,17 @@ namespace Stratocraft.Character
                     ReadOnlySpan<float> sampleZ = stackalloc float[9] { 0f, -0.75f, -0.75f, 0.75f, 0.75f, -0.75f, 0.75f, 0f, 0f };
                     for (int s = 0; s < 9; s++)
                     {
-                        Vector3 probe = matPos + right * sampleX[s] + fwd * sampleZ[s] + Vector3.up * 2.2f;
+                        Vector3 sampleWorld = matPos + right * sampleX[s] + fwd * sampleZ[s];
+                        if (_lastWorldChunks != null &&
+                            VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                                sampleWorld.x, sampleWorld.z, playerTransform.position.y, 1.95f, _lastWorldChunks,
+                                out float analMatY, out _))
+                        {
+                            maxGroundY = Mathf.Max(maxGroundY, analMatY);
+                            continue;
+                        }
+
+                        Vector3 probe = sampleWorld + Vector3.up * 2.2f;
                         if (UnityEngine.Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 4.5f))
                         {
                             if (!hit.collider.gameObject.name.Contains("Player", StringComparison.OrdinalIgnoreCase) &&
@@ -1355,6 +1370,27 @@ namespace Stratocraft.Character
             ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
         }
 
+        /// <summary>
+        /// Yalnizca oyuncunun kemer [1..9] yuvalarinda gercekten bir Kilic varsa onu eline ceker.
+        /// Envanterde kilic yoksa ASLA yoktan kilic uretmez ve false doner ([G] tusu icin).
+        /// </summary>
+        public bool TryDrawOwnedSwordFromHotbar(Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (IsCarryingShoulderLog) return false;
+            if (!InventoryUi.TrySelectExistingSwordSlot()) return false;
+
+            if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
+            {
+                HolsterMachine.AssignHolsterSlot(
+                    HolsterSlotIndex.WaistLeft_Slot1,
+                    new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f });
+            }
+            HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
+            ActiveHolsterSlot = 1;
+            miningCtrl.IsCrystalActive = false;
+            return true;
+        }
+
         public void ForceDrawSwordSlot1(Stage1MatterCrystalAndMiningController miningCtrl)
         {
             if (IsCarryingShoulderLog) return;
@@ -1984,15 +2020,21 @@ namespace Stratocraft.Character
 
             UpdateHolsterProxyVisibilityAndShadow(
                 _holsteredBeltSwordProxy,
-                shownSlot != 1 && HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid != 0UL,
+                shownSlot != 1 &&
+                InventoryUi.HasItemInHotbar(InventoryItemKind.WeaponSword) &&
+                HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid != 0UL,
                 targetShadowMode);
             UpdateHolsterProxyVisibilityAndShadow(
                 _holsteredBeltPickaxeProxy,
-                shownSlot != 2 && HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistRight_Slot2).InstanceGuid != 0UL,
+                shownSlot != 2 &&
+                InventoryUi.HasItemInHotbar(InventoryItemKind.ToolPickaxe) &&
+                HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistRight_Slot2).InstanceGuid != 0UL,
                 targetShadowMode);
             UpdateHolsterProxyVisibilityAndShadow(
                 _holsteredBackAxeProxy,
-                shownSlot != 3 && HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.BackLeft_Slot3).InstanceGuid != 0UL,
+                shownSlot != 3 &&
+                InventoryUi.HasItemInHotbar(InventoryItemKind.ToolAxe) &&
+                HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.BackLeft_Slot3).InstanceGuid != 0UL,
                 targetShadowMode);
         }
 
@@ -2195,14 +2237,36 @@ namespace Stratocraft.Character
                 InventoryItemKind.VoxelBlock => 3.4f,
                 _ => 2.8f
             };
+            Quaternion flatYawRot = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * baseRot;
             droppedGo.transform.localScale = matScale * worldScaleFactor;
-            droppedGo.transform.rotation = Quaternion.Euler(0f, playerTransform.eulerAngles.y + seq * 23f, 0f) * baseRot;
+            droppedGo.transform.rotation = flatYawRot;
 
             Mesh itemMesh = GetOrCreate3DMatMeshForSlot(in droppedSlot);
             var mf = droppedGo.AddComponent<MeshFilter>();
             mf.sharedMesh = itemMesh;
             var mr = droppedGo.AddComponent<MeshRenderer>();
             if (sharedVoxelMat != null) mr.sharedMaterial = sharedVoxelMat;
+
+            // Olceklenmis ve dondurulmus mesh'in gercek alt sinir yuksekligini (BottomClearanceY) hesapla
+            Bounds localB = itemMesh != null ? itemMesh.bounds : new Bounds(Vector3.zero, Vector3.one);
+            Vector3 scaledExt = Vector3.Scale(localB.extents, droppedGo.transform.localScale);
+            Vector3 rUp = flatYawRot * Vector3.up;
+            Vector3 rRt = flatYawRot * Vector3.right;
+            Vector3 rFw = flatYawRot * Vector3.forward;
+            float rotHalfY = Mathf.Abs(rRt.y) * scaledExt.x + Mathf.Abs(rUp.y) * scaledExt.y + Mathf.Abs(rFw.y) * scaledExt.z;
+            Vector3 rotCenterOffset = flatYawRot * Vector3.Scale(localB.center, droppedGo.transform.localScale);
+            float bottomClearance = Mathf.Max(0.08f, rotHalfY - rotCenterOffset.y + 0.03f);
+
+            if (_lastWorldChunks != null &&
+                VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    landingProbe.x, landingProbe.z, playerTransform.position.y, 2.25f, _lastWorldChunks, out float initSurfY, out _))
+            {
+                groundY = initSurfY + bottomClearance;
+            }
+            else
+            {
+                groundY = playerTransform.position.y + bottomClearance;
+            }
 
             UniqueEquipmentInstance eq = default;
             int origSlot = 4;
@@ -2230,11 +2294,50 @@ namespace Stratocraft.Character
                 Equipment = eq,
                 Velocity = launchVel,
                 RestGroundY = groundY,
+                BaseFlatRotation = flatYawRot,
+                BottomClearanceY = bottomClearance,
                 IsSettled = false,
                 DisplayName = displayName
             });
 
             miningCtrl.LastFeedbackText = $"Yere Atildi: {displayName} x{droppedSlot.Count} -> Yaklasip [E] ile geri alabilirsiniz.";
+        }
+
+        public void DropSlotIntoWorldDirect(
+            in VisualInventorySlot droppedSlot,
+            Transform playerTransform,
+            UnityEngine.Camera? cam,
+            Material? sharedVoxelMat,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
+        {
+            if (worldChunks != null) _lastWorldChunks = worldChunks;
+            SpawnDroppedSlotInWorld(in droppedSlot, playerTransform, cam, sharedVoxelMat, null, miningCtrl);
+        }
+
+        public void StepDroppedItemsForWorld(float dt, IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
+        {
+            if (worldChunks != null) _lastWorldChunks = worldChunks;
+            StepDroppedWorldItemsPhysics(dt);
+        }
+
+        public bool TryGetLastDroppedItemPose(out Vector3 position, out Quaternion rotation, out bool isSettled)
+        {
+            if (_droppedWorldItems.Count > 0)
+            {
+                DroppedWorldItemRecord rec = _droppedWorldItems[_droppedWorldItems.Count - 1];
+                if (rec.VisualObject != null)
+                {
+                    position = rec.VisualObject.transform.position;
+                    rotation = rec.VisualObject.transform.rotation;
+                    isSettled = rec.IsSettled;
+                    return true;
+                }
+            }
+            position = Vector3.zero;
+            rotation = Quaternion.identity;
+            isSettled = false;
+            return false;
         }
 
         private void StepDroppedWorldItemsPhysics(float dt)
@@ -2254,12 +2357,29 @@ namespace Stratocraft.Character
                 rec.Velocity.x *= Mathf.Max(0f, 1f - 2.2f * dt);
                 rec.Velocity.z *= Mathf.Max(0f, 1f - 2.2f * dt);
 
-                Vector3 nextPos = rec.VisualObject.transform.position + rec.Velocity * dt;
+                Vector3 curPos = rec.VisualObject.transform.position;
+                Vector3 nextPos = curPos + rec.Velocity * dt;
+                float clearance = rec.BottomClearanceY > 0.01f ? rec.BottomClearanceY : 0.14f;
+                Vector3 surfNormal = Vector3.up;
+
+                if (_lastWorldChunks != null &&
+                    VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                        nextPos.x, nextPos.z, curPos.y, 2.35f, _lastWorldChunks, out float dynSurfY, out Vector3 dynNormal))
+                {
+                    rec.RestGroundY = dynSurfY + clearance;
+                    surfNormal = dynNormal;
+                }
+
                 if (nextPos.y <= rec.RestGroundY)
                 {
                     nextPos.y = rec.RestGroundY;
                     rec.Velocity = Vector3.zero;
                     rec.IsSettled = true;
+                    if (surfNormal.y >= 0.35f)
+                    {
+                        Quaternion slopeTilt = Quaternion.FromToRotation(Vector3.up, surfNormal);
+                        rec.VisualObject.transform.rotation = slopeTilt * rec.BaseFlatRotation;
+                    }
                 }
                 rec.VisualObject.transform.position = nextPos;
                 _droppedWorldItems[i] = rec;

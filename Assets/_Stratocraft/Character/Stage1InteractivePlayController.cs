@@ -148,6 +148,7 @@ namespace Stratocraft.Character
         private readonly ChunkSubMeshEntry[] _parallelMeshEntries = new ChunkSubMeshEntry[MaxParallelMeshBatch];
         private readonly ushort[] _parallelMeshVisibleMasks = new ushort[MaxParallelMeshBatch];
         private readonly int[] _parallelMeshChebDists = new int[MaxParallelMeshBatch];
+        private readonly List<FacetedVoxelTriangle>[] _parallelSolidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
         private readonly List<FacetedVoxelTriangle>[] _parallelFluidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
         private readonly (int cx, int cz)[] _bgDistantMeshKeys = new (int cx, int cz)[MaxBgDistantMeshBatch];
         private readonly ushort[] _bgDistantMeshVisibleMasks = new ushort[MaxBgDistantMeshBatch];
@@ -1486,7 +1487,8 @@ namespace Stratocraft.Character
                 _holsterCtrl.StepHolsterBackpackAndWorldInteraction(
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
                     swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
-                    ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge, _collapseBridge);
+                    ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge, _collapseBridge,
+                    _worldChunks);
             }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
             _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial, _holsterCtrl, _fluidChunks);
@@ -1594,7 +1596,7 @@ namespace Stratocraft.Character
                 transform, PlayerBodyRoot, PlayerCamera, LeftWristCrystalTransform,
                 in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
                 _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
-                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt);
+                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks);
         }
 
         /// <summary>FPS modunda kask/basi ShadowsOnly yapar, TPS modunda (F5) tam gorunur kilar; eklemli rig kuruldugunda statik kok heykeli gizler.</summary>
@@ -1692,15 +1694,34 @@ namespace Stratocraft.Character
             if ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
                 !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
             {
-                if (_holsterCtrl.ActiveHolsterSlot != 1) _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
-                _combatBridge.CycleMartialStance();
-                _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+                if (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.TryDrawOwnedSwordFromHotbar(_miningCtrl))
+                {
+                    _combatBridge.CycleMartialStance();
+                    _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+                }
+                else
+                {
+                    _miningCtrl.LastFeedbackText = "Dövüş duruşu değiştirmek için elinizde veya kemerinizde [1..9] bir Kılıç olmalı!";
+                }
             }
             if (Input.GetKeyDown(KeyCode.F8))
             {
-                _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
-                _combatBridge.CycleWeaponArchetype(WeaponPivot);
-                _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+                bool hasSwordReady = _holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.TryDrawOwnedSwordFromHotbar(_miningCtrl);
+                if (!hasSwordReady && _holsterCtrl.IsCreativeMode)
+                {
+                    _holsterCtrl.ForceDrawSwordSlot1(_miningCtrl);
+                    hasSwordReady = true;
+                }
+
+                if (hasSwordReady)
+                {
+                    _combatBridge.CycleWeaponArchetype(WeaponPivot);
+                    _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+                }
+                else
+                {
+                    _miningCtrl.LastFeedbackText = "Kılıç türü değiştirmek için elinizde Kılıç olmalı (veya [F4] Yaratıcı Mod açın).";
+                }
             }
             if (Input.GetKeyDown(KeyCode.F10))
             {
@@ -2419,19 +2440,10 @@ namespace Stratocraft.Character
                 bool editedWhileInFlight = _dirtyChunks.Contains(key);
                 if (!editedWhileInFlight || entry.BuiltSubChunkMask == 0)
                 {
-                    int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask
-                        ? 64
-                        : (visibleMask == NearCaveEntranceSubChunksMask ? 48 : 0);
-                    int targetSub = Mathf.Clamp(consolidatedMinY >> 4, 0, SubChunkCountY - 1);
-
-                    for (int s = 0; s < SubChunkCountY; s++)
-                    {
-                        entry.SubChunkTriangles[s].Clear();
-                    }
-                    entry.SubChunkTriangles[targetSub].AddRange(_bgDistantMeshSolidTris[idx]);
+                    DistributeConsolidatedTrianglesIntoSubChunks(_bgDistantMeshSolidTris[idx], entry.SubChunkTriangles);
                     entry.BuiltSubChunkMask = visibleMask;
                     entry.LastAppliedVisibleMask = visibleMask;
-                    entry.IsConsolidatedFullPass = true;
+                    entry.IsConsolidatedFullPass = false;
                     if (!editedWhileInFlight)
                     {
                         entry.DirtySubChunkMask = 0;
@@ -2714,6 +2726,7 @@ namespace Stratocraft.Character
                 {
                     for (int idx = 0; idx < parallelBatchCount; idx++)
                     {
+                        _parallelSolidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(4096);
                         _parallelFluidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(512);
                     }
 
@@ -2734,28 +2747,26 @@ namespace Stratocraft.Character
                         FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
                             key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, fList, minY: consolidatedMinY);
 
-                        for (int s = 0; s < SubChunkCountY; s++)
-                        {
-                            entry.SubChunkTriangles[s].Clear();
-                        }
-
                         if (dist >= 3)
                         {
-                            // Uzak ufuk chunk'larinda (48m..160m) 6 ayri gecis yerine 5x hizli TEK konsolide gecis kullan!
-                            // Oyuncu yaklasip blok kazdiginda veya su doktugunde IsConsolidatedFullPass -> alt-chunk gecisi catlaksiz calisir.
-                            int targetSub = Mathf.Clamp(consolidatedMinY >> 4, 0, SubChunkCountY - 1);
+                            // Uzak ufuk chunk'larinda (48m..160m) 6 ayri gecis yerine 5x hizli TEK konsolide gecis kullan,
+                            // ardindan ucgenleri dogrudan 0..9 alt-chunk sepetlerine dagit ki maske daralmasi veya kismi guncelleme yuzeyi hicbir zaman silmesin!
+                            var sList = _parallelSolidTrisScratch[idx];
+                            sList.Clear();
                             HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
-                                key.cx, key.cz, MaxEditableVoxelY, _worldChunks, entry.SubChunkTriangles[targetSub],
+                                key.cx, key.cz, MaxEditableVoxelY, _worldChunks, sList,
                                 minY: consolidatedMinY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                            DistributeConsolidatedTrianglesIntoSubChunks(sList, entry.SubChunkTriangles);
                             entry.BuiltSubChunkMask = visibleMask;
                             entry.DirtySubChunkMask = 0;
                             entry.LastAppliedVisibleMask = visibleMask;
-                            entry.IsConsolidatedFullPass = true;
+                            entry.IsConsolidatedFullPass = false;
                         }
                         else
                         {
                             for (int s = 0; s < SubChunkCountY; s++)
                             {
+                                entry.SubChunkTriangles[s].Clear();
                                 if ((visibleMask & (1 << s)) == 0) continue;
                                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                                     key.cx, key.cz, (s + 1) * 16, _worldChunks, entry.SubChunkTriangles[s],
@@ -2927,6 +2938,33 @@ namespace Stratocraft.Character
             return true;
         }
 
+        /// <summary>
+        /// Tek geciste (konsolide) uretilen ucgen listesini, kismi alt-chunk gecisiyle (minY = s*16, maxY = (s+1)*16)
+        /// birebir ayni sepetlere (0..SubChunkCountY-1) sifir kayip ve sifir ciftleme ile dagitir.
+        /// </summary>
+        public static void DistributeConsolidatedTrianglesIntoSubChunks(
+            IReadOnlyList<FacetedVoxelTriangle> sourceTris,
+            List<FacetedVoxelTriangle>[] subChunkBuckets)
+        {
+            for (int s = 0; s < SubChunkCountY; s++)
+            {
+                subChunkBuckets[s].Clear();
+            }
+
+            int count = sourceTris.Count;
+            for (int t = 0; t < count; t++)
+            {
+                FacetedVoxelTriangle tri = sourceTris[t];
+                float minVertY = Mathf.Min(tri.V0.Y, Mathf.Min(tri.V1.Y, tri.V2.Y));
+                float maxVertY = Mathf.Max(tri.V0.Y, Mathf.Max(tri.V1.Y, tri.V2.Y));
+                float classifyY = (maxVertY - minVertY < 0.0005f && tri.Normal.Y < -0.1f)
+                    ? (maxVertY + 0.002f)
+                    : (maxVertY - 0.002f);
+                int sIdx = Mathf.Clamp(Mathf.FloorToInt(classifyY) >> 4, 0, SubChunkCountY - 1);
+                subChunkBuckets[sIdx].Add(tri);
+            }
+        }
+
         private Mesh RebuildSingleChunkWithSubMeshCache(
             (int cx, int cz) key,
             MeshFilter mf,
@@ -2968,20 +3006,17 @@ namespace Stratocraft.Character
             else if (dirtyMask == 0 && entry.LastAppliedVisibleMask == visibleMask)
             {
                 dirtyMask = AllSubChunksMask;
+                entry.BuiltSubChunkMask = 0;
             }
-            else if (entry.IsConsolidatedFullPass && dirtyMask != 0 && dirtyMask != AllSubChunksMask)
+            else if (dirtyMask == AllSubChunksMask)
             {
-                // Ilk kez tekil bir voksel kazildiginda/konuldugunda veya toprak islandiginda 10 alt-chunk dilimine ayir:
-                for (int s = 0; s < SubChunkCountY; s++) entry.SubChunkTriangles[s].Clear();
-                dirtyMask = AllSubChunksMask;
-                entry.IsConsolidatedFullPass = false;
+                entry.BuiltSubChunkMask = 0;
             }
 
             if (dirtyMask == AllSubChunksMask && entry.BuiltSubChunkMask == 0)
             {
                 // Yeni akis chunk'i veya komsu sinir guncellemesi: 10 ayri alt-chunk gecisi yerine TEK GECISTE (8x daha hizli) or
-                // ve uretilen ucgenleri dogrudan Y >> 4 alt-chunk dilimlerine dagit; kismi guncelleme gelirse tam dilimlere bol!
-                for (int s = 0; s < SubChunkCountY; s++) entry.SubChunkTriangles[s].Clear();
+                // ve uretilen ucgenleri dogrudan 0..9 alt-chunk dilimlerine birebir sinir eslesmesiyle dagit!
                 _reusableTris.Clear();
                 int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask
                     ? 64
@@ -2989,14 +3024,9 @@ namespace Stratocraft.Character
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                     key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris,
                     minY: consolidatedMinY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
-                for (int t = 0; t < _reusableTris.Count; t++)
-                {
-                    var tri = _reusableTris[t];
-                    int sIdx = Mathf.Clamp(((int)tri.V0.Y) >> 4, 0, SubChunkCountY - 1);
-                    entry.SubChunkTriangles[sIdx].Add(tri);
-                }
+                DistributeConsolidatedTrianglesIntoSubChunks(_reusableTris, entry.SubChunkTriangles);
                 entry.BuiltSubChunkMask = visibleMask;
-                entry.IsConsolidatedFullPass = true;
+                entry.IsConsolidatedFullPass = false;
             }
             else
             {
@@ -3004,7 +3034,12 @@ namespace Stratocraft.Character
                 for (int subY = 0; subY < SubChunkCountY; subY++)
                 {
                     if ((dirtyMask & (1 << subY)) == 0) continue;
-                    if ((visibleMask & (1 << subY)) == 0) continue;
+                    if ((visibleMask & (1 << subY)) == 0)
+                    {
+                        entry.SubChunkTriangles[subY].Clear();
+                        entry.BuiltSubChunkMask &= (ushort)~(1 << subY);
+                        continue;
+                    }
                     var subList = entry.SubChunkTriangles[subY];
                     subList.Clear();
                     int minY = subY * 16;

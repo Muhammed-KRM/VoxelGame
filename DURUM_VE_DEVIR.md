@@ -13,17 +13,42 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#048` (**Paket 1 `6/6` + Sonrası 3 Kritik Düzeltme TAMAMLANDI:** `1)` `SurfaceNets` Gerçek İzo-Yüzey Ayak Hizası (`EyeOffset = 1.660m`, Havada Durma Giderildi), `2)` `0.0000 mm` Sıfır Dikey Titreme/Zıplatma + Diz Hizası (`<= 1.08m`) Tümsek Çıkışı, `3)` Koşarken `16m` Chunk Geçiş Donması Çözümü (`209.3 ms -> Avg 2.27 ms / P95 5.46 ms`, `521.5 MB` SQLite Rotasyonu Dahil) \| **Sırada: Paket 2 (`DOK1..DOK4`)**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-11T18:16:00+03:00` |
+| **Devir Numarası** | `#050` (**Paket 1.5 Araziye Gömülme & Yeryüzü Kaybolma Hataları TAMAMLANDI:** `1)` `VoxelSurfaceNetsGroundSampler` ile Ayakta, Sürünmede, Canlılarda, Uzuvlarda ve `[Q]` Eşyalarında Yamaç İçi Gömülme Çözüldü, `2)` `DistributeConsolidatedTrianglesIntoSubChunks` ile Yeryüzü Meshinin Silinip Yeraltının Görünmesi Hatası Kalıcı Kapatıldı, `3)` Kıyı Tavan Koruması Eklendi \| **Sırada: Paket 2 (`DOK1..DOK4`) + #16 Yüzme Oksijen Düzeltmesi**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-12T11:30:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Devir #048 Tamamlandı: Paket 1 (6/6 Madde + Boy/Titreme/Koşu FPS Düzeltmeleri) Kapatıldı -> Sırada Paket 2 (Taş Devri Survival Başlangıcı, İlkel Zanaat & Madde Kristali Evrimi) 4'lü Dokümantasyonu (DOK1..DOK4)` |
-| **Aktif Test Durumu** | `71/71 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 66/66 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Devir #050 Tamamlandı: Dünyanın Oluşumundaki ve Yeryüzü Görünümündeki Hatalar (Yamaç Gömülmesi + Yeraltı Görünmesi) Kapatıldı -> Sırada Paket 2 (Taş Devri Survival Başlangıcı, İlkel Zanaat & Madde Kristali Evrimi) 4'lü Dokümantasyonu + #16 Yüzerken Oksijen Tükenmesi Düzeltmesi` |
+| **Aktif Test Durumu** | `74/74 Standalone Core Test PASS`, `Unity EditMode Tüm Paket: 69/69 PASS (Devir048..Devir050 Dahil)`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`10/10` 3B Model + `4/4` SVOX Şablonu, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#048`, `#047` & `#046`)
+## 2. Bu Oturumda Tamamlanan Tüm İşler (Devir `#050`, `#049` & `#048`)
+
+### 2.0.0000000. Devir #050 (Paket 1.5 - Ara Hata Paketi): Dünyanın Oluşumundaki ve Yeryüzü Görünümündeki Hataların Çözümü, Yamaç İçi Gömülme & Yeraltı Görünmesi
+
+Kullanıcının gönderdiği çoklu ekran görüntüleri (`media_1794466478562_c1e00bb7.jpg` .. `media_1794467681872_91e4fb2c.jpg`) ve onaylanan 4'lü dokümantasyon seti (`DOK1..DOK4`) doğrultusunda dünya oluşumu ve arazi etkileşimindeki **2 kritik problem grubu** kök nedenleriyle çözülmüştür:
+
+1. **Eğimli `SurfaceNets` Yamaçlarında Karakterin, Eşyaların ve Canlıların Toprağa Gömülmesi Çözümü:**
+   - **`VoxelSurfaceNetsGroundSampler.cs` (Sıfır-GC 3B Analitik Örnekleyici):** Görsel araziyi üreten `HybridSurfaceNetsAndShapeMesher` ile %100 bit-eşdeğer `IsoLevel = 64`, deterministik faset titreşimi, `Face-Solidarity` mimari pinleme ve en kısa köşegen X/Y/Z kenar kuadlarıyla `stackalloc` üzerinde çalışan analitik dikey ışın-üçgen kesişim çözücüsü yazıldı. Mağara tavanı ve ağaç dallarını dışlayan `ceilingCapY` asansör kilidi korundu.
+   - **`Stage1PlayerMovementBridge.cs`:** Dik yamaçlarda karakteri alt sütuna kilitleyip gövdeyi toprağa gömen eski `1.15m` kesmesi kaldırılarak analitik üçgen yüksekliğine geçirildi. Düz çimen ovalarında koşarken `0.00000m` kamera stabilitesi ve duvar dibi `Mantle` algısı korundu.
+   - **`Stage1ArticulatedRigAnimator.cs`:** `ProneCrawling` sürünme modunda 5 noktalı zemin taramasıyla tepe sırtlarında gövdeyi yamaç açısına paralel eğen `_smoothedProneSlopeRot` + dış sırt kaldırması (`_smoothedProneCrestLiftY`) eklendi; yokuş yukarı `Foot-IK` ayak basamak kaldırması `MeshCollider` olmadan analitik örneğe bağlandı.
+   - **`Stage1CreatureSimulationBridge.cs`:** Canlı yaratıkların (`LiveCreatureAgent`) yamaç takibi ve eğim rotasyonu (`Patrol`, `Chase`, `Flee`, `MeleeAttack`, `Companion`) ile kopan uzuvların (`ThrownLimbDebris`) eğimli yüzey normaline paralel yatay yerleşimi sağlandı.
+   - **`Stage1HolsterAndBackpackController.cs` & `Stage1MatterCrystalAndMiningController.cs`:** `[Q]` ile atılan dünya eşyalarının fırlatma anındaki sabit `playerPos.y + 0.14f` yüksekliğine kilitlenmesi kaldırıldı; uçuş boyunca her karede `(x, z)` altındaki gerçek üçgen yüksekliği ve normali hesaplanarak yamaç üstüne oturması sağlandı. `[I]` kumaş çanta matı 9 noktalı zemin taramasına geçirildi.
+
+2. **Yeryüzünün Kaybolup Yeraltı Mağaralarının Görünmesi (ve Kazınca Düzelmesi) Hatasının Çözümü:**
+   - **`Stage1InteractivePlayController.cs`:** Uzak ufuk ve konsolide chunk üretiminde (`dist >= 3`) tüm üçgenlerin tek bir `SubChunkTriangles[targetSub]` sepetine yığılıp `0x03FF -> 0x03F0` görünürlük maskesi daraldığında (`Y >= 86m`) veya `subChunk 4` güncellendiğinde yüzey üçgenlerinin (`Y = 80..160`) silinmesine yol açan mimari kaldırıldı; `DistributeConsolidatedTrianglesIntoSubChunks` ile üçgenler üç üretim yolunun tamamında kendi `0..9` alt-chunk dilimlerine sıfır kayıp/çiftlemeyle dağıtıldı.
+   - **`StratocraftFloatingIslandWorldGen.cs`:** Yüksek yamaçta başlayan doğal mağara girişlerinin göl/deniz kıyısı havzalarında (`topH <= SeaLevelY + 2.5f`) yüzeyi delmesini önleyen tavan koruması eklendi.
+
+3. **Yapılacaklar Listesine Eklenen Yeni Madde:**
+   - **#16 Su Üstünde Yüzerken Oksijenin Tükenmesi:** Yüzme esnasında gövde suda fakat kafa açık havadayken oksijenin düşmesi hatası `FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md` listesine eklendi.
+
+### 2.0.000000. Devir #049 Ek Rötuş: Gerçek Zıplama Yüksekliği (+1.85m), Duvar Önü Mantle ve [G] Tuşu Boş Envanter Kılıç Kilidi
+
+1. **Zıplama İmpulsu ve Normal Zıplama / Mantle Ayrımı (`Stage1PlayerMovementBridge.cs`):**
+   - Düz `SurfaceNets` çimeninde Space tuşuna basıldığında Mantle tetiklenmesi önlendi, tam dikey başlangıç hızı (`6.45 m/s`, `> +1.85m` yükselme) sağlandı; yalnızca önünde gerçek `1.10m..2.25m` çıkıntı ve üzerinde 2 blok açık hava varken Mantle tırmanışı çalıştırıldı.
+2. **[G] Tuşunun Boş Envanterde Yoktan Kılıç Çekmesinin Engellenmesi (`Stage1HolsterAndBackpackController.cs`):**
+   - Envanterde kılıç yokken [G] tuşuna basıldığında yoktan kılıç üretilmesi engellendi; yalnızca oyuncunun gerçekten sahip olduğu kılıç çekilir hale getirildi.
 
 ### 2.0.000000. Devir #048 Ek Rötuş (Final): Karakter Boyu / Havada Durma, `20–30 Hz` Zıplatma Titremesi ve Koşu Sırasında `209 ms` Chunk Geçiş Donması Çözümü
 
@@ -654,7 +679,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Sorun B (Ekran Titremesi / Zıplatma):** `stickToSlope` ve `ResolveVoxelAndColliderDepenetration` tek izo-yüzey düzleminde eşitlendi (`StandJitterMm = 0.0000 mm`); diz hizası (`<= 1.08m`) tümsek/basamak çıkışı ve mağara/ağaç asansör koruması `Devir048` + `Devir048b` testleriyle güvenceye alındı.
 - ✅ **Sorun C (Koşarken Chunk Sınırında FPS Donması):** `[ThreadStatic]` mağara girişi önbelleği + `FastSinLut` + bloklamayan arka plan chunk üretimi (`_pendingStreamSpawnTask`) ve uzak mesh örme (`_pendingDistantMeshTask`) ile `10` chunk sınırı (`161.5m`) koşuda `209.3 ms` takılma -> **`Avg 2.27 ms / P95 5.46 ms`** seviyesine indirildi; `521.5 MB` `telemetry_logs.db` otomatik rotasyona bağlandı (`110 KB`).
 
-### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` Tamamlandı -> Sırada `Paket 2`)
+### 3.3. 5 İş Paketi Genel Durumu (`Paket 1` ve `Paket 1.5` Tamamlandı -> Sırada `Paket 2`)
 
 1. ✅ **Paket 1 — 4 Teknik Hata + Eşya Yere Atma + Ekran Önünü Kapatan 2 Bilgi Penceresi (`6/6 TAMAMLANDI — Devir #048`):**
    - ✅ **(#1) Toprak -> Çamur Rengi Görünmeme Hatası:** `EmitDualQuadAsFacetedTriangles` + `StratocraftUberShader.hlsl` ile koyu çamur kahvesi ve ıslak parlaklık doğrulandı.
@@ -663,18 +688,14 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
    - ✅ **(#4) Staminanın Sınırsız Gibi Olması:** `[F4]` stamina kilidi kaldırıldı; `0.90s / 1.65s` yenilenme gecikmesi ve tüm efor/kazı maliyetleri bağlandı.
    - ✅ **(#5) Eşyayı Yere Atma (`Item Drop`):** `[Q]` (`1` adet), `[Ctrl+Q]` (tüm yığın) ve `[I]` 3B kumaş örtü dışına sürükle-bırak + `[E]` ile yığın birleştirmeli geri toplama eklendi.
    - ✅ **(#9) Önü Kapatan 2 Bilgi Etiketi:** `_showDebugHudText = false` varsayılan yapıldı; orta ekran `"Hedef:..."` kutusu ve çanta üstü çakışan şerit kaldırılıp yalnızca `[F3]` moduna bağlandı.
-2. ⏳ **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde — SIRADAKİ PAKET`):**
+2. ✅ **Paket 1.5 — Araziye Gömülme & Yeryüzü Meshinin Silinip Yeraltının Görünmesi Çözümü (`TAMAMLANDI — Devir #050`):**
+   - ✅ **Yamaç İçi Gömülme (`Standing`, `ProneCrawling`, Canlılar, Kopan Uzuvlar, `[Q]` Eşyaları ve `[I]` Çanta Matı):** `VoxelSurfaceNetsGroundSampler.cs` sıfır-GC 3B analitik raycast motoruyla tam GPU üçgen hizalaması sağlandı.
+   - ✅ **Yeryüzünün Kaybolup Mağaraların Görünmesi (ve Kazınca Düzelmesi):** `DistributeConsolidatedTrianglesIntoSubChunks` ile uzak ve konsolide chunk üretiminde üçgenlerin tek sepete yığılması kaldırıldı; 0..9 alt-chunk dilimlerine birebir dağıtılarak `0x03FF -> 0x03F0` maske daralması ve kısmi güncellemeler güvenceye alındı; kıyı şeridi tavan delinmesi engellendi.
+3. ⏳ **Paket 2 — Ağaç Yumruklamadan Taş Devri Survival Başlangıcı, İlkel Zanaat ve Madde Kristali (`3 Madde — SIRADAKİ BÜYÜK PAKET`):**
    - **(#6) Fiziksel Taş Devri Zanaatı:** Yerden `[E]` ile Çakmaktaşı + Kuru Dal + Bitki Lifi toplama -> Taşı taşa vurarak **Taş Yontma (`Stone Knapping`)** -> Kumaş örtü / kütük üstü fiziksel birleştirmeyle **İlkel Taş Balta, Taş Kazma, Bıçak, Kova ve İlkel Taş Ocak** (ilerideki `16x32x4` Demircilik ve Marangozluk atölyelerinin doğrudan ilkel atası).
    - **(#7) Madde Kristali Seviye Yükseltme (`Tier 0 -> Tier 1..5`):** Rezonans Kuvarsı ile `Tier 0 -> 1` ilk uyanış; Boss Çekirdekleri / Kadim Zindan Sunağı ile `Tier 2..5` evrimi.
    - **(#8) Madde Kristali "Doğal Dairesel Arazi Serpme (`Natural Scatter`)" Modu:** Bakılan yönde dairesel organik `SurfaceNets` arazi örme fırçası.
-3. **Paket 3 — Mağara Derinlik Sıcaklığı, Katılaşan Sıcak Lav, Yeraltı Gölleri ve Cevher Görünürlüğü (`2 Ana Grup`):**
-   - **(#10) Mağara Fizik Ekolojisi:** Nadir yeraltı su gölleri (`%12–%18`), derine indikçe önce soğuyan ama çekirdeğe yaklaştıkça aşırı ısınan U-eğrisi ve sıcak olmayan bölgelerde katılaşıp ısı + temas hasarı yayan volkanik lav kayası.
-   - **(#12) Ayırt Edici Maden/Cevher Görünümü:** 3B cevher yumru/kristal çıkıntıları + `0 B` VRAM metalik damar parıltısı.
-4. **Paket 4 — Rastgele Büyük Makro-Biyomlar, Köy/Şehir/Harabeler ve Mevsimsel Hava Olayları (`2 Ana Grup`):**
-   - **(#11) Büyük Makro-Biyomlar & Yapılar:** Nadirlik ağırlıklı (`Orman > Amazon / Çöl / Okyanus-Sahil-Ada > Kar / Uçan Adalar > Volkan`) `350m–1400m` rastgele boyutlu biyomlar + Köyler, Şehirler, Harabeler.
-   - **(#14) Mevsim Döngüsü & Hava Olayları:** 4 Mevsim + biyoma göre Yağmur (toprağı ıslatıp çamurlaştıran), Kar, Kum Fırtınası, Volkanik Kül.
-5. **Paket 5 — Zengin Canlı Kadrosu (Yüzey + Mağara) ve Kılıçla Bloklanabilir Çoklu Saldırı AI (`2 Madde`):**
-   - **(#13 & Mağara Canlıları):** Biyom ve mağaralara özgü canlı türleri + her canlıda 3–4 farklı yönden okunabilir, oyuncunun kılıcıyla bloklayıp saptırabileceği (`Block / MasterDeflect`) saldırı kalıpları.
+   - *(Ek Madde #16: Kafa suyun dışındayken yüzerken oksijenin tükenmesi düzeltmesi).*
 
 ---
 
@@ -713,14 +734,16 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
    - Yeni sohbete başlar başlamaz `DURUM_VE_DEVIR.md` dosyasını oku.
-   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #048` durumuyla eşleştiğini doğrula.
+   - `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun `Devir #050` durumuyla eşleştiğini doğrula.
 
-2. **Adım 2 — Kullanıcı Test Onayı ve `Paket 2` 4'lü Dokümantasyon Seti (`DOK1..DOK4`):**
-   - Kullanıcının `Devir #048` düzeltmelerini (boy hizası, sıfır titreme, koşu FPS akıcılığı ve diz hizası tümsek çıkışı) canlı test etmesinin ardından [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Paket 2** maddeleri (*Ağaç Yumruklamadan Taş Devri Survival Başlangıcı & Taş Yontma/Fiziksel İlkel Craft `#6`, Madde Kristali `Tier 0 -> 1..5` Uyandırma/Yükseltme `#7` ve Doğal Dairesel Arazi Serpme `#8`*) için birbirine üstten linkli **`DOK1..DOK4`** doküman setini hazırla ve kullanıcı onayına sun.
+2. **Adım 2 — Paket 2 Dokümantasyon Seti (`DOK1..DOK4`) veya #16 Oksijen Düzeltmesi:**
+   - Kullanıcının tercihine göre:
+     - Ya [`docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md`](docs/FAZ1_FAZ2_EKSIKLER_VE_COZUM_ONERILERI_DEVIR047.md) içindeki **Madde 16** (su yüzeyinde yüzerken kafanın açık havada nefes alabilmesi / boğulma algısı düzeltmesi) hızlıca kodlanır,
+     - Ya da doğrudan **Paket 2** (*Ağaç Yumruklamadan Taş Devri Survival Başlangıcı & Taş Yontma/Fiziksel İlkel Craft `#6`, Madde Kristali `Tier 0 -> 1..5` Uyandırma/Yükseltme `#7` ve Doğal Dairesel Arazi Serpme `#8`*) için birbirine üstten linkli **`DOK1..DOK4`** doküman seti hazırlanıp kullanıcı onayına sunulur.
 
 3. **Adım 3 — Test, Derleme ve Mimari Kuralları:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`71/71 PASS`).
-   - Unity EditMode Testleri: `66/66 PASS`.
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`74/74 PASS`).
+   - Unity EditMode Testleri: `69/69 PASS (Devir048..Devir050 Dahil)`.
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (UberShader ve doku atlası kuralı).
    - GC Bütçesi: `0 B/kare` (çalışma zamanında sıfır heap tahsisi).

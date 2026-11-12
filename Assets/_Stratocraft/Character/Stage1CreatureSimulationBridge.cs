@@ -731,8 +731,8 @@ namespace Stratocraft.Character
                     a.State = CreatureAiState.AggroChase;
                     Vector3 next = a.Root.position + flatDir * (a.BaseSpeed * a.SpeedMultiplier * dt);
                     float targetY = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
-                    if (targetY - a.Root.position.y > 1.25f) targetY = a.Root.position.y;
-                    next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 8.5f);
+                    if (targetY - a.Root.position.y > 1.65f) targetY = a.Root.position.y;
+                    next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 10.5f);
                     a.Root.position = next;
                 }
                 else if (a.AttackCooldown <= 0f)
@@ -743,7 +743,7 @@ namespace Stratocraft.Character
                     targetHostile.CurrentHp = Mathf.Max(0f, targetHostile.CurrentHp - dmg);
                     if (targetHostile.CurrentHp <= 0f) HandleCreatureZeroHp(targetHostile, sharedMat);
                 }
-                a.Root.rotation = Quaternion.Euler(0f, Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg, 0f);
+                a.Root.rotation = ComputeSlopeAlignedCreatureRotation(a.Root.position, Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg, 0f, 0f, worldChunks);
                 return;
             }
 
@@ -753,10 +753,10 @@ namespace Stratocraft.Character
                 Vector3 toP = new Vector3(playerPos.x - a.Root.position.x, 0f, playerPos.z - a.Root.position.z).normalized;
                 Vector3 next = a.Root.position + toP * (a.BaseSpeed * a.SpeedMultiplier * dt);
                 float targetY = SampleVoxelOrTerrainHeight(next.x, next.z, a.Root.position.y, worldChunks);
-                if (targetY - a.Root.position.y > 1.25f) targetY = a.Root.position.y;
-                next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 8.5f);
+                if (targetY - a.Root.position.y > 1.65f) targetY = a.Root.position.y;
+                next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 10.5f);
                 a.Root.position = next;
-                a.Root.rotation = Quaternion.Euler(0f, Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg, 0f);
+                a.Root.rotation = ComputeSlopeAlignedCreatureRotation(next, Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg, 0f, 0f, worldChunks);
             }
         }
 
@@ -806,15 +806,15 @@ namespace Stratocraft.Character
             float curY = a.Root.position.y;
             Vector3 nextPos = a.AnchorPos + new Vector3(Mathf.Sin(t) * radiusX, 0f, Mathf.Cos(t) * radiusZ);
             float patrolTargetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, curY, worldChunks);
-            if (patrolTargetY - curY > 1.25f) patrolTargetY = curY;
-            nextPos.y = Mathf.MoveTowards(curY, patrolTargetY, 0.12f);
+            if (patrolTargetY - curY > 1.65f) patrolTargetY = curY;
+            nextPos.y = Mathf.MoveTowards(curY, patrolTargetY, 0.22f);
             a.Root.position = nextPos;
 
             Vector3 moveDir = new Vector3(Mathf.Cos(t) * radiusX, 0f, -Mathf.Sin(t) * radiusZ);
             float moveYaw = Mathf.Atan2(moveDir.x, moveDir.z) * Mathf.Rad2Deg;
             float pitch = a.LegSevered ? 32f : Mathf.Abs(Mathf.Sin(t * 3.5f)) * 7f;
             float roll = a.LegSevered ? Mathf.Sin(t * 6f) * 14f : Mathf.Sin(t * 3.5f) * 4f;
-            a.Root.rotation = Quaternion.Euler(pitch, moveYaw, roll);
+            a.Root.rotation = ComputeSlopeAlignedCreatureRotation(nextPos, moveYaw, pitch, roll, worldChunks);
         }
 
         private void StepAggroAgent(
@@ -851,20 +851,20 @@ namespace Stratocraft.Character
 
                 Vector3 fleePos = pos - flatDir * (woundedFleeSpeed * deltaTime);
                 float fleeTargetY = SampleStandableHeight(a, fleePos.x, fleePos.z, pos.y, worldChunks, out _);
-                if (fleeTargetY - pos.y <= 1.25f)
+                if (fleeTargetY - pos.y <= 1.65f)
                 {
-                    fleePos.y = Mathf.MoveTowards(pos.y, fleeTargetY, deltaTime * 8.5f);
+                    fleePos.y = Mathf.MoveTowards(pos.y, fleeTargetY, deltaTime * 11.5f);
                 }
                 else
                 {
                     fleePos = pos + new Vector3(-flatDir.z, 0f, flatDir.x) * (woundedFleeSpeed * deltaTime);
                     float sideTargetY = SampleStandableHeight(a, fleePos.x, fleePos.z, pos.y, worldChunks, out _);
-                    fleePos.y = sideTargetY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, sideTargetY, deltaTime * 8.5f) : pos.y;
+                    fleePos.y = sideTargetY - pos.y <= 1.65f ? Mathf.MoveTowards(pos.y, sideTargetY, deltaTime * 11.5f) : pos.y;
                 }
                 a.Root.position = fleePos;
                 float fleeYaw = Mathf.Atan2(-flatDir.x, -flatDir.z) * Mathf.Rad2Deg;
                 float limpRoll = Mathf.Sin(time * 5.5f + a.PhaseOffset) * (a.LegSevered ? 18f : 10f);
-                a.Root.rotation = Quaternion.Euler(a.LegSevered ? 34f : 12f, fleeYaw, limpRoll);
+                a.Root.rotation = ComputeSlopeAlignedCreatureRotation(fleePos, fleeYaw, a.LegSevered ? 34f : 12f, limpRoll, worldChunks);
                 return;
             }
 
@@ -897,9 +897,9 @@ namespace Stratocraft.Character
                         targetY = SampleStandableHeight(a, nextPos.x, nextPos.z, pos.y, worldChunks, out _);
                     }
 
-                    if (targetY - pos.y <= 1.25f)
+                    if (targetY - pos.y <= 1.65f)
                     {
-                        nextPos.y = Mathf.MoveTowards(pos.y, targetY, deltaTime * 6.5f);
+                        nextPos.y = Mathf.MoveTowards(pos.y, targetY, deltaTime * 11.5f);
                         pos = nextPos;
                     }
                     else
@@ -912,13 +912,16 @@ namespace Stratocraft.Character
                         Vector3 detourDir = TryComputeAStarDetourDirection(a, pos, playerPos, worldChunks, boidsSep);
                         Vector3 detourPos = pos + detourDir * (chaseStep * 0.85f);
                         float detourY = SampleStandableHeight(a, detourPos.x, detourPos.z, pos.y, worldChunks, out _);
-                        detourPos.y = detourY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, detourY, deltaTime * 6.5f) : pos.y;
+                        detourPos.y = detourY - pos.y <= 1.65f ? Mathf.MoveTowards(pos.y, detourY, deltaTime * 11.5f) : pos.y;
                         pos = detourPos;
                     }
                 }
                 a.Root.position = pos;
                 float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
-                a.Root.rotation = Quaternion.Euler(a.LegSevered ? 32f : Mathf.Sin(time * 8f) * 6f, targetYaw, 0f);
+                float chasePitch = a.LegSevered ? 32f : Mathf.Sin(time * 8f) * 6f;
+                a.Root.rotation = flying
+                    ? Quaternion.Euler(chasePitch, targetYaw, 0f)
+                    : ComputeSlopeAlignedCreatureRotation(pos, targetYaw, chasePitch, 0f, worldChunks);
             }
             else if (vertDelta >= 2.1f && (a.Capabilities & AnatomyCapabilityFlags.VoxelSiegeBreaker) != 0)
             {
@@ -959,7 +962,7 @@ namespace Stratocraft.Character
                 else
                 {
                     float meleeTargetY = SampleStandableHeight(a, meleePos.x, meleePos.z, pos.y, worldChunks, out _);
-                    meleePos.y = meleeTargetY - pos.y <= 1.25f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 8.5f) : pos.y;
+                    meleePos.y = meleeTargetY - pos.y <= 1.72f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 12.5f) : pos.y;
                 }
                 a.Root.position = meleePos;
 
@@ -995,7 +998,10 @@ namespace Stratocraft.Character
 
                 float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
                 float combatPitch = a.AttackCooldown > 0.88f ? -12f : (a.LegSevered ? 32f : Mathf.Sin(time * 6f) * 6f);
-                a.Root.rotation = Quaternion.Euler(combatPitch, targetYaw, 0f);
+                bool flyingMelee = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
+                a.Root.rotation = flyingMelee
+                    ? Quaternion.Euler(combatPitch, targetYaw, 0f)
+                    : ComputeSlopeAlignedCreatureRotation(meleePos, targetYaw, combatPitch, 0f, worldChunks);
             }
         }
 
@@ -1659,7 +1665,20 @@ namespace Stratocraft.Character
 
                 d.Velocity.y -= 14.5f * dt;
                 Vector3 nextPos = d.Transform.position + d.Velocity * dt;
-                float groundY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks) + 0.12f;
+                Vector3 surfNormal = Vector3.up;
+                float surfY = VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    nextPos.x, nextPos.z, nextPos.y, 1.95f, worldChunks, out float exactY, out Vector3 exactN)
+                    ? exactY
+                    : SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks);
+                if (exactN.sqrMagnitude > 0.1f) surfNormal = exactN;
+
+                Vector3 sc = d.Transform.localScale;
+                Vector3 up = d.Transform.up;
+                Vector3 rt = d.Transform.right;
+                Vector3 fw = d.Transform.forward;
+                float halfExtY = 0.5f * (Mathf.Abs(up.y) * sc.y + Mathf.Abs(rt.y) * sc.x + Mathf.Abs(fw.y) * sc.z);
+                float groundY = surfY + Mathf.Max(0.08f, halfExtY);
+
                 if (nextPos.y <= groundY)
                 {
                     nextPos.y = groundY;
@@ -1667,10 +1686,22 @@ namespace Stratocraft.Character
                     d.Velocity.x *= 0.55f;
                     d.Velocity.z *= 0.55f;
                     d.AngularVelocityDeg *= 0.45f;
-                    if (d.Velocity.sqrMagnitude < 0.08f) d.RestTimer = 0f;
+                    if (d.Velocity.sqrMagnitude < 0.14f)
+                    {
+                        // Yerde duran kopmus uzvu yamaca paralel yatay yatir ki yarisina kadar dik saplanmis gorunmesin!
+                        Quaternion flatOnSlope = Quaternion.FromToRotation(Vector3.up, surfNormal) *
+                                                 Quaternion.Euler(sc.y > sc.z ? 90f : 0f, d.Transform.eulerAngles.y, 0f);
+                        d.Transform.rotation = flatOnSlope;
+                        float settledHalfY = 0.5f * Mathf.Min(sc.x, Mathf.Min(sc.y, sc.z));
+                        nextPos.y = surfY + Mathf.Max(0.08f, settledHalfY + 0.02f);
+                        d.RestTimer = 0f;
+                    }
                 }
                 d.Transform.position = nextPos;
-                d.Transform.Rotate(d.AngularVelocityDeg * dt, Space.Self);
+                if (d.RestTimer > 0f)
+                {
+                    d.Transform.Rotate(d.AngularVelocityDeg * dt, Space.Self);
+                }
             }
         }
 
@@ -2124,9 +2155,46 @@ namespace Stratocraft.Character
 
         private static int s_voxelTerrainMask = -1;
 
+        private static Quaternion ComputeSlopeAlignedCreatureRotation(
+            Vector3 worldPos, float yawDeg, float animPitchDeg, float animRollDeg,
+            Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            Quaternion baseRot = Quaternion.Euler(animPitchDeg, yawDeg, animRollDeg);
+            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    worldPos.x, worldPos.z, worldPos.y, 1.85f, worldChunks, out _, out Vector3 surfNormal) &&
+                surfNormal.y >= 0.42f)
+            {
+                Vector3 dampedNormal = Vector3.Slerp(Vector3.up, surfNormal, 0.78f).normalized;
+                return Quaternion.FromToRotation(Vector3.up, dampedNormal) * baseRot;
+            }
+            return baseRot;
+        }
+
         private static float SampleVoxelOrTerrainHeight(
             float worldX, float worldZ, float currentY, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
+            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    worldX, worldZ, currentY, 2.25f, worldChunks, out float exactCenterY, out Vector3 centerNormal))
+            {
+                float bestFootY = exactCenterY;
+                const float r = 0.24f;
+                System.ReadOnlySpan<float> ox = stackalloc float[4] { r, -r, 0f, 0f };
+                System.ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, r, -r };
+                for (int i = 0; i < 4; i++)
+                {
+                    if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                            worldX + ox[i], worldZ + oz[i], exactCenterY, 0.75f, worldChunks, out float rimY, out Vector3 rimN))
+                    {
+                        float rise = rimY - exactCenterY;
+                        if (rise > 0f && rise <= 0.44f && rimN.y >= 0.44f && rimY > bestFootY)
+                        {
+                            bestFootY = rimY;
+                        }
+                    }
+                }
+                return Mathf.Lerp(exactCenterY, bestFootY, centerNormal.y < 0.94f ? 0.70f : 0.30f);
+            }
+
             int wx = Mathf.FloorToInt(worldX), wz = Mathf.FloorToInt(worldZ);
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - cx * 16, lz = wz - cz * 16;

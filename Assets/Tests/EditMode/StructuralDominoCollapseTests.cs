@@ -1073,5 +1073,423 @@ namespace Stratocraft.Tests.EditMode
                 "Baslangic kitasindaki dogal magara girisi onbellek sonrasinda da %100 korunmalidir!");
 #endif
         }
+
+        [Test]
+        public void Devir049_JumpOnSurfaceNetsGrassReachesFullHeight_AndGKeyDoesNotConjureSwordWhenEmpty()
+        {
+#if UNITY_EDITOR || UNITY_STANDALONE
+            // 1) Duz SurfaceNets cimen zemini (y=96 Grass density 72 -> gercek yuzey ~96.13m) uzerinde Space basildiginda
+            //    yanlislikla 0.45m Mantle'a girmemeli; tam dikey hizla (~6.45 m/s) > +1.85m yukseklige ziplamalidir!
+            uint[] voxels = new uint[16 * 256 * 16];
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    for (int y = 1; y <= 95; y++)
+                    {
+                        voxels[(y << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.Dirt, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                    }
+                    voxels[(96 << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Grass, 72, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+            }
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = voxels };
+            var fluidChunks = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = new ushort[65536] };
+            var dirtyFluids = new HashSet<(int cx, int cz)>();
+            var activeFluids = new HashSet<(int cx, int cz)>();
+
+            var playerGo = new UnityEngine.GameObject("Devir049_JumpAndSwordPlayer");
+            try
+            {
+                var bridge = new Stage1PlayerMovementBridge();
+                float grassY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(worldChunks, 8.5f, 6.5f, refY: 96.2f);
+                bridge.SetSafeSpawnPosition(new UnityEngine.Vector3(8.5f, grassY, 6.5f));
+                playerGo.transform.position = new UnityEngine.Vector3(8.5f, grassY + 0.05f, 6.5f);
+
+                string feedback;
+                for (int w = 0; w < 10; w++)
+                {
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, UnityEngine.Vector2.zero,
+                        false, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                }
+
+                float startY = playerGo.transform.position.y;
+
+                // Oldugu yerde (moveInput = 0,0) Space basildiginda tam ziplama!
+                bridge.StepCharacterPhysics(
+                    playerGo.transform, worldChunks, UnityEngine.Vector2.zero,
+                    false, false, false, true, false, 0f, 1f / 60f, out feedback,
+                    fluidChunks, null, dirtyFluids, activeFluids);
+
+                Assert.That(bridge.IsMantling, Is.False,
+                    "Duz SurfaceNets cimeninde oldugu yerde Space basildiginda asla Mantle devreye girmemelidir!");
+                Assert.That(bridge.VerticalVelocity, Is.GreaterThan(6.0f),
+                    "Normal ziplama tam dikey baslangic hizini (~6.45 m/s) almalidir!");
+
+                float peakStandingJumpY = playerGo.transform.position.y;
+                for (int f = 0; f < 50; f++)
+                {
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, UnityEngine.Vector2.zero,
+                        false, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                    if (playerGo.transform.position.y > peakStandingJumpY)
+                    {
+                        peakStandingJumpY = playerGo.transform.position.y;
+                    }
+                }
+
+                Assert.That(peakStandingJumpY - startY, Is.GreaterThan(1.85f),
+                    $"Karakter duz cimende zipladiginda en az +1.85m yukselmelidir (olculen: +{peakStandingJumpY - startY:F3}m)!");
+
+                // Tekrar yere inmesini bekle, sonra ileri kosarken (moveInput = 0,1) Space basildiginda da tam ziplama!
+                for (int f = 0; f < 45; f++)
+                {
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, new UnityEngine.Vector2(0f, 1f),
+                        true, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                }
+
+                bridge.StepCharacterPhysics(
+                    playerGo.transform, worldChunks, new UnityEngine.Vector2(0f, 1f),
+                    true, false, false, true, false, 0f, 1f / 60f, out feedback,
+                    fluidChunks, null, dirtyFluids, activeFluids);
+
+                Assert.That(bridge.IsMantling, Is.False,
+                    "Onunde gercek duvar yokken kosarak Space basildiginda da Mantle tetiklenmemelidir!");
+                Assert.That(bridge.VerticalVelocity, Is.GreaterThan(6.0f),
+                    "Kosarak ziplama da tam dikey baslangic hizini (~6.45 m/s) almalidir!");
+
+                // 2) Gercek 2 blokluk (~1.87m) duvara dogru ileri basili Space yapildiginda Mantle calismaya devam etmelidir!
+                for (int f = 0; f < 90; f++)
+                {
+                    bridge.StepCharacterPhysics(
+                        playerGo.transform, worldChunks, UnityEngine.Vector2.zero,
+                        false, false, false, false, false, 0f, 1f / 60f, out feedback,
+                        fluidChunks, null, dirtyFluids, activeFluids);
+                }
+                playerGo.transform.position = new UnityEngine.Vector3(8.5f, grassY, 8.25f);
+                playerGo.transform.rotation = UnityEngine.Quaternion.identity; // +Z ileri
+                for (int lx = 7; lx <= 10; lx++)
+                {
+                    voxels[(97 << 8) | (9 << 4) | lx] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.StoneBrick, 127, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+                bridge.StepCharacterPhysics(
+                    playerGo.transform, worldChunks, new UnityEngine.Vector2(0f, 1f),
+                    false, false, false, true, false, 0f, 1f / 60f, out feedback,
+                    fluidChunks, null, dirtyFluids, activeFluids);
+
+                Assert.That(bridge.IsMantling, Is.True,
+                    "1.87m yuksekligindeki gercek cikintiya ileri yuruyerek Space basildiginda 2.2m Mantle tirmanisi calismalidir!");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(playerGo);
+            }
+
+            // 3) [G] tusu / TryDrawOwnedSwordFromHotbar: Envanter bosken ASLA yoktan kilic uretmemelidir!
+            var holsterCtrl = new Stage1HolsterAndBackpackController();
+            var miningCtrl = new Stage1MatterCrystalAndMiningController();
+            Assert.That(holsterCtrl.InventoryUi.HasItemInHotbar(InventoryItemKind.WeaponSword), Is.False);
+
+            bool drewWhenEmpty = holsterCtrl.TryDrawOwnedSwordFromHotbar(miningCtrl);
+            Assert.That(drewWhenEmpty, Is.False,
+                "Envanter bosken TryDrawOwnedSwordFromHotbar false donmeli, yoktan kilic cekmemelidir!");
+            Assert.That(holsterCtrl.ActiveHolsterSlot, Is.EqualTo(0),
+                "Envanter bosken el bos (ActiveHolsterSlot == 0) kalmalidir!");
+            for (int s = 0; s < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; s++)
+            {
+                Assert.That(holsterCtrl.InventoryUi.HotbarSlots[s].IsEmpty, Is.True,
+                    $"Envanter bosken G tusu HotbarSlots[{s}] yuvasina sahte kilic yazmamalidir!");
+            }
+
+            // Gercekten kemere (ornegin yuva 4'e) kilic konuldugunda ise TryDrawOwnedSwordFromHotbar onu secmeli ve cekmelidir!
+            holsterCtrl.InventoryUi.HotbarSlots[3] = new VisualInventorySlot
+            {
+                Kind = InventoryItemKind.WeaponSword,
+                SubId = 0,
+                Count = 1,
+                Durability01 = 1.0f
+            };
+            bool drewWhenOwned = holsterCtrl.TryDrawOwnedSwordFromHotbar(miningCtrl);
+            Assert.That(drewWhenOwned, Is.True);
+            Assert.That(holsterCtrl.ActiveHolsterSlot, Is.EqualTo(1));
+            Assert.That(holsterCtrl.InventoryUi.SelectedHotbarIndex, Is.EqualTo(3));
+#endif
+        }
+
+        [Test]
+        public void Devir050_SteepSurfaceNetsSlope_SamplerPlayerAndDroppedItemMatchVisualTriangle()
+        {
+            // lx < 8 icin y = 94 ( ~94.5m yuzey ), lx >= 8 icin y = 96 ( ~96.5m yuzey, > 1.15m dik SurfaceNets yamaci )
+            uint[] voxels = new uint[16 * 256 * 16];
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    int colTop = lx < 8 ? 94 : 96;
+                    for (int y = 0; y <= colTop; y++)
+                    {
+                        byte density = y == colTop ? (byte)(lx == 7 ? 92 : 112) : VoxelBitUtility.FullDensity;
+                        voxels[(y << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.Dirt, density, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                    }
+                }
+            }
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = voxels };
+            var gpuTriangles = new List<FacetedVoxelTriangle>(4096);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(0, 0, 112, worldChunks, gpuTriangles, minY: 80);
+            Assert.That(gpuTriangles.Count, Is.GreaterThan(64));
+
+            // 1) Yamac gecis bandindaki (x = 6.6 .. 9.4, z = 7.2 .. 8.8) kesirli noktalarda
+            // VoxelSurfaceNetsGroundSampler, GPU uzerinde cizilen FacetedVoxelTriangle yuksekligiyle < 0.01m hatayla eslesmelidir!
+            int matchedSamples = 0;
+            for (int iz = 0; iz < 4; iz++)
+            {
+                float wz = 7.23f + iz * 0.47f;
+                for (int ix = 0; ix < 8; ix++)
+                {
+                    float wx = 6.65f + ix * 0.37f;
+                    float expectedTriY = RaycastTopTriangleAtXz(gpuTriangles, wx, wz);
+                    Assert.That(expectedTriY, Is.GreaterThan(93.0f), $"GPU mesh uzerinde ({wx:F2},{wz:F2}) noktasinda ucgen bulunamadi!");
+
+                    bool ok = VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormalNumerics(
+                        wx, wz, referenceFootY: 94.6f, maxSearchUpAboveRef: 3.0f, worldChunks,
+                        out float sampledY, out Vector3 sampledNormal);
+
+                    Assert.That(ok, Is.True);
+                    Assert.That(System.MathF.Abs(sampledY - expectedTriY), Is.LessThan(0.015f),
+                        $"({wx:F2},{wz:F2}) noktasinda analitik SurfaceNets ornekleyici ({sampledY:F4}) GPU ucgeninden ({expectedTriY:F4}) sapti!");
+                    Assert.That(sampledNormal.Y, Is.GreaterThan(0.15f));
+                    matchedSamples++;
+                }
+            }
+            Assert.That(matchedSamples, Is.EqualTo(32));
+
+            // 2) Magara tavani / agac dali "asansor hatasi" kilidi: Bas ustune (y = 99..100) tavan konuldugunda yukari isinlanmamali!
+            for (int lz = 6; lz <= 10; lz++)
+            {
+                for (int lx = 5; lx <= 10; lx++)
+                {
+                    voxels[(99 << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                    voxels[(100 << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                        MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                }
+            }
+
+            bool okUnderRoof = VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormalNumerics(
+                7.85f, 8.15f, referenceFootY: 94.8f, maxSearchUpAboveRef: 8.0f, worldChunks,
+                out float floorUnderRoofY, out _);
+            Assert.That(okUnderRoof, Is.True);
+            Assert.That(floorUnderRoofY, Is.LessThan(97.2f),
+                "Magara tavani altindayken zemin ornekleyici y=100 tavanina ziplatmamalidir!");
+
+#if UNITY_5_3_OR_NEWER
+            // Tavan bloklarini kaldirip dik yamacta oyuncu ve [Q] firlatilan esya davranisini dogrula:
+            for (int lz = 6; lz <= 10; lz++)
+            {
+                for (int lx = 5; lx <= 10; lx++)
+                {
+                    voxels[(99 << 8) | (lz << 4) | lx] = 0u;
+                    voxels[(100 << 8) | (lz << 4) | lx] = 0u;
+                }
+            }
+
+            float slopeMidTriY = RaycastTopTriangleAtXz(gpuTriangles, 7.85f, 8.15f);
+            float playerSampledY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(
+                worldChunks, 7.85f, 8.15f, 94.8f);
+            Assert.That(playerSampledY, Is.GreaterThanOrEqualTo(slopeMidTriY - 0.03f),
+                $"Dik SurfaceNets yamacinda oyuncu zemin yuksekligi ({playerSampledY:F3}) gorsel ucgenin ({slopeMidTriY:F3}) altina gomulmemelidir!");
+
+            // [Q] ile alcak taraftan (x=7.45, y~95.4, +X bakisli) yuksek yamaca (x>8.2, y~96.5) firlatilan esya
+            // eski kodda playerPos.y + 0.14 seviyesinde yerin ~1.1m altina gomuluyordu; artik yuzeyin ustune oturmalidir!
+            var tempPlayerGo = new UnityEngine.GameObject("TempDevir050DropThrower");
+            try
+            {
+                tempPlayerGo.transform.position = new UnityEngine.Vector3(7.45f, 95.35f, 8.0f);
+                tempPlayerGo.transform.rotation = UnityEngine.Quaternion.Euler(0f, 90f, 0f); // +X yonune bak
+
+                var holsterCtrl = new Stage1HolsterAndBackpackController();
+                var miningCtrl = new Stage1MatterCrystalAndMiningController();
+                var dropSlot = new VisualInventorySlot
+                {
+                    Kind = InventoryItemKind.WeaponSword,
+                    SubId = 0,
+                    Count = 1,
+                    Durability01 = 1.0f
+                };
+                holsterCtrl.DropSlotIntoWorldDirect(
+                    in dropSlot, tempPlayerGo.transform, null, null, miningCtrl, worldChunks);
+
+                for (int f = 0; f < 90; f++)
+                {
+                    holsterCtrl.StepDroppedItemsForWorld(1f / 60f, worldChunks);
+                }
+
+                bool gotDropPose = holsterCtrl.TryGetLastDroppedItemPose(
+                    out UnityEngine.Vector3 dropPos, out _, out bool isSettled);
+                Assert.That(gotDropPose, Is.True);
+                Assert.That(isSettled, Is.True);
+                float uphillTriY = RaycastTopTriangleAtXz(gpuTriangles, dropPos.x, dropPos.z);
+                Assert.That(dropPos.x, Is.GreaterThan(8.1f), "Firlatilan esya yuksek yamac tarafina (lx >= 8) ulasmalidir!");
+                Assert.That(dropPos.y, Is.GreaterThanOrEqualTo(uphillTriY + 0.01f),
+                    $"[Q] ile yokus yukari atilan esya ({dropPos.y:F3}) yuksek yamac ucgeninin ({uphillTriY:F3}) icine gomulmemelidir!");
+            }
+            finally
+            {
+                var spawnedDropGo = UnityEngine.GameObject.Find("DroppedWorldItem_WeaponSword_0");
+                if (spawnedDropGo != null) UnityEngine.Object.DestroyImmediate(spawnedDropGo);
+                UnityEngine.Object.DestroyImmediate(tempPlayerGo);
+            }
+#endif
+        }
+
+        [Test]
+        public void Devir050_ConsolidatedDistantChunk_MaskNarrowingAndSubChunk4Dirty_NeverWipesSurfaceTriangles()
+        {
+#if UNITY_5_3_OR_NEWER
+            // Y = 52..76 arasinda yeralti magara boslugu (subChunk 3..4) + Y = 90..97 arasinda tepelik yuzey (subChunk 5..6)
+            // + Y = 95..96 alt-chunk sinirinda mimari blok iceren 3x3 komsulu test dunyasi olustur:
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>();
+            for (int cz = -1; cz <= 1; cz++)
+            {
+                for (int cx = -1; cx <= 1; cx++)
+                {
+                    uint[] vox = new uint[16 * 256 * 16];
+                    for (int lz = 0; lz < 16; lz++)
+                    {
+                        for (int lx = 0; lx < 16; lx++)
+                        {
+                            int surfaceTop = 91 + ((lx + lz) % 6); // 91..96 (subChunk 5 ve 6 sinirini keser!)
+                            for (int y = 0; y <= surfaceTop; y++)
+                            {
+                                // Y = 56..74 arasinda magara boslugu (subChunk 3 ve subChunk 4 icinde ucgen uretir)
+                                if (lx >= 4 && lx <= 11 && lz >= 4 && lz <= 11 && y >= 56 && y <= 74)
+                                {
+                                    continue;
+                                }
+                                byte mat = y >= surfaceTop - 1 ? MaterialIdCatalog.Dirt : MaterialIdCatalog.Stone;
+                                vox[(y << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                                    mat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                            }
+                        }
+                    }
+
+                    if (cx == 0 && cz == 0)
+                    {
+                        // Alt-chunk 5 -> 6 sinirinda (y = 95 ve y = 96) mimari sekil blogu:
+                        vox[(95 << 8) | (3 << 4) | 3] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.StoneBrick, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.OyuncuItemBlogu, 0);
+                        vox[(96 << 8) | (3 << 4) | 3] = VoxelBitUtility.PackStandard(
+                            MaterialIdCatalog.StoneBrick, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.OyuncuItemBlogu, 0);
+                    }
+
+                    worldChunks[(cx, cz)] = vox;
+                }
+            }
+
+            // Referans: 10 alt-chunk dilimini tek tek uret
+            var referenceBuckets = new List<FacetedVoxelTriangle>[Stage1InteractivePlayController.SubChunkCountY];
+            var consolidatedBuckets = new List<FacetedVoxelTriangle>[Stage1InteractivePlayController.SubChunkCountY];
+            for (int s = 0; s < Stage1InteractivePlayController.SubChunkCountY; s++)
+            {
+                referenceBuckets[s] = new List<FacetedVoxelTriangle>(512);
+                consolidatedBuckets[s] = new List<FacetedVoxelTriangle>(512);
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    0, 0, (s + 1) * 16, worldChunks, referenceBuckets[s], minY: s * 16);
+            }
+
+            // Konsolide tek gecis (0x03FF -> minY = 0..160) uret ve alt-chunk sepetlerine dagit:
+            var consolidatedAll = new List<FacetedVoxelTriangle>(4096);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                0, 0, 160, worldChunks, consolidatedAll, minY: 0);
+            Stage1InteractivePlayController.DistributeConsolidatedTrianglesIntoSubChunks(consolidatedAll, consolidatedBuckets);
+
+            for (int s = 0; s < Stage1InteractivePlayController.SubChunkCountY; s++)
+            {
+                Assert.That(consolidatedBuckets[s].Count, Is.EqualTo(referenceBuckets[s].Count),
+                    $"Sub-chunk {s} (Y={s * 16}..{(s + 1) * 16}) ucgen sayisi kismi gecisle birebir ayni olmalidir (sifir kayip / sifir ciftleme)!");
+            }
+
+            int expectedSurfaceTris = consolidatedBuckets[5].Count + consolidatedBuckets[6].Count;
+            Assert.That(expectedSurfaceTris, Is.GreaterThan(200), "Test chunk'i Y=80..112 araliginda yuzey ucgenleri icermelidir!");
+
+            // SENARYO 1 (Fotograflardaki ana hata): Oyuncu Y >= 86m yukseklige ciktiginda visibleMask 0x03FF -> 0x03F0 daralir.
+            // Eski kodda tum ucgenler SubChunkTriangles[0]'a yigildigi icin 0x03F0 maskesi 0 ucgen uretip yeryuzunu yok ediyordu!
+            UnityEngine.Mesh narrowedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshFromSubChunksZeroGc(
+                consolidatedBuckets,
+                Stage1InteractivePlayController.SurfaceAndUpperCaveSubChunksMask,
+                "TestNarrowedChunk_0_0",
+                null,
+                out int narrowedTriCount,
+                out _);
+            try
+            {
+                int expectedVisibleTris = 0;
+                for (int s = 4; s < Stage1InteractivePlayController.SubChunkCountY; s++)
+                {
+                    expectedVisibleTris += consolidatedBuckets[s].Count;
+                }
+                Assert.That(narrowedTriCount, Is.EqualTo(expectedVisibleTris),
+                    "0x03FF -> 0x03F0 maske daralmasinda yuzey ucgenlerinin tamami korunmalidir!");
+                Assert.That((int)narrowedMesh.GetIndexCount(0), Is.EqualTo(expectedVisibleTris * 3));
+
+                // SENARYO 2: Yalnizca subChunk 4 (Y=64..80 magara tavani / nem degisimi) kismi olarak yeniden oruldugunde
+                // subChunk 5..9 yuzey ucgenleri ASLA silinmemelidir!
+                consolidatedBuckets[4].Clear();
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    0, 0, 80, worldChunks, consolidatedBuckets[4], minY: 64);
+
+                HybridSurfaceNetsAndShapeMesher.BuildUnityMeshFromSubChunksZeroGc(
+                    consolidatedBuckets,
+                    Stage1InteractivePlayController.SurfaceAndUpperCaveSubChunksMask,
+                    "TestNarrowedChunk_0_0",
+                    narrowedMesh,
+                    out int afterSub4PartialTriCount,
+                    out _);
+
+                Assert.That(afterSub4PartialTriCount, Is.EqualTo(expectedVisibleTris),
+                    "Sub-chunk 4 kismi guncellemesi sonrasi Y=80..160 yuzey ucgenleri eksiksiz kalmalidir!");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(narrowedMesh);
+            }
+#endif
+        }
+
+        private static float RaycastTopTriangleAtXz(List<FacetedVoxelTriangle> tris, float wx, float wz)
+        {
+            float bestY = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FacetedVoxelTriangle t = tris[i];
+                if (t.Normal.Y <= 0.06f) continue;
+
+                float ax = t.V0.X, az = t.V0.Z;
+                float bx = t.V1.X, bz = t.V1.Z;
+                float cx = t.V2.X, cz = t.V2.Z;
+                float denom = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+                if (System.MathF.Abs(denom) < 1e-6f) continue;
+
+                float w0 = ((bz - cz) * (wx - cx) + (cx - bx) * (wz - cz)) / denom;
+                float w1 = ((cz - az) * (wx - cx) + (ax - cx) * (wz - cz)) / denom;
+                float w2 = 1.0f - w0 - w1;
+                if (w0 >= -0.0005f && w1 >= -0.0005f && w2 >= -0.0005f)
+                {
+                    float hitY = w0 * t.V0.Y + w1 * t.V1.Y + w2 * t.V2.Y;
+                    if (hitY > bestY) bestY = hitY;
+                }
+            }
+            return bestY;
+        }
     }
 }

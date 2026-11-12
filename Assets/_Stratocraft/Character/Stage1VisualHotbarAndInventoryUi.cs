@@ -654,17 +654,61 @@ namespace Stratocraft.Character
             UpdateSelectedFluidContainerUnits(fluidSubId, fluidSubId == 0 ? 0 : maxU);
         }
 
-        /// <summary>Kilic slotunu bulup secer (F8/F10/G kisayollari icin).</summary>
-        public void SelectSwordSlotOrFirst()
+        /// <summary>Kemer [1..9] yuvalarinda belirtilen turden en az 1 esya olup olmadigini kontrol eder.</summary>
+        public bool HasItemInHotbar(InventoryItemKind kind)
         {
             for (int i = 0; i < HotbarSlotCount; i++)
             {
-                if (HotbarSlots[i].Kind == InventoryItemKind.WeaponSword)
+                if (!HotbarSlots[i].IsEmpty && HotbarSlots[i].Kind == kind)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Kemer [1..9] yuvalarinda oyuncunun gercekten sahip oldugu bir Kilic varsa onu secer ve true doner;
+        /// yoksa ASLA yoktan kilic uretmez ve false doner ([G] dovus durusu tusu icin).
+        /// </summary>
+        public bool TrySelectExistingSwordSlot()
+        {
+            if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount &&
+                !HotbarSlots[SelectedHotbarIndex].IsEmpty &&
+                HotbarSlots[SelectedHotbarIndex].Kind == InventoryItemKind.WeaponSword)
+            {
+                return true;
+            }
+
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                if (!HotbarSlots[i].IsEmpty && HotbarSlots[i].Kind == InventoryItemKind.WeaponSword)
                 {
                     SelectedHotbarIndex = i;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Kilic slotunu bulup secer; yoksa ilk bos yuvaya test kilici yerlestirir (yalnizca F10 Duello Arenasi / Yaratici F8 test kisayollari icin).</summary>
+        public void SelectSwordSlotOrFirst()
+        {
+            if (TrySelectExistingSwordSlot())
+            {
+                return;
+            }
+
+            for (int e = 0; e < HotbarSlotCount; e++)
+            {
+                if (HotbarSlots[e].IsEmpty)
+                {
+                    HotbarSlots[e] = new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1.0f };
+                    SelectedHotbarIndex = e;
                     return;
                 }
             }
+
             HotbarSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 0, Count = 1, Durability01 = 1.0f };
             SelectedHotbarIndex = 0;
         }

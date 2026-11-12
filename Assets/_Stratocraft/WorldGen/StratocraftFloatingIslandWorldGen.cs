@@ -689,6 +689,12 @@ namespace Stratocraft.WorldGen.Generators
 
             if (!colInfo.InTunnelSpan) return;
 
+            // Kiyi seridi / gol tabani tavan korumasi: Yuksek yamacta baslayan magara tunelinin su baseni altinda tavan delmesini engelle
+            if (colInfo.Along > 3.5f && topH <= SeaLevelY + 2.5f && y > topH - 3.2f)
+            {
+                return;
+            }
+
             float ly = y - colInfo.FloorY;
             if (ly >= 0f && ly <= colInfo.ArchH)
             {

@@ -50,6 +50,8 @@ namespace Stratocraft.Character
         private Transform? _headCounterPitchPivot;
         private float _smoothedLeftFootIkLift;
         private float _smoothedRightFootIkLift;
+        private Quaternion _smoothedProneSlopeRot = Quaternion.identity;
+        private float _smoothedProneCrestLiftY;
         private bool _shadowModeInitialized;
         private bool _lastFirstPersonShadowState;
         private bool _lastProneShadowState;
@@ -88,7 +90,8 @@ namespace Stratocraft.Character
             float weaponSwingPitchRad,
             float weaponThrustExtensionMeters,
             Material? sharedVoxelMat,
-            float deltaTime)
+            float deltaTime,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
             float horizontalSpeed = Mathf.Sqrt(
                 movementState.VelocityX * movementState.VelocityX +
@@ -156,9 +159,20 @@ namespace Stratocraft.Character
                     : 0f;
                 float strideYawTwist = horizontalSpeed > 0.12f ? Mathf.Sin(_locomotionCyclePhase) * 6.0f : 0f;
 
-                // Kok dugum daima y=0 (zemin yuzeyi) seviyesinde sabit kalir; asla negatif y ile yerin icine girmez!
-                bodyTr.localPosition = Vector3.zero;
-                bodyTr.localRotation = Quaternion.identity;
+                // Surunme (ProneCrawling) sirasinda govdeyi arazi egim normaline (Pitch/Roll) hizala
+                // ve tumsek/agac dibi tepelerinde on/arka uclarin topraga girmesini engelleyen yukseklik zarfini uygula!
+                Quaternion targetSlopeRot = Quaternion.identity;
+                float targetCrestLiftY = 0f;
+                if (isProne && movementState.IsGrounded != 0 && worldChunks != null)
+                {
+                    ComputeProneTerrainAlignment(playerRoot, worldChunks, out targetSlopeRot, out targetCrestLiftY);
+                }
+                float slopeBlend = Mathf.Clamp01(deltaTime * 11f);
+                _smoothedProneSlopeRot = Quaternion.Slerp(_smoothedProneSlopeRot, targetSlopeRot, slopeBlend);
+                _smoothedProneCrestLiftY = Mathf.Lerp(_smoothedProneCrestLiftY, targetCrestLiftY, slopeBlend);
+
+                bodyTr.localPosition = new Vector3(0f, Mathf.Max(0f, _smoothedProneCrestLiftY), 0f);
+                bodyTr.localRotation = _smoothedProneSlopeRot;
                 bodyTr.localScale = Vector3.one;
 
                 if (_pelvisRootPivot != null)
@@ -181,7 +195,8 @@ namespace Stratocraft.Character
                     weaponSwingPitchRad,
                     weaponThrustExtensionMeters,
                     isMatterCrystalActive,
-                    deltaTime);
+                    deltaTime,
+                    worldChunks);
             }
 
             UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg);
@@ -565,8 +580,84 @@ namespace Stratocraft.Character
             return pivot.transform;
         }
 
-        private static float SampleGroundFootStepLift(Transform playerRoot, float sideOffsetX)
+        private static void ComputeProneTerrainAlignment(
+            Transform playerRoot,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
+            out Quaternion localSlopeRotation,
+            out float crestLiftY)
         {
+            Vector3 rootPos = playerRoot.position;
+            Vector3 fwd = Vector3.ProjectOnPlane(playerRoot.forward, Vector3.up);
+            if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.forward;
+            fwd.Normalize();
+            Vector3 right = Vector3.Cross(Vector3.up, fwd).normalized;
+
+            float hC = rootPos.y;
+            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(rootPos.x, rootPos.z, rootPos.y, 1.35f, worldChunks, out float sampledC, out _))
+            {
+                hC = sampledC;
+            }
+
+            float hF = SampleClampedPronePoint(rootPos + fwd * 0.56f, hC, 1.10f, worldChunks);
+            float hB = SampleClampedPronePoint(rootPos - fwd * 0.56f, hC, 1.10f, worldChunks);
+            float hL = SampleClampedPronePoint(rootPos - right * 0.22f, hC, 0.55f, worldChunks);
+            float hR = SampleClampedPronePoint(rootPos + right * 0.22f, hC, 0.55f, worldChunks);
+
+            float pitchSlope = Mathf.Clamp((hF - hB) / 1.12f, -0.78f, 0.78f);
+            float rollSlope = Mathf.Clamp((hR - hL) / 0.44f, -0.58f, 0.58f);
+
+            Vector3 localFwd = new Vector3(0f, pitchSlope, 1f).normalized;
+            Vector3 localRight = new Vector3(1f, rollSlope, 0f).normalized;
+            Vector3 localUp = Vector3.Cross(localFwd, localRight);
+            if (localUp.sqrMagnitude < 1e-4f) localUp = Vector3.up;
+            localUp.Normalize();
+
+            localSlopeRotation = Quaternion.LookRotation(localFwd, localUp);
+
+            // Bas/omuz (+0.78m) ve diz/bot (-0.78m) uc noktalarinin hicbir tumsekte topragin altina girmemesi icin zarf kaldirmasi
+            float hFarF = SampleClampedPronePoint(rootPos + fwd * 0.78f, hC, 1.25f, worldChunks);
+            float hFarB = SampleClampedPronePoint(rootPos - fwd * 0.78f, hC, 1.25f, worldChunks);
+            Vector3 rotFront = localSlopeRotation * new Vector3(0f, 0.24f, 0.78f);
+            Vector3 rotBack = localSlopeRotation * new Vector3(0f, 0.24f, -0.78f);
+            float predWorldFrontY = rootPos.y + rotFront.y;
+            float predWorldBackY = rootPos.y + rotBack.y;
+
+            float reqFront = (hFarF + 0.16f) - predWorldFrontY;
+            float reqBack = (hFarB + 0.16f) - predWorldBackY;
+            float reqCenter = (hC + 0.02f) - rootPos.y;
+            crestLiftY = Mathf.Clamp(Mathf.Max(0f, Mathf.Max(reqCenter, Mathf.Max(reqFront, reqBack))), 0f, 0.68f);
+        }
+
+        private static float SampleClampedPronePoint(
+            Vector3 probePos,
+            float refCenterY,
+            float maxDelta,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    probePos.x, probePos.z, refCenterY, maxDelta + 0.35f, worldChunks, out float h, out Vector3 n) &&
+                n.y >= 0.38f &&
+                Mathf.Abs(h - refCenterY) <= maxDelta)
+            {
+                return h;
+            }
+            return refCenterY;
+        }
+
+        private static float SampleGroundFootStepLift(
+            Transform playerRoot,
+            float sideOffsetX,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
+        {
+            Vector3 probeWorld = playerRoot.TransformPoint(new Vector3(sideOffsetX, 0f, 0.08f));
+            if (worldChunks != null &&
+                VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    probeWorld.x, probeWorld.z, playerRoot.position.y, 0.95f, worldChunks, out float exactFootY, out Vector3 n) &&
+                n.y >= 0.42f)
+            {
+                return Mathf.Clamp(exactFootY - playerRoot.position.y, -0.10f, 0.34f);
+            }
+
             Vector3 rayOrigin = playerRoot.TransformPoint(new Vector3(sideOffsetX, 0.70f, 0.08f));
             if (UnityEngine.Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 1.15f))
             {
@@ -585,7 +676,8 @@ namespace Stratocraft.Character
             float weaponSwingPitchRad,
             float weaponThrustExtensionMeters,
             bool isCrystalActive,
-            float deltaTime)
+            float deltaTime,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
         {
             CharacterStance stance = movementState.Stance;
             bool isClimbing = stance == CharacterStance.Climbing;
@@ -594,9 +686,9 @@ namespace Stratocraft.Character
             float strideSwingDeg = (speed > 0.12f || isClimbing) ? Mathf.Sin(_locomotionCyclePhase) * (isClimbing ? 36f : 26f) : 0f;
             float halfKnee = _smoothedKneeFlexDeg * 0.5f;
 
-            // Zemin Egim/Basamak Foot-IK (Ayaklarin yokus ve basamaklarda havada kalmasini onler)
-            float targetLeftLift = (movementState.IsGrounded != 0 && !isProne && !isSliding) ? SampleGroundFootStepLift(playerRoot, -0.16f) : 0f;
-            float targetRightLift = (movementState.IsGrounded != 0 && !isProne && !isSliding) ? SampleGroundFootStepLift(playerRoot, 0.16f) : 0f;
+            // Zemin Egim/Basamak Foot-IK (Ayaklarin yokus ve basamaklarda havada veya topragin icinde kalmasini onler)
+            float targetLeftLift = (movementState.IsGrounded != 0 && !isProne && !isSliding) ? SampleGroundFootStepLift(playerRoot, -0.16f, worldChunks) : 0f;
+            float targetRightLift = (movementState.IsGrounded != 0 && !isProne && !isSliding) ? SampleGroundFootStepLift(playerRoot, 0.16f, worldChunks) : 0f;
             float ikBlend = Mathf.Clamp01(deltaTime * 14f);
             _smoothedLeftFootIkLift = Mathf.Lerp(_smoothedLeftFootIkLift, targetLeftLift, ikBlend);
             _smoothedRightFootIkLift = Mathf.Lerp(_smoothedRightFootIkLift, targetRightLift, ikBlend);

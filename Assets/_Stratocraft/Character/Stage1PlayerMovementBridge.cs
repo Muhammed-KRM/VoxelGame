@@ -7,6 +7,7 @@ using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
+using Stratocraft.Voxel.Jobs;
 #if UNITY_5_3_OR_NEWER
 using UnityEngine;
 #endif
@@ -295,7 +296,7 @@ namespace Stratocraft.Character
             _coyoteGroundedTimer = grounded ? 0.16f : Mathf.Max(0f, _coyoteGroundedTimer - deltaTime);
             _movementState.IsGrounded = grounded ? (byte)1 : (byte)0;
 
-            bool hasLedgeAhead = DetectClimbableLedgeAhead(playerTransform, worldChunks, out float ledgeTopY);
+            bool hasLedgeAhead = DetectClimbableLedgeAhead(playerTransform, worldChunks, moveInput, out float ledgeTopY);
             Vector3 forwardFlat = Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up).normalized;
             Vector3 rightFlat = Vector3.ProjectOnPlane(playerTransform.right, Vector3.up).normalized;
             Vector3 wishDir = forwardFlat * moveInput.y + rightFlat * moveInput.x;
@@ -866,18 +867,26 @@ namespace Stratocraft.Character
             if (_jumpLaunchTimer > 0.001f || _verticalVelocity > 0.05f) return;
 
             Vector3 pos = playerTransform.position;
-            float supportY = SampleSupportGroundHeight(worldChunks, pos);
-            if (pos.y < supportY - 0.005f && (supportY - pos.y) <= MaxKneeStepUpMeters)
+            bool wasGroundedOrCoyote = _movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f;
+            if (wasGroundedOrCoyote)
             {
-                float burialDepth = supportY - pos.y;
-                pos.y = burialDepth <= 0.18f
-                    ? supportY
-                    : Mathf.MoveTowards(pos.y, supportY, 0.35f);
-                if (_verticalVelocity < 0f) _verticalVelocity = 0f;
-                _movementState.IsGrounded = 1;
-                _coyoteGroundedTimer = 0.16f;
-                playerTransform.position = pos;
-                return;
+                float supportY = SampleSupportGroundHeight(worldChunks, pos);
+                float maxSafeRecovery = !IsHardCollisionVoxel(ReadWorldVoxelRaw(
+                        worldChunks, Mathf.FloorToInt(pos.x), Mathf.FloorToInt(supportY + 1.55f), Mathf.FloorToInt(pos.z)))
+                    ? 1.72f
+                    : MaxKneeStepUpMeters;
+                if (pos.y < supportY - 0.005f && (supportY - pos.y) <= maxSafeRecovery)
+                {
+                    float burialDepth = supportY - pos.y;
+                    pos.y = burialDepth <= 0.24f
+                        ? supportY
+                        : Mathf.MoveTowards(pos.y, supportY, 0.42f);
+                    if (_verticalVelocity < 0f) _verticalVelocity = 0f;
+                    _movementState.IsGrounded = 1;
+                    _coyoteGroundedTimer = 0.16f;
+                    playerTransform.position = pos;
+                    return;
+                }
             }
 
             // Yalnizca oyuncunun ayak bilegi kati blok icinde gercekten gomulduyse (orn. altina blok koyma / kum dusmesi)
@@ -1024,23 +1033,68 @@ namespace Stratocraft.Character
         }
 
         private static bool DetectClimbableLedgeAhead(
-            Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks, out float ledgeTopY)
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector2 moveInput,
+            out float ledgeTopY)
         {
-            Vector3 probe = playerTransform.position + Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up).normalized * 0.85f;
-            int px = Mathf.FloorToInt(probe.x), pz = Mathf.FloorToInt(probe.z), baseWy = Mathf.FloorToInt(playerTransform.position.y + 0.5f);
-            for (int y = baseWy + 2; y >= baseWy; y--)
+            Vector3 pos = playerTransform.position;
+            ledgeTopY = pos.y;
+
+            // Oldugu yerde, yana veya geri giderken Space basildiginda ASLA tırmanma (Mantle) devreye girip normal ziplamayi ezmez!
+            if (moveInput.y <= 0.15f)
             {
-                uint raw = ReadWorldVoxelRaw(worldChunks, px, y, pz);
-                uint aboveRaw = ReadWorldVoxelRaw(worldChunks, px, y + 1, pz);
-                if (IsHardCollisionVoxel(raw) &&
-                    !IsHardCollisionVoxel(aboveRaw) &&
-                    !IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, px, y + 2, pz)))
+                return false;
+            }
+
+            // Oyuncunun kendi basinin hemen ustunde alcak tavan varsa yukari tirmanamaz
+            if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, Mathf.FloorToInt(pos.x), Mathf.FloorToInt(pos.y + 1.95f), Mathf.FloorToInt(pos.z))))
+            {
+                return false;
+            }
+
+            Vector3 fwd = Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up).normalized;
+            int minWy = Mathf.Max(1, Mathf.FloorToInt(pos.y + 0.95f));
+            int maxWy = Mathf.Min(Stage1InteractivePlayController.MaxEditableVoxelY - 4, Mathf.FloorToInt(pos.y + 2.30f));
+
+            for (int stepIdx = 0; stepIdx < 2; stepIdx++)
+            {
+                float probeDist = stepIdx == 0 ? 0.55f : 0.85f;
+                Vector3 probe = pos + fwd * probeDist;
+                int px = Mathf.FloorToInt(probe.x);
+                int pz = Mathf.FloorToInt(probe.z);
+
+                for (int y = maxWy; y >= minWy; y--)
                 {
-                    ledgeTopY = GetVoxelWalkableTopY(raw, aboveRaw, y);
-                    return true;
+                    uint raw = ReadWorldVoxelRaw(worldChunks, px, y, pz);
+                    if (!IsHardCollisionVoxel(raw)) continue;
+
+                    uint aboveRaw = ReadWorldVoxelRaw(worldChunks, px, y + 1, pz);
+                    if (IsHardCollisionVoxel(aboveRaw) ||
+                        IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, px, y + 2, pz)))
+                    {
+                        // Ustunde 2 blok acik hava yoksa tirmanilabilir cikinti degil, yuksek duvar / agac govdesidir
+                        return false;
+                    }
+
+                    float candidateTopY = GetVoxelWalkableTopY(raw, aboveRaw, y);
+                    float backGroundY = SampleBilinearVoxelGroundHeight(
+                        worldChunks, pos.x - fwd.x * 0.45f, pos.z - fwd.z * 0.45f, pos.y);
+                    float refFootY = (backGroundY > -20f && backGroundY < pos.y && (pos.y - backGroundY) <= 0.60f)
+                        ? backGroundY
+                        : pos.y;
+                    float heightDiff = candidateTopY - refFootY;
+                    // MaxKneeStepUpMeters (1.08m) ve altindaki zemin/tumsek/basamaklarda daima normal yuruyus veya tam ziplama calisir;
+                    // Mantle yalnizca bel-bas hizasi [1.10m .. 2.25m] cikintilar icindir!
+                    if (heightDiff >= 1.10f && heightDiff <= 2.25f)
+                    {
+                        ledgeTopY = candidateTopY;
+                        return true;
+                    }
+                    break;
                 }
             }
-            ledgeTopY = playerTransform.position.y;
+
             return false;
         }
 
@@ -1067,42 +1121,83 @@ namespace Stratocraft.Character
         public static float SampleBilinearVoxelGroundHeight(
             Dictionary<(int cx, int cz), uint[]> worldChunks, float worldX, float worldZ, float refY)
         {
-            // 2-katmanli Dirt(127) + Grass(66 -> +0.08m) SurfaceNets yamaclarini ve 1m diz hizasi basamaklari kacirmamak icin
-            // refY + 1.85m seviyesinden tara; fakat bulunan yuzey refY + MaxKneeStepUpMeters sinirini asarsa (ince kopru/tavan) asla yukari cekme!
-            int startY = Mathf.Clamp(Mathf.FloorToInt(refY + 1.85f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
-            int fallbackStartY = Mathf.Clamp(Mathf.FloorToInt(refY + 0.85f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
             int centerWx = Mathf.FloorToInt(worldX), centerWz = Mathf.FloorToInt(worldZ);
-            float centerH = SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, startY);
-            if (centerH > refY + MaxKneeStepUpMeters)
+            int startY = Mathf.Clamp(Mathf.FloorToInt(refY + 1.45f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+
+            // Tamamen duz (3x3 komsuda ayni Y ve ayni yogunluklu) SurfaceNets cimen ovalarinda estetik faset titresiminden (+/-1.2 cm)
+            // kaynaklanan dikey kamera mikro-salinimini sifirla (0.00000m puruzsuz kosu!):
+            if (TrySampleUniformFlatSdfPlaneY(worldChunks, centerWx, centerWz, startY, out float flatPlaneY))
             {
-                centerH = SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, fallbackStartY);
-                if (centerH > refY + MaxKneeStepUpMeters)
+                return flatPlaneY;
+            }
+
+            // Analitik 3B SurfaceNets ucgen sorgusu: Gorsel GPU mesh'inin X/Y/Z kenar ucgenlerini ve rampa bloklarini
+            // 0.000m farkla yakalar; magara tavanini (ceilingCapY) dislayarak asansor hatasina izin vermez.
+            if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                    worldX, worldZ, refY, 1.92f, worldChunks, out float exactCenterY, out Vector3 centerNormal))
+            {
+                float slopeSoleClearance = centerNormal.y < 0.94f
+                    ? Mathf.Clamp((1f - centerNormal.y) * 0.05f, 0f, 0.03f)
+                    : 0f;
+                return exactCenterY + slopeSoleClearance;
+            }
+
+            return SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, startY);
+        }
+
+        private static bool TrySampleUniformFlatSdfPlaneY(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            int centerWx,
+            int centerWz,
+            int startY,
+            out float flatPlaneY)
+        {
+            flatPlaneY = -30f;
+            int refTopWy = -1;
+            byte refDensity = 0;
+
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
                 {
-                    centerH = SampleSingleColumnGroundY(worldChunks, centerWx, centerWz, Mathf.Clamp(Mathf.FloorToInt(refY + 0.15f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3));
+                    int qx = centerWx + dx;
+                    int qz = centerWz + dz;
+                    int colTop = -1;
+                    uint colRaw = 0u;
+                    for (int y = startY; y >= 1; y--)
+                    {
+                        uint raw = ReadWorldVoxelRaw(worldChunks, qx, y, qz);
+                        if (!IsHardCollisionVoxel(raw)) continue;
+                        if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, qx, y + 1, qz))) continue;
+                        colTop = y;
+                        colRaw = raw;
+                        break;
+                    }
+
+                    if (colTop < 0 || VoxelBitUtility.GetShapeId(colRaw) != 0)
+                    {
+                        return false;
+                    }
+
+                    byte dens = VoxelBitUtility.GetDensityOrLiquid(colRaw);
+                    if (dens < VoxelBitUtility.IsoDensity) return false;
+
+                    if (refTopWy < 0)
+                    {
+                        refTopWy = colTop;
+                        refDensity = dens;
+                    }
+                    else if (colTop != refTopWy || dens != refDensity)
+                    {
+                        return false;
+                    }
                 }
             }
-            if (centerH <= -20f) return centerH;
 
-            int x0 = Mathf.FloorToInt(worldX - 0.5f);
-            int z0 = Mathf.FloorToInt(worldZ - 0.5f);
-            float tx = Mathf.Clamp01(worldX - 0.5f - x0);
-            float tz = Mathf.Clamp01(worldZ - 0.5f - z0);
-
-            float h00 = SampleSingleColumnGroundY(worldChunks, x0, z0, startY);
-            float h10 = SampleSingleColumnGroundY(worldChunks, x0 + 1, z0, startY);
-            float h01 = SampleSingleColumnGroundY(worldChunks, x0, z0 + 1, startY);
-            float h11 = SampleSingleColumnGroundY(worldChunks, x0 + 1, z0 + 1, startY);
-
-            // Ucurum kenarlarinda veya komsu dik duvar/agac sutunlarinda (>1.15m fark veya refY + MaxKneeStepUpMeters ustu) merkez sutunu koru;
-            // dogal tumsek ve egimli yamaçlarda (<=1.15m fark) 4 kose arasinda puruzsuz C0 bilineer gecis uygula!
-            if (h00 <= -20f || h00 > refY + MaxKneeStepUpMeters || Mathf.Abs(h00 - centerH) > 1.15f) h00 = centerH;
-            if (h10 <= -20f || h10 > refY + MaxKneeStepUpMeters || Mathf.Abs(h10 - centerH) > 1.15f) h10 = centerH;
-            if (h01 <= -20f || h01 > refY + MaxKneeStepUpMeters || Mathf.Abs(h01 - centerH) > 1.15f) h01 = centerH;
-            if (h11 <= -20f || h11 > refY + MaxKneeStepUpMeters || Mathf.Abs(h11 - centerH) > 1.15f) h11 = centerH;
-
-            float hx0 = Mathf.Lerp(h00, h10, tx);
-            float hx1 = Mathf.Lerp(h01, h11, tx);
-            return Mathf.Lerp(hx0, hx1, tz);
+            if (refTopWy < 0) return false;
+            float t = Mathf.Clamp((refDensity - VoxelBitUtility.IsoDensity) / Mathf.Max(1f, (float)refDensity), 0.08f, 0.92f);
+            flatPlaneY = refTopWy + Mathf.Round(t * 256f) * (1f / 256f);
+            return true;
         }
 
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)

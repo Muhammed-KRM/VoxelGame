@@ -1078,9 +1078,22 @@ namespace Stratocraft.Character
                 {
                     item.Velocity.y -= 9.81f * dt;
                     Vector3 nextPos = item.Position + item.Velocity * dt;
-                    if (TryReadNonAirVoxel(nextPos + new Vector3(0f, -0.18f, 0f), worldChunks, out Vector3Int groundVc, out _))
+                    float halfScaleY = 0.5f * item.VisualGo.transform.localScale.y + 0.05f;
+                    if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                            nextPos.x, nextPos.z, nextPos.y, 1.85f, worldChunks, out float exactSurfY, out _))
                     {
-                        float floorY = groundVc.y + 1.18f;
+                        float floorY = exactSurfY + halfScaleY;
+                        if (nextPos.y < floorY)
+                        {
+                            nextPos.y = floorY;
+                            item.Velocity.y = Mathf.Abs(item.Velocity.y) > 1.2f ? -item.Velocity.y * 0.28f : 0f;
+                            item.Velocity.x *= 0.80f;
+                            item.Velocity.z *= 0.80f;
+                        }
+                    }
+                    else if (TryReadNonAirVoxel(nextPos + new Vector3(0f, -0.18f, 0f), worldChunks, out Vector3Int groundVc, out _))
+                    {
+                        float floorY = groundVc.y + 1.0f + halfScaleY;
                         if (nextPos.y < floorY)
                         {
                             nextPos.y = floorY;
