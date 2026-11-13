@@ -212,19 +212,31 @@ namespace Stratocraft.WorldGen.Generators
             return $"Biyom {biomeId}: {GetBiomeNameTurkish(biomeId)}";
         }
 
-        public static float SampleBiomeAmbientTemperatureCelsius(float worldX, float worldY, float worldZ)
+        public static float SampleSurfaceBiomeBaseTemperatureCelsius(float worldX, float worldZ)
         {
-            float baseTemp = GetBiomeId(worldX, worldZ) switch
+            return GetBiomeId(worldX, worldZ) switch
             {
                 0 => 20.0f, 1 => 14.0f, 2 => 16.0f, 3 => 25.0f,
                 4 => -26.0f, 5 => 11.0f, 6 => 44.0f, 7 => 27.0f,
                 8 => 68.0f, 9 => 46.0f, 10 => 6.0f, 11 => -35.0f,
                 _ => 20.0f
             };
+        }
+
+        public static float SampleBiomeAmbientTemperatureCelsius(float worldX, float worldY, float worldZ)
+        {
+            float baseTemp = SampleSurfaceBiomeBaseTemperatureCelsius(worldX, worldZ);
 
             float relAlt = worldY - DefaultSurfaceBaseY;
             if (relAlt > 10.0f) baseTemp -= (relAlt - 10.0f) * 0.45f;
             else if (relAlt < -28.0f) baseTemp += (-28.0f - relAlt) * 0.65f;
+
+            if (worldY <= 24.0f)
+            {
+                float magmaTemp = 65.0f + Math.Clamp((24.0f - worldY) / 19.0f, 0.0f, 1.0f) * 45.0f;
+                if (magmaTemp > baseTemp) baseTemp = magmaTemp;
+            }
+
             return baseTemp;
         }
 
@@ -723,13 +735,131 @@ namespace Stratocraft.WorldGen.Generators
         /// Katman 4 (y = 6..19): Kaynayan Yeralti Magma Denizi (FluidType.Lava) ve Obsidyen Kubbeler
         /// Katman 5 (y = 1..5): Kirilmaz Bedrock Manto Omurgasi
         /// </summary>
+        private static uint HashChamberPcg(int chamberX, int chamberY, int chamberZ, int seed)
+        {
+            uint h = (uint)(chamberX * 73856093) ^
+                     (uint)(chamberY * 19349663) ^
+                     (uint)(chamberZ * 83492791) ^
+                     (uint)(seed * 374761393);
+            h ^= h >> 16;
+            h *= 0x7feb352du;
+            h ^= h >> 15;
+            h *= 0x846ca68bu;
+            h ^= h >> 16;
+            return h;
+        }
+
+        private static bool TryGetChamberLakeGeometry(
+            int wx, int wz,
+            out int yWater, out bool inBasinFootprint, out bool onBasinRim)
+        {
+            yWater = 0;
+            inBasinFootprint = false;
+            onBasinRim = false;
+
+            // Baslangic vadisi merkez meydani ve [F12] vitrin odalarinda (r < 28m) su baskini/deformasyon olusturma!
+            if (wx * wx + wz * wz < 28 * 28)
+            {
+                return false;
+            }
+
+            int chamberX = wx >= 0 ? (wx / 24) : ((wx - 23) / 24);
+            int chamberZ = wz >= 0 ? (wz / 24) : ((wz - 23) / 24);
+            const int chamberY = 3; // Katman 1-2 (y=46..73) 24m x 16m x 24m makro-oda katmani
+            uint hChamber = HashChamberPcg(chamberX, chamberY, chamberZ, ActiveWorldSeed);
+            if ((hChamber % 100u) >= 15u)
+            {
+                return false;
+            }
+
+            yWater = 48 + (int)((hChamber >> 8) % 22); // yWater in [48..69] -> taban [46..68], su [48..69]
+
+            int localX = wx - chamberX * 24;
+            int localZ = wz - chamberZ * 24;
+            bool oddX = (chamberX & 1) != 0;
+            bool oddZ = (chamberZ & 1) != 0;
+
+            int minLocalX = 2;
+            int maxLocalX = oddX ? 21 : 14;
+            int minLocalZ = 2;
+            int maxLocalZ = oddZ ? 21 : 14;
+
+            if (localX < minLocalX || localX > maxLocalX || localZ < minLocalZ || localZ > maxLocalZ)
+            {
+                return false;
+            }
+
+            inBasinFootprint = true;
+            int lx = wx & 15;
+            int lz = wz & 15;
+            onBasinRim = localX == minLocalX || localX == maxLocalX ||
+                         localZ == minLocalZ || localZ == maxLocalZ ||
+                         lx == 0 || lx == 15 || lz == 0 || lz == 15;
+            return true;
+        }
+
+        /// <summary>
+        /// Faz 3.2.B: Katman 1 ve Katman 2 genis magara odalarinda (y in [46..73], swell01 &gt; 0.60, provinceNoise &gt; 0.58)
+        /// 24m x 16m x 24m makro-oda hucresi icin deterministik PCG hash (hChamber % 100 &lt; 15) ile %15 (%12-%18 hedef bandi)
+        /// oraninda durgun yeralti su goleti (inLakeWater) ve %100 sizdirmaz canak muhru (isImpermeableLakeBasinSeal) uretir.
+        /// </summary>
+        public static bool TryEvaluateCaveChamberWaterLake(
+            int wx, int y, int wz, float swell01, float provinceNoise,
+            out bool inLakeWater, out bool isImpermeableLakeBasinSeal)
+        {
+            inLakeWater = false;
+            isImpermeableLakeBasinSeal = false;
+
+            if (y < 46 || y > 73)
+            {
+                return false;
+            }
+
+            if (!TryGetChamberLakeGeometry(wx, wz, out int yWater, out bool inBasinFootprint, out bool onBasinRim) ||
+                !inBasinFootprint)
+            {
+                return false;
+            }
+
+            if (y < yWater - 2 || y > yWater)
+            {
+                return false;
+            }
+
+            if (y == yWater)
+            {
+                if (!onBasinRim && swell01 > 0.60f && provinceNoise > 0.58f)
+                {
+                    inLakeWater = true;
+                    return true;
+                }
+
+                if (swell01 > 0.50f && provinceNoise > 0.48f)
+                {
+                    isImpermeableLakeBasinSeal = true;
+                    return true;
+                }
+
+                return false;
+            }
+
+            // y in [yWater - 2, yWater - 1]: %100 sizdirmaz canak tabani muhru
+            if (swell01 > 0.50f && provinceNoise > 0.48f)
+            {
+                isImpermeableLakeBasinSeal = true;
+                return true;
+            }
+
+            return false;
+        }
+
         private static void EvaluateUndergroundCaveNetwork(
             in ColumnCaveEntranceInfo colEntrance,
             float p1, float p2, float baseProvinceNoise, float colWarpY,
             int wx, int y, int wz, float topH,
             out bool inCaveVoid, out bool isCaveSupportPillar, out bool isCrystalCaveWall,
             out byte caveFluidType, out byte dungeonOverrideMat,
-            out bool isEntranceStoneRim)
+            out bool isEntranceStoneRim, out bool isImpermeableLakeBasinSeal)
         {
             inCaveVoid = false;
             isCaveSupportPillar = false;
@@ -737,6 +867,7 @@ namespace Stratocraft.WorldGen.Generators
             caveFluidType = 0;
             dungeonOverrideMat = 0;
             isEntranceStoneRim = false;
+            isImpermeableLakeBasinSeal = false;
 
             float entranceJunctionBoost01 = 0f;
             if (colEntrance.IsNearEntrance)
@@ -818,6 +949,42 @@ namespace Stratocraft.WorldGen.Generators
             if (y > 75 || y > topH - 18.0f)
             {
                 return;
+            }
+
+            // Faz 3.2.B: Katman 1-2 (%12-%18) Sizdirmaz Yeralti Su Golleri ve Canak Muhru:
+            if (!colEntrance.IsNearEntrance && y >= 43 && y <= 73 &&
+                TryGetChamberLakeGeometry(wx, wz, out int chamberLakeY, out bool inLakeFootprint, out bool onLakeRim) &&
+                inLakeFootprint)
+            {
+                if (y >= chamberLakeY - 2 && y <= chamberLakeY)
+                {
+                    if (TryEvaluateCaveChamberWaterLake(
+                            wx, y, wz,
+                            swell01: 0.68f,
+                            provinceNoise: 0.65f,
+                            out bool inLakeWater,
+                            out isImpermeableLakeBasinSeal))
+                    {
+                        if (inLakeWater)
+                        {
+                            inCaveVoid = true;
+                            caveFluidType = (byte)FluidType.Water;
+                        }
+                        return;
+                    }
+                }
+                else if (y >= chamberLakeY + 1 && y <= Math.Min(73, chamberLakeY + 2) && !onLakeRim)
+                {
+                    // Golu barindiran magara odasinin ust kubbe boslugu
+                    inCaveVoid = true;
+                    return;
+                }
+                else if (y >= chamberLakeY - 5 && y <= chamberLakeY - 3)
+                {
+                    // RemoveUngroundedCaveSliversInColumn (runLen <= 4) tarafindan silinmemesi icin >= 5 blok kalin masif taban destegi
+                    isImpermeableLakeBasinSeal = true;
+                    return;
+                }
             }
 
             int cwx = (wx & 15) == 0 ? (wx - 1) : wx;
@@ -1057,7 +1224,7 @@ namespace Stratocraft.WorldGen.Generators
                             in colEntrance, caveP1, caveP2, colProvinceNoise, colWarpY, wx, y, wz, topH,
                             out bool inCaveVoid, out bool isStalagnatePillar, out bool isCrystalCaveWall,
                             out byte caveFluidType, out byte dungeonOverrideMat,
-                            out bool isEntranceStoneRim);
+                            out bool isEntranceStoneRim, out bool isImpermeableLakeBasinSeal);
 
                         if (dungeonOverrideMat != 0)
                         {
@@ -1065,6 +1232,14 @@ namespace Stratocraft.WorldGen.Generators
                                 dungeonOverrideMat, VoxelBitUtility.FullDensity,
                                 dungeonOverrideMat == DungeonAltarCore ? (byte)7 : (byte)0,
                                 0, BlokKokenDurumu.KaliciYapi, 0);
+                            continue;
+                        }
+
+                        if (isImpermeableLakeBasinSeal)
+                        {
+                            byte sealMat = ((wx + y + wz) & 1) == 0 ? MaterialIdCatalog.Clay : MaterialIdCatalog.Stone;
+                            voxels[idx] = VoxelBitUtility.PackStandard(
+                                sealMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
                             continue;
                         }
 
@@ -1705,6 +1880,96 @@ namespace Stratocraft.WorldGen.Generators
             StampSurfaceStoneAndQuartzOutcrops(voxels, chunkX, chunkZ);
         }
 
+        /// <summary>
+        /// Faz 3.1.C: Yeryuzu kaya cikintilari (Outcrops) icin aday (wx, wz) sutununda
+        /// y = RoundToInt(topH) - 18 ile Max(14, RoundToInt(topH) - 58) araligini 4m adimla tarar.
+        /// En az 2 ornekte ayni sig/orta cevher (Coal, CopperOre, TinOre, IronOre, GoldOre, QuartzGem)
+        /// bulunursa o malzemeyi dondurur; aksi halde 0 (Air) dondurur.
+        /// </summary>
+        public static byte TrySampleUnderlyingRichOreForOutcrop(int wx, int wz, float topH, int radialRing)
+        {
+            float rSq = (float)wx * wx + (float)wz * wz;
+            if (rSq < 144.0f)
+            {
+                return MaterialIdCatalog.Air; // Baslangic Atolyesi ve Ors meydanini (r < 12m) koru
+            }
+
+            float r = MathF.Sqrt(rSq);
+            bool inStarterValley = r < 75.0f;
+            int effectiveRadialRing = radialRing >= 0
+                ? radialRing
+                : (r < 120.0f ? 0 : Math.Clamp(1 + (int)(r / 1200.0f), 1, 6));
+            if (inStarterValley)
+            {
+                effectiveRadialRing = 0;
+            }
+
+            int startY = RoundToInt(topH) - 18;
+            int endY = Math.Max(14, RoundToInt(topH) - 58);
+            if (startY < endY)
+            {
+                return MaterialIdCatalog.Air;
+            }
+
+            int biomeId = GetBiomeId(wx, wz);
+            int coalCount = 0;
+            int copperCount = 0;
+            int tinCount = 0;
+            int ironCount = 0;
+            int goldCount = 0;
+            int quartzCount = 0;
+
+            for (int y = startY; y >= endY; y -= 4)
+            {
+                byte mat = ResolveGeologicalMaterial(
+                    wx, y, wz, topH, DeepMantleFloorY, 64000.0f,
+                    inLavaCaldera: false, inWaterPool: false, isObsidianSeam: false,
+                    isStalagnatePillar: false, isCrystalCaveWall: false,
+                    precomputedBiomeId: biomeId,
+                    precomputedSurfaceMatId: MaterialIdCatalog.Stone,
+                    precomputedRadialRing: effectiveRadialRing);
+
+                if (mat == MaterialIdCatalog.Coal) coalCount++;
+                else if (mat == MaterialIdCatalog.CopperOre) copperCount++;
+                else if (mat == MaterialIdCatalog.TinOre) tinCount++;
+                else if (mat == MaterialIdCatalog.IronOre) ironCount++;
+                else if (mat == MaterialIdCatalog.GoldOre && !inStarterValley) goldCount++;
+                else if (mat == MaterialIdCatalog.QuartzGem) quartzCount++;
+            }
+
+            byte bestOre = MaterialIdCatalog.Air;
+            int bestCount = 1; // En az 2 ornek sart!
+
+            if (quartzCount > bestCount) { bestCount = quartzCount; bestOre = MaterialIdCatalog.QuartzGem; }
+            if (goldCount > bestCount) { bestCount = goldCount; bestOre = MaterialIdCatalog.GoldOre; }
+            if (ironCount > bestCount) { bestCount = ironCount; bestOre = MaterialIdCatalog.IronOre; }
+            if (tinCount > bestCount) { bestCount = tinCount; bestOre = MaterialIdCatalog.TinOre; }
+            if (copperCount > bestCount) { bestCount = copperCount; bestOre = MaterialIdCatalog.CopperOre; }
+            if (coalCount > bestCount) { bestCount = coalCount; bestOre = MaterialIdCatalog.Coal; }
+
+            return bestOre;
+        }
+
+        private static bool HasMatchingOreInGeneratedColumn(uint[] voxels, int lx, int lz, int baseY, byte targetOreMat)
+        {
+            int startY = baseY - 18;
+            int endY = Math.Max(14, baseY - 58);
+            int col = (lz << 4) | lx;
+            int count = 0;
+            for (int y = startY; y >= endY; y--)
+            {
+                if (VoxelBitUtility.GetMaterialId(voxels[(y << 8) | col]) == targetOreMat)
+                {
+                    count++;
+                    if (count >= 2)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         private static void StampSurfaceStoneAndQuartzOutcrops(uint[] voxels, int chunkX, int chunkZ)
         {
             int h = Math.Abs((chunkX * 83492791) ^ (chunkZ * 297121507) ^ (ActiveWorldSeed * 19349663));
@@ -1713,46 +1978,84 @@ namespace Stratocraft.WorldGen.Generators
             int rockLz = 2 + ((h >> 6) % 12);
             TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, rockLx, rockLz, MaterialIdCatalog.Stone, shapeId: 1);
 
-            // 2) Her ~2 chunk'tan birinde yuzey Rezonans Kuvarsi (QuartzGem) kristali cikintisi (T1 Tas Kazma ile kirilir!)
-            if ((h & 1) == 0 || (Math.Abs(chunkX) <= 2 && Math.Abs(chunkZ) <= 2))
+            // 2) Derin Damar Izdusumlu Yuzey Cevher / Kuvars Cikintisi (Outcrops):
+            // Aday sutunlarda TrySampleUnderlyingRichOreForOutcrop ile altindaki y = topH-58..topH-18 damarini dogrula
+            int startProbe = (h >> 10) % 144;
+            for (int i = 0; i < 144; i++)
             {
-                int qLx = 2 + ((h >> 10) % 12);
-                int qLz = 2 + ((h >> 14) % 12);
-                if (Math.Abs(qLx - rockLx) + Math.Abs(qLz - rockLz) >= 3)
+                int cell = (startProbe + i * 37) % 144;
+                int qLx = 2 + (cell % 12);
+                int qLz = 2 + (cell / 12);
+                if (Math.Abs(qLx - rockLx) + Math.Abs(qLz - rockLz) < 3)
                 {
-                    TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, qLx, qLz, MaterialIdCatalog.QuartzGem, shapeId: 6);
+                    continue;
+                }
+
+                int wx = chunkX * 16 + qLx;
+                int wz = chunkZ * 16 + qLz;
+                float rSq = (float)wx * wx + (float)wz * wz;
+                if (rSq < 144.0f)
+                {
+                    continue;
+                }
+
+                float r = MathF.Sqrt(rSq);
+                int radialRing = r < 120.0f ? 0 : Math.Clamp(1 + (int)(r / 1200.0f), 1, 6);
+                float surfTopY = SampleIslandTopSurfaceY(wx, wz);
+                if (surfTopY < SeaLevelY + 1.2f)
+                {
+                    continue;
+                }
+
+                byte richOre = TrySampleUnderlyingRichOreForOutcrop(wx, wz, surfTopY, radialRing);
+                if (richOre == MaterialIdCatalog.Air || richOre == MaterialIdCatalog.Stone)
+                {
+                    continue;
+                }
+
+                int baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 8);
+                if (!HasMatchingOreInGeneratedColumn(voxels, qLx, qLz, baseY, richOre))
+                {
+                    continue;
+                }
+
+                byte shapeId = richOre == MaterialIdCatalog.QuartzGem ? (byte)6 : (byte)1;
+                if (TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, qLx, qLz, richOre, shapeId))
+                {
+                    break;
                 }
             }
         }
 
-        private static void TryStampSingleSurfaceOutcrop(
+        private static bool TryStampSingleSurfaceOutcrop(
             uint[] voxels, int chunkX, int chunkZ, int lx, int lz, byte matId, byte shapeId)
         {
-            if ((uint)lx >= 15u || (uint)lz >= 15u || lx < 1 || lz < 1) return;
+            if ((uint)lx >= 15u || (uint)lz >= 15u || lx < 1 || lz < 1) return false;
             int wx = chunkX * 16 + lx;
             int wz = chunkZ * 16 + lz;
             float rSq = wx * wx + wz * wz;
-            if (rSq < 144.0f) return; // Baslangic Atolyesi ve Ors cevresini acik tut
-            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 6.5f)) return;
+            if (rSq < 144.0f) return false; // Baslangic Atolyesi ve Ors cevresini acik tut
+            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 6.5f)) return false;
 
             float r = MathF.Sqrt(rSq);
             float coastR = ComputeIslandCoastRadius(wx, wz);
             float radialMargin = InfiniteProceduralWorldMode ? 64000.0f : (coastR - r);
-            if (radialMargin < 8.0f) return;
+            if (radialMargin < 8.0f) return false;
 
             int biomeId = GetBiomeId(wx, wz);
             EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
-            if (inWater || inLava || inAcid || inWall) return;
+            if (inWater || inLava || inAcid || inWall) return false;
 
             float surfTopY = SampleIslandTopSurfaceY(wx, wz);
-            if (surfTopY < SeaLevelY + 1.2f) return;
+            if (surfTopY < SeaLevelY + 1.2f) return false;
 
             int baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 8);
             int curIdx = ((baseY + 1) << 8) | (lz << 4) | lx;
-            if (VoxelBitUtility.GetMaterialId(voxels[curIdx]) != MaterialIdCatalog.Air) return;
+            if (VoxelBitUtility.GetMaterialId(voxels[curIdx]) != MaterialIdCatalog.Air) return false;
 
             EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
             SetNaturalTreeVoxel(voxels, lx, baseY + 1, lz, matId, shapeId: shapeId, rot: 0);
+            return true;
         }
 
         /// <summary>

@@ -32,8 +32,94 @@ namespace Stratocraft.Character.Systems
         }
 
         /// <summary>
+        /// Faz 3.2 (DOK3 §2.3 &amp; DOK4 §3.2.A): Speleolojik Soguk Hava Tuzagi ve Jeotermal Gradyan (C1-Surekli U-Egrisi).
+        /// - Giris gecisi (d = 0..11m, Y = 96..85m): T_yuzey -&gt; sig soguk cep sicakligina C1 Hermite gecis
+        /// - 1. Katman Sig Soguk Hava Tuzagi (Y = 85..55m, d ~ 11..41m): -6.0 °C .. +4.0 °C
+        /// - 2. Katman Iliman Jeotermal Denge (Y = 55..45m, d ~ 41..51m): +5.0 °C .. +24.0 °C
+        /// - 3. Katman Derin Bazalt &amp; Titanyum (Y = 44..25m, d ~ 52..71m): +28.0 °C .. +65.0 °C
+        /// - 4. Katman Kaynayan Magma Kubbeleri (Y = 24..5m, d ~ 72..91m): +65.0 °C .. +110.0 °C
+        /// </summary>
+        public static float EvaluateUndergroundGeothermalTemperatureCelsius(
+            float surfaceBiomeTempCelsius,
+            float depthBelowSurfaceMeters,
+            float absoluteWorldY)
+        {
+            float effectiveDepth = depthBelowSurfaceMeters;
+            float effectiveY = absoluteWorldY;
+
+            if (float.IsNaN(effectiveY) || (effectiveY <= 0.0f && effectiveDepth > 0.0f))
+            {
+                effectiveY = 96.0f - MathF.Max(0.0f, effectiveDepth);
+            }
+
+            if (effectiveDepth <= 0.0f && effectiveY > 0.0f && effectiveY < 96.0f)
+            {
+                effectiveDepth = 96.0f - effectiveY;
+            }
+
+            float clampedBiome = Math.Clamp(surfaceBiomeTempCelsius, -30.0f, 30.0f);
+            float coldEdge = Math.Clamp(1.8f + 0.06f * clampedBiome, 0.2f, 3.6f);
+            float coldPocketDrop = 4.6f + MathF.Max(0.0f, -clampedBiome) * 0.08f;
+
+            // Giris agzi gecisi (0 < d < 11m ve Y > 85m): yuzey sicakligindan sig magara soguk tuzagina C1 gecis
+            if (effectiveDepth < 11.0f && effectiveY > 85.0f)
+            {
+                float tEntrance = Math.Clamp((effectiveDepth - 1.5f) / 9.5f, 0.0f, 1.0f);
+                float smoothEntrance = tEntrance * tEntrance * (3.0f - 2.0f * tEntrance);
+                return surfaceBiomeTempCelsius + (coldEdge - surfaceBiomeTempCelsius) * smoothEntrance;
+            }
+
+            // 1. Katman: Sig Magara Soguk Hava Tuzagi (Y = 85..55m, depth ~ 11..41m) -> [-6.0 °C .. +4.0 °C]
+            if (effectiveY >= 55.0f)
+            {
+                float u = Math.Clamp((85.0f - effectiveY) / 30.0f, 0.0f, 1.0f);
+                float sinVal = MathF.Sin(MathF.PI * u);
+                float coldTrapTemp = coldEdge - coldPocketDrop * (sinVal * sinVal);
+                return Math.Clamp(coldTrapTemp, -6.0f, 4.0f);
+            }
+
+            // 2. Katman: Gecis Bolgesi / Iliman Jeotermal Denge (Y = 55..45m) -> [+5.0 °C .. +24.0 °C]
+            if (effectiveY >= 45.0f)
+            {
+                float tMid = Math.Clamp((55.0f - effectiveY) / 10.0f, 0.0f, 1.0f);
+                float smoothMid = tMid + 0.35f * tMid * (1.0f - tMid);
+                float startMid = MathF.Max(coldEdge, 3.8f);
+                return Math.Clamp(startMid + (24.0f - startMid) * smoothMid, 5.0f, 24.0f);
+            }
+
+            // Y = 45..44m dar omuz gecisi (+24.0 °C -> +28.5 °C)
+            if (effectiveY > 44.0f)
+            {
+                float tShoulder = Math.Clamp(45.0f - effectiveY, 0.0f, 1.0f);
+                float smoothShoulder = tShoulder * tShoulder * (3.0f - 2.0f * tShoulder);
+                return 24.0f + 4.5f * smoothShoulder;
+            }
+
+            // 3. Katman: Derin Bazalt Katmani (Y = 44..25m) -> [+28.0 °C .. +65.0 °C]
+            if (effectiveY >= 25.0f)
+            {
+                float tDeep = Math.Clamp((44.0f - effectiveY) / 19.0f, 0.0f, 1.0f);
+                float smoothDeep = 0.65f * tDeep + 0.35f * (tDeep * tDeep * (3.0f - 2.0f * tDeep));
+                return Math.Clamp(28.5f + (65.0f - 28.5f) * smoothDeep, 28.0f, 65.0f);
+            }
+
+            // 4. Katman: Kaynayan Magma Kubbeleri (Y = 24..5m) -> [+65.0 °C .. +110.0 °C]
+            float tMagma = Math.Clamp((25.0f - effectiveY) / 20.0f, 0.0f, 1.0f);
+            float quadMagma = 0.75f * tMagma + 0.25f * (tMagma * tMagma * (3.0f - 2.0f * tMagma));
+            return Math.Clamp(65.0f + 45.0f * quadMagma, 65.0f, 110.0f);
+        }
+
+        /// <summary>DOK4 tablo referansi ile %100 uyumlu es-anlamli yardimci.</summary>
+        public static float EvaluateUndergroundGeothermalCurveCelsius(
+            float surfaceBiomeTempCelsius,
+            float depthBelowSurfaceMeters,
+            float absoluteWorldY)
+            => EvaluateUndergroundGeothermalTemperatureCelsius(surfaceBiomeTempCelsius, depthBelowSurfaceMeters, absoluteWorldY);
+
+        /// <summary>
         /// 6 bilesenli cevresel hissedilen sicaklik hesaplayicisi:
         /// T_env = T_season + dT_altitude + dT_underground + dT_dayNight + dT_windChill + dT_heatSources.
+        /// Yeraltinda (isUndergroundEnclosed &amp;&amp; worldAltitudeMeters &lt; -1.5f) C1-surekli Jeotermal U-Egrisi uygulanir.
         /// </summary>
         public static float EvaluateAmbientTemperatureCelsius(
             float baseSeasonTempCelsius,
@@ -41,33 +127,33 @@ namespace Stratocraft.Character.Systems
             bool isUndergroundEnclosed,
             bool isNightTime,
             float windSpeedMetersPerSec,
-            float nearbyHeatSourceBonusCelsius)
+            float nearbyHeatSourceBonusCelsius,
+            float absoluteWorldY = float.NaN)
         {
+            if (isUndergroundEnclosed && worldAltitudeMeters < -1.5f)
+            {
+                float depthBelowSurfaceMeters = -worldAltitudeMeters;
+                float resolvedWorldY = float.IsNaN(absoluteWorldY)
+                    ? (96.0f - depthBelowSurfaceMeters)
+                    : absoluteWorldY;
+                float geothermalTemp = EvaluateUndergroundGeothermalTemperatureCelsius(
+                    baseSeasonTempCelsius,
+                    depthBelowSurfaceMeters,
+                    resolvedWorldY);
+                return geothermalTemp + nearbyHeatSourceBonusCelsius;
+            }
+
             // Yuksek irtifa sogumasi (-6.5 C / 100m oyun olcekli atmosfer gradyani)
             float altitudeDelta = worldAltitudeMeters > 0f
                 ? -Math.Min(28.0f, worldAltitudeMeters * 0.14f)
                 : 0f;
-
-            // Yeralti jeotermal gradyani: sig magaralar serin (+14 C'ye yakinsar), -50m alti magma etkisiyle isinir!
-            float undergroundDelta = 0f;
-            if (isUndergroundEnclosed && worldAltitudeMeters < 0f)
-            {
-                if (worldAltitudeMeters > -45f)
-                {
-                    undergroundDelta = (14.0f - baseSeasonTempCelsius) * 0.65f;
-                }
-                else
-                {
-                    undergroundDelta = Math.Min(42.0f, (-worldAltitudeMeters - 45f) * 0.75f);
-                }
-            }
 
             float dayNightDelta = (!isUndergroundEnclosed && isNightTime) ? -6.5f : 0f;
             float windChillDelta = (!isUndergroundEnclosed && baseSeasonTempCelsius < 18.0f)
                 ? -Math.Min(10.0f, windSpeedMetersPerSec * 0.35f)
                 : 0f;
 
-            return baseSeasonTempCelsius + altitudeDelta + undergroundDelta + dayNightDelta + windChillDelta + nearbyHeatSourceBonusCelsius;
+            return baseSeasonTempCelsius + altitudeDelta + dayNightDelta + windChillDelta + nearbyHeatSourceBonusCelsius;
         }
 
         /// <summary>
