@@ -704,7 +704,18 @@ namespace Stratocraft.Voxel.Jobs
             byte shadeA = (byte)Math.Clamp(120 + (int)(seedHash & 0x7Fu) - 36, 72, 245);
             byte shadeB = (byte)Math.Clamp(shadeA + ((int)((seedHash >> 7) & 0x0Fu) - 8), 72, 245);
 
-            if (Vector3.DistanceSquared(v0, v2) <= Vector3.DistanceSquared(v1, v3))
+            bool shorterDiag02 = Vector3.DistanceSquared(v0, v2) <= Vector3.DistanceSquared(v1, v3);
+            if ((IsReliefOreOrCrystalMaterial(matA) || IsReliefOreOrCrystalMaterial(matB)) &&
+                TryEmitOreNuggetReliefPyramid(
+                    v0, v1, v2, v3, shorterDiag02, flipWinding, seedHash,
+                    matA, matB, quadMaxTemp,
+                    dualAo[i0], dualAo[i1], dualAo[i2], dualAo[i3],
+                    outTriangles))
+            {
+                return;
+            }
+
+            if (shorterDiag02)
             {
                 if (!flipWinding) { AddFacetedTriangleWithTemp(v0, v1, v2, matA, tempA, shadeA, aoA, outTriangles); AddFacetedTriangleWithTemp(v0, v2, v3, matB, tempB, shadeB, aoB, outTriangles); }
                 else { AddFacetedTriangleWithTemp(v0, v2, v1, matA, tempA, shadeA, aoA, outTriangles); AddFacetedTriangleWithTemp(v0, v3, v2, matB, tempB, shadeB, aoB, outTriangles); }
@@ -714,6 +725,137 @@ namespace Stratocraft.Voxel.Jobs
                 if (!flipWinding) { AddFacetedTriangleWithTemp(v1, v2, v3, matA, tempA, shadeA, aoA, outTriangles); AddFacetedTriangleWithTemp(v1, v3, v0, matB, tempB, shadeB, aoB, outTriangles); }
                 else { AddFacetedTriangleWithTemp(v1, v3, v2, matA, tempA, shadeA, aoA, outTriangles); AddFacetedTriangleWithTemp(v1, v0, v3, matB, tempB, shadeB, aoB, outTriangles); }
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsReliefOreOrCrystalMaterial(byte matId) =>
+            (matId >= MaterialIdCatalog.CopperOre && matId <= MaterialIdCatalog.GemVeinEnd) ||
+            (matId >= MaterialIdCatalog.SulfurOre && matId <= MaterialIdCatalog.RedDiamondGem);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsCrystalOrGemReliefMaterial(byte matId) =>
+            matId == MaterialIdCatalog.AstralOre ||
+            (matId >= MaterialIdCatalog.StarCore && matId <= MaterialIdCatalog.GemVeinEnd) ||
+            (matId >= MaterialIdCatalog.QuartzGem && matId <= MaterialIdCatalog.RedDiamondGem);
+
+        private static bool TryEmitOreNuggetReliefPyramid(
+            Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3,
+            bool shorterDiag02, bool flipWinding, uint seedHash,
+            byte matA, byte matB, byte quadMaxTemp,
+            byte aoV0, byte aoV1, byte aoV2, byte aoV3,
+            List<FacetedVoxelTriangle> outTriangles)
+        {
+            // Chunk sinir apronundaki kuadlarda (dx=0/16 veya dz=0/16) kose eslesme emniyeti icin duz 2-ucgen koru;
+            // dis koseler v0..v3 hicbir kosulda degistirilmez (0.000m watertight manifold).
+            float minX = MathF.Min(MathF.Min(v0.X, v1.X), MathF.Min(v2.X, v3.X));
+            float maxX = MathF.Max(MathF.Max(v0.X, v1.X), MathF.Max(v2.X, v3.X));
+            float minZ = MathF.Min(MathF.Min(v0.Z, v1.Z), MathF.Min(v2.Z, v3.Z));
+            float maxZ = MathF.Max(MathF.Max(v0.Z, v1.Z), MathF.Max(v2.Z, v3.Z));
+            if (minX < 0.0f || maxX > 15.0f || minZ < 0.0f || maxZ > 15.0f)
+            {
+                return false;
+            }
+
+            const float minEdgeSq = 4e-4f;
+            if (Vector3.DistanceSquared(v0, v1) < minEdgeSq ||
+                Vector3.DistanceSquared(v1, v2) < minEdgeSq ||
+                Vector3.DistanceSquared(v2, v3) < minEdgeSq ||
+                Vector3.DistanceSquared(v3, v0) < minEdgeSq)
+            {
+                return false;
+            }
+
+            Vector3 cA = Vector3.Cross(v1 - v0, v2 - v0);
+            Vector3 cB = Vector3.Cross(v2 - v0, v3 - v0);
+            float area = 0.5f * (MathF.Sqrt(cA.LengthSquared()) + MathF.Sqrt(cB.LengthSquared()));
+            if (area <= 0.015f)
+            {
+                return false;
+            }
+
+            Vector3 rawN = flipWinding ? -(cA + cB) : (cA + cB);
+            float rawNLenSq = rawN.LengthSquared();
+            if (rawNLenSq < 1e-8f)
+            {
+                return false;
+            }
+
+            Vector3 n_q = rawN / MathF.Sqrt(rawNLenSq);
+            bool isOreA = IsReliefOreOrCrystalMaterial(matA);
+            bool isOreB = IsReliefOreOrCrystalMaterial(matB);
+            byte reliefMat = (isOreA && isOreB)
+                ? (IsCrystalOrGemReliefMaterial(matA) ? matA : matB)
+                : (isOreA ? matA : matB);
+
+            float baseProtrusion = IsCrystalOrGemReliefMaterial(reliefMat) ? 0.145f : 0.105f;
+            float hash01 = (seedHash & 0xFFu) * (1.0f / 255.0f);
+            float h0 = baseProtrusion * (1.0f + (hash01 * 2.0f - 1.0f) * 0.22f);
+
+            Vector3 c_q = (v0 + v1 + v2 + v3) * 0.25f;
+            Vector3 v_apex;
+            if (n_q.Y > 0.72f)
+            {
+                // Yatay zemin yuruyus uyumu: VoxelSurfaceNetsGroundSampler diyagonal orta noktasini baz alip
+                // cikintiyi <= 0.042m ile sinirla ki yuruyus yukseklik farki <= 0.05m kalsin.
+                float h_eff = MathF.Min(0.042f, h0 * 0.28f);
+                Vector3 diagMid = shorterDiag02 ? ((v0 + v2) * 0.5f) : ((v1 + v3) * 0.5f);
+                v_apex = diagMid + n_q * h_eff;
+            }
+            else
+            {
+                float maxCornerLift = MathF.Max(
+                    MathF.Max(Vector3.Dot(v0 - c_q, n_q), Vector3.Dot(v1 - c_q, n_q)),
+                    MathF.Max(Vector3.Dot(v2 - c_q, n_q), Vector3.Dot(v3 - c_q, n_q)));
+                float h_eff = n_q.Y < -0.55f ? MathF.Min(0.18f, h0 * 1.15f) : h0;
+                h_eff = Math.Clamp(h_eff + MathF.Max(0f, maxCornerLift * 0.65f), 0.082f, 0.18f);
+                float jitterU = (((seedHash >> 8) & 0xFFu) * (1.0f / 255.0f) - 0.5f) * 0.14f;
+                float jitterV = (((seedHash >> 16) & 0xFFu) * (1.0f / 255.0f) - 0.5f) * 0.14f;
+                Vector3 rawTangent = (v2 - v0) * jitterU + (v3 - v1) * jitterV;
+                Vector3 tangentOffset = rawTangent - n_q * Vector3.Dot(rawTangent, n_q);
+                v_apex = c_q + tangentOffset + n_q * h_eff;
+            }
+
+            v_apex.X = Math.Clamp(v_apex.X, 0.005f, 14.995f);
+            v_apex.Z = Math.Clamp(v_apex.Z, 0.005f, 14.995f);
+
+            // 4 faset ucgeninin hicbirinin dejenere olmadigini garanti et (yarim/3-ucgenli piramit imkansiz!)
+            Vector3 t0A = !flipWinding ? v0 : v1, t0B = !flipWinding ? v1 : v0;
+            Vector3 t1A = !flipWinding ? v1 : v2, t1B = !flipWinding ? v2 : v1;
+            Vector3 t2A = !flipWinding ? v2 : v3, t2B = !flipWinding ? v3 : v2;
+            Vector3 t3A = !flipWinding ? v3 : v0, t3B = !flipWinding ? v0 : v3;
+
+            Vector3 cr0 = Vector3.Cross(t0B - t0A, v_apex - t0A);
+            Vector3 cr1 = Vector3.Cross(t1B - t1A, v_apex - t1A);
+            Vector3 cr2 = Vector3.Cross(t2B - t2A, v_apex - t2A);
+            Vector3 cr3 = Vector3.Cross(t3B - t3A, v_apex - t3A);
+            float l0 = cr0.LengthSquared(), l1 = cr1.LengthSquared(), l2 = cr2.LengthSquared(), l3 = cr3.LengthSquared();
+            if (l0 < 1e-9f || l1 < 1e-9f || l2 < 1e-9f || l3 < 1e-9f)
+            {
+                return false;
+            }
+
+            byte reliefTemp = ResolveQuadVertexTemperature(reliefMat, quadMaxTemp);
+            byte ao0 = AveragePackedAoWear(aoV0, aoV1, aoV2);
+            byte ao1 = AveragePackedAoWear(aoV1, aoV2, aoV3);
+            byte ao2 = AveragePackedAoWear(aoV2, aoV3, aoV0);
+            byte ao3 = AveragePackedAoWear(aoV3, aoV0, aoV1);
+
+            int shadeJitter = (int)((seedHash >> 24) & 0x0Fu) - 7;
+            int rot = (int)(seedHash & 3u);
+            byte s0 = (byte)Math.Clamp(236 + shadeJitter, 90, 250);
+            byte s1 = (byte)Math.Clamp(192 + shadeJitter, 90, 250);
+            byte s2 = (byte)Math.Clamp(146 + shadeJitter, 84, 245);
+            byte s3 = (byte)Math.Clamp(108 + shadeJitter, 78, 240);
+            byte f0 = rot switch { 0 => s0, 1 => s1, 2 => s2, _ => s3 };
+            byte f1 = rot switch { 0 => s1, 1 => s2, 2 => s3, _ => s0 };
+            byte f2 = rot switch { 0 => s2, 1 => s3, 2 => s0, _ => s1 };
+            byte f3 = rot switch { 0 => s3, 1 => s0, 2 => s1, _ => s2 };
+
+            outTriangles.Add(new FacetedVoxelTriangle { V0 = t0A, V1 = t0B, V2 = v_apex, Normal = cr0 / MathF.Sqrt(l0), MaterialId = reliefMat, Temperature = reliefTemp, FacetShade = f0, AmbientOcclusion = ao0 });
+            outTriangles.Add(new FacetedVoxelTriangle { V0 = t1A, V1 = t1B, V2 = v_apex, Normal = cr1 / MathF.Sqrt(l1), MaterialId = reliefMat, Temperature = reliefTemp, FacetShade = f1, AmbientOcclusion = ao1 });
+            outTriangles.Add(new FacetedVoxelTriangle { V0 = t2A, V1 = t2B, V2 = v_apex, Normal = cr2 / MathF.Sqrt(l2), MaterialId = reliefMat, Temperature = reliefTemp, FacetShade = f2, AmbientOcclusion = ao2 });
+            outTriangles.Add(new FacetedVoxelTriangle { V0 = t3A, V1 = t3B, V2 = v_apex, Normal = cr3 / MathF.Sqrt(l3), MaterialId = reliefMat, Temperature = reliefTemp, FacetShade = f3, AmbientOcclusion = ao3 });
+            return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1078,7 +1220,7 @@ namespace Stratocraft.Voxel.Jobs
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static byte ResolveMaterialDefaultTemperature(byte matId) => matId switch
         {
-            MaterialIdCatalog.FiniteLavaSurface => 242, MaterialIdCatalog.MagmaBlock => 195,
+            MaterialIdCatalog.FiniteLavaSurface => 242, MaterialIdCatalog.MagmaBlock => 220,
             MaterialIdCatalog.CampfireBlock => 210, MaterialIdCatalog.PrimitiveStoneKilnBlock => 192,
             MaterialIdCatalog.StarCore => 170, _ => 0
         };

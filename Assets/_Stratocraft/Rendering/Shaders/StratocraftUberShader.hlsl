@@ -152,6 +152,155 @@ float3 ApplyProceduralSolidPattern(float3 baseAlbedo, float3 posOS, uint procMod
     return baseAlbedo;
 }
 
+/// Cevher, komur, kukurt ve mucevher damari araligi (30..49 ve 52..59).
+bool IsOreOrGemVeinMat(uint matId)
+{
+    return (matId >= 30u && matId <= 49u) || (matId >= 52u && matId <= 59u);
+}
+
+/// 0 MB ek doku VRAM ile 3B alan-carpitmali sirt gurultusu uzerinden ana kayac matrisi (veinMask01=0)
+/// ve parlak cevher/kristal damari (veinMask01=1) + oksit halkasi ayrimini uretir.
+/// Floating-Origin (K * 32m) gecislerinde %100 dikissiz ve kaymasiz kalmasi icin 2*PI/32 harmonikleri kullanir.
+void ApplyProceduralOreVeinAndGlint(
+    uint matId, float3 posWS, float sharpnessOrTone,
+    inout float3 albedo, inout float roughness, inout float metallic, out float veinMask01)
+{
+    const float kStep = 0.19634954; // 2 * PI / 32.0 (32m Floating Origin periyodik kilidi)
+    float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
+
+    float3 warp = 0.46 * sin(p.yzx * (19.0 * kStep)) + 0.22 * cos(p.zxy * (31.0 * kStep));
+    float3 q1 = p * (29.0 * kStep) + warp * 2.45;
+    float ridge1 = 1.0 - abs(sin(q1.x + cos(q1.y)) * cos(q1.z - sin(q1.x)));
+
+    float3 q2 = p * (53.0 * kStep) - warp.yzx * 1.90;
+    float ridge2 = 1.0 - abs(sin(q2.y + sin(q2.z)) * cos(q2.x + cos(q2.y)));
+
+    float pocket = 0.5 + 0.5 * (sin(p.x * (17.0 * kStep) + warp.y) * cos(p.y * (23.0 * kStep) - warp.z));
+    float rawVein = saturate(ridge1 * 0.66 + ridge2 * 0.34 + (pocket - 0.45) * 0.22 + (sharpnessOrTone - 0.5) * 0.18);
+
+    veinMask01 = smoothstep(0.45, 0.69, rawVein);
+    float haloMask01 = saturate(smoothstep(0.32, 0.50, rawVein) - veinMask01);
+
+    // Yan kayac matrisi (host rock): sig magarada koyu kirec/silikat tasi, derin katmanda koyu bazalt
+    float deepBasaltBlend = saturate((52.0 - posWS.y) / 28.0);
+    float3 stoneHost = ConvertLutSrgbToActiveColorSpace(float3(0.33, 0.35, 0.39));
+    float3 basaltHost = ConvertLutSrgbToActiveColorSpace(float3(0.22, 0.24, 0.28));
+    float3 hostAlbedo = lerp(stoneHost, basaltHost, deepBasaltBlend) * lerp(0.88, 1.08, sharpnessOrTone);
+    float hostRoughness = 0.84;
+    float hostMetallic = 0.04;
+
+    float3 oreAlbedo = albedo;
+    float3 haloAlbedo = hostAlbedo * 0.85;
+    float oreRoughness = roughness;
+    float oreMetallic = metallic;
+
+    if (matId == 30u) // Bakir Cevheri: kizil-turuncu kalkopirit damar + hafif malakit yesil oksit kenar
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.88, 0.42, 0.20));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.20, 0.50, 0.40));
+        oreRoughness = 0.23;
+        oreMetallic = 0.90;
+    }
+    else if (matId == 31u) // Kalay Cevheri: kalay-gumus kasiterit + kahve oksit kenar
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.76, 0.79, 0.81));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.42, 0.30, 0.22));
+        oreRoughness = 0.27;
+        oreMetallic = 0.86;
+    }
+    else if (matId == 32u) // Demir Cevheri: parlak celik manyetit damar + pasli kizil hematit oksit halkasi
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.72, 0.75, 0.80));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.48, 0.22, 0.14));
+        oreRoughness = 0.25;
+        oreMetallic = 0.90;
+    }
+    else if (matId == 33u) // Boksit / Aluminyum
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.82, 0.56, 0.46));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.54, 0.34, 0.22));
+        oreRoughness = 0.34;
+        oreMetallic = 0.74;
+    }
+    else if (matId == 34u) // Gumus Cevheri
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.93, 0.95, 0.98));
+        haloAlbedo = hostAlbedo * 0.75;
+        oreRoughness = 0.15;
+        oreMetallic = 0.96;
+    }
+    else if (matId == 35u) // Altin Cevheri: yuksek yansiticilikli saf altin + acik kuvars damar yatagi
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.98, 0.79, 0.22));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.70, 0.68, 0.62));
+        oreRoughness = 0.14;
+        oreMetallic = 0.98;
+    }
+    else if (matId == 36u) // Titanyum Cevheri
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.80, 0.86, 0.94));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.30, 0.36, 0.46));
+        oreRoughness = 0.19;
+        oreMetallic = 0.94;
+    }
+    else if (matId == 37u) // Mithril Cevheri
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.44, 0.86, 0.98));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.22, 0.48, 0.64));
+        oreRoughness = 0.14;
+        oreMetallic = 0.97;
+    }
+    else if (matId == 44u) // Komur Damari: mat tas icinde kirikli antrasit-siyah camsi (vitreous) seritler
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.06, 0.06, 0.07));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.16, 0.16, 0.18));
+        oreRoughness = 0.22;
+        oreMetallic = 0.18;
+    }
+    else if (matId == 52u) // Kukurt Cevheri: parlak kanarya sarisi kristal kukurt
+    {
+        oreAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.92, 0.88, 0.18));
+        haloAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.48, 0.46, 0.18));
+        oreRoughness = 0.32;
+        oreMetallic = 0.14;
+    }
+    else if (matId == 41u || (matId >= 46u && matId <= 49u) || (matId >= 53u && matId <= 59u))
+    {
+        // Kuvars, Ametist, Safir, Zumrut, Yakut, Elmas, Kizil Elmas, Astral & Yildiz Kristalleri
+        float prism = 0.5 + 0.5 * sin(q2.x * 1.7 + q1.y * 1.3);
+        oreAlbedo = albedo * lerp(1.08, 1.38, prism);
+        haloAlbedo = lerp(hostAlbedo, oreAlbedo, 0.35);
+        oreRoughness = 0.11;
+        oreMetallic = max(metallic, 0.56);
+    }
+    else // Orichalcum, Cehennem Demiri, Ilahi Metal, Adamantite, Hiclik Metali, Karanlik Madde (38..43, 45)
+    {
+        oreAlbedo = albedo * 1.18;
+        haloAlbedo = lerp(hostAlbedo, oreAlbedo, 0.30);
+        oreRoughness = clamp(roughness * 0.55, 0.14, 0.26);
+        oreMetallic = max(metallic, 0.92);
+    }
+
+    float3 baseWithHalo = lerp(hostAlbedo, haloAlbedo, haloMask01 * 0.85);
+    albedo = lerp(baseWithHalo, oreAlbedo, veinMask01);
+    roughness = lerp(hostRoughness, oreRoughness, veinMask01);
+    metallic = lerp(hostMetallic, oreMetallic, veinMask01);
+}
+
+/// MagmaBlock (MaterialId=11, Temp=220) icin koyu soguyan volkanik bazalt kabugu ve
+/// catlaklarindan (magmaCrack01 -> 1) sicak turuncu-kirmizi kor isinimi ureten 3B maske.
+float EvaluateMagmaBlockCrustFissure01(float3 posWS)
+{
+    const float kStep = 0.19634954; // 2 * PI / 32.0
+    float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
+    float3 mw = 0.38 * sin(p.yzx * (23.0 * kStep)) + 0.19 * cos(p.zxy * (41.0 * kStep));
+    float3 mq1 = p * (37.0 * kStep) + mw * 2.6;
+    float3 mq2 = p * (61.0 * kStep) - mw.yzx * 2.1;
+    float crackA = 1.0 - abs(sin(mq1.x + cos(mq1.z)) * cos(mq1.y - sin(mq1.x)));
+    float crackB = 1.0 - abs(sin(mq2.y + sin(mq2.x)) * cos(mq2.z + cos(mq2.y)));
+    return saturate(smoothstep(0.60, 0.88, crackA) + 0.55 * smoothstep(0.68, 0.92, crackB));
+}
+
 float3 ComputeFacetedWorldNormal(float3 posWS, float3 interpNormalWS)
 {
     float3 dpdx = ddx(posWS);
@@ -232,6 +381,8 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float3 albedo;
     float roughness = 0.72;
     float metallic = 0.0;
+    float veinMask01 = 0.0;
+    float magmaCrack01 = 1.0;
     uint procMode = 0u;
     float microLayer = 0.0;
     uint matCapIdx = 0u;
@@ -260,6 +411,22 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
             float4 microSample = SampleBiplanarMicroDetail(input.positionWS, normalWS, microLayer, input.positionCS.xy);
             float microMod = lerp(1.0, lerp(0.84, 1.16, microSample.a), saturate(_MicroDetailStrength));
             albedo *= microMod;
+        }
+
+        if (IsOreOrGemVeinMat(safeMatId))
+        {
+            ApplyProceduralOreVeinAndGlint(
+                safeMatId, input.positionWS, sharpnessOrTone,
+                albedo, roughness, metallic, veinMask01);
+        }
+        else if (safeMatId == 11u) // MagmaBlock: koyu bazalt kabuk + kor turuncu-kirmizi catlaklar
+        {
+            magmaCrack01 = EvaluateMagmaBlockCrustFissure01(input.positionWS);
+            float3 crustCol = ConvertLutSrgbToActiveColorSpace(float3(0.15, 0.13, 0.14)) * facetContrast;
+            float3 fissureCol = ConvertLutSrgbToActiveColorSpace(float3(0.98, 0.30, 0.04));
+            albedo = lerp(crustCol, fissureCol, magmaCrack01);
+            roughness = lerp(0.86, 0.28, magmaCrack01);
+            metallic = lerp(0.05, 0.02, magmaCrack01);
         }
     }
     else
@@ -319,8 +486,21 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float3 directDiffuse = mainLight.color * (ndotl * mainLight.shadowAttenuation + wrappedFill * combinedIndirectAo);
     float3 totalDiffuse = albedo * (ambientTerm + directDiffuse);
     float3 totalSpecular = mainLight.color * specTerm;
+    float3 additionalLightIrradiance = float3(0.0, 0.0, 0.0);
 
-    // URP 17 Forward+ (_CLUSTER_LIGHT_LOOP) ve Ek Nokta/Spot Isiklar
+    float3 glintMicroNormalWS = normalWS;
+    if (veinMask01 > 0.35)
+    {
+        const float kGlintFreq = 11.97732; // 61 * (2*PI / 32.0)
+        float3 pGlint = input.positionWS - floor(input.positionWS * (1.0 / 32.0)) * 32.0;
+        glintMicroNormalWS = normalize(normalWS + 0.14 * sin(pGlint.yzx * kGlintFreq));
+        float mainGlintDot = max(saturate(dot(normalWS, halfDir)), saturate(dot(glintMicroNormalWS, halfDir)));
+        float mainGlintSpec = pow(saturate(mainGlintDot), 96.0) * (veinMask01 * 1.45) * mainLight.shadowAttenuation;
+        float3 mainGlintTint = lerp(float3(1.0, 0.98, 0.94), max(albedo * 1.45, float3(0.35, 0.35, 0.35)), saturate(metallic * 0.75));
+        totalSpecular += mainLight.color * mainGlintSpec * mainGlintTint;
+    }
+
+    // URP 17 Forward+ (_CLUSTER_LIGHT_LOOP) ve Ek Nokta/Spot Isiklar (Mesale, Kamp Atesi, Magma)
 #if defined(_ADDITIONAL_LIGHTS) || defined(_CLUSTER_LIGHT_LOOP)
     InputData inputData = (InputData)0;
     inputData.positionWS = input.positionWS;
@@ -335,38 +515,63 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
         float addNdotL = saturate(dot(normalWS, addLight.direction));
         float3 addHalf = normalize(addLight.direction + viewDirWS);
         float addSpec = pow(saturate(dot(normalWS, addHalf)), specPow) * specStrength;
-        totalDiffuse += albedo * (addLight.color * (addNdotL * addAtten));
+        float3 addIrradiance = addLight.color * (addNdotL * addAtten);
+        additionalLightIrradiance += addIrradiance;
+        totalDiffuse += albedo * addIrradiance;
         totalSpecular += addLight.color * (addSpec * addAtten);
+
+        if (veinMask01 > 0.35)
+        {
+            float glintDot = max(saturate(dot(normalWS, addHalf)), saturate(dot(glintMicroNormalWS, addHalf)));
+            float glintSpec = pow(saturate(glintDot), 96.0) * (veinMask01 * 2.45);
+            float3 glintTint = lerp(float3(1.0, 0.98, 0.94), max(albedo * 1.45, float3(0.35, 0.35, 0.35)), saturate(metallic * 0.75));
+            totalSpecular += addLight.color * (glintSpec * addAtten) * glintTint;
+        }
     LIGHT_LOOP_END
 #endif
 
-    // Metalik MatCap yansima karisimi + Astroneer/DRG siluet Rim Light
+    // Metalik MatCap yansima karisimi: ortam + gunes + mesale/nokta isik enerjisiyle module edilir ki
+    // karanlik magarada yapay parlamasin ve mesale isigi MatCap tarafindan ezilmesin!
     float3 litRgb = totalDiffuse;
     if (_UsePaletteLUT > 0.5 && metallic > 0.05)
     {
         float3 matCapCol = SampleMatCap16x(normalWS, matCapIdx);
-        float3 metalTint = albedo * matCapCol * (1.15 + 0.35 * mainLight.shadowAttenuation);
-        litRgb = lerp(litRgb, metalTint, saturate(metallic * _MatCapBlendWeight));
+        float3 sceneLightEnergy = ambientTerm + directDiffuse + additionalLightIrradiance;
+        float addLightLuma = dot(additionalLightIrradiance, float3(0.2126, 0.7152, 0.0722));
+        float torchPreserveDamp = 1.0 / (1.0 + addLightLuma * 0.55);
+        float3 metalTint = albedo * matCapCol * (sceneLightEnergy * 1.14 + 0.04);
+        litRgb = lerp(litRgb, metalTint, saturate(metallic * _MatCapBlendWeight * torchPreserveDamp));
     }
 
     float fresnelRim = pow(1.0 - saturate(dot(normalWS, viewDirWS)), 3.2) * _RimLightStrength * combinedIndirectAo;
     float3 finalRgb = litRgb + totalSpecular * cavityAo + fresnelRim * float3(0.62, 0.74, 0.95);
 
-    // Stefan-Boltzmann T^4 Kara Cisim (Magma / Demirci Orsu Kor Kizarma) Emisyonu
-    if (heatNorm > 0.03)
+    // Stefan-Boltzmann T^4 Kara Cisim (MagmaBlock Catlak Kor Isinimi / Lav / Demirci Orsu) Emisyonu
+    float effectiveHeatNorm = (input.matId == 11u)
+        ? (heatNorm * lerp(0.14, 1.06, magmaCrack01))
+        : heatNorm;
+
+    if (effectiveHeatNorm > 0.03)
     {
+        float hClamped = saturate(effectiveHeatNorm);
         float3 heatColor;
-        if (_UsePaletteLUT > 0.5)
+        if (input.matId == 11u)
         {
-            uint heatRow = 2u + (uint)round(heatNorm * 13.0);
+            // Sicak Volkanik Kaya (MagmaBlock, Temp=220): catlaklardan sicak turuncu-kirmizi magma kor isinimi
+            heatColor = ConvertLutSrgbToActiveColorSpace(
+                lerp(float3(0.78, 0.10, 0.01), float3(1.0, 0.48, 0.06), saturate(magmaCrack01)));
+        }
+        else if (_UsePaletteLUT > 0.5)
+        {
+            uint heatRow = 2u + (uint)round(hClamped * 13.0);
             heatColor = ConvertLutSrgbToActiveColorSpace(LoadMaterialLutExact(max(input.matId, 1u), heatRow).rgb);
         }
         else
         {
-            heatColor = lerp(float3(1.0, 0.24, 0.02), float3(1.0, 0.86, 0.28), heatNorm);
+            heatColor = lerp(float3(1.0, 0.24, 0.02), float3(1.0, 0.86, 0.28), hClamped);
         }
-        float blackbodyT4 = (heatNorm * heatNorm) * (0.35 + 0.65 * heatNorm * heatNorm);
-        finalRgb = lerp(finalRgb, heatColor, saturate(heatNorm * 0.70)) + heatColor * (blackbodyT4 * _BlackbodyIntensity);
+        float blackbodyT4 = (hClamped * hClamped) * (0.35 + 0.65 * hClamped * hClamped);
+        finalRgb = lerp(finalRgb, heatColor, saturate(hClamped * 0.70)) + heatColor * (blackbodyT4 * _BlackbodyIntensity);
     }
 
     finalRgb = MixFog(finalRgb, input.directColorAndFog.a);
