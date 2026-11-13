@@ -301,6 +301,37 @@ float EvaluateMagmaBlockCrustFissure01(float3 posWS)
     return saturate(smoothstep(0.60, 0.88, crackA) + 0.55 * smoothstep(0.68, 0.92, crackB));
 }
 
+// Paket 4A Faz 4A.3: Kuresel Bulut Golgesi ve Ruzgar Vektoru (SRP Batcher UnityPerMaterial disi global uniformlar)
+// _GlobalCloudGridParams: x = avgCloudWaterKgM2, y = cloudBaseY, z = cloudTopY, w = cloudShadowStrength (set edilmediginde 0.0 -> %100 1.0 carpan!)
+float4 _GlobalCloudGridParams;
+float4 _GlobalWindVector;
+
+/// Paket 4A Faz 4A.3: Gunes vektoru yonunde dunya-uzayi 3B bulut katmani izdusumu ile
+/// zemin uzerine yumusak dinamik bulut golgesi [0.25 .. 1.0] dusurur.
+/// Globaller set edilmediginde (_GlobalCloudGridParams.w <= 0.001 veya x <= 0.005) %100 1.0 doner!
+float EvaluateWorldSpaceCloudShadowAttenuation(float3 posWS, float3 sunDirWS)
+{
+    float shadowStrength = saturate(_GlobalCloudGridParams.w);
+    float cloudWaterKgM2 = _GlobalCloudGridParams.x;
+    if (shadowStrength <= 0.001 || cloudWaterKgM2 <= 0.005 || sunDirWS.y <= -0.05)
+    {
+        return 1.0;
+    }
+
+    float cloudBaseY = (_GlobalCloudGridParams.y > 1.0) ? _GlobalCloudGridParams.y : 180.0;
+    float rayT = max(0.0, (cloudBaseY - posWS.y) / max(0.08, sunDirWS.y));
+    float2 cloudXZ = posWS.xz + sunDirWS.xz * rayT - _GlobalWindVector.xz * _Time.y;
+
+    float2 p = cloudXZ * 0.025;
+    float n1 = sin(p.x * 1.7 + cos(p.y * 1.3));
+    float n2 = cos(p.y * 2.9 - sin(p.x * 2.1));
+    float cloudNoise01 = saturate(0.5 + 0.28 * n1 + 0.22 * n2);
+
+    float opticalDepth = cloudWaterKgM2 * (0.48 + 0.32 * cloudNoise01);
+    float cloudAtten = clamp(exp(-opticalDepth), 0.25, 1.0);
+    return lerp(1.0, cloudAtten, shadowStrength);
+}
+
 float3 ComputeFacetedWorldNormal(float3 posWS, float3 interpNormalWS)
 {
     float3 dpdx = ddx(posWS);
@@ -462,10 +493,11 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
 #endif
     float combinedIndirectAo = cavityAo * ssaoIndirect;
 
-    // Ana yonlu gunes isigi ve kaskad golgeleri
+    // Ana yonlu gunes isigi, kaskad golgeleri ve Paket 4A dunya-uzayi 3B bulut golgesi
     float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
     Light mainLight = GetMainLight(shadowCoord);
-    mainLight.shadowAttenuation *= ssaoDirect;
+    float cloudShadowAtten = EvaluateWorldSpaceCloudShadowAttenuation(input.positionWS, mainLight.direction);
+    mainLight.shadowAttenuation *= ssaoDirect * cloudShadowAtten;
 
     float rawNdotL = dot(normalWS, mainLight.direction);
     float ndotl = saturate(rawNdotL);

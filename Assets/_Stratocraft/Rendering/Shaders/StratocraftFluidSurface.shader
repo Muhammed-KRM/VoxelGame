@@ -75,11 +75,19 @@ Shader "Stratocraft/FluidSurface"
             // xyz = yuzucu hiz vektoru (m/s), w = suya giris sicrama darbesi (0..1)
             float4 _StratocraftSwimmerVel;
 
+            // Paket 4A Faz 4A.3: Kuresel Ruzgar Vektoru, Bulut Golgesi ve Tuzluluk Parametreleri
+            // _GlobalWindVector: x = WindVelX (m/s), y = WindSpeed (m/s), z = WindVelZ (m/s), w = Firtina Kararmasi (0..1)
+            float4 _GlobalWindVector;
+            // _GlobalCloudGridParams: x = avgCloudWaterKgM2, y = cloudBaseY, z = cloudTopY, w = cloudShadowStrength
+            float4 _GlobalCloudGridParams;
+            // _GlobalWaterSalinityParams: x = kuresel tuzluluk override (0..1), y = SeaLevelY (varsayilan 90m)
+            float4 _GlobalWaterSalinityParams;
+
             struct Attributes
             {
                 float4 positionOS   : POSITION;
                 float3 normalOS     : NORMAL;
-                float4 color        : COLOR;     // R=FluidType (1=Water, 2=Lava, 3=Acid), G=FluidLevel (0..255), B=FluxX, A=FluxZ
+                float4 color        : COLOR;     // R=FluidType (1=FreshWater, 12=SaltWater/SeaWater, 2=Lava, 3=Acid), G=FluidLevel (0..255), B=FluxX, A=FluxZ
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
@@ -92,6 +100,7 @@ Shader "Stratocraft/FluidSurface"
                 nointerpolation uint fluidType : TEXCOORD3;
                 float2 fluxVelocity : TEXCOORD4;
                 float fogFactor     : TEXCOORD5;
+                float salinity01    : TEXCOORD6;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -105,7 +114,7 @@ Shader "Stratocraft/FluidSurface"
 
                 float3 posWS = TransformObjectToWorld(input.positionOS.xyz);
                 
-                // Color.r: 1/12=Water, 2/13=Lava, 3/15=Acid
+                // Color.r: 1=FreshWater, 12=SaltWater/SeaWater, 2/13=Lava, 3/15=Acid
                 uint rawId = (uint)round(input.color.r * 255.0);
                 uint fType = 1;
                 if (rawId == 2 || rawId == 13)
@@ -118,22 +127,30 @@ Shader "Stratocraft/FluidSurface"
                 }
                 else
                 {
-                    fType = 1; // Water
+                    fType = 1; // Water (Tatli veya Tuzlu Su)
                 }
                 output.fluidType = fType;
+
+                // Tatli su (0.0) vs Tuzlu deniz suyu (1.0) optik ton ayrimi
+                float isSaltVertex = (rawId == 12u || rawId == 4u) ? 1.0 : 0.0;
+                output.salinity01 = saturate(max(isSaltVertex, _GlobalWaterSalinityParams.x));
 
                 float2 flux = float2(input.color.b * 2.0 - 1.0, input.color.a * 2.0 - 1.0);
                 output.fluxVelocity = flux;
 
-                // Su ve Asit icin prosedurel Gerstner dalgasi + Oyuncu Yuzme Dairesel Dalga Halkasi
+                // Su ve Asit icin prosedurel Gerstner dalgasi + _GlobalWindVector ruzgar olcegi + Oyuncu Yuzme Dairesel Dalga Halkasi
                 float3 nrmWS = TransformObjectToWorldNormal(input.normalOS);
                 if (fType == 1 || fType == 3)
                 {
-                    float time = _Time.y * _WaterWaveSpeed;
-                    float wave = sin((posWS.x + flux.x) * _WaterWaveFrequency + time) *
-                                 cos((posWS.z + flux.y) * _WaterWaveFrequency * 1.3 + time * 0.8);
+                    float2 windXZ = _GlobalWindVector.xz;
+                    float windSpeed = max(_GlobalWindVector.y, length(windXZ));
+                    float windAmpScale = 1.0 + clamp(windSpeed * 0.11, 0.0, 2.25);
+                    float time = _Time.y * (_WaterWaveSpeed + clamp(windSpeed * 0.08, 0.0, 1.4));
+                    float2 advectedXZ = posWS.xz + flux + windXZ * (_Time.y * 0.06);
+                    float wave = sin(advectedXZ.x * _WaterWaveFrequency + time) *
+                                 cos(advectedXZ.y * _WaterWaveFrequency * 1.3 + time * 0.8);
                     float topMask = saturate(nrmWS.y * 1.5);
-                    posWS.y += wave * _WaterWaveAmplitude * topMask;
+                    posWS.y += wave * (_WaterWaveAmplitude * windAmpScale) * topMask;
 
                     float swimWeight = saturate(_StratocraftSwimmerPos.w);
                     if (swimWeight > 0.01 && topMask > 0.25 && abs(posWS.y - _StratocraftSwimmerPos.y) < 2.4)
@@ -227,21 +244,36 @@ Shader "Stratocraft/FluidSurface"
                 float rawDiff = sceneDepthWS - surfaceDepthWS;
                 float opticalDepth = (validDepth && rawDiff >= 0.0 && rawDiff < 24.0) ? rawDiff : 1.4;
 
-                // Ana Isik
+                // Ana Isik + Paket 4A Dunya-Uzayi Bulut Golgesi Zayiflatmasi
                 Light mainLight = GetMainLight();
-                float NdotL = max(0.0, dot(normalWS, mainLight.direction));
+                float cloudShadowAtten = 1.0;
+                if (_GlobalCloudGridParams.w > 0.001 && _GlobalCloudGridParams.x > 0.005 && mainLight.direction.y > -0.05)
+                {
+                    float cloudBaseY = (_GlobalCloudGridParams.y > 1.0) ? _GlobalCloudGridParams.y : 180.0;
+                    float rayT = max(0.0, (cloudBaseY - input.positionWS.y) / max(0.08, mainLight.direction.y));
+                    float2 cloudXZ = (input.positionWS.xz + mainLight.direction.xz * rayT - _GlobalWindVector.xz * _Time.y) * 0.025;
+                    float cn = saturate(0.5 + 0.28 * sin(cloudXZ.x * 1.7 + cos(cloudXZ.y * 1.3)) + 0.22 * cos(cloudXZ.y * 2.9 - sin(cloudXZ.x * 2.1)));
+                    float rawCloudAtten = clamp(exp(-_GlobalCloudGridParams.x * (0.48 + 0.32 * cn)), 0.32, 1.0);
+                    cloudShadowAtten = lerp(1.0, rawCloudAtten, saturate(_GlobalCloudGridParams.w));
+                }
+                float NdotL = max(0.0, dot(normalWS, mainLight.direction)) * cloudShadowAtten;
                 float3 lightCol = max(float3(0.45, 0.48, 0.52), mainLight.color * (NdotL * 0.75 + 0.35));
 
-                // ==================== 1. SU (FluidType == 1) ====================
+                // ==================== 1. SU (FluidType == 1: Tatli Su & Tuzlu Deniz Suyu) ====================
                 if (input.fluidType == 1)
                 {
+                    float salt01 = saturate(input.salinity01);
+                    // Tatli su berrak camgobegi-turkuaz; tuzlu okyanus suyu hafif daha derin zumrut-kobalt tonunda
+                    float3 shallowTint = lerp(_WaterColorShallow.rgb, float3(0.16, 0.66, 0.88), salt01 * 0.32);
+                    float3 deepTint = lerp(_WaterColorDeep.rgb, float3(0.06, 0.34, 0.68), salt01 * 0.35);
+
                     if (!isFrontFace)
                     {
                         // Su icinden yukari bakis: Snell penceresi (dik acida aydinlik turkuaz, yatay acida tam ic yansima laciverti)
                         float snellWindow = smoothstep(0.42, 0.78, NdotV);
                         float causticWave = SmoothValueNoise2D(input.positionWS.xz * 2.1 + _Time.y * 0.45);
-                        float3 tirDeep = _WaterColorDeep.rgb * lightCol * 0.92;
-                        float3 windowBright = lerp(_WaterColorShallow.rgb, float3(0.68, 0.92, 1.0), 0.45 + 0.20 * causticWave) * lightCol * 1.15;
+                        float3 tirDeep = deepTint * lightCol * 0.92;
+                        float3 windowBright = lerp(shallowTint, float3(0.68, 0.92, 1.0), 0.45 + 0.20 * causticWave) * lightCol * 1.15;
                         float3 underColor = lerp(tirDeep, windowBright, snellWindow);
                         float underAlpha = saturate(lerp(0.84, 0.58, snellWindow));
                         return float4(MixFog(underColor, input.fogFactor), underAlpha);
@@ -249,10 +281,10 @@ Shader "Stratocraft/FluidSurface"
 
                     // Beer-Lambert Derinlik Sogurmasi + 3B Prizma Yan Duvar Kontrasti
                     float sideWallMask = 1.0 - saturate(abs(normalWS.y) * 1.35);
-                    float3 extinction = _WaterExtinction.rgb;
+                    float3 extinction = _WaterExtinction.rgb * lerp(1.0, 1.14, salt01);
                     float3 absorb = exp(-extinction * clamp(opticalDepth + sideWallMask * 0.85, 0.18, 6.0));
-                    float3 waterColor = lerp(_WaterColorDeep.rgb, _WaterColorShallow.rgb, absorb);
-                    waterColor = lerp(waterColor, _WaterColorDeep.rgb * 1.15, sideWallMask * 0.38);
+                    float3 waterColor = lerp(deepTint, shallowTint, absorb);
+                    waterColor = lerp(waterColor, deepTint * 1.15, sideWallMask * 0.38);
 
                     // Schlick Fresnel + Ust-Yan Kenar Meniskus Okunurlugu
                     float fresnel = 0.08 + 0.92 * pow(1.0 - NdotV, 3.6);
