@@ -4393,7 +4393,7 @@ namespace Stratocraft.Character
                     string targetLine = _miningCtrl.HasAimHit
                         ? $"Hedef: {_miningCtrl.AimVoxelCoord.x},{_miningCtrl.AimVoxelCoord.y},{_miningCtrl.AimVoxelCoord.z} {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.AimMaterialId)} (Y:{_miningCtrl.AimDensity} H:{_miningCtrl.AimDamageState}/15) [{_miningCtrl.AimHit.distance:0.1}m]"
                         : "Hedef Blok: Yok";
-                    string crystalLine = $"Kristal [C]: {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | Secili [Ctrl+B]: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)} | [B] Rehber";
+                    string crystalLine = $"Kristal [C]: {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | Secili [Shift+B]: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)} | [B] Rehber";
                     string combatLine = $"Silah [F8]: {_combatBridge.GetWeaponDisplayName()} | Stil [G]: {_combatBridge.GetStanceDisplayName()}";
                     _cachedRightHudString =
                         $"{targetLine}\n" +

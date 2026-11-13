@@ -217,13 +217,22 @@ namespace Stratocraft.Inventory.Systems
                 stepByStepGuide: "Normal odun ateşi ~735-820 °C'yi geçemez. Bakır (1085 °C) ve Demir (1230-1250 °C) izabesi için Kömür Ocağından elde edilen 6-8x Odun Kömürü İzabe Fırınına [Sağ Tık] ile üstten doldurulmalıdır."),
 
             new(
-                id: "mat_ores_all",
+                id: "mat_depth_rock_strata",
+                tab: SurvivalRecipeBookTab.MaterialsAndResources,
+                categoryBadge: "Derinlik & Kayaç Katmanı",
+                title: "Mağara Kayaç Katmanları (Derinleştikçe Sertleşir)",
+                ingredientsOrSource: "Sığ Mağara (Taş / Kırıktaş: T1 Taş Kazma) -> Derin Mağara (Derin Bazalt & Magma Kayası: T2 Demir Kazma) -> Abisal Katman (Doğal Obsidyen: T3+ Kazma).",
+                toolOrKeybind: "T1 Taş Kazma: Taş/Kırıktaş | T2 Demir Kazma: Derin Bazalt & Magma | T3+ Kazma: Doğal Obsidyen",
+                stepByStepGuide: "Yeraltına inildikçe mağara duvarı kayaçları sertleşir: Sığ katmanlardaki Taş (Stone) ve Kırıktaş (Cobblestone) T1 İlkel Taş Kazma ile kırılır. Orta ve derin mağaralardaki sert Derin Bazalt (Basalt) ile akkor Magma Bloğu (MagmaBlock) katmanlarını kazmak için T2 Dövme Demir Kazma zorunludur. En derindeki su-lav temaslı Doğal Obsidyen (NaturalObsidian) ise T3+ kazma gerektirir."),
+
+            new(
+                id: "mat_metal_ores",
                 tab: SurvivalRecipeBookTab.MaterialsAndResources,
                 categoryBadge: "Maden & Cevher Damarları",
-                title: "Bakır, Demir, Altın, Titanyum ve Mithril Cevherleri",
+                title: "Bakır, Kalay, Demir, Altın, Gümüş, Titanyum ve Mithril Cevherleri",
                 ingredientsOrSource: "Yüzeydeki mostra (Outcrop) kaya izlerinin altında ve yeraltı mağara katmanlarındaki 3B rölyefli parıltılı damarlarda bulunur.",
-                toolOrKeybind: "Bakır: T1 Taş Kazma | Demir & Altın: T2 Demir Kazma | Titanyum & Mithril: T3+ Kazma",
-                stepByStepGuide: "Cevher damarları Madde Kristali ile vakumlanamaz; uygun kademedeki kazma ile [Sol Tık] savrularak kırılır. Bakır ve Demir cevherleri Kamp Ateşinde kavrulup (10 sn) Taş Çekiçle (3 vuruş) kırılarak veya doğrudan İzabe Fırınına [Sağ Tık] ile yüklenerek metale dönüştürülür.")
+                toolOrKeybind: "T1 Taş Kazma -> Bakır/Kalay/Demir | T2 Demir Kazma -> Derin Bazalt & Altın/Gümüş | T3+ -> Doğal Obsidyen & Titanyum/Mithril",
+                stepByStepGuide: "Cevher damarları Madde Kristali ile vakumlanamaz; uygun kademedeki kazma ile [Sol Tık] savrularak kırılır: T1 Taş Kazma ile Bakır, Kalay ve ilk Demir Cevheri çıkarılır; Demir Cevheri 1250 °C Bloomery İzabe Fırınında eritilip T2 Demir Kazma yapılarak Derin Bazalt ile Altın, Gümüş ve Ametist damarlarına inilir; T3+ kazma ile Doğal Obsidyen, Titanyum, Mithril, Elmas ve Kızıl Elmas kazılır.")
         };
 
         // =====================================================================
@@ -247,7 +256,7 @@ namespace Stratocraft.Inventory.Systems
                 title: "İlkel Taş Kazma (StonePickaxe — T1)",
                 ingredientsOrSource: "1x Yontulmuş Taş Kazma Başı + 1x Kuru Dal + 1x Bitki Lifi",
                 toolOrKeybind: "[I] Çantayı Aç -> Parçaları Ortaya [Sol Tık] Koy -> [R / İple Bağla]",
-                stepByStepGuide: "Yontulmuş kazma başlığının %Kalite ve 64-bit kırık izi DNA'sı üretilen kazmaya birebir geçer. Kaya katmanlarını, Doğal Kuvarsı ve Bakır Cevheri damarlarını kazmak için kullanılır."),
+                stepByStepGuide: "Yontulmuş kazma başlığının %Kalite ve 64-bit kırık izi DNA'sı üretilen kazmaya birebir geçer. Sığ kaya katmanlarını, Doğal Kuvarsı ve Bakır, Kalay ile ilk Demir Cevheri damarlarını kazmak için kullanılır."),
 
             new(
                 id: "craft_primitive_axe",
@@ -454,10 +463,10 @@ namespace Stratocraft.Inventory.Systems
                 id: "guide_crystal_and_scatter",
                 tab: SurvivalRecipeBookTab.SmithingCookingAndCrystal,
                 categoryBadge: "[C] Kristal & [V] Fırça",
-                title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Saçılımı ve [Ctrl+B] Malzeme",
+                title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Saçılımı ve [Shift+B] Malzeme",
                 ingredientsOrSource: "3x Doğal Kuvars (T0 -> T1) | T2..T5 Rezonans Kristali (T1 -> T2..T5).",
-                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal Arazi Fırçası <-> Mimari Blok | [Shift+V] Şekil Gez | [Ctrl+B] Malzeme",
-                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Ctrl+B] inşa malzemesini değiştirir.")
+                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal Arazi Fırçası <-> Mimari Blok | [Shift+V] Şekil Gez | [Shift+B] Malzeme",
+                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Shift+B] inşa malzemesini değiştirir.")
         };
 
         private static readonly SurvivalRecipeBookTabDefinition[] CachedTabs =
@@ -544,9 +553,12 @@ namespace Stratocraft.Inventory.Systems
         {
             if (!string.IsNullOrEmpty(id))
             {
+                string lookupId = string.Equals(id, "mat_ores_all", StringComparison.OrdinalIgnoreCase)
+                    ? "mat_metal_ores"
+                    : id;
                 for (int i = 0; i < CachedAllEntries.Length; i++)
                 {
-                    if (string.Equals(CachedAllEntries[i].Id, id, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(CachedAllEntries[i].Id, lookupId, StringComparison.OrdinalIgnoreCase))
                     {
                         entry = CachedAllEntries[i];
                         return true;

@@ -2220,7 +2220,7 @@ namespace Stratocraft.Character
             Rect bgRect = new Rect(px, py, panelW, panelH);
             GUI.DrawTexture(bgRect, _windowBgTex!);
             string header =
-                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Tekerlek / Ctrl+B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [Shift+V]: Mimari Şekil | [T]: {miningCtrl.BrushAreaLabel} | [B]: Tarif & Malzeme Kitabı";
+                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Tekerlek / Shift+B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [Shift+V]: Mimari Şekil | [T]: {miningCtrl.BrushAreaLabel} | [B]: Tarif & Malzeme Kitabı";
             GUI.Label(new Rect(px + 6f, py + 3f, panelW - 12f, 20f), header, _slotTitleBannerStyle!);
 
             byte selectedMat = miningCtrl.SelectedMaterialId;
@@ -2719,7 +2719,7 @@ namespace Stratocraft.Character
         {
             if (miningCtrl.IsCrystalActive)
             {
-                return $"[C] MADDE KRİSTALİ AKTİF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tık] Vakumla | [Sağ Tık] İnşa ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)}) | [V] Mod | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                return $"[C] MADDE KRİSTALİ AKTİF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tık] Vakumla | [Sağ Tık] İnşa ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)}) | [V] Mod | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             }
 
             if (SelectedHotbarIndex == -1)

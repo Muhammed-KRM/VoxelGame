@@ -107,7 +107,7 @@ namespace Stratocraft.Character
         public int HarvestedGoldCount { get; private set; }
         public int HarvestedMithrilCount { get; private set; }
         public StructuralPreviewColor CurrentGhostPreviewColor { get; private set; } = StructuralPreviewColor.GreenSafe;
-        public string LastFeedbackText { get; set; } = "Hazir ([C] Kristal | [1-9/0] Alet & Kilif | [V] Dogal/Mimari | [R] 24-Yon | [Ctrl+B/I] Malzeme | [B] Tarif & Malzeme Kitabi)";
+        public string LastFeedbackText { get; set; } = "Hazir ([C] Kristal | [1-9/0] Alet & Kilif | [V] Dogal/Mimari | [R] 24-Yon | [Shift+B/I] Malzeme | [B] Tarif & Malzeme Kitabi)";
         public bool HasAimHit { get; private set; }
         public RaycastHit AimHit { get; private set; }
 
@@ -184,7 +184,7 @@ namespace Stratocraft.Character
             }
             byte mat = SelectedMaterialId;
             int cnt = GetMaterialCountInCrystal(mat);
-            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/Ctrl+B]: {GetMaterialDisplayName(mat)} (Stok: x{cnt}) -> [C + Sağ Tık] Dünyaya Koy | [B] Tarif & Malzeme Kitabı";
+            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/Shift+B]: {GetMaterialDisplayName(mat)} (Stok: x{cnt}) -> [C + Sağ Tık] Dünyaya Koy | [B] Tarif & Malzeme Kitabı";
         }
 
         public byte ToggleNaturalScatterAndArchitecturalShape()
@@ -285,15 +285,24 @@ namespace Stratocraft.Character
 
         public static byte GetRequiredToolTierForMaterial(byte mat)
         {
-            if (mat == MaterialIdCatalog.AstralOre || mat == MaterialIdCatalog.RedDiamondGem ||
-                mat == MaterialIdCatalog.NaturalObsidian || mat == MaterialIdCatalog.MithrilOre ||
-                mat == MaterialIdCatalog.RubyGem || mat == MaterialIdCatalog.SapphireGem ||
-                mat == MaterialIdCatalog.TitaniumOre || (mat >= MaterialIdCatalog.OrichalcumOre && mat <= MaterialIdCatalog.VoidMetalOre))
+            if (mat == MaterialIdCatalog.AstralOre ||
+                mat == MaterialIdCatalog.RedDiamondGem ||
+                mat == MaterialIdCatalog.DiamondGem ||
+                mat == MaterialIdCatalog.NaturalObsidian ||
+                mat == MaterialIdCatalog.MithrilOre ||
+                mat == MaterialIdCatalog.RubyGem ||
+                mat == MaterialIdCatalog.SapphireGem ||
+                mat == MaterialIdCatalog.EmeraldGem ||
+                mat == MaterialIdCatalog.TitaniumOre ||
+                (mat >= MaterialIdCatalog.OrichalcumOre && mat <= MaterialIdCatalog.VoidMetalOre))
             {
                 return 3;
             }
-            if (mat == MaterialIdCatalog.IronOre || mat == MaterialIdCatalog.GoldOre ||
-                mat == MaterialIdCatalog.AmethystGem || mat == MaterialIdCatalog.Basalt || mat == MaterialIdCatalog.MagmaBlock)
+            if (mat == MaterialIdCatalog.Basalt ||
+                mat == MaterialIdCatalog.MagmaBlock ||
+                mat == MaterialIdCatalog.GoldOre ||
+                mat == MaterialIdCatalog.SilverOre ||
+                mat == MaterialIdCatalog.AmethystGem)
             {
                 return 2;
             }
@@ -314,7 +323,7 @@ namespace Stratocraft.Character
 
                 IsCrystalActive = !IsCrystalActive;
                 LastFeedbackText = IsCrystalActive
-                    ? $"💎 MADDE KRİSTALİ AKTİF (Kademe T{CurrentCrystalTier}): [Sol Tık] Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı"
+                    ? $"💎 MADDE KRİSTALİ AKTİF (Kademe T{CurrentCrystalTier}): [Sol Tık] Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı"
                     : "💎 Madde Kristali uyku moduna alındı ([C] ile tekrar açabilirsiniz).";
                 return true;
             }
@@ -343,7 +352,7 @@ namespace Stratocraft.Character
             IsCrystalActive = true;
             holsterCtrl.InventoryUi.SyncWithCrystalStorage(this);
             LastFeedbackText =
-                "✨ MADDE KRİSTALİ UYANDI (3/3 Kuvars -> Kademe T1 | Kapasite: 500 Blok)! [Sol Tık] Arazi Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                "✨ MADDE KRİSTALİ UYANDI (3/3 Kuvars -> Kademe T1 | Kapasite: 500 Blok)! [Sol Tık] Arazi Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             return true;
         }
 
@@ -443,7 +452,7 @@ namespace Stratocraft.Character
                                 ? $" | ✨ Çantada T{nextTier} Rezonans Kristali hazır: Evrim için tekrar [C]'ye basın!"
                                 : (CurrentCrystalTier < 5 ? $" | Evrim: T{nextTier} Rezonans Kristali" : " | Maksimum T5");
                             LastFeedbackText =
-                                $"💎 MADDE KRİSTALİ AKTİF (T{CurrentCrystalTier} | {CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity} Blok){upgradeNote} | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                                $"💎 MADDE KRİSTALİ AKTİF (T{CurrentCrystalTier} | {CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity} Blok){upgradeNote} | [V] Doğal/Mimari | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
                         }
                     }
                 }
@@ -469,7 +478,7 @@ namespace Stratocraft.Character
                         ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
                         : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
                 }
-                if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.B))
+                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetKeyDown(KeyCode.B))
                 {
                     CycleCrystalMaterial(1);
                 }
@@ -2362,7 +2371,7 @@ namespace Stratocraft.Character
                     }
                 }
                 if (!consumedFromStorage && !(placingFromHandSlot && TryConsumeOneFromActiveHotbarSlot(holsterCtrl, out consumedFromHandKind)))
-                { LastFeedbackText = $"Depoda {GetMaterialDisplayName(mat)} kalmadı! ([Tekerlek/Ctrl+B] ile başka malzeme seçin | [B] Tarif & Malzeme Kitabı)"; return; }
+                { LastFeedbackText = $"Depoda {GetMaterialDisplayName(mat)} kalmadı! ([Tekerlek/Shift+B] ile başka malzeme seçin | [B] Tarif & Malzeme Kitabı)"; return; }
 
                 if (consumedFromHandKind == InventoryItemKind.RoughStoneChunk || consumedFromHandKind == InventoryItemKind.LooseDirtClod)
                 {
@@ -2530,7 +2539,7 @@ namespace Stratocraft.Character
                     collapseBridge.EvaluateChunkStability(lastTouchedChunk.cx, lastTouchedChunk.cz, tv, maxY, center, sharedMat, dirty, out _);
                 }
                 LastFeedbackText =
-                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI (Kademe T{Mathf.Max(1, CurrentCrystalTier)} | R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks}) | [V] Mimariye Geç | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI (Kademe T{Mathf.Max(1, CurrentCrystalTier)} | R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks}) | [V] Mimariye Geç | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             }
             else if (blockedByPlayerCapsule)
             {
@@ -3180,6 +3189,41 @@ namespace Stratocraft.Character
             {
                 Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
             }
+        }
+    }
+}
+#else
+#nullable enable
+using Stratocraft.Core.Constants;
+
+namespace Stratocraft.Character
+{
+    public sealed class Stage1MatterCrystalAndMiningController
+    {
+        public static byte GetRequiredToolTierForMaterial(byte mat)
+        {
+            if (mat == MaterialIdCatalog.AstralOre ||
+                mat == MaterialIdCatalog.RedDiamondGem ||
+                mat == MaterialIdCatalog.DiamondGem ||
+                mat == MaterialIdCatalog.NaturalObsidian ||
+                mat == MaterialIdCatalog.MithrilOre ||
+                mat == MaterialIdCatalog.RubyGem ||
+                mat == MaterialIdCatalog.SapphireGem ||
+                mat == MaterialIdCatalog.EmeraldGem ||
+                mat == MaterialIdCatalog.TitaniumOre ||
+                (mat >= MaterialIdCatalog.OrichalcumOre && mat <= MaterialIdCatalog.VoidMetalOre))
+            {
+                return 3;
+            }
+            if (mat == MaterialIdCatalog.Basalt ||
+                mat == MaterialIdCatalog.MagmaBlock ||
+                mat == MaterialIdCatalog.GoldOre ||
+                mat == MaterialIdCatalog.SilverOre ||
+                mat == MaterialIdCatalog.AmethystGem)
+            {
+                return 2;
+            }
+            return 1;
         }
     }
 }
