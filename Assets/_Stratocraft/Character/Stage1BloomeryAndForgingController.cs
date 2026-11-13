@@ -417,6 +417,20 @@ namespace Stratocraft.Character
             WorldLooseBuildSystem looseBuildSystem,
             Material? sharedVoxelMat)
         {
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+            // 0) Shift + [E] on BloomeryFurnace: extinguish fire (preserving fuel & smelt progress, never pumping bellows)
+            if (shiftHeld)
+            {
+                int shiftBloomIdx = FindAimedBloomeryIndex(cam, playerPos, 3.45f);
+                if (shiftBloomIdx >= 0)
+                {
+                    BloomeryRuntimeEntry sb = _bloomeries[shiftBloomIdx];
+                    ExtinguishBloomeryEntry(sb, sb.RootGo.transform, miningCtrl);
+                    return true;
+                }
+            }
+
             // 1) Active surface workpiece collection (RoastedOreChunk, IronBloomSponge, or WroughtIronBar)
             int wpIdx = FindAimedWorkpieceIndex(cam, playerPos, anvilTransform, 3.25f);
             if (wpIdx >= 0)
@@ -709,7 +723,7 @@ namespace Stratocraft.Character
                 {
                     if (aimedBloomeryIdx >= 0)
                     {
-                        consumedMouseClick = HandleRightClickOnBloomery(
+                        consumedMouseClick = TryHandleRightClickOnBloomery(
                             _bloomeries[aimedBloomeryIdx], in activeSlot, playerTransform,
                             miningCtrl, holsterCtrl, combatBridge);
                     }
@@ -810,9 +824,21 @@ namespace Stratocraft.Character
             if (bloomIdx >= 0)
             {
                 BloomeryRuntimeEntry b = _bloomeries[bloomIdx];
-                string oreName = b.Data.OreMaterialId == BloomeryFurnaceState.CopperMatId
-                    ? "Bakır"
-                    : (b.Data.OreMaterialId == BloomeryFurnaceState.IronMatId ? "Demir" : "Yok");
+                string oreName;
+                if (b.Data.CrushedOreUnits <= 0 ||
+                    (b.Data.OreMaterialId != BloomeryFurnaceState.CopperMatId &&
+                     b.Data.OreMaterialId != BloomeryFurnaceState.IronMatId))
+                {
+                    oreName = "Yok";
+                }
+                else
+                {
+                    string baseOre = b.Data.OreMaterialId == BloomeryFurnaceState.CopperMatId ? "Bakır" : "Demir";
+                    int speedPct = Mathf.RoundToInt(
+                        (b.Data.OreSmeltSpeedMultiplier <= 0.001f ? 1.0f : b.Data.OreSmeltSpeedMultiplier) * 100f);
+                    oreName = speedPct < 100 ? $"{baseOre} %{speedPct}" : baseOre;
+                }
+
                 string stateTag = b.Data.IsLit
                     ? $"Yanıyor {b.Data.TemperatureCelsius:0} °C"
                     : $"Sönük ({b.Data.SparkStrikeCount}/{BloomeryFurnaceState.RequiredSparkStrikes} Kıvılcım)";
@@ -845,17 +871,22 @@ namespace Stratocraft.Character
                 }
                 else if (!b.Data.HasLeatherBellows)
                 {
-                    line2 = "[Sağ Tık] Deri Körük Tak  |  [Sağ Tık] Kömür/Cevher Ekle";
+                    line2 = "[Sağ Tık] Deri Körük Tak  |  [Sağ Tık] Kömür / Cevher (Ham·Kavrulmuş·Kırılmış) Ekle";
                 }
                 else if (!b.Data.IsLit)
                 {
-                    line2 = "Çakmaktaşı ile [Sol/Sağ Tık] Tutuştur  |  [Sağ Tık] Kömür/Cevher/Pota Ekle";
+                    line2 = "Çakmaktaşı ile [Sol/Sağ Tık] Tutuştur  |  [Sağ Tık] Kömür / Cevher (Ham·Kavrulmuş·Kırılmış) / Pota Ekle";
                 }
                 else
                 {
                     int pct = Mathf.RoundToInt(b.Data.SmeltProgress01 * 100f);
                     string smeltTxt = b.Data.CrushedOreUnits > 0 ? $"İzabe: %{pct} | " : string.Empty;
                     line2 = $"{smeltTxt}[E / Boş El Sol Tık] Körük Pompala (-1.8 EP)  |  [Sağ Tık] Kömür/Cevher Ekle";
+                }
+
+                if (b.Data.IsLit)
+                {
+                    line2 = $"{line2}  |  [Shift+E] Ateşi Söndür";
                 }
 
                 DrawPromptBanner(line1, line2);
@@ -922,7 +953,7 @@ namespace Stratocraft.Character
             _strikeCooldownSec = 0f;
         }
 
-        private bool HandleRightClickOnBloomery(
+        private bool TryHandleRightClickOnBloomery(
             BloomeryRuntimeEntry b,
             in VisualInventorySlot activeSlot,
             Transform playerTransform,
@@ -930,6 +961,59 @@ namespace Stratocraft.Character
             Stage1HolsterAndBackpackController holsterCtrl,
             Stage1DirectionalCombatBridge? combatBridge)
         {
+            // 0) Water-filled fluid container (ToolFluidBucket / ToolFluidFlask / ToolFluidCauldron SubId == 1) or CleanWater extinguish
+            if (Stage1VisualHotbarAndInventoryUi.IsFluidContainerKind(activeSlot.Kind))
+            {
+                if (activeSlot.SubId == 1)
+                {
+                    int storedWater = Stage1VisualHotbarAndInventoryUi.GetSlotStoredFluidUnits(in activeSlot);
+                    if (storedWater <= 0)
+                    {
+                        miningCtrl.LastFeedbackText =
+                            "⚠️ Su kabı boş! Fırını suyla söndürmek için önce su doldurun (veya [Shift+E] kullanın).";
+                        return true;
+                    }
+                    if (!b.Data.IsLit)
+                    {
+                        miningCtrl.LastFeedbackText = "İzabe fırını zaten sönük.";
+                        return true;
+                    }
+
+                    if (!holsterCtrl.IsCreativeMode)
+                    {
+                        int remaining = Mathf.Max(0, storedWater - 255);
+                        byte nextSubId = remaining > 0 ? (byte)1 : (byte)0;
+                        holsterCtrl.InventoryUi.UpdateSelectedFluidContainerUnits(nextSubId, remaining);
+                        holsterCtrl.ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    }
+                    ExtinguishBloomeryEntry(b, playerTransform, miningCtrl);
+                    return true;
+                }
+
+                if (activeSlot.SubId == 0)
+                {
+                    miningCtrl.LastFeedbackText =
+                        "⚠️ Kap boş! Fırını suyla söndürmek için önce gölden/nehirden su doldurun (veya [Shift+E] kullanın).";
+                    return true;
+                }
+
+                miningCtrl.LastFeedbackText =
+                    "⚠️ Lav dolu kapla fırın söndürülemez! Su dolu kap veya [Shift+E] kullanın.";
+                return true;
+            }
+
+            if (activeSlot.Kind == InventoryItemKind.FoodCleanWater)
+            {
+                if (!b.Data.IsLit)
+                {
+                    miningCtrl.LastFeedbackText = "İzabe fırını zaten sönük.";
+                    return true;
+                }
+                if (!ConsumeActiveItem(holsterCtrl, miningCtrl, combatBridge)) return true;
+                ExtinguishBloomeryEntry(b, playerTransform, miningCtrl);
+                return true;
+            }
+
             // 1) Mount ClayTuyerePipe (fired only)
             if (activeSlot.Kind == InventoryItemKind.ClayTuyerePipe)
             {
@@ -990,7 +1074,7 @@ namespace Stratocraft.Character
                 if (!ConsumeActiveItem(holsterCtrl, miningCtrl, combatBridge)) return true;
                 b.Data.HasClayCrucible = true;
                 b.CrucibleGo.SetActive(true);
-                miningCtrl.LastFeedbackText = "🥣 Pişmiş Kil Pota fırına yerleştirildi! Artık Kırılmış Bakır Cevheri + Odun Kömürü eritebilirsin (1085 °C).";
+                miningCtrl.LastFeedbackText = "🥣 Pişmiş Kil Pota fırına yerleştirildi! Artık Bakır Cevheri + Odun Kömürü eritebilirsin (1085 °C).";
                 return true;
             }
 
@@ -1039,31 +1123,60 @@ namespace Stratocraft.Character
                 return true;
             }
 
-            // 7) Top-charge CrushedOrePowder
-            if (activeSlot.Kind == InventoryItemKind.CrushedOrePowder)
+            // 7) Top-charge Ore: CrushedOrePowder (1.00x), RoastedOreChunk (0.85x), OreChunk (0.70x), or VoxelBlock (30/32 -> 0.70x)
+            if (TryResolveOreChargeCandidate(in activeSlot, out byte oreMat, out BloomeryOreChargeForm chargeForm))
             {
-                byte oreMat = activeSlot.SubId != 0 ? activeSlot.SubId : BloomeryFurnaceState.IronMatId;
-                if (oreMat != BloomeryFurnaceState.CopperMatId && oreMat != BloomeryFurnaceState.IronMatId)
+                if (!BloomeryThermodynamicsSystem.IsSupportedBloomeryOreMaterial(oreMat))
                 {
-                    miningCtrl.LastFeedbackText = "⚠️ İlkel İzabe Fırınında yalnızca Kırılmış Bakır veya Demir Cevheri işlenebilir!";
+                    string unsupportedName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(oreMat);
+                    miningCtrl.LastFeedbackText = oreMat == MaterialIdCatalog.Coal
+                        ? $"⚠️ {unsupportedName} İlkel İzabe Fırınına konamaz! Yakıt olarak Odun Kömürü, cevher olarak Bakır veya Demir kullanın."
+                        : $"⚠️ {unsupportedName} İlkel İzabe Fırınında (~1250 °C) eritilemez! Yalnızca Bakır (1085 °C) veya Demir (1230 °C) cevheri yüklenebilir.";
                     return true;
                 }
-                if (b.Data.CrushedOreUnits > 0 && b.Data.OreMaterialId != oreMat)
+
+                if (b.Data.CrushedOreUnits > 0 && b.Data.OreMaterialId != 0 && b.Data.OreMaterialId != oreMat)
                 {
-                    miningCtrl.LastFeedbackText = "⚠️ Aynı fırın şarjında Bakır ve Demir cevherini karıştırma! Önce mevcut izabeyi tamamla.";
+                    string existingMetal = b.Data.OreMaterialId == BloomeryFurnaceState.CopperMatId ? "Bakır" : "Demir";
+                    string incomingMetal = oreMat == BloomeryFurnaceState.CopperMatId ? "Bakır" : "Demir";
+                    miningCtrl.LastFeedbackText =
+                        $"⚠️ Aynı fırın şarjında {existingMetal} ve {incomingMetal} cevheri karıştırılamaz! Önce mevcut izabeyi tamamla.";
                     return true;
                 }
+
                 if (b.Data.CrushedOreUnits >= BloomeryFurnaceState.MaxCrushedOreUnits)
                 {
-                    miningCtrl.LastFeedbackText = $"Fırının cevher haznesi dolu ({BloomeryFurnaceState.MaxCrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits})!";
+                    miningCtrl.LastFeedbackText =
+                        $"Fırının cevher haznesi dolu ({BloomeryFurnaceState.MaxCrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits})!";
                     return true;
                 }
+
                 if (!ConsumeActiveItem(holsterCtrl, miningCtrl, combatBridge)) return true;
-                b.Data.OreMaterialId = oreMat;
-                b.Data.CrushedOreUnits++;
+                BloomeryThermodynamicsSystem.TryChargeOreUnit(ref b.Data, oreMat, chargeForm);
+
                 string oreLabel = oreMat == BloomeryFurnaceState.CopperMatId ? "Bakır" : "Demir";
+                int speedPct = Mathf.RoundToInt(b.Data.OreSmeltSpeedMultiplier * 100f);
+                string crucibleHint = oreMat == BloomeryFurnaceState.CopperMatId && !b.Data.HasClayCrucible
+                    ? " (Bakır eritmek için Pişmiş Kil Pota takmalısın!)"
+                    : string.Empty;
+
+                miningCtrl.LastFeedbackText = chargeForm switch
+                {
+                    BloomeryOreChargeForm.CrushedPowder =>
+                        $"⛏️ Üstten +1x Kırılmış {oreLabel} Cevheri yüklendi ({b.Data.CrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits} | Hız: %{speedPct})!{crucibleHint}",
+                    BloomeryOreChargeForm.RoastedChunk =>
+                        $"🪨 Üstten +1x Kavrulmuş {oreLabel} Cevheri yüklendi ({b.Data.CrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits} | Hız: %{speedPct})!{crucibleHint}",
+                    _ =>
+                        $"🪨 Üstten +1x Ham {oreLabel} Cevheri doğrudan yüklendi ({b.Data.CrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits} | Hız: %{speedPct})!{crucibleHint}"
+                };
+                return true;
+            }
+
+            if (activeSlot.Kind == InventoryItemKind.VoxelBlock)
+            {
+                string blkName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(activeSlot.SubId);
                 miningCtrl.LastFeedbackText =
-                    $"⛏️ Üstten +1x Kırılmış {oreLabel} Cevheri yüklendi ({b.Data.CrushedOreUnits}/{BloomeryFurnaceState.MaxCrushedOreUnits})!";
+                    $"⚠️ {blkName} bloğu İzabe Fırınına yüklenemez! Yalnızca Bakır/Demir cevheri, Odun Kömürü veya fırın parçaları kullanılabilir.";
                 return true;
             }
 
@@ -1095,6 +1208,70 @@ namespace Stratocraft.Character
             }
 
             return false;
+        }
+
+        private static bool TryResolveOreChargeCandidate(
+            in VisualInventorySlot slot,
+            out byte oreMat,
+            out BloomeryOreChargeForm chargeForm)
+        {
+            switch (slot.Kind)
+            {
+                case InventoryItemKind.CrushedOrePowder:
+                    oreMat = slot.SubId != 0 ? slot.SubId : BloomeryFurnaceState.IronMatId;
+                    chargeForm = BloomeryOreChargeForm.CrushedPowder;
+                    return true;
+
+                case InventoryItemKind.RoastedOreChunk:
+                    oreMat = slot.SubId != 0 ? slot.SubId : BloomeryFurnaceState.IronMatId;
+                    chargeForm = BloomeryOreChargeForm.RoastedChunk;
+                    return true;
+
+                case InventoryItemKind.OreChunk:
+                    oreMat = slot.SubId != 0 ? slot.SubId : BloomeryFurnaceState.IronMatId;
+                    chargeForm = BloomeryOreChargeForm.RawOre;
+                    return true;
+
+                case InventoryItemKind.VoxelBlock:
+                    if (slot.SubId == BloomeryFurnaceState.CopperMatId ||
+                        slot.SubId == BloomeryFurnaceState.IronMatId ||
+                        MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(slot.SubId))
+                    {
+                        oreMat = slot.SubId;
+                        chargeForm = BloomeryOreChargeForm.RawOre;
+                        return true;
+                    }
+                    break;
+            }
+
+            oreMat = 0;
+            chargeForm = BloomeryOreChargeForm.CrushedPowder;
+            return false;
+        }
+
+        private void ExtinguishBloomeryEntry(
+            BloomeryRuntimeEntry b,
+            Transform listenerRef,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            if (!BloomeryThermodynamicsSystem.ExtinguishBloomery(ref b.Data))
+            {
+                miningCtrl.LastFeedbackText = "İzabe fırını zaten sönük.";
+                return;
+            }
+
+            if (b.FlameGo.activeSelf) b.FlameGo.SetActive(false);
+            if (b.WarmPointLight != null && !b.Data.HasReadyIronBloom)
+            {
+                b.WarmPointLight.enabled = false;
+            }
+            if (b.FurnaceBodyMf != null && _sharedBloomeryBodyColdMesh != null)
+            {
+                b.LastBodyTier = 0;
+                b.FurnaceBodyMf.sharedMesh = _sharedBloomeryBodyColdMesh;
+            }
+            PlayProceduralSfx(listenerRef, SfxKind.BellowsWhoosh);
+            miningCtrl.LastFeedbackText = "Fırın söndürüldü (yakıt ve ilerleme korundu).";
         }
 
         private void HandleFlintStrikeOnCharcoalPit(
@@ -1460,7 +1637,7 @@ namespace Stratocraft.Character
                         SetCharcoalPitSmokeActive(pit, true, isReadyBlue: true);
                         if (pit.WarmPointLight != null) pit.WarmPointLight.enabled = false;
                         if (pit.MoundMf != null) pit.MoundMf.sharedMesh = _sharedCharcoalMoundReadyMesh;
-                        looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 65);
+                        looseBuildSystem.UpdateStationAllThermalGlow(pit.Data.StationId, 0);
                     }
                     else
                     {
@@ -1588,9 +1765,9 @@ namespace Stratocraft.Character
                     looseBuildSystem.UpdateStationAllThermalGlow(b.Data.StationId, targetGlowByte);
                 }
 
-                byte targetBodyTier = !b.Data.IsLit || b.Data.TemperatureCelsius < 500.0f
+                byte targetBodyTier = !b.Data.IsLit
                     ? (byte)0
-                    : (b.Data.TemperatureCelsius >= 1060.0f ? (byte)2 : (byte)1);
+                    : (b.Data.TemperatureCelsius >= 1050.0f ? (byte)2 : (byte)1);
                 if (targetBodyTier != b.LastBodyTier && b.FurnaceBodyMf != null)
                 {
                     b.LastBodyTier = targetBodyTier;
@@ -1994,9 +2171,12 @@ namespace Stratocraft.Character
             if (_sharedBloomeryFlameMesh == null)
             {
                 _meshBuildScratch.Clear();
-                EmitConeTongue(new SysVec3(0f, 0.01f, 0f), new SysVec3(0f, 0.42f, 0f), 0.13f, MaterialIdCatalog.AstralOre, 240, _meshBuildScratch);
-                EmitConeTongue(new SysVec3(-0.06f, 0.02f, 0.04f), new SysVec3(-0.01f, 0.30f, 0.01f), 0.085f, MaterialIdCatalog.MagmaBlock, 250, _meshBuildScratch);
-                EmitConeTongue(new SysVec3(0.06f, 0.02f, -0.04f), new SysVec3(0.01f, 0.28f, -0.01f), 0.080f, MaterialIdCatalog.MagmaBlock, 245, _meshBuildScratch);
+                // Yukari yonlu sicak alev/isi sutunu: tabanda koyu kizil-turuncu kor, ortada kehribar alev, tepede altin-sari uc
+                EmitConeTongue(new SysVec3(0f, 0.00f, 0f), new SysVec3(0f, 0.26f, 0f), 0.145f, MaterialIdCatalog.MagmaBlock, 232, _meshBuildScratch);
+                EmitConeTongue(new SysVec3(0f, 0.03f, 0f), new SysVec3(0f, 0.44f, 0f), 0.112f, MaterialIdCatalog.CampfireBlock, 246, _meshBuildScratch);
+                EmitConeTongue(new SysVec3(-0.055f, 0.02f, 0.040f), new SysVec3(-0.012f, 0.34f, 0.010f), 0.082f, MaterialIdCatalog.MagmaBlock, 242, _meshBuildScratch);
+                EmitConeTongue(new SysVec3(0.055f, 0.02f, -0.040f), new SysVec3(0.012f, 0.32f, -0.010f), 0.078f, MaterialIdCatalog.CampfireBlock, 248, _meshBuildScratch);
+                EmitConeTongue(new SysVec3(0f, 0.08f, 0f), new SysVec3(0f, 0.50f, 0f), 0.064f, MaterialIdCatalog.GoldOre, 255, _meshBuildScratch);
                 _sharedBloomeryFlameMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryCOFlame");
             }
 
@@ -2009,78 +2189,89 @@ namespace Stratocraft.Character
 
             if (_sharedPlugClayMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitOrientedBox(new SysVec3(0f, 0.0f, 0f), new SysVec3(0.11f, 0.10f, 0.06f), MaterialIdCatalog.Clay, 0, _meshBuildScratch);
-                EmitConeTongue(new SysVec3(0f, -0.05f, 0.02f), new SysVec3(0f, 0.06f, 0.09f), 0.115f, MaterialIdCatalog.Clay, 0, _meshBuildScratch);
-                _sharedPlugClayMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryClayPlug");
+                _sharedPlugClayMesh = BuildBloomeryFrontClayPlugMesh("Mesh_BloomeryClayPlug");
             }
 
             if (_sharedCharcoalMoundUnlitMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitCharcoalClampMound(mode: 0, _meshBuildScratch);
-                _sharedCharcoalMoundUnlitMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Unlit");
+                _sharedCharcoalMoundUnlitMesh = BuildCharcoalEarthMoundMesh(CharcoalPitPhase.Unlit, "Mesh_CharcoalMound_Unlit");
             }
             if (_sharedCharcoalMoundSmolderingMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitCharcoalClampMound(mode: 1, _meshBuildScratch);
-                _sharedCharcoalMoundSmolderingMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Smoldering");
+                _sharedCharcoalMoundSmolderingMesh = BuildCharcoalEarthMoundMesh(CharcoalPitPhase.Smoldering, "Mesh_CharcoalMound_Smoldering");
             }
             if (_sharedCharcoalMoundReadyMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitCharcoalClampMound(mode: 2, _meshBuildScratch);
-                _sharedCharcoalMoundReadyMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Ready");
+                _sharedCharcoalMoundReadyMesh = BuildCharcoalEarthMoundMesh(CharcoalPitPhase.ReadyCharcoal, "Mesh_CharcoalMound_Ready");
             }
             if (_sharedCharcoalMoundAshMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitCharcoalClampMound(mode: 3, _meshBuildScratch);
-                _sharedCharcoalMoundAshMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_CharcoalMound_Ash");
+                _sharedCharcoalMoundAshMesh = BuildCharcoalEarthMoundMesh(CharcoalPitPhase.RuinedAsh, "Mesh_CharcoalMound_Ash");
             }
 
             if (_sharedBloomeryBodyColdMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitBloomeryChimneyBody(thermalTier: 0, _meshBuildScratch);
-                _sharedBloomeryBodyColdMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Cold");
+                _sharedBloomeryBodyColdMesh = BuildBloomerySculptedChimneyMesh(thermalTier: 0, "Mesh_BloomeryBody_Cold");
             }
             if (_sharedBloomeryBodyWarmMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitBloomeryChimneyBody(thermalTier: 1, _meshBuildScratch);
-                _sharedBloomeryBodyWarmMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Warm");
+                _sharedBloomeryBodyWarmMesh = BuildBloomerySculptedChimneyMesh(thermalTier: 1, "Mesh_BloomeryBody_Warm");
             }
             if (_sharedBloomeryBodyHotMesh == null)
             {
-                _meshBuildScratch.Clear();
-                EmitBloomeryChimneyBody(thermalTier: 2, _meshBuildScratch);
-                _sharedBloomeryBodyHotMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, "Mesh_BloomeryBody_Hot");
+                _sharedBloomeryBodyHotMesh = BuildBloomerySculptedChimneyMesh(thermalTier: 2, "Mesh_BloomeryBody_Hot");
             }
         }
 
-        private static void EmitQuad(
+        private static void EmitTriWithOutwardHint(
+            SysVec3 v0,
+            SysVec3 v1,
+            SysVec3 v2,
+            SysVec3 outwardHint,
+            byte matId,
+            byte tempByte,
+            byte facetShade,
+            byte ao,
+            List<FacetedVoxelTriangle> outTris)
+        {
+            SysVec3 cross = SysVec3.Cross(v1 - v0, v2 - v0);
+            float lenSq = cross.LengthSquared();
+            if (lenSq < 1e-10f) return;
+            SysVec3 n = cross / MathF.Sqrt(lenSq);
+            if (outwardHint.LengthSquared() > 1e-8f && SysVec3.Dot(n, outwardHint) < 0f)
+            {
+                (v1, v2) = (v2, v1);
+                n = -n;
+            }
+
+            outTris.Add(new FacetedVoxelTriangle
+            {
+                V0 = v0,
+                V1 = v1,
+                V2 = v2,
+                Normal = n,
+                MaterialId = matId,
+                Temperature = tempByte,
+                FacetShade = facetShade,
+                AmbientOcclusion = ao
+            });
+        }
+
+        private static void EmitQuadWithOutwardHint(
             SysVec3 v0,
             SysVec3 v1,
             SysVec3 v2,
             SysVec3 v3,
+            SysVec3 outwardHint,
             byte matId,
             byte tempByte,
+            byte facetShade,
+            byte ao,
             List<FacetedVoxelTriangle> outTris)
         {
-            SysVec3 n = SysVec3.Cross(v1 - v0, v2 - v0);
-            n = n.LengthSquared() > 1e-8f ? SysVec3.Normalize(n) : SysVec3.UnitY;
-            outTris.Add(new FacetedVoxelTriangle
-            {
-                V0 = v0, V1 = v1, V2 = v2, Normal = n,
-                MaterialId = matId, Temperature = tempByte, FacetShade = 228, AmbientOcclusion = 0xE2
-            });
-            outTris.Add(new FacetedVoxelTriangle
-            {
-                V0 = v0, V1 = v2, V2 = v3, Normal = n,
-                MaterialId = matId, Temperature = tempByte, FacetShade = 222, AmbientOcclusion = 0xE2
-            });
+            byte shade2 = (byte)Math.Max(96, facetShade - 7);
+            EmitTriWithOutwardHint(v0, v1, v2, outwardHint, matId, tempByte, facetShade, ao, outTris);
+            EmitTriWithOutwardHint(v0, v2, v3, outwardHint, matId, tempByte, shade2, ao, outTris);
         }
 
         private static void EmitOrientedBox(
@@ -2089,12 +2280,16 @@ namespace Stratocraft.Character
             byte matId,
             byte tempByte,
             List<FacetedVoxelTriangle> outTris,
-            float yawRad = 0f)
+            float yawRad = 0f,
+            byte baseShade = 205,
+            byte ao = 0xD8)
         {
             float c = MathF.Cos(yawRad);
             float s = MathF.Sin(yawRad);
-            SysVec3 Rot(float lx, float ly, float lz) =>
-                center + new SysVec3(lx * c - lz * s, ly, lx * s + lz * c);
+            SysVec3 axisX = new SysVec3(c, 0f, s);
+            SysVec3 axisY = SysVec3.UnitY;
+            SysVec3 axisZ = new SysVec3(-s, 0f, c);
+            SysVec3 Rot(float lx, float ly, float lz) => center + axisX * lx + axisY * ly + axisZ * lz;
 
             float hx = halfExtents.X, hy = halfExtents.Y, hz = halfExtents.Z;
             SysVec3 p000 = Rot(-hx, -hy, -hz);
@@ -2106,158 +2301,651 @@ namespace Stratocraft.Character
             SysVec3 p111 = Rot( hx,  hy,  hz);
             SysVec3 p011 = Rot(-hx,  hy,  hz);
 
-            EmitQuad(p010, p011, p111, p110, matId, tempByte, outTris); // +Y
-            EmitQuad(p000, p100, p101, p001, matId, tempByte, outTris); // -Y
-            EmitQuad(p001, p101, p111, p011, matId, tempByte, outTris); // +Z
-            EmitQuad(p100, p000, p010, p110, matId, tempByte, outTris); // -Z
-            EmitQuad(p101, p100, p110, p111, matId, tempByte, outTris); // +X
-            EmitQuad(p000, p001, p011, p010, matId, tempByte, outTris); // -X
+            byte topShade = (byte)Math.Min(245, baseShade + 20);
+            byte botShade = (byte)Math.Max(110, baseShade - 55);
+            byte sideShadeA = baseShade;
+            byte sideShadeB = (byte)Math.Max(120, baseShade - 16);
+
+            EmitQuadWithOutwardHint(p010, p011, p111, p110,  axisY, matId, tempByte, topShade, ao, outTris);
+            EmitQuadWithOutwardHint(p000, p100, p101, p001, -axisY, matId, tempByte, botShade, (byte)Math.Max(0x78, ao - 0x28), outTris);
+            EmitQuadWithOutwardHint(p001, p101, p111, p011,  axisZ, matId, tempByte, sideShadeA, ao, outTris);
+            EmitQuadWithOutwardHint(p100, p000, p010, p110, -axisZ, matId, tempByte, sideShadeB, ao, outTris);
+            EmitQuadWithOutwardHint(p101, p100, p110, p111,  axisX, matId, tempByte, sideShadeA, ao, outTris);
+            EmitQuadWithOutwardHint(p000, p001, p011, p010, -axisX, matId, tempByte, sideShadeB, ao, outTris);
         }
 
-        private static void EmitRingBand(
+        private static void EmitRoundBarkLogEnd7Sided(
+            SysVec3 innerStart,
+            SysVec3 outerEnd,
+            float radius,
+            byte barkMat,
+            byte heartwoodMat,
+            byte shadeSeed,
+            List<FacetedVoxelTriangle> outTris)
+        {
+            const int sides = 7;
+            SysVec3 axis = outerEnd - innerStart;
+            float len = axis.Length();
+            if (len < 0.005f) return;
+            SysVec3 fwd = axis / len;
+            SysVec3 refUp = MathF.Abs(fwd.Y) > 0.90f ? SysVec3.UnitX : SysVec3.UnitY;
+            SysVec3 right = SysVec3.Normalize(SysVec3.Cross(refUp, fwd));
+            SysVec3 up = SysVec3.Normalize(SysVec3.Cross(fwd, right));
+
+            float innerR = radius * 1.06f;
+            float barkBevelR = radius * 0.96f;
+            float heartR = radius * 0.74f;
+            SysVec3 capCenter = outerEnd + fwd * 0.006f;
+
+            for (int s = 0; s < sides; s++)
+            {
+                float a0 = (s / (float)sides) * MathF.PI * 2f + 0.19f;
+                float a1 = ((s + 1) / (float)sides) * MathF.PI * 2f + 0.19f;
+                // Hafif dogal kabuk puruzlulugu (7-kenarli yuvarlak kutuk profili)
+                float rMod0 = 1.0f + (((shadeSeed + s * 17) % 5) - 2) * 0.032f;
+                float rMod1 = 1.0f + (((shadeSeed + ((s + 1) % sides) * 17) % 5) - 2) * 0.032f;
+
+                SysVec3 dir0 = right * MathF.Cos(a0) + up * MathF.Sin(a0);
+                SysVec3 dir1 = right * MathF.Cos(a1) + up * MathF.Sin(a1);
+                SysVec3 midRadial = dir0 + dir1;
+
+                SysVec3 b0 = innerStart + dir0 * (innerR * rMod0);
+                SysVec3 b1 = innerStart + dir1 * (innerR * rMod1);
+                SysVec3 t0 = outerEnd + dir0 * (barkBevelR * rMod0);
+                SysVec3 t1 = outerEnd + dir1 * (barkBevelR * rMod1);
+
+                byte barkShade = (byte)Math.Clamp(152 + ((s * 23 + shadeSeed) % 38), 140, 198);
+                byte barkAo = dir0.Y + dir1.Y < -0.25f ? (byte)0x96 : (byte)0xCA;
+                // Dis kabukta her zaman Temperature = 0 (asla turuncu magma blogu gibi parlamaz!)
+                EmitQuadWithOutwardHint(b0, t0, t1, b1, midRadial, barkMat, 0, barkShade, barkAo, outTris);
+
+                // Kabuk pah halkasi (dis kabuktan kesik odun yuzeyine gecis)
+                SysVec3 h0 = capCenter + dir0 * (heartR * rMod0);
+                SysVec3 h1 = capCenter + dir1 * (heartR * rMod1);
+                EmitQuadWithOutwardHint(t0, h0, h1, t1, fwd + midRadial * 0.35f, barkMat, 0, (byte)(barkShade - 10), 0xC4, outTris);
+
+                // Ic kesik odun yuzeyi (7-kenarli halka dokulu yuvarlak kesit, Temperature = 0)
+                byte endGrainShade = (byte)Math.Clamp(172 + ((s * 13) % 24), 160, 202);
+                EmitTriWithOutwardHint(capCenter, h0, h1, fwd, heartwoodMat, 0, endGrainShade, 0xD2, outTris);
+            }
+        }
+
+        private static SysVec3 ComputeOrganicMoundVertex(
+            int ringIdx,
+            int ringCount,
+            int sectorIdx,
+            int sectorCount,
+            float baseRadius,
+            float baseY,
+            uint seed)
+        {
+            float baseAng = (sectorIdx / (float)sectorCount) * MathF.PI * 2f
+                          + ((ringIdx & 1) != 0 ? (MathF.PI / sectorCount) * 0.42f : 0f);
+            uint h = PhysicalItemShapeDna.MixHash(seed + (uint)(ringIdx * 131 + sectorIdx * 37 + 19));
+            float nRad = (((h & 0xFFu) / 255f) - 0.5f) * 2f;
+            float nAng = ((((h >> 8) & 0xFFu) / 255f) - 0.5f) * 2f;
+            float nHeight = ((((h >> 16) & 0xFFu) / 255f) - 0.5f) * 2f;
+
+            // Ust baca menfezi ve en alt etek daha duzgun, orta kubbe fasetleri organik kesekli
+            float radialAmp = ringIdx == ringCount ? 0.030f : (ringIdx == 0 ? 0.055f : 0.078f);
+            float r = baseRadius * (1.0f + nRad * radialAmp);
+            float ang = baseAng + nAng * (ringIdx == ringCount ? 0.02f : 0.055f);
+            float y = baseY;
+            if (ringIdx > 0 && ringIdx < ringCount)
+            {
+                y += nHeight * 0.015f;
+            }
+
+            return new SysVec3(MathF.Cos(ang) * r, y, MathF.Sin(ang) * r);
+        }
+
+        /// <summary>
+        /// Gercekci 3B Toprak/Kil Komur Ocagi (Clamp Mound) modeli:
+        /// - 7-kenarli koyu kabuklu yuvarlak odun uclari (turuncu kutu yok),
+        /// - Katmanli organik kesekli toprak/nemli kil kubbe fasetleri (sert duz sari halka yok),
+        /// - Ufak duman menfezi ve YALNIZCA Smoldering durumundayken yumusak koz pariltisi.
+        /// </summary>
+        private Mesh BuildCharcoalEarthMoundMesh(CharcoalPitPhase phase, string meshName)
+        {
+            _meshBuildScratch.Clear();
+            const int sectors = 14;
+
+            if (phase == CharcoalPitPhase.RuinedAsh)
+            {
+                // Cokmus kul ve yanik toprak kesek yigini (0 parilti)
+                const int ashRings = 3;
+                Span<float> ashR = stackalloc float[] { 0.60f, 0.42f, 0.21f, 0.04f };
+                Span<float> ashY = stackalloc float[] { 0.00f, 0.075f, 0.135f, 0.155f };
+                Span<SysVec3> ashPts = stackalloc SysVec3[(ashRings + 1) * sectors];
+
+                for (int r = 0; r <= ashRings; r++)
+                {
+                    for (int s = 0; s < sectors; s++)
+                    {
+                        ashPts[r * sectors + s] = ComputeOrganicMoundVertex(
+                            r, ashRings, s, sectors, ashR[r], ashY[r], 0xA5411u);
+                    }
+                }
+
+                for (int r = 0; r < ashRings; r++)
+                {
+                    for (int s = 0; s < sectors; s++)
+                    {
+                        int ns = (s + 1) % sectors;
+                        SysVec3 p00 = ashPts[r * sectors + s];
+                        SysVec3 p10 = ashPts[r * sectors + ns];
+                        SysVec3 p01 = ashPts[(r + 1) * sectors + s];
+                        SysVec3 p11 = ashPts[(r + 1) * sectors + ns];
+
+                        byte ashMat = r == 0
+                            ? ((s & 1) == 0 ? MaterialIdCatalog.LooseRubble : MaterialIdCatalog.Basalt)
+                            : MaterialIdCatalog.Coal;
+                        byte ashTemp = ashMat == MaterialIdCatalog.LooseRubble ? (byte)10 : (byte)0;
+                        byte shade = (byte)(150 + ((r * 19 + s * 11) % 36));
+                        byte ao = r == 0 ? (byte)0x9C : (byte)0xBE;
+                        SysVec3 outHint = new SysVec3((p00.X + p10.X) * 0.5f, 0.85f, (p00.Z + p10.Z) * 0.5f);
+                        EmitQuadWithOutwardHint(p00, p01, p11, p10, outHint, ashMat, ashTemp, shade, ao, _meshBuildScratch);
+                    }
+                }
+
+                SysVec3 ashApex = new SysVec3(0f, 0.145f, 0f);
+                for (int s = 0; s < sectors; s++)
+                {
+                    int ns = (s + 1) % sectors;
+                    EmitTriWithOutwardHint(
+                        ashApex,
+                        ashPts[ashRings * sectors + s],
+                        ashPts[ashRings * sectors + ns],
+                        SysVec3.UnitY,
+                        MaterialIdCatalog.Coal,
+                        0,
+                        162,
+                        0xB0,
+                        _meshBuildScratch);
+                }
+
+                return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, meshName);
+            }
+
+            bool isSmoldering = phase == CharcoalPitPhase.Smoldering;
+            bool isReady = phase == CharcoalPitPhase.ReadyCharcoal;
+            float hMul = isReady ? 0.88f : 1.0f;
+
+            // 1) Taban eteginden hafifce gorunen 9 adet 7-kenarli koyu kabuklu yuvarlak odun ucu
+            const int logCount = 9;
+            byte barkMat = isReady ? MaterialIdCatalog.Coal : MaterialIdCatalog.Ironwood;
+            byte heartMat = isReady ? MaterialIdCatalog.Coal : MaterialIdCatalog.OakWood;
+            for (int k = 0; k < logCount; k++)
+            {
+                uint lh = PhysicalItemShapeDna.MixHash(0xC0A177u + (uint)(k * 79));
+                float angJitter = (((lh & 0xFFu) / 255f) - 0.5f) * 0.14f;
+                float ang = (k / (float)logCount) * MathF.PI * 2f + 0.18f + angJitter;
+                float outerReach = 0.635f + ((((lh >> 8) & 0xFFu) / 255f) - 0.5f) * 0.045f;
+                float logRadius = 0.048f + (((lh >> 16) & 0xFFu) / 255f) * 0.011f;
+                float outerY = 0.050f + (k & 1) * 0.008f;
+
+                SysVec3 innerP = new SysVec3(MathF.Cos(ang) * 0.30f, 0.068f * hMul, MathF.Sin(ang) * 0.30f);
+                SysVec3 outerP = new SysVec3(MathF.Cos(ang) * outerReach, outerY, MathF.Sin(ang) * outerReach);
+                EmitRoundBarkLogEnd7Sided(
+                    innerP, outerP, logRadius, barkMat, heartMat, (byte)(k * 29 + 7), _meshBuildScratch);
+            }
+
+            // 2) 5 katmanli organik toprak / nemli kil kubbe fasetleri (ufak yuvarlatilmis tepe menfezi r = 0.082m)
+            const int domeRings = 4;
+            Span<float> ringR = stackalloc float[] { 0.65f, 0.54f, 0.40f, 0.23f, 0.092f };
+            Span<float> ringY = stackalloc float[]
+            {
+                0.00f,
+                0.14f * hMul,
+                0.29f * hMul,
+                0.41f * hMul,
+                0.475f * hMul
+            };
+
+            Span<SysVec3> domePts = stackalloc SysVec3[(domeRings + 1) * sectors];
+            uint moundSeed = isReady ? 0x5E771EDu : 0x3A871CDu;
+            for (int r = 0; r <= domeRings; r++)
+            {
+                for (int s = 0; s < sectors; s++)
+                {
+                    domePts[r * sectors + s] = ComputeOrganicMoundVertex(
+                        r, domeRings, s, sectors, ringR[r], ringY[r], moundSeed);
+                }
+            }
+
+            for (int r = 0; r < domeRings; r++)
+            {
+                for (int s = 0; s < sectors; s++)
+                {
+                    int ns = (s + 1) % sectors;
+                    SysVec3 p00 = domePts[r * sectors + s];
+                    SysVec3 p10 = domePts[r * sectors + ns];
+                    SysVec3 p01 = domePts[(r + 1) * sectors + s];
+                    SysVec3 p11 = domePts[(r + 1) * sectors + ns];
+
+                    // Dirt(2) ve Clay(16) icin Temp=14..24 shader'da dogal koyu/nemli toprak tonu verir (heatNorm=0, asla sari parlamaz!)
+                    bool usePackedClayClod = ((r + s) % 3) == 1 && r >= 1 && r <= 2;
+                    byte domeMat;
+                    byte domeTemp;
+                    if (isReady && r == domeRings - 1 && (s & 1) == 0)
+                    {
+                        domeMat = MaterialIdCatalog.Basalt;
+                        domeTemp = 0;
+                    }
+                    else if (usePackedClayClod)
+                    {
+                        domeMat = MaterialIdCatalog.Clay;
+                        domeTemp = (byte)(20 + (s % 5));
+                    }
+                    else
+                    {
+                        domeMat = MaterialIdCatalog.Dirt;
+                        domeTemp = (byte)(15 + ((r * 3 + s) % 8));
+                    }
+
+                    byte shade = (byte)Math.Clamp(166 + r * 11 + ((s * 17 + r * 7) % 24), 152, 218);
+                    byte ao = r == 0 ? (byte)0x9A : (r == domeRings - 1 ? (byte)0xC4 : (byte)0xD8);
+                    SysVec3 mid = (p00 + p10 + p01 + p11) * 0.25f;
+                    SysVec3 outHint = new SysVec3(mid.X, 0.45f, mid.Z);
+                    EmitQuadWithOutwardHint(p00, p01, p11, p10, outHint, domeMat, domeTemp, shade, ao, _meshBuildScratch);
+                }
+            }
+
+            // 3) Ufak duman bacasi menfez dudagi (ice dogru pahli dogal toprak/is halkasi + ic bogaz)
+            float ventInnerR = 0.068f;
+            float ventLipY = 0.455f * hMul;
+            float ventFloorY = 0.31f * hMul;
+
+            // YALNIZCA Smoldering durumundayken ufak menfez icinde yumusak koz pariltisi!
+            byte throatWallMat = isSmoldering ? MaterialIdCatalog.CampfireBlock : MaterialIdCatalog.Coal;
+            byte throatWallTemp = isSmoldering ? (byte)136 : (byte)0;
+            byte emberBedMat = isSmoldering ? MaterialIdCatalog.CampfireBlock : (isReady ? MaterialIdCatalog.Coal : MaterialIdCatalog.Ironwood);
+            byte emberBedTemp = isSmoldering ? (byte)172 : (byte)0;
+
+            SysVec3 emberCenter = new SysVec3(0f, ventFloorY + 0.012f, 0f);
+            for (int s = 0; s < sectors; s++)
+            {
+                int ns = (s + 1) % sectors;
+                float a0 = (s / (float)sectors) * MathF.PI * 2f;
+                float a1 = (ns / (float)sectors) * MathF.PI * 2f;
+
+                SysVec3 outerRim0 = domePts[domeRings * sectors + s];
+                SysVec3 outerRim1 = domePts[domeRings * sectors + ns];
+                SysVec3 innerLip0 = new SysVec3(MathF.Cos(a0) * ventInnerR, ventLipY, MathF.Sin(a0) * ventInnerR);
+                SysVec3 innerLip1 = new SysVec3(MathF.Cos(a1) * ventInnerR, ventLipY, MathF.Sin(a1) * ventInnerR);
+                SysVec3 floor0 = new SysVec3(MathF.Cos(a0) * (ventInnerR * 0.92f), ventFloorY, MathF.Sin(a0) * (ventInnerR * 0.92f));
+                SysVec3 floor1 = new SysVec3(MathF.Cos(a1) * (ventInnerR * 0.92f), ventFloorY, MathF.Sin(a1) * (ventInnerR * 0.92f));
+
+                // Menfez agzi pahli ust dudak (isli koyu toprak, sari halka yok!)
+                byte lipMat = isReady ? MaterialIdCatalog.Coal : MaterialIdCatalog.Dirt;
+                byte lipTemp = isReady ? (byte)0 : (byte)24;
+                SysVec3 lipHint = new SysVec3(-(outerRim0.X + outerRim1.X) * 0.25f, 0.85f, -(outerRim0.Z + outerRim1.Z) * 0.25f);
+                EmitQuadWithOutwardHint(outerRim0, innerLip0, innerLip1, outerRim1, lipHint, lipMat, lipTemp, 158, 0xAC, _meshBuildScratch);
+
+                // Menfez ic bogaz duvari (ice bakan normal)
+                SysVec3 inwardHint = new SysVec3(-(innerLip0.X + innerLip1.X) * 0.5f, 0.15f, -(innerLip0.Z + innerLip1.Z) * 0.5f);
+                EmitQuadWithOutwardHint(floor0, innerLip0, innerLip1, floor1, inwardHint, throatWallMat, throatWallTemp, 165, 0x8E, _meshBuildScratch);
+
+                // Menfez dibindeki komur/koz yatagi
+                EmitTriWithOutwardHint(
+                    emberCenter, floor0, floor1, SysVec3.UnitY,
+                    emberBedMat, emberBedTemp, (byte)(172 + (s % 3) * 8), isSmoldering ? (byte)0xC8 : (byte)0x82, _meshBuildScratch);
+            }
+
+            // YALNIZCA Smoldering modunda kubbe alt kesek derzlerinde cok hafif 3 ince koz sizintisi
+            if (isSmoldering)
+            {
+                for (int e = 0; e < 3; e++)
+                {
+                    float eAng = e * (MathF.PI * 2f / 3f) + 0.52f;
+                    SysVec3 seamPos = new SysVec3(MathF.Cos(eAng) * 0.545f, 0.115f, MathF.Sin(eAng) * 0.545f);
+                    EmitOrientedBox(
+                        seamPos,
+                        new SysVec3(0.032f, 0.010f, 0.014f),
+                        MaterialIdCatalog.CampfireBlock,
+                        142,
+                        _meshBuildScratch,
+                        yawRad: -eAng,
+                        baseShade: 168,
+                        ao: 0xA4);
+                }
+            }
+
+            return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, meshName);
+        }
+
+        private Mesh BuildBloomeryFrontClayPlugMesh(string meshName)
+        {
+            _meshBuildScratch.Clear();
+            // On tas kemer boslugunu sivanarak kapatan bombeli pismis/islak kil tikac + curuf olugu gobegi
+            EmitOrientedBox(
+                new SysVec3(0f, 0.00f, -0.025f),
+                new SysVec3(0.135f, 0.115f, 0.042f),
+                MaterialIdCatalog.Dirt,
+                20,
+                _meshBuildScratch,
+                baseShade: 176,
+                ao: 0xA8);
+
+            const int segs = 10;
+            SysVec3 plugApex = new SysVec3(0f, -0.01f, 0.058f);
+            for (int i = 0; i < segs; i++)
+            {
+                float a0 = (i / (float)segs) * MathF.PI * 2f;
+                float a1 = ((i + 1) / (float)segs) * MathF.PI * 2f;
+                SysVec3 r0 = new SysVec3(MathF.Cos(a0) * 0.132f, MathF.Sin(a0) * 0.112f, -0.005f);
+                SysVec3 r1 = new SysVec3(MathF.Cos(a1) * 0.132f, MathF.Sin(a1) * 0.112f, -0.005f);
+                SysVec3 m0 = new SysVec3(MathF.Cos(a0) * 0.072f, MathF.Sin(a0) * 0.064f, 0.038f);
+                SysVec3 m1 = new SysVec3(MathF.Cos(a1) * 0.072f, MathF.Sin(a1) * 0.064f, 0.038f);
+
+                byte outerMat = (i & 1) == 0 ? MaterialIdCatalog.Clay : MaterialIdCatalog.TacticalCloth;
+                byte outerTemp = outerMat == MaterialIdCatalog.Clay ? (byte)22 : (byte)0;
+                SysVec3 outHint = new SysVec3((r0.X + r1.X) * 0.3f, (r0.Y + r1.Y) * 0.3f, 1.0f);
+
+                EmitQuadWithOutwardHint(r0, m0, m1, r1, outHint, outerMat, outerTemp, (byte)(178 + (i % 4) * 6), 0xC2, _meshBuildScratch);
+                EmitTriWithOutwardHint(plugApex, m0, m1, SysVec3.UnitZ, MaterialIdCatalog.LeatherPadding, 0, 170, 0xB6, _meshBuildScratch);
+            }
+
+            // Alt curuf tahliye tapasi cikintisi
+            EmitOrientedBox(
+                new SysVec3(0f, -0.065f, 0.042f),
+                new SysVec3(0.034f, 0.026f, 0.028f),
+                MaterialIdCatalog.Clay,
+                24,
+                _meshBuildScratch,
+                baseShade: 168,
+                ao: 0xAC);
+
+            return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, meshName);
+        }
+
+        private static void EmitConicalTerracottaBand(
             float y0,
             float y1,
             float r0,
             float r1,
             int sides,
-            byte matId,
+            byte primaryMat,
+            byte secondaryMat,
             byte tempByte,
+            byte baseShade,
+            byte ao,
+            uint jitterSeed,
+            float radialJitterAmp,
             List<FacetedVoxelTriangle> outTris,
-            bool inwardNormal = false,
-            int skipSectorA = -1,
-            int skipSectorB = -1)
+            bool inwardNormal = false)
         {
             for (int i = 0; i < sides; i++)
             {
-                if (i == skipSectorA || i == skipSectorB) continue;
+                int ni = (i + 1) % sides;
                 float a0 = (i / (float)sides) * MathF.PI * 2f;
-                float a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
-                float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0);
-                float c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
+                float a1 = (ni / (float)sides) * MathF.PI * 2f;
 
-                SysVec3 b0 = new SysVec3(c0 * r0, y0, s0 * r0);
-                SysVec3 b1 = new SysVec3(c1 * r0, y0, s1 * r0);
-                SysVec3 t1 = new SysVec3(c1 * r1, y1, s1 * r1);
-                SysVec3 t0 = new SysVec3(c0 * r1, y1, s0 * r1);
+                float j0 = radialJitterAmp > 0f
+                    ? 1.0f + (((PhysicalItemShapeDna.MixHash(jitterSeed + (uint)(i * 41)) & 0xFFu) / 255f) - 0.5f) * 2f * radialJitterAmp
+                    : 1.0f;
+                float j1 = radialJitterAmp > 0f
+                    ? 1.0f + (((PhysicalItemShapeDna.MixHash(jitterSeed + (uint)(ni * 41)) & 0xFFu) / 255f) - 0.5f) * 2f * radialJitterAmp
+                    : 1.0f;
 
-                if (!inwardNormal)
-                {
-                    EmitQuad(b0, b1, t1, t0, matId, tempByte, outTris);
-                }
-                else
-                {
-                    EmitQuad(b1, b0, t0, t1, matId, tempByte, outTris);
-                }
+                SysVec3 b0 = new SysVec3(MathF.Cos(a0) * r0 * j0, y0, MathF.Sin(a0) * r0 * j0);
+                SysVec3 b1 = new SysVec3(MathF.Cos(a1) * r0 * j1, y0, MathF.Sin(a1) * r0 * j1);
+                SysVec3 t0 = new SysVec3(MathF.Cos(a0) * r1 * j0, y1, MathF.Sin(a0) * r1 * j0);
+                SysVec3 t1 = new SysVec3(MathF.Cos(a1) * r1 * j1, y1, MathF.Sin(a1) * r1 * j1);
+
+                SysVec3 radial = new SysVec3((b0.X + b1.X + t0.X + t1.X) * 0.25f, (r0 - r1) * 0.35f, (b0.Z + b1.Z + t0.Z + t1.Z) * 0.25f);
+                SysVec3 hint = inwardNormal ? -radial : radial;
+                byte mat = ((i % 3) == 1) ? secondaryMat : primaryMat;
+                byte shade = (byte)Math.Clamp(baseShade + ((i * 13) % 18) - 8, 115, 232);
+
+                EmitQuadWithOutwardHint(b0, t0, t1, b1, hint, mat, tempByte, shade, ao, outTris);
             }
         }
 
-        private static void EmitAnnulusTopCap(
-            float y,
-            float innerR,
-            float outerR,
+        private static void EmitHorizontalReinforcementHoop(
+            float yCenter,
+            float halfHeight,
+            float shaftRadius,
+            float protrusion,
             int sides,
-            byte matId,
+            byte hoopMat,
+            byte hoopAccentMat,
             byte tempByte,
             List<FacetedVoxelTriangle> outTris)
         {
-            for (int i = 0; i < sides; i++)
+            float yBot = yCenter - halfHeight;
+            float yMidBot = yCenter - halfHeight * 0.48f;
+            float yMidTop = yCenter + halfHeight * 0.48f;
+            float yTop = yCenter + halfHeight;
+            float rOuter = shaftRadius + protrusion;
+
+            // Alt pah (golgeli AO), dis kusak yuzeyi ve ust pah
+            EmitConicalTerracottaBand(
+                yBot, yMidBot, shaftRadius, rOuter, sides,
+                hoopMat, hoopAccentMat, tempByte, baseShade: 146, ao: 0x9C,
+                jitterSeed: 0u, radialJitterAmp: 0f, outTris);
+            EmitConicalTerracottaBand(
+                yMidBot, yMidTop, rOuter, rOuter, sides,
+                hoopMat, hoopAccentMat, tempByte, baseShade: 176, ao: 0xC8,
+                jitterSeed: 0u, radialJitterAmp: 0f, outTris);
+            EmitConicalTerracottaBand(
+                yMidTop, yTop, rOuter, shaftRadius, sides,
+                hoopMat, hoopAccentMat, tempByte, baseShade: 196, ao: 0xD4,
+                jitterSeed: 0u, radialJitterAmp: 0f, outTris);
+        }
+
+        /// <summary>
+        /// Gercekci 3B Bloomery Izabe Firini modeli:
+        /// - Tabanda 2 sira kuru tas duvar orgusu + 5 kemer tasli (kilit tasli) belirgin on kemer (+Z),
+        /// - Ustte sicak terakota kil konik baca govdesi,
+        /// - 3 yatay kabartmali takviye halkasi,
+        /// - Ust agiz icinde parcali koyu komur/cevher yatagi,
+        /// - Yanarken (thermalTier 1..2) asagidan yukariya dogru sicak alev/isi tonu gecisi.
+        /// </summary>
+        private Mesh BuildBloomerySculptedChimneyMesh(int thermalTier, string meshName)
+        {
+            _meshBuildScratch.Clear();
+            const int shaftSides = 16;
+
+            // Yanarken yukari yonlu sicak isi/kor tonu gradyani (Cold=0 iken dis govdede sifir emisyon!)
+            byte hearthWallTemp = thermalTier == 2 ? (byte)168 : (thermalTier == 1 ? (byte)102 : (byte)0);
+            byte midWallTemp    = thermalTier == 2 ? (byte)122 : (thermalTier == 1 ? (byte)64 : (byte)0);
+            byte upperWallTemp  = thermalTier == 2 ? (byte)82  : (thermalTier == 1 ? (byte)36 : (byte)0);
+            byte hoopLowerTemp  = thermalTier == 2 ? (byte)112 : (thermalTier == 1 ? (byte)54 : (byte)0);
+            byte hoopMidTemp    = thermalTier == 2 ? (byte)76  : (thermalTier == 1 ? (byte)32 : (byte)0);
+            byte hoopTopTemp    = thermalTier == 2 ? (byte)48  : (thermalTier == 1 ? (byte)18 : (byte)0);
+
+            byte throatGlowMat  = thermalTier == 0 ? MaterialIdCatalog.Coal : MaterialIdCatalog.CampfireBlock;
+            byte throatLowerTmp = thermalTier == 2 ? (byte)248 : (thermalTier == 1 ? (byte)188 : (byte)0);
+            byte throatUpperTmp = thermalTier == 2 ? (byte)215 : (thermalTier == 1 ? (byte)145 : (byte)0);
+
+            // 1) Dairesel 2 katmanli tas orgu kaide (y = 0.00 .. 0.28m, +Z on kemer acikligi bos birakilir)
+            const int baseStones = 14;
+            for (int course = 0; course < 2; course++)
             {
-                float a0 = (i / (float)sides) * MathF.PI * 2f;
-                float a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
+                float cy = course == 0 ? 0.072f : 0.205f;
+                float hy = course == 0 ? 0.072f : 0.064f;
+                float baseR = course == 0 ? 0.445f : 0.428f;
+                float stagger = course * (0.5f / baseStones) * MathF.PI * 2f;
+
+                for (int i = 0; i < baseStones; i++)
+                {
+                    float ang = ((i + 0.5f) / baseStones) * MathF.PI * 2f + stagger;
+                    float dirX = MathF.Cos(ang);
+                    float dirZ = MathF.Sin(ang);
+                    // +Z on kemer acikligi (yaklasik x in [-0.22..+0.22], z > 0.28)
+                    if (dirZ > 0.68f && MathF.Abs(dirX) < 0.54f) continue;
+
+                    byte stMat = ((i + course) % 3) switch
+                    {
+                        0 => MaterialIdCatalog.Stone,
+                        1 => MaterialIdCatalog.Cobblestone,
+                        _ => MaterialIdCatalog.StoneBrick
+                    };
+                    byte stShade = (byte)(172 + ((i * 19 + course * 23) % 34));
+                    byte stAo = course == 0 ? (byte)0xA4 : (byte)0xC2;
+                    SysVec3 stPos = new SysVec3(dirX * baseR, cy, dirZ * baseR);
+                    EmitOrientedBox(
+                        stPos,
+                        new SysVec3(0.095f, hy, 0.112f),
+                        stMat,
+                        0,
+                        _meshBuildScratch,
+                        yawRad: -ang,
+                        baseShade: stShade,
+                        ao: stAo);
+                }
+            }
+
+            // 2) Belirgin on tas orgu kemer (+Z yuzunde 2 yan ayak + 4 kemer tasi + 1 yukseltilmis kilit tasi)
+            // Sol ve sag kemer dikme taslari (jambs)
+            EmitOrientedBox(new SysVec3(-0.195f, 0.105f, 0.405f), new SysVec3(0.062f, 0.105f, 0.082f), MaterialIdCatalog.StoneBrick, 0, _meshBuildScratch, yawRad: 0.08f, baseShade: 192, ao: 0xB8);
+            EmitOrientedBox(new SysVec3( 0.195f, 0.105f, 0.405f), new SysVec3(0.062f, 0.105f, 0.082f), MaterialIdCatalog.StoneBrick, 0, _meshBuildScratch, yawRad: -0.08f, baseShade: 192, ao: 0xB8);
+            // Alt omuz kemer taslari (haunch voussoirs)
+            EmitOrientedBox(new SysVec3(-0.145f, 0.228f, 0.412f), new SysVec3(0.055f, 0.044f, 0.080f), MaterialIdCatalog.Cobblestone, hoopTopTemp, _meshBuildScratch, yawRad: 0.12f, baseShade: 198, ao: 0xC4);
+            EmitOrientedBox(new SysVec3( 0.145f, 0.228f, 0.412f), new SysVec3(0.055f, 0.044f, 0.080f), MaterialIdCatalog.Cobblestone, hoopTopTemp, _meshBuildScratch, yawRad: -0.12f, baseShade: 198, ao: 0xC4);
+            // Ust kemer taslari
+            EmitOrientedBox(new SysVec3(-0.078f, 0.278f, 0.418f), new SysVec3(0.050f, 0.042f, 0.082f), MaterialIdCatalog.Stone, hoopTopTemp, _meshBuildScratch, yawRad: 0.05f, baseShade: 204, ao: 0xCC);
+            EmitOrientedBox(new SysVec3( 0.078f, 0.278f, 0.418f), new SysVec3(0.050f, 0.042f, 0.082f), MaterialIdCatalog.Stone, hoopTopTemp, _meshBuildScratch, yawRad: -0.05f, baseShade: 204, ao: 0xCC);
+            // Merkez Kilit Tasi (Keystone)
+            EmitOrientedBox(new SysVec3(0f, 0.302f, 0.426f), new SysVec3(0.052f, 0.054f, 0.088f), MaterialIdCatalog.StoneBrick, hoopMidTemp, _meshBuildScratch, baseShade: 214, ao: 0xD6);
+
+            // Yan (+X) sekizgen pismis kil hava borusu (Tuyere) yuvasi bilezigi
+            EmitOrientedBox(new SysVec3(0.405f, 0.160f, 0f), new SysVec3(0.058f, 0.078f, 0.078f), MaterialIdCatalog.LeatherPadding, hoopLowerTemp, _meshBuildScratch, baseShade: 180, ao: 0xBA);
+            EmitOrientedBox(new SysVec3(0.432f, 0.160f, 0f), new SysVec3(0.026f, 0.062f, 0.062f), MaterialIdCatalog.TacticalCloth, hoopLowerTemp, _meshBuildScratch, baseShade: 190, ao: 0xC6);
+
+            // 3) Ustte sicak terakota kil konik baca govdesi (y = 0.26m -> 0.99m, 4 konik segment + 3 yatay takviye halkasi)
+            // CampfireBlock (terakota tugla turuncusu, Temp=0 iken sifir emisyon) + LeatherPadding / TacticalCloth pismis kil tonlari
+            EmitConicalTerracottaBand(
+                0.25f, 0.45f, 0.442f, 0.404f, shaftSides,
+                MaterialIdCatalog.CampfireBlock, MaterialIdCatalog.LeatherPadding, hearthWallTemp,
+                baseShade: 144, ao: 0xBE, jitterSeed: 0xB1001u, radialJitterAmp: 0.018f, _meshBuildScratch);
+
+            EmitConicalTerracottaBand(
+                0.45f, 0.66f, 0.404f, 0.356f, shaftSides,
+                MaterialIdCatalog.CampfireBlock, MaterialIdCatalog.TacticalCloth, midWallTemp,
+                baseShade: 152, ao: 0xC8, jitterSeed: 0xB1002u, radialJitterAmp: 0.016f, _meshBuildScratch);
+
+            EmitConicalTerracottaBand(
+                0.66f, 0.86f, 0.356f, 0.308f, shaftSides,
+                MaterialIdCatalog.CampfireBlock, MaterialIdCatalog.TacticalCloth, upperWallTemp,
+                baseShade: 158, ao: 0xCE, jitterSeed: 0xB1003u, radialJitterAmp: 0.014f, _meshBuildScratch);
+
+            EmitConicalTerracottaBand(
+                0.86f, 0.96f, 0.308f, 0.286f, shaftSides,
+                MaterialIdCatalog.LeatherPadding, MaterialIdCatalog.CampfireBlock, upperWallTemp,
+                baseShade: 164, ao: 0xD2, jitterSeed: 0xB1004u, radialJitterAmp: 0.010f, _meshBuildScratch);
+
+            // Baca ust agiz disa acilan kalin terakota dudak (flared rim y = 0.96 -> 1.00m)
+            EmitConicalTerracottaBand(
+                0.955f, 0.995f, 0.286f, 0.302f, shaftSides,
+                MaterialIdCatalog.LeatherPadding, MaterialIdCatalog.TacticalCloth, upperWallTemp,
+                baseShade: 176, ao: 0xD6, jitterSeed: 0u, radialJitterAmp: 0f, _meshBuildScratch);
+
+            // 4) 3 Yatay Takviye Halkasi (alt göbek y=0.39, orta bel y=0.60, ust boyun y=0.81)
+            EmitHorizontalReinforcementHoop(
+                yCenter: 0.39f, halfHeight: 0.032f, shaftRadius: 0.415f, protrusion: 0.028f,
+                sides: shaftSides, hoopMat: MaterialIdCatalog.LeatherPadding, hoopAccentMat: MaterialIdCatalog.TacticalCloth,
+                tempByte: hoopLowerTemp, outTris: _meshBuildScratch);
+
+            EmitHorizontalReinforcementHoop(
+                yCenter: 0.60f, halfHeight: 0.029f, shaftRadius: 0.370f, protrusion: 0.025f,
+                sides: shaftSides, hoopMat: MaterialIdCatalog.LeatherPadding, hoopAccentMat: MaterialIdCatalog.TacticalCloth,
+                tempByte: hoopMidTemp, outTris: _meshBuildScratch);
+
+            EmitHorizontalReinforcementHoop(
+                yCenter: 0.81f, halfHeight: 0.026f, shaftRadius: 0.320f, protrusion: 0.022f,
+                sides: shaftSides, hoopMat: MaterialIdCatalog.LeatherPadding, hoopAccentMat: MaterialIdCatalog.TacticalCloth,
+                tempByte: hoopTopTemp, outTris: _meshBuildScratch);
+
+            // 5) Ust baca agzi pahli dudagi + isli ic bogaz + gorunur koyu komur/cevher yatagi (y = 0.62 .. 0.68m)
+            const float rimOuterR = 0.302f;
+            const float throatTopR = 0.182f;
+            const float throatBedR = 0.192f;
+            const float bedBaseY = 0.62f;
+
+            for (int i = 0; i < shaftSides; i++)
+            {
+                int ni = (i + 1) % shaftSides;
+                float a0 = (i / (float)shaftSides) * MathF.PI * 2f;
+                float a1 = (ni / (float)shaftSides) * MathF.PI * 2f;
                 float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0);
                 float c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
 
-                SysVec3 i0 = new SysVec3(c0 * innerR, y, s0 * innerR);
-                SysVec3 i1 = new SysVec3(c1 * innerR, y, s1 * innerR);
-                SysVec3 o1 = new SysVec3(c1 * outerR, y, s1 * outerR);
-                SysVec3 o0 = new SysVec3(c0 * outerR, y, s0 * outerR);
-                EmitQuad(i0, o0, o1, i1, matId, tempByte, outTris);
-            }
-        }
+                SysVec3 ro0 = new SysVec3(c0 * rimOuterR, 0.995f, s0 * rimOuterR);
+                SysVec3 ro1 = new SysVec3(c1 * rimOuterR, 0.995f, s1 * rimOuterR);
+                SysVec3 ri0 = new SysVec3(c0 * throatTopR, 0.975f, s0 * throatTopR);
+                SysVec3 ri1 = new SysVec3(c1 * throatTopR, 0.975f, s1 * throatTopR);
 
-        private static void EmitCharcoalClampMound(int mode, List<FacetedVoxelTriangle> outTris)
-        {
-            const int sides = 12;
-            if (mode == 3)
+                EmitQuadWithOutwardHint(
+                    ri0, ri1, ro1, ro0, SysVec3.UnitY,
+                    MaterialIdCatalog.LeatherPadding, hoopTopTemp, 178, 0xC6, _meshBuildScratch);
+            }
+
+            // Ic bogaz ust isli bolge (y = 0.80..0.975) ve alt kor bolgesi (y = 0.62..0.80) -> yukari yonlu isi gecisi!
+            EmitConicalTerracottaBand(
+                0.80f, 0.975f, 0.188f, throatTopR, shaftSides,
+                thermalTier == 0 ? MaterialIdCatalog.Basalt : MaterialIdCatalog.CampfireBlock,
+                MaterialIdCatalog.Coal,
+                throatUpperTmp, baseShade: 150, ao: 0x8E, jitterSeed: 0u, radialJitterAmp: 0f,
+                _meshBuildScratch, inwardNormal: true);
+
+            EmitConicalTerracottaBand(
+                bedBaseY, 0.80f, throatBedR, 0.188f, shaftSides,
+                throatGlowMat, MaterialIdCatalog.Coal,
+                throatLowerTmp, baseShade: 165, ao: 0x84, jitterSeed: 0u, radialJitterAmp: 0f,
+                _meshBuildScratch, inwardNormal: true);
+
+            // Ust agiz icindeki koyu komur ve cevher yatagi tabani + parcali komur/cevher topaklari
+            SysVec3 bedCrown = new SysVec3(0f, bedBaseY + 0.042f, 0f);
+            byte bedBaseMat = thermalTier == 0 ? MaterialIdCatalog.Coal : MaterialIdCatalog.MagmaBlock;
+            byte bedBaseTemp = thermalTier == 2 ? (byte)246 : (thermalTier == 1 ? (byte)182 : (byte)0);
+            for (int i = 0; i < shaftSides; i++)
             {
-                // RuinedAsh: cokmus gri-siyah kul yigini
-                EmitRingBand(0.00f, 0.10f, 0.58f, 0.36f, sides, MaterialIdCatalog.Basalt, 0, outTris);
-                EmitRingBand(0.10f, 0.16f, 0.36f, 0.08f, sides, MaterialIdCatalog.Coal, 0, outTris);
-                EmitAnnulusTopCap(0.16f, 0.0f, 0.08f, sides, MaterialIdCatalog.Coal, 0, outTris);
-                return;
+                int ni = (i + 1) % shaftSides;
+                float a0 = (i / (float)shaftSides) * MathF.PI * 2f;
+                float a1 = (ni / (float)shaftSides) * MathF.PI * 2f;
+                SysVec3 p0 = new SysVec3(MathF.Cos(a0) * throatBedR, bedBaseY, MathF.Sin(a0) * throatBedR);
+                SysVec3 p1 = new SysVec3(MathF.Cos(a1) * throatBedR, bedBaseY, MathF.Sin(a1) * throatBedR);
+                EmitTriWithOutwardHint(bedCrown, p0, p1, SysVec3.UnitY, bedBaseMat, bedBaseTemp, 162, 0x92, _meshBuildScratch);
             }
 
-            float hMul = mode == 2 ? 0.86f : 1.0f;
-            byte woodTemp = mode == 1 ? (byte)130 : (byte)0;
-            byte clayCollarTemp = mode == 1 ? (byte)85 : (byte)0;
-            byte coreMat = mode == 1 ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Coal;
-            byte coreTemp = mode == 1 ? (byte)230 : (mode == 2 ? (byte)55 : (byte)0);
-
-            // Alttan gorunen 8 radyal yarilmis odun ucu
-            for (int k = 0; k < 8; k++)
+            // Yatak uzerinde 9 adet koyu komur (Coal) ve kirilmis cevher (IronOre/CopperOre) topagi
+            for (int c = 0; c < 9; c++)
             {
-                float ang = (k / 8f) * MathF.PI * 2f + 0.22f;
-                SysVec3 logPos = new SysVec3(MathF.Cos(ang) * 0.50f, 0.06f, MathF.Sin(ang) * 0.50f);
-                byte logMat = mode == 2 ? MaterialIdCatalog.Coal : MaterialIdCatalog.OakWood;
-                EmitOrientedBox(logPos, new SysVec3(0.055f, 0.048f, 0.15f), logMat, woodTemp, outTris, -ang + MathF.PI * 0.5f);
+                float cAng = (c / 9f) * MathF.PI * 2f + 0.37f;
+                float cRad = c == 0 ? 0.018f : (c < 5 ? 0.072f : 0.128f);
+                float cy = bedBaseY + (c == 0 ? 0.048f : (c < 5 ? 0.036f : 0.022f));
+                bool isOreNugget = (c % 3) == 1;
+                byte chunkMat = isOreNugget
+                    ? ((c & 1) == 0 ? MaterialIdCatalog.IronOre : MaterialIdCatalog.CopperOre)
+                    : MaterialIdCatalog.Coal;
+                // Komur topaklarinin ust kabugu koyu kalir, yanarken kenar kor sicakligi alir
+                byte chunkTemp = thermalTier == 2 ? (byte)(isOreNugget ? 165 : 92) : (thermalTier == 1 ? (byte)(isOreNugget ? 95 : 42) : (byte)0);
+                EmitOrientedBox(
+                    new SysVec3(MathF.Cos(cAng) * cRad, cy, MathF.Sin(cAng) * cRad),
+                    new SysVec3(0.030f, 0.020f, 0.026f),
+                    chunkMat,
+                    chunkTemp,
+                    _meshBuildScratch,
+                    yawRad: cAng * 1.7f,
+                    baseShade: (byte)(156 + (c * 11) % 30),
+                    ao: 0x9E);
             }
 
-            // Toprak + Kil kubbe katmanlari
-            EmitRingBand(0.00f, 0.20f * hMul, 0.62f, 0.50f, sides, MaterialIdCatalog.Dirt, 0, outTris);
-            EmitRingBand(0.20f * hMul, 0.38f * hMul, 0.50f, 0.31f, sides, MaterialIdCatalog.Clay, 0, outTris);
-            EmitRingBand(0.38f * hMul, 0.48f * hMul, 0.31f, 0.17f, sides, MaterialIdCatalog.Clay, clayCollarTemp, outTris);
+            // 6) On kemer icinden gorunen alt ocak komur/kor haznesi (tikac acildiginda bosluk icinde gorunur)
+            byte lowerHearthMat = thermalTier == 0 ? MaterialIdCatalog.Coal : MaterialIdCatalog.MagmaBlock;
+            byte lowerHearthTmp = thermalTier == 2 ? (byte)252 : (thermalTier == 1 ? (byte)190 : (byte)0);
+            EmitOrientedBox(
+                new SysVec3(0f, 0.075f, 0.14f),
+                new SysVec3(0.21f, 0.075f, 0.21f),
+                lowerHearthMat,
+                lowerHearthTmp,
+                _meshBuildScratch,
+                baseShade: 175,
+                ao: 0x8C);
 
-            // Ust duman bacasi agzi ve ic kor cukuru
-            EmitAnnulusTopCap(0.48f * hMul, 0.11f, 0.17f, sides, MaterialIdCatalog.Clay, clayCollarTemp, outTris);
-            EmitRingBand(0.32f * hMul, 0.48f * hMul, 0.11f, 0.11f, sides, coreMat, coreTemp, outTris, inwardNormal: true);
-            EmitAnnulusTopCap(0.32f * hMul, 0.0f, 0.11f, sides, coreMat, coreTemp, outTris);
-        }
-
-        private static void EmitBloomeryChimneyBody(int thermalTier, List<FacetedVoxelTriangle> outTris)
-        {
-            const int sides = 12;
-            byte lowerClayTemp = thermalTier == 2 ? (byte)125 : (thermalTier == 1 ? (byte)60 : (byte)0);
-            byte upperClayTemp = thermalTier == 2 ? (byte)70 : (byte)0;
-            byte innerMat = thermalTier == 0 ? MaterialIdCatalog.Coal : MaterialIdCatalog.MagmaBlock;
-            byte innerTemp = thermalTier == 2 ? (byte)250 : (thermalTier == 1 ? (byte)175 : (byte)0);
-
-            // 1) Dairesel kaba tas temel (12 tas blok, +Z yonunde on curuf/tikac kemeri acik)
-            for (int i = 0; i < sides; i++)
-            {
-                float ang = ((i + 0.5f) / sides) * MathF.PI * 2f;
-                // +Z ekseni MathF.Sin(ang) > 0.85f (i == 2 veya i == 3 civari: 60..120 derece)
-                bool isFrontArchGap = i == 2 || i == 3;
-                if (isFrontArchGap) continue;
-
-                byte stoneMat = (i & 1) == 0 ? MaterialIdCatalog.Stone : MaterialIdCatalog.Cobblestone;
-                SysVec3 stonePos = new SysVec3(MathF.Cos(ang) * 0.41f, 0.13f, MathF.Sin(ang) * 0.41f);
-                EmitOrientedBox(stonePos, new SysVec3(0.115f, 0.13f, 0.115f), stoneMat, 0, outTris, -ang);
-            }
-
-            // On kemer ustu tas lento kirisi (+Z, y=0.22..0.30)
-            EmitOrientedBox(new SysVec3(0f, 0.25f, 0.39f), new SysVec3(0.18f, 0.045f, 0.085f), MaterialIdCatalog.Cobblestone, lowerClayTemp, outTris);
-            // Yan (+X) kil hava borusu giris bilezigi
-            EmitOrientedBox(new SysVec3(0.39f, 0.16f, 0f), new SysVec3(0.06f, 0.075f, 0.075f), MaterialIdCatalog.Clay, lowerClayTemp, outTris);
-
-            // 2) Daralan silindirik kil baca govdesi (y = 0.24m -> 0.98m)
-            EmitRingBand(0.24f, 0.50f, 0.44f, 0.39f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
-            // Alt kil takviye kusagi
-            EmitRingBand(0.46f, 0.51f, 0.415f, 0.410f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
-            EmitAnnulusTopCap(0.51f, 0.39f, 0.410f, sides, MaterialIdCatalog.Clay, lowerClayTemp, outTris);
-
-            EmitRingBand(0.50f, 0.76f, 0.39f, 0.33f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
-            // Ust kil takviye kusagi
-            EmitRingBand(0.72f, 0.77f, 0.355f, 0.350f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
-            EmitAnnulusTopCap(0.77f, 0.33f, 0.350f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
-
-            EmitRingBand(0.76f, 0.98f, 0.33f, 0.28f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
-
-            // 3) Baca agzi kalin dudagi ve ici bos kor Bogaz + alt ocak tabani
-            EmitAnnulusTopCap(0.98f, 0.16f, 0.28f, sides, MaterialIdCatalog.Clay, upperClayTemp, outTris);
-            EmitRingBand(0.32f, 0.98f, 0.18f, 0.16f, sides, innerMat, innerTemp, outTris, inwardNormal: true);
-            EmitAnnulusTopCap(0.32f, 0.0f, 0.18f, sides, innerMat, innerTemp, outTris);
-            // On kemer icinden gorunen alt komur/kor yatagi
-            EmitOrientedBox(new SysVec3(0f, 0.08f, 0.12f), new SysVec3(0.22f, 0.08f, 0.22f), innerMat, innerTemp, outTris);
+            return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshBuildScratch, meshName);
         }
 
         private static void EmitConeTongue(
@@ -2268,27 +2956,15 @@ namespace Stratocraft.Character
             byte tempByte,
             List<FacetedVoxelTriangle> outTris)
         {
-            const int sides = 5;
+            const int sides = 6;
             for (int i = 0; i < sides; i++)
             {
                 float a0 = (i / (float)sides) * MathF.PI * 2f;
                 float a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
                 SysVec3 p0 = baseCenter + new SysVec3(MathF.Cos(a0) * baseRadius, 0f, MathF.Sin(a0) * baseRadius);
                 SysVec3 p1 = baseCenter + new SysVec3(MathF.Cos(a1) * baseRadius, 0f, MathF.Sin(a1) * baseRadius);
-
-                SysVec3 n = SysVec3.Cross(p1 - p0, apex - p0);
-                n = n.LengthSquared() > 1e-6f ? SysVec3.Normalize(n) : SysVec3.UnitY;
-                outTris.Add(new FacetedVoxelTriangle
-                {
-                    V0 = p0,
-                    V1 = p1,
-                    V2 = apex,
-                    Normal = n,
-                    MaterialId = matId,
-                    Temperature = tempByte,
-                    FacetShade = 235,
-                    AmbientOcclusion = 0xE2
-                });
+                SysVec3 outHint = (p0 - baseCenter) + (p1 - baseCenter) + new SysVec3(0f, 0.25f, 0f);
+                EmitTriWithOutwardHint(p0, apex, p1, outHint, matId, tempByte, 235, 0xE2, outTris);
             }
         }
 

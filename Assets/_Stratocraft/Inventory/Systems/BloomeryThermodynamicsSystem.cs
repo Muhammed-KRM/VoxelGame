@@ -40,6 +40,21 @@ namespace Stratocraft.Inventory.Systems
         public const int RequiredHammerStrikes = 3;
     }
 
+    public enum BloomeryOreChargeForm : byte
+    {
+        CrushedPowder = 0,
+        RoastedChunk = 1,
+        RawOre = 2
+    }
+
+    public enum BloomeryOreChargeResult : byte
+    {
+        Charged = 0,
+        UnsupportedMaterial = 1,
+        MixedMetalConflict = 2,
+        FurnaceOreFull = 3
+    }
+
     public struct BloomeryFurnaceState
     {
         public uint StationId;
@@ -55,6 +70,7 @@ namespace Stratocraft.Inventory.Systems
         public int CharcoalUnits;
         public int CrushedOreUnits;
         public byte OreMaterialId;
+        public float OreSmeltSpeedMultiplier;
         public float FuelBurnTimerSec;
         public float TemperatureCelsius;
         public float BellowsAirflow01;
@@ -75,6 +91,9 @@ namespace Stratocraft.Inventory.Systems
         public const float CopperMeltThresholdCelsius = 1085.0f;
         public const float IronBloomThresholdCelsius = 1230.0f;
         public const float MaxFurnaceCelsius = 1315.0f;
+        public const float CrushedOreSmeltSpeedMultiplier = 1.00f;
+        public const float RoastedOreSmeltSpeedMultiplier = 0.85f;
+        public const float RawOreSmeltSpeedMultiplier = 0.70f;
     }
 
     public struct HotForgeWorkpieceState
@@ -298,9 +317,74 @@ namespace Stratocraft.Inventory.Systems
                 HasLeatherBellows = hasBellows,
                 HasClayCrucible = hasCrucible,
                 IsFrontClayPlugIntact = true,
+                OreSmeltSpeedMultiplier = BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier,
                 TemperatureCelsius = 20.0f,
                 TimeSinceLastPumpSec = 10.0f
             };
+        }
+
+        public static float GetOreChargeSpeedMultiplier(BloomeryOreChargeForm form) => form switch
+        {
+            BloomeryOreChargeForm.CrushedPowder => BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier,
+            BloomeryOreChargeForm.RoastedChunk => BloomeryFurnaceState.RoastedOreSmeltSpeedMultiplier,
+            _ => BloomeryFurnaceState.RawOreSmeltSpeedMultiplier
+        };
+
+        public static bool IsSupportedBloomeryOreMaterial(byte materialId)
+        {
+            return materialId == BloomeryFurnaceState.CopperMatId ||
+                   materialId == BloomeryFurnaceState.IronMatId;
+        }
+
+        public static BloomeryOreChargeResult TryChargeOreUnit(
+            ref BloomeryFurnaceState state,
+            byte oreMaterialId,
+            BloomeryOreChargeForm form)
+        {
+            if (!IsSupportedBloomeryOreMaterial(oreMaterialId))
+            {
+                return BloomeryOreChargeResult.UnsupportedMaterial;
+            }
+
+            if (state.CrushedOreUnits > 0 &&
+                state.OreMaterialId != 0 &&
+                state.OreMaterialId != oreMaterialId)
+            {
+                return BloomeryOreChargeResult.MixedMetalConflict;
+            }
+
+            if (state.CrushedOreUnits >= BloomeryFurnaceState.MaxCrushedOreUnits)
+            {
+                return BloomeryOreChargeResult.FurnaceOreFull;
+            }
+
+            float unitMul = GetOreChargeSpeedMultiplier(form);
+            if (state.CrushedOreUnits <= 0)
+            {
+                state.OreSmeltSpeedMultiplier = unitMul;
+                state.CrushedOreUnits = 1;
+            }
+            else
+            {
+                float prevMul = state.OreSmeltSpeedMultiplier <= 0.001f
+                    ? BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier
+                    : state.OreSmeltSpeedMultiplier;
+                state.OreSmeltSpeedMultiplier =
+                    (prevMul * state.CrushedOreUnits + unitMul) / (state.CrushedOreUnits + 1);
+                state.CrushedOreUnits++;
+            }
+
+            state.OreMaterialId = oreMaterialId;
+            return BloomeryOreChargeResult.Charged;
+        }
+
+        public static bool ExtinguishBloomery(ref BloomeryFurnaceState state)
+        {
+            if (!state.IsLit) return false;
+            state.IsLit = false;
+            state.SparkStrikeCount = 0;
+            state.BellowsAirflow01 = 0f;
+            return true;
         }
 
         public static bool PumpBellows(ref BloomeryFurnaceState state)
@@ -341,7 +425,11 @@ namespace Stratocraft.Inventory.Systems
             float targetTemp = 20.0f;
             if (!state.IsLit || (state.CharcoalUnits <= 0 && state.WoodFuelUnits <= 0))
             {
-                state.IsLit = false;
+                if (state.IsLit)
+                {
+                    state.IsLit = false;
+                    state.SparkStrikeCount = 0;
+                }
                 targetTemp = 20.0f;
             }
             else if (state.CharcoalUnits <= 0 && state.WoodFuelUnits > 0)
@@ -391,6 +479,7 @@ namespace Stratocraft.Inventory.Systems
                     if (state.CharcoalUnits <= 0 && state.WoodFuelUnits <= 0)
                     {
                         state.IsLit = false;
+                        state.SparkStrikeCount = 0;
                         state.FuelBurnTimerSec = 0f;
                         break;
                     }
@@ -399,17 +488,25 @@ namespace Stratocraft.Inventory.Systems
 
             if (state.IsLit && state.CrushedOreUnits > 0 && state.CharcoalUnits > 0)
             {
+                float smeltSpeedMul = state.OreSmeltSpeedMultiplier <= 0.001f
+                    ? BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier
+                    : Math.Clamp(state.OreSmeltSpeedMultiplier, 0.10f, 2.00f);
+
                 if (state.OreMaterialId == BloomeryFurnaceState.CopperMatId &&
                     state.HasClayCrucible &&
                     !state.HasMoltenCopperReady)
                 {
                     if (state.TemperatureCelsius >= BloomeryFurnaceState.CopperMeltThresholdCelsius)
                     {
-                        state.SmeltProgress01 += dt / 18.0f;
+                        state.SmeltProgress01 += (dt / 18.0f) * smeltSpeedMul;
                         if (state.SmeltProgress01 >= 1.0f)
                         {
                             state.SmeltProgress01 = 0f;
                             state.CrushedOreUnits -= Math.Min(state.CrushedOreUnits, 2);
+                            if (state.CrushedOreUnits <= 0)
+                            {
+                                state.OreSmeltSpeedMultiplier = BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier;
+                            }
                             state.CharcoalUnits -= Math.Min(state.CharcoalUnits, 2);
                             state.HasMoltenCopperReady = true;
                         }
@@ -421,13 +518,17 @@ namespace Stratocraft.Inventory.Systems
                 {
                     if (state.TemperatureCelsius >= BloomeryFurnaceState.IronBloomThresholdCelsius)
                     {
-                        state.SmeltProgress01 += dt / 25.0f;
+                        state.SmeltProgress01 += (dt / 25.0f) * smeltSpeedMul;
                         state.SlagTappedVisual01 = Math.Clamp(state.SmeltProgress01, 0f, 1f);
                         if (state.SmeltProgress01 >= 1.0f)
                         {
                             state.SmeltProgress01 = 0f;
                             state.SlagTappedVisual01 = 1.0f;
                             state.CrushedOreUnits -= Math.Min(state.CrushedOreUnits, 2);
+                            if (state.CrushedOreUnits <= 0)
+                            {
+                                state.OreSmeltSpeedMultiplier = BloomeryFurnaceState.CrushedOreSmeltSpeedMultiplier;
+                            }
                             state.CharcoalUnits -= Math.Min(state.CharcoalUnits, 2);
                             state.HasReadyIronBloom = true;
                             state.HasTappedSlagShard = true;
