@@ -2,6 +2,7 @@
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Stratocraft.Core.Config;
 
 namespace Stratocraft.Networking
 {
@@ -101,6 +102,50 @@ namespace Stratocraft.Networking
             packed |= ((ulong)(activeMartialStance & 0x0F)) << 52;
             packed |= ((ulong)severedLimbFlags) << 56;
             return packed;
+        }
+
+        public const uint AtmosphereAoiSyncIntervalTicks60Hz = 60u; // 1 Hz (60 Tick'te 1)
+
+        /// <summary>
+        /// 60 Hz sunucu tick sayacinda her oyuncuya saniyede tam 1 kez (1 Hz, oyuncu faz kaydirmali)
+        /// 9x9 atmosfer AOI delta paketi gonderilip gonderilmeyecegini belirler.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool ShouldReplicateAtmosphereAoiAtTick(uint serverTick60Hz, uint playerEntityId)
+        {
+            return ((serverTick60Hz + (playerEntityId * 13u)) % AtmosphereAoiSyncIntervalTicks60Hz) == 0u;
+        }
+
+        /// <summary>
+        /// 1x..600x zaman olceginin bu dugum tarafindan degistirilip degistirilemeyecegini denetler.
+        /// Tek oyunculuda daima serbesttir; HostLoopback ve DedicatedServer modlarinda yalnizca Host/Sunucu
+        /// otoritesine izin verilir, uzak istemcilere (RemoteClient) kesinlikle kapatilir.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool CanModifyTimeScale(NetworkTopologyMode mode, bool isLocalHostOrServer)
+        {
+            return mode switch
+            {
+                NetworkTopologyMode.Singleplayer => true,
+                NetworkTopologyMode.HostLoopback => isLocalHostOrServer,
+                NetworkTopologyMode.DedicatedServer => isLocalHostOrServer,
+                NetworkTopologyMode.RemoteClient => false,
+                _ => false
+            };
+        }
+
+        /// <summary>
+        /// Calisma zamani sunucu moduna gore zaman olcegi degistirme yetkisini denetler.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool CanModifyTimeScale(ServerExecutionMode serverMode, bool isLocalHostOrServer)
+        {
+            return serverMode switch
+            {
+                ServerExecutionMode.HostLoopback => isLocalHostOrServer,
+                ServerExecutionMode.DedicatedServer => isLocalHostOrServer,
+                _ => false
+            };
         }
     }
 }

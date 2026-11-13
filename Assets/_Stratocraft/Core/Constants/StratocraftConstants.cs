@@ -124,8 +124,8 @@ namespace Stratocraft.Core.Constants
         /// <summary>Surunmede kapsul yaricapi (0.20m -> 0.40m genislik, 0.50m yariktan fiziki gecis garantisi).</summary>
         public const float ProneCapsuleRadiusMeters = 0.20f;
 
-        // ---------- Zaman, Mevsim ve Pristine Chunk Decay Sabitleri (Anayasa Bolum 2.6.B & 10.3) ----------
-        /// <summary>Tam 1 oyun gunu suresi: 60 gercek dakika = 3.600 saniye (40 dk Gunduz + 20 dk Gece).</summary>
+        // ---------- Zaman, 365-Gun Gunes Takvimi, Atmosfer ve Pristine Chunk Decay Sabitleri ----------
+        /// <summary>Tam 1 oyun gunu suresi: 60 gercek dakika = 3.600 saniye (40 dk Gunduz + 20 dk Gece taban orani).</summary>
         public const double SecondsPerInGameDay = 3600.0;
 
         /// <summary>Gunduz suresi (40 gercek dakika = 2.400 saniye).</summary>
@@ -134,8 +134,56 @@ namespace Stratocraft.Core.Constants
         /// <summary>Gece suresi (20 gercek dakika = 1.200 saniye).</summary>
         public const double NightDurationSeconds = 1200.0;
 
-        /// <summary>1 mevsimdeki oyun gunu sayisi (24 oyun gunu = 24 gercek saat; 1 yil = 96 gercek saat).</summary>
-        public const int DaysPerSeason = 24;
+        /// <summary>Kanonik 1 oyun yilindaki toplam gun sayisi (91 + 91 + 91 + 92 = 365 gun).</summary>
+        public const int DaysPerYear = 365;
+
+        /// <summary>Ilkbahar mevsimi gun sayisi (Gun 0..90).</summary>
+        public const int SpringDays = 91;
+
+        /// <summary>Yaz mevsimi gun sayisi (Gun 91..181).</summary>
+        public const int SummerDays = 91;
+
+        /// <summary>Sonbahar mevsimi gun sayisi (Gun 182..272).</summary>
+        public const int AutumnDays = 91;
+
+        /// <summary>Kis mevsimi gun sayisi (Gun 273..364).</summary>
+        public const int WinterDays = 92;
+
+        /// <summary>Nominal mevsim suresi (91 oyun gunu; Kis 92 gundur, toplam 365 gun/yil).</summary>
+        public const int DaysPerSeason = 91;
+
+        /// <summary>Tam 1 oyun yilinin toplam oyun saniyesi karsiligi (365 * 3600 = 1.314.000 sn).</summary>
+        public const double SecondsPerInGameYear = DaysPerYear * SecondsPerInGameDay;
+
+        /// <summary>Gezegensel gunes eksen egikligi (23.44 derece).</summary>
+        public const float SolarAxialTiltDegrees = 23.44f;
+
+        /// <summary>Varsayilan orta kusak enlem acisi (38.0 derece Kuzey).</summary>
+        public const float DefaultClimateLatitudeDegrees = 38.0f;
+
+        /// <summary>Atmosfer ustu gunes isinim sabiti (W/m^2).</summary>
+        public const float SolarConstantWm2 = 1361.0f;
+
+        /// <summary>Minimum zaman hizlandirma carpani (1x dogal akis).</summary>
+        public const float MinTimeAccelerationMultiplier = 1.0f;
+
+        /// <summary>Maksimum kararli zaman hizlandirma carpani (600x -> 1 oyun gunu = 6 gercek sn).</summary>
+        public const float MaxTimeAccelerationMultiplier = 600.0f;
+
+        /// <summary>600x zaman hizinda yari-Lagrange atmosfer adimi icin maksimum alt-adim suresi (oyun saniyesi).</summary>
+        public const float MaxAtmosphereSubstepGameSeconds = 15.0f;
+
+        /// <summary>Bolgesel 2B atmosfer hucresi kenar uzunlugu (64m = 4 chunk).</summary>
+        public const int AtmosphereCellSizeMeters = 64;
+
+        /// <summary>Bolgesel 2B atmosfer izgarasi tek kenar hucre sayisi (32x32 = 2048m x 2048m).</summary>
+        public const int AtmosphereGridSideCells = 32;
+
+        /// <summary>Oyuncu cevresi 1 Hz AOI atmosfer ag penceresi kenar boyutu (9x9 = 81 hucre).</summary>
+        public const int AtmosphereAoiGridSideCells = 9;
+
+        /// <summary>Oyuncu basina maksimum atmosfer AOI delta bant genisligi butcesi (Bayt/sn).</summary>
+        public const int MaxAtmosphereAoiBytesPerSecond = 512;
 
         /// <summary>Kanli Ay (Blood Moon) dongusu (her 3 gecede 1).</summary>
         public const int BloodMoonCycleDays = 3;
