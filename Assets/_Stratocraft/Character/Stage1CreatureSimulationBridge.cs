@@ -36,7 +36,9 @@ namespace Stratocraft.Character
             SupportPillarSiege = 3,
             Flee = 4,
             EmberEgg = 5,
-            Dead = 6
+            Dead = 6,
+            CeilingSleep = 7,
+            CaveAmbushTelegraph = 8
         }
 
         private enum AnatomicalHitRegion : byte { None = 0, Legs = 1, ArmsOrWings = 2, HeadOrTorso = 3 }
@@ -46,11 +48,14 @@ namespace Stratocraft.Character
             public Transform Root = null!;
             public Vector3 AnchorPos, BaseScale;
             public byte ArchetypeId;
+            public CaveCreatureVariantKind CaveVariant = CaveCreatureVariantKind.None;
             public float BaseYaw, PhaseOffset, OriginalMaxHp, MaxHp, CurrentHp, BaseSpeed, VoxelSiegeDps;
             public float SpeedMultiplier = 1.0f, AttackCooldown, DamageMultiplier = 1.0f;
             public float EmberEggTimer, HitFlinchTimer, SolarFlareTimer;
+            public float CaveAmbushTelegraphTimer, CaveFloorY, CaveCeilingY;
             public int LastHitSwingId = -1, WoundScarCount;
             public bool IsPhoenixBoss, IsFlyingBoss, IsBiped, IsDynamicBiomeSpawn, IsBatteryGenerated, IsTamed;
+            public bool IsSleepingOnCeiling, HasTriggeredCaveTelegraph;
             public bool LeftLegSevered, RightLegSevered, LeftArmSevered, RightArmSevered, LeftWingSevered, RightWingSevered, HeadSevered;
             public bool HasRebornFromEgg, SolarFlareWarningEmitted, LimbsBuilt;
             public string DisplayName = string.Empty;
@@ -118,8 +123,11 @@ namespace Stratocraft.Character
         private int _lastResolvedBareFistPunchId = -1;
 
         public int AgentCount => _agents.Count;
+        public IReadOnlyList<LiveCreatureAgent> Agents => _agents;
         public int OffScreenAnalyticalAgentCount { get; private set; }
         public Stage1MatterCrystalAndMiningController? MiningControllerForLootDrops { get; set; }
+        public Stage1CaveAcousticTelegraphController? AcousticTelegraphController { get; set; } = new Stage1CaveAcousticTelegraphController();
+        public Action<CaveCreatureVariantKind, Vector3, Vector3>? OnCaveAmbushTelegraphTriggered { get; set; }
         public LiveCreatureAgent? MountedCreatureAgent { get; private set; }
         public string LastCreatureEventText { get; private set; } =
             "Canlilar: Devriyede (5 Noktali 3B Namlu Kesimi | Boids Kusatma | [E] Evcillestirme & Binek | Phoenix Gunes Patlamasi)";
@@ -240,14 +248,168 @@ namespace Stratocraft.Character
 
             for (int s = 0; s < toSpawn; s++)
             {
-                byte archId = Creature21BehaviorSystem.SelectArchetypeForRingAndIndex(ring, _dynamicSpawnCounter++);
-                float ang = (_dynamicSpawnCounter * 1.85f) % (Mathf.PI * 2f);
-                float rad = 28f + (s * 7.5f);
+                int spawnSeed = _dynamicSpawnCounter++;
+                float ang = (spawnSeed * 1.85f) % (Mathf.PI * 2f);
+                float rad = 18f + (s * 7.5f);
                 Vector3 spawnPos = new Vector3(playerPos.x + Mathf.Cos(ang) * rad, playerPos.y + 1f, playerPos.z + Mathf.Sin(ang) * rad);
-                if (new Vector2(spawnPos.x, spawnPos.z).magnitude < 75.0f) continue;
-                SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, spawnPos, _dynamicSpawnCounter * 0.9f, archId);
+                if (new Vector2(spawnPos.x, spawnPos.z).magnitude < CaveEcologyAndSpawnSystem.SafeOriginRadiusMeters) continue;
+
+                if (TryResolveEnclosedCaveSpawnAt(
+                        spawnPos,
+                        playerPos.y,
+                        worldChunks,
+                        spawnSeed,
+                        out CaveCreatureVariantKind caveVariant,
+                        out int caveFloorY,
+                        out int caveCeilingY))
+                {
+                    SpawnProceduralCaveCreature(
+                        worldParent,
+                        sharedMat,
+                        worldChunks,
+                        spawnPos,
+                        spawnSeed * 0.9f,
+                        caveVariant,
+                        caveFloorY,
+                        caveCeilingY);
+                    continue;
+                }
+
+                float surfY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(playerPos.x, playerPos.z);
+                if (playerPos.y < surfY - 6.0f)
+                {
+                    continue;
+                }
+
+                byte archId = Creature21BehaviorSystem.SelectArchetypeForRingAndIndex(ring, spawnSeed);
+                SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, spawnPos, spawnSeed * 0.9f, archId);
             }
         }
+
+        private static bool TryResolveEnclosedCaveSpawnAt(
+            Vector3 candidatePos,
+            float referenceY,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            int deterministicSeed,
+            out CaveCreatureVariantKind variant,
+            out int floorY,
+            out int ceilingY)
+        {
+            variant = CaveCreatureVariantKind.None;
+            floorY = -1;
+            ceilingY = -1;
+
+            float surfY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(candidatePos.x, candidatePos.z);
+            if (referenceY >= surfY - 4.5f)
+            {
+                return false;
+            }
+
+            int wx = Mathf.FloorToInt(candidatePos.x);
+            int wz = Mathf.FloorToInt(candidatePos.z);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunk) || chunk == null)
+            {
+                return false;
+            }
+
+            int lx = wx - (cx * 16);
+            int lz = wz - (cz * 16);
+            int refVoxelY = Mathf.Clamp(Mathf.RoundToInt(referenceY), 4, Stage1InteractivePlayController.MaxEditableVoxelY - 4);
+            if (!CaveEcologyAndSpawnSystem.TrySampleCaveFloorAndCeiling(
+                    chunk,
+                    lx,
+                    refVoxelY,
+                    lz,
+                    Stage1InteractivePlayController.MaxEditableVoxelY,
+                    out floorY,
+                    out ceilingY))
+            {
+                return false;
+            }
+
+            if (!CaveEcologyAndSpawnSystem.CanSpawnInCaveAt(candidatePos.x, floorY + 1f, candidatePos.z, isEnclosedCave: true))
+            {
+                return false;
+            }
+
+            CaveEcologyAndSpawnSystem.InspectCaveEnvironmentInChunk(
+                chunk,
+                lx,
+                floorY + 1,
+                lz,
+                Stage1InteractivePlayController.MaxEditableVoxelY,
+                out bool nearCrystalWall,
+                out bool nearLavaOrMagma);
+
+            variant = CaveEcologyAndSpawnSystem.SelectCaveVariantForDepth(
+                floorY + 1,
+                nearCrystalWall,
+                nearLavaOrMagma,
+                deterministicSeed);
+
+            return variant != CaveCreatureVariantKind.None;
+        }
+
+        public LiveCreatureAgent? SpawnProceduralCaveCreature(
+            Transform? worldParent,
+            Material? sharedMat,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 worldPos,
+            float phaseOffset,
+            CaveCreatureVariantKind variant,
+            int floorY,
+            int ceilingY)
+        {
+            if (variant == CaveCreatureVariantKind.None ||
+                !CaveEcologyAndSpawnSystem.CanSpawnInCaveAt(worldPos.x, floorY + 1f, worldPos.z, isEnclosedCave: true))
+            {
+                return null;
+            }
+
+            byte archId = CaveEcologyAndSpawnSystem.GetBaseArchetypeId(variant);
+            bool hangOnCeiling = CaveEcologyAndSpawnSystem.IsCeilingAmbushVariant(variant) &&
+                                 (ceilingY - floorY >= CaveEcologyAndSpawnSystem.MinCeilingGalleryHeightForAmbush);
+            float spawnY = hangOnCeiling
+                ? CaveEcologyAndSpawnSystem.ComputeCeilingHangWorldY(ceilingY)
+                : (floorY + 1.05f);
+            Vector3 finalPos = new Vector3(worldPos.x, spawnY, worldPos.z);
+
+            GameObject mobRoot = new GameObject($"CaveCreature_{variant}_Arch{archId}");
+            if (worldParent != null) mobRoot.transform.SetParent(worldParent, true);
+            mobRoot.transform.position = finalPos;
+            mobRoot.transform.localScale = GetCaveVariantScale(variant, archId);
+            float initialYaw = (phaseOffset * 57.29578f) % 360f;
+            mobRoot.transform.rotation = hangOnCeiling
+                ? Quaternion.Euler(180f, initialYaw, 0f)
+                : Quaternion.Euler(0f, initialYaw, 0f);
+
+            bool isFlyer = variant == CaveCreatureVariantKind.CaveBatCrawler;
+            RegisterCreature(mobRoot.transform, finalPos, phaseOffset, isFlyingBoss: isFlyer, customArchetypeId: archId);
+            LiveCreatureAgent agent = _agents[_agents.Count - 1];
+            agent.CaveVariant = variant;
+            agent.DisplayName = CaveEcologyAndSpawnSystem.GetVariantDisplayName(variant);
+            agent.Capabilities |= CaveEcologyAndSpawnSystem.GetVariantCapabilities(variant);
+            agent.IsBiped = variant == CaveCreatureVariantKind.AbyssalSkeletonKnight;
+            agent.IsFlyingBoss = isFlyer;
+            agent.CaveFloorY = floorY + 1.0f;
+            agent.CaveCeilingY = ceilingY;
+            agent.IsSleepingOnCeiling = hangOnCeiling;
+            agent.State = hangOnCeiling ? CreatureAiState.CeilingSleep : CreatureAiState.Patrol;
+            EnsureCreatureArticulatedLimbs(agent, sharedMat);
+            return agent;
+        }
+
+        private static Vector3 GetCaveVariantScale(CaveCreatureVariantKind variant, byte archId) => variant switch
+        {
+            CaveCreatureVariantKind.GiantCaveSpider => new Vector3(1.16f, 0.92f, 1.18f),
+            CaveCreatureVariantKind.CaveBatCrawler => new Vector3(0.84f, 0.78f, 0.84f),
+            CaveCreatureVariantKind.CrystalCavernScorpion => new Vector3(1.18f, 1.04f, 1.24f),
+            CaveCreatureVariantKind.AbyssalSkeletonKnight => new Vector3(1.06f, 1.12f, 1.06f),
+            CaveCreatureVariantKind.MagmaSerpent => new Vector3(1.14f, 0.88f, 1.46f),
+            _ => GetArchetypeScale(archId)
+        };
 
         private void SpawnProceduralContinentCreature(
             Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks,
@@ -287,7 +449,17 @@ namespace Stratocraft.Character
             MiningControllerForLootDrops ??= collapseBridge.MiningControllerForItemDrops;
             EnsureOuterContinentCreaturesSpawned(worldParent, sharedVoxelMat, worldChunks);
 
-            if (Vector2.Distance(new Vector2(playerPos.x, playerPos.z), new Vector2(_lastBiomeSpawnCheckPos.x, _lastBiomeSpawnCheckPos.z)) >= 22f)
+            if (AcousticTelegraphController != null)
+            {
+                if (sharedVoxelMat != null)
+                {
+                    AcousticTelegraphController.SharedVoxelMaterial = sharedVoxelMat;
+                }
+                AcousticTelegraphController.StepDustParticles(deltaTime);
+            }
+
+            if (Vector2.Distance(new Vector2(playerPos.x, playerPos.z), new Vector2(_lastBiomeSpawnCheckPos.x, _lastBiomeSpawnCheckPos.z)) >= 22f ||
+                Mathf.Abs(playerPos.y - _lastBiomeSpawnCheckPos.y) >= 10f)
             {
                 _lastBiomeSpawnCheckPos = playerPos;
                 SpawnBiomeCreaturesNearPosition(playerPos, worldParent, sharedVoxelMat, worldChunks);
@@ -418,10 +590,29 @@ namespace Stratocraft.Character
                     continue;
                 }
 
+                if (a.CaveVariant != CaveCreatureVariantKind.None &&
+                    StepCaveCeilingAmbushAndTelegraph(a, playerPos, horizDist, time, deltaTime))
+                {
+                    if (horizDist <= 26.0f || ((frameCount + i) & 3) == 0)
+                    {
+                        StepCreatureArticulatedAnimation(a, time);
+                    }
+                    continue;
+                }
+
                 float aggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
-                float aggroRange = (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 7.0f)) * aggroMult;
+                float baseAggro = a.CaveVariant != CaveCreatureVariantKind.None ? 12.5f : (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 7.0f));
+                float aggroRange = baseAggro * aggroMult;
                 if (aggroMult > 0.02f && horizDist <= aggroRange)
                 {
+                    if (a.CaveVariant != CaveCreatureVariantKind.None && !a.HasTriggeredCaveTelegraph)
+                    {
+                        a.HasTriggeredCaveTelegraph = true;
+                        Vector3 telegraphOrigin = a.Root.position + Vector3.up * 1.35f;
+                        AcousticTelegraphController?.TriggerTelegraph(a.CaveVariant, telegraphOrigin, playerPos);
+                        OnCaveAmbushTelegraphTriggered?.Invoke(a.CaveVariant, telegraphOrigin, playerPos);
+                    }
+
                     StepAggroAgent(
                         a, i, playerPos, horizDist, toPlayer.y, isPlayerParrying, ref playerVitals,
                         worldChunks, dirtyChunks, collapseBridge, time, deltaTime, combatBridge);
@@ -483,7 +674,9 @@ namespace Stratocraft.Character
                 Mathf.Cos(patrolAngle) * radiusZ);
             if (!a.IsFlyingBoss)
             {
-                goalPos.y = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(goalPos.x, goalPos.z);
+                goalPos.y = a.CaveVariant != CaveCreatureVariantKind.None
+                    ? (a.CaveFloorY > 0f ? a.CaveFloorY : startPos.y)
+                    : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(goalPos.x, goalPos.z);
             }
 
             a.TargetPos = goalPos;
@@ -528,7 +721,9 @@ namespace Stratocraft.Character
                 Mathf.Cos(nextAngle) * radiusZ);
             if (!a.IsFlyingBoss)
             {
-                nextGoal.y = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(nextGoal.x, nextGoal.z);
+                nextGoal.y = a.CaveVariant != CaveCreatureVariantKind.None
+                    ? (a.CaveFloorY > 0f ? a.CaveFloorY : curY)
+                    : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(nextGoal.x, nextGoal.z);
             }
 
             a.TargetPos = nextGoal;
@@ -792,6 +987,70 @@ namespace Stratocraft.Character
             }
         }
 
+        private bool StepCaveCeilingAmbushAndTelegraph(
+            LiveCreatureAgent a, Vector3 playerPos, float horizDist, float time, float dt)
+        {
+            if (!a.IsSleepingOnCeiling && a.CaveAmbushTelegraphTimer <= 0f)
+            {
+                return false;
+            }
+
+            float hangY = a.CaveCeilingY > 0f
+                ? CaveEcologyAndSpawnSystem.ComputeCeilingHangWorldY(Mathf.RoundToInt(a.CaveCeilingY))
+                : a.Root.position.y;
+
+            if (CaveEcologyAndSpawnSystem.ShouldTriggerCaveAmbushTelegraph(
+                    horizDist * horizDist,
+                    a.IsSleepingOnCeiling,
+                    a.CaveAmbushTelegraphTimer,
+                    out float telegraphDurationSec))
+            {
+                a.CaveAmbushTelegraphTimer = telegraphDurationSec;
+                a.HasTriggeredCaveTelegraph = true;
+                a.State = CreatureAiState.CaveAmbushTelegraph;
+                Vector3 ceilingOrigin = new Vector3(a.Root.position.x, hangY, a.Root.position.z);
+                AcousticTelegraphController?.TriggerTelegraph(a.CaveVariant, ceilingOrigin, playerPos);
+                OnCaveAmbushTelegraphTriggered?.Invoke(a.CaveVariant, ceilingOrigin, playerPos);
+                LastCreatureEventText =
+                    $"[⚠ MAGARA TELGRAFI: {a.DisplayName} tavandan tas tozu dokuyor ({a.CaveAmbushTelegraphTimer:F1}sn icinde pusu inisi)!]";
+            }
+
+            if (a.CaveAmbushTelegraphTimer > 0f)
+            {
+                a.State = CreatureAiState.CaveAmbushTelegraph;
+                a.CaveAmbushTelegraphTimer = Mathf.Max(0f, a.CaveAmbushTelegraphTimer - dt);
+
+                Vector3 p = a.Root.position;
+                p.y = hangY + Mathf.Sin(time * 34f) * 0.04f;
+                a.Root.position = p;
+                a.Root.rotation = Quaternion.Euler(
+                    180f + Mathf.Sin(time * 38f) * 11f,
+                    a.BaseYaw,
+                    Mathf.Cos(time * 42f) * 12f);
+
+                if (a.CaveAmbushTelegraphTimer <= 0f)
+                {
+                    a.IsSleepingOnCeiling = false;
+                    a.State = CreatureAiState.AggroChase;
+                    float dropFloorY = a.CaveFloorY > 0f ? a.CaveFloorY : (hangY - 4.0f);
+                    float landingY = a.CaveVariant == CaveCreatureVariantKind.CaveBatCrawler
+                        ? Mathf.Max(dropFloorY + 1.25f, playerPos.y + 1.15f)
+                        : dropFloorY + 0.1f;
+                    a.Root.position = new Vector3(p.x, landingY, p.z);
+                    a.Root.rotation = Quaternion.Euler(0f, a.BaseYaw, 0f);
+                    LastCreatureEventText = $"[TAVAN PUSUSU!] {a.DisplayName} tavandan indi ve saldiriya gecti!";
+                    return false;
+                }
+
+                return true;
+            }
+
+            a.State = CreatureAiState.CeilingSleep;
+            a.Root.position = new Vector3(a.Root.position.x, hangY, a.Root.position.z);
+            a.Root.rotation = Quaternion.Euler(180f, a.BaseYaw, Mathf.Sin(time * 2.2f + a.PhaseOffset) * 3.5f);
+            return true;
+        }
+
         private void StepPatrolAgent(LiveCreatureAgent a, float time, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             a.State = CreatureAiState.Patrol;
@@ -986,6 +1245,11 @@ namespace Stratocraft.Character
                     }
                     else
                     {
+                        if (isPlayerParrying && a.CaveVariant == CaveCreatureVariantKind.AbyssalSkeletonKnight && combatBridge != null)
+                        {
+                            combatBridge.NotifySuccessfulParryOrClash(new Vector2(-0.28f, 0.32f), openRiposteWindow: true);
+                        }
+
                         float finalDmg = isPlayerParrying ? rawDmg * 0.15f : rawDmg;
                         Stratocraft.Character.Data.HitZone zone = (a.IsFlyingBoss || a.IsPhoenixBoss)
                             ? Stratocraft.Character.Data.HitZone.Head
@@ -1010,6 +1274,18 @@ namespace Stratocraft.Character
 
         private static string GetSpeciesAttackDescription(LiveCreatureAgent a)
         {
+            if (a.CaveVariant != CaveCreatureVariantKind.None)
+            {
+                return a.CaveVariant switch
+                {
+                    CaveCreatureVariantKind.GiantCaveSpider => "TAVAN AGI & ZEHIRLI DIS HAMLESI",
+                    CaveCreatureVariantKind.CaveBatCrawler => "KARANLIK SUZULME & ISIRIK DALISI",
+                    CaveCreatureVariantKind.CrystalCavernScorpion => "KRISTAL KISKAC & IGNE HAMLESI",
+                    CaveCreatureVariantKind.AbyssalSkeletonKnight => "PASLI SOVALYE KILICI YARMASI",
+                    CaveCreatureVariantKind.MagmaSerpent => "KOR MAGMA DISI HAMLESI",
+                    _ => "MAGARA PENCE HAMLESI"
+                };
+            }
             if (a.IsPhoenixBoss) return "ALEVLI GAGA DALISI & HAVA PENCESI";
             if (a.IsFlyingBoss || a.ArchetypeId == 14 || a.ArchetypeId == 21) return "KESKIN GAGA DALISI & HAVA PENCESI";
             switch (a.ArchetypeId)
@@ -1962,7 +2238,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            GetArchetypePalette(a.ArchetypeId, a.IsPhoenixBoss, out byte primaryMat, out byte accentMat, out byte glowTemp);
+            GetArchetypePalette(a.ArchetypeId, a.IsPhoenixBoss, a.CaveVariant, out byte primaryMat, out byte accentMat, out byte glowTemp);
             int bodyKey = (primaryMat << 8) | 1;
             if (!_creatureMeshCache.TryGetValue(bodyKey, out Mesh? bodyMesh) || bodyMesh == null)
             {
@@ -2055,9 +2331,42 @@ namespace Stratocraft.Character
             }
         }
 
-        private static void GetArchetypePalette(byte archId, bool isPhoenixBoss, out byte primaryMat, out byte accentMat, out byte glowTemp)
+        private static void GetArchetypePalette(
+            byte archId, bool isPhoenixBoss, CaveCreatureVariantKind caveVariant,
+            out byte primaryMat, out byte accentMat, out byte glowTemp)
         {
             if (isPhoenixBoss) { primaryMat = MaterialIdCatalog.Bronze; accentMat = 245; glowTemp = 235; return; }
+            if (caveVariant != CaveCreatureVariantKind.None)
+            {
+                switch (caveVariant)
+                {
+                    case CaveCreatureVariantKind.GiantCaveSpider:
+                        primaryMat = MaterialIdCatalog.NaturalObsidian;
+                        accentMat = MaterialIdCatalog.SulfurOre;
+                        glowTemp = 155;
+                        return;
+                    case CaveCreatureVariantKind.CaveBatCrawler:
+                        primaryMat = MaterialIdCatalog.Basalt;
+                        accentMat = MaterialIdCatalog.CopperOre;
+                        glowTemp = 130;
+                        return;
+                    case CaveCreatureVariantKind.CrystalCavernScorpion:
+                        primaryMat = MaterialIdCatalog.QuartzGem;
+                        accentMat = MaterialIdCatalog.AmethystGem;
+                        glowTemp = 175;
+                        return;
+                    case CaveCreatureVariantKind.AbyssalSkeletonKnight:
+                        primaryMat = MaterialIdCatalog.BoneIvory;
+                        accentMat = MaterialIdCatalog.Steel;
+                        glowTemp = 195;
+                        return;
+                    case CaveCreatureVariantKind.MagmaSerpent:
+                        primaryMat = MaterialIdCatalog.Basalt;
+                        accentMat = MaterialIdCatalog.MagmaBlock;
+                        glowTemp = 215;
+                        return;
+                }
+            }
             glowTemp = 85;
             switch (archId)
             {
