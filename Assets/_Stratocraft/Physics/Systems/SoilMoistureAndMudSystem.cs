@@ -30,6 +30,7 @@ namespace Stratocraft.Physics.Systems
         public readonly HashSet<(int cx, int cz)> ActiveMoistChunks = new();
 
         private readonly List<(int cx, int cz)> _moistChunkIterScratch = new(64);
+        private WaterCycleAndEvaporationSystem? _rainHydrologyHelper;
         private int _infiltrationParity;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -366,9 +367,50 @@ namespace Stratocraft.Physics.Systems
             }
         }
 
+        /// <summary>
+        /// Yuzey Yagmur Hidrolojisi (<c>AK-7</c>):
+        /// Acik gokyuzu (<see cref="ChunkSkyOcclusionMap256"/>) altindaki emici toprak kolonlarinda yagmurla <c>Moisture</c> artar
+        /// (<c>&gt;= 150</c> camurlasma), <c>Moisture == 255</c> tam doygunlukta ise fazla yagmur uste gercek <see cref="FluidCell16"/>
+        /// Tatli Su (<c>Salinity = false</c>) olarak dogup egim asagi cukurlara akar. Yagis durdugunda (<c>precipMmPerHour == 0</c>) kurur.
+        /// </summary>
+        public int StepRainSurfaceWettingAndPonding(
+            int cx,
+            int cz,
+            ReadOnlySpan<uint> voxels,
+            Span<ushort> fluids,
+            int maxY,
+            float precipMmPerHour,
+            float airTempC,
+            float gameDeltaSeconds,
+            out ushort visualDirtySubChunkMask,
+            out bool fluidChanged,
+            ChunkSkyOcclusionMap256? skyMap = null,
+            ChunkSalinityBitset? salinityBitset = null)
+        {
+            _rainHydrologyHelper ??= new WaterCycleAndEvaporationSystem();
+            return _rainHydrologyHelper.StepRainSurfaceWettingAndPonding(
+                cx, cz, voxels, fluids, this, maxY,
+                precipMmPerHour, airTempC, gameDeltaSeconds,
+                out visualDirtySubChunkMask, out fluidChanged,
+                skyMap, salinityBitset);
+        }
+
         public static bool StepSingleChunkSolarDrying(
             ReadOnlySpan<uint> voxels,
             ushort[]? fluids,
+            Span<byte> moisture,
+            int maxY,
+            int sunExposedDryStep,
+            ref ushort visualDirtySubChunkMask)
+        {
+            ReadOnlySpan<ushort> fluidSpan = fluids != null ? fluids.AsSpan() : ReadOnlySpan<ushort>.Empty;
+            return StepSingleChunkSolarDryingSpan(
+                voxels, fluidSpan, moisture, maxY, sunExposedDryStep, ref visualDirtySubChunkMask);
+        }
+
+        public static bool StepSingleChunkSolarDryingSpan(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> fluids,
             Span<byte> moisture,
             int maxY,
             int sunExposedDryStep,
@@ -391,13 +433,13 @@ namespace Stratocraft.Physics.Systems
                     {
                         // Ustunde veya kendi icinde hala su varsa KURUMAZ!
                         bool coveredByWater = false;
-                        if (fluids != null && idx < fluids.Length)
+                        if (!fluids.IsEmpty && idx < fluids.Length)
                         {
                             if (fluids[idx] != 0 && new FluidCell16(fluids[idx]).Type == FluidType.Water)
                             {
                                 coveredByWater = true;
                             }
-                            else if (y + 1 < maxY)
+                            else if (y + 1 < maxY && ((y + 1) << 8 | col) < fluids.Length)
                             {
                                 ushort aboveFl = fluids[((y + 1) << 8) | col];
                                 if (aboveFl != 0 && new FluidCell16(aboveFl).Type == FluidType.Water)

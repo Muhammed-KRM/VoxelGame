@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
@@ -92,6 +93,7 @@ namespace Stratocraft.Physics.Jobs
         /// <summary>
         /// 3B izgara uzerinde hacim korunumlu 1 adim akiskan + U-borusu/sifon + stokiyometrik obsidyen simulasyonu calistirir.
         /// <paramref name="steamSlagFizzleCount"/>: &lt; 128 yetersiz hacim nedeniyle kati blok olusturmadan buharlasan temas sayisi.
+        /// <paramref name="salinityBits"/>: Opsiyonel bit dizisi (<c>1 bit/hucre</c>); verildiginde akan tuzlu suyun tuzluluk bitini tasir (<see cref="FluidCell16"/> 16-bit duzeni degismez).
         /// </summary>
         public static long StepFluidGridVolumeConservative(
             Span<uint> voxels,
@@ -101,7 +103,8 @@ namespace Stratocraft.Physics.Jobs
             int sizeZ,
             out int obsidianFormedCount,
             out int steamSlagFizzleCount,
-            int stepParity = 0)
+            int stepParity = 0,
+            ulong[]? salinityBits = null)
         {
             obsidianFormedCount = 0;
             steamSlagFizzleCount = 0;
@@ -190,6 +193,7 @@ namespace Stratocraft.Physics.Jobs
                                     fluids[belowIdx] = FluidCell16.Pack(cell.Type, (byte)(belowCell.Mass + transfer), isSettled: false).RawValue;
                                     byte rem = (byte)(cell.Mass - transfer);
                                     fluids[idx] = FluidCell16.Pack(cell.Type, rem, isSettled: false).RawValue;
+                                    PropagateGridSalinityOnTransfer(salinityBits, cell.Type, idx, rem, belowIdx, belowWasDry);
                                     MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
                                     MarkChangedWithNeighbors(changedMask, x, y - 1, z, sizeX, sizeY, sizeZ);
                                     if (belowWasDry)
@@ -210,7 +214,8 @@ namespace Stratocraft.Physics.Jobs
                                 reactionTargetIsSecond: true,
                                 sizeX, sizeY, sizeZ,
                                 ref obsidianFormedCount,
-                                ref steamSlagFizzleCount);
+                                ref steamSlagFizzleCount,
+                                salinityBits);
                         }
                     }
                 }
@@ -224,23 +229,23 @@ namespace Stratocraft.Physics.Jobs
                 switch (mode)
                 {
                     case 0: // Even-X: (0,1), (2,3), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
                         break;
                     case 1: // Odd-X: (1,2), (3,4), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
                         break;
                     case 2: // Even-Z: (0,1), (2,3), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
                         break;
                     default: // Odd-Z: (1,2), (3,4), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
                         break;
                 }
             }
 
             // 3. Gecis: 5-Bit Hidrostatik Basinc Yuksekligi (PressureHead) + U-Borusu & <= 10m Sifon Dengeleme!
             UpdateHydrostaticHeadAndSolveUPipes(
-                voxels, fluids, changedMask, visitedStamp, bfsQueue, sizeX, sizeY, sizeZ);
+                voxels, fluids, changedMask, visitedStamp, bfsQueue, sizeX, sizeY, sizeZ, salinityBits);
 
             // 4. Gecis: Degismeyen durgun hucreleri IsSettled = 1 (%0 CPU) uykusuna yatir ve toplam kutleyi don
             long totalRemainingMass = 0;
@@ -251,6 +256,10 @@ namespace Stratocraft.Physics.Jobs
                 if (m == 0)
                 {
                     fluids[i] = 0;
+                    if (salinityBits != null)
+                    {
+                        SetGridSalinityBit(salinityBits, i, false);
+                    }
                     continue;
                 }
 
@@ -303,7 +312,8 @@ namespace Stratocraft.Physics.Jobs
             HashSet<(int cx, int cz)> dirtyFluidChunks,
             HashSet<(int cx, int cz)>? dirtySolidChunks = null,
             IReadOnlyList<(int cx, int cz)>? activeChunks = null,
-            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null)
+            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null,
+            ChunkSalinityBitset? salinityBitset = null)
         {
             if (worldChunks == null || fluidChunks == null || fluidChunks.Count == 0)
             {
@@ -335,7 +345,8 @@ namespace Stratocraft.Physics.Jobs
                             maxY,
                             dirtyFluidChunks,
                             dirtySolidChunks,
-                            wakeActiveFluidChunks);
+                            wakeActiveFluidChunks,
+                            salinityBitset);
                     }
 
                     // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0)
@@ -350,7 +361,8 @@ namespace Stratocraft.Physics.Jobs
                             maxY,
                             dirtyFluidChunks,
                             dirtySolidChunks,
-                            wakeActiveFluidChunks);
+                            wakeActiveFluidChunks,
+                            salinityBitset);
                     }
 
                     // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -365,7 +377,8 @@ namespace Stratocraft.Physics.Jobs
                             maxY,
                             dirtyFluidChunks,
                             dirtySolidChunks,
-                            wakeActiveFluidChunks);
+                            wakeActiveFluidChunks,
+                            salinityBitset);
                     }
 
                     // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
@@ -380,7 +393,8 @@ namespace Stratocraft.Physics.Jobs
                             maxY,
                             dirtyFluidChunks,
                             dirtySolidChunks,
-                            wakeActiveFluidChunks);
+                            wakeActiveFluidChunks,
+                            salinityBitset);
                     }
                 }
 
@@ -410,7 +424,8 @@ namespace Stratocraft.Physics.Jobs
                         maxY,
                         dirtyFluidChunks,
                         dirtySolidChunks,
-                        wakeActiveFluidChunks);
+                        wakeActiveFluidChunks,
+                        salinityBitset);
                 }
 
                 // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -427,7 +442,8 @@ namespace Stratocraft.Physics.Jobs
                         maxY,
                         dirtyFluidChunks,
                         dirtySolidChunks,
-                        wakeActiveFluidChunks);
+                        wakeActiveFluidChunks,
+                        salinityBitset);
                 }
             }
 
@@ -445,7 +461,8 @@ namespace Stratocraft.Physics.Jobs
             int maxY,
             HashSet<(int cx, int cz)>? dirtyFluidChunks,
             HashSet<(int cx, int cz)>? dirtySolidChunks,
-            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null)
+            HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null,
+            ChunkSalinityBitset? salinityBitset = null)
         {
             int limitY = Math.Min(maxY, Math.Min(fluidsA.Length >> 8, fluidsB.Length >> 8));
             limitY = Math.Min(limitY, Math.Min(voxelsA.Length >> 8, voxelsB.Length >> 8));
@@ -498,6 +515,8 @@ namespace Stratocraft.Physics.Jobs
                             {
                                 fluidsA[idxA] = 0;
                                 fluidsB[idxB] = 0;
+                                salinityBitset?.SetSaltWaterFlat(keyA.cx, keyA.cz, idxA, false);
+                                salinityBitset?.SetSaltWaterFlat(keyB.cx, keyB.cz, idxB, false);
                                 if (formedObsidian)
                                 {
                                     if (bCell.Type == FluidType.Lava)
@@ -548,8 +567,10 @@ namespace Stratocraft.Physics.Jobs
                             activeType, aCell.Mass, bCell.Mass, bCap, bedA, bedB);
                         if (transfer > 0)
                         {
-                            fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false, aCell.PressureHead).RawValue;
+                            byte remA = (byte)(aCell.Mass - transfer);
+                            fluidsA[idxA] = FluidCell16.Pack(activeType, remA, isSettled: false, aCell.PressureHead).RawValue;
                             fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false, bCell.PressureHead).RawValue;
+                            PropagateSeamSalinityOnTransfer(salinityBitset, activeType, keyA, idxA, remA, keyB, idxB, bCell.Mass == 0);
                             WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
                             WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
                             dirtyFluidA = true;
@@ -568,8 +589,10 @@ namespace Stratocraft.Physics.Jobs
                             activeType, bCell.Mass, aCell.Mass, aCap, bedB, bedA);
                         if (transfer > 0)
                         {
-                            fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false, bCell.PressureHead).RawValue;
+                            byte remB = (byte)(bCell.Mass - transfer);
+                            fluidsB[idxB] = FluidCell16.Pack(activeType, remB, isSettled: false, bCell.PressureHead).RawValue;
                             fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false, aCell.PressureHead).RawValue;
+                            PropagateSeamSalinityOnTransfer(salinityBitset, activeType, keyB, idxB, remB, keyA, idxA, aCell.Mass == 0);
                             WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
                             WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
                             dirtyFluidA = true;
@@ -651,7 +674,8 @@ namespace Stratocraft.Physics.Jobs
             bool alongX,
             int oddOffset,
             ref int obsidianFormedCount,
-            ref int steamSlagFizzleCount)
+            ref int steamSlagFizzleCount,
+            ulong[]? salinityBits = null)
         {
             int strideY = sizeZ * sizeX;
             int primaryLimit = alongX ? sizeX - 1 : sizeZ - 1;
@@ -703,7 +727,8 @@ namespace Stratocraft.Physics.Jobs
                                     reactionTargetIsSecond: lavaIsB,
                                     sizeX, sizeY, sizeZ,
                                     ref obsidianFormedCount,
-                                    ref steamSlagFizzleCount);
+                                    ref steamSlagFizzleCount,
+                                    salinityBits);
                             }
                             continue;
                         }
@@ -746,8 +771,10 @@ namespace Stratocraft.Physics.Jobs
                             if (transfer > 0)
                             {
                                 bool bWasDry = bCell.Mass == 0;
-                                fluids[aIdx] = FluidCell16.Pack(activeType, (byte)(aCell.Mass - transfer), isSettled: false).RawValue;
+                                byte remA = (byte)(aCell.Mass - transfer);
+                                fluids[aIdx] = FluidCell16.Pack(activeType, remA, isSettled: false).RawValue;
                                 fluids[bIdx] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false).RawValue;
+                                PropagateGridSalinityOnTransfer(salinityBits, activeType, aIdx, remA, bIdx, bWasDry);
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
                                 if (bWasDry)
@@ -778,8 +805,10 @@ namespace Stratocraft.Physics.Jobs
                             if (transfer > 0)
                             {
                                 bool aWasDry = aCell.Mass == 0;
-                                fluids[bIdx] = FluidCell16.Pack(activeType, (byte)(bCell.Mass - transfer), isSettled: false).RawValue;
+                                byte remB = (byte)(bCell.Mass - transfer);
+                                fluids[bIdx] = FluidCell16.Pack(activeType, remB, isSettled: false).RawValue;
                                 fluids[aIdx] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false).RawValue;
+                                PropagateGridSalinityOnTransfer(salinityBits, activeType, bIdx, remB, aIdx, aWasDry);
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
                                 if (aWasDry)
@@ -1036,7 +1065,8 @@ namespace Stratocraft.Physics.Jobs
             int[] bfsQueue,
             int sizeX,
             int sizeY,
-            int sizeZ)
+            int sizeZ,
+            ulong[]? salinityBits = null)
         {
             int strideY = sizeZ * sizeX;
 
@@ -1229,8 +1259,11 @@ namespace Stratocraft.Physics.Jobs
 
                             if (transfer > 0)
                             {
-                                fluids[bestSourceIdx] = FluidCell16.Pack(pipeType, (byte)(srcCell.Mass - transfer), isSettled: false).RawValue;
+                                bool outWasDry = outCell.Mass == 0;
+                                byte remSrc = (byte)(srcCell.Mass - transfer);
+                                fluids[bestSourceIdx] = FluidCell16.Pack(pipeType, remSrc, isSettled: false).RawValue;
                                 fluids[bestOutletIdx] = FluidCell16.Pack(pipeType, (byte)(outCell.Mass + transfer), isSettled: false, outCell.PressureHead).RawValue;
+                                PropagateGridSalinityOnTransfer(salinityBits, pipeType, bestSourceIdx, remSrc, bestOutletIdx, outWasDry);
                                 _lastStepSiphonTransfers++;
 
                                 int sy = bestSourceIdx / strideY;
@@ -1262,7 +1295,8 @@ namespace Stratocraft.Physics.Jobs
             bool reactionTargetIsSecond,
             int sizeX, int sizeY, int sizeZ,
             ref int obsidianFormedCount,
-            ref int steamSlagFizzleCount)
+            ref int steamSlagFizzleCount,
+            ulong[]? salinityBits = null)
         {
             FluidCell16 cellA = new FluidCell16(fluids[idxA]);
             FluidCell16 cellB = new FluidCell16(fluids[idxB]);
@@ -1277,6 +1311,11 @@ namespace Stratocraft.Physics.Jobs
             // Her iki hucredeki sivi tamamen tuketilir (0, 0)
             fluids[idxA] = 0;
             fluids[idxB] = 0;
+            if (salinityBits != null)
+            {
+                SetGridSalinityBit(salinityBits, idxA, false);
+                SetGridSalinityBit(salinityBits, idxB, false);
+            }
 
             if (formedObsidian)
             {
@@ -1332,6 +1371,92 @@ namespace Stratocraft.Physics.Jobs
             visitedStamp = _tlsVisitedStamp;
             bfsQueue = _tlsBfsQueue;
             activeNext = _tlsActiveNext!;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool GetGridSalinityBit(ulong[]? salinityBits, int cellIndex)
+        {
+            if (salinityBits == null) return false;
+            int word = cellIndex >> 6;
+            if ((uint)word >= (uint)salinityBits.Length) return false;
+            return ((salinityBits[word] >> (cellIndex & 63)) & 1UL) != 0UL;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SetGridSalinityBit(ulong[]? salinityBits, int cellIndex, bool isSalty)
+        {
+            if (salinityBits == null) return;
+            int word = cellIndex >> 6;
+            if ((uint)word >= (uint)salinityBits.Length) return;
+            ulong mask = 1UL << (cellIndex & 63);
+            if (isSalty) salinityBits[word] |= mask;
+            else salinityBits[word] &= ~mask;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void PropagateGridSalinityOnTransfer(
+            ulong[]? salinityBits,
+            FluidType fluidType,
+            int srcIdx,
+            byte srcRemainingMass,
+            int dstIdx,
+            bool dstWasDry)
+        {
+            if (salinityBits == null) return;
+            if (fluidType != FluidType.Water)
+            {
+                SetGridSalinityBit(salinityBits, srcIdx, false);
+                SetGridSalinityBit(salinityBits, dstIdx, false);
+                return;
+            }
+
+            if (GetGridSalinityBit(salinityBits, srcIdx))
+            {
+                SetGridSalinityBit(salinityBits, dstIdx, true);
+            }
+            else if (dstWasDry)
+            {
+                SetGridSalinityBit(salinityBits, dstIdx, false);
+            }
+
+            if (srcRemainingMass == 0)
+            {
+                SetGridSalinityBit(salinityBits, srcIdx, false);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void PropagateSeamSalinityOnTransfer(
+            ChunkSalinityBitset? salinityBitset,
+            FluidType fluidType,
+            (int cx, int cz) srcKey,
+            int srcIdx,
+            byte srcRemainingMass,
+            (int cx, int cz) dstKey,
+            int dstIdx,
+            bool dstWasDry)
+        {
+            if (salinityBitset == null) return;
+            if (fluidType != FluidType.Water)
+            {
+                salinityBitset.SetSaltWaterFlat(srcKey.cx, srcKey.cz, srcIdx, false);
+                salinityBitset.SetSaltWaterFlat(dstKey.cx, dstKey.cz, dstIdx, false);
+                return;
+            }
+
+            if (salinityBitset.IsSaltWaterFlat(srcKey.cx, srcKey.cz, srcIdx))
+            {
+                salinityBitset.SetSaltWaterFlat(dstKey.cx, dstKey.cz, dstIdx, true);
+            }
+            else if (dstWasDry)
+            {
+                salinityBitset.SetSaltWaterFlat(dstKey.cx, dstKey.cz, dstIdx, false);
+            }
+
+            if (srcRemainingMass == 0)
+            {
+                salinityBitset.SetSaltWaterFlat(srcKey.cx, srcKey.cz, srcIdx, false);
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
+using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 
@@ -760,26 +761,76 @@ namespace Stratocraft.WorldGen.Generators
             return q;
         }
 
-        private static bool IsCaveWaterChamber(int wx, int wz, out int yWater)
+        /// <summary>
+        /// Faz 4A.5: Dunya sutunundaki ust ortu gecirgenligini (0.0 = masif gecirimsiz kaya, &gt; 0 = gecirgen toprak/epikarst) hesaplar.
+        /// </summary>
+        public static float EvaluateColumnOverburdenPermeability(int wx, int wz, float topH, byte surfaceMatId)
         {
-            yWater = 0;
+            int approxOverburden = Math.Clamp((int)MathF.Floor(topH) - 62, 4, 64);
+            CaveChamberHydrologyEvaluation eval = KarstHydrologyAndAquiferSystem.EvaluateCaveChamberHydrology(
+                wx, wz, ActiveWorldSeed, surfaceMatId, approxOverburden);
+            return eval.OverburdenPermeability01;
+        }
 
+        /// <summary>
+        /// Faz 4A.5: 24m x 24m makro-magara odasinin ust ortu gecirgenligine gore deterministik Karst Hidrolojisi sinifini doner:
+        /// - &gt;= %60 ([%58..%65]): Kuru Magara (<see cref="CaveChamberHydrologyKind.DryImpermeable"/>, 0 tavan suzulmesi)
+        /// - ~%37..%39 ([%35..%42]): Islak Karst Magarasi (talweg tas birikintisi + islaklarin 1/5..1/8'inde Buyuk Karst Akifer Golu).
+        /// </summary>
+        public static CaveChamberHydrologyEvaluation EvaluateCaveChamberHydrologyAt(int wx, int wz)
+        {
             // Baslangic vadisi merkez meydani ve [F12] vitrin odalarinda (r < 28m) su golcugu olusturma!
             if (wx * wx + wz * wz < 28 * 28)
             {
-                return false;
+                return KarstHydrologyAndAquiferSystem.EvaluateCaveChamberHydrology(
+                    wx, wz, ActiveWorldSeed, MaterialIdCatalog.Stone, solidOverburdenThicknessBlocks: 64);
             }
 
-            int chamberX = FloorDiv(wx, 24);
-            int chamberZ = FloorDiv(wz, 24);
-            const int chamberY = 3; // Katman 1-2 (y=46..73) 24m x 16m x 24m makro-oda katmani
-            uint hChamber = HashChamberPcg(chamberX, chamberY, chamberZ, ActiveWorldSeed);
-            if ((hChamber % 100u) >= 15u)
+            int chamberX = FloorDiv(wx, KarstHydrologyAndAquiferSystem.ChamberSizeMeters);
+            int chamberZ = FloorDiv(wz, KarstHydrologyAndAquiferSystem.ChamberSizeMeters);
+            int centerWx = chamberX * KarstHydrologyAndAquiferSystem.ChamberSizeMeters + (KarstHydrologyAndAquiferSystem.ChamberSizeMeters / 2);
+            int centerWz = chamberZ * KarstHydrologyAndAquiferSystem.ChamberSizeMeters + (KarstHydrologyAndAquiferSystem.ChamberSizeMeters / 2);
+
+            int biomeId = GetBiomeId(centerWx, centerWz);
+            float centerTopH = SampleIslandTopSurfaceY(centerWx, centerWz);
+
+            byte capSurfaceMat;
+            if (centerTopH >= 113.0f)
             {
+                capSurfaceMat = MaterialIdCatalog.PackedIce;
+            }
+            else if (biomeId == 8)
+            {
+                capSurfaceMat = MaterialIdCatalog.MagmaBlock;
+            }
+            else if (biomeId == 11)
+            {
+                capSurfaceMat = MaterialIdCatalog.NaturalObsidian;
+            }
+            else if (biomeId == 2)
+            {
+                capSurfaceMat = MaterialIdCatalog.Marble;
+            }
+            else
+            {
+                capSurfaceMat = MaterialIdCatalog.Grass;
+            }
+
+            int approxOverburden = Math.Clamp((int)MathF.Floor(centerTopH) - 62, 6, 46);
+            return KarstHydrologyAndAquiferSystem.EvaluateCaveChamberHydrology(
+                wx, wz, ActiveWorldSeed, capSurfaceMat, approxOverburden);
+        }
+
+        private static bool IsCaveWaterChamber(int wx, int wz, out int yWater)
+        {
+            CaveChamberHydrologyEvaluation eval = EvaluateCaveChamberHydrologyAt(wx, wz);
+            if (!eval.HasActiveStandingPool)
+            {
+                yWater = 0;
                 return false;
             }
 
-            yWater = 48 + (int)((hChamber >> 8) % 22); // yWater in [48..69]
+            yWater = eval.TargetWaterFloorY;
             return true;
         }
 
@@ -1058,22 +1109,35 @@ namespace Stratocraft.WorldGen.Generators
             inBasinWall = (isObsidianSeam || nearStarterWater || nearStarterLava) && !inWaterPool && !inLavaCaldera;
         }
 
-        public static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
+        public static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(
+            int chunkX,
+            int chunkZ,
+            ChunkSalinityBitset? salinityBitset = null)
         {
             uint[] voxels = new uint[65536];
             ushort[] fluids = new ushort[65536];
-            PopulateVolumetricFloatingIslandChunkInto(chunkX, chunkZ, voxels, fluids);
+            PopulateVolumetricFloatingIslandChunkInto(chunkX, chunkZ, voxels, fluids, salinityBitset);
             return (voxels, fluids);
         }
 
         /// <summary>
         /// Sifir-GC ChunkObjectPool destekli yerinde (in-place) 3B hacimsel chunk uretici.
         /// Dogal su, asit, yeralti nehri ve magma denizi hucrelerini isSettled: true olarak baslatir.
+        /// Opsiyonel <paramref name="salinityBitset"/> verildiginde YALNIZCA dogal deniz/okyanus (<c>isNaturalSea</c>) su hucreleri
+        /// Tuzlu Su (<c>true</c>) olarak isaretlenir; tum ic kara golleri, nehirler, gokyuzu pinarlari ve yeralti magara sulari
+        /// %100 Tatli Su (<c>false</c>, 0 Byte tahsis) kalir.
         /// </summary>
-        public static void PopulateVolumetricFloatingIslandChunkInto(int chunkX, int chunkZ, uint[] voxels, ushort[] fluids)
+        public static void PopulateVolumetricFloatingIslandChunkInto(
+            int chunkX,
+            int chunkZ,
+            uint[] voxels,
+            ushort[] fluids,
+            ChunkSalinityBitset? salinityBitset = null)
         {
             Array.Clear(voxels, 0, voxels.Length);
             Array.Clear(fluids, 0, fluids.Length);
+            salinityBitset?.ClearChunk(chunkX, chunkZ);
+            ulong[]? chunkSaltBits = null;
             int worldOffsetX = chunkX * 16;
             int worldOffsetZ = chunkZ * 16;
             float caveP1 = SeedPhaseOffset(6);
@@ -1143,6 +1207,11 @@ namespace Stratocraft.WorldGen.Generators
                             FluidType seaFluidType = inLavaCaldera ? FluidType.Lava : (inAcidPool ? FluidType.Acid : FluidType.Water);
                             byte head = y < SeaLevelY ? (byte)Math.Min(15, SeaLevelY - y) : (byte)0;
                             fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: true, pressureHead: head).RawValue;
+                            if (seaFluidType == FluidType.Water && salinityBitset != null)
+                            {
+                                chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);
+                                ChunkSalinityBitset.SetBit(chunkSaltBits, idx, true);
+                            }
                             continue;
                         }
 
@@ -1326,32 +1395,68 @@ namespace Stratocraft.WorldGen.Generators
             int worldOffsetX = chunkX * 16;
             int worldOffsetZ = chunkZ * 16;
 
+            // 0 = Kuru gecirimsiz tavan (>= %60, 0 suzulme),
+            // 1 = Islak magara dogal talweg suzulme alani (yalnizca mevcut kapali tas taban cukurlarini doldurur),
+            // 2 = Islak magara aktif talweg tas olugu (dar 1-katmanli sizdirmaz cukur oyar),
+            // 3 = Buyuk Yeralti Karstik Akifer Golu (islak magaralarin 1/5..1/8'i; genis ve kalin tabanda 2-katmanli sizdirmaz akifer oyar).
             Span<byte> waterChamberMask = stackalloc byte[256];
             Span<byte> waterTargetY = stackalloc byte[256];
             waterChamberMask.Clear();
             waterTargetY.Clear();
 
-            bool anyInteriorWaterChamber = false;
+            bool anyWetCaveColumn = false;
+            bool anyActiveCarveChamber = false;
+            int cachedChX = int.MinValue;
+            int cachedChZ = int.MinValue;
+            CaveChamberHydrologyEvaluation cachedEval = default;
+
             for (int lz = 2; lz <= 13; lz++)
             {
                 int wz = worldOffsetZ + lz;
+                int chZ = FloorDiv(wz, KarstHydrologyAndAquiferSystem.ChamberSizeMeters);
                 for (int lx = 2; lx <= 13; lx++)
                 {
                     int wx = worldOffsetX + lx;
-                    if (IsCaveWaterChamber(wx, wz, out int yWater))
+                    int chX = FloorDiv(wx, KarstHydrologyAndAquiferSystem.ChamberSizeMeters);
+                    CaveChamberHydrologyEvaluation eval;
+                    if (wx * wx + wz * wz < 28 * 28)
                     {
-                        int cell = (lz << 4) | lx;
-                        waterChamberMask[cell] = 1;
-                        waterTargetY[cell] = (byte)yWater;
-                        if (lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12)
-                        {
-                            anyInteriorWaterChamber = true;
-                        }
+                        continue;
+                    }
+
+                    if (chX == cachedChX && chZ == cachedChZ)
+                    {
+                        eval = cachedEval;
+                    }
+                    else
+                    {
+                        eval = EvaluateCaveChamberHydrologyAt(wx, wz);
+                        cachedChX = chX;
+                        cachedChZ = chZ;
+                        cachedEval = eval;
+                    }
+
+                    if (eval.IsImpermeableDryRoof)
+                    {
+                        continue;
+                    }
+
+                    int cell = (lz << 4) | lx;
+                    byte mode = eval.HasMajorKarstAquiferLake
+                        ? (byte)3
+                        : (eval.HasActiveStandingPool ? (byte)2 : (byte)1);
+                    waterChamberMask[cell] = mode;
+                    waterTargetY[cell] = (byte)eval.TargetWaterFloorY;
+                    anyWetCaveColumn = true;
+
+                    if (mode >= 2 && lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12)
+                    {
+                        anyActiveCarveChamber = true;
                     }
                 }
             }
 
-            if (!anyInteriorWaterChamber)
+            if (!anyWetCaveColumn)
             {
                 return;
             }
@@ -1363,21 +1468,24 @@ namespace Stratocraft.WorldGen.Generators
             Span<byte> candidateCarveMask = stackalloc byte[256];
             bestCarveMask.Clear();
 
-            // (a) Dogal Taban Cukuru Oyma (Yalnizca Mevcut Kalin Kaya Tabanina, Havaya Asla Blok Eklemeden):
+            // (a) Dogal Taban Cukuru Oyma (Yalnizca Aktif Talweg / Karst Akifer Odalarinda, Havaya Asla Blok Eklemeden):
             int bestScore = int.MinValue;
             int bestYFloor = -1;
+            bool bestIsTwoLayerAquifer = false;
             int maxCarveY = Math.Min(71, upperPoolY - 1);
 
-            for (int cz0 = 4; cz0 <= 11; cz0++)
+            for (int cz0 = 4; cz0 <= 11 && anyActiveCarveChamber; cz0++)
             {
                 for (int cx0 = 4; cx0 <= 11; cx0++)
                 {
                     int centerCol = (cz0 << 4) | cx0;
-                    if (waterChamberMask[centerCol] == 0)
+                    byte centerMode = waterChamberMask[centerCol];
+                    if (centerMode < 2)
                     {
                         continue;
                     }
 
+                    bool isMajorAquiferCenter = centerMode == 3;
                     int targetY = waterTargetY[centerCol];
                     for (int yFloor = 47; yFloor <= maxCarveY; yFloor++)
                     {
@@ -1390,8 +1498,7 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        // Merkez cevresinde [cx0-1..cx0+1] x [yFloor-2..yFloor] x [cz0-1..cz0+1] saglam kati dogal kaya olmali
-                        // (aday havzanin her hucresi icin asagida [x-1..x+1] x [z-1..z+1] tam kenar/taban katiligi ayrica dogrulanir):
+                        // Merkez cevresinde [cx0-1..cx0+1] x [yFloor-2..yFloor] x [cz0-1..cz0+1] saglam kati dogal kaya olmali:
                         bool boxSolid = true;
                         for (int yy = yFloor - 2; yy <= yFloor && boxSolid; yy++)
                         {
@@ -1416,17 +1523,21 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        // Gurultulu/organik 3x3..6x6 aday havza secimi ([3..12] x [3..12] icinde):
+                        // Talweg olugu (mode==2 -> dar 1-katmanli) vs Buyuk Karst Akifer Golu (mode==3 -> genis aday havza):
                         candidateCarveMask.Clear();
                         uint hBasin = HashChamberPcg(worldOffsetX + cx0, yFloor, worldOffsetZ + cz0, ActiveWorldSeed ^ 0x6A09E667);
-                        float rx = 1.65f + ((hBasin & 15u) / 15.0f) * 1.15f;
-                        float rz = 1.65f + (((hBasin >> 4) & 15u) / 15.0f) * 1.15f;
+                        float rx = isMajorAquiferCenter
+                            ? (1.95f + ((hBasin & 15u) / 15.0f) * 1.00f)
+                            : (1.50f + ((hBasin & 15u) / 15.0f) * 0.85f);
+                        float rz = isMajorAquiferCenter
+                            ? (1.95f + (((hBasin >> 4) & 15u) / 15.0f) * 1.00f)
+                            : (1.45f + (((hBasin >> 4) & 15u) / 15.0f) * 0.80f);
                         float shiftX = (((hBasin >> 8) & 3u) - 1.5f) * 0.25f;
                         float shiftZ = (((hBasin >> 10) & 3u) - 1.5f) * 0.25f;
 
-                        int minWinX = Math.Max(3, cx0 - 2);
+                        int minWinX = Math.Max(3, cx0 - (isMajorAquiferCenter ? 3 : 2));
                         int maxWinX = Math.Min(12, cx0 + 3);
-                        int minWinZ = Math.Max(3, cz0 - 2);
+                        int minWinZ = Math.Max(3, cz0 - (isMajorAquiferCenter ? 3 : 2));
                         int maxWinZ = Math.Min(12, cz0 + 3);
 
                         for (int z = minWinZ; z <= maxWinZ; z++)
@@ -1434,7 +1545,7 @@ namespace Stratocraft.WorldGen.Generators
                             for (int x = minWinX; x <= maxWinX; x++)
                             {
                                 int c = (z << 4) | x;
-                                if (waterChamberMask[c] == 0)
+                                if (waterChamberMask[c] < 2)
                                 {
                                     continue;
                                 }
@@ -1539,11 +1650,46 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        int score = openAirCells * 16 + qTail * 4 - Math.Abs(yFloor - targetY) * 3;
+                        // Buyuk Karst Akifer Golu ise ve alt kaya kutlesi yeterince kalinsa (yFloor >= 49 ve [yFloor-6..yFloor-2] dolu),
+                        // 2-blok derinlikli tekduze sizdirmaz akifer canagi oyulabilir mi dogrula:
+                        bool canCarveTwoDeep = isMajorAquiferCenter && yFloor >= 49;
+                        if (canCarveTwoDeep)
+                        {
+                            int deepFloorShift = (yFloor - 3) << 8;
+                            int lowerWaterShift = (yFloor - 1) << 8;
+                            for (int i = 0; i < qTail && canCarveTwoDeep; i++)
+                            {
+                                int c = bfsQueue[i];
+                                if (voxels[((yFloor - 6) << 8) | c] == 0u)
+                                {
+                                    canCarveTwoDeep = false;
+                                    break;
+                                }
+
+                                int cx = c & 15;
+                                int cz = c >> 4;
+                                for (int nz = cz - 1; nz <= cz + 1 && canCarveTwoDeep; nz++)
+                                {
+                                    int row = nz << 4;
+                                    for (int nx = cx - 1; nx <= cx + 1; nx++)
+                                    {
+                                        if (!IsSolidCarvableNaturalRock(voxels[deepFloorShift | row | nx]) ||
+                                            fluids[lowerWaterShift | row | nx] != 0)
+                                        {
+                                            canCarveTwoDeep = false;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        int score = openAirCells * 16 + qTail * 4 + (canCarveTwoDeep ? 24 : 0) - Math.Abs(yFloor - targetY) * 3;
                         if (score > bestScore)
                         {
                             bestScore = score;
                             bestYFloor = yFloor;
+                            bestIsTwoLayerAquifer = canCarveTwoDeep;
                             bestCarveMask.Clear();
                             for (int i = 0; i < qTail; i++)
                             {
@@ -1560,37 +1706,91 @@ namespace Stratocraft.WorldGen.Generators
                 int floorShift = bestYFloor << 8;
                 int subFloorShift = (bestYFloor - 1) << 8;
 
-                for (int z = 3; z <= 12; z++)
+                if (bestIsTwoLayerAquifer)
                 {
-                    for (int x = 3; x <= 12; x++)
+                    int deepSealShift = (bestYFloor - 2) << 8;
+                    ushort upperSettledRaw = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: 1).RawValue;
+                    ushort lowerSettledRaw = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: 2).RawValue;
+
+                    for (int z = 3; z <= 12; z++)
                     {
-                        int c = (z << 4) | x;
-                        if (bestCarveMask[c] != 0)
+                        for (int x = 3; x <= 12; x++)
                         {
-                            voxels[floorShift | c] = 0u;
-                            voxels[subFloorShift | c] = SealNaturalRockFullDensity(voxels[subFloorShift | c]);
+                            int c = (z << 4) | x;
+                            if (bestCarveMask[c] != 0)
+                            {
+                                voxels[floorShift | c] = 0u;
+                                voxels[subFloorShift | c] = 0u;
+                                voxels[deepSealShift | c] = SealNaturalRockFullDensity(voxels[deepSealShift | c]);
+                                fluids[subFloorShift | c] = lowerSettledRaw;
+                                fluids[floorShift | c] = upperSettledRaw;
+                            }
+                        }
+                    }
+
+                    for (int z = 2; z <= 13; z++)
+                    {
+                        for (int x = 2; x <= 13; x++)
+                        {
+                            int c = (z << 4) | x;
+                            if (bestCarveMask[c] != 0)
+                            {
+                                continue;
+                            }
+
+                            bool touchesCarved =
+                                (x > 2 && bestCarveMask[c - 1] != 0) ||
+                                (x < 13 && bestCarveMask[c + 1] != 0) ||
+                                (z > 2 && bestCarveMask[c - 16] != 0) ||
+                                (z < 13 && bestCarveMask[c + 16] != 0);
+                            if (touchesCarved)
+                            {
+                                if (voxels[floorShift | c] != 0u)
+                                {
+                                    voxels[floorShift | c] = SealNaturalRockFullDensity(voxels[floorShift | c]);
+                                }
+                                if (voxels[subFloorShift | c] != 0u)
+                                {
+                                    voxels[subFloorShift | c] = SealNaturalRockFullDensity(voxels[subFloorShift | c]);
+                                }
+                            }
                         }
                     }
                 }
-
-                for (int z = 2; z <= 13; z++)
+                else
                 {
-                    for (int x = 2; x <= 13; x++)
+                    for (int z = 3; z <= 12; z++)
                     {
-                        int c = (z << 4) | x;
-                        if (bestCarveMask[c] != 0)
+                        for (int x = 3; x <= 12; x++)
                         {
-                            continue;
+                            int c = (z << 4) | x;
+                            if (bestCarveMask[c] != 0)
+                            {
+                                voxels[floorShift | c] = 0u;
+                                voxels[subFloorShift | c] = SealNaturalRockFullDensity(voxels[subFloorShift | c]);
+                            }
                         }
+                    }
 
-                        bool touchesCarved =
-                            (x > 2 && bestCarveMask[c - 1] != 0) ||
-                            (x < 13 && bestCarveMask[c + 1] != 0) ||
-                            (z > 2 && bestCarveMask[c - 16] != 0) ||
-                            (z < 13 && bestCarveMask[c + 16] != 0);
-                        if (touchesCarved && voxels[floorShift | c] != 0u)
+                    for (int z = 2; z <= 13; z++)
+                    {
+                        for (int x = 2; x <= 13; x++)
                         {
-                            voxels[floorShift | c] = SealNaturalRockFullDensity(voxels[floorShift | c]);
+                            int c = (z << 4) | x;
+                            if (bestCarveMask[c] != 0)
+                            {
+                                continue;
+                            }
+
+                            bool touchesCarved =
+                                (x > 2 && bestCarveMask[c - 1] != 0) ||
+                                (x < 13 && bestCarveMask[c + 1] != 0) ||
+                                (z > 2 && bestCarveMask[c - 16] != 0) ||
+                                (z < 13 && bestCarveMask[c + 16] != 0);
+                            if (touchesCarved && voxels[floorShift | c] != 0u)
+                            {
+                                voxels[floorShift | c] = SealNaturalRockFullDensity(voxels[floorShift | c]);
+                            }
                         }
                     }
                 }
