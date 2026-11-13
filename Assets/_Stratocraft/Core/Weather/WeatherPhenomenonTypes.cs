@@ -105,3 +105,14 @@ namespace Stratocraft.Core.Weather
             => flags & AtmosphericHazardFlags.ThunderLightning;
     }
 }
+
+namespace Stratocraft.WorldGen
+{
+    public enum SeasonType : byte
+    {
+        Spring = 0,
+        Summer = 1,
+        Autumn = 2,
+        Winter = 3
+    }
+}

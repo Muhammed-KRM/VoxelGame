@@ -6,14 +6,6 @@ using Stratocraft.Physics.Systems;
 
 namespace Stratocraft.WorldGen
 {
-    public enum SeasonType : byte
-    {
-        Spring = 0,
-        Summer = 1,
-        Autumn = 2,
-        Winter = 3
-    }
-
     /// <summary>
     /// Kanonik 365 Gunluk 4 Mevsim ([91, 91, 91, 92]), Gunduz/Gece (40dk Gunduz + 20dk Gece = 3600sn),
     /// Kanli Ay (Her 3 gecede 1) ve Bolgesel Fiziksel Atmosfer Geriye Uyumlu Adaptoru.
