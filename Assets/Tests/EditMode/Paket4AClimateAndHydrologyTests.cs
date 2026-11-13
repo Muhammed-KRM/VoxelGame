@@ -1113,13 +1113,13 @@ namespace Stratocraft.Tests.EditMode
             BarometerZambrettiReading falling = WeatherForecastInstrumentsSystem.EvaluateZambrettiForecast(
                 seaLevelPressureHpa: 996.0f, threeHourPressureDeltaHpa: -2.8f, windX: 2.0f, windZ: 8.0f, SeasonType.Autumn);
             Assert.That(falling.TrendDirection, Is.EqualTo(-1));
-            Assert.That(falling.ZambrettiLetter, Is.InRange('R', 'Z'));
+            Assert.That(falling.ZambrettiLetter, Is.GreaterThanOrEqualTo('R').And.LessThanOrEqualTo('Z'));
             Assert.That(falling.FitzRoyStormWarning, Is.True);
 
             BarometerZambrettiReading rising = WeatherForecastInstrumentsSystem.EvaluateZambrettiForecast(
                 seaLevelPressureHpa: 1022.0f, threeHourPressureDeltaHpa: +2.4f, windX: 0.0f, windZ: -5.0f, SeasonType.Summer);
             Assert.That(rising.TrendDirection, Is.EqualTo(+1));
-            Assert.That(rising.ZambrettiLetter, Is.InRange('A', 'G'));
+            Assert.That(rising.ZambrettiLetter, Is.GreaterThanOrEqualTo('A').And.LessThanOrEqualTo('G'));
             Assert.That(rising.FitzRoyStormWarning, Is.False);
 
             // 2) Beaufort 0..12
