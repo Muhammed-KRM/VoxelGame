@@ -13,27 +13,32 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#056` (**Paket 2 Faz 2.4 PlayMode Geri Bildirim Düzeltmeleri TAMAMLANDI:** `1)` Su Kıyısında Sınırsız Kil Kazma (`Stage1MatterCrystalAndMiningController`: suya `<=4m` yatay / `<=2m` dikey mesafedeki ıslak kum/toprak/çim zeminde hem `Sol Ctrl + [E]` avuçla kazmada hem de kazma/kürekle kırmada her zaman `ClayLump` düşer; sudan uzak kuru sahilde `SandPile` düşer), `2)` Gerçekçi 3B Kubbeli Toprak Kömür Ocağı Modeli (`Stage1BloomeryAndForgingController`: `>=4` odun + `>=4` toprak/kil `[T]->[2]` ile doğrulandığında dağınık yığın temizlenip tabanından kütük uçları görünen, tepe baca delikli kubbeli 3B toprak tepeciğine dönüşür; yanarken köz parlar, erken açılırsa çökmüş kül yığını olur), `3)` Gerçekçi 3B Taş Kemerli Silindirik Kil İzabe Fırını Modeli & Kule Şartı Kaldırımı (`MindStructureClusterValidator` + `Stage1BloomeryAndForgingController`: `0.32m` kule dikme şartı kaldırıldı; `8+` taş + `6+` kil yere doğal serilip `[T]->[3]` basıldığında önü oyuncuya bakan taş kemerli kaideli, konik silindirik kil bacalı, yan üfleme yuvalı gerçek 3B Bloomery fırınına dönüşür ve sıcaklığa göre korlaşır), `4)` Detaylı Canlı Test Rehberi (`Bölüm 3.2` adım adım genişletildi) \| **Sırada: Faz 2.4 Canlı PlayMode Testi -> Sonraki Paket**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T01:22:00+03:00` |
+| **Devir Numarası** | `#057` (**Paket 2 Tam Kapanış + Paket 3 Mağara Ekolojisi, 3B Cevherler ve Lav Katılaşması TAMAMLANDI:** `1)` **Paket 2 Tam Kapanış:** `[B]` 4 sekmeli Tarifler ve Malzemeler Rehber Kitabı (`0 B/kare` GC), `Shift+E` / Su kabıyla fırın ve kamp ateşi söndürme (`Extinguish`), Bloomery fırınına doğrudan cevher yükleme (`CrushedPowder`, `RoastedChunk`, `RawOre`) ve dışa dönük 3B model cilası, `T2..T5` Rezonans Kristali gelişimi ve `r >= 75m` canavar ganimeti, `[V]` `ShapeId=0` Doğal Arazi Saçılım Fırçası ve `[Ctrl+B]` malzeme seçimi. `2)` **Paket 3 Faz 3.1..3.4:** `HybridSurfaceNetsAndShapeMesher` 3B Cevher Rölyefi (`Ore Nugget Relief`) ve `0 MB` VRAM `StratocraftUberShader` metalik damar parıltısı / meşale `Glint`, Jeotermal Derinlik `U-Eğrisi` (`-6°C` sığ mağara -> `+110°C` magma tabanı), `%12-%18` sızdırmaz tabanlı yeraltı su gölleri ve derin damar yüzey izleri (`Outcrops`), Kenar-öncelikli lav katılaşması, `150 sn` `MagmaBlock` akkor kor süresi, `3.5m` `+22°C` kurutma bonusu ve temas yanık hasarı, 5 Mağara Canlısı varyantı (`r >= 75m` ve `Y <= 54m` kilidi) ile `0 MB` PCM akustik ses ve taş tozu pusu telgrafı \| **Sırada: Paket 2 + Paket 3 Canlı PlayMode Testi -> Paket 4**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T12:35:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 2 (Gerçekçi Fiziksel Dünya & Taş Devri -> Demir Çağı Zanaat Mimarisi): Faz 2.1, 2.2, 2.3 Onaylandı; Faz 2.4 + Devir #056 Görsel/Kil Düzeltmeleri Tüm Otomatik Testlerden Geçti -> Kullanıcı Canlı PlayMode Testi Bekliyor` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 93/93 PASS (Faz21 + Faz22 + Faz23 + Faz24 + Devir056 Dahil)`, `Standalone .NET 10 Core: 96/96 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
-| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
+| **Mevcut Çalışma Aşaması** | `Paket 2 Kapanış + Paket 3 (Faz 3.1..3.4) Tamamlandı; Tüm Otomatik Testlerden (108/108 EditMode, 111/111 Standalone .NET 10, 6/6 C++20, 9/9 Python) Geçti -> Kullanıcı Canlı PlayMode Testi ve Paket 4 Hazırlığı` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 108/108 PASS (Paket 1, 2 ve Paket 3 AK-1..AK-7 Dahil)`, `Standalone .NET 10 Core: 111/111 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Kaplama VRAM Bütçesi** | `3.133 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
 
-## 1.5. Biz Ne Yapıyorduk ve Nereye Gidiyoruz? (Paket 2 Büyük Resim Özeti)
+## 1.5. Biz Ne Yapıyorduk ve Nereye Gidiyoruz? (Paket 2 ve Paket 3 Büyük Resim Özeti)
 
-> 📂 **Taşınabilir 8 Parçalı Paket 2 Mimari ve Faz Dokümanları (Git İçi Göreceli Bağlantılar):**
-> - [`docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md`](docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md) — **Biz Ne Yapmak İstiyoruz?** (Tüm oyun kuralları, kullanıcı kararları ve kabul kriterleri)
-> - [`docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md`](docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md) — **Eski Sistemde Neler Hatalıydı?** (Kök neden ve veri akışı analizi)
-> - [`docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md) — **Endüstri ve Gerçek Hayat Araştırması** (*Vintage Story* knapping, *The Forest / Sons of the Forest* çanta & fiziksel inşa, gerçek dünya Bloomery metalürjisi)
-> - [`docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) — **Ana Faz Yol Haritası** ve 4 Alt Faz Uygulama Dokümanları:
->   1. ✅ [`DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ1_DOGAL_ESYA_BIYOM_VE_YUMRUK.md) (**TAMAMLANDI & ONAYLANDI**)
->   2. 🧪 [`DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ2_TAS_YONTMA_VE_THE_FOREST_CANTA.md) (**TAMAMLANDI — Çanta/Craft Onaylandı; `[R]` Taş Yontma Düzeltmesi Hazır**)
->   3. ✅ [`DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ3_ZIHIN_INSA_KAMP_ATESI_VE_YEMEK.md) (**TAMAMLANDI & ONAYLANDI**)
->   4. 🧪 [`DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_FAZ4_BLOOMERY_DEMIRCILIK_VE_EL_ARABASI.md) (**KODLANDI & OTOMATİK TESTLERDEN GEÇTİ — PlayMode Testi Bekliyor**)
+> 📂 **Taşınabilir Mimari ve Faz Dokümanları (Git İçi Göreceli Bağlantılar):**
+> - **Paket 2 Mimari Dokümanları:**
+>   - [`docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md`](docs/paket2-gercekci-fiziksel-dunya/DOK1_HEDEF_VE_GEREKSINIMLER.md) — **Biz Ne Yapmak İstiyoruz?**
+>   - [`docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md`](docs/paket2-gercekci-fiziksel-dunya/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md) — **Eski Sistemde Neler Hatalıydı?**
+>   - [`docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md) — **Endüstri ve Gerçek Hayat Araştırması**
+>   - [`docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket2-gercekci-fiziksel-dunya/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) — **Ana Faz Yol Haritası**
+> - **Paket 3 Mimari Dokümanları:**
+>   - [`docs/paket3-magara-cevher-ve-lav/DOK1_HEDEF_VE_GEREKSINIMLER.md`](docs/paket3-magara-cevher-ve-lav/DOK1_HEDEF_VE_GEREKSINIMLER.md) — **Paket 3 Hedef ve Kabul Kriterleri (AK-1..AK-7)**
+>   - [`docs/paket3-magara-cevher-ve-lav/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md`](docs/paket3-magara-cevher-ve-lav/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md) — **Paket 3 Mevcut Kod Akışı ve Entegrasyon Noktaları**
+>   - [`docs/paket3-magara-cevher-ve-lav/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket3-magara-cevher-ve-lav/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md) — **Paket 3 Sektör ve Literatür Çözümleri**
+>   - [`docs/paket3-magara-cevher-ve-lav/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket3-magara-cevher-ve-lav/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) — **Paket 3 Adım Adım Uygulama ve Doğrulama Planı**
+> - **Test ve Kalite Kapısı Raporları:**
+>   - [`docs/test-raporlari/faz2-raporu.md`](docs/test-raporlari/faz2-raporu.md) — **Faz 2 Test ve Kalite Kapısı Raporu**
+>   - [`docs/test-raporlari/faz3-raporu.md`](docs/test-raporlari/faz3-raporu.md) — **Faz 3 Test ve Kalite Kapısı Raporu**
 
 ### Temel Tasarım İlkelerimiz (Asla Bozulmayacak Kurallar)
 1. **Gerçekçi Fiziksel Şekil Korunumu (`Yerde == Elde == Çantada == İnşada`):**
@@ -52,7 +57,30 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#056` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#057` .. `#042`)
+
+### 2.0.0000000000000. Devir #057 (Paket 2 Tam Kapanış & Paket 3 Faz 3.1..3.4): 3B Zanaat Rehber Kitabı, Ateş/Fırın Söndürme, Rezonans Kristali Tiers, Doğal Arazi Fırçası, 3B Cevher Rölyefi, 0 MB Glint, Jeotermal U-Eğrisi, Yeraltı Gölleri, Lav Katılaşması ve Mağara Canlıları
+
+1. **Paket 2 Tam Kapanış İyileştirmeleri:**
+   - **`[B]` 4 Sekmeli Zanaat & Malzeme Rehberi (`SurvivalRecipeBookCatalog.cs`, `Stage1SurvivalRecipeBookUi.cs`, `Stage1InteractivePlayController.cs`):** Doğal malzemeler (`<=4m` su kıyısı kili, kum, kuvars), ilkel aletler (deri körük, kil tuyere borusu, kil pota, çekiç, tekerlek), `[T]->[1..4]` fiziksel yapılar ve ateş/izabe kurallarını içeren karesiz rehber kitabı. `[B]` ile açılır (`CursorLockMode.None`, `0 B/kare` GC, kamera/hareket kilitli), `ESC` önce kitabı kapatır; malzeme seçimi `[Ctrl+B]` kombinasyonuna taşındı.
+   - **Fırın & Kamp Ateşi Söndürme (`Extinguish` — `Stage1CampfireAndCookingController.cs`, `Stage1BloomeryAndForgingController.cs`, `BloomeryThermodynamicsSystem.cs`):** Kamp Ateşi ve Bloomery fırınlarına bakarken `[Shift+E]` basıldığında veya su kabı (`ToolFluidBucket`/`Flask`/`Cauldron`/`CleanWater`) ile sağ tıklandığında anında söndürülür; kalan yakıt ve sünger demir/kavurma ilerlemesi korunur.
+   - **Bloomery Doğrudan Çoklu Cevher Yükleme & 3B Model Cilası (`BloomeryThermodynamicsSystem.cs`, `Stage1BloomeryAndForgingController.cs`):** Fırına artık yalnızca kırılmış toz (`1.00x`) değil, `RoastedChunk` (`0.85x`) ve ham `OreChunk`/`VoxelBlock` (`0.70x`) yüklenebilir; Bakır/Demir karışımı ve yabancı cevher/kömür yüklemeleri engellenir. Dışa dönük kütük uçları, 5 katmanlı organik kubbe ve silindirik kil baca 3B modelleri tamamlandı (`0 MB` ek VRAM).
+   - **Madde Kristali `Tier 2..5` Gelişimi & Rezonans Ganimeti (`MatterCrystalVacuumSystem.cs`, `Stage1CreatureSimulationBridge.cs`):** Merkezden uzaklığa göre (`r < 75m` vadide düşmez; `75..180m` -> `T2`, `180..360m` -> `T3`, `360..600m` -> `T4`, `>= 600m` / Boss -> `T5`) canlılardan `ResonanceCrystal` düşer; eldeyken `[C]` / sağ tık ile kristal kapasitesi (`500 -> 1200 -> 2500 -> 5000 -> 10000`) kademeli artırılır.
+   - **`[V]` Doğal Arazi Saçılım Fırçası (`ShapeId = 0`):** `[V]` tuşu ile son mimari şekil ile `ShapeId=0` arasında anlık geçiş yapılır; `[Shift+V]` mimari şekilleri tarar. `ShapeId=0` ile zemin eğimine doğal tepecik yayılır (küp oluşmaz).
+2. **Paket 3 Faz 3.1 — 3B Cevher Rölyefi (`Ore Nugget Relief`) & `0 MB` Shader Glint (`HybridSurfaceNetsAndShapeMesher.cs`, `StratocraftUberShader.hlsl`):**
+   - 14 Kanonik cevher ve kıymetli taş vokselleri SurfaceNets arazi yüzeyinde dışa doğru `+0.05m..+0.08m` fasetli 3B kabartma (`Ore Nugget Relief`) oluşturur; analitik zemin örnekleyicisi SDF yoğunluğuna baktığı için yürüme takılmasız ve su geçirmezdir.
+   - `StratocraftUberShader.hlsl`: Sıfır ek VRAM (`0 MB`) ile biplanar metalik damar parıltısı ve meşale açısıyla tetiklenen `Glint` yansıması (Bakır kızıl-turuncu, Demir gümüş-pas, Altın sıcak sarı, Cevherler sert kıvılcım).
+3. **Paket 3 Faz 3.2 — Jeotermal Derinlik `U-Eğrisi`, `%12-%18` Yeraltı Gölleri ve Yüzey Outcrops (`ThermalAndBiologySystem.cs`, `StratocraftFloatingIslandWorldGen.cs`):**
+   - **Jeotermal U-Eğrisi:** Yüzeyden inişte ilk katmanda (`Y=85..54m`) sıcaklık `-6°C .. +4°C` soğuk nemli taş ortamına iner (hipotermi riski, meşale gereksinimi); derin mantoya inildikçe (`Y=54..20m`) jeotermal ısıyla `+18°C -> +55°C`'ye, magma tabanında (`Y < 20m`) `+75°C .. +110°C` kaynayan cehenneme ulaşır.
+   - **Yeraltı Gölleri:** Katman 1 & 2 geniş mağara odalarında (`swell01 > 0.62f` & `provinceNoise > 0.66f`) odaların `%12-%18`'inde çanak tabanlı, sızdırmaz (`isSettled = true`, `pressureHead = 1`) yeraltı su gölleri üretilir.
+   - **Yüzey Outcrops:** Derin zengin damarların (`Y < 45m`) dikey izdüşümünde yeryüzü kayalarında `%8..%14` oranında pas, malakit ve kuvars damar lekeleri oluşur.
+4. **Paket 3 Faz 3.3 — Kenar-Öncelikli Lav Katılaşması, `150 sn` `Basalt` Soğuması ve Yanık Hasarı (`LavaSolidificationAndCoolingSystem.cs`, `Stage1PlayerMovementBridge.cs`):**
+   - `T_ortam < 55°C` serin bölgelerde akan lav hücreleri dış kenarlardan başlayarak `8-15 sn` içinde katılaşır (`MagmaBlock`, `MaterialId = 11`, `Temp = 220`).
+   - `MagmaBlock` blokları `150 sn` boyunca akkor kor parıldar; `3.5m` yarıçapında `+22°C` ısı yayarak oyuncuyu ısıtır ve ıslak elbiseleri `2.5x` hızla kurutur. Üzerine basıldığında saniyede `18 HP` temas yanık hasarı verir; `150 sn` sonunda tamamen soğuyarak kalıcı `Basalt` (`MaterialId = 7`) taşına dönüşür.
+5. **Paket 3 Faz 3.4 — 5 Mağara Canlısı Varyantı, `r >= 75m` Galeri Kilidi ve `0 MB` PCM Ses/Taş Tozu Telgrafı (`CaveEcologyAndSpawnSystem.cs`, `Stage1CaveAcousticTelegraphController.cs`, `Stage1InteractivePlayController.cs`):**
+   - 5 Mağara varyantı: `CaveSpider`, `CaveBat`, `CrystalScorpion`, `DeepSkeletonKnight`, `LavaSerpent`.
+   - Başlangıç vadisinde (`r < 75m`) asla doğmaz; `r >= 75m`, karanlık galerilerde (`LightLevel < 4`) ve `Y <= 54m` katmanlarında belirir.
+   - Pusu kurmadan önce `3.5 sn` boyunca tavandan taş tozu parçacıkları dökülür ve duvarlardan yankılanan `0 MB` prosedürel PCM akustik sesleri (çatırtı, tıslama, kanat çırpma) duyulur.
 
 ### 2.0.000000000000. Devir #056 (Paket 2 Faz 2.4 Kullanıcı PlayMode Geri Bildirim Düzeltmeleri): Gerçekçi 3B Kubbeli Kömür Ocağı & Taş Kemerli Silindirik Kil İzabe Fırını Modelleri, Su Kıyısında Kil Kazma Düzeltmesi ve Ayrıntılı Test Rehberi
 
@@ -786,56 +814,73 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ---
 
-### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 FAZ 2.4 + DEVİR #056 AYRINTILI CANLI TEST REHBERİ`)
+### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 PAKET 2 KAPANIS + PAKET 3 AYRINTILI CANLI TEST REHBERI`)
 
-> **Not:** Tüm otomatik doğrulama kapıları (**`93/93` Unity EditMode** + **`96/96` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`4.14 MB` VRAM**) tam olarak geçmiştir. Hızlı malzeme almak isterseniz **`[F4]` -> `[Tab]`** yaratıcı kataloğunu da kullanabilirsiniz.
+> **Not:** Tüm otomatik doğrulama kapıları (**`108/108` Unity EditMode** + **`111/111` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`3.133 MB` VRAM**) tam olarak geçmiştir. Hızlı malzeme almak isterseniz **`[F4]` -> `[Tab]`** yaratıcı kataloğunu da kullanabilirsiniz.
 
-1. 🧪 **Test 1 — Su Kenarında Sınırsız Kil (`ClayLump`) ve Kuru Sahilde Kum (`SandPile`) Kazma:**
-   - Göl veya deniz kıyısına inin (suya `<= 4m` mesafedeki ıslak kum, toprak veya çim zemin).
-   - **`[0]` Boş El** seçin -> **`Sol Ctrl`** ile çömelip yere bakın -> **`[E]` tuşuna `0.60 sn` basılı tutun**: Her kazışta kesintisiz olarak **`Kil Topağı (ClayLump)`** çıktığını doğrulayın.
-   - Aynı su kıyısını **Kazma veya Kürek (`Sol Tık`)** ile kırın: Kırılan kıyı bloğundan da **`ClayLump`** düştüğünü görün.
-   - Sudan `5–6m` içeri (kuru sahil kumuna) yürüyüp aynı şekilde kazdığınızda **`Kum Öbeği (SandPile)`**, iç çim/toprak arazide ise **`Toprak Topağı (LooseDirtClod)`** çıktığını doğrulayın.
-2. 🧪 **Test 2 — Gerçekçi 3B Kubbeli Toprak Kömür Ocağı (`CharcoalPit`) & Piroliz:**
-   - Yere birbirine yakın (`~1.5m` içinde) en az **`4` Dal/Yarma Odun (`Stick`/`SplitFirewood`)** ve en az **`4` Toprak veya Kil Topağı (`LooseDirtClod`/`ClayLump`)** `Sağ Tık` ile bırakın.
-   - Kümenin üstüne bakıp **`[T]` -> `[2] Kömür Ocağı`** seçin: Dağınık parçaların kaybolup tabanından kütük uçları görünen, tepe baca delikli **bütünleşik 3B kubbeli toprak tepeciğine** dönüştüğünü görün (isterseniz üstüne `Sağ Tık` ile en fazla `12` oduna kadar takviye yapabilirsiniz).
-   - Elinize **`Çakmaktaşı (FlintStone)`** alıp ocağa **`2` kez `Sol/Sağ Tık`** vurarak yakın: Tepe deliğinden köz parıltısı ve duman çıktığını izleyin.
-   - **`28 sn`** bekleyip `[Hazır]` yazısını görünce **`[E]`** ile açın: **`6–8x Odun Kömürü (CharcoalChunk)`** aldığınızı doğrulayın *(İsteğe bağlı negatif test: ikinci bir ocak kurup `28 sn` dolmadan erken `[E]` basarsanız tepeciğin çöküp `RuinedAsh` yanık küle döndüğünü görün).*
-3. 🧪 **Test 3 — Çiğ Kil Ekipman Kalıplama + Ateşte `12 sn` Pişirme + Cevher Kavurma & Kırma:**
-   - **`[I]`** çanta bezini açın; sol taraftaki yığınlardan merkeze `Sol Tık` ile malzeme koyup merkezdeki önizlemeye tıklayarak (veya `[R]` ile) şunları üretin:
-     - **Çiğ Kil Hava Borusu (`ClayTuyerePipe`):** `2x ClayLump + 1x SandPile`
-     - **Çiğ Kil Pota (`ClayCruciblePot` — Bakır eritmek için):** `3x ClayLump + 1x SandPile`
-     - **Deri Körük (`LeatherBellows`):** `2x HidePiece (Deri) + 2x Stick/Wood + 2x PlantFiber`
-     - **Taş Çekiç (`ToolStoneHammer`):** `1x RoughStoneChunk + 1x Stick + 1x PlantFiber`
-   - Yanan bir **Kamp Ateşine** bakıp elinizdeki **`"Çiğ Kil Hava Borusu"`** ve **`"Çiğ Kil Pota"`** eşyalarını **`Sağ Tık`** ile ateşe koyun -> **`12 sn`** pişince **`[E]`** ile alın (artık başındaki `"Çiğ "` ibaresi kalkar ve fırına takılabilir).
-   - Yanan Kamp Ateşine **`Ham Cevher (`OreChunk` — Demir veya Bakır)`** `Sağ Tık` ile koyup **`10 sn`** kavurun -> **`[E]`** ile `Kavrulmuş Cevher (RoastedOreChunk)` alın -> yerdeki düz bir kayaya veya örse `Sağ Tık` ile koyup **`ToolStoneHammer` ile `3` kez `Sol Tık`** vurarak **`2x Kırılmış Cevher Tozu (CrushedOrePowder)`** elde edin.
-4. 🧪 **Test 4 — Kule Yapmadan `8 Taş + 6 Kil` ile 3B Taş Kemerli Silindirik Kil İzabe Fırını (`BloomeryFurnace`):**
-   - Yere üst üste kule yapmaya uğraşmadan, yan yana doğal bir küme halinde en az **`8x Taş (`RoughStoneChunk`)`** ve **`6x Kil (`ClayLump`)`** `Sağ Tık` ile dizin -> kümeye bakıp **`[T]` -> `[3] İzabe Fırını`** seçin.
-   - Dağınık taş/kil yığınının temizlenip ön kemeri size bakan **taş kaideli, konik silindirik kil bacalı, yan üfleme yuvalı gerçek 3B İzabe Fırınına** dönüştüğünü doğrulayın.
-   - Fırına sırasıyla **`Sağ Tık`** ile şunları ekleyin:
-     1. **Pişmiş `ClayTuyerePipe`** (sağ yan yuvaya kil boru takılır),
-     2. **`LeatherBellows`** (borunun ucuna körük monte edilir),
-     3. *(Bakır eritecekseniz)* **Pişmiş `ClayCruciblePot`**,
-     4. **`CharcoalChunk` (Odun Kömürü)** (`4–8` adet; `Shift+Sağ Tık` 4'lü ekler) ve **`CrushedOrePowder` (Kırılmış Cevher Tozu)** (`2–4` adet).
-   - Elinize **`FlintStone`** alıp fırına **`2` kez tıklayarak** yakın:
-     - Körüğe dokunmadan beklediğinizde kömürün doğal çekişle **`~795°C`** civarında takıldığını (demiri eritemediğini) gözlemleyin.
-     - Fırına/körüğe bakıp **`[E]` tuşuna** (veya boş elle `Sol Tık`) saniyede `1–2` kez ritmik basarak hava pompalayın: Sıcaklığın **`1230–1315°C`** aralığına çıktığını, gövdenin korlaştığını ve ön kemerden sıvı cüruf aktığını görün.
-     - **Bakır koyduysanız** `>= 1085°C` sonunda doğrudan `[E]` ile `Bakır Külçesi` alın; **Demir koyduysanız** izabe bittiğinde ön kemerdeki kil tıkaca **Çekiç veya Kazma ile `Sol Tık`** vurup kırarak **`1180°C` akkor `Sünger Demir (IronBloomSponge)`** ve `Cüruf` alın (sonraki döküm için `1x ClayLump` + `Sağ Tık` ile ön tıkacı yeniden sıvayın).
-5. 🧪 **Test 5 — Örste Sıcak Sünger Demir Dövme (`>= 720°C`) & `T2` Demir Aletler:**
-   - Fırından çıkan akkor **`IronBloomSponge`** soğumadan (`>= 720°C` iken; soğursa kamp ateşi veya yanan fırına `Sağ Tık` ile koyup `8 sn`de tekrar `920°C` ısıtabilirsiniz) bir **Örse veya düz kayaya `Sağ Tık`** ile yerleştirin.
-   - Elinizdeki **`ToolStoneHammer` (veya `IronHammer`)** ile **`8` kez `Sol Tık`** vurarak cürufu sıkıp **`Dövme Demir Külçesi (WroughtIronBar)`** elde edin.
-   - **`[I]`** çanta bezi merkezinde `WroughtIronBar` + `Stick/Wood` + `PlantFiber` birleştirerek **`IronPickaxe`**, **`IronAxe`**, **`IronHammer`** ve **`IronSword`** üretin.
-6. 🧪 **Test 6 — `36` Yuvalı 3B Fiziksel Ahşap El Arabası (`WoodenWheelbarrow`):**
-   - `[I]` merkezinde `4x Odun/Dal + 2x Lif` ile **`WoodenWheel (Ahşap Tekerlek)`** üretin -> yere `1x WoodenWheel + 4x Odun/Dal + 2x Lif` dizip **`[T]` -> `[4] Ahşap El Arabası`** kurun.
-   - Kasasına elinizdeki kil/toprak/kum/cevher/kömür ile **`Sağ Tık`** (`Shift+Sağ Tık` 5'li) yaparak `36` yuvaya kadar gerçek 3B yığılmasını izleyin; arka saplara bakıp **`[E]`** ile tutarak **`[WASD]`** ile sürün (arazi eğimi uyumu, tekerlek dönüşü, `[E]` veya `[ESC]` ile bırakma ve kasadan `[E]` ile geri alma).
+#### A. Paket 2 Kapanış Testleri (Zanaat Rehberi, Söndürme, Bloomery, Kristal Tiers & Arazi Fırçası)
+
+1. 🧪 **Test 1 — `[B]` 4 Sekmeli Zanaat & Malzeme Rehber Kitabı ve `[Ctrl+B]`:**
+   - Oyun içindeyken **`[B]`** tuşuna basın: 4 sekmeli (`[1] Doğal Malzemeler`, `[2] İlkel Zanaat`, `[3] Fiziksel Yapılar`, `[4] Ateş & İzabe`) karesiz rehber kitabı açılır.
+   - Açıkken farenin serbest kaldığını (`CursorLockMode.None`), kamera ve saldırıların kilitlendiğini doğrulayın; sekmeler arasında tıklayarak tarifleri okuyun.
+   - **`[ESC]`** tuşuna basıldığında oyun duraklatma menüsü yerine doğrudan rehber kitabının kapandığını görün.
+   - Madde Kristali açıkken malzeme seçimi için **`[Ctrl+B]`** kombinasyonunu kullanın.
+2. 🧪 **Test 2 — Kamp Ateşi & Bloomery Fırını Söndürme (`[Shift+E]` & Su Kapları):**
+   - Yanan bir Kamp Ateşine veya çalışan bir Bloomery fırınına bakın.
+   - **`[Shift+E]`** tuşuna basın: Ateşin/fırının anında söndüğünü (`"Fırın söndürüldü (yakıt ve ilerleme korundu)."`), kalan odun/kömür yakıtının ve ergitme/kavurma ilerlemesinin boşa gitmeden korunduğunu görün.
+   - Alternatif: Elinize su dolu kap (`ToolFluidBucket`, `ToolFluidFlask`, `ToolFluidCauldron` veya `FoodCleanWater`) alıp yanan ocağa **`Sağ Tık`** yapın; su buharlaşarak ateşi söndürür.
+3. 🧪 **Test 3 — Bloomery Fırınına Çoklu Formda Doğrudan Cevher Yükleme:**
+   - Çalışan fırına artık sadece kırılmış toz değil; **`Kavrulmuş Parça (`RoastedOreChunk`, 0.85x hız)`** veya **`Ham Cevher (`OreChunk`/`VoxelBlock`, 0.70x hız)`** ile de doğrudan üstten **`Sağ Tık`** yükleme yapın.
+   - Bakır fırınına Demir cevheri veya Demir fırınına Bakır cevheri koymaya çalıştığınızda Türkçe uyarıyla reddedildiğini doğrulayın.
+4. 🧪 **Test 4 — `[V]` Doğal Arazi Saçılım Fırçası (`ShapeId = 0`) & `[Shift+V]` Mimari Döngü:**
+   - Madde Kristali açıkken (`[C]`), elinizde Toprak veya Taş seçiliyken **`[V]`** tuşuna basın: Ekran üstünde `>> DOĞAL ARAZİ SAÇILIM FIRÇASI (ShapeId=0) <<` yazar.
+   - Sol tıklayarak zemine blok koyun: Sivri Minecraft küpü yerine mevcut yamaç eğimine yumuşakça yayılan doğal bir tepecik oluştuğunu gözlemleyin.
+   - **`[Shift+V]`** ile mimari şekiller (`1..7, 63`) arasında gezinin; tekrar **`[V]`** bastığınızda son mimari şekil ile doğal fırça arasında anlık geçiş yapın.
+5. 🧪 **Test 5 — Canavar Ganimetinden Rezonans Kristali & `Tier 2..5` Kristal Evrimi:**
+   - Başlangıç vadisinin dışına (`r >= 75m`) çıkıp yaban canavarlarını veya bir Boss'u avlayın.
+   - Cesedin yanında düşen mor parıltılı **`Rezonans Kristali (`ResonanceCrystal`)`** 3B modelini `[E]` ile toplayın.
+   - Elinize alıp **`[C]`** veya **`Sağ Tık`** yapın: Kristal kapasitesinin kademeli olarak arttığını (`Tier 1: 500` -> `Tier 2: 1200` -> `Tier 3: 2500` -> `Tier 4: 5000` -> `Tier 5: 10000`) doğrulayın.
+
+#### B. Paket 3 Testleri (3B Cevherler, U-Eğrisi, Yeraltı Gölleri, Lav Katılaşması ve Mağara Canlıları)
+
+6. 🧪 **Test 6 — 3B Cevher Rölyefi (`Ore Nugget Relief`) ve Meşale Açısıyla `Glint`:**
+   - Bir mağara tüneline veya açık cevher damarına yaklaşın (Bakır, Demir, Altın, Kuvars).
+   - Düz blok yüzeyi yerine SurfaceNets hücre merkezinde dışarı doğru **`+0.05m..+0.08m` fasetli 3B kabartma** çıktığını inceleyin.
+   - Üzerinde yürüyün: Analitik zemin örnekleyicisi sayesinde karakterin takılmadan, titremeden pürüzsüzce yürüdüğünü görün.
+   - Elinize meşale veya ışık kaynağı alıp farklı açılardan cevhere bakın: Metalik damar parıltısının ve `Glint` yansımasının (Bakır turuncu, Demir çelik-pas, Altın sarı, Değerli taşlar sert kıvılcım) `0 MB` ek VRAM ile parıldadığını gözlemleyin.
+7. 🧪 **Test 7 — `[F12]` ile 3 Mağara Katmanı, Jeotermal U-Eğrisi ve Yüzey Outcrops:**
+   - **`[F12]`** tuşuna basarak 3 derin yeraltı odası arasında geçiş yapın:
+     * **Katman 1 (`Y = 75m` Sığ Mağara):** Nemli soğuk taş ortamı; ortam sıcaklığının **`-6°C .. +4°C`** seviyesine düştüğünü (`[F3]` ekranında kontrol edin), hipotermi uyarısını ve meşale yaktığınızda ısınmayı test edin.
+     * **Katman 2 (`Y = 54m` Orta Galeri):** Sıcaklığın **`+18°C .. +24°C`** ılıman seviyeye döndüğünü görün.
+     * **Katman 4 (`Y = 12.2m` Magma Tabanı):** Sıcaklığın **`+75°C .. +110°C`** kaynayan cehennem ortamına fırladığını, hipertermi ve terleme/yanma riskini gözlemleyin.
+   - Yüzey arazisinde derin damarların izdüşümünde yeryüzü kayalarında filizlenen pas/malakit/kuvars kaya izlerini (`Outcrops`) arayın.
+8. 🧪 **Test 8 — `%12-%18` Sızdırmaz Yeraltı Gölleri:**
+   - Katman 1 ve 2 geniş mağara salonlarında ilerleyin.
+   - Odaların `%12-%18`'inde çanak tabanlı, mantoya akıp kaybolmayan, sızdırmaz (`isSettled = true`) durgun yeraltı su göllerini bulun; içine girip yüzme ve sualtı kamerasını test edin.
+9. 🧪 **Test 9 — Kenar-Öncelikli Lav Katılaşması, `150 sn` `MagmaBlock` Soğuması, Isı Yayımı ve Yanık Hasarı:**
+   - Serin bir mağara koridoruna (`T < 55°C`) veya yeraltı gölü kıyısına lav akıtın.
+   - Lavın dış kenarlarından başlayarak **`8-15 sn`** içinde akkor **`MagmaBlock (MaterialId = 11, Temp = 220)`** bloğuna dönüştüğünü izleyin.
+   - Kor bloğa `3.5m` yaklaşın: Kamp ateşi gibi **`+22°C`** ısı yaydığını ve ıslak giysileri `2.5x` hızla kuruttuğunu görün.
+   - Bloğun üzerine basın: Saniyede **`18 HP`** temas yanık hasarı aldığınızı doğrulayın.
+   - **`150 sn`** sonra bloğun tamamen soğuyarak gri **`Basalt (MaterialId = 7)`** taşına dönüştüğünü ve artık hasar vermediğini gözlemleyin.
+10. 🧪 **Test 10 — 5 Mağara Canlısı Varyantı ve `3.5 sn` Akustik Taş Tozu Telgrafı:**
+    - Mağara derinliklerinde (`r >= 75m`, `Y <= 54m`, karanlık bölge) ilerleyin.
+    - Bir canlı (Örümcek, Yarasa sürüsü, Kristal Akrep, İskelet Şövalye, Lav Yılanı) saldırmadan önce:
+      * Tavandan dökülen taş tozu parçacıklarını görün.
+      * Duvarlardan yankılanan `0 MB` PCM prosedürel akustik ses telgrafını (çatırtı, tıslama, kanat çırpma) dinleyin.
+      * Telgrafın oyuncuya savunma hazırlığı için tam **`3.5 sn`** kazandırdığını ve ardından saldırının başladığını doğrulayın.
 
 ---
 
-### 3.3. Tamamlanan Faz 2 Yol Haritası & Sıradaki Fazlar
+### 3.3. Tamamlanan Faz Yol Haritası & Sıradaki Fazlar
 
 - ✅ **Faz 2.1:** Doğal 3B Eşya Özdeşliği, Biyom Çalıları, Avuçla Kazma, Yumruk & Kuvars Uyanışı
 - ✅ **Faz 2.2:** Fiziksel 3B Taş Yontma (`8x8`) & Karesiz *The Forest* 3B Çanta Bezi
 - ✅ **Faz 2.3:** Serbest Fiziksel Dizilim, `[T]` Zihin İnşası & Kamp Ateşi Yemek Sistemi
-- 🧪 **Faz 2.4:** Kömür Ocağı, Cevher Kavurma/Kırma, Kil Pişirme, `1250°C` Bloomery Demircilik, `T2` Demir Aletler & 3B El Arabası *(Canlı PlayMode testi sonrası onaylanacak)*
+- ✅ **Faz 2.4:** Kömür Ocağı, Cevher Kavurma/Kırma, Kil Pişirme, `1250°C` Bloomery Demircilik, `T2` Demir Aletler & 3B El Arabası
+- ✅ **Paket 2 Kapanış:** `[B]` Zanaat Kitabı, `Shift+E` Söndürme, Bloomery Çoklu Cevher Yükleme, `T2..T5` Kristal Tiers, `[V]` Arazi Saçılım Fırçası
+- ✅ **Paket 3 (Faz 3.1..3.4):** 3B Cevher Rölyefi, `0 MB` Glint, Jeotermal `U-Eğrisi`, Yeraltı Gölleri, Lav Katılaşması (`150 sn`), 5 Mağara Canlısı & Akustik Telgraf
+- 🧪 **Sırada:** Paket 2 + Paket 3 Canlı PlayMode Testi -> **Paket 4 (İnşa, Tarım, Su Çarkı ve Gelişmiş Mekanizmalar)**
 
 ---
 
@@ -843,8 +888,13 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **Sağ Tık / Sol Tık / `[E]` (Bloomery / Kömür Ocağı / Örs)** | **Faz 2.4 Metalürji Etkileşimi:** Çakmaktaşıyla yakma, cevher kavurma (`10 sn`), kil pişirme (`12 sn`), taş/demir çekiçle kırma/sıcak dövme (`>=720°C`, `8` vuruş -> `WroughtIronBar`), körük pompalama (`1230–1315°C`), kil tıkaç kırma/sıvama | 🧪 Faz 2.4 (Test Bekliyor) |
-| **`[E]` / `[ESC]` / `Sağ Tık` (Ahşap El Arabası)** | **Faz 2.4 Fiziksel El Arabası:** Arka saplardan `[E]` ile tutar (`[WASD]` sürer, `[E]`/`[ESC]` park eder); kasa üstünde `Sağ Tık` (`Shift+Sağ Tık` 5'li) eşya yükler (`36` yuva), `[E]` ile LIFO geri alır | 🧪 Faz 2.4 (Test Bekliyor) |
+| **`[B]` Tuşu (`!Ctrl`)** | **Zanaat ve Malzeme Rehber Kitabı:** 4 sekmeli karesiz rehber kitabı (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #057 (Aktif) |
+| **`[Ctrl+B]` Tuşu** | **Madde Kristali Malzeme Seçim Paneli:** Kristal açıkken yerleştirilecek blok türünü seçer | ✅ Devir #057 (Aktif) |
+| **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme (`Extinguish`):** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür | ✅ Devir #057 (Aktif) |
+| **`[V]` / `[Shift+V]` Tuşu** | **Doğal Arazi Saçılım Fırçası (`ShapeId = 0`):** `[V]` anlık geçiş yapar; `[Shift+V]` mimari şekilleri (`1..7, 63`) tarar | ✅ Devir #057 (Aktif) |
+| **`[F12]` Tuşu** | **Mağara Katmanları Hızlı Test Teleportu:** Katman 1 (`Y=75m`), Katman 2 (`Y=54m`), Katman 4 (`Y=12.2m`) arasında döner | ✅ Devir #057 (Aktif) |
+| **Sağ Tık / Sol Tık / `[E]` (Bloomery / Kömür Ocağı / Örs)** | **Metalürji Etkileşimi:** Çakmaktaşıyla yakma, çoklu cevher yükleme (Toz, Kavrulmuş, Ham), kil pişirme (`12 sn`), çekiçle sıcak dövme (`>=720°C`, `8` vuruş -> `WroughtIronBar`), körük pompalama (`1230–1315°C`), kil tıkaç kırma/sıvama | ✅ Devir #057 (Aktif) |
+| **`[E]` / `[ESC]` / `Sağ Tık` (Ahşap El Arabası)** | **Fiziksel El Arabası:** Arka saplardan `[E]` ile tutar (`[WASD]` sürer, `[E]`/`[ESC]` park eder); kasa üstünde `Sağ Tık` (`Shift+Sağ Tık` 5'li) eşya yükler (`36` yuva), `[E]` ile LIFO geri alır | ✅ Onaylandı |
 | **`Sağ Tık` (Elde Doğal Eşya Varken)** | **Serbest 3B Fiziksel Dizilim (`WorldLooseBuild`):** Yaprak, lif, dal (kav yanında dizde kırılıp `42°` çadır eğimi alır), taş ve kil topaklarını `ShapeDna` koruyarak zemine/üst üste dizer (`[R]` döndürür, `[E]` geri alır) | ✅ Onaylandı |
 | **`[T]` Tuşu (Madde Kristali Kapalıyken)** | **Zihin İnşa Menüsü (`Mind Building`):** `[1..4]` / `Sol Tık` ile öndeki fiziksel malzeme kümesini doğrulayıp istasyona etiketler; `Sağ Tık` / `[G]` ile `2.8sn` düşünce silüeti gösterir | ✅ Onaylandı |
 | **Çakmaktaşı + Tık / Çiğ Et + `Sağ Tık`** | **Kamp Ateşi Yakma & 3B Et Pişirme:** Sönük ateşe `3` kez kıvılcım çakarak yakar; yanan ateşe `Çiğ Et` koyar (`12sn` Pişmiş -> `[E]` Al, `>26sn` Yanmış) ve `Dal/Odun` ile besler | ✅ Onaylandı |
@@ -852,7 +902,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[I]` Tuşu** | **Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkez 3B Craft:** Eşyaları gerçek 3B modelleriyle örtü üstünde gösterir; merkeze konan malzemeleri `[R]` / `Sol Tık` ile iple bağlayarak alet üretir | ✅ Onaylandı |
 | **`[E]` Tuşu (Tek Basış — Eşya/Çalı)** | Yerdeki tüm doğal eşyaları (`<= 3.15m`) anında toplar; çalıları kırıp dal/yaprak/lif/böğürtlen düşürür | ✅ Onaylandı |
 | **`[E]` Tuşu (`0.60sn` Basılı — Çömelip Yere Bakarken)** | Boş elle yumuşak Toprak / Kum / Kil zemininden avuçla gerçek 3B öbek kazar | ✅ Onaylandı |
-| **`[C]` veya `Sağ Tık` (Elde Kuvars Varken)** | Uyuyan (`Tier 0`) Madde Kristaline tek tek Kuvars yedirir (`3/3` olduğunda `Tier 1` uyanır; açıkken `[C]` kristal modunu açar/kapatır) | ✅ Onaylandı |
+| **`[C]` veya `Sağ Tık` (Elde Kuvars / Rezonans Kristali)** | `Tier 0 -> Tier 1` için Kuvars yedirir (`3/3`); `Tier 2..5` için canavarlardan düşen Rezonans Kristali ile kademe yükseltir | ✅ Devir #057 (Aktif) |
 | **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
 | **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
 | **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
@@ -864,13 +914,13 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #056`** ile birebir eşleştiğini doğrula.
-2. **Adım 2 — Kullanıcıdan `Faz 2.4 + Devir #056` Canlı PlayMode Test Geri Bildirimini Al:**
-   - Kullanıcı **Bölüm 3.2**'deki 6 adımlı `Faz 2.4 + Devir #056` döngüsünü (*Su kenarında kil kazma, 3B kubbeli Kömür Ocağı pirolizi, Çiğ kil pişirme + Cevher kavurma/kırma, 3B taş kemerli silindirik kil Bloomery izabesi, Örste sıcak sünger demir dövme + `T2` Demir aletler ve 3B Ahşap El Arabası*) test edip onayladıktan sonra bir sonraki yol haritası adımına geç.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #057`** ile birebir eşleştiğini doğrula.
+2. **Adım 2 — Kullanıcıdan `Paket 2 Kapanış + Paket 3` Canlı PlayMode Test Geri Bildirimini Al:**
+   - Kullanıcı **Bölüm 3.2**'deki 10 adımlı `Paket 2 Kapanış + Paket 3` döngüsünü (*Zanaat kitabı [B], Ateş/Fırın söndürme [Shift+E], Bloomery doğrudan cevher yükleme, [V] doğal arazi fırçası, Rezonans Kristali Tiers, [F12] 3 mağara katmanı, meşale Glint, Jeotermal U-eğrisi, Yeraltı gölleri, Lav katılaşması & yanık, Mağara canlıları akustik telgrafı*) test edip onayladıktan sonra **Paket 4** yol haritasına geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`96/96 PASS`).
-   - Unity EditMode Testleri: `93/93 PASS`.
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`111/111 PASS`).
+   - Unity EditMode Testleri: `108/108 PASS` (`test_run(mode:"editor")`).
    - Unity Konsolu: `0 Error / 0 Warning`.
-   - VRAM Bütçesi: `< 16.0 MB` (`4.14 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
+   - VRAM Bütçesi: `< 16.0 MB` (`3.133 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
    - GC Bütçesi: `0 B/kare` çalışma zamanı tahsisi.
    - Taşınabilirlik: Hiçbir kod, doküman veya `.ps1` betiğinde sabit sürücü/kullanıcı yolu kullanma; daima göreceli yol kullan.
