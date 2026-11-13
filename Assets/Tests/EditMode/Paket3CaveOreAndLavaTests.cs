@@ -913,5 +913,284 @@ namespace Stratocraft.Tests.EditMode
                     out _),
                 Is.False);
         }
+
+        [Test]
+        public void CaveRockComposition_IsPredominantlyNaturalStoneWithDepthHardeningAndCoherentVeins()
+        {
+            long totalUndergroundSolids = 0;
+            long naturalHostRockCount = 0;
+            long oreCount = 0;
+
+            long shallowSolids = 0;
+            long shallowStoneCobble = 0;
+            long shallowBasalt = 0;
+
+            long deepSolids = 0;
+            long deepBasaltObsidian = 0;
+
+            uint[] voxels = new uint[16 * 16 * StratocraftFloatingIslandWorldGen.MaxEditableVoxelY];
+            ushort[] fluids = new ushort[voxels.Length];
+
+            for (int cz = -3; cz <= 3; cz++)
+            {
+                for (int cx = -3; cx <= 3; cx++)
+                {
+                    // [F12] showcase ve baslangic reaksiyon odalarini haric tut
+                    if (cx >= -1 && cx <= 0 && cz >= -1 && cz <= 1)
+                    {
+                        continue;
+                    }
+
+                    StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(cx, cz, voxels, fluids);
+                    int maxChunkY = voxels.Length >> 8;
+
+                    for (int lz = 0; lz < 16; lz++)
+                    {
+                        int wz = cz * 16 + lz;
+                        for (int lx = 0; lx < 16; lx++)
+                        {
+                            int wx = cx * 16 + lx;
+                            float topH = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+                            int maxUndergroundY = Math.Min(82, Math.Min(maxChunkY - 1, (int)MathF.Floor(topH) - 4));
+                            if (maxUndergroundY < 12)
+                            {
+                                continue;
+                            }
+
+                            int col = (lz << 4) | lx;
+                            for (int y = 12; y <= maxUndergroundY; y++)
+                            {
+                                uint raw = voxels[(y << 8) | col];
+                                if (raw == 0u || VoxelBitUtility.GetDensityOrLiquid(raw) < StratocraftConstants.SdfIsoLevel)
+                                {
+                                    continue;
+                                }
+
+                                byte matId = VoxelBitUtility.GetMaterialId(raw);
+                                totalUndergroundSolids++;
+
+                                if (matId == MaterialIdCatalog.Stone ||
+                                    matId == MaterialIdCatalog.Cobblestone ||
+                                    matId == MaterialIdCatalog.Stalagnate ||
+                                    matId == MaterialIdCatalog.Marble ||
+                                    matId == MaterialIdCatalog.Basalt ||
+                                    matId == MaterialIdCatalog.NaturalObsidian ||
+                                    matId == MaterialIdCatalog.Bedrock ||
+                                    matId == MaterialIdCatalog.Dirt)
+                                {
+                                    naturalHostRockCount++;
+                                }
+
+                                if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(matId))
+                                {
+                                    oreCount++;
+                                }
+
+                                if (y >= 66 && y <= 78)
+                                {
+                                    shallowSolids++;
+                                    if (matId == MaterialIdCatalog.Stone || matId == MaterialIdCatalog.Cobblestone)
+                                    {
+                                        shallowStoneCobble++;
+                                    }
+                                    else if (matId == MaterialIdCatalog.Basalt)
+                                    {
+                                        shallowBasalt++;
+                                    }
+                                }
+                                else if (y >= 20 && y <= 34)
+                                {
+                                    deepSolids++;
+                                    if (matId == MaterialIdCatalog.Basalt || matId == MaterialIdCatalog.NaturalObsidian)
+                                    {
+                                        deepBasaltObsidian++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Assert.That(totalUndergroundSolids, Is.GreaterThan(50000));
+            Assert.That(shallowSolids, Is.GreaterThan(5000));
+            Assert.That(deepSolids, Is.GreaterThan(5000));
+
+            double hostRockPct = (naturalHostRockCount * 100.0) / totalUndergroundSolids;
+            double orePct = (oreCount * 100.0) / totalUndergroundSolids;
+            double shallowStonePct = (shallowStoneCobble * 100.0) / shallowSolids;
+            double shallowBasaltPct = (shallowBasalt * 100.0) / shallowSolids;
+            double deepBasaltObsidianPct = (deepBasaltObsidian * 100.0) / deepSolids;
+
+            Assert.That(hostRockPct, Is.GreaterThanOrEqualTo(88.0),
+                $"Yeralti kati voksellerinin ana kayac orani ({hostRockPct:F2}%) >= %88.0 olmalidir.");
+            Assert.That(orePct, Is.InRange(1.0, 10.0),
+                $"Yeralti cevher orani ({orePct:F2}%) [%1.0, %10.0] araliginda kalmalidir.");
+            Assert.That(shallowStonePct, Is.GreaterThan(shallowBasaltPct),
+                $"Sig yeraltinda Stone+Cobblestone ({shallowStonePct:F2}%) Basalt'tan ({shallowBasaltPct:F2}%) yuksek olmalidir.");
+            Assert.That(deepBasaltObsidianPct, Is.GreaterThan(65.0),
+                $"Derin yeraltinda Basalt+NaturalObsidian orani ({deepBasaltObsidianPct:F2}%) > %65 olmalidir.");
+        }
+
+        [Test]
+        public void CaveWaterPools_HaveZeroFloatingClayPedestalsAndRestInSolidNaturalRock()
+        {
+            var lakeChunks = new List<(int cx, int cz)>();
+            uint[] voxels = new uint[16 * 16 * StratocraftFloatingIslandWorldGen.MaxEditableVoxelY];
+            ushort[] fluids = new ushort[voxels.Length];
+
+            // AK-5 ile ayni deterministik gol odasi taramasindan gercek uretilen gol chunk'larini topla
+            for (int cz = -10; cz <= 10 && lakeChunks.Count < 6; cz++)
+            {
+                for (int cx = -10; cx <= 10 && lakeChunks.Count < 6; cx++)
+                {
+                    int wx = cx * 24 + 10;
+                    int wz = cz * 24 + 10;
+                    if (wx * wx + wz * wz < 32 * 32)
+                    {
+                        continue;
+                    }
+
+                    bool chamberHasLake = false;
+                    for (int y = 46; y <= 73; y++)
+                    {
+                        if (StratocraftFloatingIslandWorldGen.TryEvaluateCaveChamberWaterLake(
+                                wx, y, wz, swell01: 0.68f, provinceNoise: 0.65f,
+                                out bool inLakeWater, out _) &&
+                            inLakeWater)
+                        {
+                            chamberHasLake = true;
+                            break;
+                        }
+                    }
+
+                    if (!chamberHasLake)
+                    {
+                        continue;
+                    }
+
+                    int chunkX = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+                    int chunkZ = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+                    if (lakeChunks.Contains((chunkX, chunkZ)))
+                    {
+                        continue;
+                    }
+
+                    StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(chunkX, chunkZ, voxels, fluids);
+                    for (int y = 46; y <= 73; y++)
+                    {
+                        int yBase = y << 8;
+                        bool found = false;
+                        for (int i = 0; i < 256; i++)
+                        {
+                            FluidCell16 fc = new FluidCell16(fluids[yBase | i]);
+                            if (fc.Type == FluidType.Water && fc.Mass > 0)
+                            {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found)
+                        {
+                            lakeChunks.Add((chunkX, chunkZ));
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Assert.That(lakeChunks.Count, Is.GreaterThanOrEqualTo(1),
+                "Test edilecek en az 1 gercek yeralti gol chunk'i bulunmalidir.");
+
+            int clayCountInCaveLakeBand = 0;
+            int verifiedWaterCells = 0;
+
+            for (int ci = 0; ci < lakeChunks.Count; ci++)
+            {
+                (int chunkX, int chunkZ) = lakeChunks[ci];
+                StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(chunkX, chunkZ, voxels, fluids);
+                int maxChunkY = voxels.Length >> 8;
+
+                for (int lz = 0; lz < 16; lz++)
+                {
+                    int wz = chunkZ * 16 + lz;
+                    for (int lx = 0; lx < 16; lx++)
+                    {
+                        int wx = chunkX * 16 + lx;
+                        if (wx * wx + wz * wz < 28 * 28)
+                        {
+                            continue;
+                        }
+
+                        float topH = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+                        int maxCheckY = Math.Min(73, Math.Min(maxChunkY - 1, (int)MathF.Floor(topH - 8.0f)));
+                        int col = (lz << 4) | lx;
+
+                        for (int y = 46; y <= maxCheckY; y++)
+                        {
+                            uint vRaw = voxels[(y << 8) | col];
+                            if (vRaw != 0u && VoxelBitUtility.GetMaterialId(vRaw) == MaterialIdCatalog.Clay)
+                            {
+                                clayCountInCaveLakeBand++;
+                            }
+
+                            FluidCell16 fc = new FluidCell16(fluids[(y << 8) | col]);
+                            if (fc.Type != FluidType.Water || fc.Mass == 0)
+                            {
+                                continue;
+                            }
+
+                            verifiedWaterCells++;
+
+                            // 1) Hemen altinda (y - 1) kati ve Clay olmayan dogal kaya veya bagli su havuzu olmali
+                            int belowIdx = ((y - 1) << 8) | col;
+                            FluidCell16 belowFluid = new FluidCell16(fluids[belowIdx]);
+                            if (belowFluid.Type != FluidType.Water || belowFluid.Mass == 0)
+                            {
+                                uint belowVox = voxels[belowIdx];
+                                Assert.That(belowVox, Is.Not.EqualTo(0u),
+                                    $"({chunkX},{chunkZ}) y={y} su hucresi altinda bosluk tespit edildi.");
+                                Assert.That(VoxelBitUtility.GetDensityOrLiquid(belowVox), Is.GreaterThanOrEqualTo(StratocraftConstants.SdfIsoLevel),
+                                    $"({chunkX},{chunkZ}) y={y} su hucresi altindaki kaya SdfIsoLevel altinda.");
+                                Assert.That(VoxelBitUtility.GetMaterialId(belowVox), Is.Not.EqualTo(MaterialIdCatalog.Clay),
+                                    $"({chunkX},{chunkZ}) y={y} su hucresi altinda Clay kaidesi olmamalidir.");
+                            }
+
+                            // 2) Yatay dis kenarlarda su yoksa sizdirmaz dogal kaya bulunmali
+                            int yBase = y << 8;
+                            for (int dir = 0; dir < 4; dir++)
+                            {
+                                int nx = dir == 0 ? lx - 1 : (dir == 1 ? lx + 1 : lx);
+                                int nz = dir == 2 ? lz - 1 : (dir == 3 ? lz + 1 : lz);
+                                if (nx < 0 || nx >= 16 || nz < 0 || nz >= 16)
+                                {
+                                    continue;
+                                }
+
+                                int nIdx = yBase | (nz << 4) | nx;
+                                FluidCell16 nFluid = new FluidCell16(fluids[nIdx]);
+                                if (nFluid.Type == FluidType.Water && nFluid.Mass > 0)
+                                {
+                                    continue;
+                                }
+
+                                uint nVox = voxels[nIdx];
+                                Assert.That(nVox, Is.Not.EqualTo(0u),
+                                    $"({chunkX},{chunkZ}) y={y} gol dis kenarinda sizinti acikligi tespit edildi.");
+                                Assert.That(VoxelBitUtility.GetDensityOrLiquid(nVox), Is.GreaterThanOrEqualTo(StratocraftConstants.SdfIsoLevel),
+                                    $"({chunkX},{chunkZ}) y={y} gol dis kenar kayasi sizdirmaz (Density >= SdfIsoLevel) olmalidir.");
+                                Assert.That(VoxelBitUtility.GetMaterialId(nVox), Is.Not.EqualTo(MaterialIdCatalog.Clay),
+                                    $"({chunkX},{chunkZ}) y={y} gol dis kenarinda Clay olmamalidir.");
+                            }
+                        }
+                    }
+                }
+            }
+
+            Assert.That(clayCountInCaveLakeBand, Is.EqualTo(0),
+                $"r >= 28m, y <= 73 (topY - 8 altinda) yeralti gol cevrelerinde Clay sayisi 0 olmalidir (bulunan: {clayCountInCaveLakeBand}).");
+            Assert.That(verifiedWaterCells, Is.GreaterThan(0),
+                "En az bir gercek yeralti su hucresi dogrulanmalidir.");
+        }
     }
 }

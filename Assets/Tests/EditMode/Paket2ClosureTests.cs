@@ -509,5 +509,96 @@ namespace Stratocraft.Tests.EditMode
             // Zaten sonukse false donmeli
             Assert.That(CampfireSimulationLogic.TryExtinguishStation(ref station), Is.False);
         }
+
+        [Test]
+        public void SurvivalRecipeBook_UsesShiftBNotCtrlB_AndIncludesDepthStrataGuide()
+        {
+            ReadOnlySpan<SurvivalRecipeBookEntry> allEntries = SurvivalRecipeBookCatalog.AllEntries;
+            Assert.That(allEntries.Length, Is.GreaterThan(0));
+
+            bool foundShiftB = false;
+            for (int i = 0; i < allEntries.Length; i++)
+            {
+                SurvivalRecipeBookEntry entry = allEntries[i];
+
+                Assert.That(ContainsIgnoreCase(entry.Title, "Ctrl+B"), Is.False, $"Entry {entry.Id} Title 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.IngredientsOrSource, "Ctrl+B"), Is.False, $"Entry {entry.Id} IngredientsOrSource 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.RecipeOrLocation, "Ctrl+B"), Is.False, $"Entry {entry.Id} RecipeOrLocation 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.ToolOrKeybind, "Ctrl+B"), Is.False, $"Entry {entry.Id} ToolOrKeybind 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.KeybindHint, "Ctrl+B"), Is.False, $"Entry {entry.Id} KeybindHint 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.StepByStepGuide, "Ctrl+B"), Is.False, $"Entry {entry.Id} StepByStepGuide 'Ctrl+B' icermemeli.");
+                Assert.That(ContainsIgnoreCase(entry.Description, "Ctrl+B"), Is.False, $"Entry {entry.Id} Description 'Ctrl+B' icermemeli.");
+
+                if (ContainsIgnoreCase(entry.Title, "[Shift+B]") ||
+                    ContainsIgnoreCase(entry.ToolOrKeybind, "[Shift+B]") ||
+                    ContainsIgnoreCase(entry.KeybindHint, "[Shift+B]") ||
+                    ContainsIgnoreCase(entry.StepByStepGuide, "[Shift+B]") ||
+                    ContainsIgnoreCase(entry.Description, "[Shift+B]"))
+                {
+                    foundShiftB = true;
+                }
+            }
+
+            Assert.That(foundShiftB, Is.True, "Rehber kitabinda [Shift+B] kisayol bilgisi bulunmalidir.");
+
+            Assert.That(
+                HasTabEntryMatching(
+                    SurvivalRecipeBookTab.MaterialsAndResources,
+                    e => (ContainsIgnoreCase(e.Title, "Kayaç") || ContainsIgnoreCase(e.Id, "depth_rock_strata")) &&
+                         ContainsIgnoreCase(e.StepByStepGuide, "Bazalt") &&
+                         ContainsIgnoreCase(e.StepByStepGuide, "T2")),
+                Is.True,
+                "Sekme 1'de Bazalt ve T2 kazma gereksinimini anlatan derinlik kayac rehberi bulunmalidir.");
+        }
+
+        [Test]
+        public void MiningProgression_IronOreRequiresT1_WhileDeepBasaltRequiresT2AndObsidianRequiresT3()
+        {
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.CopperOre), Is.EqualTo((byte)1));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.IronOre), Is.EqualTo((byte)1));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.Basalt), Is.EqualTo((byte)2));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.GoldOre), Is.EqualTo((byte)2));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.NaturalObsidian), Is.EqualTo((byte)3));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.TitaniumOre), Is.EqualTo((byte)3));
+            Assert.That(Stage1MatterCrystalAndMiningController.GetRequiredToolTierForMaterial(MaterialIdCatalog.MithrilOre), Is.EqualTo((byte)3));
+        }
+
+        [Test]
+        public void RecipeBookUi_TwoPageSpreadNavigation_CyclesSpreadsAndResetsOnTabChange()
+        {
+            var ui = new Stage1SurvivalRecipeBookUi();
+            Assert.That(ui.IsOpen, Is.False);
+
+            ui.SelectTab(0);
+            ui.Open();
+            Assert.That(ui.IsOpen, Is.True);
+            Assert.That(ui.SelectedTabIndex, Is.EqualTo(0));
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(0));
+
+            int totalSpreads = ui.TotalSpreadsInActiveTab;
+            Assert.That(totalSpreads, Is.GreaterThanOrEqualTo(2), "Sekme 0 iki sayfali gezinti icin en az 2 spread icermelidir.");
+
+            ui.NextSpread();
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(1));
+
+            // Sinir tasmama kontrolu (alt ve ust sinir)
+            ui.PreviousSpread();
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(0));
+            ui.PreviousSpread();
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(0), "Spread indeksi 0 altina dusmemelidir.");
+
+            for (int i = 0; i < totalSpreads + 3; i++)
+            {
+                ui.NextSpread();
+            }
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(totalSpreads - 1), "Spread indeksi son sayfa sinirini asmamalidir.");
+
+            ui.SelectTab(2);
+            Assert.That(ui.SelectedTabIndex, Is.EqualTo(2));
+            Assert.That(ui.CurrentSpreadIndex, Is.EqualTo(0), "Sekme degisince CurrentSpreadIndex 0'a sifirlanmalidir.");
+
+            ui.Close(restoreCursorLock: false);
+            Assert.That(ui.IsOpen, Is.False);
+        }
     }
 }
