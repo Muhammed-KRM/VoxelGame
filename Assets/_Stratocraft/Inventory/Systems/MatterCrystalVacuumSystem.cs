@@ -37,11 +37,157 @@ namespace Stratocraft.Inventory.Systems
     /// </summary>
     public sealed class MatterCrystalVacuumSystem
     {
+        public const float SafeStarterZoneRadiusMeters = 75.0f;
+        public const float Ring2OuterRadiusMeters = 180.0f;
+        public const float Ring3OuterRadiusMeters = 320.0f;
+        public const float Ring4OuterRadiusMeters = 500.0f;
+
         private readonly IGameLogService? _logger;
+        private byte _crystalTier = 1;
+
+        /// <summary>
+        /// Aktif Madde Kristali kademesi (1..5 arasinda sinirlandirilir).
+        /// </summary>
+        public byte CrystalTier
+        {
+            get => _crystalTier;
+            set => _crystalTier = (byte)Math.Clamp((int)value, 1, 5);
+        }
+
+        public float CurrentVacuumRadius => GetVacuumRadiusForTier(_crystalTier);
+        public float CurrentPullSpeed => GetPullSpeedForTier(_crystalTier);
+        public int CurrentBatchCapacity => GetBatchCapacityForTier(_crystalTier);
+        public float CurrentBrushRadius => GetBrushRadiusForTier(_crystalTier);
+        public float CurrentScatterRadiusXZ => GetNaturalScatterRadiusXZForTier(_crystalTier);
 
         public MatterCrystalVacuumSystem(IGameLogService? logger = null)
         {
             _logger = logger;
+            _crystalTier = 1;
+        }
+
+        public static int ClampCrystalTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5);
+
+        /// <summary>
+        /// Kademe bazli esya/kutle vakum cekim yaricapi (metre): T1=6.5m .. T5=13.0m.
+        /// </summary>
+        public static float GetVacuumRadiusForTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5) switch
+        {
+            1 => 6.5f,
+            2 => 8.0f,
+            3 => 9.5f,
+            4 => 11.0f,
+            _ => 13.0f
+        };
+
+        /// <summary>
+        /// Kademe bazli vakum cekim hizi (m/sn): T1=12.5 .. T5=26.0.
+        /// </summary>
+        public static float GetPullSpeedForTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5) switch
+        {
+            1 => 12.5f,
+            2 => 15.5f,
+            3 => 18.5f,
+            4 => 22.0f,
+            _ => 26.0f
+        };
+
+        /// <summary>
+        /// Kademe bazli tek adimda vakumlanabilen maksimum voksel parti kapasitesi: T1=1 .. T5=125.
+        /// </summary>
+        public static int GetBatchCapacityForTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5) switch
+        {
+            1 => 1,
+            2 => 8,
+            3 => 27,
+            4 => 64,
+            _ => 125
+        };
+
+        /// <summary>
+        /// Kademe bazli maksimum kazma/vakum kure firca yaricapi (metre): T1=0.50m .. T5=3.50m.
+        /// </summary>
+        public static float GetBrushRadiusForTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5) switch
+        {
+            1 => 0.50f,
+            2 => 1.15f,
+            3 => 1.85f,
+            4 => 2.65f,
+            _ => 3.50f
+        };
+
+        /// <summary>
+        /// Kademe bazli Dogal Arazi Sacilim Fircasi (ShapeId=0) yatay yaricapi (1.5m .. 3.5m).
+        /// </summary>
+        public static float GetNaturalScatterRadiusXZForTier(int crystalTier) => Math.Clamp(crystalTier, 1, 5) switch
+        {
+            1 => 1.50f,
+            2 => 2.00f,
+            3 => 2.50f,
+            4 => 3.00f,
+            _ => 3.50f
+        };
+
+        /// <summary>
+        /// Kademe bazli Dogal Arazi Sacilim Fircasi dikey elipsoid yaricapi.
+        /// </summary>
+        public static float GetNaturalScatterRadiusYForTier(int crystalTier) =>
+            MathF.Max(1.15f, 0.65f * GetNaturalScatterRadiusXZForTier(crystalTier));
+
+        /// <summary>
+        /// Rezonans Kristali (T2..T5) ile Madde Kristali kademesini yukseltir (1..5 clamp).
+        /// </summary>
+        public bool UpgradeTierWithResonance(int crystalTier, CrystalMassStorage? storage = null)
+        {
+            byte clampedTarget = (byte)Math.Clamp(crystalTier, 1, 5);
+            byte current = storage != null ? storage.CrystalTier : _crystalTier;
+            if (crystalTier < 2 || clampedTarget <= current)
+            {
+                _crystalTier = (byte)Math.Clamp((int)_crystalTier, 1, 5);
+                return false;
+            }
+
+            _crystalTier = clampedTarget;
+            storage?.SetTierAndCanonicalCapacity(clampedTarget);
+            return true;
+        }
+
+        /// <summary>
+        /// Dunya merkezinden (0,0) yatay mesafeye ve canlinin Boss olup olmamasina gore
+        /// dusecek Rezonans Kristali kademesini (2..5) belirler.
+        /// Guvenli baslangic vadisi icinde (r &lt; 75m) asla Rezonans Kristali dusmez (0 doner).
+        /// </summary>
+        public static byte DetermineResonanceCrystalDropTier(float distanceFromOriginMeters, bool isBoss = false)
+        {
+            if (float.IsNaN(distanceFromOriginMeters) || distanceFromOriginMeters < SafeStarterZoneRadiusMeters)
+            {
+                return 0;
+            }
+
+            int ringTier;
+            if (distanceFromOriginMeters < Ring2OuterRadiusMeters)
+            {
+                ringTier = 2; // Ring 2 (75m .. 180m)
+            }
+            else if (distanceFromOriginMeters < Ring3OuterRadiusMeters)
+            {
+                ringTier = 3; // Ring 3 (180m .. 320m)
+            }
+            else if (distanceFromOriginMeters < Ring4OuterRadiusMeters)
+            {
+                ringTier = 4; // Ring 4 (320m .. 500m)
+            }
+            else
+            {
+                ringTier = 5; // Ring 5+ (>= 500m)
+            }
+
+            if (isBoss)
+            {
+                ringTier = Math.Min(5, ringTier + 1);
+            }
+
+            return (byte)Math.Clamp(ringTier, 2, 5);
         }
 
         /// <summary>
@@ -340,6 +486,29 @@ namespace Stratocraft.Inventory.Systems
             float falloff = 1.0f - (uClamped * uClamped);
             int targetDens = (int)MathF.Round(72.0f + 55.0f * falloff);
             return (byte)Math.Clamp(targetDens, 72, 127);
+        }
+
+        /// <summary>
+        /// Mevcut voksel yogunlugu ile Dogal Arazi Sacilim Fircasi hedef yogunlugunu yumusak gecisle birlestirir:
+        /// Mevcut kati zemini asla inceltmez, bosluktan katiliga geciste SdfIsoLevel(64) ustu (>=72) sizdirmazlik garantiler.
+        /// </summary>
+        public static byte ComputeNaturalScatterSmoothedDensity(byte existingDensity, byte scatterTargetDensity)
+        {
+            if (scatterTargetDensity < StratocraftConstants.SdfIsoLevel)
+            {
+                return existingDensity;
+            }
+            if (existingDensity == 0)
+            {
+                return Math.Clamp(scatterTargetDensity, (byte)72, VoxelBitUtility.FullDensity);
+            }
+            if (existingDensity >= scatterTargetDensity)
+            {
+                int boosted = existingDensity + Math.Max(2, (127 - existingDensity) / 5);
+                return (byte)Math.Clamp(boosted, (int)existingDensity, 127);
+            }
+            int blended = (scatterTargetDensity * 3 + existingDensity + 2) / 4;
+            return (byte)Math.Clamp(Math.Max((int)scatterTargetDensity, blended), 72, 127);
         }
 
         /// <summary>

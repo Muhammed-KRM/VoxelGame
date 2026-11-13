@@ -49,6 +49,7 @@ namespace Stratocraft.Character
         private byte _customSelectedMaterialId;
         private byte _lastGhostMat, _lastGhostShape, _lastGhostColorCode, _lastGhostRot;
         private int _brushRadiusIdx, _materialIdx, _shapeIdx = 0;
+        private int _lastArchitecturalShapeIdx = 1;
         private float _actionCooldown, _miningDamageAccumulator, _pendingMiningStaminaDrain;
         private int _lastToolSwingId;
         private int _lastActiveToolHolsterSlot = -1;
@@ -95,6 +96,7 @@ namespace Stratocraft.Character
         public bool IsCrystalActive { get; set; }
         public byte SelectedMaterialId => _customSelectedMaterialId != 0 ? _customSelectedMaterialId : BuildableMaterials[_materialIdx];
         public byte SelectedShapeId => ShapeWheelCycle[_shapeIdx];
+        public byte LastArchitecturalShapeId => ShapeWheelCycle[Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1)];
         public byte SelectedRotation => _selectedRotation24;
         public float BrushRadiusMeters => BrushRadiusSteps[_brushRadiusIdx];
         public string BrushAreaLabel => BrushAreaLabels[_brushRadiusIdx];
@@ -105,7 +107,7 @@ namespace Stratocraft.Character
         public int HarvestedGoldCount { get; private set; }
         public int HarvestedMithrilCount { get; private set; }
         public StructuralPreviewColor CurrentGhostPreviewColor { get; private set; } = StructuralPreviewColor.GreenSafe;
-        public string LastFeedbackText { get; set; } = "Hazir ([C] Kristal | [1-9/0] Alet & Kilif | [V] Sekil | [R] 24-Yon | [B/I] Malzeme)";
+        public string LastFeedbackText { get; set; } = "Hazir ([C] Kristal | [1-9/0] Alet & Kilif | [V] Dogal/Mimari | [R] 24-Yon | [Ctrl+B/I] Malzeme | [B] Tarif & Malzeme Kitabi)";
         public bool HasAimHit { get; private set; }
         public RaycastHit AimHit { get; private set; }
 
@@ -138,6 +140,10 @@ namespace Stratocraft.Character
         {
             CurrentCrystalTier = Mathf.Clamp(newTier, 0, 5);
             CrystalStorage.SetTierAndCanonicalCapacity((byte)CurrentCrystalTier);
+            if (CurrentCrystalTier >= 1)
+            {
+                VacuumSystem.UpgradeTierWithResonance(CurrentCrystalTier, CrystalStorage);
+            }
             int maxBrushIdx = GetMaxBrushIndexForCrystalTier(CurrentCrystalTier);
             if (_brushRadiusIdx > maxBrushIdx)
             {
@@ -147,14 +153,8 @@ namespace Stratocraft.Character
 
         public static int GetMaxBrushIndexForCrystalTier(int crystalTier) => Mathf.Clamp(crystalTier - 1, 0, BrushRadiusSteps.Length - 1);
 
-        public static float GetTierScatterRadiusXZ(int crystalTier) => crystalTier switch
-        {
-            <= 1 => 1.50f,
-            2 => 2.00f,
-            3 => 2.50f,
-            4 => 3.00f,
-            _ => 3.50f
-        };
+        public static float GetTierScatterRadiusXZ(int crystalTier) =>
+            MatterCrystalVacuumSystem.GetNaturalScatterRadiusXZForTier(crystalTier);
 
         public static ReadOnlySpan<byte> GetCrystalBuildableMaterials() => BuildableMaterials;
 
@@ -184,7 +184,81 @@ namespace Stratocraft.Character
             }
             byte mat = SelectedMaterialId;
             int cnt = GetMaterialCountInCrystal(mat);
-            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/B]: {GetMaterialDisplayName(mat)} (Stok: x{cnt}) -> [C + Sağ Tık] Dünyaya Koy";
+            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/Ctrl+B]: {GetMaterialDisplayName(mat)} (Stok: x{cnt}) -> [C + Sağ Tık] Dünyaya Koy | [B] Tarif & Malzeme Kitabı";
+        }
+
+        public byte ToggleNaturalScatterAndArchitecturalShape()
+        {
+            if (_shapeIdx != 0)
+            {
+                _lastArchitecturalShapeIdx = Mathf.Clamp(_shapeIdx, 1, ShapeWheelCycle.Length - 1);
+                _shapeIdx = 0;
+                float rXZ = GetTierScatterRadiusXZ(Mathf.Max(1, CurrentCrystalTier));
+                LastFeedbackText =
+                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI [V]: {GetShapeDisplayName(0)} (R={rXZ:0.1}m) | [V] Mimariye Dön ({GetShapeDisplayName(LastArchitecturalShapeId)}) | [Shift+V] Mimari Şekiller | [B] Tarif & Malzeme Kitabı";
+            }
+            else
+            {
+                _shapeIdx = Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1);
+                LastFeedbackText =
+                    $"🧱 MİMARİ BLOK MODU [V]: {GetShapeDisplayName(SelectedShapeId)} | [V] Doğal Arazi Fırçası (0) | [Shift+V] Mimari Şekiller (1..7, 63) | [R] 24-Yön | [B] Tarif & Malzeme Kitabı";
+            }
+            return SelectedShapeId;
+        }
+
+        public byte CycleArchitecturalShape(int delta = 1)
+        {
+            int archCount = ShapeWheelCycle.Length - 1;
+            int step = delta >= 0 ? 1 : -1;
+            int currentArchOffset = (_shapeIdx >= 1 ? _shapeIdx : Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1)) - 1;
+            int nextArchOffset = (currentArchOffset + step + archCount) % archCount;
+            _shapeIdx = 1 + nextArchOffset;
+            _lastArchitecturalShapeIdx = _shapeIdx;
+            LastFeedbackText =
+                $"📐 MİMARİ ŞEKİL SEÇİLDİ [Shift+V]: {GetShapeDisplayName(SelectedShapeId)} (1..7, 63) | [V] Doğal Arazi Saçılım Fırçası (0) Hızlı Geçiş | [R] 24-Yön | [B] Tarif & Malzeme Kitabı";
+            return SelectedShapeId;
+        }
+
+        public bool TryUpgradeCrystalWithResonance(
+            Stage1HolsterAndBackpackController? holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            if (CurrentCrystalTier <= 0)
+            {
+                LastFeedbackText =
+                    "⚠️ UYUYAN MADDE KRİSTALİ (T0): Rezonans Kristali yedirmeden önce 3x Rezonans Kuvarsı ile [C] tuşuna basarak kristali Kademe T1'e uyandırın!";
+                return false;
+            }
+
+            if (CurrentCrystalTier >= 5)
+            {
+                LastFeedbackText =
+                    "✨ MADDE KRİSTALİ ZATEN MAKSİMUM KADEMEDE (T5 | Kapasite: 50.000 Blok | 7x7x7 Efsanevi Vakum & R=3.5m Doğal Fırça)!";
+                return false;
+            }
+
+            int targetTier = CurrentCrystalTier + 1;
+            if (holsterCtrl == null ||
+                !holsterCtrl.InventoryUi.TryConsumeOneResonanceCrystalForTier(targetTier, this, out string consumedLabel))
+            {
+                LastFeedbackText =
+                    $"⚠️ KRİSTAL EVRİMİ (T{CurrentCrystalTier} -> T{targetTier}): Envanterde T{targetTier} Rezonans Kristali yok! (Halka {targetTier}+ yaratık/bosslarından düşer | [B] Tarif & Malzeme Kitabı)";
+                return false;
+            }
+
+            AwakenOrUpgradeCrystalToTier(targetTier);
+            AwakeningPulseTimer = 1.10f;
+            IsCrystalActive = true;
+
+            if (holsterCtrl.InventoryUi.SelectedHotbarIndex >= 0 && holsterCtrl.InventoryUi.GetActiveHotbarSlot().IsEmpty)
+            {
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(this, combatBridge);
+            }
+            holsterCtrl.InventoryUi.SyncWithCrystalStorage(this);
+
+            LastFeedbackText =
+                $"✨ MADDE KRİSTALİ EVRİMLEŞTİ ({consumedLabel} -> Kademe T{CurrentCrystalTier} | Kapasite: {CrystalStorage.MaxTotalBlocksCapacity} Blok | Vakum: {VacuumSystem.CurrentVacuumRadius:0.1}m | Doğal Fırça: R={GetTierScatterRadiusXZ(CurrentCrystalTier):0.1}m)!";
+            return true;
         }
 
         public void SelectMaterial(byte materialId)
@@ -232,9 +306,15 @@ namespace Stratocraft.Character
         {
             if (CurrentCrystalTier >= 1)
             {
+                if (IsCrystalActive && CurrentCrystalTier < 5 && holsterCtrl != null &&
+                    holsterCtrl.InventoryUi.CountResonanceCrystalForTier(CurrentCrystalTier + 1) > 0)
+                {
+                    return TryUpgradeCrystalWithResonance(holsterCtrl, combatBridge);
+                }
+
                 IsCrystalActive = !IsCrystalActive;
                 LastFeedbackText = IsCrystalActive
-                    ? $"💎 MADDE KRİSTALİ AKTİF (Kademe T{CurrentCrystalTier}): [Sol Tık] Vakumla | [Sağ Tık] İnşa Et!"
+                    ? $"💎 MADDE KRİSTALİ AKTİF (Kademe T{CurrentCrystalTier}): [Sol Tık] Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı"
                     : "💎 Madde Kristali uyku moduna alındı ([C] ile tekrar açabilirsiniz).";
                 return true;
             }
@@ -263,7 +343,7 @@ namespace Stratocraft.Character
             IsCrystalActive = true;
             holsterCtrl.InventoryUi.SyncWithCrystalStorage(this);
             LastFeedbackText =
-                "✨ MADDE KRİSTALİ UYANDI (3/3 Kuvars -> Kademe T1 | Kapasite: 500 Blok)! [Sol Tık] Arazi Vakumla | [Sağ Tık] İnşa Et | [V] Şekil Seç!";
+                "✨ MADDE KRİSTALİ UYANDI (3/3 Kuvars -> Kademe T1 | Kapasite: 500 Blok)! [Sol Tık] Arazi Vakumla | [Sağ Tık] İnşa Et | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             return true;
         }
 
@@ -276,6 +356,10 @@ namespace Stratocraft.Character
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
             if (AwakeningPulseTimer > 0f) AwakeningPulseTimer = Mathf.Max(0f, AwakeningPulseTimer - dt);
             CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
+            if (CurrentCrystalTier >= 1)
+            {
+                VacuumSystem.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 5);
+            }
             if (CurrentCrystalTier <= 0 && IsCrystalActive)
             {
                 IsCrystalActive = false;
@@ -305,15 +389,75 @@ namespace Stratocraft.Character
                                 $"⚠️ UYUYAN MADDE KRİSTALİ (T0 | Yüklü: {AwakeningQuartzFedCount}/3): Elinize Kuvars alıp [C] veya [Sağ Tık] ile 3 kez yedirin! (Çantada: {haveQuartz}){creativeTip}";
                         }
                     }
+                    else if (isCreative && shift)
+                    {
+                        int nextCreativeTier = CurrentCrystalTier < 5 ? CurrentCrystalTier + 1 : 1;
+                        AwakenOrUpgradeCrystalToTier(nextCreativeTier);
+                        IsCrystalActive = true;
+                        holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
+                        LastFeedbackText =
+                            $"★ [YARATICI SHIFT+C]: Madde Kristali Kademe T{CurrentCrystalTier} ({CrystalStorage.MaxTotalBlocksCapacity} Blok) seviyesine ayarlandı!";
+                    }
+                    else if (IsCrystalActive)
+                    {
+                        if (CurrentCrystalTier < 5 && holsterCtrl != null &&
+                            holsterCtrl.InventoryUi.CountResonanceCrystalForTier(CurrentCrystalTier + 1) > 0)
+                        {
+                            TryUpgradeCrystalWithResonance(holsterCtrl);
+                        }
+                        else
+                        {
+                            bool holdingAnyResonanceCrystal = holsterCtrl != null &&
+                                holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.ResonanceCrystal;
+                            if (holdingAnyResonanceCrystal || shift)
+                            {
+                                TryUpgradeCrystalWithResonance(holsterCtrl);
+                            }
+                            else
+                            {
+                                IsCrystalActive = false;
+                                string upgradeHint = CurrentCrystalTier < 5
+                                    ? $" (T{CurrentCrystalTier + 1} evrimi için çantada T{CurrentCrystalTier + 1} Rezonans Kristali yok)"
+                                    : " (Maksimum Kademe T5)";
+                                LastFeedbackText =
+                                    $"💎 Madde Kristali uyku moduna alındı{upgradeHint}. [C] ile açılır | [B] Tarif & Malzeme Kitabı.";
+                            }
+                        }
+                    }
                     else
                     {
-                        IsCrystalActive = !IsCrystalActive;
+                        bool holdingMatchingResonance = CurrentCrystalTier < 5 && holsterCtrl != null &&
+                            Stage1VisualHotbarAndInventoryUi.IsResonanceCrystalForTierSlot(
+                                holsterCtrl.InventoryUi.GetActiveHotbarSlot(), CurrentCrystalTier + 1);
+                        if (holdingMatchingResonance)
+                        {
+                            TryUpgradeCrystalWithResonance(holsterCtrl);
+                        }
+                        else
+                        {
+                            IsCrystalActive = true;
+                            int nextTier = CurrentCrystalTier + 1;
+                            bool hasUpgradeReady = CurrentCrystalTier < 5 && holsterCtrl != null &&
+                                holsterCtrl.InventoryUi.CountResonanceCrystalForTier(nextTier) > 0;
+                            string upgradeNote = hasUpgradeReady
+                                ? $" | ✨ Çantada T{nextTier} Rezonans Kristali hazır: Evrim için tekrar [C]'ye basın!"
+                                : (CurrentCrystalTier < 5 ? $" | Evrim: T{nextTier} Rezonans Kristali" : " | Maksimum T5");
+                            LastFeedbackText =
+                                $"💎 MADDE KRİSTALİ AKTİF (T{CurrentCrystalTier} | {CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity} Blok){upgradeNote} | [V] Doğal/Mimari | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                        }
                     }
                 }
                 if (Input.GetKeyDown(KeyCode.V))
                 {
-                    _shapeIdx = (_shapeIdx + 1) % ShapeWheelCycle.Length;
-                    LastFeedbackText = $"Insa Modu [V]: {GetShapeDisplayName(SelectedShapeId)} (0=Dogal Dairesel Arazi Sacilimi, 1..7=Mimari Sekil, 63=Mikro)";
+                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    if (shift)
+                    {
+                        CycleArchitecturalShape(1);
+                    }
+                    else
+                    {
+                        ToggleNaturalScatterAndArchitecturalShape();
+                    }
                 }
                 if (Input.GetKeyDown(KeyCode.R) && IsCrystalActive)
                 {
@@ -325,7 +469,7 @@ namespace Stratocraft.Character
                         ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
                         : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
                 }
-                if (Input.GetKeyDown(KeyCode.B))
+                if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) && Input.GetKeyDown(KeyCode.B))
                 {
                     CycleCrystalMaterial(1);
                 }
@@ -336,7 +480,11 @@ namespace Stratocraft.Character
                 {
                     int delta = scroll > 0f ? 1 : -1;
                     _shapeIdx = (_shapeIdx + delta + ShapeWheelCycle.Length) % ShapeWheelCycle.Length;
-                    LastFeedbackText = $"İnşa Şekli [Alt+Tekerlek]: {GetShapeDisplayName(SelectedShapeId)}";
+                    if (_shapeIdx > 0)
+                    {
+                        _lastArchitecturalShapeIdx = _shapeIdx;
+                    }
+                    LastFeedbackText = $"İnşa Şekli [Alt+Tekerlek]: {GetShapeDisplayName(SelectedShapeId)} ([V] Doğal/Mimari Geçiş | [Shift+V] Mimari Şekiller)";
                 }
                 else if (IsCrystalActive && (Input.GetKeyDown(KeyCode.T) || (shiftHeld && Mathf.Abs(scroll) > 0.001f)))
                 {
@@ -485,6 +633,15 @@ namespace Stratocraft.Character
                     TryFeedQuartzToAwakenCrystal(holsterCtrl, combatBridge);
                     return;
                 }
+            }
+
+            if (holsterCtrl != null &&
+                holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.ResonanceCrystal &&
+                Input.GetMouseButtonDown(1))
+            {
+                _actionCooldown = 0.18f;
+                TryUpgradeCrystalWithResonance(holsterCtrl, combatBridge);
+                return;
             }
 
             if (!HasAimHit || _actionCooldown > 0f || AimHit.distance > 9.5f) return;
@@ -1722,6 +1879,9 @@ namespace Stratocraft.Character
             if (_droppedWorldItems.Count == 0) return;
             Vector3 magnetTarget = playerPos + new Vector3(0f, 0.92f, 0f);
             bool vacuumActive = IsCrystalActive && CurrentCrystalTier >= 1 && Input.GetMouseButton(0);
+            VacuumSystem.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 5);
+            float vacuumRadius = VacuumSystem.CurrentVacuumRadius;
+            float vacuumPullSpeed = VacuumSystem.CurrentPullSpeed;
 
             for (int i = _droppedWorldItems.Count - 1; i >= 0; i--)
             {
@@ -1735,13 +1895,13 @@ namespace Stratocraft.Character
                 item.SpawnAge += dt;
                 float distToPlayer = Vector3.Distance(item.Position, magnetTarget);
 
-                // Yalnızca aktif Madde Kristali Vakum Işını ([C] + Sol Tık <= 6.5m) eşyaları uzaktan çeker;
+                // Yalnızca aktif Madde Kristali Vakum Işını ([C] + Sol Tık <= T1..T5 vakum yarıçapı) eşyaları uzaktan çeker;
                 // normal [E] tuşu ise baktığın eşyayı 0.0s gecikmesiz anında alır!
-                if (item.SpawnAge >= 0.20f && vacuumActive && distToPlayer <= 6.5f)
+                if (item.SpawnAge >= 0.20f && vacuumActive && distToPlayer <= vacuumRadius)
                 {
                     item.IsSettled = false;
                     Vector3 toPlayer = (magnetTarget - item.Position).normalized;
-                    item.Velocity = Vector3.Lerp(item.Velocity, toPlayer * 12.5f, Mathf.Clamp01(dt * 14f));
+                    item.Velocity = Vector3.Lerp(item.Velocity, toPlayer * vacuumPullSpeed, Mathf.Clamp01(dt * 14f));
                     item.Position += item.Velocity * dt;
                     item.VisualGo.transform.position = item.Position;
 
@@ -1830,6 +1990,11 @@ namespace Stratocraft.Character
             if (explicitKind != InventoryItemKind.Empty)
             {
                 kind = explicitKind;
+                if (kind == InventoryItemKind.ResonanceCrystal)
+                {
+                    subId = (byte)Mathf.Clamp(materialId, 2, 5);
+                    return;
+                }
                 subId = (kind == InventoryItemKind.RoughStoneChunk ||
                          kind == InventoryItemKind.SplitFirewood ||
                          kind == InventoryItemKind.OreChunk ||
@@ -2197,7 +2362,7 @@ namespace Stratocraft.Character
                     }
                 }
                 if (!consumedFromStorage && !(placingFromHandSlot && TryConsumeOneFromActiveHotbarSlot(holsterCtrl, out consumedFromHandKind)))
-                { LastFeedbackText = $"Depoda {GetMaterialDisplayName(mat)} kalmadi! ([Tekerlek/B] ile baska malzeme secin)"; return; }
+                { LastFeedbackText = $"Depoda {GetMaterialDisplayName(mat)} kalmadı! ([Tekerlek/Ctrl+B] ile başka malzeme seçin | [B] Tarif & Malzeme Kitabı)"; return; }
 
                 if (consumedFromHandKind == InventoryItemKind.RoughStoneChunk || consumedFromHandKind == InventoryItemKind.LooseDirtClod)
                 {
@@ -2282,8 +2447,8 @@ namespace Stratocraft.Character
                 ? AimHit.point + AimHit.normal * 0.18f
                 : new Vector3(PlacementVoxelCoord.x + 0.5f, PlacementVoxelCoord.y + 0.35f, PlacementVoxelCoord.z + 0.5f);
 
-            float rXZ = GetTierScatterRadiusXZ(Mathf.Max(1, CurrentCrystalTier));
-            float rY = Mathf.Max(1.15f, 0.65f * rXZ);
+            float rXZ = MatterCrystalVacuumSystem.GetNaturalScatterRadiusXZForTier(Mathf.Max(1, CurrentCrystalTier));
+            float rY = MatterCrystalVacuumSystem.GetNaturalScatterRadiusYForTier(Mathf.Max(1, CurrentCrystalTier));
 
             int minWx = Mathf.FloorToInt(center.x - rXZ - 1f);
             int maxWx = Mathf.CeilToInt(center.x + rXZ + 1f);
@@ -2324,10 +2489,11 @@ namespace Stratocraft.Character
                 if (curMat != MaterialIdCatalog.Air && curShape != 0) continue;
 
                 byte curDens = curMat == MaterialIdCatalog.Air ? (byte)0 : VoxelBitUtility.GetDensityOrLiquid(curRaw);
-                if (curDens >= targetDens) continue;
+                byte smoothedDens = MatterCrystalVacuumSystem.ComputeNaturalScatterSmoothedDensity(curDens, targetDens);
+                if (curDens >= smoothedDens) continue;
 
                 uint oldMass = CrystalMassStorage.MassQ24_8FromDensity7(curDens);
-                uint newMass = CrystalMassStorage.MassQ24_8FromDensity7(targetDens);
+                uint newMass = CrystalMassStorage.MassQ24_8FromDensity7(smoothedDens);
                 if (newMass <= oldMass) continue;
                 uint neededQ24_8 = newMass - oldMass;
 
@@ -2339,7 +2505,7 @@ namespace Stratocraft.Character
 
                 byte writeMat = curMat == MaterialIdCatalog.Air ? mat : curMat;
                 voxels[idx] = VoxelBitUtility.PackStandard(
-                    writeMat, targetDens, 0, 0, BlokKokenDurumu.DogalKutle, preservedDmg);
+                    writeMat, smoothedDens, 0, 0, BlokKokenDurumu.DogalKutle, preservedDmg);
 
                 spentMassQ24_8 += neededQ24_8;
                 modifiedCells++;
@@ -2364,7 +2530,7 @@ namespace Stratocraft.Character
                     collapseBridge.EvaluateChunkStability(lastTouchedChunk.cx, lastTouchedChunk.cz, tv, maxY, center, sharedMat, dirty, out _);
                 }
                 LastFeedbackText =
-                    $"🌿 DOĞAL ARAZİ SAÇILDI (R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks})";
+                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI (Kademe T{Mathf.Max(1, CurrentCrystalTier)} | R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks}) | [V] Mimariye Geç | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             }
             else if (blockedByPlayerCapsule)
             {

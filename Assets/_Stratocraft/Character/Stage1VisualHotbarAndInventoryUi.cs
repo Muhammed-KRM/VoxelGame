@@ -64,7 +64,8 @@ namespace Stratocraft.Character
         IronBloomSponge = 46,
         WroughtIronBar = 47,
         SlagShard = 48,
-        WoodenWheel = 49
+        WoodenWheel = 49,
+        ResonanceCrystal = 50
     }
 
     /// <summary>
@@ -132,6 +133,7 @@ namespace Stratocraft.Character
             InventoryItemKind.WroughtIronBar => PhysicalItemArchetype.WroughtIronBar,
             InventoryItemKind.SlagShard => PhysicalItemArchetype.SlagGlassShard,
             InventoryItemKind.WoodenWheel => PhysicalItemArchetype.WoodenWheel,
+            InventoryItemKind.ResonanceCrystal => PhysicalItemArchetype.QuartzCrystalCluster,
             InventoryItemKind.MetalIngot => PhysicalItemArchetype.MetalIngotBar,
             _ => PhysicalItemArchetype.None
         };
@@ -175,6 +177,7 @@ namespace Stratocraft.Character
                    Kind == InventoryItemKind.ClayCruciblePot ||
                    Kind == InventoryItemKind.WroughtIronBar ||
                    Kind == InventoryItemKind.SlagShard ||
+                   Kind == InventoryItemKind.ResonanceCrystal ||
                    Kind == InventoryItemKind.PlaceableCampfire ||
                    Kind == InventoryItemKind.PlaceableStoneKiln;
         }
@@ -311,6 +314,7 @@ namespace Stratocraft.Character
             InventoryItemKind.ClayCruciblePot => 2,
             InventoryItemKind.WroughtIronBar => 8,
             InventoryItemKind.SlagShard => 12,
+            InventoryItemKind.ResonanceCrystal => 8,
             InventoryItemKind.RawHide => 6,
             InventoryItemKind.MetalIngot => 12,
             InventoryItemKind.VoxelBlock => 8,
@@ -538,6 +542,89 @@ namespace Stratocraft.Character
             {
                 consumedLabel = "Kuvars Kristali";
                 return true;
+            }
+
+            consumedLabel = string.Empty;
+            return false;
+        }
+
+        public static bool IsResonanceCrystalForTierSlot(in VisualInventorySlot slot, int targetTier)
+        {
+            if (slot.IsEmpty || slot.Kind != InventoryItemKind.ResonanceCrystal) return false;
+            int slotTier = slot.SubId >= 2 && slot.SubId <= 5 ? slot.SubId : 2;
+            return slotTier == Mathf.Clamp(targetTier, 2, 5);
+        }
+
+        public int CountResonanceCrystalForTier(int targetTier)
+        {
+            int clampedTier = Mathf.Clamp(targetTier, 2, 5);
+            int total = 0;
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                if (IsResonanceCrystalForTierSlot(in HotbarSlots[i], clampedTier))
+                {
+                    total += HotbarSlots[i].Count;
+                }
+            }
+            for (int i = 0; i < BackpackSlotCount; i++)
+            {
+                if (IsResonanceCrystalForTierSlot(in BackpackSlots[i], clampedTier))
+                {
+                    total += BackpackSlots[i].Count;
+                }
+            }
+            return total;
+        }
+
+        public bool TryConsumeOneResonanceCrystalForTier(byte targetTier) =>
+            TryConsumeOneResonanceCrystalForTier((int)targetTier, null, out _);
+
+        public bool TryConsumeOneResonanceCrystalForTier(int targetTier, Stage1MatterCrystalAndMiningController? miningCtrl = null) =>
+            TryConsumeOneResonanceCrystalForTier(targetTier, miningCtrl, out _);
+
+        public bool TryConsumeOneResonanceCrystalForTier(
+            int targetTier,
+            Stage1MatterCrystalAndMiningController? miningCtrl,
+            out string consumedLabel)
+        {
+            int clampedTier = Mathf.Clamp(targetTier, 2, 5);
+            if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount)
+            {
+                ref VisualInventorySlot active = ref HotbarSlots[SelectedHotbarIndex];
+                if (IsResonanceCrystalForTierSlot(in active, clampedTier))
+                {
+                    consumedLabel = GetSlotDisplayName(in active);
+                    active.Count--;
+                    if (active.Count <= 0) active = default;
+                    if (miningCtrl != null) PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                ref VisualInventorySlot slot = ref HotbarSlots[i];
+                if (IsResonanceCrystalForTierSlot(in slot, clampedTier))
+                {
+                    consumedLabel = GetSlotDisplayName(in slot);
+                    slot.Count--;
+                    if (slot.Count <= 0) slot = default;
+                    if (miningCtrl != null) PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
+            }
+
+            for (int i = 0; i < BackpackSlotCount; i++)
+            {
+                ref VisualInventorySlot slot = ref BackpackSlots[i];
+                if (IsResonanceCrystalForTierSlot(in slot, clampedTier))
+                {
+                    consumedLabel = GetSlotDisplayName(in slot);
+                    slot.Count--;
+                    if (slot.Count <= 0) slot = default;
+                    if (miningCtrl != null) PushUiCountsToCrystalStorage(miningCtrl);
+                    return true;
+                }
             }
 
             consumedLabel = string.Empty;
@@ -2133,7 +2220,7 @@ namespace Stratocraft.Character
             Rect bgRect = new Rect(px, py, panelW, panelH);
             GUI.DrawTexture(bgRect, _windowBgTex!);
             string header =
-                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Fare Tekerleği / B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [T]: {miningCtrl.BrushAreaLabel}";
+                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Tekerlek / Ctrl+B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [Shift+V]: Mimari Şekil | [T]: {miningCtrl.BrushAreaLabel} | [B]: Tarif & Malzeme Kitabı";
             GUI.Label(new Rect(px + 6f, py + 3f, panelW - 12f, 20f), header, _slotTitleBannerStyle!);
 
             byte selectedMat = miningCtrl.SelectedMaterialId;
@@ -2327,6 +2414,7 @@ namespace Stratocraft.Character
             InventoryItemKind.WroughtIronBar => "DövmeFe",
             InventoryItemKind.SlagShard => "Cüruf",
             InventoryItemKind.WoodenWheel => "Tekerlek",
+            InventoryItemKind.ResonanceCrystal => $"T{Mathf.Clamp((int)slot.SubId, 2, 5)} Kristal",
             InventoryItemKind.PlaceableCampfire => "Ateş",
             InventoryItemKind.PlaceableStoneKiln => "TaşFırın",
             _ => "Eşya"
@@ -2631,18 +2719,18 @@ namespace Stratocraft.Character
         {
             if (miningCtrl.IsCrystalActive)
             {
-                return $"[C] MADDE KRISTALI AKTIF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tik] Vakumla | [Sag Tik] Insa Et ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)})";
+                return $"[C] MADDE KRİSTALİ AKTİF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tık] Vakumla | [Sağ Tık] İnşa ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)}) | [V] Mod | [Ctrl+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             }
 
             if (SelectedHotbarIndex == -1)
             {
-                return "[0] BOŞ EL — [Sol Tık] Yumruk (Sadece Canlılara) / Çalı Kırma | [E] Eşya Al | [Ctrl+E Basılı Tut] Toprak/Kum/Kil Avuçla";
+                return "[0] BOŞ EL — [Sol Tık] Yumruk / Çalı Kırma | [E] Eşya Al | [Ctrl+E Basılı Tut] Toprak/Kum/Kil Avuçla | [B] Tarif & Malzeme Kitabı";
             }
 
             VisualInventorySlot slot = GetActiveHotbarSlot();
             if (slot.IsEmpty)
             {
-                return $"[{SelectedHotbarIndex + 1}] BOS KILIF YUVASI — [I] 3B Kumas Cantayi acip bu yuvaya 3B esya surukleyin!";
+                return $"[{SelectedHotbarIndex + 1}] BOŞ KILIF YUVASI — [I] 3B Kumaş Çantayı açıp eşya sürükleyin | [B] Tarif & Malzeme Kitabı";
             }
 
             if (IsFluidContainerKind(slot.Kind))
@@ -2650,10 +2738,10 @@ namespace Stratocraft.Character
                 int stored = GetSlotStoredFluidUnits(in slot);
                 int maxU = GetFluidContainerMaxUnits(slot.Kind);
                 string capInfo = slot.SubId == 0 ? $"BOŞ (Kapasite: {maxU} Br)" : $"{stored}/{maxU} Birim";
-                return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} [{capInfo}] — {GetSlotUsageHint(in slot)}";
+                return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} [{capInfo}] — {GetSlotUsageHint(in slot)} | [B] Tarif & Malzeme Kitabı";
             }
 
-            return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)}";
+            return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)} | [B] Tarif & Malzeme Kitabı";
         }
 
         public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge? combatBridge = null) => slot.Kind switch
@@ -2757,6 +2845,14 @@ namespace Stratocraft.Character
             InventoryItemKind.WroughtIronBar => "Dövme Demir Lama (Cüruftan Arındırılmış Saf Demir)",
             InventoryItemKind.SlagShard => "Donmuş Cüruf Cam Parçası",
             InventoryItemKind.WoodenWheel => "Ahşap El Arabası Tekerleği",
+            InventoryItemKind.ResonanceCrystal => Mathf.Clamp((int)slot.SubId, 2, 5) switch
+            {
+                2 => "T2 Rezonans Kristali (Yoğunlaştırılmış Halka 2 Çekirdeği — 1.500 Blok)",
+                3 => "T3 Rezonans Kristali (Kiklop / Ejderha Halka 3 Çekirdeği — 4.000 Blok)",
+                4 => "T4 Rezonans Kristali (Tektonik Titan Halka 4 Çekirdeği — 12.000 Blok)",
+                5 => "T5 Rezonans Kristali (Khaos / Hiçlik Halka 5 Çekirdeği — 50.000 Blok)",
+                _ => "T2 Rezonans Kristali"
+            },
             InventoryItemKind.PlaceableCampfire => "Eski Kamp Ateşi Kiti",
             InventoryItemKind.PlaceableStoneKiln => "Eski Taş Fırın Kiti",
             _ => "Boş Yuva"
@@ -2819,6 +2915,7 @@ namespace Stratocraft.Character
             InventoryItemKind.WroughtIronBar => "Saf Dövme Demir — T2 Demir Alet ve Silah Üretimi",
             InventoryItemKind.SlagShard => "İzabe Fırını veya Demir Dövme Sırasında Ayrışan Cüruf Atığı",
             InventoryItemKind.WoodenWheel => "El Arabası Kurulumunda Kullanılan Yontulmuş Ahşap Tekerlek",
+            InventoryItemKind.ResonanceCrystal => $"[C] Madde Kristali Aktifken [C] veya [Sağ Tık] ile Yedirerek Kristali Kademe T{Mathf.Clamp((int)slot.SubId, 2, 5)}'e Yükselt!",
             InventoryItemKind.ArmorHelmet => "[Sağ Tık] Başa Kuşan / Çıkar (Kafa Hasar Koruması)",
             InventoryItemKind.ArmorChestplate => "[Sağ Tık] Göğse Kuşan / Çıkar (Gövde Darbe Direnci)",
             InventoryItemKind.ArmorVambrace => "[Sağ Tık] Kollara Kuşan / Çıkar (Kol Koruması)",
@@ -3110,6 +3207,7 @@ namespace Stratocraft.Character
                 case InventoryItemKind.FoodCleanWater: DrawCleanWaterIcon(tex); break;
                 case InventoryItemKind.PlaceableCampfire: DrawCampfireIcon(tex); break;
                 case InventoryItemKind.PlaceableStoneKiln: DrawStoneKilnIcon(tex); break;
+                case InventoryItemKind.ResonanceCrystal: DrawResonanceCrystalIcon(tex, slot.SubId); break;
             }
 
             tex.Apply(false, false);
@@ -3621,6 +3719,29 @@ namespace Stratocraft.Character
             FillRect(tex, 20, 33, 8, 5, darkStone);
         }
 
+        private static void DrawResonanceCrystalIcon(Texture2D tex, byte tierSubId)
+        {
+            int tier = Mathf.Clamp((int)tierSubId, 2, 5);
+            Color core = tier switch
+            {
+                2 => new Color(0.18f, 0.86f, 0.96f, 1f), // T2 Turkuaz
+                3 => new Color(0.72f, 0.32f, 0.98f, 1f), // T3 Ametist Moru
+                4 => new Color(0.98f, 0.24f, 0.36f, 1f), // T4 Yakut Kizili
+                _ => new Color(0.96f, 0.42f, 1.00f, 1f)  // T5 Khaos Astral
+            };
+            Color darkFacet = core * 0.58f;
+            darkFacet.a = 1f;
+            Color brightTip = Color.Lerp(core, Color.white, 0.58f);
+
+            // Yan prizma kollari
+            DrawThickLine(tex, 13, 12, 18, 28, 3, darkFacet);
+            DrawThickLine(tex, 35, 12, 30, 29, 3, darkFacet);
+            // Ana merkez kristal kulesi
+            DrawThickLine(tex, 24, 9, 24, 38, 4, core);
+            DrawThickLine(tex, 23, 14, 24, 39, 2, brightTip);
+            FillCircle(tex, 24, 23, 4, brightTip);
+        }
+
         private static Color GetMaterialIconColor(byte matId) => matId switch
         {
             MaterialIdCatalog.Stone => new Color(0.56f, 0.58f, 0.62f, 1f),
@@ -3964,6 +4085,10 @@ namespace Stratocraft.Character
             (InventoryItemKind.KnappedKnifeBlade, 0),
             (InventoryItemKind.KnappedHammerHead, 0),
             (InventoryItemKind.OreChunk, MaterialIdCatalog.QuartzGem),
+            (InventoryItemKind.ResonanceCrystal, 2),
+            (InventoryItemKind.ResonanceCrystal, 3),
+            (InventoryItemKind.ResonanceCrystal, 4),
+            (InventoryItemKind.ResonanceCrystal, 5),
             (InventoryItemKind.OreChunk, MaterialIdCatalog.CopperOre),
             (InventoryItemKind.OreChunk, MaterialIdCatalog.IronOre),
             (InventoryItemKind.CharcoalChunk, 0),
