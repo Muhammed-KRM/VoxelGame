@@ -13,11 +13,11 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#057` (**Paket 2 Tam Kapanış + Paket 3 Mağara Ekolojisi, 3B Cevherler ve Lav Katılaşması TAMAMLANDI:** `1)` **Paket 2 Tam Kapanış:** `[B]` 4 sekmeli Tarifler ve Malzemeler Rehber Kitabı (`0 B/kare` GC), `Shift+E` / Su kabıyla fırın ve kamp ateşi söndürme (`Extinguish`), Bloomery fırınına doğrudan cevher yükleme (`CrushedPowder`, `RoastedChunk`, `RawOre`) ve dışa dönük 3B model cilası, `T2..T5` Rezonans Kristali gelişimi ve `r >= 75m` canavar ganimeti, `[V]` `ShapeId=0` Doğal Arazi Saçılım Fırçası ve `[Ctrl+B]` malzeme seçimi. `2)` **Paket 3 Faz 3.1..3.4:** `HybridSurfaceNetsAndShapeMesher` 3B Cevher Rölyefi (`Ore Nugget Relief`) ve `0 MB` VRAM `StratocraftUberShader` metalik damar parıltısı / meşale `Glint`, Jeotermal Derinlik `U-Eğrisi` (`-6°C` sığ mağara -> `+110°C` magma tabanı), `%12-%18` sızdırmaz tabanlı yeraltı su gölleri ve derin damar yüzey izleri (`Outcrops`), Kenar-öncelikli lav katılaşması, `150 sn` `MagmaBlock` akkor kor süresi, `3.5m` `+22°C` kurutma bonusu ve temas yanık hasarı, 5 Mağara Canlısı varyantı (`r >= 75m` ve `Y <= 54m` kilidi) ile `0 MB` PCM akustik ses ve taş tozu pusu telgrafı \| **Sırada: Paket 2 + Paket 3 Canlı PlayMode Testi -> Paket 4**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T12:35:00+03:00` |
+| **Devir Numarası** | `#058` (**Paket 2 & Paket 3 Canlı PlayMode Geri Bildirim Düzeltmeleri + 5 Regresyon Testi TAMAMLANDI:** `1)` **Fiziksel İki Sayfalı Dikişli Deri Kitap UI (`[B]`):** `GUI.color` alfa çarpımı kaynaklı okunamaz metin hatası giderildi; pirinç köşebentler, çok katmanlı kâğıt yığını gölgesi, dikişli sırt kabartması, kırmızı ipek ayraç şeridi ve `[A/D]` / fare tekerleğiyle yaprak çevirme sesli gezintisi. `2)` **Klavye Çakışması & Madencilik Kademeleri (`[Shift+B]`):** Unity Editor `Ctrl+B` Build And Run penceresi çakışması `[Shift+B]` kombinasyonuna geçirilerek çözüldü; `IronOre` kazma kademesi `T1 (Taş Kazma)` seviyesine çekilerek demir çağına geçiş engeli kaldırıldı; `Basalt` `T2 (Bakır/Demir Kazma)`, `NaturalObsidian` `T3` olarak dengelendi; Rehber Kitabı Sekme 1'e derinlik kaya katmanları ve kazma kademe gereksinimleri eklendi. `3)` **Yüzen Kil Kutusu Mağara Göllerinin Kaldırılması:** Mağara zemininde havada yükselen yapay kil ayaklıklar tamamen silindi; `%15` mağara odalarında `PopulateNaturalCaveWaterPoolsInChunk` ile yalnızca mevcut kalın ve masif doğal kaya tabanına/kapalı çukurlara yerleşen, sıfır kil kutulu, sıfır sızıntılı doğal su gölcükleri kuruldu. `4)` **Gökkuşağı Cevher Konfetisinin Kaldırılması & 4 Katmanlı Jeolojik Kaya Stratigrafisi:** Mağara duvarlarını lunaparka çeviren rastgele parlak cevher saçılımı kaldırıldı; 4 katmanlı derinleştikçe sertleşen doğal kaya stratigrafisi (`Stone/Cobblestone -> Stalagnate/Marble -> Basalt -> NaturalObsidian/Magma`) ve jeolojik fay hatlarına paralel nadir `O(1)` 3B kapsül cevher damarları (~%3.5-%5.5) kuruldu. `5)` **Doğrulanan Testler:** `.NET 10 Standalone`: **116/116 PASS**, Unity 6 EditMode: **113/113 PASS** (`0 Error / 0 Warning`) \| **Sırada: Kullanıcı Son Onayı -> Paket 4 Hazırlığı**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T13:45:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 2 Kapanış + Paket 3 (Faz 3.1..3.4) Tamamlandı; Tüm Otomatik Testlerden (108/108 EditMode, 111/111 Standalone .NET 10, 6/6 C++20, 9/9 Python) Geçti -> Kullanıcı Canlı PlayMode Testi ve Paket 4 Hazırlığı` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 108/108 PASS (Paket 1, 2 ve Paket 3 AK-1..AK-7 Dahil)`, `Standalone .NET 10 Core: 111/111 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
+| **Mevcut Çalışma Aşaması** | `Paket 2 & Paket 3 Canlı PlayMode Düzeltmeleri Tamamlandı; Tüm Otomatik Testlerden (113/113 EditMode, 116/116 Standalone .NET 10, 6/6 C++20, 9/9 Python) Geçti -> Kullanıcı Canlı PlayMode Testi ve Paket 4 Başlangıcı` |
+| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 113/113 PASS (Paket 1, 2, 3 ve 5 Yeni Regresyon Testi Dahil)`, `Standalone .NET 10 Core: 116/116 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `3.133 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` `StratocraftUberShader` prosedürel geometri, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
@@ -57,7 +57,36 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#057` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#058` .. `#042`)
+
+### 2.0.00000000000000. Devir #058 (Paket 2 & Paket 3 Canlı PlayMode Geri Bildirim Düzeltmeleri): İki Sayfalı Dikişli Deri Kitap UI, [Shift+B] Kısayolu, T1 Demir Kazma Kademesi, Masif Doğal Taş Mağara Gölleri ve 4 Katmanlı Jeolojik Kaya Stratigrafisi
+
+Kullanıcının canlı `PlayMode` testinde ilettiği 4 kritik geri bildirim doğrultusunda sistemler kök nedenleriyle çözülmüş ve 5 yeni regresyon birim testi (`Paket2ClosureTests.cs` + `Paket3CaveOreAndLavaTests.cs`) ile `.NET 10` (116/116 PASS) ve Unity EditMode (113/113 PASS) seviyesinde doğrulanmıştır:
+
+1. **`[B]` Fiziksel İki Sayfalı Dikişli Deri Kitap UI & `GUI.color` Okunamaz Metin Çözümü (`Stage1SurvivalRecipeBookUi.cs`, `SurvivalRecipeBookCatalog.cs`):**
+   - **Kök Neden:** Kitap arkasındaki karartma perdesi çizilirken `GUI.color = new Color(0, 0, 0, 0.45f)` ayarlanmış, ancak sonrasında `GUI.color = Color.white` geri yüklenmediği için OnGUI döngüsündeki tüm metin renkleri (`GUI.skin.label.normal.textColor`) bu siyah alfa ile çarpılarak harfler kapkara ve okunamaz hale gelmişti. Ayrıca kitap tek sayfada dar bir alana sıkışmıştı.
+   - **Çözüm:** `GUI.color` ve `GUI.contentColor` her çizim bloğundan sonra temizlendi; kitap tam teşekküllü **fiziksel iki sayfalı açık deri cilt (`Two-Page Open Book Spread`)** mimarisine geçirildi:
+     * Deri cilt tabanı, koyu dikiş çizgileri, 4 pirinç köşebent koruması, sayfaların altında katman katman parşömen kâğıt yığını gölgesi, ortada dikişli sırt kabartması ve sarkan kırmızı ipek ayraç şeridi çizildi.
+     * Sol sayfa: Kategori başlığı, sekme butonları, tarif listesi ve dikey kaydırma çubuğu.
+     * Sağ sayfa: Seçili eşyanın/yapının 3B DNA ayrıntıları, gereken malzemeler, termodinamik/işleme kuralları ve ipuçları.
+     * Klavye `[A] / [D]` tuşları ve fare tekerleğiyle yaprak çevirme (`0 B/kare` GC, prosedürel sayfa hışırtısı sesi).
+2. **Klavye Çakışması & Madencilik Kademeleri (`[Shift+B]`, `T1 IronOre` — `Stage1InteractivePlayController.cs`, `Stage1MatterCrystalAndMiningController.cs`, `SurvivalRecipeBookCatalog.cs`):**
+   - **Kök Neden 1 (Kısayol Çakışması):** Madde Kristali açıkken malzeme seçimi `[Ctrl+B]` olarak atanmıştı; ancak Unity Editor ortamında `Ctrl+B` evrensel olarak *"Build and Run"* penceresini açarak oyunu kesintiye uğratıyordu.
+   - **Çözüm 1:** Malzeme seçimi güvenli **`[Shift+B]`** kombinasyonuna taşındı; HUD ipuçları ve yardım metinleri güncellendi.
+   - **Kök Neden 2 (Demir Madencilik Çıkmazı):** `IronOre` kazma kademesi `MiningTier = 2` olarak kilitliydi; ancak `Tier 2` kazma yapabilmek için zaten demir izabesi gerekiyordu (tavuk-yumurta kısırdöngüsü).
+   - **Çözüm 2:** `IronOre` kazma kademesi **`Tier 1 (Taş Kazma)`** seviyesine çekilerek doğal ilerleme sağlandı. Manto katmanındaki derin taşlar dengelendi: `Basalt` -> `Tier 2 (Bakır/Demir Kazma)`, `NaturalObsidian` -> `Tier 3`.
+   - **Rehber Kitabı Güncellemesi:** Sekme 1'e derinlik kaya katmanları, derinlik metreleri ve gereken kazma kademeleri ("Derinlik Kaya Katmanları & Kazma Kademeleri") tam liste olarak eklendi.
+3. **Yüzen Kil Kutusu Mağara Göllerinin Kaldırılması & Masif Doğal Taş Su Havzaları (`StratocraftFloatingIslandWorldGen.cs`):**
+   - **Kök Neden:** Eski algoritmada göl oluşturulurken tabana yapay kil çanak yerleştiriliyordu; mağara odalarında tavan veya yan boşluklara denk geldiğinde bu kil blokları mağaranın ortasında yapay bir "kil kutu / havuz masası" gibi havada asılı kalıyordu.
+   - **Çözüm:** Yapay kil kutusu yerleştirme tamamen kaldırıldı. Yerine `PopulateNaturalCaveWaterPoolsInChunk` yazıldı: Yalnızca oda merkezine yakın (`swell01 > 0.60f`, odaların `%15`'i), tabanında kesintisiz masif doğal kaya (`Stone`, `Cobblestone`, `Basalt` vb.) bulunan ve etrafı doğal taş duvarlarla çevrili kapalı çukurlara durgun su hücreleri (`FluidType.Water`, `isSettled = true`) dolduruldu. Sıfır kil kutusu, sıfır sızıntı, %100 doğal mağara içi gölcükler sağlandı.
+4. **Gökkuşağı Cevher Konfetisinin Kaldırılması & 4 Katmanlı Jeolojik Kaya Stratigrafisi (`StratocraftFloatingIslandWorldGen.cs`):**
+   - **Kök Neden:** Mağara duvarlarında her voksele bağımsız gürültüyle rastgele parlak cevher atanıyor, bu da mağarayı lunapark gibi alacalı ve gerçek dışı bir konfetiye boğuyordu.
+   - **Çözüm:** Mağara kayaları derinleştikçe sertleşen 4 katmanlı jeolojik mantoya bağlandı:
+     * `Y > 74m` (Sığ Mağara): `Stone` (%70) ve `Cobblestone` (%30).
+     * `Y in [54..74m]` (Orta Galeri): `Stalagnate` (%60) ve `Marble` (%40).
+     * `Y in [28..54m]` (Derin Manto): Masif sert `Basalt`.
+     * `Y < 28m` (Magma Tabanı): `NaturalObsidian` ve `Magma` damarları.
+   - Cevherler bu kaya matrisi içinde rastgele tek tek saçılmak yerine; jeolojik fay hatlarına paralel, nadir `O(1)` deterministik 3B kapsül damarlar (~%3.5-%5.5 hacim) halinde odaklandı. Mağara yüzeyleri artık doğal, karanlık ve ağırbaşlı masif taş görünümüne kavuştu.
 
 ### 2.0.0000000000000. Devir #057 (Paket 2 Tam Kapanış & Paket 3 Faz 3.1..3.4): 3B Zanaat Rehber Kitabı, Ateş/Fırın Söndürme, Rezonans Kristali Tiers, Doğal Arazi Fırçası, 3B Cevher Rölyefi, 0 MB Glint, Jeotermal U-Eğrisi, Yeraltı Gölleri, Lav Katılaşması ve Mağara Canlıları
 
@@ -816,54 +845,58 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ### 3.2. Kullanıcı Tarafından Canlı PlayMode'da Şimdi Test Edilecek Noktalar (`🧪 PAKET 2 KAPANIS + PAKET 3 AYRINTILI CANLI TEST REHBERI`)
 
-> **Not:** Tüm otomatik doğrulama kapıları (**`108/108` Unity EditMode** + **`111/111` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`3.133 MB` VRAM**) tam olarak geçmiştir. Hızlı malzeme almak isterseniz **`[F4]` -> `[Tab]`** yaratıcı kataloğunu da kullanabilirsiniz.
+> **Not:** Tüm otomatik doğrulama kapıları (**`113/113` Unity EditMode** + **`116/116` Standalone .NET 10** + **`6/6` C++20 Native** + **`9/9` Python Factory** + **`0 Error / 0 Warning`** + **`3.133 MB` VRAM**) tam olarak geçmiştir. Hızlı malzeme almak isterseniz **`[F4]` -> `[Tab]`** yaratıcı kataloğunu da kullanabilirsiniz.
 
-#### A. Paket 2 Kapanış Testleri (Zanaat Rehberi, Söndürme, Bloomery, Kristal Tiers & Arazi Fırçası)
+#### A. Paket 2 Kapanış & PlayMode Geri Bildirim Testleri (İki Sayfalı Kitap, Söndürme, Bloomery, Kristal Tiers & Arazi Fırçası)
 
-1. 🧪 **Test 1 — `[B]` 4 Sekmeli Zanaat & Malzeme Rehber Kitabı ve `[Ctrl+B]`:**
-   - Oyun içindeyken **`[B]`** tuşuna basın: 4 sekmeli (`[1] Doğal Malzemeler`, `[2] İlkel Zanaat`, `[3] Fiziksel Yapılar`, `[4] Ateş & İzabe`) karesiz rehber kitabı açılır.
-   - Açıkken farenin serbest kaldığını (`CursorLockMode.None`), kamera ve saldırıların kilitlendiğini doğrulayın; sekmeler arasında tıklayarak tarifleri okuyun.
-   - **`[ESC]`** tuşuna basıldığında oyun duraklatma menüsü yerine doğrudan rehber kitabının kapandığını görün.
-   - Madde Kristali açıkken malzeme seçimi için **`[Ctrl+B]`** kombinasyonunu kullanın.
-2. 🧪 **Test 2 — Kamp Ateşi & Bloomery Fırını Söndürme (`[Shift+E]` & Su Kapları):**
+1. 🧪 **Test 1 — `[B]` Fiziksel İki Sayfalı Dikişli Deri Kitap UI ve `[Shift+B]`:**
+   - Oyun içindeyken **`[B]`** tuşuna basın: Açık iki sayfalı dikişli deri cilt, 4 pirinç köşebent, parşömen kâğıt yığını gölgesi, dikişli sırt kabartması ve kırmızı ipek ayraç şeridiyle tam teşekküllü rehber kitabı açılır.
+   - Metinlerin arka plan karartmasından etkilenmeden kristal berraklığında (`GUI.color` sıfırlamalı) okunduğunu doğrulayın.
+   - Sayfaları çevirmek için klavyeden **`[A] / [D]`** tuşlarına basın veya fare tekerleğini kaydırın (sayfa hışırtı sesi).
+   - Sekme 1'de yeni eklenen *"Derinlik Kaya Katmanları & Kazma Kademeleri"* kılavuzunu inceleyin.
+   - **`[ESC]`** tuşuna basıldığında oyun menüsü yerine doğrudan kitabın kapandığını görün.
+   - Madde Kristali açıkken malzeme seçimi için **`[Shift+B]`** kombinasyonunu kullanın (artık Unity `Ctrl+B` Build penceresi açılmaz!).
+2. 🧪 **Test 2 — Demir Çağı Kazma Kademesi (`IronOre` T1):**
+   - Elinize İlkel Taş Kazma alıp ham bir Demir Cevherine (`IronOre`) vurun: Eski kilitlenmenin kalktığını ve Taş Kazma ile demir çıkarılabildiğini doğrulayın.
+   - Derin mantodaki `Basalt` için Bakır/Demir kazma (`T2`), `NaturalObsidian` için `T3` kazma gerektiğini test edin.
+3. 🧪 **Test 3 — Kamp Ateşi & Bloomery Fırını Söndürme (`[Shift+E]` & Su Kapları):**
    - Yanan bir Kamp Ateşine veya çalışan bir Bloomery fırınına bakın.
    - **`[Shift+E]`** tuşuna basın: Ateşin/fırının anında söndüğünü (`"Fırın söndürüldü (yakıt ve ilerleme korundu)."`), kalan odun/kömür yakıtının ve ergitme/kavurma ilerlemesinin boşa gitmeden korunduğunu görün.
    - Alternatif: Elinize su dolu kap (`ToolFluidBucket`, `ToolFluidFlask`, `ToolFluidCauldron` veya `FoodCleanWater`) alıp yanan ocağa **`Sağ Tık`** yapın; su buharlaşarak ateşi söndürür.
-3. 🧪 **Test 3 — Bloomery Fırınına Çoklu Formda Doğrudan Cevher Yükleme:**
+4. 🧪 **Test 4 — Bloomery Fırınına Çoklu Formda Doğrudan Cevher Yükleme:**
    - Çalışan fırına artık sadece kırılmış toz değil; **`Kavrulmuş Parça (`RoastedOreChunk`, 0.85x hız)`** veya **`Ham Cevher (`OreChunk`/`VoxelBlock`, 0.70x hız)`** ile de doğrudan üstten **`Sağ Tık`** yükleme yapın.
    - Bakır fırınına Demir cevheri veya Demir fırınına Bakır cevheri koymaya çalıştığınızda Türkçe uyarıyla reddedildiğini doğrulayın.
-4. 🧪 **Test 4 — `[V]` Doğal Arazi Saçılım Fırçası (`ShapeId = 0`) & `[Shift+V]` Mimari Döngü:**
+5. 🧪 **Test 5 — `[V]` Doğal Arazi Saçılım Fırçası (`ShapeId = 0`) & `[Shift+V]` Mimari Döngü:**
    - Madde Kristali açıkken (`[C]`), elinizde Toprak veya Taş seçiliyken **`[V]`** tuşuna basın: Ekran üstünde `>> DOĞAL ARAZİ SAÇILIM FIRÇASI (ShapeId=0) <<` yazar.
    - Sol tıklayarak zemine blok koyun: Sivri Minecraft küpü yerine mevcut yamaç eğimine yumuşakça yayılan doğal bir tepecik oluştuğunu gözlemleyin.
    - **`[Shift+V]`** ile mimari şekiller (`1..7, 63`) arasında gezinin; tekrar **`[V]`** bastığınızda son mimari şekil ile doğal fırça arasında anlık geçiş yapın.
-5. 🧪 **Test 5 — Canavar Ganimetinden Rezonans Kristali & `Tier 2..5` Kristal Evrimi:**
+6. 🧪 **Test 6 — Canavar Ganimetinden Rezonans Kristali & `Tier 2..5` Kristal Evrimi:**
    - Başlangıç vadisinin dışına (`r >= 75m`) çıkıp yaban canavarlarını veya bir Boss'u avlayın.
    - Cesedin yanında düşen mor parıltılı **`Rezonans Kristali (`ResonanceCrystal`)`** 3B modelini `[E]` ile toplayın.
    - Elinize alıp **`[C]`** veya **`Sağ Tık`** yapın: Kristal kapasitesinin kademeli olarak arttığını (`Tier 1: 500` -> `Tier 2: 1200` -> `Tier 3: 2500` -> `Tier 4: 5000` -> `Tier 5: 10000`) doğrulayın.
 
-#### B. Paket 3 Testleri (3B Cevherler, U-Eğrisi, Yeraltı Gölleri, Lav Katılaşması ve Mağara Canlıları)
+#### B. Paket 3 Testleri (3B Cevherler, Masif Taş Göller, Jeolojik Katmanlar, Lav & Canlılar)
 
-6. 🧪 **Test 6 — 3B Cevher Rölyefi (`Ore Nugget Relief`) ve Meşale Açısıyla `Glint`:**
-   - Bir mağara tüneline veya açık cevher damarına yaklaşın (Bakır, Demir, Altın, Kuvars).
-   - Düz blok yüzeyi yerine SurfaceNets hücre merkezinde dışarı doğru **`+0.05m..+0.08m` fasetli 3B kabartma** çıktığını inceleyin.
-   - Üzerinde yürüyün: Analitik zemin örnekleyicisi sayesinde karakterin takılmadan, titremeden pürüzsüzce yürüdüğünü görün.
-   - Elinize meşale veya ışık kaynağı alıp farklı açılardan cevhere bakın: Metalik damar parıltısının ve `Glint` yansımasının (Bakır turuncu, Demir çelik-pas, Altın sarı, Değerli taşlar sert kıvılcım) `0 MB` ek VRAM ile parıldadığını gözlemleyin.
-7. 🧪 **Test 7 — `[F12]` ile 3 Mağara Katmanı, Jeotermal U-Eğrisi ve Yüzey Outcrops:**
+7. 🧪 **Test 7 — Sıfır Kil Kutulu Masif Doğal Taş Mağara Gölleri:**
+   - Mağara derinliklerine inin: Eski havada asılı yapay "kil kutu / masa" göllerinin tamamen kalktığını doğrulayın.
+   - Yalnızca kalın ve masif doğal kaya zeminine oturan, kenarları doğal taş duvarlarla çevrili, sıfır sızıntılı ve durgun doğal su gölcüklerini inceleyin.
+8. 🧪 **Test 8 — Konfetisiz 4 Katmanlı Jeolojik Kaya Stratigrafisi ve Odaklı 3B Cevher Damarları:**
+   - Mağara duvarlarını inceleyin: Lunapark gibi saçılmış rastgele cevher lekelerinin yerini; sığda `Stone/Cobblestone`, ortada `Stalagnate/Marble`, derinde sert `Basalt` ve tabanda `Obsidian/Magma` kaya katmanlarının aldığını görün.
+   - Cevherlerin jeolojik fay hatlarında nadir, yoğun ve odaklanmış 3B kapsül damarlar (~%3.5-%5.5) halinde çıktığını gözlemleyin.
+   - Meşale açısıyla metalik parıltı ve `Glint` yansımasını (Bakır kızıl-turuncu, Demir gümüş-pas, Altın sıcak sarı) test edin.
+9. 🧪 **Test 9 — `[F12]` ile 3 Mağara Katmanı, Jeotermal U-Eğrisi ve Yüzey Outcrops:**
    - **`[F12]`** tuşuna basarak 3 derin yeraltı odası arasında geçiş yapın:
      * **Katman 1 (`Y = 75m` Sığ Mağara):** Nemli soğuk taş ortamı; ortam sıcaklığının **`-6°C .. +4°C`** seviyesine düştüğünü (`[F3]` ekranında kontrol edin), hipotermi uyarısını ve meşale yaktığınızda ısınmayı test edin.
      * **Katman 2 (`Y = 54m` Orta Galeri):** Sıcaklığın **`+18°C .. +24°C`** ılıman seviyeye döndüğünü görün.
      * **Katman 4 (`Y = 12.2m` Magma Tabanı):** Sıcaklığın **`+75°C .. +110°C`** kaynayan cehennem ortamına fırladığını, hipertermi ve terleme/yanma riskini gözlemleyin.
    - Yüzey arazisinde derin damarların izdüşümünde yeryüzü kayalarında filizlenen pas/malakit/kuvars kaya izlerini (`Outcrops`) arayın.
-8. 🧪 **Test 8 — `%12-%18` Sızdırmaz Yeraltı Gölleri:**
-   - Katman 1 ve 2 geniş mağara salonlarında ilerleyin.
-   - Odaların `%12-%18`'inde çanak tabanlı, mantoya akıp kaybolmayan, sızdırmaz (`isSettled = true`) durgun yeraltı su göllerini bulun; içine girip yüzme ve sualtı kamerasını test edin.
-9. 🧪 **Test 9 — Kenar-Öncelikli Lav Katılaşması, `150 sn` `MagmaBlock` Soğuması, Isı Yayımı ve Yanık Hasarı:**
-   - Serin bir mağara koridoruna (`T < 55°C`) veya yeraltı gölü kıyısına lav akıtın.
-   - Lavın dış kenarlarından başlayarak **`8-15 sn`** içinde akkor **`MagmaBlock (MaterialId = 11, Temp = 220)`** bloğuna dönüştüğünü izleyin.
-   - Kor bloğa `3.5m` yaklaşın: Kamp ateşi gibi **`+22°C`** ısı yaydığını ve ıslak giysileri `2.5x` hızla kuruttuğunu görün.
-   - Bloğun üzerine basın: Saniyede **`18 HP`** temas yanık hasarı aldığınızı doğrulayın.
-   - **`150 sn`** sonra bloğun tamamen soğuyarak gri **`Basalt (MaterialId = 7)`** taşına dönüştüğünü ve artık hasar vermediğini gözlemleyin.
-10. 🧪 **Test 10 — 5 Mağara Canlısı Varyantı ve `3.5 sn` Akustik Taş Tozu Telgrafı:**
+10. 🧪 **Test 10 — Kenar-Öncelikli Lav Katılaşması, `150 sn` `MagmaBlock` Soğuması, Isı Yayımı ve Yanık Hasarı:**
+    - Serin bir mağara koridoruna (`T < 55°C`) veya yeraltı gölü kıyısına lav akıtın.
+    - Lavın dış kenarlarından başlayarak **`8-15 sn`** içinde akkor **`MagmaBlock (MaterialId = 11, Temp = 220)`** bloğuna dönüştüğünü izleyin.
+    - Kor bloğa `3.5m` yaklaşın: Kamp ateşi gibi **`+22°C`** ısı yaydığını ve ıslak giysileri `2.5x` hızla kuruttuğunu görün.
+    - Bloğun üzerine basın: Saniyede **`18 HP`** temas yanık hasarı aldığınızı doğrulayın.
+    - **`150 sn`** sonra bloğun tamamen soğuyarak gri **`Basalt (MaterialId = 7)`** taşına dönüştüğünü ve artık hasar vermediğini gözlemleyin.
+11. 🧪 **Test 11 — 5 Mağara Canlısı Varyantı ve `3.5 sn` Akustik Taş Tozu Telgrafı:**
     - Mağara derinliklerinde (`r >= 75m`, `Y <= 54m`, karanlık bölge) ilerleyin.
     - Bir canlı (Örümcek, Yarasa sürüsü, Kristal Akrep, İskelet Şövalye, Lav Yılanı) saldırmadan önce:
       * Tavandan dökülen taş tozu parçacıklarını görün.
@@ -880,7 +913,8 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Faz 2.4:** Kömür Ocağı, Cevher Kavurma/Kırma, Kil Pişirme, `1250°C` Bloomery Demircilik, `T2` Demir Aletler & 3B El Arabası
 - ✅ **Paket 2 Kapanış:** `[B]` Zanaat Kitabı, `Shift+E` Söndürme, Bloomery Çoklu Cevher Yükleme, `T2..T5` Kristal Tiers, `[V]` Arazi Saçılım Fırçası
 - ✅ **Paket 3 (Faz 3.1..3.4):** 3B Cevher Rölyefi, `0 MB` Glint, Jeotermal `U-Eğrisi`, Yeraltı Gölleri, Lav Katılaşması (`150 sn`), 5 Mağara Canlısı & Akustik Telgraf
-- 🧪 **Sırada:** Paket 2 + Paket 3 Canlı PlayMode Testi -> **Paket 4 (İnşa, Tarım, Su Çarkı ve Gelişmiş Mekanizmalar)**
+- ✅ **Devir #058 Düzeltmeleri:** Fiziksel İki Sayfalı Deri Kitap UI, `[Shift+B]` Kısayolu, `T1 IronOre` Kazma Kademesi, Masif Doğal Taş Gölleri, 4 Katmanlı Jeolojik Kaya Stratigrafisi ve 5 Regresyon Testi (`116/116` Standalone, `113/113` EditMode)
+- 🧪 **Sırada:** Kullanıcı Son Canlı PlayMode Doğrulaması -> **Paket 4 (İnşa, Tarım, Su Çarkı ve Gelişmiş Mekanizmalar)**
 
 ---
 
@@ -888,8 +922,8 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[B]` Tuşu (`!Ctrl`)** | **Zanaat ve Malzeme Rehber Kitabı:** 4 sekmeli karesiz rehber kitabı (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #057 (Aktif) |
-| **`[Ctrl+B]` Tuşu** | **Madde Kristali Malzeme Seçim Paneli:** Kristal açıkken yerleştirilecek blok türünü seçer | ✅ Devir #057 (Aktif) |
+| **`[B]` Tuşu (`!Shift`)** | **Fiziksel İki Sayfalı Zanaat ve Malzeme Rehber Kitabı:** Dikişli açık deri cilt, pirinç köşebentler, kâğıt yığını, kırmızı ipek ayraç, `[A/D]` veya fare tekerleğiyle yaprak çevirme (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #058 (Aktif) |
+| **`[Shift+B]` Tuşu** | **Madde Kristali Malzeme Seçim Paneli:** Kristal açıkken yerleştirilecek blok türünü seçer (Unity `Ctrl+B` Build penceresi çakışması giderildi) | ✅ Devir #058 (Aktif) |
 | **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme (`Extinguish`):** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür | ✅ Devir #057 (Aktif) |
 | **`[V]` / `[Shift+V]` Tuşu** | **Doğal Arazi Saçılım Fırçası (`ShapeId = 0`):** `[V]` anlık geçiş yapar; `[Shift+V]` mimari şekilleri (`1..7, 63`) tarar | ✅ Devir #057 (Aktif) |
 | **`[F12]` Tuşu** | **Mağara Katmanları Hızlı Test Teleportu:** Katman 1 (`Y=75m`), Katman 2 (`Y=54m`), Katman 4 (`Y=12.2m`) arasında döner | ✅ Devir #057 (Aktif) |
@@ -914,12 +948,12 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #057`** ile birebir eşleştiğini doğrula.
-2. **Adım 2 — Kullanıcıdan `Paket 2 Kapanış + Paket 3` Canlı PlayMode Test Geri Bildirimini Al:**
-   - Kullanıcı **Bölüm 3.2**'deki 10 adımlı `Paket 2 Kapanış + Paket 3` döngüsünü (*Zanaat kitabı [B], Ateş/Fırın söndürme [Shift+E], Bloomery doğrudan cevher yükleme, [V] doğal arazi fırçası, Rezonans Kristali Tiers, [F12] 3 mağara katmanı, meşale Glint, Jeotermal U-eğrisi, Yeraltı gölleri, Lav katılaşması & yanık, Mağara canlıları akustik telgrafı*) test edip onayladıktan sonra **Paket 4** yol haritasına geç.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #058`** ile birebir eşleştiğini doğrula.
+2. **Adım 2 — Kullanıcıdan `Paket 2 & Paket 3` PlayMode Düzeltmeleri Geri Bildirimini Al:**
+   - Kullanıcı **Bölüm 3.2**'deki 11 adımlı test listesini (*Fiziksel iki sayfalı zanaat kitabı [B] ve [A/D] yaprak çevirme, [Shift+B] malzeme seçimi, T1 taş kazmayla demir çıkarma, Masif doğal taş gölleri, 4 katmanlı jeolojik kaya stratigrafisi, Ateş söndürme [Shift+E], Bloomery doğrudan cevher yükleme, [V] doğal arazi fırçası, Rezonans Kristali Tiers, Jeotermal U-eğrisi, Lav katılaşması & yanık, Mağara canlıları akustik telgrafı*) test edip onayladıktan sonra **Paket 4** mimari planlama ve geliştirmesine geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
-   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (`111/111 PASS`).
-   - Unity EditMode Testleri: `108/108 PASS` (`test_run(mode:"editor")`).
+   - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (**`116/116 PASS`**).
+   - Unity EditMode Testleri: **`113/113 PASS`** (`test_run(mode:"editor")`).
    - Unity Konsolu: `0 Error / 0 Warning`.
    - VRAM Bütçesi: `< 16.0 MB` (`3.133 MB` mevcut, sıfır yeni doku, `Color32` `StratocraftUberShader`).
    - GC Bütçesi: `0 B/kare` çalışma zamanı tahsisi.

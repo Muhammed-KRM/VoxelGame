@@ -1,9 +1,9 @@
-# Faz 3 Test ve Kalite Kapisi Raporu (`v0.3.0-faz3`)
+# Faz 3 Test ve Kalite Kapisi Raporu (`v0.3.0-faz3` — Devir #058)
 
-- **Faz:** Faz 3 — Paket 2 Tam Kapanış (`[B]` 4 Sekmeli Zanaat Rehberi, `Shift+E` / Su ile Söndürme, Bloomery Doğrudan Cevher Yükleme & 3B Model Cilası, Rezonans Kristali `Tier 2..5` Gelişimi, `[V]` `ShapeId=0` Doğal Arazi Saçılım Fırçası & `Ctrl+B`) ve Paket 3 (3B Cevher Rölyefi & `0 MB` Shader Glint, Jeotermal `U-Eğrisi` & `%12-%18` Sızdırmaz Yeraltı Gölleri, Kenar-Öncelikli Lav Katılaşması & `150 sn` `Basalt` Soğuması & `3.5m` `+22°C` Kurutma/Yanık, 5 Mağara Canlısı & `r >= 75m` Galeri Kilidi & `0 MB` PCM Ses/Taş Tozu Akustik Telgrafı)
+- **Faz:** Faz 3 — Paket 2 Tam Kapanış & Paket 3 (3B Cevher Rölyefi, `0 MB` Shader Glint, Jeotermal `U-Eğrisi`, `%12-%18` Sızdırmaz Yeraltı Gölleri, Kenar-Öncelikli Lav Katılaşması, `150 sn` `Basalt` Soğuması, 5 Mağara Canlısı & Akustik Telgraf) ve Canlı PlayMode Geri Bildirim Düzeltmeleri (İki Sayfalı Dikişli Deri Kitap UI, `[Shift+B]` Kısayolu, `T1 IronOre` Kademesi, Sıfır Kil Kutulu Masif Taş Göller, 4 Katmanlı Kaya Stratigrafisi ve 5 Yeni Regresyon Testi)
 - **Tarih:** 2026-11-13
-- **Etiket:** `v0.3.0-faz3`
-- **Genel Durum:** **PASS (Kalite Kapısı Adımları Başarılı — Paket 2 Kapanış + Paket 3 Faz 3.1..3.4 Ekoloji, Termodinamik, Voksel Rölyef ve Canlı Sistemleri Eksiksiz Doğrulandı)**
+- **Etiket:** `v0.3.0-faz3` (Devir `#058`)
+- **Genel Durum:** **PASS (Kalite Kapısı Adımları Başarılı — Paket 2 Kapanış + Paket 3 Faz 3.1..3.4 + PlayMode Geri Bildirim Düzeltmeleri Eksiksiz Doğrulandı: 116/116 Standalone, 113/113 EditMode)**
 
 ---
 
@@ -32,7 +32,11 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
 | `p2-verifier` | Paket 2 Kapanış test ve kod doğrulama denetimi (`#25`) | `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Görevini tamamladı |
 | `doc-verifier` | Paket 3 DOK1..DOK4 mimari şartname ve kural uyum denetimi (`#12`) | `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Görevini tamamladı |
 | `monitor` | Swarm kilitlenme ve akış izleyicisi | `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Aktif / İzlemede |
-| `gate-runner` | Faz 3 Kalite Kapısı icrası, telemetri ölçümleri, `DURUM_VE_DEVIR.md` ve devir raporu üretimi (`#39`)| `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Aktif / Bu Rapor |
+| `gate-runner` | Faz 3 Kalite Kapısı icrası, telemetri ölçümleri, `DURUM_VE_DEVIR.md` ve devir raporu üretimi (`#39`)| `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Görevini tamamladı |
+| `fix-recipe-book-crafting` | İki sayfalı dikişli deri kitap UI, `Shift+B` kısayolu ve `T1 IronOre` kademe düzeltmesi (`#43`)| `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Görevini tamamladı |
+| `fix-worldgen-caves` | Masif doğal taş mağara gölleri, kil ayaklıkların kaldırılması, 4 katmanlı kaya stratigrafisi (`#44`)| `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Görevini tamamladı |
+| `fix-paket3-tests` | 5 yeni regresyon birim testi (`Paket2ClosureTests.cs` + `Paket3CaveOreAndLavaTests.cs`) (`#46`)| `gemini-4-hydrogen-high` | Gemini 4 Hydrogen (High) | Görevini tamamladı |
+| `fix-gate-verifier` | Son kalite kapısı, .NET 10 116/116 PASS doğrulaması, Devir #058 ve faz 3 rapor teslimi (`#48`)| `gemini-3.8-flash-medium` | Gemini 3.8 Flash (Medium)| Aktif / Bu Rapor |
 
 ---
 
@@ -112,6 +116,29 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
 
 ---
 
+### 2.3. PlayMode Geri Bildirim Düzeltmeleri & Jeolojik İyileştirmeler (Devir #058)
+
+Kullanıcının canlı PlayMode testinde tespit edilen 4 geri bildirim başarıyla düzeltilmiş ve 5 yeni regresyon birim testi ile kilitlenmiştir:
+
+1. **`[B]` Fiziksel İki Sayfalı Dikişli Deri Kitap UI (`Stage1SurvivalRecipeBookUi.cs`):**
+   - Karartma perdesindeki `GUI.color` alfa sızıntısı giderildi, tüm metinler net okunabilir hale getirildi.
+   - İki sayfalı açık deri cilt düzenine geçildi: 4 pirinç köşebent, parşömen kâğıt yığını katmanları, dikişli sırt ve sarkan kırmızı ipek ayraç.
+   - Klavyeden `[A] / [D]` tuşları ve fare tekerleğiyle yaprak çevirme (`0 B/kare` GC, sayfa sesi).
+2. **Kısayol Çakışması & Kazma Kademesi Dengesi (`Stage1InteractivePlayController.cs`, `Stage1MatterCrystalAndMiningController.cs`):**
+   - Unity Editor `Ctrl+B` Build penceresi çakışması `[Shift+B]` kombinasyonuna geçirilerek çözüldü.
+   - `IronOre` kazma kademesi `Tier 1 (Taş Kazma)` seviyesine çekildi (demir çağına geçiş engeli kaldırıldı).
+   - Derin manto kayaçları dengelendi: `Basalt` -> `Tier 2`, `NaturalObsidian` -> `Tier 3`.
+   - Rehber Kitabı Sekme 1'e derinlik kaya katmanları ve kazma gereksinimleri eklendi.
+3. **Sıfır Kil Kutulu Masif Doğal Taş Mağara Gölleri (`StratocraftFloatingIslandWorldGen.cs`):**
+   - Havada asılı yapay kil kutuları tamamen kaldırıldı.
+   - Yalnızca kalın doğal kaya tabanına oturan ve etrafı doğal taş duvarlarla çevrili kapalı çukurlara durgun su dolduran `PopulateNaturalCaveWaterPoolsInChunk` yazıldı (%15 sıklık, sıfır kil kutusu, sıfır sızıntı).
+4. **4 Katmanlı Jeolojik Kaya Stratigrafisi ve Odaklı 3B Kapsül Damarlar (`StratocraftFloatingIslandWorldGen.cs`):**
+   - Mağara duvarlarındaki rastgele parlak cevher konfetisi kaldırıldı.
+   - 4 katmanlı doğal derinleşen kaya yapısı kuruldu: `Stone/Cobblestone` (Y>74m) -> `Stalagnate/Marble` (Y in [54..74m]) -> `Basalt` (Y in [28..54m]) -> `NaturalObsidian/Magma` (Y<28m).
+   - Cevherler jeolojik fay hatlarına paralel, nadir `O(1)` deterministik 3B kapsül damarlar (~%3.5-%5.5) haline getirildi.
+
+---
+
 ## 3. Otomatik Test ve Metrik Sonuçları
 
 ### 3.1. Test Özeti Tablosu
@@ -121,8 +148,8 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
 | **Python Ruff Linter** | `Tools/AutonomousAssetFactory/` Python araçları | 22 modül | 22 | 0 | **PASS (0 Hata / 0 Uyarı)** |
 | **Python Pytest** | Voksel şablonları, uzuv kopma rig hattı, asset doğrulayıcı | 9 birim test | 9 | 0 | **PASS (0.58s)** |
 | **C++20 GoogleTest (`ctest`)** | AVX2/FMA SIMD, LZ4, Zstd, XXH64, Ed25519, SQLite3 WAL | 6 native test | 6 | 0 | **PASS (%100)** |
-| **.NET 10 Standalone C#** | Reçete kitabı, Bloomery, Kristal, Lav katılaşması, U-Eğrisi, Mağara canavarları | 111 birim test | 111 | 0 | **PASS (0 Error / 0 Warning)** |
-| **Unity 6 Editor (EditMode)** | Tüm Paket 1, 2, 3 EditMode testleri (`Paket3CaveOreAndLavaTests` dahil) | 108 EditMode test | 108 | 0 | **PASS (%100, 0 Failed)** |
+| **.NET 10 Standalone C#** | Reçete kitabı, Bloomery, Kristal, Lav katılaşması, U-Eğrisi, Mağara canavarları, Kaya katmanları, Doğal su gölleri | 116 birim test | 116 | 0 | **PASS (0 Error / 0 Warning)** |
+| **Unity 6 Editor (EditMode)** | Tüm Paket 1, 2, 3 EditMode testleri (5 yeni regresyon testi dahil) | 113 EditMode test | 113 | 0 | **PASS (%100, 0 Failed)** |
 
 ### 3.2. Detaylı Test Dağılımı
 
@@ -139,8 +166,8 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
    - `XxHash64MatchesReference`: PASS
    - `Ed25519SignAndVerify`: PASS
    - `Sqlite3WalBasicRoundtrip`: PASS
-3. **.NET 10 Standalone Core (`Stratocraft.StandaloneCoreTests` — 111/111 PASS):**
-   - **Paket 2 Kapanış Testleri (`Paket2ClosureTests.cs`):**
+3. **.NET 10 Standalone Core (`Stratocraft.StandaloneCoreTests` — 116/116 PASS):**
+   - **Paket 2 Kapanış & Regresyon Testleri (`Paket2ClosureTests.cs` — 11 Test):**
      * `SurvivalRecipeBook_CatalogHasFourTabs_AndMandatoryEntriesPresent`: PASS
      * `SurvivalRecipeBook_ExtinguishSection_DocumentsShiftEAndWaterVessels`: PASS
      * `Bloomery_TryChargeOreUnit_CalculatesWeightedAverageSpeed`: PASS
@@ -149,7 +176,10 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
      * `MatterCrystalVacuum_DetermineResonanceCrystalDropTier_RespectsDistanceAndBoss`: PASS
      * `MatterCrystalVacuum_TryUpgradeWithResonanceTier_EnforcesStrictSequentialProgression`: PASS
      * `MatterCrystalVacuum_NaturalScatterDensity_HandlesAirSurfaceAndBedrockTransitions`: PASS
-   - **Paket 3 Mağara, Cevher ve Lav Testleri (`Paket3CaveOreAndLavaTests.cs` — AK-1..AK-7):**
+     * `SurvivalRecipeBook_UsesShiftBNotCtrlB_AndIncludesDepthStrataGuide`: PASS *(Yeni)*
+     * `MiningProgression_IronOreRequiresT1_WhileDeepBasaltRequiresT2AndObsidianRequiresT3`: PASS *(Yeni)*
+     * `RecipeBookUi_TwoPageSpreadNavigation_CyclesSpreadsAndResetsOnTabChange`: PASS *(Yeni)*
+   - **Paket 3 Mağara, Cevher, Lav ve Göller Testleri (`Paket3CaveOreAndLavaTests.cs` — 9 Test, AK-1..AK-7 + 2 Regresyon):**
      * `AK1_OreNuggetRelief_DisplacesDominantOreSurfaceOutward_AndKeepsWaterTight`: PASS
      * `AK2_OreVeinProceduralGlint_OutputsUniqueMetallicAndSpeckleSignatures`: PASS
      * `AK3_GeothermalCaveTemperature_FollowsUCurveProfileAcrossDepths`: PASS
@@ -157,8 +187,10 @@ Stratocraft çok ajanlı mimarisinde (`swarm`), iş paketleri uzmanlık alanlar�
      * `AK5_LavaSolidification_EdgeFirstFreezing_CoolsToBasaltIn150Seconds`: PASS
      * `AK6_HotVolcanicRock_RadiatesHeatAndBurnsSteppingEntity`: PASS
      * `AK7_CaveCreatureSpawning_RestrictedByDepthAndRadialDistance_WithAcousticTelegraph`: PASS
+     * `CaveRockComposition_IsPredominantlyNaturalStoneWithDepthHardeningAndCoherentVeins`: PASS *(Yeni)*
+     * `CaveWaterPools_HaveZeroFloatingClayPedestalsAndRestInSolidNaturalRock`: PASS *(Yeni)*
 4. **Unity 6 Canlı Editor Denetimi:**
-   - Unity MCP `test_run(mode: "editor")`: **108/108 PASS (0 Failed, 0 Skipped)**.
+   - Unity MCP `test_run(mode: "editor")`: **113/113 PASS (0 Failed, 0 Skipped)**.
    - Unity C# Derleme: `0 Error / 0 Warning` (`TreatWarningsAsErrors=true`, `Nullable=enable`).
 
 ---
