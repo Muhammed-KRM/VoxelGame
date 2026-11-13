@@ -1,137 +1,15 @@
 #nullable enable
 using System;
+using Stratocraft.Core.Weather;
+using Stratocraft.Networking;
 using Stratocraft.Physics.Data;
 using Stratocraft.WorldGen;
-#if !UNITY_5_3_OR_NEWER
-using Stratocraft.Networking;
-#else
+#if UNITY_5_3_OR_NEWER
 using UnityEngine;
 #endif
 
 namespace Stratocraft.Character
 {
-#if UNITY_5_3_OR_NEWER
-    /// <summary>
-    /// Stratocraft.Character.asmdef icinde Unity derlemesi icin ag topolojisi ve 1 Hz AOI paket koprusu.
-    /// (.NET 10 altinda dogrudan Stratocraft.Networking tipleri kullanilir.)
-    /// </summary>
-    public enum NetworkTopologyMode : byte
-    {
-        Singleplayer = 0,
-        HostLoopback = 1,
-        DedicatedServer = 2,
-        RemoteClient = 3,
-        Client = RemoteClient
-    }
-
-    internal static class SpatialAoiAndSwarmNetSystem
-    {
-        public const uint AtmosphereAoiSyncIntervalTicks60Hz = 60u;
-
-        public static bool ShouldReplicateAtmosphereAoiAtTick(uint serverTick60Hz, uint playerEntityId) =>
-            ((serverTick60Hz + (playerEntityId * 13u)) % AtmosphereAoiSyncIntervalTicks60Hz) == 0u;
-
-        public static bool CanModifyTimeScale(NetworkTopologyMode mode, bool isLocalHostOrServer) => mode switch
-        {
-            NetworkTopologyMode.Singleplayer => true,
-            NetworkTopologyMode.HostLoopback => isLocalHostOrServer,
-            NetworkTopologyMode.DedicatedServer => isLocalHostOrServer,
-            NetworkTopologyMode.RemoteClient => false,
-            _ => false
-        };
-    }
-
-    internal readonly struct AtmosphereAoiPacketHeader
-    {
-        public readonly short CenterCellX;
-        public readonly short CenterCellZ;
-        public readonly float TimeScaleMultiplier;
-        public readonly float EnsoTeAnomalyK;
-        public readonly byte ChangedCellCount;
-
-        public AtmosphereAoiPacketHeader(short cx, short cz, float scale, float enso, byte count)
-        {
-            CenterCellX = cx;
-            CenterCellZ = cz;
-            TimeScaleMultiplier = scale;
-            EnsoTeAnomalyK = enso;
-            ChangedCellCount = count;
-        }
-    }
-
-    internal static class AtmosphereAoiSyncPacket
-    {
-        public const int AoiSideCells = 9;
-        public const int AoiCellCount = 81;
-        public const int HeaderByteSize = 8;
-        public const int CellDeltaByteSize = 14;
-        public const int MaxCellsPerBudgetPacket = 32;
-        public const int MaxWirePacketBytes = HeaderByteSize + (MaxCellsPerBudgetPacket * CellDeltaByteSize);
-
-        public static int EncodeDeltaPacket(
-            short centerCellX,
-            short centerCellZ,
-            float serverTimeScale,
-            float ensoTeAnomalyK,
-            ReadOnlySpan<AtmosphereAoiCellSample> currentWindow81,
-            Span<AtmosphereAoiCellSample> clientBaseline81,
-            ref bool hasValidBaseline,
-            Span<byte> outWireBuffer,
-            int maxCellsPerPacket = MaxCellsPerBudgetPacket)
-        {
-            if (currentWindow81.Length < AoiCellCount || clientBaseline81.Length < AoiCellCount || outWireBuffer.Length < HeaderByteSize)
-            {
-                return 0;
-            }
-
-            int changed = 0;
-            int maxEmit = Math.Min(maxCellsPerPacket, (outWireBuffer.Length - HeaderByteSize) / CellDeltaByteSize);
-            for (int i = 0; i < AoiCellCount && changed < maxEmit; i++)
-            {
-                if (!hasValidBaseline ||
-                    currentWindow81[i].AirTempDeciC != clientBaseline81[i].AirTempDeciC ||
-                    currentWindow81[i].PrecipDeciMmPerHour != clientBaseline81[i].PrecipDeciMmPerHour ||
-                    currentWindow81[i].CloudWaterCentiKgPerM2 != clientBaseline81[i].CloudWaterCentiKgPerM2)
-                {
-                    clientBaseline81[i] = currentWindow81[i];
-                    changed++;
-                }
-            }
-            hasValidBaseline = true;
-
-            ushort scaleDeci = (ushort)Math.Clamp((int)MathF.Round(serverTimeScale * 10.0f), 10, 6000);
-            outWireBuffer[0] = (byte)(centerCellX & 0xFF);
-            outWireBuffer[1] = (byte)((centerCellX >> 8) & 0xFF);
-            outWireBuffer[2] = (byte)(centerCellZ & 0xFF);
-            outWireBuffer[3] = (byte)((centerCellZ >> 8) & 0xFF);
-            outWireBuffer[4] = (byte)(scaleDeci & 0xFF);
-            outWireBuffer[5] = (byte)((scaleDeci >> 8) & 0xFF);
-            outWireBuffer[6] = (byte)(sbyte)Math.Clamp((int)MathF.Round(ensoTeAnomalyK * 10.0f), sbyte.MinValue, sbyte.MaxValue);
-            outWireBuffer[7] = (byte)changed;
-            return HeaderByteSize + changed * CellDeltaByteSize;
-        }
-
-        public static bool TryDecodeAndApplyDeltaPacket(
-            ReadOnlySpan<byte> wireBytes,
-            Span<AtmosphereAoiCellSample> clientWindow81,
-            out AtmosphereAoiPacketHeader header)
-        {
-            if (wireBytes.Length < HeaderByteSize || clientWindow81.Length < AoiCellCount)
-            {
-                header = default;
-                return false;
-            }
-
-            short cx = (short)(wireBytes[0] | (wireBytes[1] << 8));
-            short cz = (short)(wireBytes[2] | (wireBytes[3] << 8));
-            ushort scaleDeci = (ushort)(wireBytes[4] | (wireBytes[5] << 8));
-            sbyte ensoDeci = (sbyte)wireBytes[6];
-            byte count = wireBytes[7];
-            header = new AtmosphereAoiPacketHeader(cx, cz, scaleDeci * 0.1f, ensoDeci * 0.1f, count);
-            return true;
-        }
-    }
-#endif
     /// <summary>
     /// Oyun içi canlı ayarlar, zorluk çarpanları, çevre etkileri anahtarı, zaman akış hızı (1x..600x) ve değiştirilebilir kontrol tuşları.
     /// ESC menüsü açıldığında dış dünya (Time.timeScale = 1.0f) ASLA durmaz; canlılar, sıvılar ve fizik akmaya devam eder.

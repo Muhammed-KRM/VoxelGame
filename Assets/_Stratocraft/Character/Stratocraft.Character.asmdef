@@ -9,6 +9,7 @@
     "Stratocraft.Rendering",
     "Stratocraft.Inventory",
     "Stratocraft.CreaturesAI",
+    "Stratocraft.Networking",
     "Unity.Burst",
     "Unity.Collections",
     "Unity.Entities",
