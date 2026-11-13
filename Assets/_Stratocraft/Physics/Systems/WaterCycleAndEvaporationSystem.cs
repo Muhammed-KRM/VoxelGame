@@ -642,10 +642,30 @@ namespace Stratocraft.Physics.Systems
                     if (SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(surfMat))
                     {
                         moisture ??= soilSystem.GetOrCreateChunkMoisture(cx, cz);
-                        byte curM = moisture[surfIdx];
-
-                        if (curM < SoilMoistureAndMudSystem.MaxMoistureSaturation)
+                        // Toprak kalinligina bagli su tutma: 1m toprak 1 katman (~29 birim), 5m toprak 5 katman (~145 birim) tutar.
+                        // Gecirimsiz kaya/kil/bosluk tabakasina ulasana kadar asagi dogru suzulur.
+                        int minSoilY = Math.Max(1, surfaceY - 15);
+                        for (int sy = surfaceY; sy >= minSoilY && incomingUnits > 0; sy--)
                         {
+                            int sIdx = (sy << 8) | col;
+                            uint sRaw = voxels[sIdx];
+                            if (sRaw == 0u || !VoxelBitUtility.IsPhysicallySolid(sRaw))
+                            {
+                                break;
+                            }
+
+                            byte sMat = VoxelBitUtility.GetMaterialId(sRaw);
+                            if (!SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(sMat))
+                            {
+                                break;
+                            }
+
+                            byte curM = moisture[sIdx];
+                            if (curM >= SoilMoistureAndMudSystem.MaxMoistureSaturation)
+                            {
+                                continue;
+                            }
+
                             int room = SoilMoistureAndMudSystem.MaxMoistureSaturation - curM;
                             int unitsToSaturate = (room + RainMoistureGainPerFluidUnit - 1) / RainMoistureGainPerFluidUnit;
                             int absorbedUnits = Math.Min(incomingUnits, unitsToSaturate);
@@ -654,12 +674,12 @@ namespace Stratocraft.Physics.Systems
                                 SoilMoistureAndMudSystem.MaxMoistureSaturation,
                                 curM + absorbedUnits * RainMoistureGainPerFluidUnit);
 
-                            moisture[surfIdx] = (byte)nextM;
+                            moisture[sIdx] = (byte)nextM;
                             soilSystem.ActiveMoistChunks.Add((cx, cz));
 
                             if ((curM >> 4) != (nextM >> 4))
                             {
-                                visualDirtySubChunkMask |= ComputeSubChunkMaskWithSeamApron(surfaceY);
+                                visualDirtySubChunkMask |= ComputeSubChunkMaskWithSeamApron(sy);
                             }
 
                             incomingUnits -= absorbedUnits;
@@ -684,9 +704,10 @@ namespace Stratocraft.Physics.Systems
 
                     // Toprak doygunluga (Moisture == 255) ulastiysa veya zemin gecirimsiz tas canaksa:
                     // Fazla yagmur uste gercek FluidCell16 Tatli Su (Salinity = false, isSettled = false) olarak dogar!
+                    // Not: Derin gollerin (>4m) ust yuzeyine de yagmur eklenebilmesi icin limitY-1'e kadar tarar.
                     if (incomingUnits > 0)
                     {
-                        int maxPondY = Math.Min(limitY - 1, surfaceY + 4);
+                        int maxPondY = limitY - 1;
                         for (int py = surfaceY + 1; py <= maxPondY && incomingUnits > 0; py++)
                         {
                             int pIdx = (py << 8) | col;

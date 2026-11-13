@@ -254,6 +254,8 @@ namespace Stratocraft.Character
         private readonly float[] _aoiRenderPrecip81 = new float[81];
         private float _hydrologyStepTimer;
         private float _hydrologyAccumGameSeconds;
+        private float _hydrologyAccumRealSeconds;
+        private int _testWeatherOverrideMode; // 0=Auto, 1=Rain(14mm/h), 2=Storm(28mm/h), 3=Clear(0mm/h)
         private float _pendingThunderTimerSec = -1.0f;
         private float _pendingThunderDistanceMeters;
         private float _lightningSkyFlashIntensity01;
@@ -2199,7 +2201,17 @@ namespace Stratocraft.Character
                 _feedbackArenaBridge.CycleDuelistModeAndSummonArena(transform, SharedVoxelMaterial, _worldChunks);
                 _miningCtrl.LastFeedbackText = _feedbackArenaBridge.ArenaStatusSummary;
             }
-            if (Input.GetKeyDown(KeyCode.F11)) CycleThermalAndFreezingTestMode();
+            if (Input.GetKeyDown(KeyCode.F11))
+            {
+                if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+                {
+                    CycleTestWeatherOverrideMode();
+                }
+                else
+                {
+                    CycleThermalAndFreezingTestMode();
+                }
+            }
             if (Input.GetKeyDown(KeyCode.F12)) CycleContinentBiomeAndCaveTeleport();
             if (Input.GetKeyDown(KeyCode.F6)) SaveAllChunksToRegionStore();
             if (Input.GetKeyDown(KeyCode.F9))
@@ -4832,6 +4844,62 @@ namespace Stratocraft.Character
             _placedWeatherInstruments.ClearAll();
         }
 
+        private void CycleTestWeatherOverrideMode()
+        {
+            _testWeatherOverrideMode = (_testWeatherOverrideMode + 1) % 4;
+            _miningCtrl.LastFeedbackText = _testWeatherOverrideMode switch
+            {
+                1 => "[Shift+F11] TEST HAVA DURUMU: YAĞMUR BAŞLATILDI (14 mm/sa | Bulutlu | Çukur & Göl Dolar)",
+                2 => "[Shift+F11] TEST HAVA DURUMU: SAĞANAK FIRTINA (28 mm/sa | Şimşek & CAPE 1400)",
+                3 => "[Shift+F11] TEST HAVA DURUMU: AÇIK GÜNEŞLİ HAVA (0 mm/sa)",
+                _ => "[Shift+F11] TEST HAVA DURUMU: OTOMATİK İKLİM SİSTEMİ"
+            };
+        }
+
+        private void ApplyTestWeatherOverrideIfActive()
+        {
+            if (_testWeatherOverrideMode == 0)
+            {
+                return;
+            }
+
+            // RecenterAroundWorldXZ oyuncuyu 32x32 izgaranin ortasina (16,16) yakin tutar;
+            // 9x9 AOI penceresi + 5x5 chunk cevresi icin [8..24] bandini guncelleriz.
+            for (int cz = 8; cz <= 24; cz++)
+            {
+                for (int cx = 8; cx <= 24; cx++)
+                {
+                    AtmosphereCellState c = _regionalAtmosphereSystem.GetCell(cx, cz);
+                    float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
+                    switch (_testWeatherOverrideMode)
+                    {
+                        case 1: // Yağmur
+                            c.CloudWaterKgPerM2 = 1.45f;
+                            c.SurfacePrecipMmPerHour = 14.0f;
+                            c.VaporPressureHpa = Mathf.Max(c.VaporPressureHpa, sat * 0.98f);
+                            c.StationPressureHpa = 998.0f;
+                            c.CapeJPerKg = 450;
+                            break;
+                        case 2: // Sağanak Fırtına
+                            c.CloudWaterKgPerM2 = 2.40f;
+                            c.SurfacePrecipMmPerHour = 28.0f;
+                            c.VaporPressureHpa = Mathf.Max(c.VaporPressureHpa, sat * 1.0f);
+                            c.StationPressureHpa = 986.0f;
+                            c.CapeJPerKg = 1400;
+                            break;
+                        case 3: // Açık Hava
+                            c.CloudWaterKgPerM2 = 0.0f;
+                            c.SurfacePrecipMmPerHour = 0.0f;
+                            c.VaporPressureHpa = sat * 0.40f;
+                            c.StationPressureHpa = 1018.0f;
+                            c.CapeJPerKg = 0;
+                            break;
+                    }
+                    _regionalAtmosphereSystem.SetCell(cx, cz, in c);
+                }
+            }
+        }
+
         private void StepAtmosphereSolarCloudsAndHydrology(float dt)
         {
             EnsureDefaultWeatherObservatoryPlaced();
@@ -4852,6 +4920,8 @@ namespace Stratocraft.Character
                 _totalSimulatedGameSeconds += substepGameSeconds;
                 StepSimulation(_totalSimulatedGameSeconds, substepGameSeconds);
             }
+
+            ApplyTestWeatherOverrideIfActive();
 
             float totalGameDeltaThisFrame = substepCount * substepGameSeconds;
 
@@ -5042,11 +5112,14 @@ namespace Stratocraft.Character
             // 5) Hidroloji, Su Dongusu (WaterCycleAndEvaporationSystem), Karst Akifer ve Acik Gokyuzu Ates/Firin Yagmur Sondurme
             _hydrologyStepTimer += dt;
             _hydrologyAccumGameSeconds += totalGameDeltaThisFrame;
+            _hydrologyAccumRealSeconds += dt;
             if (_hydrologyStepTimer >= 0.35f)
             {
                 float hydroGameDt = _hydrologyAccumGameSeconds;
+                float hydroRealDt = _hydrologyAccumRealSeconds;
                 _hydrologyStepTimer = 0.0f;
                 _hydrologyAccumGameSeconds = 0.0f;
+                _hydrologyAccumRealSeconds = 0.0f;
 
                 int pCx = Mathf.FloorToInt(playerPos.x / 16f);
                 int pCz = Mathf.FloorToInt(playerPos.z / 16f);
@@ -5061,73 +5134,95 @@ namespace Stratocraft.Character
                     _currentPlayerAtmosphereCell.WindVelX * _currentPlayerAtmosphereCell.WindVelX +
                     _currentPlayerAtmosphereCell.WindVelZ * _currentPlayerAtmosphereCell.WindVelZ);
 
-                if (_worldChunks.TryGetValue((pCx, pCz), out uint[]? chunkVox) && chunkVox != null &&
-                    _fluidChunks.TryGetValue((pCx, pCz), out ushort[]? chunkFluids) && chunkFluids != null)
+                // 1x hizda cukurlarin/gollerin yagmurda yavas ve dengeli dolmasi (her yerin bir anda gol olmamasina dikkat ederek)
+                // ve toprak kalinligina gore su tutma fazinin gercekci islemesi icin 240x gercek-zaman olcegi kullanilir.
+                float pondingDt = Mathf.Max(hydroGameDt * 24.0f, hydroRealDt * 240.0f);
+
+                // Oyuncunun etrafindaki 5x5 chunk (80m x 80m) cevresini isle ki uzaktaki tepeler, goller ve kazilan cukurlar da esit yagmur alsin.
+                for (int dz = -2; dz <= 2; dz++)
                 {
-                    // 5A) Yagmur altinda toprak islatma -> camur -> doygunlukta gercek Tatli Su FluidCell16 goleti olusumu
-                    _waterCycleSystem.StepRainSurfaceWettingAndPonding(
-                        pCx,
-                        pCz,
-                        chunkVox,
-                        chunkFluids,
-                        _soilMoistureSystem,
-                        MaxEditableVoxelY,
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int hCx = pCx + dx;
+                        int hCz = pCz + dz;
+                        if (!_worldChunks.TryGetValue((hCx, hCz), out uint[]? chunkVox) || chunkVox == null ||
+                            !_fluidChunks.TryGetValue((hCx, hCz), out ushort[]? chunkFluids) || chunkFluids == null)
+                        {
+                            continue;
+                        }
+
+                        AtmosphereCellState chunkCell = (dx == 0 && dz == 0)
+                            ? _currentPlayerAtmosphereCell
+                            : _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(hCx * 16.0f + 8.0f, hCz * 16.0f + 8.0f);
+
+                        // 5A) Yagmur altinda toprak islatma -> camur -> doygunlukta gercek Tatli Su FluidCell16 goleti olusumu
+                        _waterCycleSystem.StepRainSurfaceWettingAndPonding(
+                            hCx,
+                            hCz,
+                            chunkVox,
+                            chunkFluids,
+                            _soilMoistureSystem,
+                            MaxEditableVoxelY,
+                            chunkCell.SurfacePrecipMmPerHour,
+                            chunkCell.AirTempCelsius,
+                            pondingDt,
+                            out ushort rainDirtySubMask,
+                            out bool rainFluidChanged,
+                            skyMap: null,
+                            salinityBitset: _salinityBitset);
+
+                        if (rainDirtySubMask != 0)
+                        {
+                            AddSubChunkDirtyMask((hCx, hCz), rainDirtySubMask);
+                        }
+                        if (rainFluidChanged)
+                        {
+                            _dirtyFluidChunks.Add((hCx, hCz));
+                            WakeChunkAndNeighborsFluid((hCx, hCz));
+                        }
+
+                        // 5C) Dalton yuzey buharlasmasi -> atmosfere geri kutle enjeksiyonu (deniz suyu tuzlu kalir, buhar tatli su bulutu olur!)
+                        float chunkSatHpa = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(chunkCell.AirTempCelsius);
+                        float chunkRh01 = Mathf.Clamp(chunkCell.VaporPressureHpa / Mathf.Max(0.1f, chunkSatHpa), 0.02f, 1.0f);
+                        float chunkWindMps = Mathf.Sqrt(chunkCell.WindVelX * chunkCell.WindVelX + chunkCell.WindVelZ * chunkCell.WindVelZ);
+                        float evapKgPerM2 = _waterCycleSystem.StepSurfaceWaterEvaporation(
+                            hCx,
+                            hCz,
+                            chunkVox,
+                            chunkFluids,
+                            MaxEditableVoxelY,
+                            chunkCell.AirTempCelsius,
+                            chunkRh01,
+                            chunkWindMps,
+                            hydroGameDt,
+                            out _,
+                            out bool evapFluidChanged,
+                            skyMap: null,
+                            salinityBitset: _salinityBitset,
+                            maintainOceanMacroBalance: false,
+                            seaLevelY: (int)StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6);
+
+                        if (evapFluidChanged)
+                        {
+                            _dirtyFluidChunks.Add((hCx, hCz));
+                        }
+                        if (evapKgPerM2 > 0.0f)
+                        {
+                            _regionalAtmosphereSystem.InjectSurfaceEvaporationMassAtWorldXZ(
+                                hCx * 16.0f + 8.0f,
+                                hCz * 16.0f + 8.0f,
+                                evapKgPerM2);
+                        }
+                    }
+                }
+
+                // 5B) Acik varil / kazan yagmur suyu dolumu
+                if (localPrecipMmHr > 0.05f && _activeOpenContainerCount > 0)
+                {
+                    WaterCycleAndEvaporationSystem.StepOpenContainerRainFill(
+                        _openRainContainersScratch.AsSpan(0, _activeOpenContainerCount),
                         localPrecipMmHr,
-                        _currentPlayerAtmosphereCell.AirTempCelsius,
-                        hydroGameDt,
-                        out ushort rainDirtySubMask,
-                        out bool rainFluidChanged,
-                        skyMap: null,
-                        salinityBitset: _salinityBitset);
-
-                    if (rainDirtySubMask != 0)
-                    {
-                        AddSubChunkDirtyMask((pCx, pCz), rainDirtySubMask);
-                    }
-                    if (rainFluidChanged)
-                    {
-                        _dirtyFluidChunks.Add((pCx, pCz));
-                        WakeChunkAndNeighborsFluid((pCx, pCz));
-                    }
-
-                    // 5B) Acik varil / kazan yagmur suyu dolumu
-                    if (localPrecipMmHr > 0.05f && _activeOpenContainerCount > 0)
-                    {
-                        WaterCycleAndEvaporationSystem.StepOpenContainerRainFill(
-                            _openRainContainersScratch.AsSpan(0, _activeOpenContainerCount),
-                            localPrecipMmHr,
-                            hydroGameDt);
-                    }
-
-                    // 5C) Dalton yuzey buharlasmasi -> atmosfere geri kutle enjeksiyonu (deniz suyu tuzlu kalir, buhar tatli su bulutu olur!)
-                    float evapKgPerM2 = _waterCycleSystem.StepSurfaceWaterEvaporation(
-                        pCx,
-                        pCz,
-                        chunkVox,
-                        chunkFluids,
-                        MaxEditableVoxelY,
-                        _currentPlayerAtmosphereCell.AirTempCelsius,
-                        localRh01,
-                        localWindMps,
-                        hydroGameDt,
-                        out _,
-                        out bool evapFluidChanged,
-                        skyMap: null,
-                        salinityBitset: _salinityBitset,
-                        maintainOceanMacroBalance: false,
-                        seaLevelY: (int)StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6);
-
-                    if (evapFluidChanged)
-                    {
-                        _dirtyFluidChunks.Add((pCx, pCz));
-                    }
-                    if (evapKgPerM2 > 0.0f)
-                    {
-                        _regionalAtmosphereSystem.InjectSurfaceEvaporationMassAtWorldXZ(
-                            pCx * 16.0f + 8.0f,
-                            pCz * 16.0f + 8.0f,
-                            evapKgPerM2);
-                    }
+                        pondingDt);
                 }
 
                 // 5D) Karst yeralti akiferlerinin yagmur suzulmesiyle yeniden dolumu

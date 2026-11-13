@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#060` (**Paket 4A PlayMode Görsel & Oynanış Düzeltmeleri (Gökyüzü/Güneş/Gece-Gündüz, Tekil Hacimsel Bulutlar, Tarif Kitabı 3B Önizleme & Malzeme İkonları, Yaratıcı Mod Hava Aletleri Sekmesi) TAMAMLANDI:** `1)` **Gökyüzü, Güneş ve Gece/Gündüz Döngüsü (`Stage1SkyDayNightController.cs`, `StratocraftUberShader.hlsl`):** Kamera `CameraClearFlags.Skybox` moduna geçirildi, çalışma zamanı `Skybox/Procedural` materyali ve `00_Paket4A_Sun_And_Moon_DirectionalLight` yönlü ışığı bağlandı, `_StratoNightDim01` ile gece arazi karartması ve gün batımı ufuk kızıllığı sağlandı. `2)` **Prosedürel Bulutlar & Yerel Yağmur (`StratocraftProceduralClouds.shader`, `Stage1AtmosphereCloudAndRainRenderer.cs`, `Stage1InteractivePlayController.cs`):** Bulut AOI ızgarası `OriginWorldX/Z` ofsetiyle hizalandı, tekil bulut tabakası + yağmur hacmi (`_CloudWater81` / `_CloudPrecip81` bilineer örnekleme + derinlik kırpması) `LateUpdate()` içinde çizildi. `3)` **Tarif Kitabı `[B]` 3B Önizleme & Malzeme İkon Şeridi (`Stage1RecipeBookPreviewRenderer.cs`, `Stage1SurvivalRecipeBookUi.cs`):** `Y = -2600m` (`PreviewLayer = 30`) izole önizleme kamerasıyla öğe/yapı 3B önizlemeleri ve `"Gerekenler:"` ikon şeridi eklendi. `4)` **Yaratıcılık Modu `[F4]`+`[Tab]` Hava Aletleri Sekmesi (`Stage1VisualHotbarAndInventoryUi.cs`):** `"🌦️ Hava Aletleri (6)"` sekmesi (Barometre, Termometre, Higrometre, Rüzgâr Gülü, Yağmur Ölçer, Paratoner) 3B önizleme ve ele alıp `[Sağ Tık]` ile yerleştirme akışıyla eklendi. `5)` **Doğrulama:** PlayMode görsel doğrulama (gün batımı, `[B]` sekmeleri, `[F4]+[Tab]` sekmesi) `0 Error / 0 Warning` ve Unity EditMode **124/124 PASS**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T21:00:00+03:00` |
+| **Devir Numarası** | `#061` (**Paket 4A Yağmur Birikimi, Toprak Kalınlığına Göre Su Tutma & `[Shift+F11]` Test Yağmuru Düzeltmeleri TAMAMLANDI:** `1)` **Toprak Kalınlığına Göre Çok Katmanlı Su Tutma (`WaterCycleAndEvaporationSystem.cs`):** `StepRainSurfaceWettingAndPonding` artık tek yüzey bloğu yerine `surfaceY`'den aşağı geçirimsiz kaya/kil tabakasına kadar (`1..16` blok) tüm emici toprak katmanlarını doyuruyor; `5m` toprak `5` kat fazla su tutarken `1m` toprak veya kayaya kazılmış çukur daha erken su biriktiriyor, derin göllerin (`>4m`) üst yüzeyine de (`limitY - 1`) yağmur ekleniyor. `2)` **Dengeli Göllenme Hızı & `5×5` Chunk Kapsamı (`Stage1InteractivePlayController.cs`):** `pondingDt` taşmayı önlemek için `hydroRealDt * 240.0f` ölçeğine dengelendi ve ıslanma/göllenme döngüsü `5×5` chunk (`80m × 80m`) alanına genişletildi. `3)` **Test Hava Durumu Kısayolu (`[Shift+F11]`):** PlayMode içinde `Otomatik -> Yağmur (14 mm/sa) -> Sağanak Fırtına (28 mm/sa, CAPE 1400) -> Açık Hava (0 mm/sa)` döngüsü `[8..24]` hücre bandına eklendi. `4)` **Doğrulama:** Unity EditMode **124/124 PASS** (`0 Error / 0 Warning`)) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-14T00:25:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 4A PlayMode Görsel/UI Düzeltmeleri Tamamlandı (124/124 EditMode PASS, PlayMode 0 Error/Warning) -> Kullanıcı Final Onayı ve Paket 4B Başlangıcı` |
+| **Mevcut Çalışma Aşaması** | `Paket 4A Hidroloji & Yağmur Birikimi Kalibrasyonu Tamamlandı (124/124 EditMode PASS) -> Kullanıcı PlayMode Onayı ve Paket 4B Başlangıcı` |
 | **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 124/124 PASS (Paket 1..3 + Paket 4A İklim & Hidroloji Dahil)`, `Standalone .NET 10 Core: 127/127 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` ve prosedürel hacimsel shader, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -63,9 +63,22 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#060` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#061` .. `#042`)
 
-### 2.0. Devir #060 (Paket 4A PlayMode Görsel & Oynanış Düzeltmeleri: Gökyüzü/Güneş/Gece-Gündüz, Tekil Hacimsel Bulutlar, Tarif Kitabı 3B Önizleme & Malzeme İkonları, Yaratıcı Mod Hava Aletleri Sekmesi)
+### 2.0. Devir #061 (Paket 4A Yağmur Birikimi, Toprak Kalınlığına Göre Su Tutma, `5×5` Chunk Islanması & `[Shift+F11]` Test Yağmuru)
+
+PlayMode yağmur/göllenme testinde tespit edilen su birikim hızı, uzak alan ıslanması ve toprak tutuculuğu geri bildirimleri giderilmiş ve Unity EditMode testleriyle (**124/124 PASS**) doğrulanmıştır:
+
+1. **Toprak Kalınlığına Göre Çok Katmanlı Su Tutma (`WaterCycleAndEvaporationSystem.cs`):**
+   - `StepRainSurfaceWettingAndPonding` tek blok yerine `surfaceY`'den aşağı geçirimsiz kaya/kil/boşluk tabakasına kadar (`1..16` blok) kesintisiz emici toprak katmanlarını (`Grass`, `Dirt`, `Sand`) doyuracak şekilde güncellendi; `5m` toprak `5` kat daha fazla su tutarken `1m` toprak veya kazılmış çukur daha hızlı su biriktirir.
+   - `maxPondY` sınırı `surfaceY + 4` yerine `limitY - 1` yapılarak `4m`'den derin göllerin üst yüzeyine de yağmur suyu eklenmesi sağlandı.
+2. **Dengeli Göllenme Hızı & `5×5` Chunk Kapsamı (`Stage1InteractivePlayController.cs`):**
+   - `1x` hızda tüm arazinin bir anda mavi su örtüsüne dönmemesi için `pondingDt = Mathf.Max(hydroGameDt * 24.0f, hydroRealDt * 240.0f)` kalibrasyonu uygulandı.
+   - Hidroloji ıslanma ve buharlaşma döngüsü `5×5` chunk (`80m × 80m`) çevresini işleyecek şekilde genişletildi.
+3. **`[Shift+F11]` Test Hava Durumu Kısayolu (`Stage1InteractivePlayController.cs`):**
+   - `CycleTestWeatherOverrideMode()` ve `ApplyTestWeatherOverrideIfActive()` (`[8..24]` hücre bandı) ile `Otomatik -> Yağmur (14 mm/sa) -> Sağanak Fırtına (28 mm/sa, CAPE 1400) -> Açık Hava (0 mm/sa)` döngüsü eklendi.
+
+### 2.1. Devir #060 (Paket 4A PlayMode Görsel & Oynanış Düzeltmeleri: Gökyüzü/Güneş/Gece-Gündüz, Tekil Hacimsel Bulutlar, Tarif Kitabı 3B Önizleme & Malzeme İkonları, Yaratıcı Mod Hava Aletleri Sekmesi)
 
 Kullanıcı PlayMode testinde bildirilen 3 ana sorun kök nedenleriyle giderilmiş ve hem PlayMode ekran görüntüleri hem de Unity EditMode testleriyle (**124/124 PASS**) doğrulanmıştır:
 
@@ -977,6 +990,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Devir #058 Düzeltmeleri:** Fiziksel İki Sayfalı Deri Kitap UI, `[Shift+B]` Kısayolu, `T1 IronOre` Kazma Kademesi, Masif Doğal Taş Gölleri, 4 Katmanlı Jeolojik Kaya Stratigrafisi ve 5 Regresyon Testi (`116/116` Standalone, `113/113` EditMode)
 - ✅ **Paket 4A (Faz 4A.1..4A.7 — Devir #059):** 365 Gün Güneş Takvimi, 2D Bölgesel Atmosfer Jin (1997) ENSO, Karst Hidrolojisi, Çift Tuzluluk, 0 MB VRAM 3D Prosedürel Bulutlar, 5 Denizci Aleti + Paratoner, 5. Rehber Kitap Sekmesi, Açık Ateş Yağmur Söndürme, 1x-600x Zaman Ölçeği (`127/127` Standalone, `124/124` EditMode)
 - ✅ **Devir #060 PlayMode Düzeltmeleri:** Skybox/Güneş/Gece-Gündüz döngüsü + gece karartması, AOI hizalı tekil prosedürel bulut/yağmur hacmi, `[B]` Tarif Kitabı 3B önizlemeleri & Gerekenler ikon şeridi, `[F4]+[Tab]` Hava Aletleri (6) sekmesi (`124/124` EditMode PASS, PlayMode `0 Error / 0 Warning`)
+- ✅ **Devir #061 Yağmur & Toprak Hidrolojisi Kalibrasyonu:** Toprak kalınlığına göre çok katmanlı (`1..16` blok) su tutma, derin göl (`limitY - 1`) yağmur ekleme, `240x` dengeli göllenme + `5×5` chunk ıslanma ve `[Shift+F11]` test yağmuru kısayolu (`124/124` EditMode PASS)
 - 🧪 **Sırada:** Kullanıcı Final PlayMode Onayı -> **Paket 4B (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı)**
 
 ---
@@ -1008,6 +1022,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
 | **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
 | **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 6-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar, yontulmuş taş başlıklar ve `🌦️ Hava Aletleri (6)` sekmesi dahil) | ✅ Devir #060 (Aktif) |
+| **`[Shift+F11]` Tuşu** | **Test Hava Durumu Döngüsü:** `Otomatik -> Yağmur (14 mm/sa) -> Sağanak Fırtına (28 mm/sa, CAPE 1400) -> Açık Hava (0 mm/sa)` modları arasında geçer | ✅ Devir #061 (Aktif) |
 | **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Aktif |
 
 ---
@@ -1015,7 +1030,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #060`** ile birebir eşleştiğini doğrula.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #061`** ile birebir eşleştiğini doğrula.
 2. **Adım 2 — Kullanıcıdan `Paket 4A` PlayMode Geri Bildirimini Al:**
    - Kullanıcı `docs/test-raporlari/faz4-raporu.md` içindeki PlayMode test adımlarını (*[ / ] / Backspace zaman hızı ölçeği, [B]->[5] Hava ve Denizci sekmesi, Barometre/Termometre/Higrometre/Anemometre/Yağmurölçer ve Paratoner kullanımı, Yağmurda açık kamp ateşinin sönmesi, çamurlaşma ve karstik su akışı*) test edip onayladıktan sonra **Paket 4B** (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı) geliştirmesine geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
