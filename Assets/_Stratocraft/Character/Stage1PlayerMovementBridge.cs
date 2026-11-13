@@ -270,6 +270,134 @@ namespace Stratocraft.Character
             }
         }
 
+        /// <summary>Kati kor MagmaBlock (11) uzerine basildiginda veya govde temasinda saniyelik yanik hasari (HP/s).</summary>
+        public const float MagmaBlockContactDamagePerSecond = 9.0f;
+
+        /// <summary>Kati kor MagmaBlock (11) temasinda saniyelik vucut cekirdek isi artisi (C/s).</summary>
+        public const float MagmaBlockCoreHeatGainCelsiusPerSecond = 2.8f;
+
+        /// <summary>Dunya (wx, wy, wz) koordinatindaki 32-bit vokseli okur.</summary>
+        public static uint ReadWorldVoxelRaw(Dictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
+        {
+            if (worldChunks == null || wy < 0 || wy >= 256) return 0u;
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? v) || v == null) return 0u;
+            int idx = (wy << 8) | ((wz - cz * 16) << 4) | (wx - cx * 16);
+            return (uint)idx < (uint)v.Length ? v[idx] : 0u;
+        }
+
+        /// <summary>
+        /// Oyuncunun bastigi taban vokseli (feetWy - 1) veya ayak/bel kapsulu kati <see cref="MaterialIdCatalog.MagmaBlock"/> (11)
+        /// ile temas halinde mi kontrol eder (.NET 10 ve Unity 6 uyumlu, 0 B GC).
+        /// </summary>
+        public static bool IsTouchingSolidMagmaBlock(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float playerX,
+            float playerFeetY,
+            float playerZ)
+        {
+            if (worldChunks == null || worldChunks.Count == 0)
+            {
+                return false;
+            }
+
+            int wx = (int)MathF.Floor(playerX);
+            int wz = (int)MathF.Floor(playerZ);
+            int feetWy = Math.Clamp((int)MathF.Floor(playerFeetY + 0.25f), 1, 254);
+            int waistWy = Math.Clamp((int)MathF.Floor(playerFeetY + 0.85f), 1, 254);
+            int soleWy = feetWy - 1;
+
+            if (IsSolidMagmaVoxelAt(worldChunks, wx, feetWy, wz) ||
+                IsSolidMagmaVoxelAt(worldChunks, wx, waistWy, wz))
+            {
+                return true;
+            }
+
+            if (soleWy >= 0 &&
+                playerFeetY <= soleWy + 1.18f &&
+                IsSolidMagmaVoxelAt(worldChunks, wx, soleWy, wz))
+            {
+                return true;
+            }
+
+            const float capsuleProbeRadius = 0.34f;
+            ReadOnlySpan<float> ox = stackalloc float[4] { capsuleProbeRadius, -capsuleProbeRadius, 0f, 0f };
+            ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, capsuleProbeRadius, -capsuleProbeRadius };
+
+            for (int i = 0; i < 4; i++)
+            {
+                int px = (int)MathF.Floor(playerX + ox[i]);
+                int pz = (int)MathF.Floor(playerZ + oz[i]);
+                if (IsSolidMagmaVoxelAt(worldChunks, px, feetWy, pz) ||
+                    IsSolidMagmaVoxelAt(worldChunks, px, waistWy, pz))
+                {
+                    return true;
+                }
+
+                if (soleWy >= 0 &&
+                    playerFeetY <= soleWy + 1.12f &&
+                    IsSolidMagmaVoxelAt(worldChunks, px, soleWy, pz))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Kati <see cref="MaterialIdCatalog.MagmaBlock"/> (11) temas yanigini (-9.0 HP/s ve +2.8 C/s cekirdek isi artisi)
+        /// saf C# olarak <paramref name="vitals"/> uzerine uygular.
+        /// </summary>
+        public static bool StepSolidMagmaBlockContactHazard(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float playerX,
+            float playerFeetY,
+            float playerZ,
+            float dt,
+            bool environmentalEffectsEnabled,
+            ref CharacterVitalsComponent vitals,
+            out float appliedDamageHp,
+            out float appliedCoreHeatDeltaCelsius)
+        {
+            appliedDamageHp = 0f;
+            appliedCoreHeatDeltaCelsius = 0f;
+
+            if (dt <= 0f || !IsTouchingSolidMagmaBlock(worldChunks, playerX, playerFeetY, playerZ))
+            {
+                return false;
+            }
+
+            if (environmentalEffectsEnabled)
+            {
+                float hpLoss = MagmaBlockContactDamagePerSecond * dt;
+                float heatGain = MagmaBlockCoreHeatGainCelsiusPerSecond * dt;
+                float prevHp = vitals.CurrentHp;
+                float prevTemp = vitals.CoreBodyTempCelsius;
+
+                vitals.CurrentHp = MathF.Max(1.0f, prevHp - hpLoss);
+                vitals.CoreBodyTempCelsius = MathF.Min(43.5f, prevTemp + heatGain);
+                vitals.Wetness01 = MathF.Max(0f, vitals.Wetness01 - 0.35f * dt);
+
+                if (vitals.CoreBodyTempCelsius > ThermalAndBiologySystem.HyperthermiaThresholdCelsius)
+                {
+                    vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.Hyperthermia;
+                }
+
+                appliedDamageHp = MathF.Max(0f, prevHp - vitals.CurrentHp);
+                appliedCoreHeatDeltaCelsius = MathF.Max(0f, vitals.CoreBodyTempCelsius - prevTemp);
+            }
+
+            return true;
+        }
+
+        private static bool IsSolidMagmaVoxelAt(Dictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
+        {
+            uint raw = ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+            return VoxelBitUtility.GetMaterialId(raw) == MaterialIdCatalog.MagmaBlock &&
+                   VoxelBitUtility.IsPhysicallySolid(raw);
+        }
+
 #if UNITY_5_3_OR_NEWER
         private const float VoidRescueThresholdY = -14.0f;
         private const float MaxStepUpHeightMeters = 0.65f;
@@ -296,9 +424,27 @@ namespace Stratocraft.Character
         private bool _wasTouchingWaterLastFrame;
         private bool _wasHeadSubmergedLastFrame;
         private float _swimmerSurgeCooldownSec;
+        private float _pendingMagmaBurnHp;
+        private float _pendingMagmaCoreHeatCelsius;
 
         /// <summary>Son karede hesaplanan nefes alma (agiz/burun ustu) hava voksel Y kotu.</summary>
         public int LastBreathAirVoxelY { get; private set; } = -1;
+
+        /// <summary>Oyuncu su anda kati kor MagmaBlock (11) uzerine basiyor veya govdesiyle temas ediyor mu?</summary>
+        public bool IsTouchingHotMagmaBlock { get; private set; }
+
+        /// <summary>Oyuncunun kesintisiz kati MagmaBlock (11) temasinda kaldigi sure (sn; temas yoksa 0).</summary>
+        public float LastMagmaContactSeconds { get; private set; }
+
+        /// <summary>Biriken kati MagmaBlock yanik telemetrisini okur ve sifirlar.</summary>
+        public bool ConsumePendingMagmaBurn(out float burnDamageHp, out float coreHeatDeltaCelsius)
+        {
+            burnDamageHp = _pendingMagmaBurnHp;
+            coreHeatDeltaCelsius = _pendingMagmaCoreHeatCelsius;
+            _pendingMagmaBurnHp = 0f;
+            _pendingMagmaCoreHeatCelsius = 0f;
+            return burnDamageHp > 0f || coreHeatDeltaCelsius > 0f;
+        }
 
         /// <summary>Oyuncu-su etkilesimi dunya konumu (_StratocraftSwimmerPos.xyz).</summary>
         public Vector3 WaterInteractionWorldPos { get; private set; }
@@ -325,14 +471,6 @@ namespace Stratocraft.Character
         /// <summary>Ornek bazli kapsul-blok kesisim kontrolu.</summary>
         public bool CanPlaceBlockOutsidePlayerCapsule(Transform playerTransform, int wx, int wy, int wz, float brushRadius = 0.5f)
             => CanPlaceBlockOutsidePlayerCapsule(wx, wy, wz, playerTransform.position, _movementState.CapsuleHeightMeters, brushRadius);
-
-        /// <summary>Dunya (wx, wy, wz) koordinatindaki 32-bit vokseli okur.</summary>
-        public static uint ReadWorldVoxelRaw(Dictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
-        {
-            if (wy < 0 || wy >= 256) return 0u;
-            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
-            return worldChunks.TryGetValue((cx, cz), out uint[]? v) ? v[(wy << 8) | ((wz - cz * 16) << 4) | (wx - cx * 16)] : 0u;
-        }
 
         /// <summary>Dunya (wx, wy, wz) koordinatina 32-bit voksel yazar ve komsu chunk sinirlarini kirli isaretler.</summary>
         public static void WriteWorldVoxelRaw(
@@ -651,6 +789,7 @@ namespace Stratocraft.Character
                 _swimmerSurgeCooldownSec = Mathf.Max(0f, _swimmerSurgeCooldownSec - dt);
             }
 
+            Vector3 pos = playerTransform.position;
             if (fluidChunks == null)
             {
                 _vitals.SubmergedDepthMeters = 0f;
@@ -659,9 +798,9 @@ namespace Stratocraft.Character
                 _wasTouchingWaterLastFrame = false;
                 _wasHeadSubmergedLastFrame = false;
                 LastBreathAirVoxelY = -1;
+                ApplySolidMagmaContactIfNeeded(worldChunks, pos, dt, inLiquidLava: false, ref statusFeedback);
                 return;
             }
-            Vector3 pos = playerTransform.position;
             int wx = Mathf.FloorToInt(pos.x), wz = Mathf.FloorToInt(pos.z);
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4), cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             if (!fluidChunks.TryGetValue((cx, cz), out ushort[]? f) || f == null)
@@ -672,6 +811,7 @@ namespace Stratocraft.Character
                 _wasTouchingWaterLastFrame = false;
                 _wasHeadSubmergedLastFrame = false;
                 LastBreathAirVoxelY = -1;
+                ApplySolidMagmaContactIfNeeded(worldChunks, pos, dt, inLiquidLava: false, ref statusFeedback);
                 return;
             }
 
@@ -812,6 +952,51 @@ namespace Stratocraft.Character
             else
             {
                 _vitals.Wetness01 = Mathf.Max(0f, _vitals.Wetness01 - 0.08f * dt);
+            }
+
+            ApplySolidMagmaContactIfNeeded(worldChunks, pos, dt, inLiquidLava: inLava, ref statusFeedback);
+        }
+
+        private void ApplySolidMagmaContactIfNeeded(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 playerPos,
+            float dt,
+            bool inLiquidLava,
+            ref string statusFeedback)
+        {
+            if (inLiquidLava)
+            {
+                IsTouchingHotMagmaBlock = false;
+                LastMagmaContactSeconds = 0f;
+                return;
+            }
+
+            bool touchingMagma = StepSolidMagmaBlockContactHazard(
+                worldChunks,
+                playerPos.x,
+                playerPos.y,
+                playerPos.z,
+                dt,
+                Stage1GameSettings.EnableEnvironmentalEffects,
+                ref _vitals,
+                out float dmgHp,
+                out float heatDeltaC);
+
+            if (touchingMagma)
+            {
+                IsTouchingHotMagmaBlock = true;
+                LastMagmaContactSeconds += dt;
+                _pendingMagmaBurnHp += dmgHp;
+                _pendingMagmaCoreHeatCelsius += heatDeltaC;
+                if (Stage1GameSettings.EnableEnvironmentalEffects)
+                {
+                    statusFeedback = "SICAK VOLKANIK KAYA YANIGI! (-9 HP/s) Kor MagmaBlogu ustunden inin!";
+                }
+            }
+            else
+            {
+                IsTouchingHotMagmaBlock = false;
+                LastMagmaContactSeconds = 0f;
             }
         }
 
