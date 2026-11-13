@@ -2578,7 +2578,7 @@ namespace Stratocraft.Character
             bool hasOpenSkyAbovePlayer = !isEnclosedCave &&
                                          _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
             bool underLocalRainCloud = hasOpenSkyAbovePlayer &&
-                                       (_cloudAndRainRenderer.IsWorldPointUnderLocalRain(
+                                       (_cloudAndRainRenderer.IsWorldPointUnderActiveRain(
                                             transform.position.x, transform.position.y + 1.5f, transform.position.z, 0) ||
                                         _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour > 0.1f);
             float effectivePlayerRainMmHr = underLocalRainCloud ? _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour : 0.0f;
@@ -4773,16 +4773,8 @@ namespace Stratocraft.Character
             return true;
         }
 
-        private static PhysicalItemArchetype MapWeatherOutputToArchetype(PrimitiveCraftOutputId outputKind) => outputKind switch
-        {
-            PrimitiveCraftOutputId.WeatherBarometer => PhysicalItemArchetype.WeatherBarometer,
-            PrimitiveCraftOutputId.WeatherThermometer => PhysicalItemArchetype.WeatherThermometer,
-            PrimitiveCraftOutputId.WeatherHygrometer => PhysicalItemArchetype.WeatherHygrometer,
-            PrimitiveCraftOutputId.WeatherWindVaneAnemometer => PhysicalItemArchetype.WeatherWindVaneAnemometer,
-            PrimitiveCraftOutputId.WeatherRainGauge => PhysicalItemArchetype.WeatherRainGauge,
-            PrimitiveCraftOutputId.MetalLightningRod => PhysicalItemArchetype.MetalLightningRod,
-            _ => PhysicalItemArchetype.WeatherBarometer
-        };
+        private static PhysicalItemArchetype MapWeatherOutputToArchetype(PrimitiveCraftOutputId outputKind) =>
+            PhysicalItemMeshFactory.MapCraftOutputToArchetype(outputKind);
 
         private void ClearAllWeatherInstrumentVisuals()
         {
