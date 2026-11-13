@@ -185,11 +185,15 @@ namespace Stratocraft.Character
         public int VisibleChunkCount { get; private set; }
         public int CulledUndergroundSubChunkCount { get; private set; }
         public float LastChunkRebuildMilliseconds { get; private set; }
+        public LavaSolidificationAndCoolingSystem LavaSolidificationSystem => _lavaSolidificationSystem;
+        public Stage1CaveAcousticTelegraphController CaveAcousticTelegraphController => _caveAcousticTelegraphCtrl;
         private float _nextHudStringRefreshTime;
         private string _cachedMainHudString = string.Empty;
         private string _cachedRightHudString = string.Empty;
         private string _cachedSwordBannerString = string.Empty;
         private readonly FluidSimulationSystem _fluidSystem = new();
+        private readonly LavaSolidificationAndCoolingSystem _lavaSolidificationSystem = new LavaSolidificationAndCoolingSystem();
+        private static readonly Func<int, int, int, float> s_sampleLocalAmbientTempDelegate = SampleLocalVoxelAmbientTemperatureCelsius;
         private readonly FluidTraceRecorder _fluidTraceRecorder = new();
         private readonly SoilMoistureAndMudSystem _soilMoistureSystem = new();
         private readonly UnderwaterCameraEffect _underwaterCameraEffect = new();
@@ -214,6 +218,7 @@ namespace Stratocraft.Character
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
+        private readonly Stage1CaveAcousticTelegraphController _caveAcousticTelegraphCtrl = new Stage1CaveAcousticTelegraphController();
         private readonly Stage1CombatFeedbackAndArenaBridge _feedbackArenaBridge = new();
         private readonly Stage1EscapeMenuAndSettingsController _escapeMenuCtrl = new();
         private readonly Stage1SurvivalRecipeBookUi _recipeBookUi = new Stage1SurvivalRecipeBookUi();
@@ -449,6 +454,10 @@ namespace Stratocraft.Character
             EnsureChunksInitialized();
             EnsureDistantHorizonShellsInitialized();
             EnsureElevatedSceneObjectsAlignedToSurface();
+            _caveAcousticTelegraphCtrl.SharedVoxelMaterial = SharedVoxelMaterial;
+            _caveAcousticTelegraphCtrl.InitializeProceduralClipsOnce();
+            _creatureBridge.AcousticTelegraphController = _caveAcousticTelegraphCtrl;
+            _creatureBridge.OnCaveAmbushTelegraphTriggered ??= OnCaveAmbushTelegraphTriggered;
             EnsureCreaturesInitialized();
             InitializePersistenceAndTelemetry();
             _collapseBridge.MiningControllerForItemDrops = _miningCtrl;
@@ -1075,11 +1084,18 @@ namespace Stratocraft.Character
 
         private void StepFluidSimulation(float dt)
         {
+            if (_lavaSolidificationSystem.ActiveCoolingRockCount > 0)
+            {
+                _lavaSolidificationSystem.StepCoolingVolcanicRocks(dt, _worldChunks, _dirtyChunks);
+            }
+
             if (_activeFluidChunks.Count == 0) return;
 
             _fluidTickTimer -= dt;
             if (_fluidTickTimer > 0f) return;
-            _fluidTickTimer = 0.130f;
+            const float fluidTickInterval = 0.130f;
+            float effectiveFluidTickDt = Mathf.Clamp(fluidTickInterval - _fluidTickTimer, fluidTickInterval, 0.30f);
+            _fluidTickTimer = fluidTickInterval;
 
             int budgetChunks = Mathf.Clamp(_fluidSystem.MaxChunksPerTick, 12, 24);
             _allActiveFluidKeysScratch.Clear();
@@ -1122,43 +1138,65 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                if (!HasUnsettledFluidCells(fluids, sliceVolume))
+                bool hasUnsettled = HasUnsettledFluidCells(fluids, sliceVolume);
+                long remaining = 0L;
+                int obsidianCount = 0;
+                int steamCount = 0;
+
+                if (hasUnsettled)
                 {
-                    _activeFluidChunks.Remove(key);
-                    continue;
+                    anyActiveStepped = true;
+                    steppedCount++;
+                    remaining = _fluidSystem.StepChunkFluid(
+                        voxels.AsSpan(0, sliceVolume),
+                        fluids.AsSpan(0, sliceVolume),
+                        16, MaxEditableVoxelY, 16,
+                        out obsidianCount, out steamCount,
+                        explicitTickParity: tickParity);
+
+                    // WP-N1: Topraga su emilimi ve camurlasma (Moisture == 255 doygunluga ulasinca 0 birim ceker!)
+                    int absorbedBySoil = _soilMoistureSystem.StepChunkSoilInfiltration(
+                        key.cx, key.cz,
+                        voxels.AsSpan(0, sliceVolume),
+                        fluids.AsSpan(0, sliceVolume),
+                        MaxEditableVoxelY,
+                        out ushort soilVisualDirtyMask,
+                        out bool soilChangedFluid);
+                    if (soilVisualDirtyMask != 0)
+                    {
+                        AddSubChunkDirtyMask(key, soilVisualDirtyMask);
+                    }
+                    if (soilChangedFluid)
+                    {
+                        remaining = Math.Max(0L, remaining - absorbedBySoil);
+                        _dirtyFluidChunks.Add(key);
+                    }
+
+                    totalRemainingAcrossStepped += remaining;
+                    totalObsidian += obsidianCount;
+                    totalSteam += steamCount;
+                    totalSiphonTransfers += _fluidSystem.LastStepSiphonTransfers;
                 }
 
-                anyActiveStepped = true;
-                steppedCount++;
-                long remaining = _fluidSystem.StepChunkFluid(
-                    voxels.AsSpan(0, sliceVolume),
-                    fluids.AsSpan(0, sliceVolume),
-                    16, MaxEditableVoxelY, 16,
-                    out int obsidianCount, out int steamCount,
-                    explicitTickParity: tickParity);
-
-                // WP-N1: Topraga su emilimi ve camurlasma (Moisture == 255 doygunluga ulasinca 0 birim ceker!)
-                int absorbedBySoil = _soilMoistureSystem.StepChunkSoilInfiltration(
-                    key.cx, key.cz,
+                // Faz 3.3: Serin ortamda (T_env < 55C) kenar-oncelikli lav kabuklasmasi (8-15 sn -> MagmaBlock)
+                int solidifiedLavaCount = _lavaSolidificationSystem.StepChunkLavaCrusting(
+                    key.cx,
+                    key.cz,
                     voxels.AsSpan(0, sliceVolume),
                     fluids.AsSpan(0, sliceVolume),
                     MaxEditableVoxelY,
-                    out ushort soilVisualDirtyMask,
-                    out bool soilChangedFluid);
-                if (soilVisualDirtyMask != 0)
+                    effectiveFluidTickDt,
+                    s_sampleLocalAmbientTempDelegate,
+                    out ushort lavaDirtySubMask);
+                int coolingLavaCells = _lavaSolidificationSystem.LastStepCoolingLavaCells;
+                if (lavaDirtySubMask != 0)
                 {
-                    AddSubChunkDirtyMask(key, soilVisualDirtyMask);
-                }
-                if (soilChangedFluid)
-                {
-                    remaining = Math.Max(0L, remaining - absorbedBySoil);
+                    AddSubChunkDirtyMask(key, lavaDirtySubMask);
+                    _dirtyChunks.Add(key);
                     _dirtyFluidChunks.Add(key);
+                    WakeChunkAndNeighborsFluid(key);
+                    anyActiveStepped = true;
                 }
-
-                totalRemainingAcrossStepped += remaining;
-                totalObsidian += obsidianCount;
-                totalSteam += steamCount;
-                totalSiphonTransfers += _fluidSystem.LastStepSiphonTransfers;
 
                 if (obsidianCount > 0 || steamCount > 0)
                 {
@@ -1169,11 +1207,16 @@ namespace Stratocraft.Character
                         ? $"STOKIYOMETRIK REAKSIYON: Su + Lav (>=128) -> +{obsidianCount} Dogal Obsidyen olustu!"
                         : $"BUHARLASMA: Dusuk hacimli (<128) Su + Lav temas etti, +{steamCount} hucre buharlasti!";
                 }
+                else if (solidifiedLavaCount > 0)
+                {
+                    _miningCtrl.LastFeedbackText =
+                        $"🔥 LAV KABUKLAŞMASI: Serin ortamda +{solidifiedLavaCount} kenar lav hücresi Sıcak Volkanik Kaya (MagmaBlock) oldu!";
+                }
                 else if (remaining > 0)
                 {
                     _dirtyFluidChunks.Add(key);
                 }
-                else
+                else if (coolingLavaCells <= 0)
                 {
                     _activeFluidChunks.Remove(key);
                 }
@@ -1343,6 +1386,46 @@ namespace Stratocraft.Character
                 if (raw != 0 && !new FluidCell16(raw).IsSettled) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Faz 3.2 &amp; 3.3: Voksel koordinatindaki (wx, wy, wz) yerel ortam sicakligini 0 B/kare GC ile ornekler.
+        /// Yuzey biyom taban sicakligini, C1-surekli Jeotermal U-Egrisini ve derin magma tabani (wy &lt;= 24 -&gt; &gt;= 65C) kuralini birlestirir.
+        /// </summary>
+        public static float SampleLocalVoxelAmbientTemperatureCelsius(int wx, int wy, int wz)
+        {
+            float surfaceBiomeTemp = StratocraftFloatingIslandWorldGen.SampleSurfaceBiomeBaseTemperatureCelsius(wx, wz);
+            if (wy <= 24)
+            {
+                return MathF.Max(
+                    65.0f,
+                    ThermalAndBiologySystem.EvaluateUndergroundGeothermalTemperatureCelsius(
+                        surfaceBiomeTemp,
+                        StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - wy,
+                        wy));
+            }
+
+            float surfaceTopY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            float signedRelAlt = wy - surfaceTopY;
+            if (signedRelAlt < -4.5f)
+            {
+                float geoTemp = ThermalAndBiologySystem.EvaluateUndergroundGeothermalTemperatureCelsius(
+                    surfaceBiomeTemp,
+                    -signedRelAlt,
+                    wy);
+                return surfaceBiomeTemp >= LavaSolidificationAndCoolingSystem.LavaLiquidRetentionMinAmbientCelsius
+                    ? MathF.Max(surfaceBiomeTemp, geoTemp)
+                    : geoTemp;
+            }
+
+            return ThermalAndBiologySystem.EvaluateAmbientTemperatureCelsius(
+                baseSeasonTempCelsius: surfaceBiomeTemp,
+                worldAltitudeMeters: signedRelAlt,
+                isUndergroundEnclosed: false,
+                isNightTime: false,
+                windSpeedMetersPerSec: 0f,
+                nearbyHeatSourceBonusCelsius: 0f,
+                absoluteWorldY: wy);
         }
 
         private void StepMovementAndOxygen(float dt)
@@ -2082,6 +2165,11 @@ namespace Stratocraft.Character
             RebuildAllDirtyChunks(forceImmediateAll: true);
             _movementBridge.VerticalVelocity = 0f;
             _movementBridge.ResolveVoxelAndColliderDepenetration(transform, _worldChunks);
+            _oxygenSampleTimer = 0f;
+            if ((targetPos.x * targetPos.x + targetPos.z * targetPos.z) >= 75.0f * 75.0f)
+            {
+                _creatureBridge.SpawnBiomeCreaturesNearPosition(targetPos, _chunkContainerParent, SharedVoxelMaterial, _worldChunks);
+            }
             _miningCtrl.LastFeedbackText = label;
         }
 
@@ -2280,7 +2368,9 @@ namespace Stratocraft.Character
             _oxygenSystem.StepOxygen(ref _movementBridge.Vitals, effectiveAir, holdingTorch, dt);
 
             // Paket 4: A-Kararli Analitik Ustel (Exponential) Vucut Cekirdek Isisi & Islaklik (ThermalAndBiologySystem)
-            float lavaDist = Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(8.5f, -7.2f));
+            float lavaDist = Mathf.Abs(transform.position.y - StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY) < 8.0f
+                ? Vector2.Distance(new Vector2(transform.position.x, transform.position.z), new Vector2(8.5f, -7.2f))
+                : 999f;
             float heatBonus = lavaDist < 7.5f ? (1f - lavaDist / 7.5f) * 26f : 0f;
             float physicalCampfireHeat = _campfireCtrl.EvaluateThermalBonusAndDrying(
                 transform.position + Vector3.up * 0.8f,
@@ -2327,9 +2417,31 @@ namespace Stratocraft.Character
                     }
                 }
             }
-            bool isEnclosedCave = _lastConnectedAirVoxels < EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
-            float biomeBaseTemp = StratocraftFloatingIslandWorldGen.SampleBiomeAmbientTemperatureCelsius(
-                transform.position.x, transform.position.y, transform.position.z);
+
+            // Faz 3.3: 3.5m Sicak Volkanik Kaya (MagmaBlock) Radyal Isi Yayilimi (+22C tepe) ve Islaklik Kurutma (0 B/kare GC)
+            float hotRockBonus = _lavaSolidificationSystem.EvaluateNearbyHotRockThermalBonus(
+                transform.position.x,
+                transform.position.y,
+                transform.position.z,
+                _worldChunks,
+                out bool hotRockDrying);
+            if (hotRockBonus > 0f)
+            {
+                heatBonus += hotRockBonus;
+            }
+            if (hotRockDrying && _movementBridge.Vitals.SubmergedDepthMeters <= 0.05f)
+            {
+                _movementBridge.Vitals.Wetness01 = Mathf.Max(0f, _movementBridge.Vitals.Wetness01 - 0.16f * dt);
+            }
+
+            // Faz 3.2: Negatif alt-kot duzeltmesi ve C1-surekli Jeotermal U-Egrisi (-6..+4C sig magara -> +65..+110C derin magma)
+            float surfaceTopY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(
+                transform.position.x, transform.position.z);
+            float signedRelAltitudeMeters = transform.position.y - surfaceTopY;
+            bool isEnclosedCave = _lastConnectedAirVoxels < EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels ||
+                                  signedRelAltitudeMeters < -4.5f;
+            float biomeBaseTemp = StratocraftFloatingIslandWorldGen.SampleSurfaceBiomeBaseTemperatureCelsius(
+                transform.position.x, transform.position.z);
 
             if (_thermalTestMode == 1)
             {
@@ -2347,11 +2459,12 @@ namespace Stratocraft.Character
                     transform.position.y);
                 _ambientTempCelsius = ThermalAndBiologySystem.EvaluateAmbientTemperatureCelsius(
                     baseSeasonTempCelsius: biomeBaseTemp,
-                    worldAltitudeMeters: Mathf.Max(0f, (transform.position.y - StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY) * 2.5f),
+                    worldAltitudeMeters: signedRelAltitudeMeters,
                     isUndergroundEnclosed: isEnclosedCave,
                     isNightTime: _seasonWeatherSystem.IsNight,
                     windSpeedMetersPerSec: biomeBaseTemp < 0f ? 6.5f : _seasonWeatherSystem.WindSpeedMps,
-                    nearbyHeatSourceBonusCelsius: heatBonus);
+                    nearbyHeatSourceBonusCelsius: heatBonus,
+                    absoluteWorldY: transform.position.y);
             }
 
             _movementBridge.Vitals.HungerKcal = 2000f;
@@ -3954,6 +4067,10 @@ namespace Stratocraft.Character
 
         private void EnsureCreaturesInitialized()
         {
+            _caveAcousticTelegraphCtrl.SharedVoxelMaterial = SharedVoxelMaterial;
+            _caveAcousticTelegraphCtrl.InitializeProceduralClipsOnce();
+            _creatureBridge.AcousticTelegraphController = _caveAcousticTelegraphCtrl;
+            _creatureBridge.OnCaveAmbushTelegraphTriggered ??= OnCaveAmbushTelegraphTriggered;
             if (_creatureBridge.AgentCount > 0) return;
             var creaturesParent = GameObject.Find("04_Faz2_Creatures_VAT_Siege_And_PhoenixBoss");
             if (creaturesParent != null)
@@ -3994,6 +4111,20 @@ namespace Stratocraft.Character
                         phase += 1.35f;
                     }
                 }
+            }
+        }
+
+        private void OnCaveAmbushTelegraphTriggered(
+            Stratocraft.CreaturesAI.CreaturesAndBosses.CaveCreatureVariantKind variant,
+            Vector3 worldCeilingPos,
+            Vector3 playerPos)
+        {
+            _ = variant;
+            _ = worldCeilingPos;
+            _ = playerPos;
+            if (!string.IsNullOrEmpty(_caveAcousticTelegraphCtrl.LastTelegraphStatusText))
+            {
+                _miningCtrl.LastFeedbackText = _caveAcousticTelegraphCtrl.LastTelegraphStatusText;
             }
         }
 
