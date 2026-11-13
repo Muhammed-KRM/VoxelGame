@@ -9,6 +9,7 @@ using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.Data;
 using Stratocraft.CreaturesAI.HybridLod;
 using Stratocraft.CreaturesAI.Pathfinding;
+using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
@@ -1558,13 +1559,31 @@ namespace Stratocraft.Character
         private string SpawnCreatureDeathLootDrops(LiveCreatureAgent a, Material? sharedMat)
         {
             if (a.IsBatteryGenerated || MiningControllerForLootDrops == null || a.Root == null) return string.Empty;
-            Vector3 basePos = a.Root.position + Vector3.up * 0.45f;
+            Vector3 pos = a.Root.position;
+            Vector3 basePos = pos + Vector3.up * 0.45f;
 
             int wx = Mathf.RoundToInt(basePos.x * 4f);
             int wy = Mathf.RoundToInt(basePos.y * 4f);
             int wz = Mathf.RoundToInt(basePos.z * 4f);
             int meatCount = a.IsPhoenixBoss || a.MaxHp >= 360f ? 2 : 1;
             int hideCount = a.IsPhoenixBoss || a.MaxHp >= 420f ? 2 : 1;
+
+            bool isBoss = a.IsPhoenixBoss;
+            float distMeters = Mathf.Sqrt(pos.x * pos.x + pos.z * pos.z);
+            byte dropTier = MatterCrystalVacuumSystem.DetermineResonanceCrystalDropTier(distMeters, isBoss);
+            if (dropTier >= 2)
+            {
+                var crystalDna = Stratocraft.Inventory.Data.PhysicalItemShapeDna.CreateFromWorldCoord(
+                    wx, wy, wz, (uint)(0x9401 + a.ArchetypeId * 31 + dropTier));
+                MiningControllerForLootDrops.SpawnPhysicalWorldItem(
+                    basePos + new Vector3(0.06f, 0.32f, -0.06f),
+                    InventoryItemKind.ResonanceCrystal,
+                    dropTier,
+                    1,
+                    crystalDna,
+                    sharedMat);
+            }
+            string crystalLootNote = dropTier >= 2 ? $", 1x T{dropTier} Rezonans Kristali" : string.Empty;
 
             for (int m = 0; m < meatCount; m++)
             {
@@ -1592,7 +1611,7 @@ namespace Stratocraft.Character
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(-0.3f, 0.2f, 0f), MaterialIdCatalog.PhoenixFeatherGold, 2, "Anka Altin-Kor Tuyu");
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0.3f, 0.3f, 0.2f), MaterialIdCatalog.StarCore, 1, "Anka Kor Kalbi");
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0f, 0.25f, -0.3f), MaterialIdCatalog.GoldOre, 2, "Saf Kor Altini");
-                return $" (Ganimet: {meatCount}x Cig Et, 2x Anka Tuyu, 1x Anka Kor Kalbi, 2x Kor Altini dustu!)";
+                return $" (Ganimet: {meatCount}x Cig Et, 2x Anka Tuyu, 1x Anka Kor Kalbi, 2x Kor Altini{crystalLootNote} dustu!)";
             }
 
             byte primaryDrop = a.ArchetypeId switch
@@ -1618,7 +1637,7 @@ namespace Stratocraft.Character
             {
                 MiningControllerForLootDrops.SpawnDroppedItem(basePos + new Vector3(0f, 0.25f, 0.25f), MaterialIdCatalog.CopperOre, 1, "Canli Rezonans Cevheri");
             }
-            return $" (Ganimet: {meatCount}x Cig Et, {hideCount}x Ham Post, {primaryLabel} yere dustu!)";
+            return $" (Ganimet: {meatCount}x Cig Et, {hideCount}x Ham Post, {primaryLabel}{crystalLootNote} yere dustu!)";
         }
 
         private void AttachSlashWoundScar(
