@@ -17,6 +17,88 @@ namespace Stratocraft.Character.Systems
         public const float HyperthermiaThresholdCelsius = 39.5f;
         public const float SevereHyperthermiaThresholdCelsius = 40.5f;
 
+        /// <summary>
+        /// Paket 4A: Son hesaplanan oyuncu yagmur/su islaklik orani (0.0 = Tam Kuru, 1.0 = Sirilsiklam).
+        /// </summary>
+        public float Wetness01;
+
+        /// <summary>
+        /// Paket 4A: Acik gokyuzunde yagmur altinda islanma, cati altinda veya ates/firin isisi yaninda hizla kuruma
+        /// adimini ilerletir ve vucut isisi kaybi / hipotermi hizlandirma carpanini (1.0x .. 3.0x+) dondurur.
+        /// Saf .NET 10 altinda (0 B GC) dogrudan birim testi edilebilir.
+        /// </summary>
+        public static float StepRainWetnessAndDrying(
+            ref float wetness01,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float nearFireHeatCelsius,
+            float gameDeltaSeconds)
+        {
+            if (!float.IsFinite(wetness01))
+            {
+                wetness01 = 0.0f;
+            }
+
+            if (!float.IsFinite(gameDeltaSeconds) || gameDeltaSeconds <= 0.0f)
+            {
+                wetness01 = Math.Clamp(wetness01, 0.0f, 1.0f);
+                return ComputeHypothermiaHeatLossMultiplier(wetness01, 5.0f);
+            }
+
+            float safePrecip = float.IsFinite(precipMmPerHour) ? MathF.Max(0.0f, precipMmPerHour) : 0.0f;
+            float safeFireHeat = float.IsFinite(nearFireHeatCelsius) ? MathF.Max(0.0f, nearFireHeatCelsius) : 0.0f;
+
+            if (hasOpenSkyAbove && safePrecip > 0.05f)
+            {
+                // Acik gokyuzunde aktif yagmur altinda: yagis siddetiyle (mm/saat) orantili islanma
+                float wettingRatePerSec = 0.016f + 0.0028f * Math.Clamp(safePrecip, 0.0f, 80.0f);
+                wetness01 = Math.Clamp(wetness01 + wettingRatePerSec * gameDeltaSeconds, 0.0f, 1.0f);
+            }
+            else
+            {
+                // Cati/magara altinda (!hasOpenSkyAbove) veya yagmursuz havada: baz kuruma + ates yaninda hizli termal kuruma
+                float dryingRatePerSec = hasOpenSkyAbove ? 0.010f : 0.020f;
+                if (safeFireHeat > 0.0f)
+                {
+                    dryingRatePerSec += 0.0075f * Math.Clamp(safeFireHeat, 0.0f, 120.0f);
+                }
+                wetness01 = Math.Clamp(wetness01 - dryingRatePerSec * gameDeltaSeconds, 0.0f, 1.0f);
+            }
+
+            return ComputeHypothermiaHeatLossMultiplier(wetness01, 5.0f);
+        }
+
+        /// <summary>
+        /// Paket 4A: Ortam sicakligini da hesaba katan asiri yuklenmis (overload) yagmur islakligi ve kuruma adimi.
+        /// </summary>
+        public static float StepRainWetnessAndDrying(
+            ref float wetness01,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float nearFireHeatCelsius,
+            float gameDeltaSeconds,
+            float ambientTempCelsius)
+        {
+            StepRainWetnessAndDrying(ref wetness01, precipMmPerHour, hasOpenSkyAbove, nearFireHeatCelsius, gameDeltaSeconds);
+            return ComputeHypothermiaHeatLossMultiplier(wetness01, ambientTempCelsius);
+        }
+
+        /// <summary>
+        /// Paket 4A: Islaklik (0..1) ve ortam sicakligina gore vucut isisi kaybi / hipotermi hizlanma carpanini (1.0x .. 3.5x) hesaplar.
+        /// Sogukta islak kiyafet/deri suyun yuksek isil iletkenligi nedeniyle isi kaybini 3 kata kadar hizlandirir.
+        /// </summary>
+        public static float ComputeHypothermiaHeatLossMultiplier(float wetness01, float ambientTempCelsius = 5.0f)
+        {
+            float w = float.IsFinite(wetness01) ? Math.Clamp(wetness01, 0.0f, 1.0f) : 0.0f;
+            float baseMult = 1.0f + w * 2.0f;
+            if (float.IsFinite(ambientTempCelsius) && ambientTempCelsius < 15.0f && w > 0.001f)
+            {
+                float coldSeverity01 = Math.Clamp((15.0f - ambientTempCelsius) / 30.0f, 0.0f, 1.0f);
+                baseMult += w * coldSeverity01 * 0.5f;
+            }
+            return baseMult;
+        }
+
         /// <summary>Ornek bazli atardamar kanama hizi (HP/s).</summary>
         public float BleedRateHpPerSec { get; set; }
 
@@ -184,6 +266,7 @@ namespace Stratocraft.Character.Systems
                 float dryRate = 0.025f + MathF.Max(0f, ambientTempCelsius - 15.0f) * 0.004f;
                 vitals.Wetness01 = Math.Clamp(vitals.Wetness01 * MathF.Exp(-dryRate * deltaTime), 0f, 1f);
             }
+            Wetness01 = vitals.Wetness01;
 
             // 2. Zirh Yalitimi ve Islaklikta 3x Soguk Isi Kaybi (GAME LOGIC BIBLE v7.0 Bolum 3.3)
             float effectiveWetness = isSubmergedOrInRain ? MathF.Max(vitals.Wetness01, 0.75f) : vitals.Wetness01;

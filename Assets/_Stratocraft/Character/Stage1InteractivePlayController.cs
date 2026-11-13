@@ -226,6 +226,66 @@ namespace Stratocraft.Character
         private readonly ThermalAndBiologySystem _thermalSystem = new();
         private readonly SeasonAndWeatherSystem _seasonWeatherSystem = new();
         private readonly ChunkSnappedFloatingOriginSystem _floatingOriginSystem = new();
+        private readonly RegionalAtmosphereSimulationSystem _regionalAtmosphereSystem = new(StratocraftFloatingIslandWorldGen.ActiveWorldSeed);
+        private readonly WaterCycleAndEvaporationSystem _waterCycleSystem = new();
+        private readonly ChunkSalinityBitset _salinityBitset = new();
+        private readonly KarstHydrologyAndAquiferSystem _karstAquiferSystem = new();
+        private readonly ConvectiveLightningAndRodSystem _convectiveLightningSystem = new();
+        private readonly Stage1AtmosphereCloudAndRainRenderer _cloudAndRainRenderer = new();
+        private readonly PlacedWeatherInstrumentsSystem _placedWeatherInstruments = new();
+        private readonly AtmosphereAoiCellSample[] _aoiCurrentWindow81 = new AtmosphereAoiCellSample[AtmosphereAoiSyncPacket.AoiCellCount];
+        private readonly AtmosphereAoiCellSample[] _aoiClientBaseline81 = new AtmosphereAoiCellSample[AtmosphereAoiSyncPacket.AoiCellCount];
+        private readonly byte[] _aoiWirePacketBuffer = new byte[AtmosphereAoiSyncPacket.MaxWirePacketBytes];
+        private readonly CloudCellRenderSample[] _cloudRenderSamplesScratch = new CloudCellRenderSample[AtmosphereAoiSyncPacket.AoiCellCount];
+        private readonly OpenRainContainerRecord[] _openRainContainersScratch = new OpenRainContainerRecord[16];
+        private int _activeOpenContainerCount = 2;
+        private bool _hasValidAoiBaseline;
+        private uint _atmosphereNetTickCounter;
+        private int _lastAoiPacketBytes;
+        private double _totalSimulatedGameSeconds = 8.5 * 3600.0;
+        private SolarEphemState _currentSolarEphem;
+        private AtmosphereCellState _currentPlayerAtmosphereCell;
+        private Light? _directionalSunLight;
+        private float _hydrologyStepTimer;
+        private float _hydrologyAccumGameSeconds;
+        private float _pendingThunderTimerSec = -1.0f;
+        private float _pendingThunderDistanceMeters;
+        private float _lightningSkyFlashIntensity01;
+        private AudioSource? _weatherAudioSource;
+        private AudioClip? _thunderRumbleClip;
+        private CampfireStationData _openSkyCampfireRainState;
+        private BloomeryFurnaceState _openSkyBloomeryRainState;
+        private readonly List<PlacedWeatherInstrumentVisualEntry> _weatherInstrumentVisuals = new(32);
+        private Transform? _weatherInstrumentsContainer;
+        private PrimitiveCraftOutputId _heldWeatherInstrumentForPlacement = PrimitiveCraftOutputId.None;
+        private PhysicalItemShapeDna _heldWeatherInstrumentDna;
+        private GUIStyle? _timeScaleBadgeStyle;
+        private GUIStyle? _weatherInstrumentBannerBoxStyle;
+        private GUIStyle? _weatherInstrumentBannerTitleStyle;
+        private GUIStyle? _weatherInstrumentBannerSubStyle;
+        private string _cachedCalendarHudLine = string.Empty;
+        private string _cachedTimeScaleBadgeText = string.Empty;
+        private float _lastCachedTimeScaleVal = -1.0f;
+
+        public RegionalAtmosphereSimulationSystem RegionalAtmosphereSystem => _regionalAtmosphereSystem;
+        public KarstHydrologyAndAquiferSystem KarstAquiferSystem => _karstAquiferSystem;
+        public ConvectiveLightningAndRodSystem ConvectiveLightningSystem => _convectiveLightningSystem;
+        public Stage1AtmosphereCloudAndRainRenderer CloudAndRainRenderer => _cloudAndRainRenderer;
+        public PlacedWeatherInstrumentsSystem PlacedWeatherInstruments => _placedWeatherInstruments;
+        public SolarEphemState CurrentSolarEphem => _currentSolarEphem;
+
+        private sealed class PlacedWeatherInstrumentVisualEntry
+        {
+            public uint InstanceId;
+            public PrimitiveCraftOutputId OutputKind;
+            public GameObject RootGo = null!;
+            public MeshFilter MainMf = null!;
+            public Transform? RotatingVanePivot;
+            public Transform? RotatingCupsPivot;
+            public Transform? RotatingNeedlePivot;
+            public byte LastRenderedStageByte;
+            public byte LastRenderedTempByte;
+        }
         private RegionFileStore? _regionStore;
         private SqliteTelemetryLogger? _telemetryLogger;
         private VoxelChunkComponent? _oxygenScratchChunk;
@@ -274,7 +334,21 @@ namespace Stratocraft.Character
             var key = (chunkCoord.x, chunkCoord.y);
             _worldChunks[key] = voxels65536; _chunkMeshFilters[key] = mf; _chunkColliders[key] = mc;
             if (mf != null && mf.TryGetComponent<MeshRenderer>(out var mr)) _chunkMeshRenderers[key] = mr;
-            if (fluids65536 != null) _fluidChunks[key] = fluids65536;
+            if (fluids65536 != null)
+            {
+                _fluidChunks[key] = fluids65536;
+                CaveChamberHydrologyEvaluation karstEval = KarstHydrologyAndAquiferSystem.EvaluateCaveChamberHydrology(
+                    key.x * 16 + 8,
+                    key.y * 16 + 8,
+                    StratocraftFloatingIslandWorldGen.ActiveWorldSeed);
+                _karstAquiferSystem.RegisterBasinFromChunkFluids(
+                    key.x,
+                    key.y,
+                    fluids65536,
+                    karstEval.IsImpermeableDryRoof,
+                    karstEval.OverburdenPermeability01,
+                    karstEval.HasMajorKarstAquiferLake);
+            }
             if (fluidMf != null)
             {
                 _fluidMeshFilters[key] = fluidMf;
@@ -468,6 +542,7 @@ namespace Stratocraft.Character
             _cameraYaw = transform.eulerAngles.y;
             _cameraPitch = 0f;
             ApplyFirstPersonVisibility();
+            InitializeAtmosphereHydrologyAndWeatherInstruments();
             UpdateFrustumVisibility();
             RebuildAllDirtyChunks(forceImmediateAll: false);
             Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
@@ -582,6 +657,7 @@ namespace Stratocraft.Character
                 _activeInstance = null;
             }
             _underwaterCameraEffect.Dispose();
+            _cloudAndRainRenderer.Dispose();
             Shader.SetGlobalVector(ShaderSwimmerPosId, Vector4.zero);
             Shader.SetGlobalVector(ShaderSwimmerVelId, Vector4.zero);
             if (_fluidTraceRecorder.IsEnabled)
@@ -594,6 +670,7 @@ namespace Stratocraft.Character
         private void OnRenderObject()
         {
             SwingTraceGizmoRenderer.DrawTrails(_combatBridge.TraceRecorder);
+            _cloudAndRainRenderer.RenderProceduralCloudsAndLocalRain(StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY);
         }
 
         private void Update()
@@ -614,6 +691,7 @@ namespace Stratocraft.Character
                 _movementBridge.Vitals.LungOxygenPercent = 100f;
                 _miningCtrl.CurrentToolDurability = _miningCtrl.MaxToolDurability;
             }
+            StepAtmosphereSolarCloudsAndHydrology(dt);
             StepConsumablesAndArmor(dt);
             StepDynamicContinentChunkStreaming();
             StepMovementAndOxygen(dt);
@@ -699,6 +777,7 @@ namespace Stratocraft.Character
 
                     _worldChunks.Remove(key);
                     _fluidChunks.Remove(key);
+                    _salinityBitset.ClearChunk(key.cx, key.cz);
                     _chunkMeshFilters.Remove(key);
                     _fluidMeshFilters.Remove(key);
                     _chunkMeshRenderers.Remove(key);
@@ -1685,7 +1764,11 @@ namespace Stratocraft.Character
             if (!uiBlocked && (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)))
             {
                 bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                if (shiftHeld)
+                if (TryHandleWeatherInstrumentInteractKeyE(shiftHeld))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (shiftHeld)
                 {
                     if (_bloomeryCtrl.TryHandleInteractKeyE(PlayerCamera, transform.position, AnvilTransform, _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, SharedVoxelMaterial))
                     {
@@ -1767,12 +1850,14 @@ namespace Stratocraft.Character
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
                 out bool wheelbarrowConsumedClick);
 
-            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick;
+            bool weatherInstConsumedClick = TryPlaceHeldWeatherInstrumentOnRightClick(uiBlocked);
+            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || weatherInstConsumedClick;
             bool suppressLooseBuild = stationConsumedClick ||
                                       _wheelbarrowCtrl.IsPushingWheelbarrow ||
                                       _wheelbarrowCtrl.HasAimedWheelbarrow(PlayerCamera, transform.position, out _, out _) ||
                                       _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform) ||
-                                      _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0;
+                                      _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
+                                      FindAimedWeatherInstrumentIndex(3.6f) >= 0;
             _looseBuildSystem.Step(
                 dt, PlayerCamera, transform, uiBlocked,
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
@@ -2047,6 +2132,19 @@ namespace Stratocraft.Character
             }
             if (_escapeMenuCtrl.IsMenuOpen || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen) return;
 
+            if (Input.GetKeyDown(KeyCode.LeftBracket))
+            {
+                HandleTimeScaleHotkeyStep(-1, resetToOne: false);
+            }
+            else if (Input.GetKeyDown(KeyCode.RightBracket))
+            {
+                HandleTimeScaleHotkeyStep(+1, resetToOne: false);
+            }
+            else if (Input.GetKeyDown(KeyCode.Backspace))
+            {
+                HandleTimeScaleHotkeyStep(0, resetToOne: true);
+            }
+
             if ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
                 !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
             {
@@ -2252,6 +2350,8 @@ namespace Stratocraft.Character
             _wheelbarrowCtrl.ClearAll();
             _mindBuildingCtrl.ClearAll();
             _miningCtrl.ClearAllDroppedWorldItems();
+            ClearAllWeatherInstrumentVisuals();
+            InitializeAtmosphereHydrologyAndWeatherInstruments();
             _miningCtrl.LastFeedbackText = $"[F7] YENI RASTGELE HARITA TOHUMU URETILDI (Seed={nextSeed} | {keys.Count} Gercek 3B VoxelChunk + Biyom Florasi Guncellendi)";
         }
 
@@ -2454,17 +2554,41 @@ namespace Stratocraft.Character
             else
             {
                 _seasonWeatherSystem.EvaluateAtWorldTime(
-                    Time.timeAsDouble,
+                    _totalSimulatedGameSeconds,
                     StratocraftFloatingIslandWorldGen.GetBiomeRingIndex(transform.position.x, transform.position.z),
                     transform.position.y);
+                float windSpd = Mathf.Sqrt(
+                    _currentPlayerAtmosphereCell.WindVelX * _currentPlayerAtmosphereCell.WindVelX +
+                    _currentPlayerAtmosphereCell.WindVelZ * _currentPlayerAtmosphereCell.WindVelZ);
+                float baseAtmosphereOrBiomeTemp = Mathf.Abs(biomeBaseTemp - 20.0f) < 4.0f
+                    ? (_currentPlayerAtmosphereCell.AirTempCelsius * 0.65f + biomeBaseTemp * 0.35f)
+                    : biomeBaseTemp;
                 _ambientTempCelsius = ThermalAndBiologySystem.EvaluateAmbientTemperatureCelsius(
-                    baseSeasonTempCelsius: biomeBaseTemp,
+                    baseSeasonTempCelsius: baseAtmosphereOrBiomeTemp,
                     worldAltitudeMeters: signedRelAltitudeMeters,
                     isUndergroundEnclosed: isEnclosedCave,
-                    isNightTime: _seasonWeatherSystem.IsNight,
-                    windSpeedMetersPerSec: biomeBaseTemp < 0f ? 6.5f : _seasonWeatherSystem.WindSpeedMps,
+                    isNightTime: _currentSolarEphem.IsNight,
+                    windSpeedMetersPerSec: biomeBaseTemp < 0f ? 6.5f : windSpd,
                     nearbyHeatSourceBonusCelsius: heatBonus,
                     absoluteWorldY: transform.position.y);
+            }
+
+            bool hasOpenSkyAbovePlayer = !isEnclosedCave &&
+                                         _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
+            bool underLocalRainCloud = hasOpenSkyAbovePlayer &&
+                                       (_cloudAndRainRenderer.IsWorldPointUnderLocalRain(
+                                            transform.position.x, transform.position.y + 1.5f, transform.position.z, 0) ||
+                                        _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour > 0.1f);
+            float effectivePlayerRainMmHr = underLocalRainCloud ? _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour : 0.0f;
+            if (_movementBridge.Vitals.SubmergedDepthMeters <= 0.05f)
+            {
+                ThermalAndBiologySystem.StepRainWetnessAndDrying(
+                    ref _movementBridge.Vitals.Wetness01,
+                    effectivePlayerRainMmHr,
+                    hasOpenSkyAbovePlayer,
+                    heatBonus,
+                    dt,
+                    _ambientTempCelsius);
             }
 
             _movementBridge.Vitals.HungerKcal = 2000f;
@@ -2475,7 +2599,7 @@ namespace Stratocraft.Character
                 ref _movementBridge.Vitals,
                 ambientTempCelsius: _ambientTempCelsius,
                 armorThermalInsulation01: Mathf.Clamp01(armorInsulation),
-                isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f,
+                isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f || (hasOpenSkyAbovePlayer && effectivePlayerRainMmHr > 0.25f),
                 deltaTime: dt);
 
             // Usume veya sicaklama yuzunden karakterin HP'si 0'a inip yere dusmesi (BleedOutCrawl) ve bir daha kalkamamasi engellenir!
@@ -4279,9 +4403,11 @@ namespace Stratocraft.Character
                 PlayerCamera, transform.position, AnvilTransform, _showAllHud, hudInteractionBlocked);
             _wheelbarrowCtrl.DrawCrosshairPromptGui(
                 PlayerCamera, transform.position, _showAllHud, hudInteractionBlocked);
+            DrawWeatherInstrumentCrosshairPromptGui(_showAllHud, hudInteractionBlocked);
             _mindBuildingCtrl.DrawGui(
                 _showAllHud, PlayerCamera, transform, _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
                 _bloomeryCtrl, _wheelbarrowCtrl);
+            DrawTimeScaleBadgeAndCalendarHudGui(_showAllHud, hudInteractionBlocked, refreshPeriodicStrings);
 
             if (_showDebugHudText)
             {
@@ -4380,14 +4506,14 @@ namespace Stratocraft.Character
                     };
                     string biomeLabel = StratocraftFloatingIslandWorldGen.GetBiomeDisplayName(pos.x, pos.z);
 
-                    // SOL-UST KUTU (Minecraft F3 Sol Sutun: FPS, XYZ, Chunk, Yon, Biyom, Hareket)
+                    // SOL-UST KUTU (Minecraft F3 Sol Sutun: FPS, XYZ, Chunk, Yon, Biyom, Hareket, Takvim & Atmosfer)
                     _cachedMainHudString =
                         $"Stratocraft (Faz 1-2) | {fps} FPS | Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed}\n" +
                         $"XYZ: {pos.x:0.0} / {pos.y:0.0} / {pos.z:0.0}  [Chunk: {pCx}, {pCz}]\n" +
                         $"Yon: {compass} ({normYaw:0}°) | Kamera: {(_isFirstPersonMode ? "FPS" : "TPS")} [F5]\n" +
-                        $"{biomeLabel} | Sicaklik: {_ambientTempCelsius:0.1}°C (Vucut: {vt.CoreBodyTempCelsius:0.1}°C)\n" +
-                        $"Chunk: {VisibleChunkCount}/{_worldChunks.Count} (Menzil: {ActiveChunkRadius})\n" +
-                        $"Hareket: {st.Stance} ({st.CurrentSpeedMetersPerSec:0.0} m/s)";
+                        $"{biomeLabel} | Sicaklik: {_ambientTempCelsius:0.1}°C (Vucut: {vt.CoreBodyTempCelsius:0.1}°C | Islaklik: %{vt.Wetness01 * 100f:0})\n" +
+                        $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.1} hPa | Yagis: {_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.1} mm/s\n" +
+                        $"Chunk: {VisibleChunkCount}/{_worldChunks.Count} (Menzil: {ActiveChunkRadius}) | Hareket: {st.Stance} ({st.CurrentSpeedMetersPerSec:0.0} m/s)";
 
                     // SAG-UST KUTU (Minecraft F3 Sag Sutun: Hedef Blok + Yogunluk/Hasar/Mesafe, Silah/Stil, Kristal, Kisa Tuslar)
                     string targetLine = _miningCtrl.HasAimHit
@@ -4403,12 +4529,1101 @@ namespace Stratocraft.Character
                         $"[F3] Bilgileri Gizle | [F1] Sinematik | [ESC] Ayarlar";
                 }
 
-                GUI.Box(new Rect(10f, 10f, 390f, 112f), _cachedMainHudString, _hudBoxStyle);
+                GUI.Box(new Rect(10f, 10f, 440f, 118f), _cachedMainHudString, _hudBoxStyle);
                 GUI.Box(new Rect(Screen.width - 400f, 10f, 390f, 96f), _cachedRightHudString, _hudRightBoxStyle);
             }
 
             _recipeBookUi.DrawOnGui(Screen.width, Screen.height);
             _escapeMenuCtrl.DrawEscapeMenuOnGui(_creatureBridge, _miningCtrl, SaveAllChunksToRegionStore, LoadAllChunksFromRegionStore);
+        }
+
+        // ============================================================================================================
+        // PAKET 4A: GUNES TAKVIMI, ZAMAN AKIS HIZI (1x..600x), FIZIKSEL ATMOSFER, HIDROLOJI VE 5 METEOROLOJI ALETI
+        // ============================================================================================================
+
+        private void HandleTimeScaleHotkeyStep(int stepDirection, bool resetToOne)
+        {
+            bool canModify = SpatialAoiAndSwarmNetSystem.CanModifyTimeScale(
+                Stage1GameSettings.ActiveNetworkTopology,
+                Stage1GameSettings.IsLocalServerOrHostAuthority);
+
+            if (!canModify)
+            {
+                _miningCtrl.LastFeedbackText =
+                    "🔒 İstemci modunda Zaman Akış Hızı değiştirilemez (Salt-Okunur — Sunucu/Host yetkisi gerekir).";
+                return;
+            }
+
+            float nextScale = resetToOne
+                ? 1.0f
+                : SolarCalendarAndTimeScaleSystem.StepTimeScaleHotkeyStep(Stage1GameSettings.TimeScaleMultiplier, stepDirection);
+            Stage1GameSettings.SetTimeScaleMultiplier(nextScale);
+            Stage1GameSettings.SaveToPrefs();
+
+            _miningCtrl.LastFeedbackText = resetToOne
+                ? "⏱️ Zaman Akış Hızı 1x (Gerçek Zamanlı: 1 Gün = 60 Dk) olarak sıfırlandı."
+                : $"⏩ Zaman Akış Hızı: {Stage1GameSettings.TimeScaleMultiplier:0}x ([ Azalt | ] Artır | Backspace: 1x)";
+        }
+
+        private void StepSimulation(double worldTimeSeconds, float gameDeltaSeconds)
+        {
+            _regionalAtmosphereSystem.StepAtmosphere(worldTimeSeconds, gameDeltaSeconds);
+        }
+
+        private void InitializeAtmosphereHydrologyAndWeatherInstruments()
+        {
+            if (_directionalSunLight == null)
+            {
+                var lights = FindObjectsByType<Light>(FindObjectsInactive.Exclude);
+                for (int i = 0; i < lights.Length; i++)
+                {
+                    if (lights[i] != null && lights[i].type == LightType.Directional)
+                    {
+                        _directionalSunLight = lights[i];
+                        break;
+                    }
+                }
+            }
+
+            _openSkyCampfireRainState = CampfireSimulationLogic.CreateUnlitStation(
+                9001u,
+                new System.Numerics.Vector3(transform.position.x, transform.position.y, transform.position.z),
+                transform.position.y,
+                1.0f,
+                hasStoneRing: true);
+            _openSkyBloomeryRainState = BloomeryThermodynamicsSystem.CreateBloomeryFurnace(
+                9002u,
+                new System.Numerics.Vector3(transform.position.x, transform.position.y, transform.position.z),
+                transform.position.y,
+                hasTuyere: true,
+                hasBellows: true,
+                hasCrucible: false);
+
+            // Acik su varili / kazan yagmur dolumu testi ve simulasyonu icin baslangic kayitlari (0 B GC)
+            int baseWx = Mathf.RoundToInt(transform.position.x) + 3;
+            int baseWz = Mathf.RoundToInt(transform.position.z) + 2;
+            int baseWy = Mathf.RoundToInt(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(baseWx, baseWz));
+            _openRainContainersScratch[0] = new OpenRainContainerRecord
+            {
+                WorldX = baseWx,
+                WorldY = baseWy,
+                WorldZ = baseWz,
+                ApertureAreaM2 = 1.0f,
+                MaxCapacityLiters = 100.0f,
+                StoredWaterLiters = 5.0f,
+                IsSaltWater = false
+            };
+            _openRainContainersScratch[1] = new OpenRainContainerRecord
+            {
+                WorldX = baseWx + 1,
+                WorldY = baseWy,
+                WorldZ = baseWz,
+                ApertureAreaM2 = 1.25f,
+                MaxCapacityLiters = 150.0f,
+                StoredWaterLiters = 12.0f,
+                IsSaltWater = false
+            };
+            _activeOpenContainerCount = 2;
+
+            _currentSolarEphem = SolarCalendarAndTimeScaleSystem.EvaluateSolarEphem(_totalSimulatedGameSeconds);
+            _regionalAtmosphereSystem.RecenterAroundWorldXZ(transform.position.x, transform.position.z);
+            _currentPlayerAtmosphereCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(transform.position.x, transform.position.z);
+
+            EnsureDefaultWeatherObservatoryPlaced();
+        }
+
+        private void EnsureDefaultWeatherObservatoryPlaced()
+        {
+            if (_placedWeatherInstruments.Count > 0) return;
+
+            if (_weatherInstrumentsContainer == null)
+            {
+                GameObject? existing = GameObject.Find("06_Faz4A_MeteorologyInstruments_And_LightningRods");
+                if (existing == null) existing = new GameObject("06_Faz4A_MeteorologyInstruments_And_LightningRods");
+                _weatherInstrumentsContainer = existing.transform;
+            }
+
+            Vector3 baseAnchor = AnvilTransform != null
+                ? AnvilTransform.position + new Vector3(2.4f, 0f, -1.6f)
+                : new Vector3(2.8f, StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY, -3.5f);
+
+            PrimitiveCraftOutputId[] defaultInstruments =
+            {
+                PrimitiveCraftOutputId.WeatherBarometer,
+                PrimitiveCraftOutputId.WeatherThermometer,
+                PrimitiveCraftOutputId.WeatherHygrometer,
+                PrimitiveCraftOutputId.WeatherWindVaneAnemometer,
+                PrimitiveCraftOutputId.WeatherRainGauge,
+                PrimitiveCraftOutputId.MetalLightningRod
+            };
+
+            for (int i = 0; i < defaultInstruments.Length; i++)
+            {
+                float wx = baseAnchor.x + i * 0.82f;
+                float wz = baseAnchor.z + ((i & 1) * 0.28f);
+                float surfY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+                if (VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                        wx, wz, surfY + 0.8f, 4.0f, _worldChunks, out float exactY, out _))
+                {
+                    surfY = exactY;
+                }
+
+                var dna = PhysicalItemShapeDna.CreateNatural((uint)(0x4A100 + i * 997));
+                PlaceWeatherInstrumentInWorld(
+                    defaultInstruments[i],
+                    new Vector3(wx, surfY + 0.22f, wz),
+                    Quaternion.Euler(0f, 180f, 0f),
+                    in dna);
+            }
+        }
+
+        public bool PlaceWeatherInstrumentInWorld(
+            PrimitiveCraftOutputId outputKind,
+            Vector3 worldPos,
+            Quaternion worldRot,
+            in PhysicalItemShapeDna dna)
+        {
+            bool openSky = HasOpenSkyAboveWorldCoord(
+                Mathf.FloorToInt(worldPos.x),
+                Mathf.Clamp(Mathf.FloorToInt(worldPos.y) + 1, 1, MaxEditableVoxelY - 1),
+                Mathf.FloorToInt(worldPos.z));
+
+            if (!_placedWeatherInstruments.TryPlaceInstrument(
+                    outputKind,
+                    new System.Numerics.Vector3(worldPos.x, worldPos.y, worldPos.z),
+                    new System.Numerics.Quaternion(worldRot.x, worldRot.y, worldRot.z, worldRot.w),
+                    in dna,
+                    out uint instanceId,
+                    hasOpenSkyAbove: openSky,
+                    initialGameSeconds: _totalSimulatedGameSeconds))
+            {
+                return false;
+            }
+
+            if (outputKind == PrimitiveCraftOutputId.MetalLightningRod)
+            {
+                PlacedWeatherInstrumentRecord placedRec = _placedWeatherInstruments.GetRecordAt(_placedWeatherInstruments.Count - 1);
+                _convectiveLightningSystem.RegisterLightningRod(
+                    placedRec.RegisteredRodWorldX,
+                    placedRec.RegisteredRodWorldYTop,
+                    placedRec.RegisteredRodWorldZ);
+            }
+
+            if (_weatherInstrumentsContainer == null)
+            {
+                GameObject? existing = GameObject.Find("06_Faz4A_MeteorologyInstruments_And_LightningRods");
+                if (existing == null) existing = new GameObject("06_Faz4A_MeteorologyInstruments_And_LightningRods");
+                _weatherInstrumentsContainer = existing.transform;
+            }
+
+            PhysicalItemArchetype archetype = MapWeatherOutputToArchetype(outputKind);
+            Mesh mainMesh = PhysicalItemMeshFactory.GetOrCreateMesh(archetype, 0, in dna, out Vector3 natSize);
+            Vector3 worldScale = PhysicalItemMeshFactory.GetWorldGroundScale(archetype, natSize);
+
+            GameObject rootGo = new GameObject($"WeatherInstrument_{outputKind}_{instanceId}");
+            rootGo.transform.SetParent(_weatherInstrumentsContainer, false);
+            rootGo.transform.SetPositionAndRotation(worldPos, worldRot);
+            rootGo.transform.localScale = worldScale;
+
+            MeshFilter mf = rootGo.AddComponent<MeshFilter>();
+            mf.sharedMesh = mainMesh;
+            MeshRenderer mr = rootGo.AddComponent<MeshRenderer>();
+            if (SharedVoxelMaterial != null) mr.sharedMaterial = SharedVoxelMaterial;
+
+            Transform? vanePivot = null;
+            Transform? cupsPivot = null;
+            Transform? needlePivot = null;
+
+            if (outputKind == PrimitiveCraftOutputId.WeatherWindVaneAnemometer)
+            {
+                GameObject vaneGo = new GameObject("WindVane_LiveRotorPivot");
+                vaneGo.transform.SetParent(rootGo.transform, false);
+                vaneGo.transform.localPosition = new Vector3(0f, 0.25f, 0f);
+                vanePivot = vaneGo.transform;
+
+                GameObject cupsGo = new GameObject("Anemometer_LiveCupsPivot");
+                cupsGo.transform.SetParent(rootGo.transform, false);
+                cupsGo.transform.localPosition = new Vector3(0f, 0.12f, 0f);
+                cupsPivot = cupsGo.transform;
+            }
+            else if (outputKind == PrimitiveCraftOutputId.WeatherBarometer ||
+                     outputKind == PrimitiveCraftOutputId.WeatherHygrometer)
+            {
+                GameObject needleGo = new GameObject("Dial_LiveNeedlePivot");
+                needleGo.transform.SetParent(rootGo.transform, false);
+                needleGo.transform.localPosition = new Vector3(0f, 0f, 0.045f);
+                needlePivot = needleGo.transform;
+            }
+
+            _weatherInstrumentVisuals.Add(new PlacedWeatherInstrumentVisualEntry
+            {
+                InstanceId = instanceId,
+                OutputKind = outputKind,
+                RootGo = rootGo,
+                MainMf = mf,
+                RotatingVanePivot = vanePivot,
+                RotatingCupsPivot = cupsPivot,
+                RotatingNeedlePivot = needlePivot,
+                LastRenderedStageByte = dna.StageByte,
+                LastRenderedTempByte = dna.ThermalTempByte
+            });
+
+            return true;
+        }
+
+        private static PhysicalItemArchetype MapWeatherOutputToArchetype(PrimitiveCraftOutputId outputKind) => outputKind switch
+        {
+            PrimitiveCraftOutputId.WeatherBarometer => PhysicalItemArchetype.WeatherBarometer,
+            PrimitiveCraftOutputId.WeatherThermometer => PhysicalItemArchetype.WeatherThermometer,
+            PrimitiveCraftOutputId.WeatherHygrometer => PhysicalItemArchetype.WeatherHygrometer,
+            PrimitiveCraftOutputId.WeatherWindVaneAnemometer => PhysicalItemArchetype.WeatherWindVaneAnemometer,
+            PrimitiveCraftOutputId.WeatherRainGauge => PhysicalItemArchetype.WeatherRainGauge,
+            PrimitiveCraftOutputId.MetalLightningRod => PhysicalItemArchetype.MetalLightningRod,
+            _ => PhysicalItemArchetype.WeatherBarometer
+        };
+
+        private void ClearAllWeatherInstrumentVisuals()
+        {
+            for (int i = 0; i < _weatherInstrumentVisuals.Count; i++)
+            {
+                if (_weatherInstrumentVisuals[i].RootGo != null)
+                {
+                    Destroy(_weatherInstrumentVisuals[i].RootGo);
+                }
+            }
+            _weatherInstrumentVisuals.Clear();
+            _convectiveLightningSystem.ClearRegisteredRods();
+            _placedWeatherInstruments.ClearAll();
+        }
+
+        private void StepAtmosphereSolarCloudsAndHydrology(float dt)
+        {
+            EnsureDefaultWeatherObservatoryPlaced();
+
+            // 1) Kararli Alt-Adimlama (ComputeStableSubsteps: 600x hizda dahi Courant/CFL asimi olmadan kararli simulasyon!)
+            bool canModify = Stage1GameSettings.CanLocalPlayerModifyTimeScale();
+            float effectiveTimeScale = SolarCalendarAndTimeScaleSystem.ClampTimeScale(
+                Stage1GameSettings.TimeScaleMultiplier,
+                isServerOrHostAuthority: canModify || Stage1GameSettings.ActiveNetworkTopology == NetworkTopologyMode.RemoteClient);
+            SolarCalendarAndTimeScaleSystem.ComputeStableSubsteps(
+                dt, effectiveTimeScale, out int substepCount, out float substepGameSeconds);
+
+            Vector3 playerPos = transform.position;
+            _regionalAtmosphereSystem.RecenterAroundWorldXZ(playerPos.x, playerPos.z);
+
+            for (int s = 0; s < substepCount; s++)
+            {
+                _totalSimulatedGameSeconds += substepGameSeconds;
+                StepSimulation(_totalSimulatedGameSeconds, substepGameSeconds);
+            }
+
+            float totalGameDeltaThisFrame = substepCount * substepGameSeconds;
+
+            // 2) Gunes Efemerisi + Rayleigh Gun Dogumu/Batimi Renk Kaymasi (Red Sky at Night / Morning)
+            _currentSolarEphem = SolarCalendarAndTimeScaleSystem.EvaluateSolarEphem(_totalSimulatedGameSeconds);
+            _currentPlayerAtmosphereCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x, playerPos.z);
+
+            AtmosphereCellState westCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x - 192.0f, playerPos.z);
+            AtmosphereCellState eastCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x + 192.0f, playerPos.z);
+            float westSat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(westCell.AirTempCelsius);
+            float eastSat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(eastCell.AirTempCelsius);
+            float westRh01 = Mathf.Clamp01(westCell.VaporPressureHpa / Mathf.Max(0.1f, westSat));
+            float eastRh01 = Mathf.Clamp01(eastCell.VaporPressureHpa / Mathf.Max(0.1f, eastSat));
+
+            RayleighHorizonTint rayleighTint = Stage1AtmosphereCloudAndRainRenderer.ComputeRayleighSunriseSunsetTint(
+                _currentSolarEphem.SunDirY,
+                westRh01,
+                eastRh01,
+                _currentPlayerAtmosphereCell.StationPressureHpa);
+
+            if (_directionalSunLight != null)
+            {
+                Vector3 lightForward = new Vector3(
+                    -_currentSolarEphem.SunDirX,
+                    Mathf.Min(-0.08f, -_currentSolarEphem.SunDirY),
+                    -_currentSolarEphem.SunDirZ);
+                if (lightForward.sqrMagnitude > 0.001f)
+                {
+                    _directionalSunLight.transform.rotation = Quaternion.LookRotation(lightForward.normalized, Vector3.up);
+                }
+
+                float dayFactor01 = Mathf.Clamp01((_currentSolarEphem.SunDirY + 0.12f) / 0.42f);
+                float flashBoost = _lightningSkyFlashIntensity01 * 1.65f;
+                _directionalSunLight.color = new Color(rayleighTint.R, rayleighTint.G, rayleighTint.B, 1.0f);
+                _directionalSunLight.intensity = Mathf.Lerp(0.14f, 1.22f, dayFactor01) + flashBoost;
+            }
+
+            _cloudAndRainRenderer.ApplyGlobalAtmosphereShaderUniforms(
+                _currentSolarEphem.SunDirY,
+                westRh01,
+                eastRh01,
+                _currentPlayerAtmosphereCell.StationPressureHpa);
+
+            // 3) 9x9 Atmosfer AOI Penceresi, 1 Hz Delta Senkron Paketi (AtmosphereAoiSyncPacket) ve 3B Bulut/Yagmur Cizici
+            _regionalAtmosphereSystem.ExtractAoiWindow9x9(
+                playerPos.x,
+                playerPos.z,
+                _aoiCurrentWindow81,
+                out short centerCellX,
+                out short centerCellZ);
+
+            if (SpatialAoiAndSwarmNetSystem.ShouldReplicateAtmosphereAoiAtTick(_atmosphereNetTickCounter++, 0u))
+            {
+                _lastAoiPacketBytes = AtmosphereAoiSyncPacket.EncodeDeltaPacket(
+                    centerCellX,
+                    centerCellZ,
+                    effectiveTimeScale,
+                    _regionalAtmosphereSystem.EnsoState.TeAnomalyK,
+                    _aoiCurrentWindow81,
+                    _aoiClientBaseline81,
+                    ref _hasValidAoiBaseline,
+                    _aoiWirePacketBuffer);
+
+                if (Stage1GameSettings.ActiveNetworkTopology == NetworkTopologyMode.RemoteClient && _lastAoiPacketBytes > 0)
+                {
+                    if (AtmosphereAoiSyncPacket.TryDecodeAndApplyDeltaPacket(
+                            _aoiWirePacketBuffer.AsSpan(0, _lastAoiPacketBytes),
+                            _aoiClientBaseline81,
+                            out AtmosphereAoiPacketHeader decodedHeader))
+                    {
+                        Stage1GameSettings.TimeScaleMultiplier = decodedHeader.TimeScaleMultiplier;
+                    }
+                }
+            }
+
+            int cloudCount = 0;
+            for (int dz = -4; dz <= 4; dz++)
+            {
+                for (int dx = -4; dx <= 4; dx++)
+                {
+                    int wIdx = (dz + 4) * 9 + (dx + 4);
+                    ref readonly AtmosphereAoiCellSample sample = ref _aoiCurrentWindow81[wIdx];
+                    float cloudWater = sample.CloudWaterCentiKgPerM2 * 0.01f;
+                    float precip = sample.PrecipDeciMmPerHour * 0.1f;
+                    if (cloudWater <= 0.08f && precip <= 0.05f) continue;
+
+                    float cellCenterX = (centerCellX + dx + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
+                    float cellCenterZ = (centerCellZ + dz + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
+                    float baseY = Mathf.Max(115.0f, sample.CloudBase16m * 16.0f);
+                    float thickness = Mathf.Max(18.0f, sample.CloudThickness32m * 32.0f);
+
+                    _cloudRenderSamplesScratch[cloudCount++] = new CloudCellRenderSample(
+                        cellCenterX,
+                        cellCenterZ,
+                        cloudWater,
+                        baseY,
+                        baseY + thickness,
+                        precip,
+                        sample.WindXCentiMps * 0.01f,
+                        sample.WindZCentiMps * 0.01f);
+                }
+            }
+            _cloudAndRainRenderer.UpdateActiveCloudCells(_cloudRenderSamplesScratch.AsSpan(0, cloudCount));
+
+            // 4) Konvektif Yildirim (CAPE > 1000 J/kg), Metal Paratoner 24m Koni Korumasi ve Mesafe/343s Ses Gecikmesi
+            if (_lightningSkyFlashIntensity01 > 0.001f)
+            {
+                _lightningSkyFlashIntensity01 = Mathf.Max(0f, _lightningSkyFlashIntensity01 - dt * 4.5f);
+            }
+            if (_pendingThunderTimerSec >= 0.0f)
+            {
+                _pendingThunderTimerSec -= dt;
+                if (_pendingThunderTimerSec <= 0.0f)
+                {
+                    _pendingThunderTimerSec = -1.0f;
+                    PlayDelayedThunderRumble(_pendingThunderDistanceMeters);
+                }
+            }
+
+            bool readyToStrike = _convectiveLightningSystem.StepConvectiveCharge(
+                _currentPlayerAtmosphereCell.CapeJPerKg,
+                _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour,
+                totalGameDeltaThisFrame);
+
+            if (readyToStrike &&
+                ConvectiveLightningAndRodSystem.IsConvectiveLightningActive(_currentPlayerAtmosphereCell.CapeJPerKg))
+            {
+                float boltOriginX = playerPos.x + ((int)(_atmosphereNetTickCounter % 17u) - 8) * 2.0f;
+                float boltOriginZ = playerPos.z + ((int)((_atmosphereNetTickCounter >> 3) % 17u) - 8) * 2.0f;
+
+                if (_convectiveLightningSystem.TryStrikeWorldAtStormColumn(
+                        _currentPlayerAtmosphereCell.CapeJPerKg,
+                        boltOriginX,
+                        boltOriginZ,
+                        _worldChunks,
+                        _fluidChunks,
+                        skyOcclusionMaps: null,
+                        listenerX: playerPos.x,
+                        listenerY: playerPos.y + 1.5f,
+                        listenerZ: playerPos.z,
+                        out LightningStrikeResult strikeResult))
+                {
+                    _lightningSkyFlashIntensity01 = 1.0f;
+                    _pendingThunderTimerSec = strikeResult.ThunderAudioDelaySeconds;
+                    float dx = strikeResult.TargetWorldX - playerPos.x;
+                    float dy = strikeResult.TargetWorldY - (playerPos.y + 1.5f);
+                    float dz = strikeResult.TargetWorldZ - playerPos.z;
+                    _pendingThunderDistanceMeters = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
+
+                    if (strikeResult.HitLightningRod)
+                    {
+                        _placedWeatherInstruments.NotifyLightningInterceptedNear(
+                            strikeResult.TargetWorldX,
+                            strikeResult.TargetWorldZ);
+                        _miningCtrl.LastFeedbackText =
+                            $"⚡ METAL PARATONER YILDIRIMI YAKALADI! (24m Koruma Konisi | Gök Gürültüsü Gecikmesi: {strikeResult.ThunderAudioDelaySeconds:0.1} sn)";
+                    }
+                    else if (_pendingThunderDistanceMeters <= 3.5f && Stage1GameSettings.EnableEnvironmentalEffects)
+                    {
+                        _movementBridge.Vitals.CurrentHp = Mathf.Max(
+                            20.0f,
+                            _movementBridge.Vitals.CurrentHp - 35.0f);
+                    }
+                }
+            }
+
+            // 5) Hidroloji, Su Dongusu (WaterCycleAndEvaporationSystem), Karst Akifer ve Acik Gokyuzu Ates/Firin Yagmur Sondurme
+            _hydrologyStepTimer += dt;
+            _hydrologyAccumGameSeconds += totalGameDeltaThisFrame;
+            if (_hydrologyStepTimer >= 0.35f)
+            {
+                float hydroGameDt = _hydrologyAccumGameSeconds;
+                _hydrologyStepTimer = 0.0f;
+                _hydrologyAccumGameSeconds = 0.0f;
+
+                int pCx = Mathf.FloorToInt(playerPos.x / 16f);
+                int pCz = Mathf.FloorToInt(playerPos.z / 16f);
+                float localPrecipMmHr = _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour;
+                float satHpa = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(
+                    _currentPlayerAtmosphereCell.AirTempCelsius);
+                float localRh01 = Mathf.Clamp(
+                    _currentPlayerAtmosphereCell.VaporPressureHpa / Mathf.Max(0.1f, satHpa),
+                    0.02f,
+                    1.0f);
+                float localWindMps = Mathf.Sqrt(
+                    _currentPlayerAtmosphereCell.WindVelX * _currentPlayerAtmosphereCell.WindVelX +
+                    _currentPlayerAtmosphereCell.WindVelZ * _currentPlayerAtmosphereCell.WindVelZ);
+
+                if (_worldChunks.TryGetValue((pCx, pCz), out uint[]? chunkVox) && chunkVox != null &&
+                    _fluidChunks.TryGetValue((pCx, pCz), out ushort[]? chunkFluids) && chunkFluids != null)
+                {
+                    // 5A) Yagmur altinda toprak islatma -> camur -> doygunlukta gercek Tatli Su FluidCell16 goleti olusumu
+                    _waterCycleSystem.StepRainSurfaceWettingAndPonding(
+                        pCx,
+                        pCz,
+                        chunkVox,
+                        chunkFluids,
+                        _soilMoistureSystem,
+                        MaxEditableVoxelY,
+                        localPrecipMmHr,
+                        _currentPlayerAtmosphereCell.AirTempCelsius,
+                        hydroGameDt,
+                        out ushort rainDirtySubMask,
+                        out bool rainFluidChanged,
+                        skyMap: null,
+                        salinityBitset: _salinityBitset);
+
+                    if (rainDirtySubMask != 0)
+                    {
+                        AddSubChunkDirtyMask((pCx, pCz), rainDirtySubMask);
+                    }
+                    if (rainFluidChanged)
+                    {
+                        _dirtyFluidChunks.Add((pCx, pCz));
+                        WakeChunkAndNeighborsFluid((pCx, pCz));
+                    }
+
+                    // 5B) Acik varil / kazan yagmur suyu dolumu
+                    if (localPrecipMmHr > 0.05f && _activeOpenContainerCount > 0)
+                    {
+                        WaterCycleAndEvaporationSystem.StepOpenContainerRainFill(
+                            _openRainContainersScratch.AsSpan(0, _activeOpenContainerCount),
+                            localPrecipMmHr,
+                            hydroGameDt);
+                    }
+
+                    // 5C) Dalton yuzey buharlasmasi -> atmosfere geri kutle enjeksiyonu (deniz suyu tuzlu kalir, buhar tatli su bulutu olur!)
+                    float evapKgPerM2 = _waterCycleSystem.StepSurfaceWaterEvaporation(
+                        pCx,
+                        pCz,
+                        chunkVox,
+                        chunkFluids,
+                        MaxEditableVoxelY,
+                        _currentPlayerAtmosphereCell.AirTempCelsius,
+                        localRh01,
+                        localWindMps,
+                        hydroGameDt,
+                        out _,
+                        out bool evapFluidChanged,
+                        skyMap: null,
+                        salinityBitset: _salinityBitset,
+                        maintainOceanMacroBalance: false,
+                        seaLevelY: (int)StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6);
+
+                    if (evapFluidChanged)
+                    {
+                        _dirtyFluidChunks.Add((pCx, pCz));
+                    }
+                    if (evapKgPerM2 > 0.0f)
+                    {
+                        _regionalAtmosphereSystem.InjectSurfaceEvaporationMassAtWorldXZ(
+                            pCx * 16.0f + 8.0f,
+                            pCz * 16.0f + 8.0f,
+                            evapKgPerM2);
+                    }
+                }
+
+                // 5D) Karst yeralti akiferlerinin yagmur suzulmesiyle yeniden dolumu
+                _karstAquiferSystem.StepAllBasinsRainRecharge(localPrecipMmHr, hydroGameDt);
+
+                // 5E) Acik gokyuzu altindaki Kamp Atesi ve Bloomery Izabe Firini yagmur sondurme/sogutma adimi
+                bool playerAreaOpenSky = _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
+                bool proxyCampfireExtinguished = CampfireSimulationLogic.StepRainExposure(
+                    ref _openSkyCampfireRainState,
+                    localPrecipMmHr,
+                    playerAreaOpenSky,
+                    hydroGameDt,
+                    _currentPlayerAtmosphereCell.AirTempCelsius);
+                _ = BloomeryThermodynamicsSystem.StepRainExposure(
+                    ref _openSkyBloomeryRainState,
+                    localPrecipMmHr,
+                    playerAreaOpenSky,
+                    hydroGameDt,
+                    _currentPlayerAtmosphereCell.AirTempCelsius);
+
+                if (localPrecipMmHr > 1.5f && playerAreaOpenSky && _campfireCtrl.ActiveCampfireCount > 0)
+                {
+                    if (_campfireCtrl.IsTargetCampfireLit(PlayerCamera, playerPos, 6.0f) || proxyCampfireExtinguished)
+                    {
+                        _campfireCtrl.TryExtinguishTargetedCampfire(PlayerCamera, playerPos, _miningCtrl, _looseBuildSystem, 6.0f);
+                    }
+                }
+
+                // Yerlestirilmis meteoroloji aletlerinin acik gokyuzu durumunu guncelle
+                for (int i = 0; i < _placedWeatherInstruments.Count; i++)
+                {
+                    PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(i);
+                    bool openSky = HasOpenSkyAboveWorldCoord(
+                        Mathf.FloorToInt(rec.Position.X),
+                        Mathf.Clamp(Mathf.FloorToInt(rec.Position.Y) + 1, 1, MaxEditableVoxelY - 1),
+                        Mathf.FloorToInt(rec.Position.Z));
+                    _placedWeatherInstruments.SetOpenSkyStateAt(i, openSky);
+                }
+            }
+
+            // 6) 5 Meteoroloji Aleti ve Metal Paratonerin canli fiziksel olcumlerini ve 3B donen alt parcalarini guncelle
+            StepPlacedWeatherInstrumentsTelemetry(totalGameDeltaThisFrame);
+            StepWeatherInstrument3DVisuals();
+        }
+
+        private void StepPlacedWeatherInstrumentsTelemetry(float gameDeltaSeconds)
+        {
+            if (_placedWeatherInstruments.Count == 0 || gameDeltaSeconds <= 0.0f) return;
+
+            float seaLevelWorldY = StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6.0f;
+            for (int i = 0; i < _placedWeatherInstruments.Count; i++)
+            {
+                PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(i);
+                AtmosphereCellState cell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(rec.Position.X, rec.Position.Z);
+
+                float altitudeAboveSea = Mathf.Max(0.0f, rec.Position.Y - seaLevelWorldY);
+                float slpNow = WeatherForecastInstrumentsSystem.ComputeSeaLevelReducedPressureHpa(
+                    cell.StationPressureHpa, altitudeAboveSea, cell.AirTempCelsius);
+                float threeHourDelta = PlacedWeatherInstrumentsSystem.AdvanceBarometer3HourHistory(
+                    ref rec, slpNow, _totalSimulatedGameSeconds);
+
+                ZambrettiForecastResult zamb = WeatherForecastInstrumentsSystem.EvaluateZambrettiForecast(
+                    slpNow,
+                    threeHourDelta,
+                    cell.WindVelX,
+                    cell.WindVelZ,
+                    _currentSolarEphem.Season);
+
+                WeatherForecastInstrumentsSystem.EvaluatePsychrometer(
+                    cell.AirTempCelsius,
+                    cell.VaporPressureHpa,
+                    out _,
+                    out float rh01,
+                    out float dewPointC,
+                    out float lclAboveGroundM);
+
+                float windSpeed = Mathf.Sqrt(cell.WindVelX * cell.WindVelX + cell.WindVelZ * cell.WindVelZ);
+                byte beaufort = WeatherForecastInstrumentsSystem.EvaluateBeaufortScale0To12(
+                    windSpeed,
+                    out _,
+                    out string beaufortTr);
+                WeatherForecastInstrumentsSystem.EvaluateWindCompassDirection8(
+                    cell.WindVelX,
+                    cell.WindVelZ,
+                    out _,
+                    out string compassCode,
+                    out string compassFullName);
+                float windDeg = Mathf.Atan2(cell.WindVelX, cell.WindVelZ) * Mathf.Rad2Deg;
+                if (windDeg < 0.0f) windDeg += 360.0f;
+
+                WeatherForecastInstrumentsSystem.StepRainGaugeAccumulation(
+                    ref rec.CurrentStormAccumulatedMm,
+                    ref rec.Rolling24hAccumulatedMm,
+                    cell.SurfacePrecipMmPerHour,
+                    rec.HasOpenSkyAbove,
+                    gameDeltaSeconds);
+
+                PlacedWeatherInstrumentsSystem.ApplyComputedTelemetryAndDna(
+                    ref rec,
+                    cell.StationPressureHpa,
+                    zamb.SeaLevelPressureHpa,
+                    zamb.ThreeHourPressureDeltaHpa,
+                    zamb.Letter,
+                    zamb.Index1To26,
+                    zamb.TurkishForecastLabel,
+                    zamb.FitzRoyStormWarning,
+                    cell.AirTempCelsius,
+                    rh01,
+                    dewPointC,
+                    rec.Position.Y + lclAboveGroundM,
+                    windSpeed,
+                    windDeg,
+                    beaufort,
+                    beaufortTr,
+                    compassCode,
+                    compassFullName,
+                    cell.CapeJPerKg,
+                    _currentSolarEphem.TotalDayIndex,
+                    gameDeltaSeconds);
+
+                _placedWeatherInstruments.SetRecordAt(i, in rec);
+            }
+        }
+
+        private bool HasOpenSkyAboveWorldCoord(int wx, int startWy, int wz)
+        {
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!_worldChunks.TryGetValue((cx, cz), out uint[]? vox) || vox == null)
+            {
+                return true;
+            }
+
+            int lx = wx - cx * 16;
+            int lz = wz - cz * 16;
+            int colBase = (lz << 4) | lx;
+            int minY = Mathf.Clamp(startWy, 1, MaxEditableVoxelY - 1);
+            for (int sy = minY; sy < MaxEditableVoxelY; sy++)
+            {
+                if (VoxelBitUtility.IsPhysicallySolid(vox[(sy << 8) | colBase]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private void StepWeatherInstrument3DVisuals()
+        {
+            int count = Mathf.Min(_weatherInstrumentVisuals.Count, _placedWeatherInstruments.Count);
+            for (int i = 0; i < count; i++)
+            {
+                PlacedWeatherInstrumentVisualEntry vis = _weatherInstrumentVisuals[i];
+                if (vis.RootGo == null || vis.MainMf == null) continue;
+
+                PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(i);
+
+                // Canli alt-parca (Ruzgar Gulu, Anemometre 3-Kepce, Kadran Ibresi) rotasyonlari
+                if (vis.RotatingVanePivot != null)
+                {
+                    vis.RotatingVanePivot.localRotation = Quaternion.Euler(0f, rec.WindFromDegrees, 0f);
+                }
+                if (vis.RotatingCupsPivot != null)
+                {
+                    vis.RotatingCupsPivot.localRotation = Quaternion.Euler(0f, rec.AnemometerRotorPhaseRad * Mathf.Rad2Deg, 0f);
+                }
+                if (vis.RotatingNeedlePivot != null)
+                {
+                    float norm01 = rec.ShapeDna.StageByte / 255.0f;
+                    float needleDeg = (norm01 - 0.5f) * 250.0f;
+                    vis.RotatingNeedlePivot.localRotation = Quaternion.Euler(0f, 0f, -needleDeg);
+                }
+
+                // 3B Mesh DNA (StageByte / ThermalTempByte) anlamli bir esik kadar degistiyse 3B modeli yenile
+                int stageDiff = Mathf.Abs(rec.ShapeDna.StageByte - vis.LastRenderedStageByte);
+                int tempDiff = Mathf.Abs(rec.ShapeDna.ThermalTempByte - vis.LastRenderedTempByte);
+                int threshold = vis.OutputKind == PrimitiveCraftOutputId.WeatherWindVaneAnemometer ? 6 : 2;
+                if (stageDiff >= threshold || tempDiff >= threshold)
+                {
+                    vis.LastRenderedStageByte = rec.ShapeDna.StageByte;
+                    vis.LastRenderedTempByte = rec.ShapeDna.ThermalTempByte;
+                    PhysicalItemArchetype arch = MapWeatherOutputToArchetype(vis.OutputKind);
+                    vis.MainMf.sharedMesh = PhysicalItemMeshFactory.GetOrCreateMesh(arch, 0, in rec.ShapeDna, out _);
+                }
+            }
+        }
+
+        private int FindAimedWeatherInstrumentIndex(float maxReach = 3.6f)
+        {
+            int count = Mathf.Min(_weatherInstrumentVisuals.Count, _placedWeatherInstruments.Count);
+            if (count == 0) return -1;
+
+            Vector3 rayOrigin = PlayerCamera != null ? PlayerCamera.transform.position : transform.position + new Vector3(0f, 1.52f, 0f);
+            Vector3 rayDir = PlayerCamera != null ? PlayerCamera.transform.forward : transform.forward;
+            if (rayDir.sqrMagnitude < 0.001f) rayDir = Vector3.forward;
+            rayDir.Normalize();
+
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            Vector3 playerChest = transform.position + new Vector3(0f, 0.9f, 0f);
+
+            for (int i = 0; i < count; i++)
+            {
+                PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(i);
+                Vector3 center = new Vector3(rec.Position.X, rec.Position.Y + 0.15f, rec.Position.Z);
+
+                float distPlayer = Vector3.Distance(playerChest, center);
+                float distCam = Vector3.Distance(rayOrigin, center);
+                if (distPlayer > maxReach && distCam > maxReach + 0.5f) continue;
+
+                Vector3 toInst = center - rayOrigin;
+                float along = Vector3.Dot(toInst, rayDir);
+                if (along < -0.15f || along > maxReach + 0.65f) continue;
+
+                Vector3 closest = rayOrigin + rayDir * Mathf.Max(0f, along);
+                float perp = Vector3.Distance(closest, center);
+                if (perp > 0.52f) continue;
+
+                float score = perp * 2.2f + along * 0.25f;
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            return bestIdx;
+        }
+
+        private bool TryHandleWeatherInstrumentInteractKeyE(bool shiftHeld)
+        {
+            int idx = FindAimedWeatherInstrumentIndex(3.6f);
+            if (idx < 0) return false;
+
+            PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(idx);
+
+            // [Shift+E] -> Yagmur Olcer ise hazneyi sifirla; diger aletlerde aleti sok/eline al!
+            if (shiftHeld)
+            {
+                if (rec.OutputKind == PrimitiveCraftOutputId.WeatherRainGauge &&
+                    !Input.GetKey(KeyCode.LeftControl) && !Input.GetKey(KeyCode.RightControl))
+                {
+                    if (_placedWeatherInstruments.TryResetRainGaugeAt(idx, out float clearedMm))
+                    {
+                        StepWeatherInstrument3DVisuals();
+                        _miningCtrl.LastFeedbackText =
+                            $"🌧️ Yağmur Ölçer su haznesi boşaltıldı ve sıfırlandı (Önceki Fırtına Birikimi: {clearedMm:0.1} mm -> 0.0 mm).";
+                        return true;
+                    }
+                }
+
+                return TryDismantleWeatherInstrumentAt(idx);
+            }
+
+            // [Ctrl+E] -> Herhangi bir meteoroloji aletini veya paratoneri sokup eline al
+            if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+            {
+                return TryDismantleWeatherInstrumentAt(idx);
+            }
+
+            // [E] -> Canli meteorolojik okuma raporunu bildir
+            FormatWeatherInstrumentHudText(in rec, out string titleLine, out string detailLine);
+            _miningCtrl.LastFeedbackText = $"{titleLine} — {detailLine}";
+            return true;
+        }
+
+        private bool TryDismantleWeatherInstrumentAt(int idx)
+        {
+            if (!_placedWeatherInstruments.TryDismantleOrPickupAt(
+                    idx,
+                    out PlacedWeatherInstrumentRecord removed))
+            {
+                return false;
+            }
+
+            if (removed.OutputKind == PrimitiveCraftOutputId.MetalLightningRod)
+            {
+                _convectiveLightningSystem.UnregisterLightningRod(
+                    removed.RegisteredRodWorldX,
+                    removed.RegisteredRodWorldZ);
+            }
+
+            if ((uint)idx < (uint)_weatherInstrumentVisuals.Count)
+            {
+                if (_weatherInstrumentVisuals[idx].RootGo != null)
+                {
+                    Destroy(_weatherInstrumentVisuals[idx].RootGo);
+                }
+                _weatherInstrumentVisuals.RemoveAt(idx);
+            }
+
+            _heldWeatherInstrumentForPlacement = removed.OutputKind;
+            _heldWeatherInstrumentDna = removed.ShapeDna;
+            _miningCtrl.LastFeedbackText =
+                $"🔧 {GetWeatherInstrumentDisplayName(removed.OutputKind)} söküldü! İstediğiniz zemine bakıp [Sağ Tık] ile yeniden yerleştirin.";
+            return true;
+        }
+
+        private bool TryPlaceHeldWeatherInstrumentOnRightClick(bool uiBlocked)
+        {
+            if (uiBlocked || _heldWeatherInstrumentForPlacement == PrimitiveCraftOutputId.None)
+            {
+                return false;
+            }
+
+            if (!Input.GetMouseButtonDown(1))
+            {
+                return false;
+            }
+
+            Vector3 placePos;
+            if (_miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 4.5f)
+            {
+                placePos = _miningCtrl.AimHit.point + _miningCtrl.AimHit.normal * 0.20f;
+            }
+            else
+            {
+                Vector3 fwd = transform.forward;
+                fwd.y = 0f;
+                if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward;
+                fwd.Normalize();
+                float px = transform.position.x + fwd.x * 1.8f;
+                float pz = transform.position.z + fwd.z * 1.8f;
+                float py = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(px, pz) + 0.22f;
+                placePos = new Vector3(px, py, pz);
+            }
+
+            Quaternion rot = Quaternion.Euler(0f, _cameraYaw + 180f, 0f);
+            PrimitiveCraftOutputId placedKind = _heldWeatherInstrumentForPlacement;
+            if (PlaceWeatherInstrumentInWorld(placedKind, placePos, rot, in _heldWeatherInstrumentDna))
+            {
+                _heldWeatherInstrumentForPlacement = PrimitiveCraftOutputId.None;
+                _miningCtrl.LastFeedbackText =
+                    $"✅ {GetWeatherInstrumentDisplayName(placedKind)} dünyaya yerleştirildi! ([E] Oku | [Shift+E / Ctrl+E] Sök)";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string GetWeatherInstrumentDisplayName(PrimitiveCraftOutputId kind) => kind switch
+        {
+            PrimitiveCraftOutputId.WeatherBarometer => "Sıvılı Barometre",
+            PrimitiveCraftOutputId.WeatherThermometer => "Cam Kapiler Termometre",
+            PrimitiveCraftOutputId.WeatherHygrometer => "Psikrometre / Higrometre",
+            PrimitiveCraftOutputId.WeatherWindVaneAnemometer => "Rüzgâr Gülü ve 3-Kepçeli Anemometre",
+            PrimitiveCraftOutputId.WeatherRainGauge => "Dereceli Yağmur Ölçer (Plüvyometre)",
+            PrimitiveCraftOutputId.MetalLightningRod => "Topraklamalı Metal Paratoner",
+            _ => "Meteoroloji Aleti"
+        };
+
+        private void FormatWeatherInstrumentHudText(
+            in PlacedWeatherInstrumentRecord rec,
+            out string line1,
+            out string line2)
+        {
+            switch (rec.OutputKind)
+            {
+                case PrimitiveCraftOutputId.WeatherBarometer:
+                {
+                    string zambrettiTr = !string.IsNullOrEmpty(rec.LastZambrettiForecastLabel)
+                        ? rec.LastZambrettiForecastLabel
+                        : "B - Güzel ve Açık Hava";
+                    line1 = $"🧭 BAROMETRE: {rec.SeaLevelPressureHpa:0.1} hPa (İstasyon: {rec.StationPressureHpa:0.1} hPa)  |  3s ΔP/Δt: {rec.ThreeHourDeltaHpa:+0.0;-0.0;0.0} hPa";
+                    line2 = $"Zambretti Tahmini [{rec.LastZambrettiLetter}]: {zambrettiTr}  |  [E] Oku  |  [Shift+E] Sök";
+                    break;
+                }
+                case PrimitiveCraftOutputId.WeatherThermometer:
+                {
+                    string frostTag = rec.CurrentTempCelsius <= 0.0f
+                        ? " ❄️ [DON UYARISI ≤ 0°C]"
+                        : (rec.CurrentTempCelsius >= 35.0f ? " 🔥 [AŞIRI SICAK ≥ 35°C]" : string.Empty);
+                    line1 = $"🌡️ TERMOMETRE: {rec.CurrentTempCelsius:0.1} °C{frostTag}";
+                    line2 = $"Günlük Min: {rec.DailyMinTempCelsius:0.1} °C  |  Günlük Maks: {rec.DailyMaxTempCelsius:0.1} °C  |  [E] Oku  |  [Shift+E] Sök";
+                    break;
+                }
+                case PrimitiveCraftOutputId.WeatherHygrometer:
+                {
+                    line1 = $"💧 HİGROMETRE: Bağıl Nem %{rec.RelativeHumidity01 * 100f:0} RH  |  Çiğ Noktası (Td): {rec.DewPointCelsius:0.1} °C";
+                    line2 = $"Tahmini Bulut Tabanı (LCL): Y={rec.EstimatedCloudBaseWorldY:0}m  |  Sis Riski: %{rec.FogRisk01 * 100f:0}  |  [E] Oku  |  [Shift+E] Sök";
+                    break;
+                }
+                case PrimitiveCraftOutputId.WeatherWindVaneAnemometer:
+                {
+                    string beaufortTr = !string.IsNullOrEmpty(rec.LastBeaufortMaritimeLabel)
+                        ? rec.LastBeaufortMaritimeLabel
+                        : "2 - Hafif Meltem";
+                    string compass = !string.IsNullOrEmpty(rec.LastWindCompassFullName)
+                        ? rec.LastWindCompassFullName
+                        : "Batı (Günbatısı)";
+                    line1 = $"🌬️ RÜZGÂR GÜLÜ & ANEMOMETRE: {rec.WindSpeedMps:0.1} m/s ({rec.WindFromDegrees:0}° {compass})";
+                    line2 = $"Beaufort {rec.BeaufortScale}/12: {beaufortTr}  |  [E] Oku  |  [Shift+E] Sök";
+                    break;
+                }
+                case PrimitiveCraftOutputId.WeatherRainGauge:
+                {
+                    string skyState = rec.HasOpenSkyAbove ? "Üstü Açık Gökyüzü" : "⚠️ Çatı Altında (Yağmur Alamaz)";
+                    line1 = $"🌧️ YAĞMUR ÖLÇER: Fırtına Birikimi {rec.CurrentStormAccumulatedMm:0.1} mm  |  Son 24s: {rec.Rolling24hAccumulatedMm:0.1} mm";
+                    line2 = $"{skyState}  |  [E] Oku  |  [Shift+E] Su Haznesini Boşalt/Sıfırla  |  [Ctrl+E] Sök";
+                    break;
+                }
+                default:
+                {
+                    line1 = $"⚡ METAL PARATONER: 24m Koruma Konisi Aktif  |  Yakalanan Yıldırım: {rec.InterceptedStrikeCount}";
+                    line2 = $"Yerel Konvektif Enerji (CAPE): {_currentPlayerAtmosphereCell.CapeJPerKg} J/kg  |  [E] Kontrol Et  |  [Shift+E] Sök";
+                    break;
+                }
+            }
+        }
+
+        private void DrawWeatherInstrumentCrosshairPromptGui(bool showHud, bool uiBlocked)
+        {
+            if (!showHud || uiBlocked) return;
+
+            int aimedIdx = FindAimedWeatherInstrumentIndex(3.6f);
+            if (aimedIdx < 0 && _heldWeatherInstrumentForPlacement == PrimitiveCraftOutputId.None)
+            {
+                return;
+            }
+
+            _weatherInstrumentBannerBoxStyle ??= new GUIStyle(GUI.skin.box)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                padding = new RectOffset(10, 10, 6, 6)
+            };
+            _weatherInstrumentBannerTitleStyle ??= new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 13,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(0.95f, 0.98f, 1.0f, 1.0f) }
+            };
+            _weatherInstrumentBannerSubStyle ??= new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(0.76f, 0.92f, 1.0f, 0.96f) }
+            };
+
+            string line1;
+            string line2;
+            if (aimedIdx >= 0)
+            {
+                PlacedWeatherInstrumentRecord rec = _placedWeatherInstruments.GetRecordAt(aimedIdx);
+                FormatWeatherInstrumentHudText(in rec, out line1, out line2);
+            }
+            else
+            {
+                line1 = $"🔧 Elde Taşınan Alet: {GetWeatherInstrumentDisplayName(_heldWeatherInstrumentForPlacement)}";
+                line2 = "Zemine veya duvara bakıp [Sağ Tık] ile yerleştirin";
+            }
+
+            float w = 720f;
+            float h = 52f;
+            float x = (Screen.width - w) * 0.5f;
+            float y = Screen.height * 0.56f;
+
+            Color prev = GUI.color;
+            GUI.color = new Color(0.05f, 0.09f, 0.14f, 0.88f);
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, _weatherInstrumentBannerBoxStyle);
+            GUI.color = prev;
+
+            GUI.Label(new Rect(x + 8f, y + 5f, w - 16f, 20f), line1, _weatherInstrumentBannerTitleStyle);
+            GUI.Label(new Rect(x + 8f, y + 26f, w - 16f, 20f), line2, _weatherInstrumentBannerSubStyle);
+        }
+
+        private void DrawTimeScaleBadgeAndCalendarHudGui(bool showHud, bool uiBlocked, bool refreshPeriodicStrings)
+        {
+            if (!showHud || uiBlocked) return;
+
+            if (refreshPeriodicStrings || string.IsNullOrEmpty(_cachedCalendarHudLine))
+            {
+                string seasonTr = _currentSolarEphem.Season switch
+                {
+                    SeasonType.Spring => "İlkbahar",
+                    SeasonType.Summer => "Yaz",
+                    SeasonType.Autumn => "Sonbahar",
+                    _ => "Kış"
+                };
+                int hour = Mathf.Clamp(Mathf.FloorToInt(_currentSolarEphem.LocalHour0To24), 0, 23);
+                int minute = Mathf.Clamp(Mathf.FloorToInt((_currentSolarEphem.LocalHour0To24 - hour) * 60.0f), 0, 59);
+                _cachedCalendarHudLine =
+                    $"📅 Yıl {_currentSolarEphem.YearIndex + 1} | {seasonTr} Gün {_currentSolarEphem.DayOfSeason + 1}/91 ({hour:00}:{minute:00})";
+            }
+
+            _timeScaleBadgeStyle ??= new GUIStyle(GUI.skin.box)
+            {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color(1.0f, 0.94f, 0.68f, 0.98f) }
+            };
+
+            float topY = _holsterCtrl.IsCreativeMode ? 36f : 8f;
+            float cx = Screen.width * 0.5f;
+            GUI.Box(new Rect(cx - 175f, topY, 350f, 22f), _cachedCalendarHudLine, _timeScaleBadgeStyle);
+
+            if (Stage1GameSettings.TimeScaleMultiplier > 1.01f)
+            {
+                if (Mathf.Abs(Stage1GameSettings.TimeScaleMultiplier - _lastCachedTimeScaleVal) > 0.05f ||
+                    string.IsNullOrEmpty(_cachedTimeScaleBadgeText))
+                {
+                    _lastCachedTimeScaleVal = Stage1GameSettings.TimeScaleMultiplier;
+                    _cachedTimeScaleBadgeText =
+                        $"⏩ ZAMAN AKIŞ HIZI: {_lastCachedTimeScaleVal:0}x  ([ / ] Değiştir | Backspace: 1x)";
+                }
+
+                Color prev = GUI.color;
+                GUI.color = new Color(1.0f, 0.82f, 0.28f, 0.96f);
+                GUI.Box(new Rect(cx - 210f, topY + 24f, 420f, 24f), _cachedTimeScaleBadgeText, _timeScaleBadgeStyle);
+                GUI.color = prev;
+            }
+        }
+
+        private void PlayDelayedThunderRumble(float distanceMeters)
+        {
+            if (_weatherAudioSource == null)
+            {
+                _weatherAudioSource = GetComponent<AudioSource>();
+                if (_weatherAudioSource == null)
+                {
+                    _weatherAudioSource = gameObject.AddComponent<AudioSource>();
+                    _weatherAudioSource.spatialBlend = 0f;
+                    _weatherAudioSource.playOnAwake = false;
+                }
+            }
+            if (_weatherAudioSource == null) return;
+
+            if (_thunderRumbleClip == null)
+            {
+                const int sampleRate = 22050;
+                int samples = sampleRate * 2; // 2.0 sn derin gok gurultusu ugultusu
+                float[] pcm = new float[samples];
+                uint rng = 0x7F4A7C15u;
+                float lp1 = 0f;
+                float lp2 = 0f;
+                for (int i = 0; i < samples; i++)
+                {
+                    rng = rng * 1664525u + 1013904223u;
+                    float white = ((rng & 0xFFFFu) / 32768f) - 1f;
+                    lp1 = lp1 * 0.94f + white * 0.06f;
+                    lp2 = lp2 * 0.97f + lp1 * 0.03f;
+                    float t = i / (float)samples;
+                    float burst = MathF.Exp(-t * 2.4f) + 0.45f * MathF.Exp(-MathF.Pow((t - 0.35f) * 6.0f, 2.0f));
+                    pcm[i] = Math.Clamp(lp2 * burst * 2.6f, -0.95f, 0.95f);
+                }
+                _thunderRumbleClip = AudioClip.Create("Sfx_ConvectiveThunderRumble", samples, 1, sampleRate, false);
+                _thunderRumbleClip.SetData(pcm, 0);
+            }
+
+            float distAtten = Mathf.Clamp(1.0f - distanceMeters / 2200.0f, 0.15f, 1.0f);
+            _weatherAudioSource.PlayOneShot(_thunderRumbleClip, distAtten * Stage1GameSettings.AmbientVolume);
         }
     }
 }

@@ -1,17 +1,146 @@
-#if UNITY_5_3_OR_NEWER
 #nullable enable
 using System;
+using Stratocraft.Physics.Data;
+using Stratocraft.WorldGen;
+#if !UNITY_5_3_OR_NEWER
+using Stratocraft.Networking;
+#else
 using UnityEngine;
+#endif
 
 namespace Stratocraft.Character
 {
+#if UNITY_5_3_OR_NEWER
     /// <summary>
-    /// Oyun içi canlı ayarlar, zorluk çarpanları, çevre etkileri anahtarı ve değiştirilebilir kontrol tuşları.
+    /// Stratocraft.Character.asmdef icinde Unity derlemesi icin ag topolojisi ve 1 Hz AOI paket koprusu.
+    /// (.NET 10 altinda dogrudan Stratocraft.Networking tipleri kullanilir.)
+    /// </summary>
+    public enum NetworkTopologyMode : byte
+    {
+        Singleplayer = 0,
+        HostLoopback = 1,
+        DedicatedServer = 2,
+        RemoteClient = 3,
+        Client = RemoteClient
+    }
+
+    internal static class SpatialAoiAndSwarmNetSystem
+    {
+        public const uint AtmosphereAoiSyncIntervalTicks60Hz = 60u;
+
+        public static bool ShouldReplicateAtmosphereAoiAtTick(uint serverTick60Hz, uint playerEntityId) =>
+            ((serverTick60Hz + (playerEntityId * 13u)) % AtmosphereAoiSyncIntervalTicks60Hz) == 0u;
+
+        public static bool CanModifyTimeScale(NetworkTopologyMode mode, bool isLocalHostOrServer) => mode switch
+        {
+            NetworkTopologyMode.Singleplayer => true,
+            NetworkTopologyMode.HostLoopback => isLocalHostOrServer,
+            NetworkTopologyMode.DedicatedServer => isLocalHostOrServer,
+            NetworkTopologyMode.RemoteClient => false,
+            _ => false
+        };
+    }
+
+    internal readonly struct AtmosphereAoiPacketHeader
+    {
+        public readonly short CenterCellX;
+        public readonly short CenterCellZ;
+        public readonly float TimeScaleMultiplier;
+        public readonly float EnsoTeAnomalyK;
+        public readonly byte ChangedCellCount;
+
+        public AtmosphereAoiPacketHeader(short cx, short cz, float scale, float enso, byte count)
+        {
+            CenterCellX = cx;
+            CenterCellZ = cz;
+            TimeScaleMultiplier = scale;
+            EnsoTeAnomalyK = enso;
+            ChangedCellCount = count;
+        }
+    }
+
+    internal static class AtmosphereAoiSyncPacket
+    {
+        public const int AoiSideCells = 9;
+        public const int AoiCellCount = 81;
+        public const int HeaderByteSize = 8;
+        public const int CellDeltaByteSize = 14;
+        public const int MaxCellsPerBudgetPacket = 32;
+        public const int MaxWirePacketBytes = HeaderByteSize + (MaxCellsPerBudgetPacket * CellDeltaByteSize);
+
+        public static int EncodeDeltaPacket(
+            short centerCellX,
+            short centerCellZ,
+            float serverTimeScale,
+            float ensoTeAnomalyK,
+            ReadOnlySpan<AtmosphereAoiCellSample> currentWindow81,
+            Span<AtmosphereAoiCellSample> clientBaseline81,
+            ref bool hasValidBaseline,
+            Span<byte> outWireBuffer,
+            int maxCellsPerPacket = MaxCellsPerBudgetPacket)
+        {
+            if (currentWindow81.Length < AoiCellCount || clientBaseline81.Length < AoiCellCount || outWireBuffer.Length < HeaderByteSize)
+            {
+                return 0;
+            }
+
+            int changed = 0;
+            int maxEmit = Math.Min(maxCellsPerPacket, (outWireBuffer.Length - HeaderByteSize) / CellDeltaByteSize);
+            for (int i = 0; i < AoiCellCount && changed < maxEmit; i++)
+            {
+                if (!hasValidBaseline ||
+                    currentWindow81[i].AirTempDeciC != clientBaseline81[i].AirTempDeciC ||
+                    currentWindow81[i].PrecipDeciMmPerHour != clientBaseline81[i].PrecipDeciMmPerHour ||
+                    currentWindow81[i].CloudWaterCentiKgPerM2 != clientBaseline81[i].CloudWaterCentiKgPerM2)
+                {
+                    clientBaseline81[i] = currentWindow81[i];
+                    changed++;
+                }
+            }
+            hasValidBaseline = true;
+
+            ushort scaleDeci = (ushort)Math.Clamp((int)MathF.Round(serverTimeScale * 10.0f), 10, 6000);
+            outWireBuffer[0] = (byte)(centerCellX & 0xFF);
+            outWireBuffer[1] = (byte)((centerCellX >> 8) & 0xFF);
+            outWireBuffer[2] = (byte)(centerCellZ & 0xFF);
+            outWireBuffer[3] = (byte)((centerCellZ >> 8) & 0xFF);
+            outWireBuffer[4] = (byte)(scaleDeci & 0xFF);
+            outWireBuffer[5] = (byte)((scaleDeci >> 8) & 0xFF);
+            outWireBuffer[6] = (byte)(sbyte)Math.Clamp((int)MathF.Round(ensoTeAnomalyK * 10.0f), sbyte.MinValue, sbyte.MaxValue);
+            outWireBuffer[7] = (byte)changed;
+            return HeaderByteSize + changed * CellDeltaByteSize;
+        }
+
+        public static bool TryDecodeAndApplyDeltaPacket(
+            ReadOnlySpan<byte> wireBytes,
+            Span<AtmosphereAoiCellSample> clientWindow81,
+            out AtmosphereAoiPacketHeader header)
+        {
+            if (wireBytes.Length < HeaderByteSize || clientWindow81.Length < AoiCellCount)
+            {
+                header = default;
+                return false;
+            }
+
+            short cx = (short)(wireBytes[0] | (wireBytes[1] << 8));
+            short cz = (short)(wireBytes[2] | (wireBytes[3] << 8));
+            ushort scaleDeci = (ushort)(wireBytes[4] | (wireBytes[5] << 8));
+            sbyte ensoDeci = (sbyte)wireBytes[6];
+            byte count = wireBytes[7];
+            header = new AtmosphereAoiPacketHeader(cx, cz, scaleDeci * 0.1f, ensoDeci * 0.1f, count);
+            return true;
+        }
+    }
+#endif
+    /// <summary>
+    /// Oyun içi canlı ayarlar, zorluk çarpanları, çevre etkileri anahtarı, zaman akış hızı (1x..600x) ve değiştirilebilir kontrol tuşları.
     /// ESC menüsü açıldığında dış dünya (Time.timeScale = 1.0f) ASLA durmaz; canlılar, sıvılar ve fizik akmaya devam eder.
     /// </summary>
     public static class Stage1GameSettings
     {
+#if UNITY_5_3_OR_NEWER
         private static bool _loadedFromPrefs;
+#endif
 
         // 1) Fare, Kamera ve Ses Ayarları
         public static float MouseSensitivity = 1.00f;
@@ -22,8 +151,30 @@ namespace Stratocraft.Character
         public static float CombatSfxVolume = 0.90f;
         public static float AmbientVolume = 0.75f;
 
-        // 2) Çevre Etkileri (Üşüme / Sıcaklama / Boğulma / Lav-Asit Hasarı) Kapatma Ayarı
+        // 2) Çevre Etkileri (Üşüme / Sıcaklama / Boğulma / Lav-Asit Hasarı) ve Paket 4A Zaman Akış Hızı (1x - 600x)
         public static bool EnableEnvironmentalEffects = true;
+        public static float TimeScaleMultiplier = 1.0f;
+        public static NetworkTopologyMode ActiveNetworkTopology = NetworkTopologyMode.Singleplayer;
+        public static bool IsLocalServerOrHostAuthority = true;
+        public static readonly float[] QuickTimeScalePresets = { 1.0f, 10.0f, 60.0f, 300.0f, 600.0f };
+
+        public static bool CanLocalPlayerModifyTimeScale()
+        {
+            return SpatialAoiAndSwarmNetSystem.CanModifyTimeScale(ActiveNetworkTopology, IsLocalServerOrHostAuthority);
+        }
+
+        public static float SetTimeScaleMultiplier(float requestedScale)
+        {
+            bool canModify = CanLocalPlayerModifyTimeScale();
+            if (!canModify)
+            {
+                TimeScaleMultiplier = Math.Clamp(TimeScaleMultiplier, SolarCalendarAndTimeScaleSystem.MinTimeAccelerationMultiplier, SolarCalendarAndTimeScaleSystem.MaxTimeAccelerationMultiplier);
+                return TimeScaleMultiplier;
+            }
+
+            TimeScaleMultiplier = SolarCalendarAndTimeScaleSystem.ClampTimeScale(requestedScale, isServerOrHostAuthority: true);
+            return TimeScaleMultiplier;
+        }
 
         // 3) Oyun Zorluk Seviyesi (0: Barışçıl, 1: Kolay, 2: Normal, 3: Zor, 4: Kabus, 5: Özel)
         public static int DifficultyPreset = 2;
@@ -46,6 +197,7 @@ namespace Stratocraft.Character
         public static bool EnableBurstAndAsyncBakeMesh = true;
         public static bool EnableFlowFieldAndSpatialBoids = true;
 
+#if UNITY_5_3_OR_NEWER
         // 5) Değiştirilebilir Kontrol Tuşları
         public static KeyCode KeyBackpack = KeyCode.I;
         public static KeyCode KeyMatterCrystal = KeyCode.C;
@@ -72,6 +224,9 @@ namespace Stratocraft.Character
             AmbientVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_AmbientVol", 0.75f));
 
             EnableEnvironmentalEffects = PlayerPrefs.GetInt("SC_EnvEffects", 1) != 0;
+            TimeScaleMultiplier = SolarCalendarAndTimeScaleSystem.ClampTimeScale(
+                PlayerPrefs.GetFloat("SC_TimeScaleMult", 1.00f),
+                isServerOrHostAuthority: true);
             DifficultyPreset = Mathf.Clamp(PlayerPrefs.GetInt("SC_DiffPreset", 2), 0, 5);
             CreatureAggressionMultiplier = Mathf.Clamp(PlayerPrefs.GetFloat("SC_MobAggro", 1.00f), 0.00f, 3.00f);
             CreatureHealthMultiplier = Mathf.Clamp(PlayerPrefs.GetFloat("SC_MobHp", 1.00f), 0.25f, 4.00f);
@@ -115,6 +270,7 @@ namespace Stratocraft.Character
             PlayerPrefs.SetFloat("SC_AmbientVol", AmbientVolume);
 
             PlayerPrefs.SetInt("SC_EnvEffects", EnableEnvironmentalEffects ? 1 : 0);
+            PlayerPrefs.SetFloat("SC_TimeScaleMult", TimeScaleMultiplier);
             PlayerPrefs.SetInt("SC_DiffPreset", DifficultyPreset);
             PlayerPrefs.SetFloat("SC_MobAggro", CreatureAggressionMultiplier);
             PlayerPrefs.SetFloat("SC_MobHp", CreatureHealthMultiplier);
@@ -139,10 +295,15 @@ namespace Stratocraft.Character
             PlayerPrefs.SetInt("SC_Key_Cam", (int)KeyCameraToggle);
             PlayerPrefs.Save();
         }
+#else
+        public static void SaveToPrefs()
+        {
+        }
+#endif
 
         public static void ApplyDifficultyPreset(int preset)
         {
-            DifficultyPreset = Mathf.Clamp(preset, 0, 4);
+            DifficultyPreset = Math.Clamp(preset, 0, 4);
             switch (DifficultyPreset)
             {
                 case 0: // Barışçıl (Peaceful)
@@ -178,6 +339,10 @@ namespace Stratocraft.Character
         {
             ApplyDifficultyPreset(2);
             EnableEnvironmentalEffects = true;
+            if (CanLocalPlayerModifyTimeScale())
+            {
+                TimeScaleMultiplier = 1.00f;
+            }
             PlayerCombatDamageMultiplier = 1.00f;
             MiningSpeedMultiplier = 1.00f;
             PlayerMoveSpeedMultiplier = 1.00f;
@@ -187,6 +352,7 @@ namespace Stratocraft.Character
             SaveToPrefs();
         }
 
+#if UNITY_5_3_OR_NEWER
         public static void ResetKeybindsToDefault()
         {
             KeyBackpack = KeyCode.I;
@@ -201,6 +367,7 @@ namespace Stratocraft.Character
             KeyCameraToggle = KeyCode.F5;
             SaveToPrefs();
         }
+#endif
 
         public static string GetDifficultyDisplayName(int preset) => preset switch
         {
@@ -212,6 +379,8 @@ namespace Stratocraft.Character
             _ => "ÖZEL (Kullanıcı Çarpanları)"
         };
     }
+
+#if UNITY_5_3_OR_NEWER
 
     /// <summary>
     /// [ESC] tuşu ile açılan, dış dünyayı DURDURMAYAN (Canlı Dünya) Sistem &amp; Ayarlar Menüsü.
@@ -780,14 +949,78 @@ namespace Stratocraft.Character
             }
 
             cy += 8f;
-            GUI.Box(new Rect(area.x, cy, area.width, 44f),
+            DrawTimeScaleControlSection(area.x, ref cy, area.width, miningCtrl);
+
+            GUI.Box(new Rect(area.x, cy, area.width, 40f),
                 "ℹ️ Not: Oyuncu açlık/susuzluk tüketimi bu aşamada pasif tutulmuştur. Üşüme veya sıcaklama oluştuğunda karakter asla yere düşüp kilitlenmez.",
                 _controlRowStyle!);
+        }
+
+        private void DrawTimeScaleControlSection(
+            float x,
+            ref float cy,
+            float width,
+            Stage1MatterCrystalAndMiningController? miningCtrl = null)
+        {
+            bool canModifyTimeScale = SpatialAoiAndSwarmNetSystem.CanModifyTimeScale(
+                Stage1GameSettings.ActiveNetworkTopology,
+                Stage1GameSettings.IsLocalServerOrHostAuthority);
+
+            string authTag = canModifyTimeScale
+                ? "([ / ] Kısayol | Backspace: 1x)"
+                : "🔒 SALT-OKUNUR (İstemci Modu — Sunucu/Host Yetkisi Gerekir)";
+            GUI.Label(new Rect(x, cy, width, 22f),
+                $"⏱️ ZAMAN AKIŞ HIZI (1x - 600x) — {authTag}",
+                _subHeaderStyle!);
+            cy += 24f;
+
+            bool prevEnabled = GUI.enabled;
+            GUI.enabled = prevEnabled && canModifyTimeScale;
+
+            float prevScale = Stage1GameSettings.TimeScaleMultiplier;
+            float sliderVal = DrawSliderRow(
+                x, ref cy, width,
+                "Zaman Akış Hızı (1x - 600x):",
+                Stage1GameSettings.TimeScaleMultiplier,
+                SolarCalendarAndTimeScaleSystem.MinTimeAccelerationMultiplier,
+                SolarCalendarAndTimeScaleSystem.MaxTimeAccelerationMultiplier,
+                canModifyTimeScale
+                    ? $"{Stage1GameSettings.TimeScaleMultiplier:0.#}x"
+                    : $"{Stage1GameSettings.TimeScaleMultiplier:0.#}x (Salt-Okunur)");
+
+            if (canModifyTimeScale && Mathf.Abs(sliderVal - prevScale) > 0.05f)
+            {
+                Stage1GameSettings.SetTimeScaleMultiplier(Mathf.Round(sliderVal));
+                Stage1GameSettings.SaveToPrefs();
+            }
+
+            float[] presets = Stage1GameSettings.QuickTimeScalePresets;
+            float presetBtnW = (width - (presets.Length - 1) * 8f) / presets.Length;
+            for (int i = 0; i < presets.Length; i++)
+            {
+                float p = presets[i];
+                bool isSelected = Mathf.Abs(Stage1GameSettings.TimeScaleMultiplier - p) < 0.45f;
+                GUIStyle btnSt = isSelected ? _activeTabButtonStyle! : _buttonStyle!;
+                if (GUI.Button(new Rect(x + i * (presetBtnW + 8f), cy, presetBtnW, 28f), $"{p:0}x", btnSt) && canModifyTimeScale)
+                {
+                    Stage1GameSettings.SetTimeScaleMultiplier(p);
+                    Stage1GameSettings.SaveToPrefs();
+                    if (miningCtrl != null)
+                    {
+                        miningCtrl.LastFeedbackText = $"⏩ Zaman Akış Hızı: {Stage1GameSettings.TimeScaleMultiplier:0}x olarak ayarlandı.";
+                    }
+                }
+            }
+            cy += 34f;
+            GUI.enabled = prevEnabled;
         }
 
         private void DrawGameplayMultipliersTab(Rect area, Stage1CreatureSimulationBridge creatureBridge)
         {
             float cy = area.y;
+            DrawTimeScaleControlSection(area.x, ref cy, area.width, null);
+            cy += 4f;
+
             GUI.Label(new Rect(area.x, cy, area.width, 24f), "⚡ OYUN MEKANİK, SAVAŞ, KAZI VE FİZİK ÇARPANLARI", _subHeaderStyle!);
             cy += 28f;
 
@@ -899,6 +1132,7 @@ namespace Stratocraft.Character
                 $"• [{Stage1GameSettings.KeyInteract}] : Yerdeki Eşyayı Al / Örs Onarımı / 3B CAS Sandık Aç / Köy-Tapınak Hazinesi / Yaralı Canlı Evcilleştir & Binek",
                 $"• [{Stage1GameSettings.KeyQuickDrop}] veya [Shift + G] : Eldeki Silahı/Aleti 0.0sn Sürede Yere At (Quick-Drop)",
                 $"• [{Stage1GameSettings.KeyCameraToggle}] : 1. Şahıs (FPS) <-> 3. Şahıs Omuz Üstü (TPS) Kamera Geçişi",
+                "• [ [ / ] ] : Zaman Akış Hızını Azalt / Artır (1x..600x)  |  [Backspace] : Zaman Akış Hızını 1x'e Sıfırla",
                 "• [F1] : Tüm Arayüzü Gizle (Sinematik Mod)  |  [F3] : Geliştirici & Simülasyon Bilgi Yazılarını Gizle/Aç",
                 "• [F6] : Dünyayı Kaydet (.sregion)  |  [Shift + F9] : Dünyayı Yükle (.sregion)  |  [F7] : Yeni Rastgele Harita Tohumu (Seed)",
                 "• [F9] : Oyuncu Uzuv Kopması Testi  |  [F10] : Düellocu NPC & Kukla Çağır  |  [F11] : İklim Testi  |  [F12] : Biyom/Mağara Keşif Işınlanma"
@@ -942,5 +1176,5 @@ namespace Stratocraft.Character
             return nextVal;
         }
     }
-}
 #endif
+}
