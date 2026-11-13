@@ -22,15 +22,15 @@ Paket 4A kapsamında Stratocraft dünyasına kapsamlı ve birbirine bağlı dina
    - Jin (1997) analitik matris-üstelli ENSO salınımı (~3.5 oyun yılı El Niño / La Niña döngüsü).
    - Orografik yağış ve Föhn rüzgârı yağmur gölgesi fiziği, kara/deniz meltemi dinamikleri, $\text{CAPE} > 1000\text{ J/kg}$ gök gürültülü fırtına tetiklemesi.
    - 600x hızda tam oyun yılı boyunca $0\text{ NaN/Infinity}$ kararlı yarı-Lagrange adveksiyonu.
-3. **0 MB VRAM 3D Prosedürel Hacimsel Bulutlar ve Rayleigh Optiği (`StratocraftVolumetricClouds.shader` & `Stage1AtmosphereAndCloudController.cs`):**
+3. **0 MB VRAM 3D Prosedürel Hacimsel Bulutlar ve Rayleigh Optiği (`StratocraftProceduralClouds.shader` & `Stage1AtmosphereCloudAndRainRenderer.cs`):**
    - Hiçbir harici doku kullanmadan (`0.0 MB` VRAM) tam analitik 3D Perlin-Worley gürültüsü ile gerçek zamanlı ışın yürütme (raymarching).
    - Bulut tipleri (Kümülüs, Kümülonimbus, Stratüs, Sirrüs), güneş açısına bağlı Rayleigh/Mie saçılması, gün batımı kızıllığı ve yere düşen dinamik bulut gölgeleri.
-4. **Çift Tuzluluklu Su, Dalton Buharlaşması ve Karst Akiferleri (`KarstAquiferAndSurfaceHydrologySystem.cs`):**
+4. **Çift Tuzluluklu Su, Dalton Buharlaşması ve Karst Akiferleri (`ChunkSalinityBitset.cs`, `WaterCycleAndEvaporationSystem.cs` & `KarstHydrologyAndAquiferSystem.cs`):**
    - $0.0\text{ g/L}$ tatlı su ve $35.0\text{ g/L}$ okyanus suyu ayrımı.
    - Dalton rüzgâr/buhar basıncı destekli buharlaşma fiziği.
    - Kireçtaşı ve mermer katmanlarında asidik yağmurla açılan karstik erime boşlukları, düdenler ve yeraltı nehirleri.
    - Yağmur suyu birikimi ile karst akiferinin beslenmesi ve mağara sızıntılarının debisinin dinamik değişimi.
-5. **Yağmur Islanması, Çamurlaşma ve Açık Ateş Söndürme (`RainWettingAndMudSystem.cs` & `Stage1CampfireAndCookingController.cs`):**
+5. **Yağmur Islanması, Çamurlaşma ve Açık Ateş Söndürme (`WaterCycleAndEvaporationSystem.cs` & `SoilMoistureAndMudSystem.cs` & `Stage1CampfireAndCookingController.cs`):**
    - Yağmur altında toprak blokların doygunluğunun artması; `150/255` eşiğinde çamur bloklarına dönüşmesi, `255/255` tam doygunlukta yüzeyde tatlı su akıntısı başlatması.
    - Çatısız açık gökyüzü altında yanan kamp ateşi ve Bloomery fırınlarının $\ge 6.0\text{ mm/sa}$ sağanak yağışta otomatik sönmesi (`IsLit = false`); korunaklı/mağara altındaki ateşlerin yanmaya devam etmesi.
 6. **5 Denizci & Hava Tahmin Aleti ve Paratoner (`WeatherForecastInstrumentsSystem.cs` & `PhysicalItemMeshFactory.cs`):**
@@ -39,7 +39,7 @@ Paket 4A kapsamında Stratocraft dünyasına kapsamlı ve birbirine bağlı dina
    - **Higrometre:** Tetens bağıl nemi (%RH).
    - **Rüzgâr Gülü / Anemometre:** 8 yön pusulası ve Beaufort 0..12 rüzgâr şiddeti skalası (Türkçe denizci açıklamalarıyla).
    - **Yağmur Ölçer:** Milimetre cinsinden son 24 saatlik toplam yağış miktarı.
-   - **Metal Paratoner:** Yıldırım düşmelerini güvenli menzilde topraklayan $12\text{ m}$ yarıçaplı koruma direği.
+   - **Metal Paratoner:** Yıldırım düşmelerini güvenli menzilde topraklayan $24\text{ m}$ yarıçaplı koruma direği.
    - Tamamı `0.0 MB` doku VRAM ile `%100 Color32` prosedürel 3B meş modelleri olarak üretildi.
 7. **Rehber Kitabı Sekme 5: Hava & Denizci Tahmini (`SurvivalRecipeBookCatalog.cs` & `Stage1SurvivalRecipeBookUi.cs`):**
    - `[B]` kitabına 5. sekme (`[5] Hava & Denizci Tahmini`) eklendi; 8 ayrıntılı meteoroloji, alet yapımı, Zambretti tablosu, Beaufort skalası ve bulut okuma kılavuzu entegre edildi.
@@ -55,10 +55,10 @@ Stratocraft Swarm orkestrasyonunda Paket 4A görev dağılımı ve kullanılan m
 | Rol / Ajan Adı | Görevi ve Sorumluluk Alanı | Model | Model Ailesi | Durum |
 | :--- | :--- | :--- | :--- | :--- |
 | `coordinator` | Swarm mimari planlama, entegrasyon yönetimi ve Unity meta yönetimi | `gemini-flash-worker-agy` | Gemini System | Tamamlandı |
-| `w1-doc-architect` | Paket 4A 4'lü mimari şartname seti (`DOK1`..`DOK4`) | `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Tamamlandı (#54, `364d975`) |
-| `w1-clouds-shader` | 0 MB VRAM 3D Prosedürel Bulutlar, Rayleigh saçılması, gölgeler | `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Tamamlandı (#60, `1cad55b`) |
+| `p4a-doc-architect` | Paket 4A 4'lü mimari şartname seti (`DOK1`..`DOK4`) | `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Tamamlandı (#54, `364d975`) |
+| `w1-cloud-shader` | 0 MB VRAM 3D Prosedürel Bulutlar, Rayleigh saçılması, gölgeler | `gemini-4-argon-high` | Gemini 4 Argon (High) | Tamamlandı (#60, `1cad55b`) |
 | `w1-instruments-book` | 5 Hava aleti, Paratoner, [5] Kitap sekmesi, yağmur ateş söndürme | `gemini-4-argon-high` | Gemini 4 Argon (High) | Tamamlandı (#63, `0a81e83`) |
-| `w1-atmos-core` | 365 gün takvim, 2D Bölgesel Atmosfer, ENSO, 1Hz AOI senk | `gemini-4-argon-high` | Gemini 4 Argon (High) | Tamamlandı (#64, `4917675`) |
+| `w1-atmos-core` | 365 gün takvim, 2D Bölgesel Atmosfer, ENSO, 1Hz AOI senk | `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Tamamlandı (#64, `4917675`) |
 | `w1-water-karst` | Çift tuzluluk, Dalton buharlaşma, karst akiferleri | `gemini-4-carbon-high` | Gemini 4 Carbon (High) | Tamamlandı (#65, `1c6f6b7`) |
 | `w2-controller-glue` | 1x-600x zaman UI, atmosfer döngüsü, yağmur ıslanması entegrasyonu | `gemini-4-argon-high` | Gemini 4 Argon (High) | Tamamlandı (#67, `132ccc2`) |
 | `w2-p4a-tests` | 11 NUnit birim testi (AK-1..AK-12 iklim ve hidroloji) | `gemini-4-hydrogen-high` | Gemini 4 Hydrogen (High) | Tamamlandı (#69, `3f5fe93`) |
@@ -139,7 +139,7 @@ Stratocraft Swarm orkestrasyonunda Paket 4A görev dağılımı ve kullanılan m
 
 ### 4.5. Bellek ve VRAM Bütçe Denetimi
 - **Kaplama VRAM Bütçesi:**
-  - Paket 4A Ek VRAM: `0.0 MB` (Bulutlar: `StratocraftVolumetricClouds.shader` tam prosedürel raymarch, 5 Alet: `PhysicalItemMeshFactory` `%100 Color32` vertex color prosedürel geometri).
+  - Paket 4A Ek VRAM: `0.0 MB` (Bulutlar: `StratocraftProceduralClouds.shader` tam prosedürel raymarch, 5 Alet: `PhysicalItemMeshFactory` `%100 Color32` vertex color prosedürel geometri).
   - Mevcut Toplam VRAM: **4.14 MB / 16.000 MB** (`%100` Bütçe İçi, Hedef: `< 16.0 MB`).
 - **RAM / Garbage Collection:**
   - GC Alloc: `0 B/kare` (Hücre durumu 36 Byte blittable struct, delta paketleri önceden ayrılmış tampon üzerinden).
@@ -156,8 +156,8 @@ Stratocraft Swarm orkestrasyonunda Paket 4A görev dağılımı ve kullanılan m
 
 Oyunu Unity Editor üzerinde `Play` butonuna basarak başlattığınızda Paket 4A yeniliklerini şu adımlarla deneyimleyebilirsiniz:
 
-1. **Zaman Hızlandırma (`[1..9]` Kısayolları veya Ekran Sağ Üst HUD):**
-   - Sayı tuşları (`1`=1x, `2`=2x, `3`=5x, `4`=10x, `5`=30x, `6`=60x, `7`=150x, `8`=300x, `9`=600x) ile dünya saatini hızlandırabilirsiniz.
+1. **Zaman Hızlandırma (`[` / `]` / `Backspace` Kısayolları veya `ESC -> Ayarlar` Kaydırıcısı):**
+   - `[` azaltır, `]` artırır (`1x, 2x, 5x, 10x, 30x, 60x, 150x, 300x, 600x`), `Backspace`: `1x`'e sıfırlar.
    - `600x` hızda mevsimlerin, güneş zenit açısının, gün batımı kızıllığının ve bulut hareketlerinin akıcı şekilde simüle edildiğini gözlemleyin.
 2. **Rehber Kitabı Sekme 5 (`[B]` -> `[5]`):**
    - `[B]` tuşuyla iki sayfalı açık deri rehber kitabını açın ve `[5]` tuşuna basın ya da üstteki `[5] Hava & Denizci` sekmesine tıklayın.

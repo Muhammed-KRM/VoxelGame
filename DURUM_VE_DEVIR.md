@@ -72,20 +72,20 @@ Paket 4A mimari şartnamesi (`AK-1..AK-12`) ve Swarm orkestrasyonu ile Stratocra
 1. **365 Günlük Güneş Takvimi, Güneş Efemerisi ve 1x-600x Zaman Hızlandırma (`SolarCalendarAndTimeScaleSystem.cs`, `SeasonAndWeatherSystem.cs`):**
    - 365 günlük Miladi takvim döngüsü (`[91, 91, 91, 92]` gün: İlkbahar, Yaz, Sonbahar, Kış); $23.44^\circ$ eksen eğikliği ile $12.0 \pm 3.2$ saat gün uzunluğu modülasyonu, deklinasyon ve zenit hesabı.
    - Her 3. gece Kanlı Ay (`IsBloodMoonNight`) döngüsü ve geriye uyumluluk tam korundu.
-   - `[1..9]` tuşlarıyla 9 kademeli (`1, 2, 5, 10, 30, 60, 150, 300, 600x`) kesintisiz ve sayısal olarak kararlı zaman hızlandırma; 600x hızda tam oyun yılı boyunca $0\text{ NaN/Infinity}$.
+   - `[` / `]` / `Backspace` tuşlarıyla (veya `ESC -> Ayarlar` kaydırıcısıyla) 9 kademeli (`1, 2, 5, 10, 30, 60, 150, 300, 600x`) kesintisiz ve sayısal olarak kararlı zaman hızlandırma; 600x hızda tam oyun yılı boyunca $0\text{ NaN/Infinity}$.
 2. **2D Bölgesel Atmosfer, Jin (1997) ENSO Salınımı ve 1 Hz AOI Ağ Senkronizasyonu (`RegionalAtmosphereSimulationSystem.cs`, `AtmosphereAoiSyncPacket.cs`):**
    - `32x32` grid ($2048\text{m} \times 2048\text{m}$ ada etki alanı), `36 Byte` blittable `0 B` GC `AtmosphereCellState` hücresi.
    - Tetens doyma buhar basıncı, Stull ıslak hazne sıcaklığı ve $z_{\text{LCL}} = h + 125 \cdot \max(0.15, T - T_d)$ taban bulut yüksekliği.
    - Jin (1997) analitik matris-üstelli ENSO salınımı (~3.5 oyun yılı El Niño / La Niña döngüsü), orografik yağış, Föhn rüzgâr gölgesi, kara/deniz meltemi ve $\text{CAPE} > 1000\text{ J/kg}$ fırtına tetiklemesi.
    - $9 \times 9$ AOI penceresi için 1 Hz frekansında hücre başına 14 Byte delta senkronizasyonu ($< 512\text{ B/s}$).
-3. **0 MB VRAM 3D Prosedürel Hacimsel Bulutlar ve Rayleigh Saçılması (`StratocraftVolumetricClouds.shader`, `Stage1AtmosphereAndCloudController.cs`):**
+3. **0 MB VRAM 3D Prosedürel Hacimsel Bulutlar ve Rayleigh Saçılması (`StratocraftProceduralClouds.shader`, `Stage1AtmosphereCloudAndRainRenderer.cs`):**
    - Hiçbir harici doku kullanmadan (`0.0 MB` ek VRAM) analitik 3D Perlin-Worley gürültüsü ile gerçek zamanlı ışın yürütme (raymarching).
    - Bulut tipleri (Kümülüs, Kümülonimbus, Stratüs, Sirrüs), Rayleigh/Mie saçılması, gün batımı kızıllığı ve yere düşen dinamik bulut gölgeleri.
-4. **Çift Tuzluluklu Su, Dalton Buharlaşması ve Karst Akiferleri (`KarstAquiferAndSurfaceHydrologySystem.cs`):**
+4. **Çift Tuzluluklu Su, Dalton Buharlaşması ve Karst Akiferleri (`ChunkSalinityBitset.cs`, `WaterCycleAndEvaporationSystem.cs`, `KarstHydrologyAndAquiferSystem.cs`):**
    - $0.0\text{ g/L}$ tatlı su ve $35.0\text{ g/L}$ okyanus suyu ayrımı.
    - Dalton rüzgâr ve buhar basıncı destekli dinamik buharlaşma fiziği.
    - Kireçtaşı ve mermer katmanlarında asidik yağmurla açılan karstik erime boşlukları, düdenler, yeraltı nehirleri ve yağmurla beslenen dinamik mağara akiferleri.
-5. **Yağmur Islanması, Çamurlaşma ve Açık Ateş Söndürme (`RainWettingAndMudSystem.cs`, `Stage1CampfireAndCookingController.cs`):**
+5. **Yağmur Islanması, Çamurlaşma ve Açık Ateş Söndürme (`WaterCycleAndEvaporationSystem.cs`, `SoilMoistureAndMudSystem.cs`, `Stage1CampfireAndCookingController.cs`):**
    - Yağmur alan toprak zeminlerin nemlenmesi; 150/255 doygunlukta çamur bloklarına dönüşmesi, 255/255 tam doygunlukta yüzeyde tatlı su akıntısı başlatması.
    - Açık gökyüzü altındaki Kamp Ateşi ve Bloomery fırınlarının $\ge 6.0\text{ mm/sa}$ sağanakta otomatik sönmesi (`IsLit = false`), sıcaklığın düşmesi; çatı/mağara altındaki ateşlerin yanmaya devam etmesi.
 6. **5 Denizci & Hava Tahmin Aleti ve Metal Paratoner (`WeatherForecastInstrumentsSystem.cs`, `PhysicalItemMeshFactory.cs`):**
@@ -94,7 +94,7 @@ Paket 4A mimari şartnamesi (`AK-1..AK-12`) ve Swarm orkestrasyonu ile Stratocra
    - **Higrometre:** Tetens bağıl nemi (%RH).
    - **Rüzgâr Gülü / Anemometre:** 8 yön pusulası ve Beaufort 0..12 rüzgâr şiddeti skalası (Türkçe denizci açıklamalarıyla).
    - **Yağmur Ölçer:** Milimetre cinsinden son 24 saatlik toplam yağış miktarı.
-   - **Metal Paratoner:** Yıldırım darbelerini $12\text{m}$ yarıçapta topraklayarak yakındaki yapıları koruyan ve batarya şarj eden paratoner direği.
+   - **Metal Paratoner:** $24\text{m}$ yarıçapta yıldırım darbelerini yakalayıp güvenli şekilde toprağa aktaran koruma direği.
    - Tamamı `0.0 MB` doku VRAM ile `%100 Color32` prosedürel 3B meş modelleri olarak üretildi.
 7. **Rehber Kitabı Sekme 5: Hava & Denizci Tahmini (`SurvivalRecipeBookCatalog.cs`, `Stage1SurvivalRecipeBookUi.cs`):**
    - `[B]` kitabına 5. sekme (`[5] Hava & Denizci`) eklendi; 8 meteoroloji/alet maddesi, Zambretti tablosu, Beaufort rüzgâr skalası, Stull psikrometre formülleri ve bulut okuma ipuçları işlendi.
@@ -970,10 +970,10 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[1..9]` Tuşları (Sayı Tuşları)** | **Dinamik Zaman Ölçeği (Hızlandırma):** `1`=1x, `2`=2x, `3`=5x, `4`=10x, `5`=30x, `6`=60x, `7`=150x, `8`=300x, `9`=600x hızlandırma kademeleri (`0 NaN/Inf` kararlı) | ✅ Devir #059 (Aktif) |
+| **`[` / `]` / `Backspace` (veya `ESC -> Ayarlar`)** | **Dinamik Zaman Ölçeği (`1x–600x`):** `[` azaltır, `]` artırır (`1, 2, 5, 10, 30, 60, 150, 300, 600x`), `Backspace` `1x`'e sıfırlar (`0 NaN/Inf` kararlı) | ✅ Devir #059 (Aktif) |
 | **`[B]` Tuşu (`!Shift`) -> `[5]`** | **Rehber Kitabı [5] Hava & Denizci Tahmini:** Açık deri kitapta 5. sekme; Zambretti tablosu, Beaufort skalası, Stull formülleri, bulut rehberi | ✅ Devir #059 (Aktif) |
 | **Barometre / Termometre / Higrometre / Anemometre / Yağmur Ölçer** | **5 Denizci Hava Aleti:** Elde tutulduğunda ekranda hPa basınç, Zambretti A..Z tahmini, rüzgâr yönü/şiddeti ve yağış mm değerini gösterir | ✅ Devir #059 (Aktif) |
-| **Metal Paratoner** | **Yıldırım Koruma & Topraklama:** $12\text{m}$ yarıçapta yıldırım düşmelerini emerek bataryaya aktarır | ✅ Devir #059 (Aktif) |
+| **Metal Paratoner** | **Yıldırım Koruma & Topraklama:** $24\text{m}$ yarıçapta yıldırım düşmelerini yakalayarak güvenli şekilde toprağa aktarır | ✅ Devir #059 (Aktif) |
 | **`[B]` Tuşu (`!Shift`)** | **Fiziksel İki Sayfalı Zanaat ve Malzeme Rehber Kitabı:** Dikişli açık deri cilt, pirinç köşebentler, kâğıt yığını, kırmızı ipek ayraç, `[A/D]` veya fare tekerleğiyle yaprak çevirme (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #058 (Aktif) |
 | **`[Shift+B]` Tuşu** | **Madde Kristali Malzeme Seçim Paneli:** Kristal açıkken yerleştirilecek blok türünü seçer (Unity `Ctrl+B` Build penceresi çakışması giderildi) | ✅ Devir #058 (Aktif) |
 | **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme (`Extinguish`):** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür (Yağmurda açık gökyüzünde kendiliğinden söner) | ✅ Devir #059 (Aktif) |
@@ -991,6 +991,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[C]` veya `Sağ Tık` (Elde Kuvars / Rezonans Kristali)** | `Tier 0 -> Tier 1` için Kuvars yedirir (`3/3`); `Tier 2..5` için canavarlardan düşen Rezonans Kristali ile kademe yükseltir | ✅ Devir #057 (Aktif) |
 | **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
 | **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
+| **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
 | **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 5-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar ve yontulmuş taş başlıklar dahil) | ✅ Aktif |
 | **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Aktif |
 
@@ -1001,7 +1002,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
    - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #059`** ile birebir eşleştiğini doğrula.
 2. **Adım 2 — Kullanıcıdan `Paket 4A` PlayMode Geri Bildirimini Al:**
-   - Kullanıcı `docs/test-raporlari/faz4-raporu.md` içindeki PlayMode test adımlarını (*[1..9] zaman hızı ölçeği, [B]->[5] Hava ve Denizci sekmesi, Barometre/Termometre/Higrometre/Anemometre/Yağmurölçer ve Paratoner kullanımı, Yağmurda açık kamp ateşinin sönmesi, çamurlaşma ve karstik su akışı*) test edip onayladıktan sonra **Paket 4B** (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı) geliştirmesine geç.
+   - Kullanıcı `docs/test-raporlari/faz4-raporu.md` içindeki PlayMode test adımlarını (*[ / ] / Backspace zaman hızı ölçeği, [B]->[5] Hava ve Denizci sekmesi, Barometre/Termometre/Higrometre/Anemometre/Yağmurölçer ve Paratoner kullanımı, Yağmurda açık kamp ateşinin sönmesi, çamurlaşma ve karstik su akışı*) test edip onayladıktan sonra **Paket 4B** (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı) geliştirmesine geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**
    - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (**`127/127 PASS`**).
    - Unity EditMode Testleri: **`124/124 PASS`** (`0 Failed, 0 Skipped, 0 Error / 0 Warning`).
