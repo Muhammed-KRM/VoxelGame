@@ -749,22 +749,29 @@ namespace Stratocraft.WorldGen.Generators
             return h;
         }
 
-        private static bool TryGetChamberLakeGeometry(
-            int wx, int wz,
-            out int yWater, out bool inBasinFootprint, out bool onBasinRim)
+        private static int FloorDiv(int a, int b)
+        {
+            int q = a / b;
+            int rem = a % b;
+            if (rem != 0 && ((rem < 0) != (b < 0)))
+            {
+                q--;
+            }
+            return q;
+        }
+
+        private static bool IsCaveWaterChamber(int wx, int wz, out int yWater)
         {
             yWater = 0;
-            inBasinFootprint = false;
-            onBasinRim = false;
 
-            // Baslangic vadisi merkez meydani ve [F12] vitrin odalarinda (r < 28m) su baskini/deformasyon olusturma!
+            // Baslangic vadisi merkez meydani ve [F12] vitrin odalarinda (r < 28m) su golcugu olusturma!
             if (wx * wx + wz * wz < 28 * 28)
             {
                 return false;
             }
 
-            int chamberX = wx >= 0 ? (wx / 24) : ((wx - 23) / 24);
-            int chamberZ = wz >= 0 ? (wz / 24) : ((wz - 23) / 24);
+            int chamberX = FloorDiv(wx, 24);
+            int chamberZ = FloorDiv(wz, 24);
             const int chamberY = 3; // Katman 1-2 (y=46..73) 24m x 16m x 24m makro-oda katmani
             uint hChamber = HashChamberPcg(chamberX, chamberY, chamberZ, ActiveWorldSeed);
             if ((hChamber % 100u) >= 15u)
@@ -772,36 +779,14 @@ namespace Stratocraft.WorldGen.Generators
                 return false;
             }
 
-            yWater = 48 + (int)((hChamber >> 8) % 22); // yWater in [48..69] -> taban [46..68], su [48..69]
-
-            int localX = wx - chamberX * 24;
-            int localZ = wz - chamberZ * 24;
-            bool oddX = (chamberX & 1) != 0;
-            bool oddZ = (chamberZ & 1) != 0;
-
-            int minLocalX = 2;
-            int maxLocalX = oddX ? 21 : 14;
-            int minLocalZ = 2;
-            int maxLocalZ = oddZ ? 21 : 14;
-
-            if (localX < minLocalX || localX > maxLocalX || localZ < minLocalZ || localZ > maxLocalZ)
-            {
-                return false;
-            }
-
-            inBasinFootprint = true;
-            int lx = wx & 15;
-            int lz = wz & 15;
-            onBasinRim = localX == minLocalX || localX == maxLocalX ||
-                         localZ == minLocalZ || localZ == maxLocalZ ||
-                         lx == 0 || lx == 15 || lz == 0 || lz == 15;
+            yWater = 48 + (int)((hChamber >> 8) % 22); // yWater in [48..69]
             return true;
         }
 
         /// <summary>
         /// Faz 3.2.B: Katman 1 ve Katman 2 genis magara odalarinda (y in [46..73], swell01 &gt; 0.60, provinceNoise &gt; 0.58)
         /// 24m x 16m x 24m makro-oda hucresi icin deterministik PCG hash (hChamber % 100 &lt; 15) ile %15 (%12-%18 hedef bandi)
-        /// oraninda durgun yeralti su goleti (inLakeWater) ve %100 sizdirmaz canak muhru (isImpermeableLakeBasinSeal) uretir.
+        /// oraninda dogal tas cukur yeralti su golcugu bolge secimini degerlendirir (havaya suni kil/tas kutu eklemez).
         /// </summary>
         public static bool TryEvaluateCaveChamberWaterLake(
             int wx, int y, int wz, float swell01, float provinceNoise,
@@ -815,38 +800,14 @@ namespace Stratocraft.WorldGen.Generators
                 return false;
             }
 
-            if (!TryGetChamberLakeGeometry(wx, wz, out int yWater, out bool inBasinFootprint, out bool onBasinRim) ||
-                !inBasinFootprint)
+            if (!IsCaveWaterChamber(wx, wz, out int yWater))
             {
                 return false;
             }
 
-            if (y < yWater - 2 || y > yWater)
+            if (y == yWater && swell01 > 0.60f && provinceNoise > 0.58f)
             {
-                return false;
-            }
-
-            if (y == yWater)
-            {
-                if (!onBasinRim && swell01 > 0.60f && provinceNoise > 0.58f)
-                {
-                    inLakeWater = true;
-                    return true;
-                }
-
-                if (swell01 > 0.50f && provinceNoise > 0.48f)
-                {
-                    isImpermeableLakeBasinSeal = true;
-                    return true;
-                }
-
-                return false;
-            }
-
-            // y in [yWater - 2, yWater - 1]: %100 sizdirmaz canak tabani muhru
-            if (swell01 > 0.50f && provinceNoise > 0.48f)
-            {
-                isImpermeableLakeBasinSeal = true;
+                inLakeWater = true;
                 return true;
             }
 
@@ -859,7 +820,7 @@ namespace Stratocraft.WorldGen.Generators
             int wx, int y, int wz, float topH,
             out bool inCaveVoid, out bool isCaveSupportPillar, out bool isCrystalCaveWall,
             out byte caveFluidType, out byte dungeonOverrideMat,
-            out bool isEntranceStoneRim, out bool isImpermeableLakeBasinSeal)
+            out bool isEntranceStoneRim)
         {
             inCaveVoid = false;
             isCaveSupportPillar = false;
@@ -867,7 +828,6 @@ namespace Stratocraft.WorldGen.Generators
             caveFluidType = 0;
             dungeonOverrideMat = 0;
             isEntranceStoneRim = false;
-            isImpermeableLakeBasinSeal = false;
 
             float entranceJunctionBoost01 = 0f;
             if (colEntrance.IsNearEntrance)
@@ -933,8 +893,7 @@ namespace Stratocraft.WorldGen.Generators
             {
                 if (wx >= 11 && wx <= 13 && wz >= 17 && wz <= 19 && y <= 11)
                 {
-                    // [F12] 3/9 oyuncunun guvenle uzerinde durdugu bazalt/obsidyen gozlem terasi
-                    isCrystalCaveWall = true;
+                    // [F12] 3/9 oyuncunun guvenle uzerinde durdugu koyu bazalt gozlem terasi
                     return;
                 }
                 inCaveVoid = true;
@@ -949,42 +908,6 @@ namespace Stratocraft.WorldGen.Generators
             if (y > 75 || y > topH - 18.0f)
             {
                 return;
-            }
-
-            // Faz 3.2.B: Katman 1-2 (%12-%18) Sizdirmaz Yeralti Su Golleri ve Canak Muhru:
-            if (!colEntrance.IsNearEntrance && y >= 43 && y <= 73 &&
-                TryGetChamberLakeGeometry(wx, wz, out int chamberLakeY, out bool inLakeFootprint, out bool onLakeRim) &&
-                inLakeFootprint)
-            {
-                if (y >= chamberLakeY - 2 && y <= chamberLakeY)
-                {
-                    if (TryEvaluateCaveChamberWaterLake(
-                            wx, y, wz,
-                            swell01: 0.68f,
-                            provinceNoise: 0.65f,
-                            out bool inLakeWater,
-                            out isImpermeableLakeBasinSeal))
-                    {
-                        if (inLakeWater)
-                        {
-                            inCaveVoid = true;
-                            caveFluidType = (byte)FluidType.Water;
-                        }
-                        return;
-                    }
-                }
-                else if (y >= chamberLakeY + 1 && y <= Math.Min(73, chamberLakeY + 2) && !onLakeRim)
-                {
-                    // Golu barindiran magara odasinin ust kubbe boslugu
-                    inCaveVoid = true;
-                    return;
-                }
-                else if (y >= chamberLakeY - 5 && y <= chamberLakeY - 3)
-                {
-                    // RemoveUngroundedCaveSliversInColumn (runLen <= 4) tarafindan silinmemesi icin >= 5 blok kalin masif taban destegi
-                    isImpermeableLakeBasinSeal = true;
-                    return;
-                }
             }
 
             int cwx = (wx & 15) == 0 ? (wx - 1) : wx;
@@ -1024,10 +947,6 @@ namespace Stratocraft.WorldGen.Generators
                         caveFluidType = (byte)FluidType.Lava;
                     }
                     return;
-                }
-                if (magmaWave > -0.04f || y == 9)
-                {
-                    isCrystalCaveWall = true;
                 }
                 return;
             }
@@ -1089,12 +1008,28 @@ namespace Stratocraft.WorldGen.Generators
                 return;
             }
 
-            // Magara duvar kabugu (Parlayan Yosun, Kuvars, Ametist ve Derin Cevher Damarlari icin 1 blokluk dis kabuk):
-            float wallTrunkSq = (baseRadius + 0.048f) * (baseRadius + 0.048f);
-            float wallBranchSq = (branchRadius + 0.038f) * (branchRadius + 0.038f);
-            if (trunkDistSq < wallTrunkSq || (swell01 > 0.28f && minBranchDistSq < wallBranchSq))
+            // Yalnizca cok nadir (< %1) derin jeot ceplerinde (y in [22..62]) magara duvarinda tutarli kristal cep olustur:
+            if (y >= 22 && y <= 62)
             {
-                isCrystalCaveWall = true;
+                float wallTrunkSq = (baseRadius + 0.048f) * (baseRadius + 0.048f);
+                float wallBranchSq = (branchRadius + 0.038f) * (branchRadius + 0.038f);
+                if (trunkDistSq < wallTrunkSq || (swell01 > 0.28f && minBranchDistSq < wallBranchSq))
+                {
+                    int gx = FloorDiv(wx, 16);
+                    int gy = FloorDiv(y, 12);
+                    int gz = FloorDiv(wz, 16);
+                    uint hGeo = HashChamberPcg(gx, gy, gz, ActiveWorldSeed ^ 0x51A7E31D);
+                    if ((hGeo & 127u) == 0u)
+                    {
+                        float gdx = (wx - gx * 16) - 8.0f;
+                        float gdy = (y - gy * 12) - 6.0f;
+                        float gdz = (wz - gz * 16) - 8.0f;
+                        if (gdx * gdx + gdy * gdy + gdz * gdz <= 11.5f)
+                        {
+                            isCrystalCaveWall = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -1224,7 +1159,7 @@ namespace Stratocraft.WorldGen.Generators
                             in colEntrance, caveP1, caveP2, colProvinceNoise, colWarpY, wx, y, wz, topH,
                             out bool inCaveVoid, out bool isStalagnatePillar, out bool isCrystalCaveWall,
                             out byte caveFluidType, out byte dungeonOverrideMat,
-                            out bool isEntranceStoneRim, out bool isImpermeableLakeBasinSeal);
+                            out bool isEntranceStoneRim);
 
                         if (dungeonOverrideMat != 0)
                         {
@@ -1232,14 +1167,6 @@ namespace Stratocraft.WorldGen.Generators
                                 dungeonOverrideMat, VoxelBitUtility.FullDensity,
                                 dungeonOverrideMat == DungeonAltarCore ? (byte)7 : (byte)0,
                                 0, BlokKokenDurumu.KaliciYapi, 0);
-                            continue;
-                        }
-
-                        if (isImpermeableLakeBasinSeal)
-                        {
-                            byte sealMat = ((wx + y + wz) & 1) == 0 ? MaterialIdCatalog.Clay : MaterialIdCatalog.Stone;
-                            voxels[idx] = VoxelBitUtility.PackStandard(
-                                sealMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
                             continue;
                         }
 
@@ -1318,10 +1245,478 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
+            // Dogal tas cukur yeralti su golcukleri (0 havada duran kil kutusu, 0 B GC stackalloc post-pass):
+            PopulateNaturalCaveWaterPoolsInChunk(chunkX, chunkZ, MaxEditableVoxelY, voxels, fluids);
+
             // Biyom 10 (Gökyüzü Adaları Takımadası) ve Kesif Noktalari icin Bagimsiz Yuksek İrtifa Gökyüzü Adaları
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids);
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
             StampSurfaceFloraAndLandmarks(chunkX, chunkZ, voxels);
+        }
+
+        private static bool IsSolidCarvableNaturalRock(uint raw)
+        {
+            if (raw == 0u) return false;
+            if (VoxelBitUtility.GetShapeId(raw) != 0) return false;
+            if (VoxelBitUtility.GetDensityOrLiquid(raw) < VoxelBitUtility.IsoDensity) return false;
+            if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.KaliciYapi) return false;
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            return mat != MaterialIdCatalog.Bedrock &&
+                   mat != DungeonSanctumWall &&
+                   mat != DungeonAltarCore;
+        }
+
+        private static uint SealNaturalRockFullDensity(uint raw)
+        {
+            if (raw == 0u || VoxelBitUtility.GetShapeId(raw) != 0)
+            {
+                return raw;
+            }
+
+            byte matId = VoxelBitUtility.GetMaterialId(raw);
+            if (matId == MaterialIdCatalog.Clay)
+            {
+                matId = MaterialIdCatalog.Stone;
+            }
+
+            return VoxelBitUtility.PackStandard(
+                matId,
+                VoxelBitUtility.FullDensity,
+                0,
+                VoxelBitUtility.GetRotationState(raw),
+                VoxelBitUtility.GetOriginState(raw),
+                VoxelBitUtility.GetDamageState(raw));
+        }
+
+        private static bool HasSolidCaveRoofAbove(uint[] voxels, int colOffset, int fromY, int maxChunkY)
+        {
+            int roofMaxY = Math.Min(maxChunkY - 2, fromY + 46);
+            for (int ry = fromY + 2; ry <= roofMaxY; ry++)
+            {
+                if (voxels[(ry << 8) | colOffset] != 0u)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Sifir-GC (stackalloc) yeralti dogal tas cukur su golcugu post-pass ureteci:
+        /// Havaya asla suni kil/tas kutu yerlestirmez; yalnizca %15 secili su odalarindaki mevcut kalin dogal kaya tabanina
+        /// organik 3x3..6x6 cukur oyup kenar/taban dogal tasini FullDensity (127) ile sizdirmazlastirir ve kapali 2B cukurlari
+        /// IsSettled=true tek katman su ile doldurur.
+        /// </summary>
+        private static void PopulateNaturalCaveWaterPoolsInChunk(
+            int chunkX, int chunkZ, int maxChunkY, uint[] voxels, ushort[] fluids)
+        {
+            // [F12] yeralti kesif odalari ve baslangic merkez meydanini koru:
+            if (chunkX >= -1 && chunkX <= 0 && chunkZ >= 0 && chunkZ <= 1)
+            {
+                return;
+            }
+
+            int actualMaxY = Math.Min(maxChunkY, voxels.Length >> 8);
+            int upperPoolY = Math.Min(72, actualMaxY - 6);
+            if (upperPoolY < 48 || fluids.Length < (upperPoolY + 3) << 8)
+            {
+                return;
+            }
+
+            int worldOffsetX = chunkX * 16;
+            int worldOffsetZ = chunkZ * 16;
+
+            Span<byte> waterChamberMask = stackalloc byte[256];
+            Span<byte> waterTargetY = stackalloc byte[256];
+            waterChamberMask.Clear();
+            waterTargetY.Clear();
+
+            bool anyInteriorWaterChamber = false;
+            for (int lz = 2; lz <= 13; lz++)
+            {
+                int wz = worldOffsetZ + lz;
+                for (int lx = 2; lx <= 13; lx++)
+                {
+                    int wx = worldOffsetX + lx;
+                    if (IsCaveWaterChamber(wx, wz, out int yWater))
+                    {
+                        int cell = (lz << 4) | lx;
+                        waterChamberMask[cell] = 1;
+                        waterTargetY[cell] = (byte)yWater;
+                        if (lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12)
+                        {
+                            anyInteriorWaterChamber = true;
+                        }
+                    }
+                }
+            }
+
+            if (!anyInteriorWaterChamber)
+            {
+                return;
+            }
+
+            Span<byte> visited = stackalloc byte[256];
+            Span<byte> bfsQueue = stackalloc byte[256];
+            Span<byte> compCells = stackalloc byte[256];
+            Span<byte> bestCarveMask = stackalloc byte[256];
+            Span<byte> candidateCarveMask = stackalloc byte[256];
+            bestCarveMask.Clear();
+
+            // (a) Dogal Taban Cukuru Oyma (Yalnizca Mevcut Kalin Kaya Tabanina, Havaya Asla Blok Eklemeden):
+            int bestScore = int.MinValue;
+            int bestYFloor = -1;
+            int maxCarveY = Math.Min(71, upperPoolY - 1);
+
+            for (int cz0 = 4; cz0 <= 11; cz0++)
+            {
+                for (int cx0 = 4; cx0 <= 11; cx0++)
+                {
+                    int centerCol = (cz0 << 4) | cx0;
+                    if (waterChamberMask[centerCol] == 0)
+                    {
+                        continue;
+                    }
+
+                    int targetY = waterTargetY[centerCol];
+                    for (int yFloor = 47; yFloor <= maxCarveY; yFloor++)
+                    {
+                        // Uzerinde (yFloor + 1 ve yFloor + 2) zaten dogal magara havasi bulunmali:
+                        if (voxels[((yFloor + 1) << 8) | centerCol] != 0u ||
+                            voxels[((yFloor + 2) << 8) | centerCol] != 0u ||
+                            fluids[((yFloor + 1) << 8) | centerCol] != 0 ||
+                            fluids[((yFloor + 2) << 8) | centerCol] != 0)
+                        {
+                            continue;
+                        }
+
+                        // Merkez cevresinde [cx0-1..cx0+1] x [yFloor-2..yFloor] x [cz0-1..cz0+1] saglam kati dogal kaya olmali
+                        // (aday havzanin her hucresi icin asagida [x-1..x+1] x [z-1..z+1] tam kenar/taban katiligi ayrica dogrulanir):
+                        bool boxSolid = true;
+                        for (int yy = yFloor - 2; yy <= yFloor && boxSolid; yy++)
+                        {
+                            int yShift = yy << 8;
+                            for (int nz = cz0 - 1; nz <= cz0 + 1; nz++)
+                            {
+                                int rowShift = yShift | (nz << 4);
+                                for (int nx = cx0 - 1; nx <= cx0 + 1; nx++)
+                                {
+                                    if (!IsSolidCarvableNaturalRock(voxels[rowShift | nx]))
+                                    {
+                                        boxSolid = false;
+                                        break;
+                                    }
+                                }
+                                if (!boxSolid) break;
+                            }
+                        }
+
+                        if (!boxSolid || !HasSolidCaveRoofAbove(voxels, centerCol, yFloor, actualMaxY))
+                        {
+                            continue;
+                        }
+
+                        // Gurultulu/organik 3x3..6x6 aday havza secimi ([3..12] x [3..12] icinde):
+                        candidateCarveMask.Clear();
+                        uint hBasin = HashChamberPcg(worldOffsetX + cx0, yFloor, worldOffsetZ + cz0, ActiveWorldSeed ^ 0x6A09E667);
+                        float rx = 1.65f + ((hBasin & 15u) / 15.0f) * 1.15f;
+                        float rz = 1.65f + (((hBasin >> 4) & 15u) / 15.0f) * 1.15f;
+                        float shiftX = (((hBasin >> 8) & 3u) - 1.5f) * 0.25f;
+                        float shiftZ = (((hBasin >> 10) & 3u) - 1.5f) * 0.25f;
+
+                        int minWinX = Math.Max(3, cx0 - 2);
+                        int maxWinX = Math.Min(12, cx0 + 3);
+                        int minWinZ = Math.Max(3, cz0 - 2);
+                        int maxWinZ = Math.Min(12, cz0 + 3);
+
+                        for (int z = minWinZ; z <= maxWinZ; z++)
+                        {
+                            for (int x = minWinX; x <= maxWinX; x++)
+                            {
+                                int c = (z << 4) | x;
+                                if (waterChamberMask[c] == 0)
+                                {
+                                    continue;
+                                }
+
+                                if (x != cx0 || z != cz0)
+                                {
+                                    float dx = (x - cx0) - shiftX;
+                                    float dz = (z - cz0) - shiftZ;
+                                    uint hCell = HashChamberPcg(worldOffsetX + x, yFloor, worldOffsetZ + z, ActiveWorldSeed);
+                                    float jitter = ((hCell & 31u) / 31.0f - 0.5f) * 0.32f;
+                                    if ((dx * dx) / (rx * rx) + (dz * dz) / (rz * rz) + jitter > 1.0f)
+                                    {
+                                        continue;
+                                    }
+                                }
+
+                                // 1-blokluk yatay kenar ve alt tabanin saglam dogal kaya oldugunu dogrula:
+                                bool rimAndFloorOk = true;
+                                for (int yy = yFloor - 2; yy <= yFloor && rimAndFloorOk; yy++)
+                                {
+                                    int yShift = yy << 8;
+                                    for (int nz = z - 1; nz <= z + 1; nz++)
+                                    {
+                                        int rowShift = yShift | (nz << 4);
+                                        for (int nx = x - 1; nx <= x + 1; nx++)
+                                        {
+                                            if (!IsSolidCarvableNaturalRock(voxels[rowShift | nx]) ||
+                                                fluids[(yFloor << 8) | (nz << 4) | nx] != 0)
+                                            {
+                                                rimAndFloorOk = false;
+                                                break;
+                                            }
+                                        }
+                                        if (!rimAndFloorOk) break;
+                                    }
+                                }
+                                if (!rimAndFloorOk) continue;
+
+                                // Devir046 sifir havada kalan parca garantisi: altinda >= 5 kati blok olmali
+                                bool thickBelow = true;
+                                for (int by = yFloor - 5; by <= yFloor - 1; by++)
+                                {
+                                    if (voxels[(by << 8) | c] == 0u)
+                                    {
+                                        thickBelow = false;
+                                        break;
+                                    }
+                                }
+                                if (!thickBelow) continue;
+
+                                // Ustunde ya acik magara havasi olmali ya da >= 5 blokluk kalin tavan olmali:
+                                bool airAbove = voxels[((yFloor + 1) << 8) | c] == 0u && fluids[((yFloor + 1) << 8) | c] == 0;
+                                if (!airAbove)
+                                {
+                                    if (Math.Abs(x - cx0) + Math.Abs(z - cz0) > 2) continue;
+                                    bool thickAbove = true;
+                                    for (int ay = yFloor + 1; ay <= yFloor + 5; ay++)
+                                    {
+                                        if (voxels[(ay << 8) | c] == 0u)
+                                        {
+                                            thickAbove = false;
+                                            break;
+                                        }
+                                    }
+                                    if (!thickAbove) continue;
+                                }
+
+                                candidateCarveMask[c] = 1;
+                            }
+                        }
+
+                        if (candidateCarveMask[centerCol] == 0)
+                        {
+                            continue;
+                        }
+
+                        // Merkezden 4-komsu bagli havza bilesenini cikar:
+                        visited.Clear();
+                        int qHead = 0, qTail = 0;
+                        bfsQueue[qTail++] = (byte)centerCol;
+                        visited[centerCol] = 1;
+                        int openAirCells = 0;
+
+                        while (qHead < qTail)
+                        {
+                            int cur = bfsQueue[qHead++];
+                            if (voxels[((yFloor + 1) << 8) | cur] == 0u)
+                            {
+                                openAirCells++;
+                            }
+
+                            int x = cur & 15;
+                            int z = cur >> 4;
+                            if (x > 3 && candidateCarveMask[cur - 1] != 0 && visited[cur - 1] == 0) { visited[cur - 1] = 1; bfsQueue[qTail++] = (byte)(cur - 1); }
+                            if (x < 12 && candidateCarveMask[cur + 1] != 0 && visited[cur + 1] == 0) { visited[cur + 1] = 1; bfsQueue[qTail++] = (byte)(cur + 1); }
+                            if (z > 3 && candidateCarveMask[cur - 16] != 0 && visited[cur - 16] == 0) { visited[cur - 16] = 1; bfsQueue[qTail++] = (byte)(cur - 16); }
+                            if (z < 12 && candidateCarveMask[cur + 16] != 0 && visited[cur + 16] == 0) { visited[cur + 16] = 1; bfsQueue[qTail++] = (byte)(cur + 16); }
+                        }
+
+                        if (qTail < 4)
+                        {
+                            continue;
+                        }
+
+                        int score = openAirCells * 16 + qTail * 4 - Math.Abs(yFloor - targetY) * 3;
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestYFloor = yFloor;
+                            bestCarveMask.Clear();
+                            for (int i = 0; i < qTail; i++)
+                            {
+                                bestCarveMask[bfsQueue[i]] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Chunk basina en fazla 1 dogal taban cukuru oy ve 1-blokluk dogal tas kenari + tabani FullDensity yap:
+            if (bestYFloor >= 47)
+            {
+                int floorShift = bestYFloor << 8;
+                int subFloorShift = (bestYFloor - 1) << 8;
+
+                for (int z = 3; z <= 12; z++)
+                {
+                    for (int x = 3; x <= 12; x++)
+                    {
+                        int c = (z << 4) | x;
+                        if (bestCarveMask[c] != 0)
+                        {
+                            voxels[floorShift | c] = 0u;
+                            voxels[subFloorShift | c] = SealNaturalRockFullDensity(voxels[subFloorShift | c]);
+                        }
+                    }
+                }
+
+                for (int z = 2; z <= 13; z++)
+                {
+                    for (int x = 2; x <= 13; x++)
+                    {
+                        int c = (z << 4) | x;
+                        if (bestCarveMask[c] != 0)
+                        {
+                            continue;
+                        }
+
+                        bool touchesCarved =
+                            (x > 2 && bestCarveMask[c - 1] != 0) ||
+                            (x < 13 && bestCarveMask[c + 1] != 0) ||
+                            (z > 2 && bestCarveMask[c - 16] != 0) ||
+                            (z < 13 && bestCarveMask[c + 16] != 0);
+                        if (touchesCarved && voxels[floorShift | c] != 0u)
+                        {
+                            voxels[floorShift | c] = SealNaturalRockFullDensity(voxels[floorShift | c]);
+                        }
+                    }
+                }
+            }
+
+            // (b) 2D Kapali Cukur Flood-Fill (stackalloc, 0 B GC):
+            ushort settledPoolWaterRaw = FluidCell16.Pack(FluidType.Water, 255, isSettled: true, pressureHead: 1).RawValue;
+
+            for (int y = 47; y <= upperPoolY; y++)
+            {
+                visited.Clear();
+                int yShift = y << 8;
+                int belowShift = (y - 1) << 8;
+                int aboveShift = (y + 1) << 8;
+
+                for (int lz = 2; lz <= 13; lz++)
+                {
+                    for (int lx = 2; lx <= 13; lx++)
+                    {
+                        int startCell = (lz << 4) | lx;
+                        if (visited[startCell] != 0 ||
+                            waterChamberMask[startCell] == 0 ||
+                            voxels[yShift | startCell] != 0u)
+                        {
+                            continue;
+                        }
+
+                        int qHead = 0, qTail = 0, compCount = 0;
+                        bool validClosedBasin = true;
+                        bool hasCaveRoof = false;
+
+                        bfsQueue[qTail++] = (byte)startCell;
+                        visited[startCell] = 1;
+
+                        while (qHead < qTail)
+                        {
+                            int cur = bfsQueue[qHead++];
+                            int cx = cur & 15;
+                            int cz = cur >> 4;
+                            compCells[compCount++] = (byte)cur;
+
+                            if (cx <= 1 || cx >= 14 || cz <= 1 || cz >= 14)
+                            {
+                                validClosedBasin = false;
+                                continue;
+                            }
+
+                            uint belowRaw = voxels[belowShift | cur];
+                            if (belowRaw == 0u ||
+                                VoxelBitUtility.GetShapeId(belowRaw) != 0 ||
+                                fluids[belowShift | cur] != 0 ||
+                                fluids[yShift | cur] != 0 ||
+                                fluids[aboveShift | cur] != 0)
+                            {
+                                validClosedBasin = false;
+                            }
+
+                            if (!hasCaveRoof && HasSolidCaveRoofAbove(voxels, cur, y, actualMaxY))
+                            {
+                                hasCaveRoof = true;
+                            }
+
+                            // 4-komsu yatay yayilim ve dis kaya duvar kontrolu:
+                            int nLeft = cur - 1;
+                            uint rawLeft = voxels[yShift | nLeft];
+                            if (rawLeft == 0u)
+                            {
+                                if (cx - 1 <= 1) validClosedBasin = false;
+                                else if (visited[nLeft] == 0) { visited[nLeft] = 1; bfsQueue[qTail++] = (byte)nLeft; }
+                            }
+                            else if (VoxelBitUtility.GetShapeId(rawLeft) != 0) validClosedBasin = false;
+
+                            int nRight = cur + 1;
+                            uint rawRight = voxels[yShift | nRight];
+                            if (rawRight == 0u)
+                            {
+                                if (cx + 1 >= 14) validClosedBasin = false;
+                                else if (visited[nRight] == 0) { visited[nRight] = 1; bfsQueue[qTail++] = (byte)nRight; }
+                            }
+                            else if (VoxelBitUtility.GetShapeId(rawRight) != 0) validClosedBasin = false;
+
+                            int nBack = cur - 16;
+                            uint rawBack = voxels[yShift | nBack];
+                            if (rawBack == 0u)
+                            {
+                                if (cz - 1 <= 1) validClosedBasin = false;
+                                else if (visited[nBack] == 0) { visited[nBack] = 1; bfsQueue[qTail++] = (byte)nBack; }
+                            }
+                            else if (VoxelBitUtility.GetShapeId(rawBack) != 0) validClosedBasin = false;
+
+                            int nFront = cur + 16;
+                            uint rawFront = voxels[yShift | nFront];
+                            if (rawFront == 0u)
+                            {
+                                if (cz + 1 >= 14) validClosedBasin = false;
+                                else if (visited[nFront] == 0) { visited[nFront] = 1; bfsQueue[qTail++] = (byte)nFront; }
+                            }
+                            else if (VoxelBitUtility.GetShapeId(rawFront) != 0) validClosedBasin = false;
+                        }
+
+                        if (!validClosedBasin || !hasCaveRoof || compCount < 4 || compCount > 80)
+                        {
+                            continue;
+                        }
+
+                        // Yatay kenar kayalarini (y) ve taban kayalarini (y - 1) kendi dogal kaya MaterialId'sini koruyarak FullDensity yap,
+                        // ve bilesen hucrelerine tek katman IsSettled=true su yerlestir:
+                        for (int k = 0; k < compCount; k++)
+                        {
+                            int c = compCells[k];
+                            voxels[belowShift | c] = SealNaturalRockFullDensity(voxels[belowShift | c]);
+
+                            int cLeft = c - 1;
+                            if (voxels[yShift | cLeft] != 0u) voxels[yShift | cLeft] = SealNaturalRockFullDensity(voxels[yShift | cLeft]);
+                            int cRight = c + 1;
+                            if (voxels[yShift | cRight] != 0u) voxels[yShift | cRight] = SealNaturalRockFullDensity(voxels[yShift | cRight]);
+                            int cBack = c - 16;
+                            if (voxels[yShift | cBack] != 0u) voxels[yShift | cBack] = SealNaturalRockFullDensity(voxels[yShift | cBack]);
+                            int cFront = c + 16;
+                            if (voxels[yShift | cFront] != 0u) voxels[yShift | cFront] = SealNaturalRockFullDensity(voxels[yShift | cFront]);
+
+                            fluids[yShift | c] = settledPoolWaterRaw;
+                        }
+                    }
+                }
+            }
         }
 
         private static void RemoveUngroundedCaveSliversInColumn(uint[] voxels, int colOffset, int maxCheckY)
@@ -1416,11 +1811,323 @@ namespace Stratocraft.WorldGen.Generators
             }
         }
 
+        private static uint Hash3D(int x, int y, int z)
+            => HashChamberPcg(x, y, z, ActiveWorldSeed ^ 0x2C9277B5);
+
+        private static byte SelectDeterministicCapsuleOre(int cellX, int cellY, int cellZ, uint hOre)
+        {
+            int maxYInCell = cellY * 8 + 7;
+
+            int minX = cellX * 10;
+            int maxX = minX + 9;
+            int clampedX = 0 < minX ? minX : (0 > maxX ? maxX : 0);
+            int minZ = cellZ * 10;
+            int maxZ = minZ + 9;
+            int clampedZ = 0 < minZ ? minZ : (0 > maxZ ? maxZ : 0);
+            float cellMinRSq = (float)clampedX * clampedX + (float)clampedZ * clampedZ;
+
+            // Baslangic vadisi (ring == 0, r < 96m / < 120m guvenlik tamponu):
+            // YALNIZCA Coal, CopperOre, TinOre, IronOre (y <= 68), QuartzGem (y <= 64)!
+            if (cellMinRSq < 120.0f * 120.0f)
+            {
+                if (maxYInCell > 68)
+                {
+                    return (hOre % 8u) switch
+                    {
+                        0u or 1u or 2u => MaterialIdCatalog.Coal,
+                        3u or 4u or 5u => MaterialIdCatalog.CopperOre,
+                        _ => MaterialIdCatalog.TinOre
+                    };
+                }
+
+                if (maxYInCell > 64)
+                {
+                    return (hOre & 3u) switch
+                    {
+                        0u => MaterialIdCatalog.Coal,
+                        1u => MaterialIdCatalog.CopperOre,
+                        2u => MaterialIdCatalog.TinOre,
+                        _ => MaterialIdCatalog.IronOre
+                    };
+                }
+
+                return (hOre % 10u) switch
+                {
+                    0u or 1u => MaterialIdCatalog.Coal,
+                    2u or 3u => MaterialIdCatalog.CopperOre,
+                    4u or 5u => MaterialIdCatalog.TinOre,
+                    6u or 7u => MaterialIdCatalog.IronOre,
+                    _ => MaterialIdCatalog.QuartzGem
+                };
+            }
+
+            // Dis halkalar (r >= 120m -> ring 1..6) ve derinlik kilitli kademeli cevherler:
+            float rMin = MathF.Sqrt(cellMinRSq);
+            int cellRing = Math.Clamp(1 + (int)(rMin / 1200.0f), 1, 6);
+
+            if (maxYInCell > 68)
+            {
+                return (hOre % 6u) switch
+                {
+                    0u or 1u => MaterialIdCatalog.Coal,
+                    2u or 3u => MaterialIdCatalog.CopperOre,
+                    _ => MaterialIdCatalog.TinOre
+                };
+            }
+
+            if (maxYInCell > 48)
+            {
+                if (cellRing >= 2)
+                {
+                    return (hOre % 8u) switch
+                    {
+                        0u => MaterialIdCatalog.Coal,
+                        1u => MaterialIdCatalog.CopperOre,
+                        2u => MaterialIdCatalog.TinOre,
+                        3u => MaterialIdCatalog.IronOre,
+                        4u => MaterialIdCatalog.QuartzGem,
+                        5u => MaterialIdCatalog.SilverOre,
+                        6u => MaterialIdCatalog.SulfurOre,
+                        _ => maxYInCell <= 60 ? MaterialIdCatalog.GoldOre : MaterialIdCatalog.AmethystGem
+                    };
+                }
+
+                return (hOre % 7u) switch
+                {
+                    0u => MaterialIdCatalog.Coal,
+                    1u => MaterialIdCatalog.CopperOre,
+                    2u => MaterialIdCatalog.TinOre,
+                    3u => MaterialIdCatalog.IronOre,
+                    4u => MaterialIdCatalog.QuartzGem,
+                    5u => MaterialIdCatalog.SilverOre,
+                    _ => maxYInCell <= 60 ? MaterialIdCatalog.GoldOre : MaterialIdCatalog.IronOre
+                };
+            }
+
+            if (maxYInCell > 22)
+            {
+                if (cellRing >= 3)
+                {
+                    return (hOre % 8u) switch
+                    {
+                        0u => MaterialIdCatalog.SilverOre,
+                        1u => MaterialIdCatalog.GoldOre,
+                        2u => MaterialIdCatalog.SulfurOre,
+                        3u => MaterialIdCatalog.AmethystGem,
+                        4u => MaterialIdCatalog.TitaniumOre,
+                        5u => MaterialIdCatalog.SapphireGem,
+                        6u => MaterialIdCatalog.EmeraldGem,
+                        _ => maxYInCell <= 40 ? MaterialIdCatalog.RubyGem : MaterialIdCatalog.MithrilOre
+                    };
+                }
+
+                if (cellRing == 2)
+                {
+                    return (hOre % 7u) switch
+                    {
+                        0u => MaterialIdCatalog.IronOre,
+                        1u => MaterialIdCatalog.SilverOre,
+                        2u => MaterialIdCatalog.GoldOre,
+                        3u => MaterialIdCatalog.SulfurOre,
+                        4u => MaterialIdCatalog.AmethystGem,
+                        5u => MaterialIdCatalog.TitaniumOre,
+                        _ => maxYInCell <= 38 ? MaterialIdCatalog.MithrilOre : MaterialIdCatalog.GoldOre
+                    };
+                }
+
+                return (hOre % 6u) switch
+                {
+                    0u => MaterialIdCatalog.IronOre,
+                    1u => MaterialIdCatalog.SilverOre,
+                    2u => MaterialIdCatalog.GoldOre,
+                    3u => MaterialIdCatalog.QuartzGem,
+                    4u => MaterialIdCatalog.AmethystGem,
+                    _ => maxYInCell <= 44 ? MaterialIdCatalog.TitaniumOre : MaterialIdCatalog.IronOre
+                };
+            }
+
+            // Abisal Manto (y <= 22):
+            if (cellRing >= 4)
+            {
+                return (hOre % 6u) switch
+                {
+                    0u => MaterialIdCatalog.TitaniumOre,
+                    1u => MaterialIdCatalog.MithrilOre,
+                    2u => MaterialIdCatalog.RubyGem,
+                    3u => MaterialIdCatalog.DiamondGem,
+                    4u => MaterialIdCatalog.RedDiamondGem,
+                    _ => MaterialIdCatalog.AstralOre
+                };
+            }
+
+            if (cellRing == 3)
+            {
+                return (hOre % 6u) switch
+                {
+                    0u => MaterialIdCatalog.TitaniumOre,
+                    1u => MaterialIdCatalog.MithrilOre,
+                    2u => MaterialIdCatalog.RubyGem,
+                    3u => MaterialIdCatalog.SapphireGem,
+                    4u => MaterialIdCatalog.EmeraldGem,
+                    _ => MaterialIdCatalog.DiamondGem
+                };
+            }
+
+            if (cellRing == 2)
+            {
+                return (hOre % 5u) switch
+                {
+                    0u => MaterialIdCatalog.GoldOre,
+                    1u => MaterialIdCatalog.TitaniumOre,
+                    2u => MaterialIdCatalog.MithrilOre,
+                    3u => MaterialIdCatalog.SapphireGem,
+                    _ => MaterialIdCatalog.RubyGem
+                };
+            }
+
+            return (hOre % 4u) switch
+            {
+                0u => MaterialIdCatalog.SilverOre,
+                1u => MaterialIdCatalog.GoldOre,
+                2u => MaterialIdCatalog.TitaniumOre,
+                _ => MaterialIdCatalog.AmethystGem
+            };
+        }
+
+        private static bool TryEvaluateCapsuleOreVein(int wx, int y, int wz, out byte oreMaterialId)
+        {
+            oreMaterialId = MaterialIdCatalog.Air;
+            if (y <= DeepMantleFloorY + 1)
+            {
+                return false;
+            }
+
+            int cellX = FloorDiv(wx, 10);
+            int cellY = FloorDiv(y, 8);
+            int cellZ = FloorDiv(wz, 10);
+
+            uint h = Hash3D(cellX, cellY, cellZ);
+            // ~%56 hucrede tek tutarli 3B kapsul damar -> toplam yeralti kayasinin ~%4.1'i cevher, ~%95.9'u katmanli ana kaya:
+            if ((h & 255u) >= 144u)
+            {
+                return false;
+            }
+
+            uint h2 = HashChamberPcg(cellX, cellY, cellZ, ActiveWorldSeed ^ 0x517CC1B7);
+
+            float halfLen = 1.9f + (((h >> 8) & 63u) / 63.0f) * 0.75f;  // [1.90 .. 2.65]
+            float radius = 1.45f + (((h >> 14) & 63u) / 63.0f) * 0.40f; // [1.45 .. 1.85]
+
+            // 3B birim dogrultu vektoru (dogal jeolojik egim acisi):
+            float yaw = (((h >> 20) & 1023u) * (MathF.PI * 2.0f / 1024.0f));
+            float dirY = (((h2 & 255u) / 255.0f) - 0.5f) * 0.80f; // [-0.40 .. +0.40]
+            float horizScale = MathF.Sqrt(MathF.Max(0.05f, 1.0f - dirY * dirY));
+            float dirX = FastCos(yaw) * horizScale;
+            float dirZ = FastSin(yaw) * horizScale;
+
+            // Kapsulun tamamini tek 10x8x10 hucre icinde tutacak sekilde merkezi kelepcele (O(1) tek hucre sorgusu!):
+            float rawCx = 2.5f + (((h2 >> 8) & 255u) / 255.0f) * 5.0f;  // [2.5 .. 7.5]
+            float rawCy = 2.0f + (((h2 >> 16) & 255u) / 255.0f) * 4.0f; // [2.0 .. 6.0]
+            float rawCz = 2.5f + (((h2 >> 24) & 255u) / 255.0f) * 5.0f; // [2.5 .. 7.5]
+
+            float marginX = MathF.Max(2.5f, MathF.Abs(dirX) * halfLen + radius + 0.04f);
+            float marginY = MathF.Max(2.0f, MathF.Abs(dirY) * halfLen + radius + 0.04f);
+            float marginZ = MathF.Max(2.5f, MathF.Abs(dirZ) * halfLen + radius + 0.04f);
+
+            float cx = Math.Clamp(rawCx, marginX, 10.0f - marginX);
+            float cy = Math.Clamp(rawCy, marginY, 8.0f - marginY);
+            float cz = Math.Clamp(rawCz, marginZ, 10.0f - marginZ);
+
+            float px = (wx - cellX * 10) + 0.5f - cx;
+            float py = (y - cellY * 8) + 0.5f - cy;
+            float pz = (wz - cellZ * 10) + 0.5f - cz;
+
+            float proj = Math.Clamp(px * dirX + py * dirY + pz * dirZ, -halfLen, halfLen);
+            float dx = px - dirX * proj;
+            float dy = py - dirY * proj;
+            float dz = pz - dirZ * proj;
+
+            if (dx * dx + dy * dy + dz * dz > radius * radius)
+            {
+                return false;
+            }
+
+            uint hOre = HashChamberPcg(cellX, cellY, cellZ, ActiveWorldSeed ^ 0x1F83D9AB);
+            oreMaterialId = SelectDeterministicCapsuleOre(cellX, cellY, cellZ, hOre);
+            return true;
+        }
+
+        private static byte ResolveUndergroundHostRockStrata(int wx, int y, int wz, float terrainTopY, bool inF12MagmaRoom)
+        {
+            float strataWave = FastSin(wx * 0.043f + wz * 0.037f) * 2.5f + FastCos(wx * 0.019f - wz * 0.051f) * 1.8f;
+            float effectiveDepth = (terrainTopY - y) + strataWave;
+
+            // Pikselli beyaz gurultu yerine 6m-12m olcekli yumusak 3B jeolojik yama/bant dalgasi:
+            float p1 = SeedPhaseOffset(21);
+            float p2 = SeedPhaseOffset(22);
+            float patchWave = 0.5f * FastSin(wx * 0.13f + y * 0.27f - wz * 0.11f + p1)
+                            + 0.5f * FastCos(wz * 0.14f - y * 0.23f + wx * 0.09f - p2);
+
+            // Katman 4 — Abisal Manto (5 <= y <= 18, Bedrock y <= 4 ustunde):
+            // ~%82 Basalt (7) + ~%15 NaturalObsidian (6) + y <= 12 sicak cephede ~%3 MagmaBlock (11)
+            if (y <= 18)
+            {
+                if (inF12MagmaRoom)
+                {
+                    return MaterialIdCatalog.Basalt;
+                }
+                if (patchWave > 0.52f)
+                {
+                    return MaterialIdCatalog.NaturalObsidian;
+                }
+                if (y <= 12 && patchWave < -0.79f)
+                {
+                    return MaterialIdCatalog.MagmaBlock;
+                }
+                return MaterialIdCatalog.Basalt;
+            }
+
+            // Katman 3 — Derin Sert Volkanik Bazalt (effectiveDepth >= 44f veya y <= 36, y > 18):
+            // ~%88 Basalt (7) + ~%12 Stalagnate (17) / Marble (14)
+            if (effectiveDepth >= 44.0f || y <= 36)
+            {
+                if (patchWave > 0.66f)
+                {
+                    return MaterialIdCatalog.Stalagnate;
+                }
+                if (patchWave < -0.72f)
+                {
+                    return MaterialIdCatalog.Marble;
+                }
+                return MaterialIdCatalog.Basalt;
+            }
+
+            // Katman 2 — Orta Sert Arduvaz/Metamorfik (22f <= effectiveDepth < 44f ve y > 36):
+            // ~%76 Stalagnate (17) + ~%14 Marble (14) damar bantlari + ~%10 Stone (1)
+            if (effectiveDepth >= 22.0f || y <= 54)
+            {
+                if (patchWave > 0.54f)
+                {
+                    return MaterialIdCatalog.Marble;
+                }
+                if (patchWave < -0.62f)
+                {
+                    return MaterialIdCatalog.Stone;
+                }
+                return MaterialIdCatalog.Stalagnate;
+            }
+
+            // Katman 1 — Sig Tortul (effectiveDepth < 22f ve y > 54):
+            // ~%86 Stone (1) + ~%14 Cobblestone (8)
+            return patchWave > 0.54f ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Stone;
+        }
+
         public static byte ResolveGeologicalMaterial(
             int wx, int y, int wz, float topH, float bottomH, float radialMargin,
             bool inLavaCaldera, bool inWaterPool, bool isObsidianSeam, bool isStalagnatePillar, bool isCrystalCaveWall = false,
             int precomputedBiomeId = -1, byte precomputedSurfaceMatId = 0, int precomputedRadialRing = -1)
         {
+            _ = precomputedRadialRing;
             if (isObsidianSeam) return MaterialIdCatalog.NaturalObsidian;
             if (inLavaCaldera && y >= topH - 4.5f) return y >= topH - 2.0f ? MaterialIdCatalog.MagmaBlock : MaterialIdCatalog.Basalt;
             if (inWaterPool && y >= topH - 4.0f) return MaterialIdCatalog.Sand;
@@ -1457,75 +2164,35 @@ namespace Stratocraft.WorldGen.Generators
                 };
             }
 
-            int depthFromSurface = Math.Max(1, (int)MathF.Round(topH - y));
-
+            // Yalnizca [F12] Oda 2 kristal odasi ve cok nadir (< %1) derin jeot ceplerinde tutarli kristal (AmethystGem / QuartzGem):
             if (isCrystalCaveWall)
             {
-                int crystalHash = Math.Abs(wx * 31 + y * 17 + wz * 13) & 7;
-                if (crystalHash == 0) return MaterialIdCatalog.GlowingMoss;
-                if (depthFromSurface >= 52)
+                bool inF12CrystalRoom = wx >= -11 && wx <= -5 && wz >= 15 && wz <= 21 && y >= 52 && y <= 58;
+                if (inF12CrystalRoom)
                 {
-                    if (crystalHash == 1) return MaterialIdCatalog.MithrilOre;
-                    if (crystalHash == 2) return MaterialIdCatalog.TitaniumOre;
-                    if (crystalHash == 3 && y <= 16) return MaterialIdCatalog.MagmaBlock;
+                    float crystalBand = FastSin(wx * 0.34f + y * 0.42f - wz * 0.29f);
+                    return crystalBand > 0.0f ? MaterialIdCatalog.AmethystGem : MaterialIdCatalog.QuartzGem;
                 }
-                else if (depthFromSurface >= 26)
+
+                if (wx * wx + wz * wz < 120 * 120)
                 {
-                    if (crystalHash == 1) return MaterialIdCatalog.QuartzGem;
-                    if (crystalHash == 2) return MaterialIdCatalog.AmethystGem;
-                    if (crystalHash == 3) return MaterialIdCatalog.GoldOre;
+                    return y <= 64 ? MaterialIdCatalog.QuartzGem : MaterialIdCatalog.Stone;
                 }
-                else
-                {
-                    if (crystalHash == 1) return MaterialIdCatalog.CopperOre;
-                    if (crystalHash == 2) return MaterialIdCatalog.Coal;
-                    if (crystalHash == 3) return MaterialIdCatalog.QuartzGem;
-                }
+
+                uint hGeoMat = HashChamberPcg(FloorDiv(wx, 16), FloorDiv(y, 12), FloorDiv(wz, 16), ActiveWorldSeed ^ 0x3C6EF372);
+                return ((hGeoMat >> 8) & 1u) == 0u ? MaterialIdCatalog.AmethystGem : MaterialIdCatalog.QuartzGem;
             }
 
-            // Gercek Derinlik ve Halka Kilitli Cevher Dagilimi (OreDistributionTable):
-            // Baslangic vadisinin 3 blok altinda asla Mithril/Astral/Kizil Elmas cikmaz!
-            int seedXor = ActiveWorldSeed * 19349663;
-            int worldYEquivalent = -depthFromSurface;
-            int radialRing;
-            if (precomputedRadialRing >= 0)
+            bool inF12MagmaRoom = wx >= 9 && wx <= 14 && wz >= 15 && wz <= 21 && y >= 9 && y <= 16;
+
+            // O(1) Tutarli 3B Kapsul Cevher Damarlari:
+            if (!inF12MagmaRoom && TryEvaluateCapsuleOreVein(wx, y, wz, out byte capsuleOreMat))
             {
-                radialRing = precomputedRadialRing;
-            }
-            else
-            {
-                float r = MathF.Sqrt(wx * wx + wz * wz);
-                radialRing = r < 120f ? 0 : Math.Clamp(1 + (int)(r / 1200f), 1, 6);
-            }
-            int depthBonusRing = depthFromSurface < 18 ? 0 : Math.Clamp((depthFromSurface - 14) / 14, 0, 5);
-            int effectiveRingTier = Math.Clamp(Math.Max(radialRing, depthBonusRing), 0, 6);
-
-            float geoNoise01 = ((Math.Abs((wx * 73856093) ^ (y * 19349663) ^ (wz * 83492791) ^ seedXor) & 1023) / 1023.0f);
-            bool inNaturalVeinCluster = ((wx * 17 + y * 31 + wz * 43) & 3) == 0;
-            if (inNaturalVeinCluster)
-            {
-                byte sampledOre = OreDistributionTable.SampleOreMaterial(worldYEquivalent, effectiveRingTier, geoNoise01);
-                if (sampledOre != MaterialIdCatalog.Stone) return sampledOre;
+                return capsuleOreMat;
             }
 
-            // Seyrek ikincil damarlar: Yalnizca derinlik kilidine %100 uygun cevherler!
-            int veinHash = Math.Abs(wx * 73 + y * 37 + wz * 19 + seedXor) & 63;
-            if (veinHash == 0) return MaterialIdCatalog.Coal;
-            if (veinHash == 1) return MaterialIdCatalog.CopperOre;
-            if (veinHash == 9 && depthFromSurface <= 24) return MaterialIdCatalog.QuartzGem;
-            if (veinHash == 2 && depthFromSurface >= 8) return MaterialIdCatalog.TinOre;
-            if (veinHash == 3 && depthFromSurface >= 18) return MaterialIdCatalog.IronOre;
-            if (veinHash == 4 && depthFromSurface >= 32) return MaterialIdCatalog.SilverOre;
-            if (veinHash == 5 && depthFromSurface >= 40) return MaterialIdCatalog.GoldOre;
-            if (veinHash == 6 && depthFromSurface >= 50) return MaterialIdCatalog.TitaniumOre;
-            if (veinHash == 7 && depthFromSurface >= 58) return MaterialIdCatalog.MithrilOre;
-            if (veinHash == 8 && depthFromSurface >= 68 && radialRing >= 3) return MaterialIdCatalog.RedDiamondGem;
-            if (veinHash == 9 && depthFromSurface >= 74 && radialRing >= 4) return MaterialIdCatalog.AstralOre;
-
-            // 5 Yeralti Katmani Ana Kaya Matrisi
-            if (y <= 16) return ((wx + y + wz) & 7) == 0 ? MaterialIdCatalog.NaturalObsidian : MaterialIdCatalog.Basalt;
-            if (y <= 43) return ((wx * 3 + y) & 7) == 0 ? MaterialIdCatalog.Marble : MaterialIdCatalog.Basalt;
-            return MaterialIdCatalog.Stone;
+            // Derinlestikce Sertlesen 4 Katmanli Ana Kaya Matrisi (~%95-98):
+            return ResolveUndergroundHostRockStrata(wx, y, wz, topH, inF12MagmaRoom);
         }
 
         public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels)
@@ -1882,7 +2549,7 @@ namespace Stratocraft.WorldGen.Generators
 
         /// <summary>
         /// Faz 3.1.C: Yeryuzu kaya cikintilari (Outcrops) icin aday (wx, wz) sutununda
-        /// y = RoundToInt(topH) - 18 ile Max(14, RoundToInt(topH) - 58) araligini 4m adimla tarar.
+        /// y = RoundToInt(topH) - 18 ile Max(14, RoundToInt(topH) - 58) araligini 1m adimla tarar.
         /// En az 2 ornekte ayni sig/orta cevher (Coal, CopperOre, TinOre, IronOre, GoldOre, QuartzGem)
         /// bulunursa o malzemeyi dondurur; aksi halde 0 (Air) dondurur.
         /// </summary>
@@ -1919,7 +2586,7 @@ namespace Stratocraft.WorldGen.Generators
             int goldCount = 0;
             int quartzCount = 0;
 
-            for (int y = startY; y >= endY; y -= 4)
+            for (int y = startY; y >= endY; y -= 1)
             {
                 byte mat = ResolveGeologicalMaterial(
                     wx, y, wz, topH, DeepMantleFloorY, 64000.0f,
