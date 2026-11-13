@@ -125,6 +125,8 @@ namespace Stratocraft.Character
             };
         }
 
+        public const string ExtinguishedToastMessage = "Kamp ateşi söndürüldü (yakıt korundu).";
+
         public static bool ApplyFlintSparkStrike(ref CampfireStationData station, out bool justIgnited)
         {
             justIgnited = false;
@@ -136,14 +138,33 @@ namespace Stratocraft.Character
                 station.SparkStrikeCount = CampfireStationData.RequiredSparkStrikes;
                 station.IsLit = true;
                 float mult = 1.0f + station.EfficiencyBonus01;
-                station.RemainingFuelSec = MathF.Min(
-                    CampfireStationData.MaxFuelSeconds,
-                    MathF.Max(station.RemainingFuelSec, CampfireStationData.InitialFuelSeconds * mult));
+                if (station.RemainingFuelSec <= 0.01f)
+                {
+                    station.RemainingFuelSec = MathF.Min(
+                        CampfireStationData.MaxFuelSeconds,
+                        CampfireStationData.InitialFuelSeconds * mult);
+                }
                 station.TemperatureCelsius = 480.0f;
                 justIgnited = true;
             }
             return true;
         }
+
+        /// <summary>
+        /// Yanmakta olan kamp atesini sondurur (IsLit = false).
+        /// Kalan yakit suresini (RemainingFuelSec) ve 3 yuvadaki pisirme ilerlemesini (ElapsedCookSec / Stage) korur.
+        /// </summary>
+        public static bool TryExtinguishStation(ref CampfireStationData station)
+        {
+            if (!station.IsLit) return false;
+            station.IsLit = false;
+            station.SparkStrikeCount = 0;
+            station.TemperatureCelsius = 20.0f;
+            return true;
+        }
+
+        public static bool TryExtinguishCampfire(ref CampfireStationData station) =>
+            TryExtinguishStation(ref station);
 
         public static bool TryAddWoodFuel(ref CampfireStationData station, bool isSplitFirewood, out float addedSeconds)
         {
@@ -579,17 +600,92 @@ namespace Stratocraft.Character
             return bestIdx;
         }
 
+        public bool IsTargetCampfireLit(UnityEngine.Camera? cam, Vector3 playerPos, float maxReach = 3.25f)
+        {
+            int idx = FindAimedCampfireIndex(cam, playerPos, maxReach);
+            return idx >= 0 && _campfires[idx].Data.IsLit;
+        }
+
+        public static bool IsWaterFilledContainerSlot(in VisualInventorySlot slot)
+        {
+            if (slot.IsEmpty) return false;
+            if (Stage1VisualHotbarAndInventoryUi.IsFluidContainerKind(slot.Kind) && slot.SubId == 1)
+            {
+                return true;
+            }
+            return slot.Kind == InventoryItemKind.FoodCleanWater;
+        }
+
+        public bool TryExtinguishTargetedCampfire(
+            UnityEngine.Camera? cam,
+            Vector3 playerPos,
+            Stage1MatterCrystalAndMiningController? miningCtrl = null,
+            WorldLooseBuildSystem? looseBuildSystem = null,
+            float maxReach = 3.25f)
+        {
+            int idx = FindAimedCampfireIndex(cam, playerPos, maxReach);
+            if (idx < 0) return false;
+            return TryExtinguishCampfireAtIndex(idx, miningCtrl, looseBuildSystem);
+        }
+
+        private bool TryExtinguishCampfireAtIndex(
+            int idx,
+            Stage1MatterCrystalAndMiningController? miningCtrl,
+            WorldLooseBuildSystem? looseBuildSystem)
+        {
+            if ((uint)idx >= (uint)_campfires.Count) return false;
+            CampfireRuntimeEntry entry = _campfires[idx];
+            if (!CampfireSimulationLogic.TryExtinguishStation(ref entry.Data))
+            {
+                return false;
+            }
+
+            if (entry.FlameClusterGo != null) entry.FlameClusterGo.SetActive(false);
+            if (entry.WarmPointLight != null) entry.WarmPointLight.enabled = false;
+            for (int m = 0; m < entry.RisingMotes.Length; m++)
+            {
+                if (entry.RisingMotes[m] != null && entry.RisingMotes[m].gameObject.activeSelf)
+                {
+                    entry.RisingMotes[m].gameObject.SetActive(false);
+                }
+            }
+
+            if (looseBuildSystem != null)
+            {
+                entry.WasLitLastStep = false;
+                looseBuildSystem.UpdateStationWoodThermalGlow(entry.Data.StationId, 30);
+            }
+
+            if (miningCtrl != null)
+            {
+                miningCtrl.LastFeedbackText = CampfireSimulationLogic.ExtinguishedToastMessage;
+            }
+
+            return true;
+        }
+
         public bool TryHandleInteractKeyE(
             UnityEngine.Camera? cam,
             Vector3 playerPos,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1HolsterAndBackpackController holsterCtrl,
-            Stage1DirectionalCombatBridge? combatBridge)
+            Stage1DirectionalCombatBridge? combatBridge,
+            WorldLooseBuildSystem? looseBuildSystem = null)
         {
             int idx = FindAimedCampfireIndex(cam, playerPos, 3.20f);
             if (idx < 0) return false;
 
             CampfireRuntimeEntry entry = _campfires[idx];
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            if (shiftHeld)
+            {
+                if (entry.Data.IsLit)
+                {
+                    return TryExtinguishCampfireAtIndex(idx, miningCtrl, looseBuildSystem);
+                }
+                return false;
+            }
+
             if (!CampfireSimulationLogic.TryCollectBestPayload(
                     ref entry.Data,
                     out int slotIdx,
@@ -706,9 +802,29 @@ namespace Stratocraft.Character
                 if (aimedIdx >= 0)
                 {
                     CampfireRuntimeEntry aimed = _campfires[aimedIdx];
+                    bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
+                    // 0) Shift + [E] veya Su Dolu Kap (SubId == 1) ile Sag Tik -> Kamp Atesini Sondur (Yakit ve pisirme ilerlemesi korunur!)
+                    if (shiftHeld &&
+                        (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)) &&
+                        aimed.Data.IsLit)
+                    {
+                        TryExtinguishCampfireAtIndex(aimedIdx, miningCtrl, looseBuildSystem);
+                    }
+                    else if (Input.GetMouseButtonDown(1) && IsWaterFilledContainerSlot(in activeSlot))
+                    {
+                        consumedMouseClick = true;
+                        if (aimed.Data.IsLit)
+                        {
+                            TryExtinguishCampfireAtIndex(aimedIdx, miningCtrl, looseBuildSystem);
+                        }
+                        else
+                        {
+                            miningCtrl.LastFeedbackText = "Kamp ateşi zaten sönük.";
+                        }
+                    }
                     // A) Elinde Cakmaktasi varken Sol veya Sag Tik -> Kivilcim Cakma!
-                    if (activeSlot.Kind == InventoryItemKind.FlintStone &&
+                    else if (activeSlot.Kind == InventoryItemKind.FlintStone &&
                         (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)) &&
                         _strikeCooldownSec <= 0f)
                     {
@@ -925,6 +1041,8 @@ namespace Stratocraft.Character
                     {
                         line2 = "[Sağ Tık] Çiğ Et / Ham Cevher / Çiğ Kil / Soğuk Demir Koy  |  Dal (+60sn) / Odun (+140sn)";
                     }
+
+                    line2 += "  |  [Shift+E] Ateşi Söndür";
                 }
 
                 DrawPromptBanner(line1, line2);
@@ -1428,7 +1546,7 @@ namespace Stratocraft.Character
 
         private void DrawPromptBanner(string line1, string line2)
         {
-            float w = 520f;
+            float w = 640f;
             float h = string.IsNullOrEmpty(line2) ? 34f : 52f;
             float x = (Screen.width - w) * 0.5f;
             float y = Screen.height * 0.56f;
