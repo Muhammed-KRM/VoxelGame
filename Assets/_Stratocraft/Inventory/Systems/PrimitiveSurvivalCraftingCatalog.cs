@@ -25,7 +25,13 @@ namespace Stratocraft.Inventory.Systems
         PrimitiveFlintKnife = 3,
         PrimitiveWoodenBucket = 4,
         CampfireKit = 5,
-        PrimitiveStoneKilnKit = 6
+        PrimitiveStoneKilnKit = 6,
+        WeatherBarometer = 7,
+        WeatherThermometer = 8,
+        WeatherHygrometer = 9,
+        WeatherWindVaneAnemometer = 10,
+        WeatherRainGauge = 11,
+        MetalLightningRod = 12
     }
 
     /// <summary>
@@ -42,7 +48,12 @@ namespace Stratocraft.Inventory.Systems
         KnappedKnifeBlade = 6,
         SplitFirewood = 7,
         RoughStoneChunk = 8,
-        LooseDirtClod = 9
+        LooseDirtClod = 9,
+        QuartzCrystal = 10,
+        CopperIngot = 11,
+        WroughtIronBar = 12,
+        ClayLump = 13,
+        SlagGlassShard = 14
     }
 
     public readonly struct ClothMatCraftMatch
@@ -115,6 +126,65 @@ namespace Stratocraft.Inventory.Systems
         public const int RequiredKnappingStrikes = 3;
         public const float ClothMatBindChannelSeconds = 0.80f;
 
+        private static readonly ClothMatCraftMatch[] CachedWeatherAndRodRecipes =
+        {
+            new(
+                PrimitiveCraftOutputId.WeatherBarometer,
+                CraftIngredientToken.CopperIngot, 2,
+                CraftIngredientToken.QuartzCrystal, 1,
+                CraftIngredientToken.SplitFirewood, 1,
+                "Pirinç Aneroid Barometre (Zambretti A-Z)"),
+            new(
+                PrimitiveCraftOutputId.WeatherThermometer,
+                CraftIngredientToken.QuartzCrystal, 1,
+                CraftIngredientToken.CopperIngot, 1,
+                CraftIngredientToken.Stick, 1,
+                "Sıvı Sütunlu Termometre (°C Min/Maks)"),
+            new(
+                PrimitiveCraftOutputId.WeatherHygrometer,
+                CraftIngredientToken.QuartzCrystal, 1,
+                CraftIngredientToken.PlantFiber, 1,
+                CraftIngredientToken.SplitFirewood, 1,
+                "Kuru/Islak Hazneli Higrometre (Psikrometre & LCL)"),
+            new(
+                PrimitiveCraftOutputId.WeatherWindVaneAnemometer,
+                CraftIngredientToken.WroughtIronBar, 1,
+                CraftIngredientToken.CopperIngot, 1,
+                CraftIngredientToken.Stick, 2,
+                "Rüzgâr Gülü + Kepçeli Anemometre (Beaufort 0-12)"),
+            new(
+                PrimitiveCraftOutputId.WeatherRainGauge,
+                CraftIngredientToken.QuartzCrystal, 1,
+                CraftIngredientToken.ClayLump, 1,
+                CraftIngredientToken.CopperIngot, 1,
+                "Ölçekli Yağmur Ölçer / Plüviyometre (mm)"),
+            new(
+                PrimitiveCraftOutputId.MetalLightningRod,
+                CraftIngredientToken.CopperIngot, 2,
+                CraftIngredientToken.WroughtIronBar, 1,
+                CraftIngredientToken.RoughStoneChunk, 1,
+                "Topraklamalı Metal Paratoner Direği (Yıldırım Kalkanı)")
+        };
+
+        public static ReadOnlySpan<ClothMatCraftMatch> WeatherInstrumentAndRodRecipes => CachedWeatherAndRodRecipes;
+
+        public static bool IsWeatherInstrumentOrLightningRod(PrimitiveCraftOutputId outputId) =>
+            outputId >= PrimitiveCraftOutputId.WeatherBarometer && outputId <= PrimitiveCraftOutputId.MetalLightningRod;
+
+        public static bool TryGetWeatherInstrumentRecipe(PrimitiveCraftOutputId outputId, out ClothMatCraftMatch recipe)
+        {
+            for (int i = 0; i < CachedWeatherAndRodRecipes.Length; i++)
+            {
+                if (CachedWeatherAndRodRecipes[i].OutputId == outputId)
+                {
+                    recipe = CachedWeatherAndRodRecipes[i];
+                    return true;
+                }
+            }
+            recipe = default;
+            return false;
+        }
+
         public static string GetKnappingPatternDisplayName(StoneKnappingPattern pattern) => pattern switch
         {
             StoneKnappingPattern.AxeHead => "Yontulmus Tas Balta Basi",
@@ -138,7 +208,7 @@ namespace Stratocraft.Inventory.Systems
             match = default;
             if (padTokens.Length < 3 || padCounts.Length < 3) return false;
 
-            Span<int> totals = stackalloc int[10];
+            Span<int> totals = stackalloc int[16];
             int distinctNonZeroTypes = 0;
             for (int i = 0; i < 3; i++)
             {
@@ -237,6 +307,66 @@ namespace Stratocraft.Inventory.Systems
                     CraftIngredientToken.Stick, 2,
                     CraftIngredientToken.LooseDirtClod, 1,
                     "Ilkel Tas Firin / Ocak Kiti");
+                return true;
+            }
+
+            // 7) Pirinc Aneroid Barometre: 2x CopperIngot + 1x QuartzCrystal + 1x SplitFirewood
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.CopperIngot] >= 2 &&
+                totals[(int)CraftIngredientToken.QuartzCrystal] >= 1 &&
+                totals[(int)CraftIngredientToken.SplitFirewood] >= 1)
+            {
+                match = CachedWeatherAndRodRecipes[0];
+                return true;
+            }
+
+            // 8) Sivi Sutunlu Termometre: 1x QuartzCrystal + 1x CopperIngot + 1x Stick
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.QuartzCrystal] >= 1 &&
+                totals[(int)CraftIngredientToken.CopperIngot] >= 1 &&
+                totals[(int)CraftIngredientToken.Stick] >= 1)
+            {
+                match = CachedWeatherAndRodRecipes[1];
+                return true;
+            }
+
+            // 9) Kuru/Islak Hazneli Higrometre (Psikrometre): 1x QuartzCrystal + 1x PlantFiber + 1x SplitFirewood
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.QuartzCrystal] >= 1 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1 &&
+                totals[(int)CraftIngredientToken.SplitFirewood] >= 1)
+            {
+                match = CachedWeatherAndRodRecipes[2];
+                return true;
+            }
+
+            // 10) Ruzgar Gulu + Kepceli Anemometre: 1x WroughtIronBar + 1x CopperIngot + 2x Stick
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.WroughtIronBar] >= 1 &&
+                totals[(int)CraftIngredientToken.CopperIngot] >= 1 &&
+                totals[(int)CraftIngredientToken.Stick] >= 2)
+            {
+                match = CachedWeatherAndRodRecipes[3];
+                return true;
+            }
+
+            // 11) Yagmur Olcer (Pluviyometre): 1x QuartzCrystal + 1x ClayLump + 1x CopperIngot
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.QuartzCrystal] >= 1 &&
+                totals[(int)CraftIngredientToken.ClayLump] >= 1 &&
+                totals[(int)CraftIngredientToken.CopperIngot] >= 1)
+            {
+                match = CachedWeatherAndRodRecipes[4];
+                return true;
+            }
+
+            // 12) Metal Paratoner Diregi: 2x CopperIngot + 1x WroughtIronBar + 1x RoughStoneChunk
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.CopperIngot] >= 2 &&
+                totals[(int)CraftIngredientToken.WroughtIronBar] >= 1 &&
+                totals[(int)CraftIngredientToken.RoughStoneChunk] >= 1)
+            {
+                match = CachedWeatherAndRodRecipes[5];
                 return true;
             }
 

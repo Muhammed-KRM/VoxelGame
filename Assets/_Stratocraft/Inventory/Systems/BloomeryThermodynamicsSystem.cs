@@ -378,6 +378,9 @@ namespace Stratocraft.Inventory.Systems
             return BloomeryOreChargeResult.Charged;
         }
 
+        public const float LightRainThresholdMmPerHour = 0.5f;
+        public const float HeavyRainExtinguishThresholdMmPerHour = 6.0f;
+
         public static bool ExtinguishBloomery(ref BloomeryFurnaceState state)
         {
             if (!state.IsLit) return false;
@@ -386,6 +389,93 @@ namespace Stratocraft.Inventory.Systems
             state.BellowsAirflow01 = 0f;
             return true;
         }
+
+        public static bool ApplyBloomeryFlintStrike(ref BloomeryFurnaceState state, out bool ignited) =>
+            ApplyBloomeryFlintStrike(ref state, precipMmPerHour: 0f, hasOpenSkyAbove: false, out ignited);
+
+        public static bool ApplyBloomeryFlintStrike(
+            ref BloomeryFurnaceState state,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            out bool ignited)
+        {
+            ignited = false;
+            if (state.IsLit || (state.CharcoalUnits <= 0 && state.WoodFuelUnits <= 0)) return false;
+
+            if (hasOpenSkyAbove && precipMmPerHour >= HeavyRainExtinguishThresholdMmPerHour)
+            {
+                state.SparkStrikeCount = 0;
+                return false;
+            }
+
+            int requiredStrikes = (hasOpenSkyAbove && precipMmPerHour > LightRainThresholdMmPerHour)
+                ? BloomeryFurnaceState.RequiredSparkStrikes + 2
+                : BloomeryFurnaceState.RequiredSparkStrikes;
+
+            state.SparkStrikeCount++;
+            if (state.SparkStrikeCount >= requiredStrikes)
+            {
+                state.SparkStrikeCount = BloomeryFurnaceState.RequiredSparkStrikes;
+                state.IsLit = true;
+                state.TemperatureCelsius = MathF.Max(state.TemperatureCelsius, 320.0f);
+                ignited = true;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Paket 4A (Faz 4A.4 / AK-8) — Bloomery izabe firininin acik gokyuzu yagmur maruziyetini ilerletir.
+        /// Ustu acikken (hasOpenSkyAbove == true) hafif yagmurda isitma yavaslar ve tutusturma zorlasir;
+        /// siddetli yagmurda (&gt;= 6.0 mm/sa) firin soner (IsLit = false, komur/cevher/ilerleme korunur) ve sicaklik hizla ortama duser.
+        /// Ustu cati/magara altindaysa (hasOpenSkyAbove == false) saganakta bile %100 yanmaya devam eder.
+        /// </summary>
+        public static bool StepRainExposure(
+            ref BloomeryFurnaceState state,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            float ambientTempCelsius = 20.0f)
+        {
+            if (!hasOpenSkyAbove || precipMmPerHour <= LightRainThresholdMmPerHour || gameDeltaSeconds <= 0f)
+            {
+                return false;
+            }
+
+            float dt = MathF.Max(0f, gameDeltaSeconds);
+            if (precipMmPerHour >= HeavyRainExtinguishThresholdMmPerHour)
+            {
+                bool wasLit = ExtinguishBloomery(ref state);
+                float rapidDrop = MathF.Max(320.0f * dt, (state.TemperatureCelsius - ambientTempCelsius) * 0.85f);
+                state.TemperatureCelsius = MathF.Max(ambientTempCelsius, state.TemperatureCelsius - rapidDrop);
+                return wasLit;
+            }
+
+            if (!state.IsLit)
+            {
+                if (state.SparkStrikeCount > 0 && dt >= 0.5f)
+                {
+                    state.SparkStrikeCount = Math.Max(0, state.SparkStrikeCount - 1);
+                }
+            }
+            else
+            {
+                state.BellowsAirflow01 = MathF.Max(0f, state.BellowsAirflow01 - 0.18f * dt);
+                float dampCooling = precipMmPerHour * 22.0f * dt;
+                state.TemperatureCelsius = MathF.Max(
+                    MathF.Max(ambientTempCelsius, 180.0f),
+                    state.TemperatureCelsius - dampCooling);
+            }
+
+            return false;
+        }
+
+        public static bool StepRainExposure(
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            ref BloomeryFurnaceState state,
+            float ambientTempCelsius = 20.0f) =>
+            StepRainExposure(ref state, precipMmPerHour, hasOpenSkyAbove, gameDeltaSeconds, ambientTempCelsius);
 
         public static bool PumpBellows(ref BloomeryFurnaceState state)
         {

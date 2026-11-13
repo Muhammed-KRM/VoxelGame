@@ -126,14 +126,35 @@ namespace Stratocraft.Character
         }
 
         public const string ExtinguishedToastMessage = "Kamp ateşi söndürüldü (yakıt korundu).";
+        public const float LightRainThresholdMmPerHour = 0.5f;
+        public const float HeavyRainExtinguishThresholdMmPerHour = 6.0f;
 
         public static bool ApplyFlintSparkStrike(ref CampfireStationData station, out bool justIgnited)
+        {
+            return ApplyFlintSparkStrike(ref station, precipMmPerHour: 0f, hasOpenSkyAbove: false, out justIgnited);
+        }
+
+        public static bool ApplyFlintSparkStrike(
+            ref CampfireStationData station,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            out bool justIgnited)
         {
             justIgnited = false;
             if (station.IsLit) return false;
 
+            if (hasOpenSkyAbove && precipMmPerHour >= HeavyRainExtinguishThresholdMmPerHour)
+            {
+                station.SparkStrikeCount = 0;
+                return false;
+            }
+
+            int requiredStrikes = (hasOpenSkyAbove && precipMmPerHour > LightRainThresholdMmPerHour)
+                ? CampfireStationData.RequiredSparkStrikes + 2
+                : CampfireStationData.RequiredSparkStrikes;
+
             station.SparkStrikeCount++;
-            if (station.SparkStrikeCount >= CampfireStationData.RequiredSparkStrikes)
+            if (station.SparkStrikeCount >= requiredStrikes)
             {
                 station.SparkStrikeCount = CampfireStationData.RequiredSparkStrikes;
                 station.IsLit = true;
@@ -144,11 +165,70 @@ namespace Stratocraft.Character
                         CampfireStationData.MaxFuelSeconds,
                         CampfireStationData.InitialFuelSeconds * mult);
                 }
-                station.TemperatureCelsius = 480.0f;
+                station.TemperatureCelsius = (hasOpenSkyAbove && precipMmPerHour > LightRainThresholdMmPerHour)
+                    ? 360.0f
+                    : 480.0f;
                 justIgnited = true;
             }
             return true;
         }
+
+        /// <summary>
+        /// Paket 4A (Faz 4A.4 / AK-8) — Kamp atesinin yagmur maruziyetini ilerletir.
+        /// Ustu acikken (hasOpenSkyAbove == true) hafif yagmurda isitma yavaslar ve tutusturma zorlasir;
+        /// siddetli yagmurda (&gt;= 6.0 mm/sa) ates soner (IsLit = false, yakit korunur) ve sicaklik hizla ortama duser.
+        /// Ustu cati/magara altindaysa (hasOpenSkyAbove == false) saganakta bile %100 yanmaya devam eder.
+        /// </summary>
+        public static bool StepRainExposure(
+            ref CampfireStationData station,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            float ambientTempCelsius = 20.0f)
+        {
+            if (!hasOpenSkyAbove || precipMmPerHour <= LightRainThresholdMmPerHour || gameDeltaSeconds <= 0f)
+            {
+                return false;
+            }
+
+            float dt = MathF.Max(0f, gameDeltaSeconds);
+            if (precipMmPerHour >= HeavyRainExtinguishThresholdMmPerHour)
+            {
+                bool wasLit = station.IsLit;
+                station.IsLit = false;
+                station.SparkStrikeCount = 0;
+
+                float rapidDrop = MathF.Max(260.0f * dt, (station.TemperatureCelsius - ambientTempCelsius) * 0.85f);
+                station.TemperatureCelsius = MathF.Max(ambientTempCelsius, station.TemperatureCelsius - rapidDrop);
+                return wasLit;
+            }
+
+            // Hafif / orta yagmur (0.5 .. 6.0 mm/sa): isinmayi yavaslatir, sonukse kivilcim ilerlemesini nemlendirir
+            if (!station.IsLit)
+            {
+                if (station.SparkStrikeCount > 0 && dt >= 0.5f)
+                {
+                    station.SparkStrikeCount = Math.Max(0, station.SparkStrikeCount - 1);
+                }
+            }
+            else
+            {
+                float dampCooling = precipMmPerHour * 18.0f * dt;
+                station.TemperatureCelsius = MathF.Max(
+                    MathF.Max(ambientTempCelsius, 160.0f),
+                    station.TemperatureCelsius - dampCooling);
+            }
+
+            return false;
+        }
+
+        public static bool StepRainExposure(
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            ref CampfireStationData station,
+            float ambientTempCelsius = 20.0f) =>
+            StepRainExposure(ref station, precipMmPerHour, hasOpenSkyAbove, gameDeltaSeconds, ambientTempCelsius);
 
         /// <summary>
         /// Yanmakta olan kamp atesini sondurur (IsLit = false).
@@ -403,13 +483,31 @@ namespace Stratocraft.Character
         }
     }
 
-#if UNITY_5_3_OR_NEWER
     /// <summary>
-    /// Faz 2.3 (Asama 3.4 &amp; 3.5): Sahnedeki muhurlenmis Kamp Ateslerinin kivilcimla tutusturulmasi,
-    /// prosedurel 3B alev/kor/duman gorselleri, termal isinma alani ve 3B et pisirme etkilesim denetleyicisi.
+    /// Faz 2.3 (Asama 3.4 &amp; 3.5) &amp; Paket 4A (AK-8): Sahnedeki muhurlenmis Kamp Ateslerinin kivilcimla tutusturulmasi,
+    /// yagmur maruziyeti, prosedurel 3B alev/kor/duman gorselleri, termal isinma alani ve 3B et pisirme etkilesim denetleyicisi.
     /// </summary>
     public sealed class Stage1CampfireAndCookingController
     {
+        public static bool StepRainExposure(
+            ref CampfireStationData station,
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            float ambientTempCelsius = 20.0f) =>
+            CampfireSimulationLogic.StepRainExposure(
+                ref station, precipMmPerHour, hasOpenSkyAbove, gameDeltaSeconds, ambientTempCelsius);
+
+        public static bool StepRainExposure(
+            float precipMmPerHour,
+            bool hasOpenSkyAbove,
+            float gameDeltaSeconds,
+            ref CampfireStationData station,
+            float ambientTempCelsius = 20.0f) =>
+            CampfireSimulationLogic.StepRainExposure(
+                ref station, precipMmPerHour, hasOpenSkyAbove, gameDeltaSeconds, ambientTempCelsius);
+
+#if UNITY_5_3_OR_NEWER
         private sealed class SparkParticleBurst
         {
             public readonly Transform[] Shards = new Transform[6];
@@ -1569,6 +1667,6 @@ namespace Stratocraft.Character
                 _promptTextStyle.normal.textColor = subPrev;
             }
         }
-    }
 #endif
+    }
 }

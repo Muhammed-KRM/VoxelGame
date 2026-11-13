@@ -261,6 +261,7 @@ namespace Stratocraft.Character
             if (Input.GetKeyDown(KeyCode.Alpha2)) { SelectTab(1); return true; }
             if (Input.GetKeyDown(KeyCode.Alpha3)) { SelectTab(2); return true; }
             if (Input.GetKeyDown(KeyCode.Alpha4)) { SelectTab(3); return true; }
+            if (Input.GetKeyDown(KeyCode.Alpha5)) { SelectTab(4); return true; }
 
             if (Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.LeftArrow))
             {
@@ -362,10 +363,10 @@ namespace Stratocraft.Character
                 CurrentSpreadIndex = 0;
             }
 
-            // 3) Ust kenardan disari tasan 4 fiziksel bolum ayiraci sekmesi ([1]..[4])
-            float tabsStartX = bookX + 36f;
-            float tabsTotalW = bookW - 72f;
-            float tabGap = 8f;
+            // 3) Ust kenardan disari tasan 5 fiziksel bolum ayiraci sekmesi ([1]..[5])
+            float tabsStartX = bookX + 24f;
+            float tabsTotalW = bookW - 48f;
+            float tabGap = 6f;
             float singleTabW = (tabsTotalW - tabGap * (SurvivalRecipeBookCatalog.TabCount - 1)) / SurvivalRecipeBookCatalog.TabCount;
 
             for (int t = 0; t < SurvivalRecipeBookCatalog.TabCount; t++)
@@ -744,7 +745,7 @@ namespace Stratocraft.Character
 
             _activeTabLabelStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 13,
+                fontSize = 12,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 wordWrap = true,
@@ -754,7 +755,7 @@ namespace Stratocraft.Character
 
             _inactiveTabLabelStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 12,
+                fontSize = 11,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 wordWrap = true,
@@ -877,7 +878,7 @@ namespace Stratocraft.Character
             _prevSpreadButtonContent = new GUIContent("◀ Önceki Yaprak (A / Sol Ok)");
             _nextSpreadButtonContent = new GUIContent("Sonraki Yaprak (D / Sağ Ok) ▶");
             _footerHintContent = new GUIContent(
-                "[1..4] Bölüm  |  [A/D / Ok / Tekerlek] Yaprak Çevir  |  [I] Çanta  |  [R] Yontma  |  [T] Zihin İnşası  |  [Shift+E] Söndür  |  [C]/[V]/[Shift+B] Kristal");
+                "[1..5] Bölüm  |  [A/D / Ok / Tekerlek] Yaprak Çevir  |  [I] Çanta  |  [R] Yontma  |  [T] Zihin İnşası  |  [Shift+E] Söndür  |  [C]/[V]/[Shift+B] Kristal");
 
             _cachedPageNumberContents = new GUIContent[MaxCachedPageNumbers];
             for (int p = 0; p < MaxCachedPageNumbers; p++)

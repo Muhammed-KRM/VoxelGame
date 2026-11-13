@@ -4,14 +4,15 @@ using System;
 namespace Stratocraft.Inventory.Systems
 {
     /// <summary>
-    /// [B] Hayatta Kalma Tarif ve Malzeme Rehber Kitabindaki 4 ana kategori sekmesi.
+    /// [B] Hayatta Kalma Tarif ve Malzeme Rehber Kitabindaki 5 ana kategori sekmesi.
     /// </summary>
     public enum SurvivalRecipeBookTab : byte
     {
         MaterialsAndResources = 0,
         ClothAndKnappingRecipes = 1,
         MindBuildingStructures = 2,
-        SmithingCookingAndCrystal = 3
+        SmithingCookingAndCrystal = 3,
+        WeatherAndMaritimeForecast = 4
     }
 
     /// <summary>
@@ -86,14 +87,15 @@ namespace Stratocraft.Inventory.Systems
     /// </summary>
     public static class SurvivalRecipeBookCatalog
     {
-        public const int TabCount = 4;
+        public const int TabCount = 5;
 
         private static readonly string[] CachedTabTitles =
         {
             "Malzemeler ve Kaynaklar",
             "[I] / [R] Craft Tarifleri",
             "[T] Zihin İnşası Yapıları",
-            "Demircilik, Pişirme & Kristal"
+            "Demircilik, Pişirme & Kristal",
+            "Hava & Denizci Tahmini"
         };
 
         private static readonly string[] CachedShortTabLabels =
@@ -101,7 +103,8 @@ namespace Stratocraft.Inventory.Systems
             "[1] Malzemeler ve Kaynaklar",
             "[2] [I] / [R] Craft Tarifleri",
             "[3] [T] Zihin İnşası Yapıları",
-            "[4] Demircilik, Pişirme & Kristal"
+            "[4] Demircilik, Pişirme & Kristal",
+            "[5] Hava & Denizci Tahmini"
         };
 
         private static readonly string[] CachedTabSubtitles =
@@ -109,7 +112,8 @@ namespace Stratocraft.Inventory.Systems
             "Doğadaki temel hammaddelerin bulunduğu biyom/mesafe kuralları ve hangi alet veya tuşla çıkarılacağı.",
             "[R] ile yerdeki taşa Çakmaktaşıyla 4 taş başlık yontma ve [I] Kumaş Çanta Bezi üzerindeki tüm birleştirme tarifleri.",
             "Madde Kristali kapalıyken [T] Zihin İnşası Menüsü ile yerdeki gerçek 3B malzeme kümelerini doğrulama ve mühürleme.",
-            "Kamp ateşinde pişirme/kavurma, 28 sn kömür ocağı pirolizi, 1250 °C Bloomery izabe fırını, örste dövme, [Shift+E] söndürme ve [C]/[V] Kristal."
+            "Kamp ateşinde pişirme/kavurma, 28 sn kömür ocağı pirolizi, 1250 °C Bloomery izabe fırını, örste dövme, [Shift+E] söndürme ve [C]/[V] Kristal.",
+            "5 fiziksel meteoroloji aleti + Metal Paratoner yapımı, Amiral FitzRoy kuralları, Zambretti A-Z, Beaufort 0-12, Psikrometre LCL ve kızıl ufuk rehberi."
         };
 
         // =====================================================================
@@ -469,6 +473,84 @@ namespace Stratocraft.Inventory.Systems
                 stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Shift+B] inşa malzemesini değiştirir.")
         };
 
+        // =====================================================================
+        // SEKME 5: HAVA & DENİZCİ TAHMİNİ (5 METEOROLOJİ ALETİ + PARATONER & REHBER)
+        // =====================================================================
+        private static readonly SurvivalRecipeBookEntry[] Tab4WeatherForecastEntries =
+        {
+            new(
+                id: "weather_instruments_barometer_thermometer",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Meteoroloji Aletleri (1-2)",
+                title: "1. Pirinç Aneroid Barometre (WeatherBarometer) & Termometre (WeatherThermometer)",
+                ingredientsOrSource: "Barometre = 2x Bakır Külçesi + 1x Doğal Kuvars + 1x Yarılmış Odun | Termometre = 1x Doğal Kuvars + 1x Bakır Külçesi + 1x Kuru Dal.",
+                toolOrKeybind: "[I] Çanta Bezi Ortasında [R / İple Bağla] -> Elde İncele veya [Sağ Tık] ile Yerleştir",
+                stepByStepGuide: "Barometre (WeatherBarometer), istasyon basıncını hipsometrik formülle deniz seviyesine indirger (P0, hPa) ve 3 saatlik basınç değişimini (dP/3sa) ölçer; üzerindeki sabit pirinç referans ibresiyle basıncın yükseldiği (Rising), durgun kaldığı (Steady) veya düştüğü (Falling) okunur. Termometre (WeatherThermometer) ise anlık hava sıcaklığını (°C) ve son 24 saatlik Min/Maks izini kırmızı sıvı sütunuyla gösterir."),
+
+            new(
+                id: "weather_instruments_hygro_wind_raingauge",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Meteoroloji Aletleri (3-5)",
+                title: "2. Higrometre/Psikrometre, Rüzgâr Gülü + Anemometre & Yağmur Ölçer (Plüviyometre)",
+                ingredientsOrSource: "Higrometre = 1x Kuvars + 1x Lif + 1x Odun | Rüzgâr Gülü + Anemometre = 1x Dövme Demir + 1x Bakır + 2x Dal | Yağmur Ölçer = 1x Kuvars + 1x Kil + 1x Bakır.",
+                toolOrKeybind: "[I] Çanta Bezi Ortasında [R / İple Bağla] | Yağmur Ölçer Sıfırlama: [E]",
+                stepByStepGuide: "Higrometre/Psikrometre (WeatherHygrometer) kuru ve ıslak hazne sıcaklık farkından bağıl nemi (%RH), çiğ noktasını (Td) ve LCL bulut tabanını ölçer. Rüzgâr Gülü + Anemometre (WeatherWindVaneAnemometer) 8 yön pusulasını (K, KD, D, GD, G, GB, B, KB), rüzgâr hızını (m/s) ve Beaufort 0..12 kademesini gösterir. Yağmur Ölçer / Plüviyometre (WeatherRainGauge) açık gökyüzü altında biriken yağışı (mm) ölçer ve [E] ile sıfırlanır."),
+
+            new(
+                id: "weather_metal_lightning_rod",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Yıldırım Kalkanı (Paratoner)",
+                title: "3. Metal Paratoner Direği (MetalLightningRod) ve CAPE Şimşek Koruması",
+                ingredientsOrSource: "2x Bakır Külçesi (CopperIngot) + 1x Dövme Demir Külçesi (WroughtIronBar) + 1x Kaba Taş Parçası.",
+                toolOrKeybind: "[I] Çanta Ortasında [R / İple Bağla] -> Çatıya / Yüksek Noktaya [Sağ Tık] ile Dik",
+                stepByStepGuide: "Atmosfer hücresinde konvektif kararsızlık enerjisi CAPE > 1000 J/kg aşıldığında Cumulonimbus fırtına bulutları yıldırım düşürür ve mesafeye bağlı gecikmeli gök gürültüsü (d = 343 m/s * t_gecikme) üretir. Çatıya veya kamp yanına dikilen Metal Paratoner (MetalLightningRod), +24m pozitif öncü skoruyla 24m-32m koruma konisi içindeki tüm yıldırımları ahşap çatı ve ağaçlar yerine kendi üzerine çekip toprağa güvenle deşarj eder."),
+
+            new(
+                id: "weather_fitzroy_barometer_rules",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Amiral FitzRoy Yasaları",
+                title: "4. Amiral Robert FitzRoy'un Barometre ve Termometre Okuma Kuralları",
+                ingredientsOrSource: "Barometre (P0 ve dP/3sa) + Termometre (°C eğilimi) + Rüzgâr Gülü yönü.",
+                toolOrKeybind: "Hızlı Düşüş (dP/3sa <= -1.6 hPa) = Fırtına/Yağış | Hızlı Yükseliş (dP/3sa >= +1.6 hPa) = Açan Hava",
+                stepByStepGuide: "1) Barometre 3 saatte -1.6 hPa veya daha hızlı düşerken (dP/3sa <= -1.6) sıcaklık yükseliyor ve rüzgâr Güney/Lodos yönüne dönüyorsa nemli sıcak cephe ve sağanak/fırtına kesindir (FitzRoyStormWarning = true). 2) Barometre +1.6 hPa veya daha hızlı yükselirken (dP/3sa >= +1.6) sıcaklık düşüyorsa fırtına arkası berrak ve açık hava gelir. 3) Çok hızlı yükselen basınç ('Uzun süreli iyi hava yavaş yükselir') kısa süreli açmanın ardından yeni bir cephe getirebilir."),
+
+            new(
+                id: "weather_zambretti_az_forecaster",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Zambretti Kadranı (A..Z)",
+                title: "5. Negretti & Zambra Zambretti Harf Sistemi (A..Z, 1..26 Tahmin Skalası)",
+                ingredientsOrSource: "Deniz seviyesi basıncı P0 (950..1050 hPa) + 3 saatlik eğilim (Rising / Steady / Falling) + Mevsim & Rüzgâr.",
+                toolOrKeybind: "A..G (1..7): Açık/İyileşen Hava | H..Q (8..17): Değişken/Bulutlu | R..Z (18..26): Yağış ve Fırtına",
+                stepByStepGuide: "Zambretti kadranı 26 harften oluşur: Yükselen basınçta (dP/3sa >= +1.6 hPa) ibre A ('Yerleşik Açık ve Çok Güzel Hava') ile G ('İyileşen Açık Hava') arasında kalır. Durgun basınçta (|dP/3sa| < 1.6 hPa) mutlak basınca göre A..Z arası okunur. Hızlı düşen basınçta (dP/3sa <= -1.6 hPa) ise ibre R ('Yağışlı Hava') ile Z ('Şiddetli Fırtına ve Yoğun Sağanak Yağış!') arasına inerek açık ateşi çatı altına alma uyarısı verir."),
+
+            new(
+                id: "weather_beaufort_0_to_12_scale",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Beaufort Rüzgâr Ölçeği",
+                title: "6. Beaufort 0..12 Rüzgâr Skalası ve Denizci/Kara Karşılıkları",
+                ingredientsOrSource: "Anemometre kepçe dönüş hızı (m/s) -> B = clamp(round((v / 0.836)^(2/3)), 0, 12).",
+                toolOrKeybind: "0 (< 0.5 m/s): Sakin / Durgun Deniz .. 6: Kuvvetli Meltem .. 8: Fırtına .. 12 (>= 32.7 m/s): Kasırga",
+                stepByStepGuide: "Beaufort 0 (< 0.5 m/s): Sakin / Durgun Deniz, duman dik yükselir. Beaufort 1-3 (0.5-5.4 m/s): Esinti, Hafif ve Tatlı Meltem, yapraklar ve ince dallar sallanır. Beaufort 4-6 (5.5-13.8 m/s): Orta, Serin ve Kuvvetli Meltem, su yüzeyinde dalga genliği büyür. Beaufort 7-9 (13.9-24.4 m/s): Fırtınamsı Rüzgâr, Fırtına (Gale) ve Kuvvetli Fırtına. Beaufort 10-11 (24.5-32.6 m/s): Tam ve Şiddetli Fırtına. Beaufort 12 (>= 32.7 m/s): Kasırga (Hurricane)."),
+
+            new(
+                id: "weather_psychrometer_lcl_and_fire_shelter",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Psikrometre & LCL Bulut Tabanı",
+                title: "7. Psikrometre ile Bulut Tabanı (LCL = 125 * (T - Td)), Yağış Tahmini ve Ateş Koruma",
+                ingredientsOrSource: "Kuru Hazne Sıcaklığı (T, °C) + Çiğ Noktası (Td, °C) -> LCL = 125 * (T - Td) metre.",
+                toolOrKeybind: "T - Td <= 2 °C -> Alçak Bulut & Yağış | Sağanak (>= 6 mm/sa) -> Açık Ateş ve Fırın Söner!",
+                stepByStepGuide: "Psikrometre kuru (T) ve ıslak hazne (Tw) farkından bağıl nemi (%RH) ve çiğ noktasını (Td) bulur. Yükselen nemli havanın yoğuşma tabanı LCL = 125 * (T - Td) formülüyle hesaplanır: T ile Td birbirine yaklaştıkça bulut tabanı alçalır ve yağış başlar. DİKKAT: Üstü açık (HasOpenSkyAbove == true) Kamp Ateşi ve Bloomery İzabe Fırını hafif yağmurda zor ısınır, şiddetli yağmurda (>= 6.0 mm/sa) ise tamamen söner; üstüne çatı/sundurma inşa edilen ateşler sağanakta bile %100 yanmaya devam eder!"),
+
+            new(
+                id: "weather_clouds_and_red_sky_sailor_rule",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Bulutlar & Kızıl Ufuk",
+                title: "8. Bulut Tipleri, Orografik Yağmur Gölgesi ve Denizci Kızıl Gökyüzü Kuralı",
+                ingredientsOrSource: "3B Dünya-Uzayı Bulutları (Cumulus, Cirrus, Cumulonimbus) + Rayleigh Ufuk Saçılması.",
+                toolOrKeybind: "\"Akşam kızıllığı güne iyilik, sabah kızıllığı fırtına habercisi\" (Rayleigh Optik Yolu)",
+                stepByStepGuide: "1) Bulutlar: Yüksek ince tüy bulutlar (Cirrus) yaklaşan cephenin öncüsüdür; pamuksu Cumulus iyi havayı, koyu tabanlı dev örs bulutu Cumulonimbus ise yalnızca kendi 3B izdüşümü altına yağan sağanak ve şimşeği gösterir. 2) Orografi: Nemli rüzgâr dağın rüzgâr alan yamacına yağış bırakır, arka yamaçta kuru Föhn Yağmur Gölgesi oluşur. 3) Kızıl Gökyüzü Kuralı: Hava sistemleri batıdan doğuya ilerler; akşam batı ufku kızardığında batıdaki hava kuru ve açıktır (iyi hava geliyor), sabah doğu kızardığında ise batıdaki fırtına bulutları alttan aydınlanmaktadır (yağmur/fırtına yaklaşıyor)!")
+        };
+
         private static readonly SurvivalRecipeBookTabDefinition[] CachedTabs =
         {
             new(
@@ -498,7 +580,14 @@ namespace Stratocraft.Inventory.Systems
                 CachedTabTitles[3],
                 CachedShortTabLabels[3],
                 CachedTabSubtitles[3],
-                Tab3GuideEntries)
+                Tab3GuideEntries),
+            new(
+                SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                4,
+                CachedTabTitles[4],
+                CachedShortTabLabels[4],
+                CachedTabSubtitles[4],
+                Tab4WeatherForecastEntries)
         };
 
         private static readonly SurvivalRecipeBookEntry[] CachedAllEntries = BuildAllEntries();
@@ -508,7 +597,8 @@ namespace Stratocraft.Inventory.Systems
             int total = Tab0MaterialsEntries.Length +
                         Tab1CraftingEntries.Length +
                         Tab2MindStructuresEntries.Length +
-                        Tab3GuideEntries.Length;
+                        Tab3GuideEntries.Length +
+                        Tab4WeatherForecastEntries.Length;
             var all = new SurvivalRecipeBookEntry[total];
             int dst = 0;
             for (int t = 0; t < CachedTabs.Length; t++)

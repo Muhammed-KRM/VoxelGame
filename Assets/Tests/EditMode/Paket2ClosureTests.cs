@@ -37,10 +37,10 @@ namespace Stratocraft.Tests.EditMode
         [Test]
         public void SurvivalRecipeBookCatalog_HasFourValidTabs_AndNonEmptyEntries()
         {
-            Assert.That(SurvivalRecipeBookCatalog.TabCount, Is.EqualTo(4));
-            Assert.That(SurvivalRecipeBookCatalog.Tabs.Length, Is.EqualTo(4));
-            Assert.That(SurvivalRecipeBookCatalog.TabTitles.Length, Is.EqualTo(4));
-            Assert.That(SurvivalRecipeBookCatalog.ShortTabLabels.Length, Is.EqualTo(4));
+            Assert.That(SurvivalRecipeBookCatalog.TabCount, Is.EqualTo(5));
+            Assert.That(SurvivalRecipeBookCatalog.Tabs.Length, Is.EqualTo(5));
+            Assert.That(SurvivalRecipeBookCatalog.TabTitles.Length, Is.EqualTo(5));
+            Assert.That(SurvivalRecipeBookCatalog.ShortTabLabels.Length, Is.EqualTo(5));
 
             int countedEntries = 0;
             for (int t = 0; t < SurvivalRecipeBookCatalog.TabCount; t++)

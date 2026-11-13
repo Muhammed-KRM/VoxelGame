@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
+using Stratocraft.Inventory.Systems;
 using Stratocraft.Voxel.Jobs;
 using SysVec3 = System.Numerics.Vector3;
 
@@ -21,6 +22,14 @@ namespace Stratocraft.Inventory.Rendering
     {
         public const int VariantsPerArchetype = 12;
         private const byte DefaultAo = 0xE2;
+
+        // Paket 4A (Faz 4A.6) — 5 Fiziksel Meteoroloji Aleti + Metal Paratoner 3B Arketip Kimlikleri
+        public const PhysicalItemArchetype WeatherBarometer = (PhysicalItemArchetype)38;
+        public const PhysicalItemArchetype WeatherThermometer = (PhysicalItemArchetype)39;
+        public const PhysicalItemArchetype WeatherHygrometer = (PhysicalItemArchetype)40;
+        public const PhysicalItemArchetype WeatherWindVaneAnemometer = (PhysicalItemArchetype)41;
+        public const PhysicalItemArchetype WeatherRainGauge = (PhysicalItemArchetype)42;
+        public const PhysicalItemArchetype MetalLightningRod = (PhysicalItemArchetype)43;
 
         private static readonly List<FacetedVoxelTriangle> SharedBuildTris = new(256);
 
@@ -199,8 +208,47 @@ namespace Stratocraft.Inventory.Rendering
                 },
                 PhysicalItemArchetype.WildBushFoliage => MaterialIdCatalog.Grass,
                 PhysicalItemArchetype.WildBushBareRoots => MaterialIdCatalog.OakWood,
+                WeatherBarometer => MaterialIdCatalog.Bronze,
+                WeatherThermometer => MaterialIdCatalog.QuartzGem,
+                WeatherHygrometer => MaterialIdCatalog.OakWood,
+                WeatherWindVaneAnemometer => MaterialIdCatalog.Steel,
+                WeatherRainGauge => MaterialIdCatalog.QuartzGem,
+                MetalLightningRod => MaterialIdCatalog.CopperOre,
                 _ => subMaterialId != 0 ? subMaterialId : MaterialIdCatalog.Stone
             };
+        }
+
+        public static PhysicalItemArchetype MapCraftOutputToArchetype(PrimitiveCraftOutputId outputId) => outputId switch
+        {
+            PrimitiveCraftOutputId.PrimitiveFlintAxe => PhysicalItemArchetype.ToolPrimitiveAxe,
+            PrimitiveCraftOutputId.PrimitiveStonePickaxe => PhysicalItemArchetype.ToolPrimitivePickaxe,
+            PrimitiveCraftOutputId.PrimitiveFlintKnife => PhysicalItemArchetype.ToolPrimitiveKnife,
+            PrimitiveCraftOutputId.WeatherBarometer => WeatherBarometer,
+            PrimitiveCraftOutputId.WeatherThermometer => WeatherThermometer,
+            PrimitiveCraftOutputId.WeatherHygrometer => WeatherHygrometer,
+            PrimitiveCraftOutputId.WeatherWindVaneAnemometer => WeatherWindVaneAnemometer,
+            PrimitiveCraftOutputId.WeatherRainGauge => WeatherRainGauge,
+            PrimitiveCraftOutputId.MetalLightningRod => MetalLightningRod,
+            _ => PhysicalItemArchetype.RoughStone
+        };
+
+        public static void EmitWeatherInstrumentTriangles(
+            PrimitiveCraftOutputId instrumentId,
+            float primaryReading01,
+            float secondaryAngleRad,
+            List<FacetedVoxelTriangle> outTris)
+        {
+            byte dialStep = (byte)Math.Clamp((int)MathF.Round(Math.Clamp(primaryReading01, 0f, 1f) * 255f), 0, 255);
+            float wrappedAngle = secondaryAngleRad % (MathF.PI * 2f);
+            if (wrappedAngle < 0f) wrappedAngle += MathF.PI * 2f;
+            byte yawByte = (byte)Math.Clamp((int)MathF.Round((wrappedAngle / (MathF.PI * 2f)) * 255f), 0, 255);
+
+            PhysicalItemShapeDna dna = PhysicalItemShapeDna.CreateNatural(0x4A600001u + (uint)instrumentId)
+                .WithStage(dialStep)
+                .WithTemperature(yawByte);
+
+            PhysicalItemArchetype arch = MapCraftOutputToArchetype(instrumentId);
+            EmitArchetypeTriangles(arch, ResolvePrimaryMaterialId(arch, 0), in dna, outTris);
         }
 
         public static SysVec3 ComputeNaturalVariantScale(PhysicalItemArchetype archetype, in PhysicalItemShapeDna dna)
@@ -408,6 +456,30 @@ namespace Stratocraft.Inventory.Rendering
                     }
                     break;
                 }
+
+                case WeatherBarometer:
+                    EmitWeatherBarometerModel(in dna, outTris);
+                    break;
+
+                case WeatherThermometer:
+                    EmitWeatherThermometerModel(in dna, outTris);
+                    break;
+
+                case WeatherHygrometer:
+                    EmitWeatherHygrometerModel(in dna, outTris);
+                    break;
+
+                case WeatherWindVaneAnemometer:
+                    EmitWeatherWindVaneAnemometerModel(in dna, outTris);
+                    break;
+
+                case WeatherRainGauge:
+                    EmitWeatherRainGaugeModel(in dna, outTris);
+                    break;
+
+                case MetalLightningRod:
+                    EmitMetalLightningRodModel(in dna, outTris);
+                    break;
 
                 default:
                     HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
@@ -879,6 +951,121 @@ namespace Stratocraft.Inventory.Rendering
             {
                 EmitDeformedOctaSphere(seed ^ 0xCC11u, new SysVec3(0f, 0.42f, 0f), 0.30f, 0.22f, 0.30f, 0.20f, 0.20f, MaterialIdCatalog.Grass, 0, outTris);
             }
+        }
+
+        private static void EmitWeatherBarometerModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Sekizgen mese govde + pirinc cerceve + kuvars/mermer kadran + hareketli basinc ibresi ve sabit referans ibresi
+            EmitHollowTubeSegment(new SysVec3(0f, 0f, -0.045f), new SysVec3(0f, 0f, 0.015f), 0.165f, 0.155f, MaterialIdCatalog.OakWood, 0, outTris, sides: 8);
+            EmitHollowTubeSegment(new SysVec3(0f, 0f, 0.015f), new SysVec3(0f, 0f, 0.040f), 0.140f, 0.132f, MaterialIdCatalog.Bronze, 0, outTris, sides: 8);
+            EmitHollowTubeSegment(new SysVec3(0f, 0f, 0.036f), new SysVec3(0f, 0f, 0.044f), 0.118f, 0.116f, MaterialIdCatalog.Marble, 0, outTris, sides: 8);
+
+            // Ust pirinc asma halkasi
+            EmitHollowTubeSegment(new SysVec3(0f, 0.160f, -0.01f), new SysVec3(0f, 0.205f, -0.01f), 0.018f, 0.022f, MaterialIdCatalog.GoldOre, 0, outTris, sides: 6);
+
+            // Basinc ibresi acisi (StageByte: 0..255 -> -125 deg .. +125 deg)
+            float norm01 = dna.StageByte == 0 ? 0.52f : (dna.StageByte / 255f);
+            float needleAngle = (norm01 - 0.5f) * 2.18f;
+            SysVec3 needleDir = new SysVec3(MathF.Sin(needleAngle), MathF.Cos(needleAngle), 0f);
+            EmitHollowTubeSegment(new SysVec3(0f, 0f, 0.046f), new SysVec3(0f, 0f, 0.046f) + needleDir * 0.098f, 0.009f, 0.003f, MaterialIdCatalog.Steel, 0, outTris, sides: 4);
+
+            // Sabit referans ibresi (pirinc)
+            SysVec3 refDir = SysVec3.Normalize(new SysVec3(0.32f, 0.94f, 0f));
+            EmitHollowTubeSegment(new SysVec3(0f, 0f, 0.049f), new SysVec3(0f, 0f, 0.049f) + refDir * 0.088f, 0.007f, 0.003f, MaterialIdCatalog.GoldOre, 0, outTris, sides: 4);
+        }
+
+        private static void EmitWeatherThermometerModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Dikey ahsap plaka + kuvars kapiler tup + alt hazne + sicaklikla yukselen kirmizi sivi sutunu
+            EmitOrientedBox(new SysVec3(0f, 0f, -0.018f), new SysVec3(0.062f, 0.215f, 0.016f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.OakWood, 0, outTris);
+            EmitHollowTubeSegment(new SysVec3(0f, -0.145f, 0.008f), new SysVec3(0f, 0.175f, 0.008f), 0.016f, 0.016f, MaterialIdCatalog.QuartzGem, 0, outTris, sides: 6);
+            EmitDeformedOctaSphere(0x71E201u, new SysVec3(0f, -0.158f, 0.012f), 0.028f, 0.028f, 0.026f, 0f, 0.04f, MaterialIdCatalog.RubyGem, 45, outTris);
+
+            float fill01 = dna.StageByte == 0 ? 0.55f : Math.Clamp(dna.StageByte / 255f, 0.08f, 1.0f);
+            float colTopY = -0.135f + fill01 * 0.285f;
+            EmitHollowTubeSegment(new SysVec3(0f, -0.145f, 0.014f), new SysVec3(0f, colTopY, 0.014f), 0.010f, 0.010f, MaterialIdCatalog.RedDiamondGem, 60, outTris, sides: 5);
+
+            // Pirinc olcek cizgileri (Min / Donma 0C / Maks)
+            EmitOrientedBox(new SysVec3(0.032f, -0.06f, 0.004f), new SysVec3(0.018f, 0.004f, 0.005f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.Bronze, 0, outTris);
+            EmitOrientedBox(new SysVec3(0.032f, 0.02f, 0.004f), new SysVec3(0.022f, 0.004f, 0.005f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.GoldOre, 0, outTris);
+            EmitOrientedBox(new SysVec3(0.032f, 0.11f, 0.004f), new SysVec3(0.018f, 0.004f, 0.005f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.Bronze, 0, outTris);
+        }
+
+        private static void EmitWeatherHygrometerModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Kuru ve Islak Hazneli Cift Tup Psikrometre + Alt Su Haznesi + Ust LCL Kadrani
+            EmitOrientedBox(new SysVec3(0f, 0f, -0.020f), new SysVec3(0.095f, 0.210f, 0.018f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.OakWood, 0, outTris);
+
+            // Sol tup: Kuru hazne (Dry Bulb)
+            EmitHollowTubeSegment(new SysVec3(-0.042f, -0.120f, 0.008f), new SysVec3(-0.042f, 0.145f, 0.008f), 0.014f, 0.014f, MaterialIdCatalog.QuartzGem, 0, outTris, sides: 6);
+            EmitDeformedOctaSphere(0x8811u, new SysVec3(-0.042f, -0.135f, 0.010f), 0.022f, 0.022f, 0.022f, 0f, 0.04f, MaterialIdCatalog.RubyGem, 30, outTris);
+
+            // Sag tup: Islak hazne (Wet Bulb) + islak pamuk fitil + su canagi
+            EmitHollowTubeSegment(new SysVec3(0.042f, -0.120f, 0.008f), new SysVec3(0.042f, 0.145f, 0.008f), 0.014f, 0.014f, MaterialIdCatalog.SapphireGem, 0, outTris, sides: 6);
+            EmitHollowTubeSegment(new SysVec3(0.042f, -0.165f, 0.010f), new SysVec3(0.042f, -0.115f, 0.010f), 0.018f, 0.016f, MaterialIdCatalog.GlowingMoss, 0, outTris, sides: 6);
+            EmitHollowTubeSegment(new SysVec3(0.042f, -0.195f, 0.012f), new SysVec3(0.042f, -0.155f, 0.012f), 0.032f, 0.036f, MaterialIdCatalog.Clay, 0, outTris, sides: 6);
+
+            // Ortada LCL / %RH pirinc ibre skalasi
+            float rh01 = dna.StageByte == 0 ? 0.60f : (dna.StageByte / 255f);
+            float indY = -0.08f + rh01 * 0.18f;
+            EmitOrientedBox(new SysVec3(0f, indY, 0.014f), new SysVec3(0.026f, 0.008f, 0.008f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.Bronze, 0, outTris);
+        }
+
+        private static void EmitWeatherWindVaneAnemometerModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Dikey demir direk + sabit K-D-G-B yon kollari + donen ruzgar gulu oku + 3 kepceli anemometre carki
+            EmitHollowTubeSegment(new SysVec3(0f, -0.26f, 0f), new SysVec3(0f, 0.26f, 0f), 0.020f, 0.016f, MaterialIdCatalog.Steel, 0, outTris, sides: 6);
+            EmitHollowTubeSegment(new SysVec3(-0.14f, -0.06f, 0f), new SysVec3(0.14f, -0.06f, 0f), 0.008f, 0.008f, MaterialIdCatalog.Bronze, 0, outTris, sides: 4);
+            EmitHollowTubeSegment(new SysVec3(0f, -0.06f, -0.14f), new SysVec3(0f, -0.06f, 0.14f), 0.008f, 0.008f, MaterialIdCatalog.Bronze, 0, outTris, sides: 4);
+
+            // Ruzgar gulu oku (ThermalTempByte veya StageByte ile yaw acisi)
+            float vaneYaw = (dna.ThermalTempByte / 255f) * MathF.PI * 2f;
+            SysVec3 vaneFwd = new SysVec3(MathF.Sin(vaneYaw), 0f, MathF.Cos(vaneYaw));
+            SysVec3 vaneRight = new SysVec3(vaneFwd.Z, 0f, -vaneFwd.X);
+            EmitHollowTubeSegment(new SysVec3(0f, 0.08f, 0f) - vaneFwd * 0.16f, new SysVec3(0f, 0.08f, 0f) + vaneFwd * 0.16f, 0.010f, 0.008f, MaterialIdCatalog.CopperOre, 0, outTris, sides: 5);
+            // Ok ucu ve kuyruk kanadi
+            EmitHollowTubeSegment(new SysVec3(0f, 0.08f, 0f) + vaneFwd * 0.16f, new SysVec3(0f, 0.08f, 0f) + vaneFwd * 0.22f, 0.028f, 0.002f, MaterialIdCatalog.GoldOre, 0, outTris, sides: 4);
+            EmitOrientedBox(new SysVec3(0f, 0.09f, 0f) - vaneFwd * 0.15f, new SysVec3(0.006f, 0.042f, 0.045f), vaneRight, SysVec3.UnitY, vaneFwd, MaterialIdCatalog.CopperOre, 0, outTris);
+
+            // Ustte 3 kollu kepceli anemometre rotor carki
+            float rotorPhase = (dna.StageByte / 255f) * MathF.PI * 2f;
+            for (int c = 0; c < 3; c++)
+            {
+                float ang = rotorPhase + c * (MathF.PI * 2f / 3f);
+                SysVec3 armDir = new SysVec3(MathF.Cos(ang), 0f, MathF.Sin(ang));
+                SysVec3 cupCenter = new SysVec3(0f, 0.22f, 0f) + armDir * 0.13f;
+                EmitHollowTubeSegment(new SysVec3(0f, 0.22f, 0f), cupCenter, 0.007f, 0.007f, MaterialIdCatalog.Steel, 0, outTris, sides: 4);
+                EmitDeformedOctaSphere(0xA4E0u + (uint)c, cupCenter, 0.028f, 0.026f, 0.028f, 0.35f, 0.05f, MaterialIdCatalog.Bronze, 0, outTris);
+            }
+        }
+
+        private static void EmitWeatherRainGaugeModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Tas/kil kaide + seffaf kuvars olcek silindiri + ust pirinc toplama hunisi + yukselen tatli su sutunu
+            EmitHollowTubeSegment(new SysVec3(0f, -0.20f, 0f), new SysVec3(0f, -0.14f, 0f), 0.115f, 0.095f, MaterialIdCatalog.Stone, 0, outTris, sides: 7);
+            EmitHollowTubeSegment(new SysVec3(0f, -0.14f, 0f), new SysVec3(0f, 0.14f, 0f), 0.068f, 0.068f, MaterialIdCatalog.QuartzGem, 0, outTris, sides: 8);
+            EmitHollowTubeSegment(new SysVec3(0f, 0.14f, 0f), new SysVec3(0f, 0.21f, 0f), 0.068f, 0.112f, MaterialIdCatalog.Bronze, 0, outTris, sides: 8);
+
+            // Iceride biriken yagmur suyu sutunu
+            float waterLevel01 = dna.StageByte == 0 ? 0.35f : Math.Clamp(dna.StageByte / 255f, 0.05f, 1.0f);
+            float waterTopY = -0.13f + waterLevel01 * 0.25f;
+            EmitHollowTubeSegment(new SysVec3(0f, -0.135f, 0f), new SysVec3(0f, waterTopY, 0f), 0.052f, 0.052f, MaterialIdCatalog.SapphireGem, 0, outTris, sides: 7);
+        }
+
+        private static void EmitMetalLightningRodModel(in PhysicalItemShapeDna dna, List<FacetedVoxelTriangle> outTris)
+        {
+            // Yalitkan tas kaide + dovme demir bilezik + iletken bakir direk + 3 catalli altin/bakir korona yakalayici ucu
+            EmitHollowTubeSegment(new SysVec3(0f, -0.34f, 0f), new SysVec3(0f, -0.24f, 0f), 0.110f, 0.088f, MaterialIdCatalog.StoneBrick, 0, outTris, sides: 6);
+            EmitHollowTubeSegment(new SysVec3(0f, -0.24f, 0f), new SysVec3(0f, -0.16f, 0f), 0.048f, 0.040f, MaterialIdCatalog.Steel, 0, outTris, sides: 6);
+            EmitHollowTubeSegment(new SysVec3(0f, -0.16f, 0f), new SysVec3(0f, 0.26f, 0f), 0.028f, 0.018f, MaterialIdCatalog.CopperOre, dna.ThermalTempByte, outTris, sides: 6);
+
+            // Orta rezonans bobin halkasi
+            EmitHollowTubeSegment(new SysVec3(0f, 0.04f, 0f), new SysVec3(0f, 0.09f, 0f), 0.046f, 0.046f, MaterialIdCatalog.Bronze, dna.ThermalTempByte, outTris, sides: 6);
+
+            // Ust 3 catalli paratoner yakalayici tac (Franklin finial)
+            EmitHollowTubeSegment(new SysVec3(0f, 0.26f, 0f), new SysVec3(0f, 0.38f, 0f), 0.018f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 5);
+            EmitHollowTubeSegment(new SysVec3(0f, 0.25f, 0f), new SysVec3(-0.065f, 0.34f, 0f), 0.012f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 4);
+            EmitHollowTubeSegment(new SysVec3(0f, 0.25f, 0f), new SysVec3(0.065f, 0.34f, 0f), 0.012f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 4);
         }
 
         private static void EmitDeformedOctaSphere(
