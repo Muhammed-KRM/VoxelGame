@@ -13,10 +13,10 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#059` (**Paket 4A (İklim, Bölgesel Atmosfer, 365 Gün Güneş Takvimi, Karst Hidrolojisi, Çift Tuzluluk, 0 MB VRAM Prosedürel Bulutlar, 5 Denizci/Hava Tahmin Aleti + Paratoner, 5. Rehber Kitap Sekmesi, Açık Ateş Yağmur Söndürme, 1x-600x Zaman Ölçeği, Çamur/Doygunluk Dönüşümü) TAMAMLANDI:** `1)` **365 Günlük Güneş Takvimi & Güneş Efemerisi:** $23.44^\circ$ eksen eğikliği, $12.0 \pm 3.2$ sa gün uzunluğu modülasyonu, deklinasyon/zenit hesabı ve 1x-600x 9 kademeli (`1..600x`) kesintisiz kararlı zaman ölçeği. `2)` **2D Bölgesel Atmosfer & ENSO Döngüsü:** `32x32` grid ($2048\text{m} \times 2048\text{m}$), 36B blittable `0 B` GC hücreler, Jin (1997) analitik ENSO (~3.5 yıl periyot), orografik yağış, Föhn rüzgâr gölgesi, kara/deniz meltemi ve 1 Hz AOI delta senk ($< 512\text{ B/s}$). `3)` **0 MB VRAM 3D Prosedürel Hacimsel Bulutlar & Rayleigh Optiği:** Sıfır ek VRAM ile tam analitik Perlin-Worley ışın yürütme, Kümülüs/Stratüs/Sirrüs tipleri, Rayleigh/Mie saçılması ve dinamik bulut gölgeleri. `4)` **Çift Tuzluluklu Su, Dalton Buharlaşması & Karst Akiferleri:** $0\text{ g/L}$ tatlı su ve $35\text{ g/L}$ okyanus suyu, Dalton buharlaşması, asidik yağmurla kireçtaşında açılan karstik erime boşlukları ve yağmurla beslenen dinamik mağara akiferleri. `5)` **Yağmur Islanması, Çamur & Açık Ateş Söndürme:** Yağmurda toprağın çamurlaşması (150/255) ve tam doygunlukta tatlı su akıntısı (255/255); açık gökyüzü altındaki kamp ateşi ve Bloomery fırınlarının $\ge 6.0\text{ mm/sa}$ sağanakta otomatik sönmesi (`IsLit = false`), korunaklı ateşlerin yanmaya devam etmesi. `6)` **5 Denizci Aleti & Paratoner:** Barometre (Zambretti A..Z tahmini, FitzRoy fırtına uyarısı), Termometre, Higrometre, Anemometre, Yağmur Ölçer ve Metal Paratoner; `0.0 MB` ek VRAM `%100 Color32` 3B modelleri. `7)` **Rehber Kitabı Sekme 5:** `[B]->[5]` sekmesiyle 8 maddelik hava ve denizci meteoroloji rehberi. `8)` **Doğrulanan Testler:** Standalone `.NET 10`: **127/127 PASS**, Unity 6 EditMode: **124/124 PASS** (`0 Error / 0 Warning`, Devir048b < 60 ms), C++20 `ctest`: **6/6 PASS**, Python `pytest`: **9/9 PASS** \| **Sırada: Kullanıcı Canlı PlayMode Testi -> Paket 4B Hazırlığı**) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T19:30:00+03:00` |
+| **Devir Numarası** | `#060` (**Paket 4A PlayMode Görsel & Oynanış Düzeltmeleri (Gökyüzü/Güneş/Gece-Gündüz, Tekil Hacimsel Bulutlar, Tarif Kitabı 3B Önizleme & Malzeme İkonları, Yaratıcı Mod Hava Aletleri Sekmesi) TAMAMLANDI:** `1)` **Gökyüzü, Güneş ve Gece/Gündüz Döngüsü (`Stage1SkyDayNightController.cs`, `StratocraftUberShader.hlsl`):** Kamera `CameraClearFlags.Skybox` moduna geçirildi, çalışma zamanı `Skybox/Procedural` materyali ve `00_Paket4A_Sun_And_Moon_DirectionalLight` yönlü ışığı bağlandı, `_StratoNightDim01` ile gece arazi karartması ve gün batımı ufuk kızıllığı sağlandı. `2)` **Prosedürel Bulutlar & Yerel Yağmur (`StratocraftProceduralClouds.shader`, `Stage1AtmosphereCloudAndRainRenderer.cs`, `Stage1InteractivePlayController.cs`):** Bulut AOI ızgarası `OriginWorldX/Z` ofsetiyle hizalandı, tekil bulut tabakası + yağmur hacmi (`_CloudWater81` / `_CloudPrecip81` bilineer örnekleme + derinlik kırpması) `LateUpdate()` içinde çizildi. `3)` **Tarif Kitabı `[B]` 3B Önizleme & Malzeme İkon Şeridi (`Stage1RecipeBookPreviewRenderer.cs`, `Stage1SurvivalRecipeBookUi.cs`):** `Y = -2600m` (`PreviewLayer = 30`) izole önizleme kamerasıyla öğe/yapı 3B önizlemeleri ve `"Gerekenler:"` ikon şeridi eklendi. `4)` **Yaratıcılık Modu `[F4]`+`[Tab]` Hava Aletleri Sekmesi (`Stage1VisualHotbarAndInventoryUi.cs`):** `"🌦️ Hava Aletleri (6)"` sekmesi (Barometre, Termometre, Higrometre, Rüzgâr Gülü, Yağmur Ölçer, Paratoner) 3B önizleme ve ele alıp `[Sağ Tık]` ile yerleştirme akışıyla eklendi. `5)` **Doğrulama:** PlayMode görsel doğrulama (gün batımı, `[B]` sekmeleri, `[F4]+[Tab]` sekmesi) `0 Error / 0 Warning` ve Unity EditMode **124/124 PASS**) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-13T21:00:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 4A Tamamlandı; Tüm Kalite Kapısı Testlerinden (124/124 EditMode, 127/127 Standalone .NET 10, 6/6 C++20, 9/9 Python) Geçti -> Kullanıcı Canlı PlayMode Testi ve Paket 4B Başlangıcı` |
+| **Mevcut Çalışma Aşaması** | `Paket 4A PlayMode Görsel/UI Düzeltmeleri Tamamlandı (124/124 EditMode PASS, PlayMode 0 Error/Warning) -> Kullanıcı Final Onayı ve Paket 4B Başlangıcı` |
 | **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 124/124 PASS (Paket 1..3 + Paket 4A İklim & Hidroloji Dahil)`, `Standalone .NET 10 Core: 127/127 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
 | **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` ve prosedürel hacimsel shader, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
@@ -63,9 +63,23 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#059` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#060` .. `#042`)
 
-### 2.0. Devir #059 (Paket 4A: İklim, Bölgesel Atmosfer, 365 Gün Güneş Takvimi, Karst Hidrolojisi, Çift Tuzluluk, 0 MB VRAM 3D Prosedürel Bulutlar, 5 Denizci Aleti, 1x-600x Zaman Ölçeği ve Yağmurda Ateş Söndürme)
+### 2.0. Devir #060 (Paket 4A PlayMode Görsel & Oynanış Düzeltmeleri: Gökyüzü/Güneş/Gece-Gündüz, Tekil Hacimsel Bulutlar, Tarif Kitabı 3B Önizleme & Malzeme İkonları, Yaratıcı Mod Hava Aletleri Sekmesi)
+
+Kullanıcı PlayMode testinde bildirilen 3 ana sorun kök nedenleriyle giderilmiş ve hem PlayMode ekran görüntüleri hem de Unity EditMode testleriyle (**124/124 PASS**) doğrulanmıştır:
+
+1. **Gökyüzü, Güneş Diski, Gece/Gündüz Döngüsü ve Kararan Gece Arazisi (`Stage1SkyDayNightController.cs`, `Stage1InteractivePlayController.cs`, `StratocraftUberShader.hlsl`):**
+   - `Camera.main.clearFlags` `SolidColor` yerine `CameraClearFlags.Skybox` olarak ayarlandı; çalışma zamanında `Skybox/Procedural` materyali ve eksikse `00_Paket4A_Sun_And_Moon_DirectionalLight` yönlü ışığı oluşturularak `StepAtmosphereSolarCloudsAndHydrology` içinden sürüldü.
+   - `StratocraftUberShader.hlsl` içine `_StratoNightDim01` globali (`hemiScale = 1.0 - 0.86 * saturate(_StratoNightDim01)`) eklenerek gece yarısı arazinin gerçekçi şekilde kararması sağlandı.
+2. **Prosedürel Bulutlar & Yerel Yağmur Hizalaması (`StratocraftProceduralClouds.shader`, `Stage1AtmosphereCloudAndRainRenderer.cs`, `Stage1InteractivePlayController.cs`):**
+   - Bulut dünya koordinatlarının `_regionalAtmosphereSystem.OriginWorldX/Z` ofseti olmadan hesaplanması (~1 km kayma) ve 81 ayrı kutudaki dikiş izleri giderildi; `SetAoiRenderGrid` üzerinden `_CloudWater81` / `_CloudPrecip81` bilineer örnekleyen tekil bulut tabakası + yağmur hacmi `LateUpdate()` içinde çizildi (`ShaderUtil` 0 mesaj).
+3. **Tarif Kitabı (`[B]`) 3B Önizlemeler & Malzeme İkonları (`Stage1RecipeBookPreviewRenderer.cs`, `Stage1SurvivalRecipeBookUi.cs`, `Stage1WheelbarrowController.cs`, `Stage1BloomeryAndForgingController.cs`, `Stage1CampfireAndCookingController.cs`, `Stage1VisualHotbarAndInventoryUi.cs`):**
+   - `Y = -2600m` konumunda (`PreviewLayer = 30`) izole 256×256 `RenderTexture` önizleme üreticisi eklendi; her tarif kartına 3B eşya/yapı görseli ve `"Gerekenler:"` malzeme ikon şeridi yerleştirildi.
+4. **Yaratıcılık Modu (`[F4]` + `[Tab]`) Hava Aletleri Sekmesi (`Stage1VisualHotbarAndInventoryUi.cs`, `Stage1InteractivePlayController.cs`):**
+   - `"🌦️ Hava Aletleri (6)"` sekmesi (`CreativeWeatherCategoryIndex = 5`) ve `DrawCreativeWeatherInstrumentsGrid` eklendi; Barometre, Termometre, Higrometre, Rüzgâr Gülü, Yağmur Ölçer ve Paratoner 3B önizlemeleriyle listelenip tıklandığında ele alınarak `[Sağ Tık]` ile yerleştirilebiliyor.
+
+### 2.1. Devir #059 (Paket 4A: İklim, Bölgesel Atmosfer, 365 Gün Güneş Takvimi, Karst Hidrolojisi, Çift Tuzluluk, 0 MB VRAM 3D Prosedürel Bulutlar, 5 Denizci Aleti, 1x-600x Zaman Ölçeği ve Yağmurda Ateş Söndürme)
 
 Paket 4A mimari şartnamesi (`AK-1..AK-12`) ve Swarm orkestrasyonu ile Stratocraft dünyasına kapsamlı iklim, su döngüsü, atmosfer simülasyonu ve meteoroloji aletleri kazandırılmış, bağımsız `.NET 10` (127/127 PASS), Unity 6 EditMode (124/124 PASS, `0 Error / 0 Warning`), C++20 `ctest` (6/6 PASS) ve Python `pytest` (9/9 PASS) ile eksiksiz doğrulanmıştır:
 
@@ -962,7 +976,8 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Paket 3 (Faz 3.1..3.4):** 3B Cevher Rölyefi, `0 MB` Glint, Jeotermal `U-Eğrisi`, Yeraltı Gölleri, Lav Katılaşması (`150 sn`), 5 Mağara Canlısı & Akustik Telgraf
 - ✅ **Devir #058 Düzeltmeleri:** Fiziksel İki Sayfalı Deri Kitap UI, `[Shift+B]` Kısayolu, `T1 IronOre` Kazma Kademesi, Masif Doğal Taş Gölleri, 4 Katmanlı Jeolojik Kaya Stratigrafisi ve 5 Regresyon Testi (`116/116` Standalone, `113/113` EditMode)
 - ✅ **Paket 4A (Faz 4A.1..4A.7 — Devir #059):** 365 Gün Güneş Takvimi, 2D Bölgesel Atmosfer Jin (1997) ENSO, Karst Hidrolojisi, Çift Tuzluluk, 0 MB VRAM 3D Prosedürel Bulutlar, 5 Denizci Aleti + Paratoner, 5. Rehber Kitap Sekmesi, Açık Ateş Yağmur Söndürme, 1x-600x Zaman Ölçeği (`127/127` Standalone, `124/124` EditMode)
-- 🧪 **Sırada:** Kullanıcı Canlı PlayMode Testi -> **Paket 4B (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı)**
+- ✅ **Devir #060 PlayMode Düzeltmeleri:** Skybox/Güneş/Gece-Gündüz döngüsü + gece karartması, AOI hizalı tekil prosedürel bulut/yağmur hacmi, `[B]` Tarif Kitabı 3B önizlemeleri & Gerekenler ikon şeridi, `[F4]+[Tab]` Hava Aletleri (6) sekmesi (`124/124` EditMode PASS, PlayMode `0 Error / 0 Warning`)
+- 🧪 **Sırada:** Kullanıcı Final PlayMode Onayı -> **Paket 4B (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı)**
 
 ---
 
@@ -974,7 +989,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[B]` Tuşu (`!Shift`) -> `[5]`** | **Rehber Kitabı [5] Hava & Denizci Tahmini:** Açık deri kitapta 5. sekme; Zambretti tablosu, Beaufort skalası, Stull formülleri, bulut rehberi | ✅ Devir #059 (Aktif) |
 | **Barometre / Termometre / Higrometre / Anemometre / Yağmur Ölçer** | **5 Denizci Hava Aleti:** Elde tutulduğunda ekranda hPa basınç, Zambretti A..Z tahmini, rüzgâr yönü/şiddeti ve yağış mm değerini gösterir | ✅ Devir #059 (Aktif) |
 | **Metal Paratoner** | **Yıldırım Koruma & Topraklama:** $24\text{m}$ yarıçapta yıldırım düşmelerini yakalayarak güvenli şekilde toprağa aktarır | ✅ Devir #059 (Aktif) |
-| **`[B]` Tuşu (`!Shift`)** | **Fiziksel İki Sayfalı Zanaat ve Malzeme Rehber Kitabı:** Dikişli açık deri cilt, pirinç köşebentler, kâğıt yığını, kırmızı ipek ayraç, `[A/D]` veya fare tekerleğiyle yaprak çevirme (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #058 (Aktif) |
+| **`[B]` Tuşu (`!Shift`)** | **Fiziksel İki Sayfalı Zanaat ve Malzeme Rehber Kitabı:** Dikişli açık deri cilt, pirinç köşebentler, kâğıt yığını, kırmızı ipek ayraç, 3B öğe/yapı önizlemeleri, `"Gerekenler:"` malzeme ikon şeridi, `[A/D]` veya fare tekerleğiyle yaprak çevirme (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #060 (Aktif) |
 | **`[Shift+B]` Tuşu** | **Madde Kristali Malzeme Seçim Paneli:** Kristal açıkken yerleştirilecek blok türünü seçer (Unity `Ctrl+B` Build penceresi çakışması giderildi) | ✅ Devir #058 (Aktif) |
 | **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme (`Extinguish`):** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür (Yağmurda açık gökyüzünde kendiliğinden söner) | ✅ Devir #059 (Aktif) |
 | **`[V]` / `[Shift+V]` Tuşu** | **Doğal Arazi Saçılım Fırçası (`ShapeId = 0`):** `[V]` anlık geçiş yapar; `[Shift+V]` mimari şekilleri (`1..7, 63`) tarar | ✅ Devir #057 (Aktif) |
@@ -992,7 +1007,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
 | **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
 | **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
-| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 5-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar ve yontulmuş taş başlıklar dahil) | ✅ Aktif |
+| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 6-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar, yontulmuş taş başlıklar ve `🌦️ Hava Aletleri (6)` sekmesi dahil) | ✅ Devir #060 (Aktif) |
 | **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Aktif |
 
 ---
@@ -1000,7 +1015,7 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 ## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Talimatı)
 
 1. **Adım 1 — Devir Raporunu ve Git Durumunu Doğrula:**
-   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #059`** ile birebir eşleştiğini doğrula.
+   - Yeni oturuma başlar başlamaz bu `DURUM_VE_DEVIR.md` dosyasını oku ve `git status -s` + `git log -5 --oneline --date=iso` ile reponun **`Devir #060`** ile birebir eşleştiğini doğrula.
 2. **Adım 2 — Kullanıcıdan `Paket 4A` PlayMode Geri Bildirimini Al:**
    - Kullanıcı `docs/test-raporlari/faz4-raporu.md` içindeki PlayMode test adımlarını (*[ / ] / Backspace zaman hızı ölçeği, [B]->[5] Hava ve Denizci sekmesi, Barometre/Termometre/Higrometre/Anemometre/Yağmurölçer ve Paratoner kullanımı, Yağmurda açık kamp ateşinin sönmesi, çamurlaşma ve karstik su akışı*) test edip onayladıktan sonra **Paket 4B** (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Yağışı ve Termal Giysi Yalıtımı) geliştirmesine geç.
 3. **Adım 3 — Korunacak Teknik Bütçeler:**

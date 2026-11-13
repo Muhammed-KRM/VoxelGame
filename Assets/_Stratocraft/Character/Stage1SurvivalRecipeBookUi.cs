@@ -116,15 +116,18 @@ namespace Stratocraft.Character
 #if UNITY_5_3_OR_NEWER
         private sealed class CachedEntryGuiContent
         {
+            public readonly string Id;
             public readonly GUIContent BadgeContent;
             public readonly GUIContent TitleContent;
             public readonly GUIContent SourceLabelContent;
             public readonly GUIContent ToolKeyContent;
             public readonly GUIContent GuideBodyContent;
             public readonly float FallbackCardHeight;
+            public GUIContent[]? IngredientCountContents;
 
             public CachedEntryGuiContent(in SurvivalRecipeBookEntry entry)
             {
+                Id = entry.Id;
                 BadgeContent = new GUIContent(entry.CategoryBadge);
                 TitleContent = new GUIContent(entry.Title);
                 SourceLabelContent = new GUIContent($"Kaynak / Gereksinim:  {entry.IngredientsOrSource}");
@@ -666,8 +669,89 @@ namespace Stratocraft.Character
             float keybindH = Mathf.Max(20f, _keybindLineStyle!.CalcHeight(card.ToolKeyContent, innerW));
             float bodyH = Mathf.Max(36f, _guideBodyStyle!.CalcHeight(card.GuideBodyContent, innerW));
 
-            float computed = 10f + headerRowH + 6f + sourceH + 4f + keybindH + 6f + bodyH + 10f;
+            float computed = 10f + headerRowH + 6f + MeasureFigureHeight(card) + sourceH + 4f + keybindH + 6f + bodyH + 10f;
             return Mathf.Max(computed, 132f);
+        }
+
+        // ------------------------------------------------------------------
+        // Gorsel sekil alani: solda gercek 3B model onizlemesi, sagda "Gerekenler" malzeme ikon seridi
+        // ------------------------------------------------------------------
+        private const float FigureHeight = 128f;
+        private static readonly Color ColFigureFrame = new(0x8A / 255f, 0x71 / 255f, 0x50 / 255f, 1f);
+        private static readonly Color ColFigureFill = new(0.90f, 0.85f, 0.74f, 1f);
+        private static readonly Color ColIngredientSlot = new(0xEF / 255f, 0xE3 / 255f, 0xC6 / 255f, 1f);
+        private GUIStyle? _figureCaptionStyle;
+        private GUIStyle? _ingredientCountStyle;
+        private GUIStyle? _ingredientNameStyle;
+        private GUIContent? _ingredientsHeaderContent;
+        private GUIContent? _previewLoadingContent;
+
+        /// <summary>Tarif kitabi 3B onizleme kaynagi (Stage1InteractivePlayController baglar).</summary>
+        public Stage1RecipeBookPreviewRenderer? PreviewRenderer { get; set; }
+
+        private float MeasureFigureHeight(CachedEntryGuiContent card)
+        {
+            if (PreviewRenderer == null) return 0f;
+            return PreviewRenderer.HasVisual(card.Id) ? FigureHeight + 8f : 0f;
+        }
+
+        private float DrawFigure(float innerX, float curY, float innerW, CachedEntryGuiContent card)
+        {
+            if (PreviewRenderer == null || !PreviewRenderer.HasVisual(card.Id)) return curY;
+
+            float x = innerX;
+            bool hasModel = PreviewRenderer.HasPreviewModel(card.Id);
+            if (hasModel)
+            {
+                Rect frame = new Rect(x, curY, FigureHeight, FigureHeight);
+                DrawFramedRect(frame, ColFigureFill, ColFigureFrame, 2f);
+                Rect imgRect = new Rect(frame.x + 2f, frame.y + 2f, frame.width - 4f, frame.height - 4f);
+                Texture? tex = PreviewRenderer.GetPreview(card.Id);
+                if (tex != null)
+                {
+                    GUI.DrawTexture(imgRect, tex, ScaleMode.ScaleToFit, false);
+                }
+                else
+                {
+                    GUI.Label(imgRect, _previewLoadingContent!, _figureCaptionStyle!);
+                }
+                x = frame.xMax + 10f;
+            }
+
+            Stage1RecipeBookPreviewRenderer.IngredientIcon[]? ingredients = PreviewRenderer.GetIngredients(card.Id);
+            if (ingredients != null && ingredients.Length > 0)
+            {
+                if (card.IngredientCountContents == null)
+                {
+                    card.IngredientCountContents = new GUIContent[ingredients.Length * 2];
+                    for (int i = 0; i < ingredients.Length; i++)
+                    {
+                        card.IngredientCountContents[i * 2] = new GUIContent($"x{ingredients[i].Count}");
+                        card.IngredientCountContents[i * 2 + 1] = new GUIContent(ingredients[i].Name);
+                    }
+                }
+
+                float areaW = innerX + innerW - x;
+                GUI.Label(new Rect(x, curY, areaW, 18f), _ingredientsHeaderContent!, _sourceLineStyle!);
+
+                const float slotW = 68f;
+                const float slotH = 50f;
+                int cols = Mathf.Max(1, Mathf.FloorToInt(areaW / (slotW + 4f)));
+                for (int i = 0; i < ingredients.Length; i++)
+                {
+                    int col = i % cols;
+                    int row = i / cols;
+                    if (row > 1) break; // en fazla 2 satir (figur yuksekligi icinde)
+                    Rect slot = new Rect(x + col * (slotW + 4f), curY + 22f + row * (slotH + 4f), slotW, slotH);
+                    DrawFramedRect(slot, ColIngredientSlot, ColCardBorder, 1f);
+                    Texture2D icon = Stage1VisualHotbarAndInventoryUi.GetStaticItemIcon(ingredients[i].Kind, ingredients[i].SubId);
+                    GUI.DrawTexture(new Rect(slot.x + (slotW - 32f) * 0.5f, slot.y + 2f, 32f, 32f), icon, ScaleMode.ScaleToFit, true);
+                    GUI.Label(new Rect(slot.x + 2f, slot.y + 2f, slotW - 4f, 16f), card.IngredientCountContents[i * 2], _ingredientCountStyle!);
+                    GUI.Label(new Rect(slot.x + 1f, slot.y + slotH - 16f, slotW - 2f, 15f), card.IngredientCountContents[i * 2 + 1], _ingredientNameStyle!);
+                }
+            }
+
+            return curY + FigureHeight + 8f;
         }
 
         private void DrawSingleCard(Rect cardRect, CachedEntryGuiContent card)
@@ -692,6 +776,9 @@ namespace Stratocraft.Character
 
             curY += Mathf.Max(badgeH, titleH) + 5f;
             DrawSolidRect(new Rect(innerX, curY - 2f, innerW, 1f), ColPageRuledLine);
+
+            // Gorsel: gercek 3B model onizlemesi + gereken malzeme ikonlari
+            curY = DrawFigure(innerX, curY + 2f, innerW, card) - 2f;
 
             // Kaynak / Gereksinim (#144726, 12px Bold, wordWrap = true)
             float sourceH = Mathf.Max(20f, _sourceLineStyle!.CalcHeight(card.SourceLabelContent, innerW));
@@ -872,6 +959,38 @@ namespace Stratocraft.Character
                 clipping = TextClipping.Overflow,
                 normal = { textColor = ColPageHeaderRunningText }
             };
+
+            _figureCaptionStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Italic,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = true,
+                normal = { textColor = ColPageSubtitleText }
+            };
+
+            _ingredientCountStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.UpperRight,
+                wordWrap = false,
+                clipping = TextClipping.Overflow,
+                normal = { textColor = ColBadgeFill }
+            };
+
+            _ingredientNameStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 10,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = ColEntryTitleText }
+            };
+
+            _ingredientsHeaderContent = new GUIContent("Gerekenler:");
+            _previewLoadingContent = new GUIContent("Görsel hazırlanıyor…");
 
             _bookRunningHeaderContent = new GUIContent("STRATOCRAFT HAYATTA KALMA TARİF & MALZEME EL KİTABI");
             _closeFullButtonContent = new GUIContent("[X] Kapat [B / ESC]");

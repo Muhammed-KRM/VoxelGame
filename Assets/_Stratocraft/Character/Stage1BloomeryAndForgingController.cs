@@ -204,6 +204,52 @@ namespace Stratocraft.Character
             _charcoalPits.Add(entry);
         }
 
+        /// <summary>
+        /// [B] Tarif kitabi 3B onizlemesi: gercek oyun ici Komur Ocagi kubbesi veya Bloomery izabe firini
+        /// (govde + kil boru + deri koruk + pota + on kil tikac) modellerini yerel matrisleriyle disari verir.
+        /// Sahneye nesne eklemez, simulasyona kayit yapmaz.
+        /// </summary>
+        public void AppendRecipePreviewParts(bool bloomeryFurnace, List<(Mesh mesh, Matrix4x4 local)> outParts)
+        {
+            EnsureSharedMeshesAndContainer();
+            if (!bloomeryFurnace)
+            {
+                if (_sharedCharcoalMoundUnlitMesh != null)
+                {
+                    outParts.Add((_sharedCharcoalMoundUnlitMesh, Matrix4x4.identity));
+                }
+                return;
+            }
+
+            if (_sharedBloomeryBodyColdMesh != null)
+            {
+                outParts.Add((_sharedBloomeryBodyColdMesh, Matrix4x4.identity));
+            }
+            if (_sharedPlugClayMesh != null)
+            {
+                outParts.Add((_sharedPlugClayMesh, Matrix4x4.Translate(new Vector3(0f, 0.12f, 0.39f))));
+            }
+
+            PhysicalItemShapeDna dna = PhysicalItemShapeDna.CreateNatural(0x4B100u);
+            Mesh tuyereMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.ClayTuyerePipe, 0, in dna, out Vector3 tuyereNat);
+            outParts.Add((tuyereMesh, Matrix4x4.TRS(
+                new Vector3(0.42f, 0.16f, 0f),
+                Quaternion.Euler(0f, 90f, 0f),
+                PhysicalItemMeshFactory.GetWorldGroundScale(PhysicalItemArchetype.ClayTuyerePipe, tuyereNat))));
+
+            Mesh bellowsMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.LeatherBellows, 0, in dna, out Vector3 bellowsNat);
+            outParts.Add((bellowsMesh, Matrix4x4.TRS(
+                new Vector3(0.72f, 0.17f, 0f),
+                Quaternion.Euler(0f, -90f, 0f),
+                PhysicalItemMeshFactory.GetWorldGroundScale(PhysicalItemArchetype.LeatherBellows, bellowsNat))));
+
+            Mesh crucibleMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.ClayCruciblePot, 0, in dna, out Vector3 crucibleNat);
+            outParts.Add((crucibleMesh, Matrix4x4.TRS(
+                new Vector3(0f, 0.72f, 0f),
+                Quaternion.identity,
+                PhysicalItemMeshFactory.GetWorldGroundScale(PhysicalItemArchetype.ClayCruciblePot, crucibleNat) * 0.85f)));
+        }
+
         public void RegisterBloomeryFurnace(
             uint stationId,
             in MindValidationResult res,

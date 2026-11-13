@@ -619,10 +619,108 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Aktif 64m x 64m atmosfer hucrelerindeki 3B bulut hacimlerini ve yalnizca yagisli hucrelerin
-        /// altindaki yerel yagmur perdelerini 0 B/kare GC ile Graphics.DrawMeshInstanced uzerinden cizer.
+        /// Canli PlayMode duzeltmesi (v2): 9x9 AOI hucrelerinin bulut suyu ve yagisini tek bir buyuk bulut "slab"
+        /// hacmi + tek bir yagmur hacmi olarak cizer (kutu kenari izgara cizgileri olmadan, overdraw = 1).
+        /// Hucre verisi _CloudWater81 / _CloudPrecip81 dizileriyle GPU'ya yazilir; shader dunya XZ'sinde bilinear ornekler.
         /// </summary>
+        private static readonly int s_cloudWater81Id = Shader.PropertyToID("_CloudWater81");
+        private static readonly int s_cloudPrecip81Id = Shader.PropertyToID("_CloudPrecip81");
+        private static readonly int s_cloudGridOriginId = Shader.PropertyToID("_CloudGridOrigin");
+        private static readonly int s_cloudSlabParamsId = Shader.PropertyToID("_CloudSlabParams");
+        private readonly float[] _aoiWater81 = new float[81];
+        private readonly float[] _aoiPrecip81 = new float[81];
+        private float _aoiOriginX;
+        private float _aoiOriginZ;
+        private float _aoiBaseY = DefaultCloudBaseWorldY;
+        private float _aoiTopY = DefaultCloudTopWorldY;
+        private bool _hasAoiGrid;
+        private bool _aoiHasAnyCloud;
+        private bool _aoiHasAnyRain;
+
+        public bool HasAoiGrid => _hasAoiGrid;
+
+        /// <summary>
+        /// Oyuncu merkezli 9x9 atmosfer penceresinin (satir = dz, sutun = dx) gorsel bulut suyu ve yagis verisini ayarlar.
+        /// originX/Z = pencerenin sol-alt (min) dunya kosesi.
+        /// </summary>
+        public void SetAoiRenderGrid(
+            float originX,
+            float originZ,
+            ReadOnlySpan<float> water81,
+            ReadOnlySpan<float> precip81,
+            float visualBaseY,
+            float visualTopY)
+        {
+            int n = Math.Min(81, Math.Min(water81.Length, precip81.Length));
+            bool anyCloud = false;
+            bool anyRain = false;
+            for (int i = 0; i < n; i++)
+            {
+                _aoiWater81[i] = water81[i];
+                _aoiPrecip81[i] = precip81[i];
+                anyCloud |= water81[i] > 0.06f;
+                anyRain |= precip81[i] > MinLocalRainPrecipMmPerHour;
+            }
+
+            _aoiOriginX = originX;
+            _aoiOriginZ = originZ;
+            _aoiBaseY = visualBaseY;
+            _aoiTopY = Math.Max(visualTopY, visualBaseY + 8.0f);
+            _aoiHasAnyCloud = anyCloud;
+            _aoiHasAnyRain = anyRain;
+            _hasAoiGrid = true;
+        }
+
         public void RenderProceduralCloudsAndLocalRain(float defaultGroundOccluderY = 90.0f)
+        {
+            if (!_hasAoiGrid || (!_aoiHasAnyCloud && !_aoiHasAnyRain))
+            {
+                return;
+            }
+
+            EnsureRenderResourcesInitialized();
+            if (_proceduralCloudRainMaterial == null || _sharedCloudVolumeMesh == null || _sharedRainCurtainMesh == null)
+            {
+                return;
+            }
+
+            const float gridSpan = AtmosphereCellSizeMeters * 9.0f; // 576 m
+            const float slabSpan = 3200.0f;                         // ufka kadar (kenar hucreleri uzatilir)
+            float centerX = _aoiOriginX + gridSpan * 0.5f;
+            float centerZ = _aoiOriginZ + gridSpan * 0.5f;
+
+            Shader.SetGlobalFloatArray(s_cloudWater81Id, _aoiWater81);
+            Shader.SetGlobalFloatArray(s_cloudPrecip81Id, _aoiPrecip81);
+            Shader.SetGlobalVector(s_cloudGridOriginId, new Vector4(_aoiOriginX, _aoiOriginZ, AtmosphereCellSizeMeters, 9.0f));
+            Shader.SetGlobalVector(s_cloudSlabParamsId, new Vector4(_aoiBaseY, _aoiTopY, defaultGroundOccluderY - 6.0f, 0.0f));
+
+            if (_aoiHasAnyCloud)
+            {
+                float thick = _aoiTopY - _aoiBaseY;
+                Matrix4x4 slab = Matrix4x4.TRS(
+                    new Vector3(centerX, _aoiBaseY + thick * 0.5f, centerZ),
+                    Quaternion.identity,
+                    new Vector3(slabSpan, thick, slabSpan));
+                Graphics.DrawMesh(_sharedCloudVolumeMesh, slab, _proceduralCloudRainMaterial, 0, null, 0, null, ShadowCastingMode.Off, false);
+            }
+
+            if (_aoiHasAnyRain)
+            {
+                float bottom = defaultGroundOccluderY - 40.0f;
+                float top = _aoiBaseY + 2.0f;
+                float h = Math.Max(4.0f, top - bottom);
+                Matrix4x4 rain = Matrix4x4.TRS(
+                    new Vector3(centerX, bottom + h * 0.5f, centerZ),
+                    Quaternion.identity,
+                    new Vector3(gridSpan + AtmosphereCellSizeMeters * 2.0f, h, gridSpan + AtmosphereCellSizeMeters * 2.0f));
+                Graphics.DrawMesh(_sharedRainCurtainMesh, rain, _proceduralCloudRainMaterial, 0, null, 0, null, ShadowCastingMode.Off, false);
+            }
+        }
+
+        /// <summary>
+        /// Eski hucre-basi instanced cizim yolu (geriye uyumluluk icin korunur; artik kullanilmiyor).
+        /// </summary>
+        public void RenderProceduralCloudsAndLocalRainPerCellLegacy(float defaultGroundOccluderY = 90.0f)
         {
             if (_activeCellCount <= 0)
             {

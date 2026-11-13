@@ -561,6 +561,16 @@ namespace Stratocraft.Character
             return v;
         }
 
+        /// <summary>
+        /// [B] Tarif kitabi 3B onizlemesi icin kamp atesinin gercek oyun ici alev/kor cekirdegi modelini verir.
+        /// (Tas halkasi ve dallar oyuncunun dizdigi gercek fiziksel parcalardir; onizleyici onlari ayrica dizer.)
+        /// </summary>
+        public Mesh? GetRecipePreviewFlameMesh()
+        {
+            EnsureSharedMeshesAndContainer();
+            return _sharedFlameClusterMesh;
+        }
+
         public void RegisterUnlitCampfire(
             uint stationId,
             in MindValidationResult validation,

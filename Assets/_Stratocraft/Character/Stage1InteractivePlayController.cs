@@ -248,6 +248,10 @@ namespace Stratocraft.Character
         private SolarEphemState _currentSolarEphem;
         private AtmosphereCellState _currentPlayerAtmosphereCell;
         private Light? _directionalSunLight;
+        private readonly Stage1SkyDayNightController _skyDayNightCtrl = new Stage1SkyDayNightController();
+        private readonly Stage1RecipeBookPreviewRenderer _recipeBookPreviewRenderer = new Stage1RecipeBookPreviewRenderer();
+        private readonly float[] _aoiRenderWater81 = new float[81];
+        private readonly float[] _aoiRenderPrecip81 = new float[81];
         private float _hydrologyStepTimer;
         private float _hydrologyAccumGameSeconds;
         private float _pendingThunderTimerSec = -1.0f;
@@ -660,6 +664,8 @@ namespace Stratocraft.Character
             }
             _underwaterCameraEffect.Dispose();
             _cloudAndRainRenderer.Dispose();
+            _skyDayNightCtrl.Dispose();
+            _recipeBookPreviewRenderer.Dispose();
             Shader.SetGlobalVector(ShaderSwimmerPosId, Vector4.zero);
             Shader.SetGlobalVector(ShaderSwimmerVelId, Vector4.zero);
             if (_fluidTraceRecorder.IsEnabled)
@@ -672,7 +678,15 @@ namespace Stratocraft.Character
         private void OnRenderObject()
         {
             SwingTraceGizmoRenderer.DrawTrails(_combatBridge.TraceRecorder);
+        }
+
+        private void LateUpdate()
+        {
+            // DUZELTME: Graphics.DrawMeshInstanced kare icinde kamera culling'inden ONCE cagrilmalidir;
+            // OnRenderObject (render sirasinda) cagrildiginda URP bulut/yagmur orneklerini hic cizmiyordu.
             _cloudAndRainRenderer.RenderProceduralCloudsAndLocalRain(StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY);
+            // [B] tarif kitabi / yaratici katalog 3B onizlemeleri (kare basina en fazla 1 kucuk cizim)
+            _recipeBookPreviewRenderer.Step();
         }
 
         private void Update()
@@ -4574,6 +4588,12 @@ namespace Stratocraft.Character
 
         private void InitializeAtmosphereHydrologyAndWeatherInstruments()
         {
+            // Yaratici katalog [Tab] -> "Hava Aletleri" sekmesi: secilen alet ele alinir, [Sag Tik] ile yerlestirilir.
+            _recipeBookPreviewRenderer.Initialize(SharedVoxelMaterial, _campfireCtrl, _bloomeryCtrl, _wheelbarrowCtrl);
+            _recipeBookUi.PreviewRenderer = _recipeBookPreviewRenderer;
+            _holsterCtrl.InventoryUi.OnCreativeWeatherInstrumentRequested = GrantCreativeWeatherInstrumentForPlacement;
+            _holsterCtrl.InventoryUi.RecipePreviewTextureProvider = id => _recipeBookPreviewRenderer.GetWeatherInstrumentPreview(id);
+
             if (_directionalSunLight == null)
             {
                 var lights = FindObjectsByType<Light>(FindObjectsInactive.Exclude);
@@ -4585,6 +4605,28 @@ namespace Stratocraft.Character
                         break;
                     }
                 }
+            }
+
+            // DUZELTME: Sahnede yonlu isik yoksa (Stage1 sahnesi yalnizca ortam isigiyla aydinlaniyordu ->
+            // "gunes yok, gece-gunduz yok") calisma zamaninda Gunes/Ay isigini olustur.
+            if (_directionalSunLight == null)
+            {
+                GameObject sunGo = new GameObject("00_Paket4A_Sun_And_Moon_DirectionalLight");
+                sunGo.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+                Light sun = sunGo.AddComponent<Light>();
+                sun.type = LightType.Directional;
+                sun.color = new Color(1.0f, 0.96f, 0.90f);
+                sun.intensity = 1.2f;
+                sun.shadows = LightShadows.Soft;
+                sun.shadowStrength = 0.75f;
+                sun.shadowBias = 0.04f;
+                sun.shadowNormalBias = 0.35f;
+                _directionalSunLight = sun;
+            }
+
+            if (RenderSettings.sun == null && _directionalSunLight != null)
+            {
+                RenderSettings.sun = _directionalSunLight;
             }
 
             _openSkyCampfireRainState = CampfireSimulationLogic.CreateUnlitStation(
@@ -4830,22 +4872,19 @@ namespace Stratocraft.Character
                 eastRh01,
                 _currentPlayerAtmosphereCell.StationPressureHpa);
 
-            if (_directionalSunLight != null)
-            {
-                Vector3 lightForward = new Vector3(
-                    -_currentSolarEphem.SunDirX,
-                    Mathf.Min(-0.08f, -_currentSolarEphem.SunDirY),
-                    -_currentSolarEphem.SunDirZ);
-                if (lightForward.sqrMagnitude > 0.001f)
-                {
-                    _directionalSunLight.transform.rotation = Quaternion.LookRotation(lightForward.normalized, Vector3.up);
-                }
-
-                float dayFactor01 = Mathf.Clamp01((_currentSolarEphem.SunDirY + 0.12f) / 0.42f);
-                float flashBoost = _lightningSkyFlashIntensity01 * 1.65f;
-                _directionalSunLight.color = new Color(rayleighTint.R, rayleighTint.G, rayleighTint.B, 1.0f);
-                _directionalSunLight.intensity = Mathf.Lerp(0.14f, 1.22f, dayFactor01) + flashBoost;
-            }
+            // Canli PlayMode duzeltmesi: Gunes/Ay yonlu isigi + prosedurel Skybox + ortam isigi + sis rengi
+            // artik gercek zamanli gunes efemerisine ve oyuncu hucresinin bulut/yagis durumuna baglidir.
+            float playerCloudCover01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.CloudWaterKgPerM2 / 1.6f);
+            float playerStorm01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour / 12.0f);
+            _skyDayNightCtrl.Apply(
+                PlayerCamera != null ? PlayerCamera : UnityEngine.Camera.main,
+                _directionalSunLight,
+                in _currentSolarEphem,
+                rayleighTint,
+                playerCloudCover01,
+                playerStorm01,
+                _lightningSkyFlashIntensity01,
+                allowFogColorWrite: _underwaterCameraEffect.CurrentBlend01 <= 0.001f);
 
             _cloudAndRainRenderer.ApplyGlobalAtmosphereShaderUniforms(
                 _currentSolarEphem.SunDirY,
@@ -4886,6 +4925,9 @@ namespace Stratocraft.Character
             }
 
             int cloudCount = 0;
+            float visualBaseSum = 0.0f;
+            float visualTopSum = 0.0f;
+            int visualCount = 0;
             for (int dz = -4; dz <= 4; dz++)
             {
                 for (int dx = -4; dx <= 4; dx++)
@@ -4894,12 +4936,24 @@ namespace Stratocraft.Character
                     ref readonly AtmosphereAoiCellSample sample = ref _aoiCurrentWindow81[wIdx];
                     float cloudWater = sample.CloudWaterCentiKgPerM2 * 0.01f;
                     float precip = sample.PrecipDeciMmPerHour * 0.1f;
+                    _aoiRenderWater81[wIdx] = cloudWater;
+                    _aoiRenderPrecip81[wIdx] = precip;
                     if (cloudWater <= 0.08f && precip <= 0.05f) continue;
 
-                    float cellCenterX = (centerCellX + dx + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
-                    float cellCenterZ = (centerCellZ + dz + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
-                    float baseY = Mathf.Max(115.0f, sample.CloudBase16m * 16.0f);
-                    float thickness = Mathf.Max(18.0f, sample.CloudThickness32m * 32.0f);
+                    // DUZELTME: Hucre indeksi 32x32 bolgesel izgara ICINDEKI indekstir; dunya koordinatina
+                    // cevirmek icin izgaranin dunya orijini eklenmelidir (aksi halde bulutlar ~1 km uzaga cizilir).
+                    float cellCenterX = _regionalAtmosphereSystem.OriginWorldX + (centerCellX + dx + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
+                    float cellCenterZ = _regionalAtmosphereSystem.OriginWorldZ + (centerCellZ + dz + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
+                    // DUZELTME: Fiziksel LCL bulut tabani gercek metre (600..3000m) cinsindendir; oyun dunyasi
+                    // ~96m zemin ve 4500m kamera menzili ile olceklendigi icin gorsel bulut katmani 150..240m
+                    // bandina sikistirilir (fizik/test degerleri degismez, yalnizca cizim olcegi).
+                    float physBaseY = sample.CloudBase16m * 16.0f;
+                    float physThickness = sample.CloudThickness32m * 32.0f;
+                    float baseY = 150.0f + Mathf.Clamp01(physBaseY / 3200.0f) * 90.0f;
+                    float thickness = Mathf.Clamp(physThickness * 0.035f, 34.0f, 85.0f);
+                    visualBaseSum += baseY;
+                    visualTopSum += baseY + thickness;
+                    visualCount++;
 
                     _cloudRenderSamplesScratch[cloudCount++] = new CloudCellRenderSample(
                         cellCenterX,
@@ -4913,6 +4967,15 @@ namespace Stratocraft.Character
                 }
             }
             _cloudAndRainRenderer.UpdateActiveCloudCells(_cloudRenderSamplesScratch.AsSpan(0, cloudCount));
+            float avgVisualBase = visualCount > 0 ? visualBaseSum / visualCount : 180.0f;
+            float avgVisualTop = visualCount > 0 ? visualTopSum / visualCount : 230.0f;
+            _cloudAndRainRenderer.SetAoiRenderGrid(
+                _regionalAtmosphereSystem.OriginWorldX + (centerCellX - 4) * RegionalAtmosphereSimulationSystem.CellSizeMeters,
+                _regionalAtmosphereSystem.OriginWorldZ + (centerCellZ - 4) * RegionalAtmosphereSimulationSystem.CellSizeMeters,
+                _aoiRenderWater81,
+                _aoiRenderPrecip81,
+                avgVisualBase,
+                avgVisualTop);
 
             // 4) Konvektif Yildirim (CAPE > 1000 J/kg), Metal Paratoner 24m Koni Korumasi ve Mesafe/343s Ses Gecikmesi
             if (_lightningSkyFlashIntensity01 > 0.001f)
@@ -5361,6 +5424,21 @@ namespace Stratocraft.Character
             _miningCtrl.LastFeedbackText =
                 $"🔧 {GetWeatherInstrumentDisplayName(removed.OutputKind)} söküldü! İstediğiniz zemine bakıp [Sağ Tık] ile yeniden yerleştirin.";
             return true;
+        }
+
+        private void GrantCreativeWeatherInstrumentForPlacement(PrimitiveCraftOutputId kind)
+        {
+            if (!PrimitiveSurvivalCraftingCatalog.IsWeatherInstrumentOrLightningRod(kind))
+            {
+                return;
+            }
+
+            _heldWeatherInstrumentForPlacement = kind;
+            _heldWeatherInstrumentDna = PhysicalItemShapeDna.CreateNatural((uint)(0x4A900 + (int)kind * 7919 + _weatherInstrumentVisuals.Count * 131));
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+            _miningCtrl.LastFeedbackText =
+                $"★ KREATİF: {GetWeatherInstrumentDisplayName(kind)} elinizde! Zemine bakıp [Sağ Tık] ile yerleştirin.";
         }
 
         private bool TryPlaceHeldWeatherInstrumentOnRightClick(bool uiBlocked)

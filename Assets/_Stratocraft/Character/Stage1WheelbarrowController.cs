@@ -78,6 +78,27 @@ namespace Stratocraft.Character
             _ => false
         };
 
+        /// <summary>
+        /// [B] Tarif kitabi 3B onizlemesi icin el arabasinin gercek oyun ici govde + tekerlek modelini
+        /// (yerel matrisleriyle) disari verir. Sahneye nesne eklemez, simulasyona kayit yapmaz.
+        /// </summary>
+        public void AppendRecipePreviewParts(List<(Mesh mesh, Matrix4x4 local)> outParts)
+        {
+            EnsureRootAndSharedMesh();
+            if (_sharedWheelbarrowBodyMesh != null)
+            {
+                outParts.Add((_sharedWheelbarrowBodyMesh, Matrix4x4.identity));
+            }
+
+            PhysicalItemShapeDna wheelDna = PhysicalItemShapeDna.CreateNatural(0x57484C31u);
+            Mesh wheelMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.WoodenWheel, 0, in wheelDna, out _);
+            const float wheelModelScale = WheelRadiusMeters / 0.204f;
+            outParts.Add((wheelMesh, Matrix4x4.TRS(
+                new Vector3(0f, WheelRadiusMeters, WheelAxleLocalZ),
+                Quaternion.identity,
+                new Vector3(wheelModelScale, wheelModelScale, wheelModelScale))));
+        }
+
         public void RegisterWheelbarrowStation(
             uint stationId,
             in MindValidationResult res,

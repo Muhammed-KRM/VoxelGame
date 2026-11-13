@@ -305,6 +305,9 @@ float EvaluateMagmaBlockCrustFissure01(float3 posWS)
 // _GlobalCloudGridParams: x = avgCloudWaterKgM2, y = cloudBaseY, z = cloudTopY, w = cloudShadowStrength (set edilmediginde 0.0 -> %100 1.0 carpan!)
 float4 _GlobalCloudGridParams;
 float4 _GlobalWindVector;
+// Paket 4A gece-gunduz: 0 = gunduz (set edilmediginde varsayilan, eski gorunum korunur), 1 = tam gece.
+// Sabit gokyuzu/zemin yari-kure ortam tabanini geceleri karartir (aksi halde gece de arazi gunduz kadar aydinlik kalir).
+float _StratoNightDim01;
 
 /// Paket 4A Faz 4A.3: Gunes vektoru yonunde dunya-uzayi 3B bulut katmani izdusumu ile
 /// zemin uzerine yumusak dinamik bulut golgesi [0.25 .. 1.0] dusurur.
@@ -513,6 +516,9 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float upFactor = normalWS.y * 0.5 + 0.5;
     float3 skyHemi = float3(0.46, 0.56, 0.74);
     float3 groundHemi = float3(0.18, 0.15, 0.14);
+    float hemiScale = 1.0 - 0.86 * saturate(_StratoNightDim01);
+    skyHemi *= hemiScale;
+    groundHemi *= hemiScale;
     float3 ambientTerm = max(shAmbient, lerp(groundHemi, skyHemi, upFactor)) * max(_AmbientStrength, 0.25) * combinedIndirectAo;
 
     float3 directDiffuse = mainLight.color * (ndotl * mainLight.shadowAttenuation + wrappedFill * combinedIndirectAo);

@@ -3127,6 +3127,25 @@ namespace Stratocraft.Character
             return tex;
         }
 
+        private static readonly Dictionary<int, Texture2D> s_staticIconCache = new(64);
+
+        /// <summary>
+        /// [B] Tarif kitabi malzeme seridi icin envanterdeki ayni prosedurel esya ikonunu (48x48) dondurur.
+        /// </summary>
+        public static Texture2D GetStaticItemIcon(InventoryItemKind kind, byte subId)
+        {
+            int key = ((int)kind << 8) | subId;
+            if (s_staticIconCache.TryGetValue(key, out Texture2D? existing) && existing != null)
+            {
+                return existing;
+            }
+
+            var slot = new VisualInventorySlot { Kind = kind, SubId = subId, Count = 1, Durability01 = 1f };
+            Texture2D created = BuildProceduralItemIcon(in slot, CombatWeaponArchetype.Longsword);
+            s_staticIconCache[key] = created;
+            return created;
+        }
+
         private Texture2D GetOrBuildIconForSlot(in VisualInventorySlot slot, CombatWeaponArchetype activeSwordArchetype)
         {
             int key = ((int)slot.Kind << 16) | (slot.SubId << 8) | (slot.Kind == InventoryItemKind.WeaponSword ? (int)activeSwordArchetype : 0);
@@ -3988,7 +4007,26 @@ namespace Stratocraft.Character
             "⚔️ Silah & Aletler (21)",
             "🛡️ Zırhlar (12)",
             "🧪 İksir & Tıp (3)",
-            "🌿 Doğa, Yontma & Metalurji (30)"
+            "🌿 Doğa, Yontma & Metalurji (34)",
+            "🌦️ Hava Aletleri (6)"
+        };
+
+        public const int CreativeWeatherCategoryIndex = 5;
+
+        /// <summary>
+        /// Paket 4A: Yaratıcı katalogdan seçilen meteoroloji aleti / paratoner, elde yerleştirilmeye hazır
+        /// olarak oyuncuya verilir ([Sağ Tık] ile dünyaya konur). Stage1InteractivePlayController bağlar.
+        /// </summary>
+        public Action<PrimitiveCraftOutputId>? OnCreativeWeatherInstrumentRequested { get; set; }
+
+        private static readonly (PrimitiveCraftOutputId id, string name, string hint)[] CreativeWeatherInstruments =
+        {
+            (PrimitiveCraftOutputId.WeatherBarometer, "Barometre", "Basınç + Zambretti A-Z tahmini"),
+            (PrimitiveCraftOutputId.WeatherThermometer, "Termometre", "Hava sıcaklığı °C (min/maks)"),
+            (PrimitiveCraftOutputId.WeatherHygrometer, "Higrometre", "Nem % + bulut tabanı (LCL)"),
+            (PrimitiveCraftOutputId.WeatherWindVaneAnemometer, "Rüzgâr Gülü", "Yön + hız (Beaufort 0-12)"),
+            (PrimitiveCraftOutputId.WeatherRainGauge, "Yağmur Ölçer", "Biriken yağış (mm)"),
+            (PrimitiveCraftOutputId.MetalLightningRod, "Paratoner", "Yıldırımı çeker, 24m koruma")
         };
 
         private static readonly (InventoryItemKind kind, byte subId)[] CreativeBlocks =
@@ -4161,6 +4199,12 @@ namespace Stratocraft.Character
                 }
             }
 
+            if (CreativeCategoryIndex == CreativeWeatherCategoryIndex)
+            {
+                DrawCreativeWeatherInstrumentsGrid(winX, winY, winW, winH, tabY, miningCtrl);
+                return;
+            }
+
             var items = CreativeCategoryIndex switch
             {
                 0 => CreativeBlocks,
@@ -4231,6 +4275,81 @@ namespace Stratocraft.Character
             GUI.Label(new Rect(winX + 16f, winY + winH - 26f, winW - 32f, 20f),
                 "İpucu: [Sol Tık] = +1 Tekil Eşya ( Benzersiz 3B Şekil Tohumlu ) | [Shift + Sol Tık] = +Tam Yığın | [TAB / ESC] Kapat", _keyBadgeStyle!);
         }
+
+        private GUIStyle? _creativeWeatherHintStyle;
+
+        /// <summary>
+        /// Paket 4A meteoroloji aletleri + paratoner sekmesi. Aletler çantada taşınan yığın eşya değil,
+        /// dünyaya yerleştirilen fiziksel istasyonlardır: seçilen alet ele alınır ve [Sağ Tık] ile konur.
+        /// </summary>
+        private void DrawCreativeWeatherInstrumentsGrid(
+            float winX,
+            float winY,
+            float winW,
+            float winH,
+            float tabY,
+            Stage1MatterCrystalAndMiningController miningCtrl)
+        {
+            const float cellW = 250f;
+            const float cellH = 84f;
+            float viewX = winX + 16f;
+            float viewY = tabY + 38f;
+            float viewW = winW - 32f;
+            int cols = Mathf.Max(1, Mathf.FloorToInt(viewW / cellW));
+
+            for (int i = 0; i < CreativeWeatherInstruments.Length; i++)
+            {
+                var entry = CreativeWeatherInstruments[i];
+                int col = i % cols;
+                int row = i / cols;
+                Rect cellRect = new Rect(viewX + col * cellW, viewY + row * cellH, cellW - 8f, cellH - 8f);
+                bool isHovered = Event.current != null && cellRect.Contains(Event.current.mousePosition);
+                GUI.DrawTexture(cellRect, isHovered ? _slotHoverBgTex! : _slotBgTex!);
+
+                Texture? preview = RecipePreviewTextureProvider?.Invoke(entry.id);
+                float textX = cellRect.x + 8f;
+                if (preview != null)
+                {
+                    GUI.DrawTexture(new Rect(cellRect.x + 4f, cellRect.y + 4f, cellH - 16f, cellH - 16f), preview, ScaleMode.ScaleToFit, true);
+                    textX = cellRect.x + cellH - 4f;
+                }
+
+                float textW = cellRect.xMax - textX - 6f;
+                _creativeWeatherHintStyle ??= new GUIStyle(_keyBadgeStyle!)
+                {
+                    fontSize = 10,
+                    fontStyle = FontStyle.Normal,
+                    wordWrap = true,
+                    alignment = TextAnchor.UpperLeft,
+                    normal = { textColor = new Color(0.84f, 0.88f, 0.94f, 1f) }
+                };
+                GUI.Label(new Rect(textX, cellRect.y + 6f, textW, 20f), $"<b>{entry.name}</b>", _keyBadgeStyle!);
+                GUI.Label(new Rect(textX, cellRect.y + 26f, textW, 28f), entry.hint, _creativeWeatherHintStyle);
+                GUI.Label(new Rect(textX, cellRect.y + 56f, textW, 18f), "Tıkla -> ele al -> [Sağ Tık] koy", _creativeWeatherHintStyle);
+
+                if (GUI.Button(cellRect, GUIContent.none, GUIStyle.none))
+                {
+                    if (OnCreativeWeatherInstrumentRequested != null)
+                    {
+                        OnCreativeWeatherInstrumentRequested.Invoke(entry.id);
+                        IsCreativeCatalogOpen = false;
+                    }
+                    else
+                    {
+                        miningCtrl.LastFeedbackText = "Meteoroloji aleti verilemedi (oyun denetleyicisi bağlı değil).";
+                    }
+                }
+            }
+
+            GUI.Label(new Rect(winX + 16f, winY + winH - 26f, winW - 32f, 20f),
+                "İpucu: Aleti seç → katalog kapanır → bakılan zemine [Sağ Tık] ile yerleştir | Yerleşik alete [E] Oku, [Shift+E] Sök", _keyBadgeStyle!);
+        }
+
+        /// <summary>
+        /// Tarif kitabı 3B önizleme oluşturucusundan (Stage1RecipeBookPreviewRenderer) meteoroloji aleti görseli
+        /// almak için isteğe bağlı sağlayıcı. Bağlı değilse sadece metin gösterilir.
+        /// </summary>
+        public Func<PrimitiveCraftOutputId, Texture?>? RecipePreviewTextureProvider { get; set; }
     }
 }
 #endif
