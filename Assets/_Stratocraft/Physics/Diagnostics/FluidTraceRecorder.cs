@@ -1,12 +1,13 @@
 #nullable enable
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
 namespace Stratocraft.Physics.Diagnostics
 {
     /// <summary>
-    /// WP-W1: 0-GC Kapsamli Sivi Simulasyonu ve Cizim Anomali Telemetri Kaydedicisi
+    /// WP-W1 &amp; Paket 4B (IP-1): 0-GC Kapsamli Sivi Simulasyonu, Kinematik Dilim ve Cizim Anomali Telemetri Kaydedicisi
     /// (Logs/fluid_trace_*.csv ve Logs/fluid_events.log).
     /// </summary>
     public sealed class FluidTraceRecorder
@@ -33,7 +34,14 @@ namespace Stratocraft.Physics.Diagnostics
             int missingRendererChunks = 0,
             int zeroMeshFluidChunks = 0,
             int seamTransfers = 0,
-            int siphonTransfers = 0)
+            int siphonTransfers = 0,
+            float subTickAlpha01 = 0f,
+            int leasedKinematicsSlices = 0,
+            int poolCapacitySlices = 0,
+            float meanFlowSpeedMps = 0f,
+            int massFluxUnits = 0,
+            int currentTickStride = 1,
+            double batchMicroseconds = 0.0)
         {
             if (!IsEnabled || (steppedChunkCount <= 0 && missingRendererChunks <= 0 && zeroMeshFluidChunks <= 0))
             {
@@ -44,13 +52,13 @@ namespace Stratocraft.Physics.Diagnostics
             if (!_headerWritten)
             {
                 _sb.AppendLine(
-                    "Tick,TimeUtc,ActiveChunks,SteppedChunks,GlobalActiveMass,SteppedMass,MissingRenderers,ZeroMeshChunks,SeamTransfers,SiphonTransfers,ObsidianFormed,SteamFizzled,StepParity");
+                    "Tick,TimeUtc,ActiveChunks,SteppedChunks,GlobalActiveMass,SteppedMass,MissingRenderers,ZeroMeshChunks,SeamTransfers,SiphonTransfers,ObsidianFormed,SteamFizzled,StepParity,SubTickAlpha,LeasedSlices,PoolCapacity,MeanFlowMps,MassFluxUnits,TickStride,BatchUs");
                 _headerWritten = true;
             }
 
             long reportedGlobal = globalActiveMass >= 0 ? globalActiveMass : steppedRemainingMass;
             _sb.Append(_tickCounter).Append(',')
-               .Append(DateTime.UtcNow.ToString("HH:mm:ss.fff")).Append(',')
+               .Append(DateTime.UtcNow.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)).Append(',')
                .Append(activeChunkCount).Append(',')
                .Append(steppedChunkCount).Append(',')
                .Append(reportedGlobal).Append(',')
@@ -61,7 +69,14 @@ namespace Stratocraft.Physics.Diagnostics
                .Append(siphonTransfers).Append(',')
                .Append(totalObsidianFormed).Append(',')
                .Append(totalSteamFizzled).Append(',')
-               .Append(stepParity)
+               .Append(stepParity).Append(',')
+               .Append(subTickAlpha01.ToString("F3", CultureInfo.InvariantCulture)).Append(',')
+               .Append(leasedKinematicsSlices).Append(',')
+               .Append(poolCapacitySlices).Append(',')
+               .Append(meanFlowSpeedMps.ToString("F3", CultureInfo.InvariantCulture)).Append(',')
+               .Append(massFluxUnits).Append(',')
+               .Append(currentTickStride).Append(',')
+               .Append(batchMicroseconds.ToString("F1", CultureInfo.InvariantCulture))
                .AppendLine();
 
             _flushBatchCounter++;

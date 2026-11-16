@@ -152,16 +152,22 @@ namespace Stratocraft.Character
         private readonly (int cx, int cz)[] _parallelMeshKeys = new (int cx, int cz)[MaxParallelMeshBatch];
         private readonly ChunkSubMeshEntry[] _parallelMeshEntries = new ChunkSubMeshEntry[MaxParallelMeshBatch];
         private readonly ushort[] _parallelMeshVisibleMasks = new ushort[MaxParallelMeshBatch];
+        public const float FluidFixedTickSeconds = FluidSimulationSystem.FixedTickIntervalSeconds;
+        public const int MaxFluidMeshRebuildsPerFrame = 16;
+
         private readonly int[] _parallelMeshChebDists = new int[MaxParallelMeshBatch];
         private readonly List<FacetedVoxelTriangle>[] _parallelSolidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
-        private readonly List<FacetedVoxelTriangle>[] _parallelFluidTrisScratch = new List<FacetedVoxelTriangle>[MaxParallelMeshBatch];
+        private readonly List<FluidRichTriangle>[] _parallelFluidRichTrisScratch = new List<FluidRichTriangle>[MaxParallelMeshBatch];
         private readonly (int cx, int cz)[] _bgDistantMeshKeys = new (int cx, int cz)[MaxBgDistantMeshBatch];
         private readonly ushort[] _bgDistantMeshVisibleMasks = new ushort[MaxBgDistantMeshBatch];
         private readonly List<FacetedVoxelTriangle>[] _bgDistantMeshSolidTris = new List<FacetedVoxelTriangle>[MaxBgDistantMeshBatch];
-        private readonly List<FacetedVoxelTriangle>[] _bgDistantMeshFluidTris = new List<FacetedVoxelTriangle>[MaxBgDistantMeshBatch];
+        private readonly List<FluidRichTriangle>[] _bgDistantMeshFluidRichTris = new List<FluidRichTriangle>[MaxBgDistantMeshBatch];
         private readonly Dictionary<(int cx, int cz), uint[]> _bgDistantMeshSolidMap = new(64);
         private readonly Dictionary<(int cx, int cz), ushort[]> _bgDistantMeshFluidMap = new(64);
         private readonly Dictionary<(int cx, int cz), byte[]> _bgDistantMeshSoilMap = new(64);
+        private readonly Dictionary<(int cx, int cz), ulong[]> _bgDistantMeshSalinityMap = new(32);
+        private readonly Dictionary<(int cx, int cz), byte[]> _bgDistantMeshSnowMap = new(64);
+        private readonly Dictionary<(int cx, int cz), ChunkSkyOcclusionMap256> _bgDistantMeshSkyMap = new(64);
         private readonly HashSet<(int cx, int cz)> _inFlightDistantMeshKeys = new();
         private System.Threading.Tasks.Task? _pendingDistantMeshTask;
         private int _bgDistantMeshBatchCount;
@@ -170,9 +176,11 @@ namespace Stratocraft.Character
         private readonly Stack<PooledChunkSlot> _chunkPool = new(128);
         private readonly Plane[] _frustumPlanes = new Plane[6];
         private Comparison<(int cx, int cz)>? _dirtyChunkSortComparison;
+        private Comparison<(int cx, int cz)>? _dirtyFluidDistanceSortComparison;
         private int _sortPlayerCx;
         private int _sortPlayerCz;
         private Vector2 _sortCamFwd2D;
+        private Vector3 _fluidSortCamPos;
         private Vector3 _lastFrustumCamPos = new(float.MinValue, float.MinValue, float.MinValue);
         private Quaternion _lastFrustumCamRot = Quaternion.identity;
         private int _lastFrustumChunkCount = -1;
@@ -180,7 +188,7 @@ namespace Stratocraft.Character
         private int _telemetrySampleFrameCounter;
         private readonly System.Diagnostics.Stopwatch _meshRebuildStopwatch = new();
         private readonly List<FacetedVoxelTriangle> _reusableTris = new(8192);
-        private readonly List<FacetedVoxelTriangle> _reusableFluidTris = new(4096);
+        private readonly List<FluidRichTriangle> _reusableFluidRichTris = new(4096);
         private readonly DistantHorizonLodSystem _distantHorizonSystem = new();
         private int _lastColliderRingPlayerCx = int.MinValue;
         private int _lastColliderRingPlayerCz = int.MinValue;
@@ -194,6 +202,12 @@ namespace Stratocraft.Character
         private string _cachedRightHudString = string.Empty;
         private string _cachedSwordBannerString = string.Empty;
         private readonly FluidSimulationSystem _fluidSystem = new();
+        private readonly ActiveChunkFluidKinematicsPool _fluidKinematicsPool = new(
+            ActiveChunkFluidKinematicsPool.DefaultPrewarmSlices,
+            16 * MaxEditableVoxelY * 16);
+        private readonly Dictionary<(int cx, int cz), IFluidKinematicsSlice> _fluidKinematicsViewMap = new(
+            ActiveChunkFluidKinematicsPool.HardMaxSlices);
+        private readonly Dictionary<(int cx, int cz), ChunkSkyOcclusionMap256> _skyOcclusionMaps = new(256);
         private readonly LavaSolidificationAndCoolingSystem _lavaSolidificationSystem = new LavaSolidificationAndCoolingSystem();
         private static readonly Func<int, int, int, float> s_sampleLocalAmbientTempDelegate = SampleLocalVoxelAmbientTemperatureCelsius;
         private readonly FluidTraceRecorder _fluidTraceRecorder = new();
@@ -203,10 +217,13 @@ namespace Stratocraft.Character
         private float _soilSolarDryingTimer = 0.85f;
         private static readonly int ShaderSwimmerPosId = Shader.PropertyToID("_StratocraftSwimmerPos");
         private static readonly int ShaderSwimmerVelId = Shader.PropertyToID("_StratocraftSwimmerVel");
+        private static readonly int ShaderFluidSubTickAlphaId = Shader.PropertyToID("_FluidSubTickAlpha");
+        private static readonly int ShaderGlobalWindBeaufortId = Shader.PropertyToID("_GlobalWindBeaufort");
         private readonly List<(int cx, int cz)> _allActiveFluidKeysScratch = new(64);
         private int _fluidRoundRobinCursor;
         private int _fluidTickIndex;
-        private float _fluidTickTimer;
+        private float _fluidTickAccumulator;
+        private float _fluidSubTickAlpha01;
         private readonly Stage1PlayerMovementBridge _movementBridge = new();
         private readonly Stage1StructuralCollapseBridge _collapseBridge = new();
         private readonly Stage1MatterCrystalAndMiningController _miningCtrl = new();
@@ -217,6 +234,7 @@ namespace Stratocraft.Character
         private readonly Stage1CampfireAndCookingController _campfireCtrl = new();
         private readonly Stage1BloomeryAndForgingController _bloomeryCtrl = new();
         private readonly Stage1WheelbarrowController _wheelbarrowCtrl = new();
+        private readonly Stage1WindmillController _windmillCtrl = new();
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
@@ -233,8 +251,14 @@ namespace Stratocraft.Character
         private readonly ChunkSalinityBitset _salinityBitset = new();
         private readonly KarstHydrologyAndAquiferSystem _karstAquiferSystem = new();
         private readonly ConvectiveLightningAndRodSystem _convectiveLightningSystem = new();
+        private readonly SnowAccumulationAndMeltSystem _snowSystem = new();
         private readonly Stage1AtmosphereCloudAndRainRenderer _cloudAndRainRenderer = new();
         private readonly PlacedWeatherInstrumentsSystem _placedWeatherInstruments = new();
+        private VoxelSolidProbeDelegate? _isWorldVoxelSolidCached;
+        private LocalWindSample3D _currentPlayerLocalWind3D;
+        private System.Numerics.Vector3 _currentPlayerWindDragForceN;
+        private byte _currentWindBeaufortScale;
+        private float _lastPlayerSnowColumnSweMm;
         private readonly AtmosphereAoiCellSample[] _aoiCurrentWindow81 = new AtmosphereAoiCellSample[AtmosphereAoiSyncPacket.AoiCellCount];
         private readonly AtmosphereAoiCellSample[] _aoiClientBaseline81 = new AtmosphereAoiCellSample[AtmosphereAoiSyncPacket.AoiCellCount];
         private readonly byte[] _aoiWirePacketBuffer = new byte[AtmosphereAoiSyncPacket.MaxWirePacketBytes];
@@ -255,7 +279,7 @@ namespace Stratocraft.Character
         private float _hydrologyStepTimer;
         private float _hydrologyAccumGameSeconds;
         private float _hydrologyAccumRealSeconds;
-        private int _testWeatherOverrideMode; // 0=Auto, 1=Rain(14mm/h), 2=Storm(28mm/h), 3=Clear(0mm/h)
+        private int _testWeatherOverrideMode; // 0=Auto, 1=Rain, 2=Storm, 3=Snow, 4=Blizzard, 5=Clear
         private float _pendingThunderTimerSec = -1.0f;
         private float _pendingThunderDistanceMeters;
         private float _lightningSkyFlashIntensity01;
@@ -281,6 +305,10 @@ namespace Stratocraft.Character
         public Stage1AtmosphereCloudAndRainRenderer CloudAndRainRenderer => _cloudAndRainRenderer;
         public PlacedWeatherInstrumentsSystem PlacedWeatherInstruments => _placedWeatherInstruments;
         public SolarEphemState CurrentSolarEphem => _currentSolarEphem;
+        public ActiveChunkFluidKinematicsPool FluidKinematicsPool => _fluidKinematicsPool;
+        public Stage1WindmillController WindmillController => _windmillCtrl;
+        public SnowAccumulationAndMeltSystem SnowSystem => _snowSystem;
+        public LocalWindSample3D CurrentPlayerLocalWind3D => _currentPlayerLocalWind3D;
 
         private sealed class PlacedWeatherInstrumentVisualEntry
         {
@@ -342,9 +370,11 @@ namespace Stratocraft.Character
             var key = (chunkCoord.x, chunkCoord.y);
             _worldChunks[key] = voxels65536; _chunkMeshFilters[key] = mf; _chunkColliders[key] = mc;
             if (mf != null && mf.TryGetComponent<MeshRenderer>(out var mr)) _chunkMeshRenderers[key] = mr;
+            RebuildChunkSkyOcclusionMap(key.x, key.y, voxels65536);
             if (fluids65536 != null)
             {
                 _fluidChunks[key] = fluids65536;
+                SeedCoastalOceanSalinityIfApplicable(key.x, key.y, fluids65536);
                 CaveChamberHydrologyEvaluation karstEval = KarstHydrologyAndAquiferSystem.EvaluateCaveChamberHydrology(
                     key.x * 16 + 8,
                     key.y * 16 + 8,
@@ -361,6 +391,62 @@ namespace Stratocraft.Character
             {
                 _fluidMeshFilters[key] = fluidMf;
                 if (fluidMf.TryGetComponent<MeshRenderer>(out var fmr)) _fluidMeshRenderers[key] = fmr;
+            }
+        }
+
+        private void RebuildChunkSkyOcclusionMap(int cx, int cz, uint[] voxels)
+        {
+            if (voxels == null) return;
+            if (!_skyOcclusionMaps.TryGetValue((cx, cz), out ChunkSkyOcclusionMap256? skyMap) || skyMap == null)
+            {
+                skyMap = new ChunkSkyOcclusionMap256();
+                _skyOcclusionMaps[(cx, cz)] = skyMap;
+            }
+            int sliceLen = Math.Min(voxels.Length, 16 * MaxEditableVoxelY * 16);
+            skyMap.RebuildAllColumns(voxels.AsSpan(0, sliceLen));
+        }
+
+        private void SeedCoastalOceanSalinityIfApplicable(int cx, int cz, ushort[] fluids)
+        {
+            int seaLevelY = (int)StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6;
+            float centerX = cx * 16f + 8f;
+            float centerZ = cz * 16f + 8f;
+            if (StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(centerX, centerZ) > seaLevelY + 1.5f)
+            {
+                return;
+            }
+
+            _skyOcclusionMaps.TryGetValue((cx, cz), out ChunkSkyOcclusionMap256? skyMap);
+            int minOceanY = Math.Max(1, seaLevelY - 14);
+            int maxOceanY = Math.Min(seaLevelY, (fluids.Length >> 8) - 1);
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    if (skyMap != null && !skyMap.HasOpenSkyAbove(lx, maxOceanY, lz))
+                    {
+                        continue;
+                    }
+
+                    int col = (lz << 4) | lx;
+                    int topIdx = (maxOceanY << 8) | col;
+                    ushort topRaw = fluids[topIdx];
+                    if ((topRaw & 0xFFu) == 0u || ((topRaw >> 8) & 0x03u) != (uint)FluidType.Water)
+                    {
+                        continue;
+                    }
+
+                    for (int y = maxOceanY; y >= minOceanY; y--)
+                    {
+                        int idx = (y << 8) | col;
+                        ushort raw = fluids[idx];
+                        if ((raw & 0xFFu) == 0u || ((raw >> 8) & 0x03u) != (uint)FluidType.Water)
+                        {
+                            break;
+                        }
+                        _salinityBitset.SetSaltWaterFlat(cx, cz, idx, true);
+                    }
+                }
             }
         }
 
@@ -431,7 +517,7 @@ namespace Stratocraft.Character
                         {
                             _sharedFluidMaterial = existingMr.sharedMaterial;
                         }
-                        else if (existingMr.sharedMaterial == null)
+                        else if (existingMr.sharedMaterial == null || existingMr.sharedMaterial == SharedVoxelMaterial)
                         {
                             Material? resolved = fallbackFluidMat != null ? fallbackFluidMat : ResolveFluidSurfaceMaterial();
                             if (resolved != null) existingMr.sharedMaterial = resolved;
@@ -456,6 +542,7 @@ namespace Stratocraft.Character
         /// <summary>
         /// Bir voksel (wx, wy, wz) kirildiginda, konuldugunda veya hasar aldiginda YALNIZCA ilgili
         /// 16x16x16 Kubik Alt-Chunk dilimini (subY = wy &gt;&gt; 4) kirli isaretler (10x daha hizli kismi orme!).
+        /// Ayrica ChunkSkyOcclusionMap256 ve SnowAccumulationAndMeltSystem sutun durumunu O(1) gunceller.
         /// </summary>
         public static void NotifyWorldVoxelEdited(int cx, int cz, int wy, int lx, int lz, bool includeNeighbors = true)
         {
@@ -470,6 +557,43 @@ namespace Stratocraft.Character
             int localSubY = wy & 15;
             if (localSubY <= 1 && subY > 0) mask |= (ushort)(1 << (subY - 1));
             if (localSubY >= 14 && subY + 1 < SubChunkCountY) mask |= (ushort)(1 << (subY + 1));
+
+            if (_worldChunks.TryGetValue((cx, cz), out uint[]? editedVoxels) && editedVoxels != null)
+            {
+                int sliceLen = Math.Min(editedVoxels.Length, 16 * MaxEditableVoxelY * 16);
+                if ((uint)lx < 16u && (uint)lz < 16u && (uint)wy < (uint)MaxEditableVoxelY)
+                {
+                    int cellIdx = (wy << 8) | (lz << 4) | lx;
+                    if ((uint)cellIdx < (uint)editedVoxels.Length)
+                    {
+                        if (!_skyOcclusionMaps.TryGetValue((cx, cz), out ChunkSkyOcclusionMap256? skyMap) || skyMap == null)
+                        {
+                            skyMap = new ChunkSkyOcclusionMap256();
+                            skyMap.RebuildAllColumns(editedVoxels.AsSpan(0, sliceLen));
+                            _skyOcclusionMaps[(cx, cz)] = skyMap;
+                        }
+                        else
+                        {
+                            skyMap.UpdateOnCellChanged(editedVoxels.AsSpan(0, sliceLen), lx, wy, lz, editedVoxels[cellIdx]);
+                        }
+                    }
+
+                    if (_fluidChunks.TryGetValue((cx, cz), out ushort[]? editedFluids) && editedFluids != null)
+                    {
+                        _snowSystem.OnColumnVoxelEdited(
+                            cx,
+                            cz,
+                            lx,
+                            lz,
+                            editedVoxels.AsSpan(0, sliceLen),
+                            editedFluids.AsSpan(0, Math.Min(editedFluids.Length, sliceLen)),
+                            _soilMoistureSystem,
+                            MaxEditableVoxelY,
+                            out ushort snowDirtyMask);
+                        mask |= snowDirtyMask;
+                    }
+                }
+            }
 
             AddSubChunkDirtyMask((cx, cz), mask);
             if (!includeNeighbors) return;
@@ -670,6 +794,8 @@ namespace Stratocraft.Character
             _recipeBookPreviewRenderer.Dispose();
             Shader.SetGlobalVector(ShaderSwimmerPosId, Vector4.zero);
             Shader.SetGlobalVector(ShaderSwimmerVelId, Vector4.zero);
+            Shader.SetGlobalFloat(ShaderFluidSubTickAlphaId, 1.0f);
+            Shader.SetGlobalFloat(ShaderGlobalWindBeaufortId, 0.0f);
             if (_fluidTraceRecorder.IsEnabled)
             {
                 _fluidTraceRecorder.Flush(Path.Combine(Directory.GetCurrentDirectory(), "Logs"));
@@ -796,6 +922,10 @@ namespace Stratocraft.Character
                     _worldChunks.Remove(key);
                     _fluidChunks.Remove(key);
                     _salinityBitset.ClearChunk(key.cx, key.cz);
+                    _skyOcclusionMaps.Remove(key);
+                    _snowSystem.ReleaseChunk(key.cx, key.cz);
+                    _fluidKinematicsPool.ReleaseChunk(key.cx, key.cz);
+                    _fluidKinematicsViewMap.Remove(key);
                     _chunkMeshFilters.Remove(key);
                     _fluidMeshFilters.Remove(key);
                     _chunkMeshRenderers.Remove(key);
@@ -1007,6 +1137,9 @@ namespace Stratocraft.Character
             _bgDistantMeshSolidMap.Clear();
             _bgDistantMeshFluidMap.Clear();
             _bgDistantMeshSoilMap.Clear();
+            _bgDistantMeshSalinityMap.Clear();
+            _bgDistantMeshSnowMap.Clear();
+            _bgDistantMeshSkyMap.Clear();
             _bgDistantMeshBatchCount = 0;
             _bgDistantMeshIntegrateCursor = 0;
         }
@@ -1186,167 +1319,241 @@ namespace Stratocraft.Character
                 _lavaSolidificationSystem.StepCoolingVolcanicRocks(dt, _worldChunks, _dirtyChunks);
             }
 
-            if (_activeFluidChunks.Count == 0) return;
-
-            _fluidTickTimer -= dt;
-            if (_fluidTickTimer > 0f) return;
-            const float fluidTickInterval = 0.130f;
-            float effectiveFluidTickDt = Mathf.Clamp(fluidTickInterval - _fluidTickTimer, fluidTickInterval, 0.30f);
-            _fluidTickTimer = fluidTickInterval;
-
-            int budgetChunks = Mathf.Clamp(_fluidSystem.MaxChunksPerTick, 12, 24);
-            _allActiveFluidKeysScratch.Clear();
-            foreach (var key in _activeFluidChunks)
+            if (_activeFluidChunks.Count == 0)
             {
-                _allActiveFluidKeysScratch.Add(key);
+                _fluidTickAccumulator = 0f;
+                _fluidSubTickAlpha01 = 1.0f;
+                _fluidSystem.ResetFixedStepAccumulator();
+                Shader.SetGlobalFloat(ShaderFluidSubTickAlphaId, 1.0f);
+                return;
             }
 
-            _activeFluidScratch.Clear();
-            int totalActive = _allActiveFluidKeysScratch.Count;
-            if (totalActive > 0)
+            const int maxSubSteps = FluidSimulationSystem.MaxCatchupTicksPerFrame;
+            int subStepsToRun = _fluidSystem.AdvanceFixedStepAccumulator(dt);
+            _fluidTickAccumulator = _fluidSystem.SubTickAccumulatorSeconds;
+            _fluidSubTickAlpha01 = _fluidSystem.SubTickAlpha01;
+            Shader.SetGlobalFloat(ShaderFluidSubTickAlphaId, _fluidSubTickAlpha01);
+
+            if (subStepsToRun <= 0)
             {
-                _fluidRoundRobinCursor %= totalActive;
-                int countToPick = Mathf.Min(budgetChunks, totalActive);
-                for (int i = 0; i < countToPick; i++)
-                {
-                    int idx = (_fluidRoundRobinCursor + i) % totalActive;
-                    _activeFluidScratch.Add(_allActiveFluidKeysScratch[idx]);
-                }
-                _fluidRoundRobinCursor = (_fluidRoundRobinCursor + countToPick) % totalActive;
+                return;
             }
 
+            int clampedSubSteps = Math.Min(subStepsToRun, maxSubSteps);
             int sliceVolume = 16 * MaxEditableVoxelY * 16;
-            bool anyActiveStepped = false;
-            int tickParity = _fluidSystem.AdvanceTickParity();
-            _fluidTickIndex++;
-            int steppedCount = 0;
-            long totalRemainingAcrossStepped = 0;
-            int totalObsidian = 0;
-            int totalSteam = 0;
-            int totalSiphonTransfers = 0;
 
-            for (int i = 0; i < _activeFluidScratch.Count; i++)
+            for (int subStep = 0; subStep < clampedSubSteps && _activeFluidChunks.Count > 0; subStep++)
             {
-                var key = _activeFluidScratch[i];
-                if (!_worldChunks.TryGetValue(key, out uint[]? voxels) || voxels == null ||
-                    !_fluidChunks.TryGetValue(key, out ushort[]? fluids) || fluids == null)
+                int budgetChunks = Mathf.Clamp(_fluidSystem.MaxChunksPerTick, 12, 24);
+                _allActiveFluidKeysScratch.Clear();
+                foreach (var key in _activeFluidChunks)
                 {
-                    _activeFluidChunks.Remove(key);
-                    continue;
+                    _allActiveFluidKeysScratch.Add(key);
                 }
 
-                bool hasUnsettled = HasUnsettledFluidCells(fluids, sliceVolume);
-                long remaining = 0L;
-                int obsidianCount = 0;
-                int steamCount = 0;
-
-                if (hasUnsettled)
+                _activeFluidScratch.Clear();
+                int totalActive = _allActiveFluidKeysScratch.Count;
+                if (totalActive > 0)
                 {
-                    anyActiveStepped = true;
-                    steppedCount++;
-                    remaining = _fluidSystem.StepChunkFluid(
-                        voxels.AsSpan(0, sliceVolume),
-                        fluids.AsSpan(0, sliceVolume),
-                        16, MaxEditableVoxelY, 16,
-                        out obsidianCount, out steamCount,
-                        explicitTickParity: tickParity);
+                    _fluidRoundRobinCursor %= totalActive;
+                    int countToPick = Mathf.Min(budgetChunks, totalActive);
+                    for (int i = 0; i < countToPick; i++)
+                    {
+                        int idx = (_fluidRoundRobinCursor + i) % totalActive;
+                        _activeFluidScratch.Add(_allActiveFluidKeysScratch[idx]);
+                    }
+                    _fluidRoundRobinCursor = (_fluidRoundRobinCursor + countToPick) % totalActive;
+                }
 
-                    // WP-N1: Topraga su emilimi ve camurlasma (Moisture == 255 doygunluga ulasinca 0 birim ceker!)
-                    int absorbedBySoil = _soilMoistureSystem.StepChunkSoilInfiltration(
-                        key.cx, key.cz,
+                bool anyActiveStepped = false;
+                int tickParity = _fluidSystem.AdvanceTickParity();
+                _fluidTickIndex++;
+                int steppedCount = 0;
+                long totalRemainingAcrossStepped = 0;
+                int totalObsidian = 0;
+                int totalSteam = 0;
+                int totalSiphonTransfers = 0;
+
+                _fluidSystem.BeginFluidTickBatch();
+
+                for (int i = 0; i < _activeFluidScratch.Count; i++)
+                {
+                    var key = _activeFluidScratch[i];
+                    if (!_worldChunks.TryGetValue(key, out uint[]? voxels) || voxels == null ||
+                        !_fluidChunks.TryGetValue(key, out ushort[]? fluids) || fluids == null)
+                    {
+                        _activeFluidChunks.Remove(key);
+                        _fluidKinematicsPool.ReleaseChunk(key.cx, key.cz);
+                        _fluidKinematicsViewMap.Remove(key);
+                        continue;
+                    }
+
+                    bool hasUnsettled = HasUnsettledFluidCells(fluids, sliceVolume);
+                    long remaining = 0L;
+                    int obsidianCount = 0;
+                    int steamCount = 0;
+
+                    if (hasUnsettled)
+                    {
+                        anyActiveStepped = true;
+                        steppedCount++;
+
+                        ActiveChunkFluidKinematicsSlice? kinSlice = _fluidKinematicsPool.RentOrGetAndSyncBaseline(
+                            key.cx,
+                            key.cz,
+                            fluids.AsSpan(0, sliceVolume),
+                            sliceVolume,
+                            _fluidTickIndex);
+                        if (kinSlice != null)
+                        {
+                            _fluidKinematicsViewMap[key] = kinSlice;
+                        }
+                        _salinityBitset.TryGetChunkBits(key.cx, key.cz, out ulong[]? salBits);
+
+                        remaining = _fluidSystem.StepChunkFluid(
+                            voxels.AsSpan(0, sliceVolume),
+                            fluids.AsSpan(0, sliceVolume),
+                            16,
+                            MaxEditableVoxelY,
+                            16,
+                            out obsidianCount,
+                            out steamCount,
+                            explicitTickParity: tickParity,
+                            kinematicsSlice: kinSlice,
+                            salinityBits: salBits);
+
+                        // WP-N1: Topraga su emilimi ve camurlasma (Moisture == 255 doygunluga ulasinca 0 birim ceker!)
+                        int absorbedBySoil = _soilMoistureSystem.StepChunkSoilInfiltration(
+                            key.cx, key.cz,
+                            voxels.AsSpan(0, sliceVolume),
+                            fluids.AsSpan(0, sliceVolume),
+                            MaxEditableVoxelY,
+                            out ushort soilVisualDirtyMask,
+                            out bool soilChangedFluid);
+                        if (soilVisualDirtyMask != 0)
+                        {
+                            AddSubChunkDirtyMask(key, soilVisualDirtyMask);
+                        }
+                        if (soilChangedFluid)
+                        {
+                            remaining = Math.Max(0L, remaining - absorbedBySoil);
+                            _dirtyFluidChunks.Add(key);
+                        }
+
+                        totalRemainingAcrossStepped += remaining;
+                        totalObsidian += obsidianCount;
+                        totalSteam += steamCount;
+                        totalSiphonTransfers += _fluidSystem.LastStepSiphonTransfers;
+                    }
+
+                    // Faz 3.3: Serin ortamda (T_env < 55C) kenar-oncelikli lav kabuklasmasi (8-15 sn -> MagmaBlock)
+                    int solidifiedLavaCount = _lavaSolidificationSystem.StepChunkLavaCrusting(
+                        key.cx,
+                        key.cz,
                         voxels.AsSpan(0, sliceVolume),
                         fluids.AsSpan(0, sliceVolume),
                         MaxEditableVoxelY,
-                        out ushort soilVisualDirtyMask,
-                        out bool soilChangedFluid);
-                    if (soilVisualDirtyMask != 0)
+                        FluidFixedTickSeconds,
+                        s_sampleLocalAmbientTempDelegate,
+                        out ushort lavaDirtySubMask);
+                    int coolingLavaCells = _lavaSolidificationSystem.LastStepCoolingLavaCells;
+                    if (lavaDirtySubMask != 0)
                     {
-                        AddSubChunkDirtyMask(key, soilVisualDirtyMask);
+                        AddSubChunkDirtyMask(key, lavaDirtySubMask);
+                        _dirtyChunks.Add(key);
+                        _dirtyFluidChunks.Add(key);
+                        WakeChunkAndNeighborsFluid(key);
+                        anyActiveStepped = true;
                     }
-                    if (soilChangedFluid)
+
+                    if (obsidianCount > 0 || steamCount > 0)
                     {
-                        remaining = Math.Max(0L, remaining - absorbedBySoil);
+                        _dirtyChunks.Add(key);
+                        _dirtyFluidChunks.Add(key);
+                        WakeChunkAndNeighborsFluid(key);
+                        _miningCtrl.LastFeedbackText = obsidianCount > 0
+                            ? $"STOKIYOMETRIK REAKSIYON: Su + Lav (>=128) -> +{obsidianCount} Dogal Obsidyen olustu!"
+                            : $"BUHARLASMA: Dusuk hacimli (<128) Su + Lav temas etti, +{steamCount} hucre buharlasti!";
+                    }
+                    else if (solidifiedLavaCount > 0)
+                    {
+                        _miningCtrl.LastFeedbackText =
+                            $"🔥 LAV KABUKLAŞMASI: Serin ortamda +{solidifiedLavaCount} kenar lav hücresi Sıcak Volkanik Kaya (MagmaBlock) oldu!";
+                    }
+                    else if (remaining > 0)
+                    {
                         _dirtyFluidChunks.Add(key);
                     }
-
-                    totalRemainingAcrossStepped += remaining;
-                    totalObsidian += obsidianCount;
-                    totalSteam += steamCount;
-                    totalSiphonTransfers += _fluidSystem.LastStepSiphonTransfers;
+                    else if (coolingLavaCells <= 0)
+                    {
+                        _activeFluidChunks.Remove(key);
+                        _fluidKinematicsPool.ReleaseChunk(key.cx, key.cz);
+                        if (_fluidKinematicsViewMap.Remove(key))
+                        {
+                            // Son duragan karede EncodedSubTickDy == 128 ve hiz == 128 sifirlanarak kilitlenir
+                            _dirtyFluidChunks.Add(key);
+                        }
+                    }
                 }
 
-                // Faz 3.3: Serin ortamda (T_env < 55C) kenar-oncelikli lav kabuklasmasi (8-15 sn -> MagmaBlock)
-                int solidifiedLavaCount = _lavaSolidificationSystem.StepChunkLavaCrusting(
-                    key.cx,
-                    key.cz,
-                    voxels.AsSpan(0, sliceVolume),
-                    fluids.AsSpan(0, sliceVolume),
-                    MaxEditableVoxelY,
-                    effectiveFluidTickDt,
-                    s_sampleLocalAmbientTempDelegate,
-                    out ushort lavaDirtySubMask);
-                int coolingLavaCells = _lavaSolidificationSystem.LastStepCoolingLavaCells;
-                if (lavaDirtySubMask != 0)
+                _fluidSystem.EndFluidTickBatch(steppedCount);
+
+                int seamTransfers = 0;
+                if (anyActiveStepped)
                 {
-                    AddSubChunkDirtyMask(key, lavaDirtySubMask);
-                    _dirtyChunks.Add(key);
-                    _dirtyFluidChunks.Add(key);
-                    WakeChunkAndNeighborsFluid(key);
-                    anyActiveStepped = true;
+                    seamTransfers = FluidCellularAutomataJob.ExchangeChunkBorderFluids(
+                        _worldChunks,
+                        _fluidChunks,
+                        MaxEditableVoxelY,
+                        _dirtyFluidChunks,
+                        _dirtyChunks,
+                        _activeFluidScratch,
+                        _activeFluidChunks,
+                        _salinityBitset,
+                        _fluidKinematicsPool);
+
+                    if (seamTransfers > 0)
+                    {
+                        foreach (var dk in _dirtyFluidChunks)
+                        {
+                            if (_fluidKinematicsPool.TryGetLeased(dk.cx, dk.cz, out ActiveChunkFluidKinematicsSlice? seamSlice) &&
+                                seamSlice != null)
+                            {
+                                _fluidKinematicsViewMap[dk] = seamSlice;
+                            }
+                        }
+                    }
                 }
 
-                if (obsidianCount > 0 || steamCount > 0)
+                if (_fluidTraceRecorder.IsEnabled && steppedCount > 0)
                 {
-                    _dirtyChunks.Add(key);
-                    _dirtyFluidChunks.Add(key);
-                    WakeChunkAndNeighborsFluid(key);
-                    _miningCtrl.LastFeedbackText = obsidianCount > 0
-                        ? $"STOKIYOMETRIK REAKSIYON: Su + Lav (>=128) -> +{obsidianCount} Dogal Obsidyen olustu!"
-                        : $"BUHARLASMA: Dusuk hacimli (<128) Su + Lav temas etti, +{steamCount} hucre buharlasti!";
-                }
-                else if (solidifiedLavaCount > 0)
-                {
-                    _miningCtrl.LastFeedbackText =
-                        $"🔥 LAV KABUKLAŞMASI: Serin ortamda +{solidifiedLavaCount} kenar lav hücresi Sıcak Volkanik Kaya (MagmaBlock) oldu!";
-                }
-                else if (remaining > 0)
-                {
-                    _dirtyFluidChunks.Add(key);
-                }
-                else if (coolingLavaCells <= 0)
-                {
-                    _activeFluidChunks.Remove(key);
-                }
-            }
+                    ComputeFluidTelemetryDiagnostics(
+                        sliceVolume,
+                        out long globalActiveMass,
+                        out int missingRenderers,
+                        out int zeroMeshChunks);
 
-            int seamTransfers = 0;
-            if (anyActiveStepped)
-            {
-                seamTransfers = FluidCellularAutomataJob.ExchangeChunkBorderFluids(
-                    _worldChunks, _fluidChunks, MaxEditableVoxelY, _dirtyFluidChunks, _dirtyChunks, _activeFluidScratch, _activeFluidChunks);
-            }
-
-            if (_fluidTraceRecorder.IsEnabled && steppedCount > 0)
-            {
-                ComputeFluidTelemetryDiagnostics(
-                    sliceVolume,
-                    out long globalActiveMass,
-                    out int missingRenderers,
-                    out int zeroMeshChunks);
-
-                _fluidTraceRecorder.RecordTick(
-                    Path.Combine(Directory.GetCurrentDirectory(), "Logs"),
-                    _activeFluidChunks.Count,
-                    steppedCount,
-                    totalRemainingAcrossStepped,
-                    totalObsidian,
-                    totalSteam,
-                    tickParity,
-                    globalActiveMass,
-                    missingRenderers,
-                    zeroMeshChunks,
-                    seamTransfers,
-                    totalSiphonTransfers);
+                    _fluidTraceRecorder.RecordTick(
+                        Path.Combine(Directory.GetCurrentDirectory(), "Logs"),
+                        _activeFluidChunks.Count,
+                        steppedCount,
+                        totalRemainingAcrossStepped,
+                        totalObsidian,
+                        totalSteam,
+                        tickParity,
+                        globalActiveMass,
+                        missingRenderers,
+                        zeroMeshChunks,
+                        seamTransfers,
+                        totalSiphonTransfers,
+                        subTickAlpha01: _fluidSubTickAlpha01,
+                        leasedKinematicsSlices: _fluidKinematicsPool.LeasedCount,
+                        poolCapacitySlices: ActiveChunkFluidKinematicsPool.HardMaxSlices,
+                        meanFlowSpeedMps: 0f,
+                        massFluxUnits: seamTransfers,
+                        currentTickStride: _fluidSystem.CurrentTickStride,
+                        batchMicroseconds: _fluidSystem.LastBatchMicroseconds);
+                }
             }
         }
 
@@ -1525,6 +1732,56 @@ namespace Stratocraft.Character
                 absoluteWorldY: wy);
         }
 
+        private bool IsWorldVoxelSolidAt(int wx, int wy, int wz)
+        {
+            if ((uint)wy >= (uint)MaxEditableVoxelY)
+            {
+                return false;
+            }
+
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!_worldChunks.TryGetValue((cx, cz), out uint[]? vox) || vox == null)
+            {
+                return false;
+            }
+
+            int idx = (wy << 8) | ((wz - cz * 16) << 4) | (wx - cx * 16);
+            return (uint)idx < (uint)vox.Length && VoxelBitUtility.IsPhysicallySolid(vox[idx]);
+        }
+
+        /// <summary>
+        /// Paket 4B (IP-4 / AK-7): Sahnedeki ok (0.045 kg), mizrak (1.8 kg) ve firlatilan cisimlerin
+        /// anlik 3B ruzgar alaninda (engel golgesi + irtifa profili + bora) hiz sapmasini ilerletir (0 B GC).
+        /// </summary>
+        public Vector3 StepProjectileVelocityWithLocalWind(
+            Vector3 worldPos,
+            Vector3 currentVelocity,
+            float projectileMassKg,
+            float dtSeconds)
+        {
+            if (dtSeconds <= 0.0f) return currentVelocity;
+            _isWorldVoxelSolidCached ??= IsWorldVoxelSolidAt;
+            float groundY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldPos.x, worldPos.z);
+            bool isIndoor = !HasOpenSkyAboveWorldCoord(
+                Mathf.FloorToInt(worldPos.x),
+                Mathf.Clamp(Mathf.FloorToInt(worldPos.y), 1, MaxEditableVoxelY - 1),
+                Mathf.FloorToInt(worldPos.z));
+            LocalWindSample3D sample = DynamicWindFieldSystem.EvaluateLocal3DWind(
+                _regionalAtmosphereSystem,
+                new System.Numerics.Vector3(worldPos.x, worldPos.y, worldPos.z),
+                groundY,
+                _totalSimulatedGameSeconds,
+                isIndoor,
+                _isWorldVoxelSolidCached);
+            System.Numerics.Vector3 nextVel = DynamicWindFieldSystem.StepProjectileWindDeflectionVelocity(
+                new System.Numerics.Vector3(currentVelocity.x, currentVelocity.y, currentVelocity.z),
+                in sample,
+                projectileMassKg,
+                dtSeconds);
+            return new Vector3(nextVel.X, nextVel.Y, nextVel.Z);
+        }
+
         private void StepMovementAndOxygen(float dt)
         {
             bool menuOpen = _escapeMenuCtrl.IsMenuOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen;
@@ -1553,6 +1810,13 @@ namespace Stratocraft.Character
                 _isUserProneToggled = false;
                 wantProne = false;
             }
+
+            float stiffnessPenalty01 = Mathf.Clamp(_holsterCtrl.InventoryUi.LastThermalGearSummary.MovementStiffnessPenalty01, 0f, 0.15f);
+            if (stiffnessPenalty01 > 0.001f && Stage1GameSettings.EnableEnvironmentalEffects)
+            {
+                moveInput *= (1.0f - stiffnessPenalty01);
+            }
+
             float activeHandheldMass = _holsterCtrl.ActiveHolsterSlot == 0
                 ? 0f
                 : _holsterCtrl.HolsterMachine.GetHolsteredWeapon((HolsterSlotIndex)_holsterCtrl.ActiveHolsterSlot).MassKg;
@@ -1571,6 +1835,26 @@ namespace Stratocraft.Character
                 !menuOpen && Input.GetKeyDown(KeyCode.Space), _holsterCtrl.IsBackpackOpen || menuOpen, equippedMass, dt, out string moveFeedback,
                 _fluidChunks, _soilMoistureSystem, _dirtyFluidChunks, _activeFluidChunks);
             if (!string.IsNullOrEmpty(moveFeedback)) _miningCtrl.LastFeedbackText = moveFeedback;
+
+            // Paket 4B (IP-6 / AK-10): Firtinada ([Sol Ctrl] comelme ve duvar siperi duyarli) aerodinamik oyuncu suruklemesi
+            _currentPlayerWindDragForceN = DynamicWindFieldSystem.ComputePlayerAerodynamicDragForce(
+                in _currentPlayerLocalWind3D,
+                isCrouching: wantCrouch || wantProne);
+            if (!menuOpen &&
+                Stage1GameSettings.EnableEnvironmentalEffects &&
+                !_holsterCtrl.IsCreativeMode &&
+                _currentPlayerWindDragForceN.LengthSquared() > 0.05f)
+            {
+                Vector3 windPushSpeed = new Vector3(
+                    _currentPlayerWindDragForceN.X / 85.0f,
+                    0.0f,
+                    _currentPlayerWindDragForceN.Z / 85.0f);
+                if (windPushSpeed.sqrMagnitude > 2.60f * 2.60f)
+                {
+                    windPushSpeed = windPushSpeed.normalized * 2.60f;
+                }
+                _movementBridge.ApplyWeaponMomentumHorizontalStep(transform, _worldChunks, windPushSpeed * dt, dt);
+            }
             if (_combatBridge.IsWeaponLodged)
             {
                 if (moveInput.y < -0.1f)
@@ -1736,6 +2020,7 @@ namespace Stratocraft.Character
                         vox[cellIdx] = VoxelBitUtility.PackStandard(
                             stationMat, VoxelBitUtility.FullDensity, stationShape, 0, BlokKokenDurumu.OyuncuItemBlogu, 0);
 
+                        MarkSubChunkDirtyInternal(cx, cz, wy, lx, lz, includeNeighbors: true);
                         _dirtyChunks.Add((cx, cz));
                         if (lx == 0) _dirtyChunks.Add((cx - 1, cz));
                         if (lx == 15) _dirtyChunks.Add((cx + 1, cz));
@@ -1775,7 +2060,7 @@ namespace Stratocraft.Character
             _mindBuildingCtrl.Step(
                 dt, PlayerCamera, transform, externalUiBlocked,
                 _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
-                _bloomeryCtrl, _wheelbarrowCtrl);
+                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl);
 
             bool uiBlocked = externalUiBlocked || _mindBuildingCtrl.IsMindMenuOpen;
             bool consumedEarlyInteract = false;
@@ -1783,6 +2068,10 @@ namespace Stratocraft.Character
             {
                 bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 if (TryHandleWeatherInstrumentInteractKeyE(shiftHeld))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (_windmillCtrl.TryHandleInteractKeyE(shiftHeld, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge))
                 {
                     consumedEarlyInteract = true;
                 }
@@ -1868,11 +2157,27 @@ namespace Stratocraft.Character
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
                 out bool wheelbarrowConsumedClick);
 
+            _isWorldVoxelSolidCached ??= IsWorldVoxelSolidAt;
+            _windmillCtrl.Step(
+                dt,
+                PlayerCamera,
+                transform,
+                uiBlocked,
+                _miningCtrl,
+                _holsterCtrl,
+                _combatBridge,
+                _regionalAtmosphereSystem,
+                _totalSimulatedGameSeconds,
+                _isWorldVoxelSolidCached,
+                Mathf.Clamp(Stage1GameSettings.TimeScaleMultiplier, 1.0f, 20.0f),
+                out bool windmillConsumedClick);
+
             bool weatherInstConsumedClick = TryPlaceHeldWeatherInstrumentOnRightClick(uiBlocked);
-            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || weatherInstConsumedClick;
+            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || windmillConsumedClick || weatherInstConsumedClick;
             bool suppressLooseBuild = stationConsumedClick ||
                                       _wheelbarrowCtrl.IsPushingWheelbarrow ||
                                       _wheelbarrowCtrl.HasAimedWheelbarrow(PlayerCamera, transform.position, out _, out _) ||
+                                      _windmillCtrl.HasAimedWindmill(PlayerCamera, transform.position, out _) ||
                                       _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform) ||
                                       _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
                                       FindAimedWeatherInstrumentIndex(3.6f) >= 0;
@@ -2359,14 +2664,24 @@ namespace Stratocraft.Character
                     Array.Copy(voxels, _worldChunks[key], 65536);
                 }
             });
+            _salinityBitset.ClearAll();
             for (int i = 0; i < keys.Count; i++)
             {
-                if (_chunkSubMeshCache.TryGetValue(keys[i], out var subEntry))
+                var k = keys[i];
+                if (_chunkSubMeshCache.TryGetValue(k, out var subEntry))
                 {
                     subEntry.ResetAllDirty();
                 }
-                _dirtyChunks.Add(keys[i]);
-                _dirtyFluidChunks.Add(keys[i]);
+                RebuildChunkSkyOcclusionMap(k.cx, k.cz, _worldChunks[k]);
+                if (_fluidChunks.TryGetValue(k, out ushort[]? fl) && fl != null)
+                {
+                    SeedCoastalOceanSalinityIfApplicable(k.cx, k.cz, fl);
+                }
+                _snowSystem.ReleaseChunk(k.cx, k.cz);
+                _fluidKinematicsPool.ReleaseChunk(k.cx, k.cz);
+                _fluidKinematicsViewMap.Remove(k);
+                _dirtyChunks.Add(k);
+                _dirtyFluidChunks.Add(k);
             }
             RebuildDistantHorizonShellsForCurrentCenter(0, 0);
             _spawnedForageChunks.Clear();
@@ -2376,6 +2691,7 @@ namespace Stratocraft.Character
             _campfireCtrl.ClearAllStations();
             _bloomeryCtrl.ClearAll();
             _wheelbarrowCtrl.ClearAll();
+            _windmillCtrl.ClearAll();
             _mindBuildingCtrl.ClearAll();
             _miningCtrl.ClearAllDroppedWorldItems();
             ClearAllWeatherInstrumentVisuals();
@@ -2422,10 +2738,13 @@ namespace Stratocraft.Character
                 if (snap != null && snap.VoxelCells.Length == 65536)
                 {
                     Array.Copy(snap.VoxelCells, _worldChunks[key], 65536);
+                    RebuildChunkSkyOcclusionMap(key.cx, key.cz, _worldChunks[key]);
                     _dirtyChunks.Add(key);
                     if (snap.FluidCells != null && snap.FluidCells.Length == 65536 && _fluidChunks.TryGetValue(key, out ushort[]? fl))
                     {
                         Array.Copy(snap.FluidCells, fl, 65536);
+                        _fluidKinematicsPool.ReleaseChunk(key.cx, key.cz);
+                        _fluidKinematicsViewMap.Remove(key);
                         _dirtyFluidChunks.Add(key);
                     }
                     loadedCount++;
@@ -2451,14 +2770,21 @@ namespace Stratocraft.Character
                 {
                     int lx = wx - cx * 16;
                     int lz = wz - cz * 16;
-                    int colBase = (lz << 4) | lx;
                     bool hasOverheadRoof = false;
-                    for (int sy = wy + 1; sy < MaxEditableVoxelY; sy++)
+                    if (_skyOcclusionMaps.TryGetValue((cx, cz), out ChunkSkyOcclusionMap256? headSkyMap) && headSkyMap != null)
                     {
-                        if (VoxelBitUtility.IsPhysicallySolid(raw[(sy << 8) | colBase]))
+                        hasOverheadRoof = !headSkyMap.HasOpenSkyAbove(lx, wy, lz);
+                    }
+                    else
+                    {
+                        int colBase = (lz << 4) | lx;
+                        for (int sy = wy + 1; sy < MaxEditableVoxelY; sy++)
                         {
-                            hasOverheadRoof = true;
-                            break;
+                            if (VoxelBitUtility.IsPhysicallySolid(raw[(sy << 8) | colBase]))
+                            {
+                                hasOverheadRoof = true;
+                                break;
+                            }
                         }
                     }
 
@@ -2585,50 +2911,69 @@ namespace Stratocraft.Character
                     _totalSimulatedGameSeconds,
                     StratocraftFloatingIslandWorldGen.GetBiomeRingIndex(transform.position.x, transform.position.z),
                     transform.position.y);
-                float windSpd = Mathf.Sqrt(
-                    _currentPlayerAtmosphereCell.WindVelX * _currentPlayerAtmosphereCell.WindVelX +
-                    _currentPlayerAtmosphereCell.WindVelZ * _currentPlayerAtmosphereCell.WindVelZ);
                 float baseAtmosphereOrBiomeTemp = Mathf.Abs(biomeBaseTemp - 20.0f) < 4.0f
                     ? (_currentPlayerAtmosphereCell.AirTempCelsius * 0.65f + biomeBaseTemp * 0.35f)
                     : biomeBaseTemp;
+                // Paket 4B (IP-8): Hissedilen ruzgar sogugu (JAG/TI Wind Chill) StepBiologyWithThermalGear icinde
+                // giysi ruzgar-kesiciligine (AggregateWindBlock01) gore hesaplandigi icin kuru hazne hava sicakligi baz alinir.
                 _ambientTempCelsius = ThermalAndBiologySystem.EvaluateAmbientTemperatureCelsius(
                     baseSeasonTempCelsius: baseAtmosphereOrBiomeTemp,
                     worldAltitudeMeters: signedRelAltitudeMeters,
                     isUndergroundEnclosed: isEnclosedCave,
                     isNightTime: _currentSolarEphem.IsNight,
-                    windSpeedMetersPerSec: biomeBaseTemp < 0f ? 6.5f : windSpd,
+                    windSpeedMetersPerSec: 0f,
                     nearbyHeatSourceBonusCelsius: heatBonus,
                     absoluteWorldY: transform.position.y);
             }
 
             bool hasOpenSkyAbovePlayer = !isEnclosedCave &&
                                          _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
-            bool underLocalRainCloud = hasOpenSkyAbovePlayer &&
-                                       (_cloudAndRainRenderer.IsWorldPointUnderActiveRain(
-                                            transform.position.x, transform.position.y + 1.5f, transform.position.z, 0) ||
-                                        _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour > 0.1f);
-            float effectivePlayerRainMmHr = underLocalRainCloud ? _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour : 0.0f;
-            if (_movementBridge.Vitals.SubmergedDepthMeters <= 0.05f)
+            bool underLocalPrecipCloud = hasOpenSkyAbovePlayer &&
+                                         (_cloudAndRainRenderer.IsWorldPointUnderActiveRain(
+                                              transform.position.x, transform.position.y + 1.5f, transform.position.z, 0) ||
+                                          _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour > 0.1f);
+            float effectivePlayerPrecipMmHr = underLocalPrecipCloud ? _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour : 0.0f;
+            float openSkyLiquidEquivalentMmHr = _currentPlayerAtmosphereCell.ActiveKind == PrecipitationKind.Snow
+                ? (effectivePlayerPrecipMmHr * 0.45f)
+                : effectivePlayerPrecipMmHr;
+            float localWindForThermal = isEnclosedCave
+                ? 0.0f
+                : (_thermalTestMode == 1 ? Mathf.Max(18.0f, _currentPlayerLocalWind3D.SpeedMps) : _currentPlayerLocalWind3D.SpeedMps);
+            float nearbyFireRadiantFluxKwM2 = heatBonus * 0.35f;
+
+            PlayerThermalGearSummary gearSummary = _holsterCtrl.InventoryUi.StepEquippedClothingThermalState(
+                _ambientTempCelsius,
+                localWindForThermal,
+                hasOpenSkyAbovePlayer ? openSkyLiquidEquivalentMmHr : 0.0f,
+                _movementBridge.Vitals.SubmergedDepthMeters,
+                nearbyFireRadiantFluxKwM2,
+                dt);
+
+            VisualInventorySlot heldSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            bool heldToolIsConductiveMetal = !heldSlot.IsEmpty &&
+                ((heldSlot.Kind == InventoryItemKind.WeaponSword ||
+                  heldSlot.Kind == InventoryItemKind.ToolPickaxe ||
+                  heldSlot.Kind == InventoryItemKind.ToolAxe) && heldSlot.SubId == 0 ||
+                 heldSlot.Kind == InventoryItemKind.MetalIngot ||
+                 heldSlot.Kind == InventoryItemKind.WroughtIronBar);
+            if (heldToolIsConductiveMetal)
             {
-                ThermalAndBiologySystem.StepRainWetnessAndDrying(
-                    ref _movementBridge.Vitals.Wetness01,
-                    effectivePlayerRainMmHr,
-                    hasOpenSkyAbovePlayer,
-                    heatBonus,
-                    dt,
-                    _ambientTempCelsius);
+                gearSummary.ConductiveMetalLoad01 = Mathf.Clamp01(gearSummary.ConductiveMetalLoad01 + 0.30f);
+                _holsterCtrl.InventoryUi.LastThermalGearSummary = gearSummary;
             }
 
             _movementBridge.Vitals.HungerKcal = 2000f;
             _movementBridge.Vitals.ThirstHydration = 100f;
             _holsterCtrl.InventoryUi.SyncEquippedArmorToVitals(ref _movementBridge.Vitals);
-            float armorInsulation = 0.15f + (_movementBridge.Vitals.EquippedHelmetTier + _movementBridge.Vitals.EquippedChestplateTier + _movementBridge.Vitals.EquippedVambracesTier + _movementBridge.Vitals.EquippedGreavesTier) * 0.08f;
-            _thermalSystem.StepBiology(
+            _thermalSystem.StepBiologyWithThermalGear(
                 ref _movementBridge.Vitals,
-                ambientTempCelsius: _ambientTempCelsius,
-                armorThermalInsulation01: Mathf.Clamp01(armorInsulation),
-                isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f || (hasOpenSkyAbovePlayer && effectivePlayerRainMmHr > 0.25f),
-                deltaTime: dt);
+                airTempCelsius: _ambientTempCelsius,
+                localWindSpeedMps: localWindForThermal,
+                in gearSummary,
+                deltaTime: dt,
+                isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f ||
+                                     (hasOpenSkyAbovePlayer && openSkyLiquidEquivalentMmHr > 0.25f));
+            _holsterCtrl.InventoryUi.LastEffectiveWindChillCelsius = _thermalSystem.EffectiveWindChillCelsius;
 
             // Usume veya sicaklama yuzunden karakterin HP'si 0'a inip yere dusmesi (BleedOutCrawl) ve bir daha kalkamamasi engellenir!
             _movementBridge.Vitals.CurrentHp = Mathf.Max(20.0f, _movementBridge.Vitals.CurrentHp);
@@ -3299,6 +3644,70 @@ namespace Stratocraft.Character
             return dotB.CompareTo(dotA);
         }
 
+        private int CompareDirtyFluidChunksByCamDistSqZeroGc((int cx, int cz) a, (int cx, int cz) b)
+        {
+            float ax = (a.cx * 16f + 8f) - _fluidSortCamPos.x;
+            float az = (a.cz * 16f + 8f) - _fluidSortCamPos.z;
+            float bx = (b.cx * 16f + 8f) - _fluidSortCamPos.x;
+            float bz = (b.cz * 16f + 8f) - _fluidSortCamPos.z;
+            float distSqA = (ax * ax) + (az * az);
+            float distSqB = (bx * bx) + (bz * bz);
+            return distSqA.CompareTo(distSqB);
+        }
+
+        private void ApplyRichFluidMeshToChunkZeroGc(
+            MeshFilter fmf,
+            (int cx, int cz) key,
+            List<FluidRichTriangle> richTris)
+        {
+            if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmrCheck) && fmrCheck != null)
+            {
+                if (fmrCheck.sharedMaterial == null || fmrCheck.sharedMaterial == SharedVoxelMaterial)
+                {
+                    Material? fluidMat = ResolveFluidSurfaceMaterial();
+                    if (fluidMat != null) fmrCheck.sharedMaterial = fluidMat;
+                }
+            }
+
+            if (richTris.Count == 0)
+            {
+                if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
+                {
+                    fmf.sharedMesh.Clear(keepVertexLayout: true);
+                }
+                else
+                {
+                    fmf.sharedMesh = null;
+                }
+                if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmrEmpty) && fmrEmpty != null)
+                {
+                    fmrEmpty.enabled = false;
+                }
+                return;
+            }
+
+            Mesh? targetMesh = fmf.sharedMesh != null &&
+                               fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
+                ? fmf.sharedMesh
+                : null;
+            if (targetMesh == null)
+            {
+                targetMesh = new Mesh
+                {
+                    name = $"DynamicFluidSurface_{key.cx}_{key.cz}",
+                    indexFormat = IndexFormat.UInt32
+                };
+                targetMesh.MarkDynamic();
+                fmf.sharedMesh = targetMesh;
+            }
+
+            FluidSurfaceSkirtMesher.BuildFluidUnityMeshZeroGc(richTris, targetMesh);
+            if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null)
+            {
+                fmr.enabled = true;
+            }
+        }
+
         private void StepBackgroundDistantMeshIntegration()
         {
             if (_pendingDistantMeshTask == null || !_pendingDistantMeshTask.IsCompleted)
@@ -3370,29 +3779,7 @@ namespace Stratocraft.Character
 
                     if (fmf != null)
                     {
-                        var fList = _bgDistantMeshFluidTris[idx];
-                        if (fList.Count == 0)
-                        {
-                            if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
-                            {
-                                fmf.sharedMesh.Clear(keepVertexLayout: true);
-                            }
-                            else
-                            {
-                                fmf.sharedMesh = null;
-                            }
-                            if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
-                        }
-                        else
-                        {
-                            Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
-                                                             fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
-                                ? fmf.sharedMesh
-                                : null;
-                            fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
-                                fList, $"DynamicFluidSurface_{key.cx}_{key.cz}", existingFluidDynamicMesh);
-                            if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = true;
-                        }
+                        ApplyRichFluidMeshToChunkZeroGc(fmf, key, _bgDistantMeshFluidRichTris[idx]);
                     }
 
                     if (HasAll8NeighborVoxels(key.cx, key.cz))
@@ -3410,6 +3797,9 @@ namespace Stratocraft.Character
                 _bgDistantMeshSolidMap.Clear();
                 _bgDistantMeshFluidMap.Clear();
                 _bgDistantMeshSoilMap.Clear();
+                _bgDistantMeshSalinityMap.Clear();
+                _bgDistantMeshSnowMap.Clear();
+                _bgDistantMeshSkyMap.Clear();
                 _bgDistantMeshBatchCount = 0;
                 _bgDistantMeshIntegrateCursor = 0;
             }
@@ -3422,14 +3812,19 @@ namespace Stratocraft.Character
             _bgDistantMeshSolidMap.Clear();
             _bgDistantMeshFluidMap.Clear();
             _bgDistantMeshSoilMap.Clear();
+            _bgDistantMeshSalinityMap.Clear();
+            _bgDistantMeshSnowMap.Clear();
+            _bgDistantMeshSkyMap.Clear();
             var soilMap = _soilMoistureSystem.SoilMoistureChunks;
+            var salinityMap = _salinityBitset.ChunkBitsMap;
+            var snowMap = _snowSystem.SnowSweChunks256;
 
             for (int i = 0; i < count; i++)
             {
                 _bgDistantMeshSolidTris[i] ??= new List<FacetedVoxelTriangle>(4096);
-                _bgDistantMeshFluidTris[i] ??= new List<FacetedVoxelTriangle>(512);
+                _bgDistantMeshFluidRichTris[i] ??= new List<FluidRichTriangle>(512);
                 _bgDistantMeshSolidTris[i].Clear();
-                _bgDistantMeshFluidTris[i].Clear();
+                _bgDistantMeshFluidRichTris[i].Clear();
 
                 var key = _bgDistantMeshKeys[i];
                 for (int ndz = -1; ndz <= 1; ndz++)
@@ -3453,6 +3848,24 @@ namespace Stratocraft.Character
                         {
                             _bgDistantMeshSoilMap[nKey] = mArr;
                         }
+                        if (salinityMap != null && salinityMap.Count > 0 &&
+                            !_bgDistantMeshSalinityMap.ContainsKey(nKey) &&
+                            salinityMap.TryGetValue(nKey, out ulong[]? salArr) && salArr != null)
+                        {
+                            _bgDistantMeshSalinityMap[nKey] = salArr;
+                        }
+                        if (snowMap != null && snowMap.Count > 0 &&
+                            !_bgDistantMeshSnowMap.ContainsKey(nKey) &&
+                            snowMap.TryGetValue(nKey, out byte[]? snArr) && snArr != null)
+                        {
+                            _bgDistantMeshSnowMap[nKey] = snArr;
+                        }
+                        if (_skyOcclusionMaps.Count > 0 &&
+                            !_bgDistantMeshSkyMap.ContainsKey(nKey) &&
+                            _skyOcclusionMaps.TryGetValue(nKey, out ChunkSkyOcclusionMap256? skyOcc) && skyOcc != null)
+                        {
+                            _bgDistantMeshSkyMap[nKey] = skyOcc;
+                        }
                     }
                 }
             }
@@ -3470,15 +3883,22 @@ namespace Stratocraft.Character
                         ? 64
                         : (visibleMask == NearCaveEntranceSubChunksMask ? 48 : 0);
 
-                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
+                    FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(
                         key.cx, key.cz, MaxEditableVoxelY,
                         _bgDistantMeshSolidMap, _bgDistantMeshFluidMap,
-                        _bgDistantMeshFluidTris[idx], minY: consolidatedMinY);
+                        _bgDistantMeshFluidRichTris[idx],
+                        minY: consolidatedMinY,
+                        kinematicsChunks: null,
+                        salinityChunkBitsMap: _bgDistantMeshSalinityMap);
 
                     HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                         key.cx, key.cz, MaxEditableVoxelY,
                         _bgDistantMeshSolidMap, _bgDistantMeshSolidTris[idx],
-                        minY: consolidatedMinY, soilMoistureChunks: _bgDistantMeshSoilMap);
+                        worldMicroPools: null,
+                        minY: consolidatedMinY,
+                        soilMoistureChunks: _bgDistantMeshSoilMap,
+                        snowSweChunks256: _bgDistantMeshSnowMap,
+                        skyOcclusionMaps: _bgDistantMeshSkyMap);
                 });
             });
         }
@@ -3625,7 +4045,7 @@ namespace Stratocraft.Character
                     for (int idx = 0; idx < parallelBatchCount; idx++)
                     {
                         _parallelSolidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(4096);
-                        _parallelFluidTrisScratch[idx] ??= new List<FacetedVoxelTriangle>(512);
+                        _parallelFluidRichTrisScratch[idx] ??= new List<FluidRichTriangle>(512);
                     }
 
                     // Tum yeni / tam-gecis chunk meshlerini dogrudan 16m alt-chunk dilimleri halinde tum CPU cekirdeklerinde PARALEL uret!
@@ -3636,24 +4056,30 @@ namespace Stratocraft.Character
                         var entry = _parallelMeshEntries[idx];
                         ushort visibleMask = _parallelMeshVisibleMasks[idx];
                         int dist = _parallelMeshChebDists[idx];
-                        var fList = _parallelFluidTrisScratch[idx];
+                        var fList = _parallelFluidRichTrisScratch[idx];
                         fList.Clear();
 
                         int consolidatedMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask
                             ? 64
                             : (visibleMask == NearCaveEntranceSubChunksMask ? 48 : 0);
-                        FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
-                            key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, fList, minY: consolidatedMinY);
+                        FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(
+                            key.cx, key.cz, MaxEditableVoxelY,
+                            _worldChunks, _fluidChunks, fList,
+                            minY: consolidatedMinY,
+                            kinematicsChunks: _fluidKinematicsViewMap,
+                            salinityChunkBitsMap: _salinityBitset.ChunkBitsMap);
 
                         if (dist >= 3)
                         {
-                            // Uzak ufuk chunk'larinda (48m..160m) 6 ayri gecis yerine 5x hizli TEK konsolide gecis kullan,
-                            // ardindan ucgenleri dogrudan 0..9 alt-chunk sepetlerine dagit ki maske daralmasi veya kismi guncelleme yuzeyi hicbir zaman silmesin!
                             var sList = _parallelSolidTrisScratch[idx];
                             sList.Clear();
                             HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                                 key.cx, key.cz, MaxEditableVoxelY, _worldChunks, sList,
-                                minY: consolidatedMinY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                                worldMicroPools: null,
+                                minY: consolidatedMinY,
+                                soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                                snowSweChunks256: _snowSystem.SnowSweChunks256,
+                                skyOcclusionMaps: _skyOcclusionMaps);
                             DistributeConsolidatedTrianglesIntoSubChunks(sList, entry.SubChunkTriangles);
                             entry.BuiltSubChunkMask = visibleMask;
                             entry.DirtySubChunkMask = 0;
@@ -3668,7 +4094,11 @@ namespace Stratocraft.Character
                                 if ((visibleMask & (1 << s)) == 0) continue;
                                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                                     key.cx, key.cz, (s + 1) * 16, _worldChunks, entry.SubChunkTriangles[s],
-                                    minY: s * 16, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                                    worldMicroPools: null,
+                                    minY: s * 16,
+                                    soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                                    snowSweChunks256: _snowSystem.SnowSweChunks256,
+                                    skyOcclusionMaps: _skyOcclusionMaps);
                             }
                             entry.BuiltSubChunkMask = visibleMask;
                             entry.DirtySubChunkMask = 0;
@@ -3708,29 +4138,7 @@ namespace Stratocraft.Character
 
                         if (fmf != null)
                         {
-                            var fList = _parallelFluidTrisScratch[idx];
-                            if (fList.Count == 0)
-                            {
-                                if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
-                                {
-                                    fmf.sharedMesh.Clear(keepVertexLayout: true);
-                                }
-                                else
-                                {
-                                    fmf.sharedMesh = null;
-                                }
-                                if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
-                            }
-                            else
-                            {
-                                Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
-                                                                 fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
-                                    ? fmf.sharedMesh
-                                    : null;
-                                fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
-                                    fList, $"DynamicFluidSurface_{key.cx}_{key.cz}", existingFluidDynamicMesh);
-                                if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = true;
-                            }
+                            ApplyRichFluidMeshToChunkZeroGc(fmf, key, _parallelFluidRichTrisScratch[idx]);
                         }
 
                         if (HasAll8NeighborVoxels(key.cx, key.cz))
@@ -3745,7 +4153,14 @@ namespace Stratocraft.Character
             {
                 _sortedDirtyChunks.Clear();
                 foreach (var k in _dirtyFluidChunks) _sortedDirtyChunks.Add(k);
-                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : 4;
+                if (_sortedDirtyChunks.Count > 1)
+                {
+                    _fluidSortCamPos = PlayerCamera != null ? PlayerCamera.transform.position : playerPos;
+                    _dirtyFluidDistanceSortComparison ??= CompareDirtyFluidChunksByCamDistSqZeroGc;
+                    _sortedDirtyChunks.Sort(_dirtyFluidDistanceSortComparison);
+                }
+
+                int maxFluidPerFrame = forceImmediateAll ? _sortedDirtyChunks.Count : MaxFluidMeshRebuildsPerFrame;
                 int processedFluid = 0;
 
                 for (int i = 0; i < _sortedDirtyChunks.Count; i++)
@@ -3774,32 +4189,19 @@ namespace Stratocraft.Character
                         if (fmf.TryGetComponent<MeshRenderer>(out var boundFmr)) _fluidMeshRenderers[key] = boundFmr;
                     }
                     if (fmf == null) continue;
-                    _reusableFluidTris.Clear();
+                    _reusableFluidRichTris.Clear();
                     int fluidMinY = (Stage1GameSettings.EnableUndergroundCaveCulling && playerPos.y >= 70.0f) ? 70 : 0;
-                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
-                        key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, _reusableFluidTris, minY: fluidMinY);
-                    if (_reusableFluidTris.Count == 0)
-                    {
-                        if (fmf.sharedMesh != null && fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal))
-                        {
-                            fmf.sharedMesh.Clear(keepVertexLayout: true);
-                        }
-                        else
-                        {
-                            fmf.sharedMesh = null;
-                        }
-                        if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = false;
-                    }
-                    else
-                    {
-                        Mesh? existingFluidDynamicMesh = fmf.sharedMesh != null &&
-                                                         fmf.sharedMesh.name.StartsWith("DynamicFluidSurface_", StringComparison.Ordinal)
-                            ? fmf.sharedMesh
-                            : null;
-                        fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
-                            _reusableFluidTris, $"DynamicFluidSurface_{key.cx}_{key.cz}", existingFluidDynamicMesh);
-                        if (_fluidMeshRenderers.TryGetValue(key, out MeshRenderer? fmr) && fmr != null) fmr.enabled = true;
-                    }
+                    FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(
+                        key.cx,
+                        key.cz,
+                        MaxEditableVoxelY,
+                        _worldChunks,
+                        _fluidChunks,
+                        _reusableFluidRichTris,
+                        minY: fluidMinY,
+                        kinematicsChunks: _fluidKinematicsViewMap,
+                        salinityChunkBitsMap: _salinityBitset.ChunkBitsMap);
+                    ApplyRichFluidMeshToChunkZeroGc(fmf, key, _reusableFluidRichTris);
 
                     processedFluid++;
                     if (!forceImmediateAll && processedFluid >= maxFluidPerFrame) break;
@@ -3883,7 +4285,11 @@ namespace Stratocraft.Character
                 int meshMinY = visibleMask == SurfaceAndUpperCaveSubChunksMask ? 64 : 0;
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                     key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris,
-                    minY: meshMinY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                    worldMicroPools: null,
+                    minY: meshMinY,
+                    soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                    snowSweChunks256: _snowSystem.SnowSweChunks256,
+                    skyOcclusionMaps: _skyOcclusionMaps);
                 totalTriCount = _reusableTris.Count;
                 return HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
                     _reusableTris, $"DynamicSeamlessChunk_{key.cx}_{key.cz}", existingDynamicMesh);
@@ -3921,7 +4327,11 @@ namespace Stratocraft.Character
                     : (visibleMask == NearCaveEntranceSubChunksMask ? 48 : 0);
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                     key.cx, key.cz, MaxEditableVoxelY, _worldChunks, _reusableTris,
-                    minY: consolidatedMinY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                    worldMicroPools: null,
+                    minY: consolidatedMinY,
+                    soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                    snowSweChunks256: _snowSystem.SnowSweChunks256,
+                    skyOcclusionMaps: _skyOcclusionMaps);
                 DistributeConsolidatedTrianglesIntoSubChunks(_reusableTris, entry.SubChunkTriangles);
                 entry.BuiltSubChunkMask = visibleMask;
                 entry.IsConsolidatedFullPass = false;
@@ -3944,7 +4354,11 @@ namespace Stratocraft.Character
                     int maxY = (subY + 1) * 16;
                     HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                         key.cx, key.cz, maxY, _worldChunks, subList,
-                        minY: minY, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                        worldMicroPools: null,
+                        minY: minY,
+                        soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                        snowSweChunks256: _snowSystem.SnowSweChunks256,
+                        skyOcclusionMaps: _skyOcclusionMaps);
                     entry.BuiltSubChunkMask |= (ushort)(1 << subY);
                 }
             }
@@ -4139,7 +4553,7 @@ namespace Stratocraft.Character
             if (chunkEntries.Count > 0)
             {
                 var builtSubEntries = new ChunkSubMeshEntry?[chunkEntries.Count];
-                var builtFluidTris = new List<FacetedVoxelTriangle>?[chunkEntries.Count];
+                var builtFluidTris = new List<FluidRichTriangle>?[chunkEntries.Count];
                 System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, k =>
                 {
                     var (cx, cz, _) = chunkEntries[k];
@@ -4156,10 +4570,23 @@ namespace Stratocraft.Character
                         if ((startupMask & (1 << s)) == 0) continue;
                         HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
                             cx, cz, (s + 1) * 16, _worldChunks, subEntry.SubChunkTriangles[s],
-                            minY: s * 16, soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks);
+                            worldMicroPools: null,
+                            minY: s * 16,
+                            soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
+                            snowSweChunks256: _snowSystem.SnowSweChunks256,
+                            skyOcclusionMaps: _skyOcclusionMaps);
                     }
-                    var fList = new List<FacetedVoxelTriangle>(256);
-                    FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(cx, cz, MaxEditableVoxelY, _worldChunks, _fluidChunks, fList, minY: startupFluidMinY);
+                    var fList = new List<FluidRichTriangle>(256);
+                    FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(
+                        cx,
+                        cz,
+                        MaxEditableVoxelY,
+                        _worldChunks,
+                        _fluidChunks,
+                        fList,
+                        minY: startupFluidMinY,
+                        kinematicsChunks: _fluidKinematicsViewMap,
+                        salinityChunkBitsMap: _salinityBitset.ChunkBitsMap);
                     builtSubEntries[k] = subEntry;
                     builtFluidTris[k] = fList;
                 });
@@ -4200,8 +4627,7 @@ namespace Stratocraft.Character
                     {
                         if (fList != null && fList.Count > 0)
                         {
-                            fmf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(fList, $"DynamicFluidSurface_{cx}_{cz}");
-                            if (_fluidMeshRenderers.TryGetValue((cx, cz), out MeshRenderer? fmr) && fmr != null) fmr.enabled = true;
+                            ApplyRichFluidMeshToChunkZeroGc(fmf, (cx, cz), fList);
                         }
                         else
                         {
@@ -4431,10 +4857,12 @@ namespace Stratocraft.Character
                 PlayerCamera, transform.position, AnvilTransform, _showAllHud, hudInteractionBlocked);
             _wheelbarrowCtrl.DrawCrosshairPromptGui(
                 PlayerCamera, transform.position, _showAllHud, hudInteractionBlocked);
+            _windmillCtrl.DrawGui(
+                _showAllHud && !hudInteractionBlocked, PlayerCamera, transform);
             DrawWeatherInstrumentCrosshairPromptGui(_showAllHud, hudInteractionBlocked);
             _mindBuildingCtrl.DrawGui(
                 _showAllHud, PlayerCamera, transform, _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
-                _bloomeryCtrl, _wheelbarrowCtrl);
+                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl);
             DrawTimeScaleBadgeAndCalendarHudGui(_showAllHud, hudInteractionBlocked, refreshPeriodicStrings);
 
             if (_showDebugHudText)
@@ -4534,13 +4962,20 @@ namespace Stratocraft.Character
                     };
                     string biomeLabel = StratocraftFloatingIslandWorldGen.GetBiomeDisplayName(pos.x, pos.z);
 
-                    // SOL-UST KUTU (Minecraft F3 Sol Sutun: FPS, XYZ, Chunk, Yon, Biyom, Hareket, Takvim & Atmosfer)
+                    // SOL-UST KUTU (Minecraft F3 Sol Sutun: FPS, XYZ, Chunk, Yon, Biyom, Hareket, Takvim, 3B Ruzgar, Kar, Degirmen & Giysi clo)
+                    var gear = _holsterCtrl.InventoryUi.LastThermalGearSummary;
+                    string windmillSummary = _windmillCtrl.ActiveWindmillCount > 0
+                        ? $"{_windmillCtrl.ActiveWindmillCount} aktif ({_windmillCtrl.GetWindmillState(0).LastMechanicalPowerWatts:0}W)"
+                        : "0 aktif ([T]->[5])";
                     _cachedMainHudString =
-                        $"Stratocraft (Faz 1-2) | {fps} FPS | Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed}\n" +
+                        $"Stratocraft (Paket 4B) | {fps} FPS | Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed}\n" +
                         $"XYZ: {pos.x:0.0} / {pos.y:0.0} / {pos.z:0.0}  [Chunk: {pCx}, {pCz}]\n" +
                         $"Yon: {compass} ({normYaw:0}°) | Kamera: {(_isFirstPersonMode ? "FPS" : "TPS")} [F5]\n" +
-                        $"{biomeLabel} | Sicaklik: {_ambientTempCelsius:0.1}°C (Vucut: {vt.CoreBodyTempCelsius:0.1}°C | Islaklik: %{vt.Wetness01 * 100f:0})\n" +
-                        $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.1} hPa | Yagis: {_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.1} mm/s\n" +
+                        $"{biomeLabel} | Hava: {_ambientTempCelsius:0.1}°C | WindChill: {_thermalSystem.EffectiveWindChillCelsius:0.1}°C (Vucut: {vt.CoreBodyTempCelsius:0.1}°C)\n" +
+                        $"Giysi: {_thermalSystem.TotalEffectiveClo:0.00} clo | Kopru: -{_thermalSystem.ThermalBridgePenaltyWatts:0}W | Islak: %{gear.AverageWetness01 * 100f:0} | DonmaCezasi: %{gear.MovementStiffnessPenalty01 * 100f:0}\n" +
+                        $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.1} hPa | Faz: {_currentPlayerAtmosphereCell.ActiveKind} ({_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.1} mm/s)\n" +
+                        $"Ruzgar 3B: {_currentPlayerLocalWind3D.SpeedMps:0.1} m/s (Bft {_currentWindBeaufortScale}, Siper: %{(1f - _currentPlayerLocalWind3D.UpwindExposure01) * 100f:0}, Bora: +{_currentPlayerLocalWind3D.InstantGustBonusMps:0.1})\n" +
+                        $"Kar SWE: {_lastPlayerSnowColumnSweMm:0} mm ({_snowSystem.ActiveSnowChunkCount} chunk) | Degirmen: {windmillSummary} | Su a={_fluidSubTickAlpha01:0.00} ({_fluidKinematicsPool.LeasedCount}/64)\n" +
                         $"Chunk: {VisibleChunkCount}/{_worldChunks.Count} (Menzil: {ActiveChunkRadius}) | Hareket: {st.Stance} ({st.CurrentSpeedMetersPerSec:0.0} m/s)";
 
                     // SAG-UST KUTU (Minecraft F3 Sag Sutun: Hedef Blok + Yogunluk/Hasar/Mesafe, Silah/Stil, Kristal, Kisa Tuslar)
@@ -4554,11 +4989,11 @@ namespace Stratocraft.Character
                         $"{combatLine}\n" +
                         $"{crystalLine}\n" +
                         $"{_creatureBridge.NearestCreatureHudSummary}\n" +
-                        $"[F3] Bilgileri Gizle | [F1] Sinematik | [ESC] Ayarlar";
+                        $"[F3] Gizle | [Shift+F11] Hava/Kar/Tipi | [ESC] Ayarlar";
                 }
 
-                GUI.Box(new Rect(10f, 10f, 440f, 118f), _cachedMainHudString, _hudBoxStyle);
-                GUI.Box(new Rect(Screen.width - 400f, 10f, 390f, 96f), _cachedRightHudString, _hudRightBoxStyle);
+                GUI.Box(new Rect(10f, 10f, 520f, 168f), _cachedMainHudString, _hudBoxStyle);
+                GUI.Box(new Rect(Screen.width - 410f, 10f, 400f, 98f), _cachedRightHudString, _hudRightBoxStyle);
             }
 
             _recipeBookUi.DrawOnGui(Screen.width, Screen.height);
@@ -4846,12 +5281,14 @@ namespace Stratocraft.Character
 
         private void CycleTestWeatherOverrideMode()
         {
-            _testWeatherOverrideMode = (_testWeatherOverrideMode + 1) % 4;
+            _testWeatherOverrideMode = (_testWeatherOverrideMode + 1) % 6;
             _miningCtrl.LastFeedbackText = _testWeatherOverrideMode switch
             {
-                1 => "[Shift+F11] TEST HAVA DURUMU: YAĞMUR BAŞLATILDI (14 mm/sa | Bulutlu | Çukur & Göl Dolar)",
-                2 => "[Shift+F11] TEST HAVA DURUMU: SAĞANAK FIRTINA (28 mm/sa | Şimşek & CAPE 1400)",
-                3 => "[Shift+F11] TEST HAVA DURUMU: AÇIK GÜNEŞLİ HAVA (0 mm/sa)",
+                1 => "[Shift+F11] TEST HAVA DURUMU (1/5): YAĞMUR BAŞLATILDI (14 mm/sa | Bulutlu | Çukur & Göl Dolar)",
+                2 => "[Shift+F11] TEST HAVA DURUMU (2/5): SAĞANAK FIRTINA (28 mm/sa | Şimşek & CAPE 1400)",
+                3 => "[Shift+F11] TEST HAVA DURUMU (3/5): KAR YAĞIŞI (-3.0°C | 6.5 mm/sa | Zemin Kar Örtüsü Birikir)",
+                4 => "[Shift+F11] TEST HAVA DURUMU (4/5): TİPİ / BORA FIRTINASI (-9.0°C | ~21 m/s Rüzgâr | Thundersnow & Wind Chill)",
+                5 => "[Shift+F11] TEST HAVA DURUMU (5/5): AÇIK GÜNEŞLİ HAVA (0 mm/sa | Kar Erir & Toprak Kurur)",
                 _ => "[Shift+F11] TEST HAVA DURUMU: OTOMATİK İKLİM SİSTEMİ"
             };
         }
@@ -4870,30 +5307,86 @@ namespace Stratocraft.Character
                 for (int cx = 8; cx <= 24; cx++)
                 {
                     AtmosphereCellState c = _regionalAtmosphereSystem.GetCell(cx, cz);
-                    float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
                     switch (_testWeatherOverrideMode)
                     {
                         case 1: // Yağmur
+                        {
+                            c.AirTempCelsius = Mathf.Max(14.0f, c.AirTempCelsius);
+                            c.SurfaceTempCelsius = Mathf.Max(14.5f, c.SurfaceTempCelsius);
+                            float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
                             c.CloudWaterKgPerM2 = 1.45f;
                             c.SurfacePrecipMmPerHour = 14.0f;
                             c.VaporPressureHpa = Mathf.Max(c.VaporPressureHpa, sat * 0.98f);
                             c.StationPressureHpa = 998.0f;
                             c.CapeJPerKg = 450;
+                            c.ActiveKind = PrecipitationKind.Rain;
+                            c.Hazards = AtmosphericHazardFlags.None;
                             break;
+                        }
                         case 2: // Sağanak Fırtına
+                        {
+                            c.AirTempCelsius = Mathf.Max(15.0f, c.AirTempCelsius);
+                            c.SurfaceTempCelsius = Mathf.Max(16.0f, c.SurfaceTempCelsius);
+                            float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
                             c.CloudWaterKgPerM2 = 2.40f;
                             c.SurfacePrecipMmPerHour = 28.0f;
                             c.VaporPressureHpa = Mathf.Max(c.VaporPressureHpa, sat * 1.0f);
                             c.StationPressureHpa = 986.0f;
                             c.CapeJPerKg = 1400;
+                            c.WindVelX = 13.5f;
+                            c.WindVelZ = 5.5f;
+                            c.ActiveKind = PrecipitationKind.Rain;
+                            c.Hazards = AtmosphericHazardFlags.ThunderLightning;
                             break;
-                        case 3: // Açık Hava
+                        }
+                        case 3: // Kar Yağışı (-3°C, 6.5 mm/sa)
+                        {
+                            c.AirTempCelsius = -3.0f;
+                            c.SurfaceTempCelsius = -2.5f;
+                            float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
+                            c.CloudWaterKgPerM2 = 1.35f;
+                            c.SurfacePrecipMmPerHour = 6.5f;
+                            c.VaporPressureHpa = sat * 0.88f;
+                            c.StationPressureHpa = 1004.0f;
+                            c.WindVelX = 5.5f;
+                            c.WindVelZ = 2.0f;
+                            c.CapeJPerKg = 120;
+                            c.ActiveKind = PrecipitationKind.Snow;
+                            c.Hazards = AtmosphericHazardFlags.None;
+                            break;
+                        }
+                        case 4: // Tipi / Bora Fırtınası (-9°C, ~21.3 m/s <= 35 m/s, Thundersnow CAPE=520)
+                        {
+                            c.AirTempCelsius = -9.0f;
+                            c.SurfaceTempCelsius = -8.5f;
+                            float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
+                            c.CloudWaterKgPerM2 = 2.15f;
+                            c.SurfacePrecipMmPerHour = 12.0f;
+                            c.VaporPressureHpa = sat * 0.92f;
+                            c.StationPressureHpa = 978.0f - ((cx - 16) * 0.65f);
+                            c.WindVelX = 19.5f;
+                            c.WindVelZ = 8.5f;
+                            c.CapeJPerKg = 520;
+                            c.ActiveKind = PrecipitationKind.Snow;
+                            c.Hazards = AtmosphericHazardFlags.Blizzard | AtmosphericHazardFlags.ThunderLightning;
+                            break;
+                        }
+                        case 5: // Açık Güneşli Hava
+                        {
+                            c.AirTempCelsius = Mathf.Max(18.0f, c.AirTempCelsius);
+                            c.SurfaceTempCelsius = Mathf.Max(20.0f, c.SurfaceTempCelsius);
+                            float sat = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(c.AirTempCelsius);
                             c.CloudWaterKgPerM2 = 0.0f;
                             c.SurfacePrecipMmPerHour = 0.0f;
                             c.VaporPressureHpa = sat * 0.40f;
                             c.StationPressureHpa = 1018.0f;
+                            c.WindVelX = 4.0f;
+                            c.WindVelZ = 1.0f;
                             c.CapeJPerKg = 0;
+                            c.ActiveKind = PrecipitationKind.None;
+                            c.Hazards = AtmosphericHazardFlags.None;
                             break;
+                        }
                     }
                     _regionalAtmosphereSystem.SetCell(cx, cz, in c);
                 }
@@ -4925,9 +5418,24 @@ namespace Stratocraft.Character
 
             float totalGameDeltaThisFrame = substepCount * substepGameSeconds;
 
-            // 2) Gunes Efemerisi + Rayleigh Gun Dogumu/Batimi Renk Kaymasi (Red Sky at Night / Morning)
+            // 2) Gunes Efemerisi + 3B Yerel Dinamik Ruzgar Alani + Rayleigh Gun Dogumu/Batimi Renk Kaymasi
             _currentSolarEphem = SolarCalendarAndTimeScaleSystem.EvaluateSolarEphem(_totalSimulatedGameSeconds);
             _currentPlayerAtmosphereCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x, playerPos.z);
+
+            _isWorldVoxelSolidCached ??= IsWorldVoxelSolidAt;
+            float playerGroundY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(playerPos.x, playerPos.z);
+            bool isPlayerIndoor = _lastConnectedAirVoxels < EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels ||
+                                  (playerPos.y - playerGroundY) < -4.5f;
+            _currentPlayerLocalWind3D = DynamicWindFieldSystem.EvaluateLocal3DWind(
+                _regionalAtmosphereSystem,
+                new System.Numerics.Vector3(playerPos.x, playerPos.y + 1.25f, playerPos.z),
+                playerGroundY,
+                _totalSimulatedGameSeconds,
+                isPlayerIndoor,
+                _isWorldVoxelSolidCached);
+            _currentWindBeaufortScale = WeatherForecastInstrumentsSystem.EvaluateBeaufortScale0To12(
+                _currentPlayerLocalWind3D.SpeedMps, out _, out _);
+            Shader.SetGlobalFloat(ShaderGlobalWindBeaufortId, _currentWindBeaufortScale);
 
             AtmosphereCellState westCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x - 192.0f, playerPos.z);
             AtmosphereCellState eastCell = _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(playerPos.x + 192.0f, playerPos.z);
@@ -4942,8 +5450,6 @@ namespace Stratocraft.Character
                 eastRh01,
                 _currentPlayerAtmosphereCell.StationPressureHpa);
 
-            // Canli PlayMode duzeltmesi: Gunes/Ay yonlu isigi + prosedurel Skybox + ortam isigi + sis rengi
-            // artik gercek zamanli gunes efemerisine ve oyuncu hucresinin bulut/yagis durumuna baglidir.
             float playerCloudCover01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.CloudWaterKgPerM2 / 1.6f);
             float playerStorm01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour / 12.0f);
             _skyDayNightCtrl.Apply(
@@ -4956,13 +5462,7 @@ namespace Stratocraft.Character
                 _lightningSkyFlashIntensity01,
                 allowFogColorWrite: _underwaterCameraEffect.CurrentBlend01 <= 0.001f);
 
-            _cloudAndRainRenderer.ApplyGlobalAtmosphereShaderUniforms(
-                _currentSolarEphem.SunDirY,
-                westRh01,
-                eastRh01,
-                _currentPlayerAtmosphereCell.StationPressureHpa);
-
-            // 3) 9x9 Atmosfer AOI Penceresi, 1 Hz Delta Senkron Paketi (AtmosphereAoiSyncPacket) ve 3B Bulut/Yagmur Cizici
+            // 3) 9x9 Atmosfer AOI Penceresi, 1 Hz Delta Senkron Paketi (AtmosphereAoiSyncPacket) ve 3B Bulut/Yagmur/Kar Cizici
             _regionalAtmosphereSystem.ExtractAoiWindow9x9(
                 playerPos.x,
                 playerPos.z,
@@ -5010,13 +5510,12 @@ namespace Stratocraft.Character
                     _aoiRenderPrecip81[wIdx] = precip;
                     if (cloudWater <= 0.08f && precip <= 0.05f) continue;
 
-                    // DUZELTME: Hucre indeksi 32x32 bolgesel izgara ICINDEKI indekstir; dunya koordinatina
-                    // cevirmek icin izgaranin dunya orijini eklenmelidir (aksi halde bulutlar ~1 km uzaga cizilir).
+                    int gx = Mathf.Clamp(centerCellX + dx, 0, RegionalAtmosphereSimulationSystem.GridSideCells - 1);
+                    int gz = Mathf.Clamp(centerCellZ + dz, 0, RegionalAtmosphereSimulationSystem.GridSideCells - 1);
+                    PrecipitationKind cellPrecipKind = _regionalAtmosphereSystem.GetCell(gx, gz).ActiveKind;
+
                     float cellCenterX = _regionalAtmosphereSystem.OriginWorldX + (centerCellX + dx + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
                     float cellCenterZ = _regionalAtmosphereSystem.OriginWorldZ + (centerCellZ + dz + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
-                    // DUZELTME: Fiziksel LCL bulut tabani gercek metre (600..3000m) cinsindendir; oyun dunyasi
-                    // ~96m zemin ve 4500m kamera menzili ile olceklendigi icin gorsel bulut katmani 150..240m
-                    // bandina sikistirilir (fizik/test degerleri degismez, yalnizca cizim olcegi).
                     float physBaseY = sample.CloudBase16m * 16.0f;
                     float physThickness = sample.CloudThickness32m * 32.0f;
                     float baseY = 150.0f + Mathf.Clamp01(physBaseY / 3200.0f) * 90.0f;
@@ -5033,10 +5532,23 @@ namespace Stratocraft.Character
                         baseY + thickness,
                         precip,
                         sample.WindXCentiMps * 0.01f,
-                        sample.WindZCentiMps * 0.01f);
+                        sample.WindZCentiMps * 0.01f,
+                        cellPrecipKind);
                 }
             }
             _cloudAndRainRenderer.UpdateActiveCloudCells(_cloudRenderSamplesScratch.AsSpan(0, cloudCount));
+            float blizzardOverride = (_currentPlayerAtmosphereCell.Hazards & AtmosphericHazardFlags.Blizzard) != 0 ? 1.0f : -1.0f;
+            PrecipitationKind? precipOverride = _currentPlayerAtmosphereCell.ActiveKind != PrecipitationKind.None
+                ? _currentPlayerAtmosphereCell.ActiveKind
+                : null;
+            _cloudAndRainRenderer.ApplyGlobalAtmosphereShaderUniforms(
+                _currentSolarEphem.SunDirY,
+                westRh01,
+                eastRh01,
+                _currentPlayerAtmosphereCell.StationPressureHpa,
+                activePrecipKindOverride: precipOverride,
+                blizzardFactor01Override: blizzardOverride);
+
             float avgVisualBase = visualCount > 0 ? visualBaseSum / visualCount : 180.0f;
             float avgVisualTop = visualCount > 0 ? visualTopSum / visualCount : 230.0f;
             _cloudAndRainRenderer.SetAoiRenderGrid(
@@ -5047,7 +5559,7 @@ namespace Stratocraft.Character
                 avgVisualBase,
                 avgVisualTop);
 
-            // 4) Konvektif Yildirim (CAPE > 1000 J/kg), Metal Paratoner 24m Koni Korumasi ve Mesafe/343s Ses Gecikmesi
+            // 4) Konvektif Yildirim (CAPE > 1000 J/kg veya Thundersnow), Metal Ekipman Riski ve 24m Paratoner Kalkanı
             if (_lightningSkyFlashIntensity01 > 0.001f)
             {
                 _lightningSkyFlashIntensity01 = Mathf.Max(0f, _lightningSkyFlashIntensity01 - dt * 4.5f);
@@ -5063,12 +5575,11 @@ namespace Stratocraft.Character
             }
 
             bool readyToStrike = _convectiveLightningSystem.StepConvectiveCharge(
-                _currentPlayerAtmosphereCell.CapeJPerKg,
-                _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour,
-                totalGameDeltaThisFrame);
+                in _currentPlayerAtmosphereCell,
+                totalGameDeltaThisFrame,
+                out bool isThundersnow);
 
-            if (readyToStrike &&
-                ConvectiveLightningAndRodSystem.IsConvectiveLightningActive(_currentPlayerAtmosphereCell.CapeJPerKg))
+            if (readyToStrike && ConvectiveLightningAndRodSystem.IsCellEligibleForLightning(in _currentPlayerAtmosphereCell))
             {
                 float boltOriginX = playerPos.x + ((int)(_atmosphereNetTickCounter % 17u) - 8) * 2.0f;
                 float boltOriginZ = playerPos.z + ((int)((_atmosphereNetTickCounter >> 3) % 17u) - 8) * 2.0f;
@@ -5079,37 +5590,75 @@ namespace Stratocraft.Character
                         boltOriginZ,
                         _worldChunks,
                         _fluidChunks,
-                        skyOcclusionMaps: null,
+                        skyOcclusionMaps: _skyOcclusionMaps,
                         listenerX: playerPos.x,
                         listenerY: playerPos.y + 1.5f,
                         listenerZ: playerPos.z,
-                        out LightningStrikeResult strikeResult))
+                        out LightningStrikeResult strikeResult,
+                        searchRadiusBlocks: 24,
+                        isThundersnow: isThundersnow))
                 {
                     _lightningSkyFlashIntensity01 = 1.0f;
-                    _pendingThunderTimerSec = strikeResult.ThunderAudioDelaySeconds;
+                    float playerMetalLoad01 = _holsterCtrl.InventoryUi.LastThermalGearSummary.ConductiveMetalLoad01;
+                    bool playerExposedToSky = !isPlayerIndoor && HasOpenSkyAboveWorldCoord(
+                        Mathf.FloorToInt(playerPos.x),
+                        Mathf.Clamp(Mathf.FloorToInt(playerPos.y) + 2, 1, MaxEditableVoxelY - 1),
+                        Mathf.FloorToInt(playerPos.z));
+
+                    // Paratoner menzili disindayken metal zirhli/silahli oyuncu yildirim hedef skorunu yukseltir (IP-6 / AK-10)
+                    bool struckMetalPlayerDirectly = false;
+                    if (!strikeResult.HitLightningRod && playerExposedToSky && playerMetalLoad01 > 0.05f)
+                    {
+                        float bDx = playerPos.x - boltOriginX;
+                        float bDz = playerPos.z - boltOriginZ;
+                        float playerHorizDist = Mathf.Sqrt(bDx * bDx + bDz * bDz);
+                        if (playerHorizDist <= 24.0f)
+                        {
+                            float playerScore = ConvectiveLightningAndRodSystem.ComputeTargetScore(
+                                playerPos.y + 1.75f,
+                                isRod: false,
+                                isWater: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f,
+                                horizDist: playerHorizDist,
+                                conductiveMetalLoad01: playerMetalLoad01);
+                            if (playerScore >= strikeResult.SelectionScore)
+                            {
+                                struckMetalPlayerDirectly = true;
+                            }
+                        }
+                    }
+
+                    _pendingThunderTimerSec = struckMetalPlayerDirectly ? 0.02f : strikeResult.ThunderAudioDelaySeconds;
                     float dx = strikeResult.TargetWorldX - playerPos.x;
                     float dy = strikeResult.TargetWorldY - (playerPos.y + 1.5f);
                     float dz = strikeResult.TargetWorldZ - playerPos.z;
-                    _pendingThunderDistanceMeters = Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
+                    _pendingThunderDistanceMeters = struckMetalPlayerDirectly
+                        ? 0.5f
+                        : Mathf.Sqrt(dx * dx + dy * dy + dz * dz);
 
                     if (strikeResult.HitLightningRod)
                     {
+                        string tsTag = strikeResult.IsThundersnow ? " [Kış Yıldırımı / Thundersnow]" : string.Empty;
                         _placedWeatherInstruments.NotifyLightningInterceptedNear(
                             strikeResult.TargetWorldX,
                             strikeResult.TargetWorldZ);
                         _miningCtrl.LastFeedbackText =
-                            $"⚡ METAL PARATONER YILDIRIMI YAKALADI! (24m Koruma Konisi | Gök Gürültüsü Gecikmesi: {strikeResult.ThunderAudioDelaySeconds:0.1} sn)";
+                            $"⚡ METAL PARATONER YILDIRIMI YAKALADI!{tsTag} (24m Koruma Konisi | Gök Gürültüsü Gecikmesi: {strikeResult.ThunderAudioDelaySeconds:0.1} sn)";
                     }
-                    else if (_pendingThunderDistanceMeters <= 3.5f && Stage1GameSettings.EnableEnvironmentalEffects)
+                    else if ((struckMetalPlayerDirectly || _pendingThunderDistanceMeters <= 3.5f) && Stage1GameSettings.EnableEnvironmentalEffects)
                     {
                         _movementBridge.Vitals.CurrentHp = Mathf.Max(
                             20.0f,
                             _movementBridge.Vitals.CurrentHp - 35.0f);
+                        if (struckMetalPlayerDirectly)
+                        {
+                            _miningCtrl.LastFeedbackText =
+                                $"⚡ İLETKEN METAL ZIRH/SİLAH YILDIRIMI ÇEKTİ! (-35 Can | Metal Yükü: %{playerMetalLoad01 * 100f:0} — Paratoner kurun veya metali çıkarın!)";
+                        }
                     }
                 }
             }
 
-            // 5) Hidroloji, Su Dongusu (WaterCycleAndEvaporationSystem), Karst Akifer ve Acik Gokyuzu Ates/Firin Yagmur Sondurme
+            // 5) Hidroloji, Kar Birikimi/Savrulmasi/Erimesi (SnowAccumulationAndMeltSystem), Su Dongusu ve Karst Akifer
             _hydrologyStepTimer += dt;
             _hydrologyAccumGameSeconds += totalGameDeltaThisFrame;
             _hydrologyAccumRealSeconds += dt;
@@ -5124,21 +5673,51 @@ namespace Stratocraft.Character
                 int pCx = Mathf.FloorToInt(playerPos.x / 16f);
                 int pCz = Mathf.FloorToInt(playerPos.z / 16f);
                 float localPrecipMmHr = _currentPlayerAtmosphereCell.SurfacePrecipMmPerHour;
-                float satHpa = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(
-                    _currentPlayerAtmosphereCell.AirTempCelsius);
-                float localRh01 = Mathf.Clamp(
-                    _currentPlayerAtmosphereCell.VaporPressureHpa / Mathf.Max(0.1f, satHpa),
-                    0.02f,
-                    1.0f);
-                float localWindMps = Mathf.Sqrt(
-                    _currentPlayerAtmosphereCell.WindVelX * _currentPlayerAtmosphereCell.WindVelX +
-                    _currentPlayerAtmosphereCell.WindVelZ * _currentPlayerAtmosphereCell.WindVelZ);
+                float pondingDt = Mathf.Max(hydroGameDt * 3.0f, hydroRealDt * 18.0f);
 
-                // 1x hizda cukurlarin/gollerin yagmurda yavas ve dengeli dolmasi (her yerin bir anda gol olmamasina dikkat ederek)
-                // ve toprak kalinligina gore su tutma fazinin gercekci islemesi icin 240x gercek-zaman olcegi kullanilir.
-                float pondingDt = Mathf.Max(hydroGameDt * 24.0f, hydroRealDt * 240.0f);
+                Span<ThermalHeatSourcePoint> heatPoints = stackalloc ThermalHeatSourcePoint[16];
+                int heatPointCount = 0;
+                for (int hi = 0; hi < _placedThermalStations.Count && heatPointCount < heatPoints.Length; hi++)
+                {
+                    Vector3Int st = _placedThermalStations[hi];
+                    heatPoints[heatPointCount++] = new ThermalHeatSourcePoint
+                    {
+                        WorldPos = new System.Numerics.Vector3(st.x + 0.5f, st.y + 0.5f, st.z + 0.5f),
+                        RadiusMeters = 5.0f,
+                        ThermalPowerKw = 22.0f
+                    };
+                }
+                if (_campfireCtrl.ActiveCampfireCount > 0 && heatPointCount < heatPoints.Length)
+                {
+                    float nearFireC = _campfireCtrl.EvaluateThermalBonusAndDrying(
+                        playerPos + Vector3.up * 0.8f, 0f, false, ref _movementBridge.Vitals.Wetness01);
+                    if (nearFireC > 2.0f)
+                    {
+                        heatPoints[heatPointCount++] = new ThermalHeatSourcePoint
+                        {
+                            WorldPos = new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z),
+                            RadiusMeters = 4.8f,
+                            ThermalPowerKw = 18.0f
+                        };
+                    }
+                }
+                if (_bloomeryCtrl.ActiveBloomeryCount > 0 && heatPointCount < heatPoints.Length)
+                {
+                    float nearBloomC = _bloomeryCtrl.EvaluateThermalBonus(playerPos + Vector3.up * 0.8f);
+                    if (nearBloomC > 4.0f)
+                    {
+                        heatPoints[heatPointCount++] = new ThermalHeatSourcePoint
+                        {
+                            WorldPos = new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z),
+                            RadiusMeters = 6.0f,
+                            ThermalPowerKw = 55.0f
+                        };
+                    }
+                }
 
-                // Oyuncunun etrafindaki 5x5 chunk (80m x 80m) cevresini isle ki uzaktaki tepeler, goller ve kazilan cukurlar da esit yagmur alsin.
+                ReadOnlySpan<ThermalHeatSourcePoint> activeHeatSpan = heatPoints.Slice(0, heatPointCount);
+
+                // Oyuncunun etrafindaki 5x5 chunk (80m x 80m) cevresini gercek ChunkSkyOcclusionMap256 ile isle
                 for (int dz = -2; dz <= 2; dz++)
                 {
                     for (int dx = -2; dx <= 2; dx++)
@@ -5151,11 +5730,59 @@ namespace Stratocraft.Character
                             continue;
                         }
 
+                        _skyOcclusionMaps.TryGetValue((hCx, hCz), out ChunkSkyOcclusionMap256? chunkSkyMap);
+
                         AtmosphereCellState chunkCell = (dx == 0 && dz == 0)
                             ? _currentPlayerAtmosphereCell
                             : _regionalAtmosphereSystem.SampleBilinearAtWorldXZ(hCx * 16.0f + 8.0f, hCz * 16.0f + 8.0f);
 
-                        // 5A) Yagmur altinda toprak islatma -> camur -> doygunlukta gercek Tatli Su FluidCell16 goleti olusumu
+                        float chunkSatHpa = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(chunkCell.AirTempCelsius);
+                        float chunkRh01 = Mathf.Clamp(chunkCell.VaporPressureHpa / Mathf.Max(0.1f, chunkSatHpa), 0.02f, 1.0f);
+                        float chunkWindMps = Mathf.Sqrt(chunkCell.WindVelX * chunkCell.WindVelX + chunkCell.WindVelZ * chunkCell.WindVelZ);
+
+                        RegionalAtmosphereSimulationSystem.ClassifyPrecipitationPhasePaket4B(
+                            chunkCell.SurfacePrecipMmPerHour,
+                            chunkCell.AirTempCelsius,
+                            chunkRh01,
+                            chunkCell.CapeJPerKg,
+                            out float snowFrac01);
+                        if (chunkCell.ActiveKind == PrecipitationKind.Snow)
+                        {
+                            snowFrac01 = Mathf.Max(snowFrac01, 1.0f);
+                        }
+
+                        // 5A-0) Kar yagisi birikimi, ruzgar savrulmasi ve gunes/sicaklik/ates/lav erimesi -> nem + tatli su
+                        _snowSystem.StepChunkSnowAccumulationDriftAndMelt(
+                            hCx,
+                            hCz,
+                            chunkVox,
+                            chunkFluids,
+                            chunkSkyMap,
+                            _soilMoistureSystem,
+                            _salinityBitset,
+                            MaxEditableVoxelY,
+                            chunkCell.SurfacePrecipMmPerHour,
+                            snowFrac01,
+                            chunkCell.AirTempCelsius,
+                            _currentSolarEphem.ClearSkyInsolationWm2,
+                            new System.Numerics.Vector2(chunkCell.WindVelX, chunkCell.WindVelZ),
+                            activeHeatSpan,
+                            pondingDt,
+                            out ushort snowDirtySubMask,
+                            out bool spawnedMeltRunoffFluid);
+
+                        if (snowDirtySubMask != 0)
+                        {
+                            AddSubChunkDirtyMask((hCx, hCz), snowDirtySubMask);
+                        }
+                        if (spawnedMeltRunoffFluid)
+                        {
+                            _dirtyFluidChunks.Add((hCx, hCz));
+                            WakeChunkAndNeighborsFluid((hCx, hCz));
+                        }
+
+                        // 5A) Sivi yagmur altinda toprak islatma -> camur -> doygunlukta gercek Tatli Su FluidCell16 goleti olusumu
+                        float liquidRainMmHr = chunkCell.SurfacePrecipMmPerHour * (1.0f - snowFrac01);
                         _waterCycleSystem.StepRainSurfaceWettingAndPonding(
                             hCx,
                             hCz,
@@ -5163,12 +5790,12 @@ namespace Stratocraft.Character
                             chunkFluids,
                             _soilMoistureSystem,
                             MaxEditableVoxelY,
-                            chunkCell.SurfacePrecipMmPerHour,
+                            liquidRainMmHr,
                             chunkCell.AirTempCelsius,
                             pondingDt,
                             out ushort rainDirtySubMask,
                             out bool rainFluidChanged,
-                            skyMap: null,
+                            skyMap: chunkSkyMap,
                             salinityBitset: _salinityBitset);
 
                         if (rainDirtySubMask != 0)
@@ -5182,9 +5809,6 @@ namespace Stratocraft.Character
                         }
 
                         // 5C) Dalton yuzey buharlasmasi -> atmosfere geri kutle enjeksiyonu (deniz suyu tuzlu kalir, buhar tatli su bulutu olur!)
-                        float chunkSatHpa = RegionalAtmosphereSimulationSystem.ComputeTetensSaturationVaporHpa(chunkCell.AirTempCelsius);
-                        float chunkRh01 = Mathf.Clamp(chunkCell.VaporPressureHpa / Mathf.Max(0.1f, chunkSatHpa), 0.02f, 1.0f);
-                        float chunkWindMps = Mathf.Sqrt(chunkCell.WindVelX * chunkCell.WindVelX + chunkCell.WindVelZ * chunkCell.WindVelZ);
                         float evapKgPerM2 = _waterCycleSystem.StepSurfaceWaterEvaporation(
                             hCx,
                             hCz,
@@ -5194,10 +5818,10 @@ namespace Stratocraft.Character
                             chunkCell.AirTempCelsius,
                             chunkRh01,
                             chunkWindMps,
-                            hydroGameDt,
+                            pondingDt,
                             out _,
                             out bool evapFluidChanged,
-                            skyMap: null,
+                            skyMap: chunkSkyMap,
                             salinityBitset: _salinityBitset,
                             maintainOceanMacroBalance: false,
                             seaLevelY: (int)StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY - 6);
@@ -5208,25 +5832,31 @@ namespace Stratocraft.Character
                         }
                         if (evapKgPerM2 > 0.0f)
                         {
+                            float atmosEvapScale = Mathf.Clamp01(hydroGameDt / Mathf.Max(0.001f, pondingDt));
                             _regionalAtmosphereSystem.InjectSurfaceEvaporationMassAtWorldXZ(
                                 hCx * 16.0f + 8.0f,
                                 hCz * 16.0f + 8.0f,
-                                evapKgPerM2);
+                                evapKgPerM2 * atmosEvapScale);
                         }
                     }
                 }
 
-                // 5B) Acik varil / kazan yagmur suyu dolumu
-                if (localPrecipMmHr > 0.05f && _activeOpenContainerCount > 0)
+                int pLx = Mathf.FloorToInt(playerPos.x) - pCx * 16;
+                int pLz = Mathf.FloorToInt(playerPos.z) - pCz * 16;
+                _lastPlayerSnowColumnSweMm = _snowSystem.GetColumnSweUnits(pCx, pCz, pLx, pLz) * SnowAccumulationAndMeltSystem.MmSwePerUnit;
+
+                // 5B) Acik varil / kazan yagmur suyu dolumu (yalnizca sivi yagmurda)
+                float playerLiquidRainMmHr = _currentPlayerAtmosphereCell.ActiveKind == PrecipitationKind.Snow ? 0.0f : localPrecipMmHr;
+                if (playerLiquidRainMmHr > 0.05f && _activeOpenContainerCount > 0)
                 {
                     WaterCycleAndEvaporationSystem.StepOpenContainerRainFill(
                         _openRainContainersScratch.AsSpan(0, _activeOpenContainerCount),
-                        localPrecipMmHr,
+                        playerLiquidRainMmHr,
                         pondingDt);
                 }
 
                 // 5D) Karst yeralti akiferlerinin yagmur suzulmesiyle yeniden dolumu
-                _karstAquiferSystem.StepAllBasinsRainRecharge(localPrecipMmHr, hydroGameDt);
+                _karstAquiferSystem.StepAllBasinsRainRecharge(playerLiquidRainMmHr, hydroGameDt);
 
                 // 5E) Acik gokyuzu altindaki Kamp Atesi ve Bloomery Izabe Firini yagmur sondurme/sogutma adimi
                 bool playerAreaOpenSky = _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
@@ -5351,13 +5981,18 @@ namespace Stratocraft.Character
         {
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
             int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            int lx = wx - cx * 16;
+            int lz = wz - cz * 16;
+            if (_skyOcclusionMaps.TryGetValue((cx, cz), out ChunkSkyOcclusionMap256? skyMap) && skyMap != null)
+            {
+                return skyMap.HasOpenSkyAbove(lx, Mathf.Clamp(startWy - 1, 0, 255), lz);
+            }
+
             if (!_worldChunks.TryGetValue((cx, cz), out uint[]? vox) || vox == null)
             {
                 return true;
             }
 
-            int lx = wx - cx * 16;
-            int lz = wz - cz * 16;
             int colBase = (lz << 4) | lx;
             int minY = Mathf.Clamp(startWy, 1, MaxEditableVoxelY - 1);
             for (int sy = minY; sy < MaxEditableVoxelY; sy++)

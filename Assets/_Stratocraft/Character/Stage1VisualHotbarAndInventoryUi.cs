@@ -65,7 +65,15 @@ namespace Stratocraft.Character
         WroughtIronBar = 47,
         SlagShard = 48,
         WoodenWheel = 49,
-        ResonanceCrystal = 50
+        ResonanceCrystal = 50,
+        WindmillSailPanel = 51,
+        WildGrainBundle = 52,
+        MilledFlour = 53,
+        CrushedFluxPowder = 54,
+        WovenClothTunic = 55,
+        OiledLeatherWindbreaker = 56,
+        HeavyFurWinterParka = 57,
+        FurLinedWinterBoots = 58
     }
 
     /// <summary>
@@ -121,11 +129,15 @@ namespace Stratocraft.Character
             InventoryItemKind.FoodRawMeat => PhysicalItemArchetype.RawMeatCut,
             InventoryItemKind.FoodCookedMeat => PhysicalItemArchetype.CookedMeatCut,
             InventoryItemKind.FoodBurntMeat => PhysicalItemArchetype.BurntCharredMeat,
-            InventoryItemKind.FoodWildBerries => PhysicalItemArchetype.WildBerryCluster,
+            InventoryItemKind.FoodWildBerries => subId == MaterialIdCatalog.Marble
+                ? PhysicalItemArchetype.MilledFlour
+                : PhysicalItemArchetype.WildBerryCluster,
             InventoryItemKind.RawHide => PhysicalItemArchetype.RawHideRoll,
             InventoryItemKind.CharcoalChunk => PhysicalItemArchetype.CharcoalChunk,
             InventoryItemKind.RoastedOreChunk => PhysicalItemArchetype.RoastedCrackedOre,
-            InventoryItemKind.CrushedOrePowder => PhysicalItemArchetype.CrushedOreGravel,
+            InventoryItemKind.CrushedOrePowder => subId == MaterialIdCatalog.Marble
+                ? PhysicalItemArchetype.CrushedFluxPowder
+                : PhysicalItemArchetype.CrushedOreGravel,
             InventoryItemKind.ClayTuyerePipe => PhysicalItemArchetype.ClayTuyerePipe,
             InventoryItemKind.ClayCruciblePot => PhysicalItemArchetype.ClayCruciblePot,
             InventoryItemKind.LeatherBellows => PhysicalItemArchetype.LeatherBellows,
@@ -135,6 +147,14 @@ namespace Stratocraft.Character
             InventoryItemKind.WoodenWheel => PhysicalItemArchetype.WoodenWheel,
             InventoryItemKind.ResonanceCrystal => PhysicalItemArchetype.QuartzCrystalCluster,
             InventoryItemKind.MetalIngot => PhysicalItemArchetype.MetalIngotBar,
+            InventoryItemKind.WindmillSailPanel => PhysicalItemArchetype.WindmillSailPanel,
+            InventoryItemKind.WildGrainBundle => PhysicalItemArchetype.WildGrainBundle,
+            InventoryItemKind.MilledFlour => PhysicalItemArchetype.MilledFlour,
+            InventoryItemKind.CrushedFluxPowder => PhysicalItemArchetype.CrushedFluxPowder,
+            InventoryItemKind.WovenClothTunic => PhysicalItemArchetype.WovenClothTunic,
+            InventoryItemKind.OiledLeatherWindbreaker => PhysicalItemArchetype.OiledLeatherWindbreaker,
+            InventoryItemKind.HeavyFurWinterParka => PhysicalItemArchetype.HeavyFurWinterParka,
+            InventoryItemKind.FurLinedWinterBoots => PhysicalItemArchetype.FurLinedWinterBoots,
             _ => PhysicalItemArchetype.None
         };
 
@@ -179,7 +199,11 @@ namespace Stratocraft.Character
                    Kind == InventoryItemKind.SlagShard ||
                    Kind == InventoryItemKind.ResonanceCrystal ||
                    Kind == InventoryItemKind.PlaceableCampfire ||
-                   Kind == InventoryItemKind.PlaceableStoneKiln;
+                   Kind == InventoryItemKind.PlaceableStoneKiln ||
+                   Kind == InventoryItemKind.WindmillSailPanel ||
+                   Kind == InventoryItemKind.WildGrainBundle ||
+                   Kind == InventoryItemKind.MilledFlour ||
+                   Kind == InventoryItemKind.CrushedFluxPowder;
         }
     }
 
@@ -203,6 +227,10 @@ namespace Stratocraft.Character
         public readonly VisualInventorySlot[] EquippedArmorSlots = new VisualInventorySlot[ArmorSlotCount];
         public readonly VisualInventorySlot[] AssemblyInputSlots = new VisualInventorySlot[AssemblyInputSlotCount];
         public readonly VisualInventorySlot[] CenterCraftSlots = new VisualInventorySlot[CenterCraftSlotCount];
+        public readonly Stratocraft.Character.Systems.ClothingSlotWetnessState[] ArmorSlotWetnessStates =
+            new Stratocraft.Character.Systems.ClothingSlotWetnessState[ArmorSlotCount];
+        public Stratocraft.Character.Systems.PlayerThermalGearSummary LastThermalGearSummary;
+        public float LastEffectiveWindChillCelsius { get; set; } = 21.0f;
 
         public VisualInventorySlot AssemblyPreviewSlot;
         public ClothMatCraftMatch ActiveAssemblyMatch { get; private set; }
@@ -331,6 +359,10 @@ namespace Stratocraft.Character
             InventoryItemKind.FoodCleanWater => 8,
             InventoryItemKind.PlaceableCampfire => 4,
             InventoryItemKind.PlaceableStoneKiln => 2,
+            InventoryItemKind.WindmillSailPanel => 4,
+            InventoryItemKind.WildGrainBundle => 12,
+            InventoryItemKind.MilledFlour => 12,
+            InventoryItemKind.CrushedFluxPowder => 12,
             _ => 1
         };
 
@@ -352,7 +384,9 @@ namespace Stratocraft.Character
             for (int i = 0; i < ArmorSlotCount; i++)
             {
                 EquippedArmorSlots[i] = default;
+                ArmorSlotWetnessStates[i] = default;
             }
+            LastThermalGearSummary = default;
 
             // Dunyadaki baslangic sandigi (CAS Sandik Kasasi) acil durum rezervi olarak bazi maddeleri icerir
             ChestSlots[0] = new VisualInventorySlot { Kind = InventoryItemKind.MetalIngot, SubId = 1, Count = 8, Durability01 = 1.0f };
@@ -651,23 +685,27 @@ namespace Stratocraft.Character
             kind == InventoryItemKind.ArmorHelmet ||
             kind == InventoryItemKind.ArmorChestplate ||
             kind == InventoryItemKind.ArmorVambrace ||
-            kind == InventoryItemKind.ArmorGreaves;
+            kind == InventoryItemKind.ArmorGreaves ||
+            kind == InventoryItemKind.WovenClothTunic ||
+            kind == InventoryItemKind.OiledLeatherWindbreaker ||
+            kind == InventoryItemKind.HeavyFurWinterParka ||
+            kind == InventoryItemKind.FurLinedWinterBoots;
 
         public static int GetArmorSlotIndexForItemKind(InventoryItemKind kind) => kind switch
         {
-            InventoryItemKind.ArmorHelmet => 0,
-            InventoryItemKind.ArmorChestplate => 1,
-            InventoryItemKind.ArmorVambrace => 2,
-            InventoryItemKind.ArmorGreaves => 3,
+            InventoryItemKind.ArmorHelmet or InventoryItemKind.OiledLeatherWindbreaker => 0,
+            InventoryItemKind.ArmorChestplate or InventoryItemKind.HeavyFurWinterParka => 1,
+            InventoryItemKind.ArmorVambrace or InventoryItemKind.WovenClothTunic => 2,
+            InventoryItemKind.ArmorGreaves or InventoryItemKind.FurLinedWinterBoots => 3,
             _ => -1
         };
 
         public static string GetArmorSlotName(int slotIndex) => slotIndex switch
         {
-            0 => "Kafa (Miğfer)",
-            1 => "Gövde (Göğüslük)",
-            2 => "Kollar (Kolçak)",
-            3 => "Bacaklar (Dizlik)",
+            0 => "Kafa / Rüzgârlık",
+            1 => "Gövde (Göğüslük / Parka)",
+            2 => "Kollar / İçlik",
+            3 => "Bacaklar (Dizlik / Çizme)",
             _ => "Zırh"
         };
 
@@ -678,15 +716,121 @@ namespace Stratocraft.Character
             3 => "Bakır (%60)",
             4 => "Demir (%75)",
             5 => "Mithril (%90)",
+            6 => "Kürk Astarlı Çelik (%75 | 1.35 clo)",
             _ => "Zırhsız (%0)"
         };
 
+        public static UniqueEquipmentInstance BuildUniqueEquipmentInstanceForSlot(in VisualInventorySlot slot)
+        {
+            if (slot.IsEmpty)
+            {
+                return default;
+            }
+
+            switch (slot.Kind)
+            {
+                case InventoryItemKind.WovenClothTunic:
+                    return Stratocraft.Character.Systems.ThermalClothingInsulationSystem.CreateGarmentInstance(
+                        MaterialIdCatalog.TacticalCloth, MaterialIdCatalog.Air, 0.0f, (ushort)PrimitiveCraftOutputId.WovenClothTunic);
+
+                case InventoryItemKind.OiledLeatherWindbreaker:
+                    return Stratocraft.Character.Systems.ThermalClothingInsulationSystem.CreateGarmentInstance(
+                        MaterialIdCatalog.LeatherPadding, MaterialIdCatalog.TacticalCloth, 0.0f, (ushort)PrimitiveCraftOutputId.OiledLeatherWindbreaker);
+
+                case InventoryItemKind.HeavyFurWinterParka:
+                    return Stratocraft.Character.Systems.ThermalClothingInsulationSystem.CreateGarmentInstance(
+                        MaterialIdCatalog.CreatureFurAsh, MaterialIdCatalog.LeatherPadding, 0.0f, (ushort)PrimitiveCraftOutputId.HeavyFurWinterParka);
+
+                case InventoryItemKind.FurLinedWinterBoots:
+                    return Stratocraft.Character.Systems.ThermalClothingInsulationSystem.CreateGarmentInstance(
+                        MaterialIdCatalog.CreatureFurAsh, MaterialIdCatalog.LeatherPadding, 0.0f, (ushort)PrimitiveCraftOutputId.FurLinedWinterBoots);
+
+                case InventoryItemKind.ArmorHelmet:
+                case InventoryItemKind.ArmorChestplate:
+                case InventoryItemKind.ArmorVambrace:
+                case InventoryItemKind.ArmorGreaves:
+                {
+                    byte primaryMat = slot.SubId switch
+                    {
+                        1 => MaterialIdCatalog.LeatherPadding,
+                        2 => MaterialIdCatalog.OakWood,
+                        3 => MaterialIdCatalog.Bronze,
+                        5 => MaterialIdCatalog.MithrilOre,
+                        6 => MaterialIdCatalog.Steel,
+                        _ => MaterialIdCatalog.Steel
+                    };
+                    byte linerMat = slot.SubId switch
+                    {
+                        5 or 6 => MaterialIdCatalog.CreatureFurAsh,
+                        _ => MaterialIdCatalog.Air
+                    };
+                    return Stratocraft.Character.Systems.ThermalClothingInsulationSystem.CreateGarmentInstance(
+                        primaryMat, linerMat, 0.0f, (ushort)slot.Kind);
+                }
+
+                default:
+                    return default;
+            }
+        }
+
+        public void PopulateEquippedGarmentInstances(Span<UniqueEquipmentInstance> destination)
+        {
+            int count = Math.Min(ArmorSlotCount, destination.Length);
+            for (int i = 0; i < count; i++)
+            {
+                destination[i] = BuildUniqueEquipmentInstanceForSlot(in EquippedArmorSlots[i]);
+            }
+        }
+
+        public Stratocraft.Character.Systems.PlayerThermalGearSummary StepEquippedClothingThermalState(
+            float ambientTempCelsius,
+            float localWindSpeedMps,
+            float openSkyRainMmPerHour,
+            float submergedWaterDepthMeters,
+            float nearbyFireRadiantFluxKwM2,
+            float realDtSeconds)
+        {
+            Span<UniqueEquipmentInstance> equipped = stackalloc UniqueEquipmentInstance[ArmorSlotCount];
+            PopulateEquippedGarmentInstances(equipped);
+            LastThermalGearSummary = Stratocraft.Character.Systems.ThermalClothingInsulationSystem.StepClothingWetnessFreezingAndDrying(
+                equipped,
+                ArmorSlotWetnessStates,
+                ambientTempCelsius,
+                localWindSpeedMps,
+                openSkyRainMmPerHour,
+                submergedWaterDepthMeters,
+                nearbyFireRadiantFluxKwM2,
+                realDtSeconds);
+            LastEffectiveWindChillCelsius = Stratocraft.Character.Systems.ThermalClothingInsulationSystem.ComputeJagTiWindChillCelsius(
+                ambientTempCelsius,
+                localWindSpeedMps,
+                LastThermalGearSummary.AggregateWindBlock01);
+            return LastThermalGearSummary;
+        }
+
         public void SyncEquippedArmorToVitals(ref Stratocraft.Character.Data.CharacterVitalsComponent vitals)
         {
-            vitals.EquippedHelmetTier = (byte)(EquippedArmorSlots[0].Kind == InventoryItemKind.ArmorHelmet ? EquippedArmorSlots[0].SubId : 0);
-            vitals.EquippedChestplateTier = (byte)(EquippedArmorSlots[1].Kind == InventoryItemKind.ArmorChestplate ? EquippedArmorSlots[1].SubId : 0);
-            vitals.EquippedVambracesTier = (byte)(EquippedArmorSlots[2].Kind == InventoryItemKind.ArmorVambrace ? EquippedArmorSlots[2].SubId : 0);
-            vitals.EquippedGreavesTier = (byte)(EquippedArmorSlots[3].Kind == InventoryItemKind.ArmorGreaves ? EquippedArmorSlots[3].SubId : 0);
+            vitals.EquippedHelmetTier = ResolveSlotArmorTier(in EquippedArmorSlots[0]);
+            vitals.EquippedChestplateTier = ResolveSlotArmorTier(in EquippedArmorSlots[1]);
+            vitals.EquippedVambracesTier = ResolveSlotArmorTier(in EquippedArmorSlots[2]);
+            vitals.EquippedGreavesTier = ResolveSlotArmorTier(in EquippedArmorSlots[3]);
+        }
+
+        private static byte ResolveSlotArmorTier(in VisualInventorySlot slot)
+        {
+            if (slot.IsEmpty) return 0;
+            return slot.Kind switch
+            {
+                InventoryItemKind.ArmorHelmet or
+                InventoryItemKind.ArmorChestplate or
+                InventoryItemKind.ArmorVambrace or
+                InventoryItemKind.ArmorGreaves => slot.SubId == 6 ? (byte)4 : slot.SubId,
+                InventoryItemKind.WovenClothTunic => 1,
+                InventoryItemKind.OiledLeatherWindbreaker => 1,
+                InventoryItemKind.HeavyFurWinterParka => 2,
+                InventoryItemKind.FurLinedWinterBoots => 2,
+                _ => 0
+            };
         }
 
         public bool TryEquipArmor(ref VisualInventorySlot itemToEquip, out VisualInventorySlot unequippedOld)
@@ -1174,6 +1318,20 @@ namespace Stratocraft.Character
                 InventoryItemKind.SplitFirewood => CraftIngredientToken.SplitFirewood,
                 InventoryItemKind.RoughStoneChunk => CraftIngredientToken.RoughStoneChunk,
                 InventoryItemKind.LooseDirtClod => CraftIngredientToken.LooseDirtClod,
+                InventoryItemKind.ClayLump => CraftIngredientToken.ClayLump,
+                InventoryItemKind.SlagShard => CraftIngredientToken.SlagGlassShard,
+                InventoryItemKind.WroughtIronBar => CraftIngredientToken.WroughtIronBar,
+                InventoryItemKind.RawHide => CraftIngredientToken.LeatherPadding,
+                InventoryItemKind.WildGrainBundle => CraftIngredientToken.WildGrainBundle,
+                InventoryItemKind.MilledFlour => CraftIngredientToken.MilledFlour,
+                InventoryItemKind.CrushedFluxPowder => CraftIngredientToken.CrushedFluxPowder,
+                InventoryItemKind.MetalIngot when slot.SubId == 1 => CraftIngredientToken.CopperIngot,
+                InventoryItemKind.MetalIngot when slot.SubId == 2 => CraftIngredientToken.WroughtIronBar,
+                InventoryItemKind.OreChunk when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.TacticalCloth => CraftIngredientToken.TacticalCloth,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.LeatherPadding => CraftIngredientToken.LeatherPadding,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.CreatureFurAsh => CraftIngredientToken.CreatureFurAsh,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Stone || slot.SubId == MaterialIdCatalog.Cobblestone => CraftIngredientToken.RoughStoneChunk,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Dirt || slot.SubId == MaterialIdCatalog.Gravel => CraftIngredientToken.LooseDirtClod,
                 _ => CraftIngredientToken.None
@@ -1188,6 +1346,11 @@ namespace Stratocraft.Character
             PrimitiveCraftOutputId.PrimitiveWoodenBucket => new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidBucket, SubId = 0, Count = 1, Durability01 = 0.0f },
             PrimitiveCraftOutputId.CampfireKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableCampfire, SubId = 0, Count = 1, Durability01 = 1.0f },
             PrimitiveCraftOutputId.PrimitiveStoneKilnKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableStoneKiln, SubId = 0, Count = 1, Durability01 = 1.0f },
+            PrimitiveCraftOutputId.WindmillSailPanel => new VisualInventorySlot { Kind = InventoryItemKind.WindmillSailPanel, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
+            PrimitiveCraftOutputId.WovenClothTunic => new VisualInventorySlot { Kind = InventoryItemKind.WovenClothTunic, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
+            PrimitiveCraftOutputId.OiledLeatherWindbreaker => new VisualInventorySlot { Kind = InventoryItemKind.OiledLeatherWindbreaker, SubId = MaterialIdCatalog.LeatherPadding, Count = 1, Durability01 = 1.0f },
+            PrimitiveCraftOutputId.HeavyFurWinterParka => new VisualInventorySlot { Kind = InventoryItemKind.HeavyFurWinterParka, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
+            PrimitiveCraftOutputId.FurLinedWinterBoots => new VisualInventorySlot { Kind = InventoryItemKind.FurLinedWinterBoots, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
             _ => default
         };
 
@@ -2126,25 +2289,26 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Action onActiveSlotChanged)
         {
-            const float panelW = 286f;
-            const float panelH = 212f;
+            const float panelW = 302f;
+            const float panelH = 224f;
             float px = screenW - panelW - 18f;
             float py = 72f;
 
             Rect panelRect = new Rect(px, py, panelW, panelH);
             GUI.DrawTexture(panelRect, _windowBgTex!);
 
-            string title = "🛡️ ANATOMİK BÖLGESEL ZIRHLAR";
+            string title = $"🛡️ ZIRH & TERMAL YALITIM ({LastThermalGearSummary.TotalEffectiveClo:0.00} clo)";
             GUI.Label(new Rect(px + 8f, py + 4f, panelW - 16f, 22f), title, _slotTitleBannerStyle!);
 
             const float slotSize = 38f;
-            const float rowH = 42f;
+            const float rowH = 44f;
 
             for (int i = 0; i < ArmorSlotCount; i++)
             {
                 float ry = py + 30f + i * rowH;
                 Rect slotRect = new Rect(px + 10f, ry, slotSize, slotSize);
                 ref VisualInventorySlot armorSlot = ref EquippedArmorSlots[i];
+                ref readonly Stratocraft.Character.Systems.ClothingSlotWetnessState wetState = ref ArmorSlotWetnessStates[i];
                 bool isHovered = slotRect.Contains(mousePos);
 
                 Texture2D bg = isHovered ? _slotHoverBgTex! : _slotBgTex!;
@@ -2154,6 +2318,24 @@ namespace Stratocraft.Character
                 {
                     Texture2D icon = GetOrBuildIconForSlot(in armorSlot, CombatWeaponArchetype.Longsword);
                     GUI.DrawTexture(new Rect(slotRect.x + 3f, slotRect.y + 3f, slotSize - 6f, slotSize - 6f), icon);
+
+                    // Giysi yuvası ıslaklık (Wetness01) ve donma (FrozenStiffness01) çubuğu (0 yeni doku!)
+                    float wet01 = Mathf.Clamp01(wetState.Wetness01);
+                    float frz01 = Mathf.Clamp01(wetState.FrozenStiffness01);
+                    if (wet01 > 0.01f || frz01 > 0.01f)
+                    {
+                        float barFill = Mathf.Max(wet01, frz01);
+                        Rect wetBg = new Rect(slotRect.x + 3f, slotRect.yMax - 6f, slotSize - 6f, 4f);
+                        Rect wetFg = new Rect(slotRect.x + 3f, slotRect.yMax - 6f, (slotSize - 6f) * barFill, 4f);
+                        Color prevBar = GUI.color;
+                        GUI.color = new Color(0.06f, 0.10f, 0.16f, 0.90f);
+                        GUI.DrawTexture(wetBg, _whitePixelTex!);
+                        GUI.color = frz01 > 0.10f
+                            ? Color.Lerp(new Color(0.20f, 0.72f, 1.0f, 0.95f), new Color(0.82f, 0.96f, 1.0f, 1.0f), frz01)
+                            : new Color(0.20f, 0.72f, 1.0f, 0.95f);
+                        GUI.DrawTexture(wetFg, _whitePixelTex!);
+                        GUI.color = prevBar;
+                    }
                 }
 
                 string slotLabel = GetArmorSlotName(i);
@@ -2169,15 +2351,32 @@ namespace Stratocraft.Character
                     }
                     else
                     {
-                        statusText = "Boş Yuva (%0 Koruma)";
+                        statusText = "Boş Yuva (0.00 clo | %0 Koruma)";
                         statusColor = new Color(0.72f, 0.72f, 0.72f);
                     }
                 }
                 else
                 {
-                    string tierDesc = GetArmorTierName(armorSlot.SubId);
-                    statusText = $"{GetSlotDisplayName(in armorSlot, null)} — {tierDesc}";
-                    statusColor = new Color(0.40f, 1.0f, 0.65f);
+                    UniqueEquipmentInstance eqInst = BuildUniqueEquipmentInstanceForSlot(in armorSlot);
+                    Stratocraft.Character.Systems.ThermalClothingInsulationSystem.EvaluateSingleGarmentSlot(
+                        in eqInst,
+                        in wetState,
+                        LastEffectiveWindChillCelsius,
+                        out float slotClo,
+                        out _,
+                        out float bridgeWatts,
+                        out _);
+
+                    int wetPct = Mathf.RoundToInt(Mathf.Clamp01(wetState.Wetness01) * 100f);
+                    int frzPct = Mathf.RoundToInt(Mathf.Clamp01(wetState.FrozenStiffness01) * 100f);
+                    string wetBadge = frzPct > 5
+                        ? $" ❄️Don:%{frzPct}"
+                        : (wetPct > 5 ? $" 💧Islak:%{wetPct}" : " Kuru");
+                    string bridgeWarn = bridgeWatts > 5.0f ? $" ⚠️Köprü:-{bridgeWatts:0}W" : string.Empty;
+                    statusText = $"{GetShortSlotBadgeLabel(in armorSlot)} | {slotClo:0.00} clo{wetBadge}{bridgeWarn}";
+                    statusColor = frzPct > 15
+                        ? new Color(0.68f, 0.92f, 1.0f)
+                        : (bridgeWatts > 5.0f ? new Color(1.0f, 0.55f, 0.30f) : new Color(0.40f, 1.0f, 0.65f));
                 }
 
                 Rect textRect = new Rect(px + slotSize + 16f, ry, panelW - slotSize - 22f, rowH - 4f);
@@ -2401,12 +2600,12 @@ namespace Stratocraft.Character
             InventoryItemKind.FoodRawMeat => "ÇiğEt",
             InventoryItemKind.FoodCookedMeat => "PişmişEt",
             InventoryItemKind.FoodBurntMeat => "YanıkEt",
-            InventoryItemKind.FoodWildBerries => "Böğürt",
+            InventoryItemKind.FoodWildBerries => slot.SubId == MaterialIdCatalog.Marble ? "Un" : "Böğürt",
             InventoryItemKind.FoodCleanWater => "Su",
             InventoryItemKind.RawHide => "HamDeri",
             InventoryItemKind.CharcoalChunk => "OdunKmr",
             InventoryItemKind.RoastedOreChunk => "KavrCvh",
-            InventoryItemKind.CrushedOrePowder => "KırıkCvh",
+            InventoryItemKind.CrushedOrePowder => slot.SubId == MaterialIdCatalog.Marble ? "AkıTozu" : "KırıkCvh",
             InventoryItemKind.ClayTuyerePipe => "KilBoru",
             InventoryItemKind.LeatherBellows => "DeriKörük",
             InventoryItemKind.ClayCruciblePot => "KilPota",
@@ -2417,6 +2616,14 @@ namespace Stratocraft.Character
             InventoryItemKind.ResonanceCrystal => $"T{Mathf.Clamp((int)slot.SubId, 2, 5)} Kristal",
             InventoryItemKind.PlaceableCampfire => "Ateş",
             InventoryItemKind.PlaceableStoneKiln => "TaşFırın",
+            InventoryItemKind.WindmillSailPanel => "Yelken",
+            InventoryItemKind.WildGrainBundle => "Tahıl",
+            InventoryItemKind.MilledFlour => "Un",
+            InventoryItemKind.CrushedFluxPowder => "AkıTozu",
+            InventoryItemKind.WovenClothTunic => "Kumaşİç",
+            InventoryItemKind.OiledLeatherWindbreaker => "Rüzgârlk",
+            InventoryItemKind.HeavyFurWinterParka => "KürkPrk",
+            InventoryItemKind.FurLinedWinterBoots => "KürkÇzm",
             _ => "Eşya"
         };
 
@@ -2448,6 +2655,10 @@ namespace Stratocraft.Character
             MaterialIdCatalog.RedDiamondGem => "K.Elmas",
             MaterialIdCatalog.CampfireBlock => "KampAteş",
             MaterialIdCatalog.PrimitiveStoneKilnBlock => "TaşFırın",
+            MaterialIdCatalog.TacticalCloth => "Kumaş",
+            MaterialIdCatalog.LeatherPadding => "Deri",
+            MaterialIdCatalog.CreatureFurAsh => "KürkPost",
+            MaterialIdCatalog.ThatchTile => "Saman",
             _ => $"M#{matId}"
         };
 
@@ -2686,6 +2897,30 @@ namespace Stratocraft.Character
                     GUI.DrawTexture(barFg, _whitePixelTex!);
                     GUI.color = prev;
                 }
+                else if (IsArmorKind(slot.Kind))
+                {
+                    int armorSlotIdx = GetArmorSlotIndexForItemKind(slot.Kind);
+                    float wet01 = (uint)armorSlotIdx < (uint)ArmorSlotCount
+                        ? Mathf.Clamp01(ArmorSlotWetnessStates[armorSlotIdx].Wetness01)
+                        : 0f;
+                    float frz01 = (uint)armorSlotIdx < (uint)ArmorSlotCount
+                        ? Mathf.Clamp01(ArmorSlotWetnessStates[armorSlotIdx].FrozenStiffness01)
+                        : 0f;
+                    if (wet01 > 0.01f || frz01 > 0.01f)
+                    {
+                        float fill = Mathf.Max(wet01, frz01);
+                        Rect barBg = new Rect(rect.x + 6f, rect.yMax - 6f, rect.width - 12f, 4f);
+                        Rect barFg = new Rect(rect.x + 6f, rect.yMax - 6f, (rect.width - 12f) * fill, 4f);
+                        Color prev = GUI.color;
+                        GUI.color = new Color(0.06f, 0.10f, 0.16f, 0.90f);
+                        GUI.DrawTexture(barBg, _whitePixelTex!);
+                        GUI.color = frz01 > 0.10f
+                            ? Color.Lerp(new Color(0.20f, 0.72f, 1.0f, 0.95f), new Color(0.82f, 0.96f, 1.0f, 1.0f), frz01)
+                            : new Color(0.20f, 0.72f, 1.0f, 0.95f);
+                        GUI.DrawTexture(barFg, _whitePixelTex!);
+                        GUI.color = prev;
+                    }
+                }
                 else if (IsFluidContainerKind(slot.Kind) && slot.SubId != 0)
                 {
                     float fill01 = slot.Durability01 <= 0.0001f ? 1.0f : Mathf.Clamp01(slot.Durability01);
@@ -2800,26 +3035,30 @@ namespace Stratocraft.Character
                 : "Demirci Çekici (T2)",
             InventoryItemKind.ArmorHelmet => slot.SubId switch
             {
-                1 => "Deri Miğfer (0.4 kg)",
+                1 => "Deri Miğfer (0.4 kg | 0.80 clo)",
                 2 => "Ahşap Savaş Miğferi (0.8 kg)",
-                3 => "Dövme Bakır Miğfer (1.4 kg)",
-                _ => "Dövme Demir Miğfer (1.2 kg)"
+                3 => "Dövme Bakır Miğfer (1.4 kg | Termal Köprü!)",
+                6 => "Kürk Astarlı Çelik Miğfer (1.5 kg | 1.35 clo)",
+                _ => "Dövme Demir Miğfer (1.2 kg | Termal Köprü!)"
             },
             InventoryItemKind.ArmorChestplate => slot.SubId switch
             {
-                1 => "Deri Zırh Yeleği (1.8 kg)",
+                1 => "Deri Zırh Yeleği (1.8 kg | 0.80 clo)",
                 2 => "Ahşap Plaka Göğüslük (2.8 kg)",
-                3 => "Dövme Bakır Göğüslük (5.2 kg)",
-                _ => "Dövme Demir Göğüslük (4.5 kg)"
+                3 => "Dövme Bakır Göğüslük (5.2 kg | Termal Köprü!)",
+                6 => "Kürk Astarlı Çelik Göğüslük (5.0 kg | 1.35 clo)",
+                _ => "Dövme Demir Göğüslük (4.5 kg | Termal Köprü!)"
             },
             InventoryItemKind.ArmorVambrace => slot.SubId switch
             {
-                1 => "Deri Ön Kolçak (0.4 kg)",
+                1 => "Deri Ön Kolçak (0.4 kg | 0.80 clo)",
+                6 => "Kürk Astarlı Çelik Kolçak (1.2 kg | 1.35 clo)",
                 _ => "Demir Plaka Ön Kolçak (1.0 kg)"
             },
             InventoryItemKind.ArmorGreaves => slot.SubId switch
             {
-                1 => "Deri Çizme / Dizlik (0.9 kg)",
+                1 => "Deri Çizme / Dizlik (0.9 kg | 0.80 clo)",
+                6 => "Kürk Astarlı Çelik Dizlik (2.5 kg | 1.35 clo)",
                 _ => "Demir Plaka Dizlik ve Çizme (2.2 kg)"
             },
             InventoryItemKind.PotionHealth => "Şifalı Can İksiri (+%45 Can)",
@@ -2828,12 +3067,16 @@ namespace Stratocraft.Character
             InventoryItemKind.FoodRawMeat => "Çiğ Av Eti (Kamp Ateşinde Pişirilmeli)",
             InventoryItemKind.FoodCookedMeat => "Közde Pişmiş Et (+35 Can & +50 Enerji)",
             InventoryItemKind.FoodBurntMeat => "Yanmış Kömür Et (Yenmez)",
-            InventoryItemKind.FoodWildBerries => "Yaban Orman Böğürtleni (+10 Can & +20 Enerji)",
+            InventoryItemKind.FoodWildBerries => slot.SubId == MaterialIdCatalog.Marble
+                ? "Öğütülmüş Un (MilledFlour — Yel Değirmeni Ürünü)"
+                : "Yaban Orman Böğürtleni (+10 Can & +20 Enerji)",
             InventoryItemKind.FoodCleanWater => "Arıtılmış Temiz Su (+40 Enerji & Ferahlama)",
             InventoryItemKind.RawHide => "Ham Hayvan Derisi (Körük & Zırh Malzemesi)",
             InventoryItemKind.CharcoalChunk => "Odun Kömürü (1300 °C İzabe Yakıtı)",
             InventoryItemKind.RoastedOreChunk => $"Kavrulmuş Çatlak {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} (Taş Çekiçle Kırılmalı)",
-            InventoryItemKind.CrushedOrePowder => $"Kırılmış {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} Cevheri (İzabe Ocağına Hazır)",
+            InventoryItemKind.CrushedOrePowder => slot.SubId == MaterialIdCatalog.Marble
+                ? "Kalsiyum Akı / Harç Tozu (CrushedFluxPowder)"
+                : $"Kırılmış {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(slot.SubId)} Cevheri (İzabe Ocağına Hazır)",
             InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
                 ? "Çiğ Kil Hava Borusu (Ateşte Pişirilmeli)"
                 : "Pişmiş Kil Hava Borusu (Tuyere)",
@@ -2855,6 +3098,14 @@ namespace Stratocraft.Character
             },
             InventoryItemKind.PlaceableCampfire => "Eski Kamp Ateşi Kiti",
             InventoryItemKind.PlaceableStoneKiln => "Eski Taş Fırın Kiti",
+            InventoryItemKind.WindmillSailPanel => "Yel Değirmeni Yelken Kanadı (Betz Rotor Yelkeni)",
+            InventoryItemKind.WildGrainBundle => "Yabani Tahıl Demeti (Yel Değirmeninde 6.000 J ile Öğütülür)",
+            InventoryItemKind.MilledFlour => "Öğütülmüş Un (MilledFlour — Besin & Ekmek Hammaddesi)",
+            InventoryItemKind.CrushedFluxPowder => "Kalsiyum Akı / Harç Tozu (CrushedFluxPowder — İzabe Cüruf Akısı)",
+            InventoryItemKind.WovenClothTunic => "Dokuma Kumaş İçlik / Tunik (0.45 clo — Hızlı Kuruyan İç Katman)",
+            InventoryItemKind.OiledLeatherWindbreaker => "Yağlı Deri Rüzgârlık Pelerin (0.80 clo — %88 Rüzgâr & Yağmur Kesici)",
+            InventoryItemKind.HeavyFurWinterParka => "Ağır Kürk Kış Parkası (1.45 clo — Tipi ve Hipotermi Kalkanı)",
+            InventoryItemKind.FurLinedWinterBoots => "Kürk Astarlı Kış Çizmesi (1.45 clo — Derin Kar & Donma Direnci)",
             _ => "Boş Yuva"
         };
 
@@ -2882,17 +3133,17 @@ namespace Stratocraft.Character
             InventoryItemKind.VoxelBlock => "[Sag Tik] Dunyaya Blok Yerlestir | [V] Mimari Sekil Degistir | [R] 24-Yon Dondur",
             InventoryItemKind.OreChunk => slot.SubId == MaterialIdCatalog.QuartzGem
                 ? "[C] Basarak Madde Kristaline Enerji Yedir (1/3 -> 3/3 Uyandır!)"
-                : "[Sağ Tık] Kamp Ateşinde Kavur veya Yere Diz",
+                : "[Sağ Tık] Kamp Ateşinde Kavur, Yel Değirmeninde Öğüt veya Yere Diz",
             InventoryItemKind.MetalIngot => "[Sağ Tık] Dünyaya Koy veya Örste İşle",
-            InventoryItemKind.RoughStoneChunk => "Yerdeyken eline Çakmaktaşı alıp [R] ile Yont veya [Sağ Tık] Yere Taş Diz",
+            InventoryItemKind.RoughStoneChunk => "Yerdeyken eline Çakmaktaşı alıp [R] ile Yont, Yel Değirmeninde Öğüt veya [Sağ Tık] Yere Taş Diz",
             InventoryItemKind.LooseDirtClod => "[Sağ Tık] Kömür Yığını Örtüsü veya Harç Olarak Yere Koy",
             InventoryItemKind.SandPile => "[Sağ Tık] İzabe Harcı veya Kil Karışımı İçin Yere Koy",
             InventoryItemKind.ClayLump => "[Sağ Tık] İzabe Bacası Harcı Ör veya Hava Borusu/Pota Şekillendir",
             InventoryItemKind.LeafPile => "[Sağ Tık] Kamp Ateşi Tutuşturucusu Olarak Zemine Koy",
-            InventoryItemKind.SplitFirewood => "[Sağ Tık] Kamp Ateşi / Kömür Yığını İçin Yere Diz",
-            InventoryItemKind.Stick => "[I] Çantada Sap Olarak Bağla veya [Sağ Tık] Yere Kırıp Çapraz Diz",
+            InventoryItemKind.SplitFirewood => "[Sağ Tık] Kamp Ateşi / Kömür Yığını / Yel Değirmeni İçin Yere Diz",
+            InventoryItemKind.Stick => "[I] Çantada Sap / Yelken Kanadı Bağla veya [Sağ Tık] Yere Diz",
             InventoryItemKind.FlintStone => "Yerdeki Kaba Taşa Bakıp [R] ile Taş Yont | Sönük Ateşe Çakarak Kıvılcımla Yak",
-            InventoryItemKind.PlantFiber => "[I] Çanta Ortasında Taş Başlık ve Dalı Birbirine Bağlar",
+            InventoryItemKind.PlantFiber => "[I] Çanta Ortasında Taş Başlık, Yelken Kanadı ve Kış Giysisi Bağlar",
             InventoryItemKind.KnappedAxeHead => "[I] Çanta Ortasında: Balta Başı + Kuru Dal + Bitki Lifi -> Taş Balta",
             InventoryItemKind.KnappedPickaxeHead => "[I] Çanta Ortasında: Kazma Başı + Kuru Dal + Bitki Lifi -> Taş Kazma",
             InventoryItemKind.KnappedKnifeBlade => "[I] Çanta Ortasında: Bıçak Ağzı + Kuru Dal + Bitki Lifi -> Taş Bıçak",
@@ -2900,9 +3151,9 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolStoneHammer => "[Sol Tık] Kavrulmuş Cevheri Kır veya Sıcak Sünger Demiri Düz Kayada Döv!",
             InventoryItemKind.FoodRawMeat => "[Sağ Tık] Yanan Kamp Ateşinin Üstüne Koyarak Pişir (Unutursan Yanar!)",
             InventoryItemKind.FoodBurntMeat => "Ateşte Fazla Kaldığı İçin Kömürleşmiş (Yenemez)",
-            InventoryItemKind.RawHide => "[I] Çantada 2x Ham Deri + 2x Odun + 2x Lif -> Deri Körük",
+            InventoryItemKind.RawHide => "[I] Çantada Deri Körük veya Kış Giysisi / Zırh Astarı Üretimi",
             InventoryItemKind.CharcoalChunk => "[Sağ Tık] İzabe Bacasına Üstten Doldur (1300 °C Yüksek Isı Yakıtı)",
-            InventoryItemKind.RoastedOreChunk => "Düz Kayaya Koyup Taş Çekiçle 3 Kez Vurarak Kırılmış Cevhere Dönüştür",
+            InventoryItemKind.RoastedOreChunk => "Düz Kayada Taş Çekiçle Kır veya Yel Değirmeni Hunisine [Sağ Tık] ile Yükle",
             InventoryItemKind.CrushedOrePowder => "[Sağ Tık] İzabe Bacasına Kömürle Katmanlı Olarak Doldur",
             InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0
                 ? "Çiğ Kil! [Sağ Tık] ile Yanan Kamp Ateşinde 12 sn Pişir!"
@@ -2914,24 +3165,32 @@ namespace Stratocraft.Character
             InventoryItemKind.IronBloomSponge => "Sıcakken (>=720 °C) Düz Granit Kayada Çekiçle Döverek Cürufunu At!",
             InventoryItemKind.WroughtIronBar => "Saf Dövme Demir — T2 Demir Alet ve Silah Üretimi",
             InventoryItemKind.SlagShard => "İzabe Fırını veya Demir Dövme Sırasında Ayrışan Cüruf Atığı",
-            InventoryItemKind.WoodenWheel => "El Arabası Kurulumunda Kullanılan Yontulmuş Ahşap Tekerlek",
+            InventoryItemKind.WoodenWheel => "El Arabası veya Yel Değirmeni Kurulumunda Kullanılan Ahşap Çark",
             InventoryItemKind.ResonanceCrystal => $"[C] Madde Kristali Aktifken [C] veya [Sağ Tık] ile Yedirerek Kristali Kademe T{Mathf.Clamp((int)slot.SubId, 2, 5)}'e Yükselt!",
             InventoryItemKind.ArmorHelmet => "[Sağ Tık] Başa Kuşan / Çıkar (Kafa Hasar Koruması)",
-            InventoryItemKind.ArmorChestplate => "[Sağ Tık] Göğse Kuşan / Çıkar (Gövde Darbe Direnci)",
+            InventoryItemKind.ArmorChestplate => "[Sağ Tık] Göğse Kuşan / Çıkar (Gövde Darbe & Termal Koruması)",
             InventoryItemKind.ArmorVambrace => "[Sağ Tık] Kollara Kuşan / Çıkar (Kol Koruması)",
             InventoryItemKind.ArmorGreaves => "[Sağ Tık] Bacaklara Kuşan / Çıkar (Bacak ve Ayak Koruması)",
             InventoryItemKind.PotionHealth => "[Sol Tık] İç (+45 HP Can Yeniler)",
             InventoryItemKind.PotionStamina => "[Sol Tık] İç (+70 EP Enerji Yeniler)",
             InventoryItemKind.MedicalBandage => "[Sol Tık] Sar (Kanamayı Durdurur, +20 HP)",
             InventoryItemKind.FoodCookedMeat => "[Sol Tık] Ye (+35 HP, +50 EP, Tokluk Sağlar)",
-            InventoryItemKind.FoodWildBerries => "[Sol Tık] Ye (+10 HP, +20 EP)",
+            InventoryItemKind.FoodWildBerries => "[Sol Tık] Ye (+10 HP, +20 EP) veya Yel Değirmeninde Öğüt",
             InventoryItemKind.FoodCleanWater => "[Sol Tık] İç (Susuzluğu Giderir, +40 EP)",
             InventoryItemKind.PlaceableCampfire => "[Eski Prototip — Kamp Ateşi Artık Yere Dal + Yaprak Dizilip [T] ile Kurulur]",
             InventoryItemKind.PlaceableStoneKiln => "[Eski Prototip — İzabe Fırını Artık Yere Taş + Kil Dizilip [T] ile Kurulur]",
+            InventoryItemKind.WindmillSailPanel => "[Sağ Tık] Yere Dizip [T]->[5] Yel Değirmeni Kur veya Fırtınada Yırtılan Kanadı Onar",
+            InventoryItemKind.WildGrainBundle => "[Sağ Tık] Yel Değirmeni Hunisine Yükle (6.000 J -> 2x Öğütülmüş Un)",
+            InventoryItemKind.MilledFlour => "Yel Değirmeninde Öğütülmüş İnce Un — Kamp Ateşinde Pişirme & Besin",
+            InventoryItemKind.CrushedFluxPowder => "[Sağ Tık] İzabe Fırınına Katkı Olarak Yükle (Cüruf Akışkanlığı Sağlar)",
+            InventoryItemKind.WovenClothTunic => "[Sağ Tık] İçlik Yuvasına Kuşan (0.45 clo | Islanırsa %82 Yalıtım Kaybeder, Ateşte Hızlı Kurur)",
+            InventoryItemKind.OiledLeatherWindbreaker => "[Sağ Tık] Rüzgârlık Yuvasına Kuşan (0.80 clo | %88 Wind Chill Kesici & %80 Su İtici)",
+            InventoryItemKind.HeavyFurWinterParka => "[Sağ Tık] Gövde Yuvasına Kuşan (1.45 clo | Tipi ve Dondurucu Soğukta Normotermi Kalkanı)",
+            InventoryItemKind.FurLinedWinterBoots => "[Sağ Tık] Çizme Yuvasına Kuşan (1.45 clo | Derin Kar ve Buz Tutma Direnci)",
             _ => string.Empty
         };
 
-        private static string FormatSlotTooltip(
+        private string FormatSlotTooltip(
             in VisualInventorySlot slot,
             bool isEmptyHand,
             Stage1DirectionalCombatBridge combatBridge)
@@ -2942,6 +3201,20 @@ namespace Stratocraft.Character
             }
             string name = GetSlotDisplayName(in slot, combatBridge);
             string hint = GetSlotUsageHint(in slot);
+            if (IsArmorKind(slot.Kind))
+            {
+                int armorIdx = GetArmorSlotIndexForItemKind(slot.Kind);
+                Stratocraft.Character.Systems.ClothingSlotWetnessState wet = (uint)armorIdx < (uint)ArmorSlotCount
+                    ? ArmorSlotWetnessStates[armorIdx]
+                    : default;
+                UniqueEquipmentInstance eq = BuildUniqueEquipmentInstanceForSlot(in slot);
+                Stratocraft.Character.Systems.ThermalClothingInsulationSystem.EvaluateSingleGarmentSlot(
+                    in eq, in wet, LastEffectiveWindChillCelsius, out float clo, out float wb, out float bridgeW, out _);
+                int wetPct = Mathf.RoundToInt(Mathf.Clamp01(wet.Wetness01) * 100f);
+                int frzPct = Mathf.RoundToInt(Mathf.Clamp01(wet.FrozenStiffness01) * 100f);
+                string bridgeStr = bridgeW > 1f ? $" | Termal Köprü: -{bridgeW:0}W" : string.Empty;
+                return $"{name} [Yalıtım: {clo:0.00} clo | Rüzgâr Kesme: %{Mathf.RoundToInt(wb * 100f)} | Islak: %{wetPct} | Donma: %{frzPct}{bridgeStr}]\n{hint}";
+            }
             return $"{name}  [Miktar: x{slot.Count}]\n{hint}";
         }
 
@@ -3227,6 +3500,14 @@ namespace Stratocraft.Character
                 case InventoryItemKind.PlaceableCampfire: DrawCampfireIcon(tex); break;
                 case InventoryItemKind.PlaceableStoneKiln: DrawStoneKilnIcon(tex); break;
                 case InventoryItemKind.ResonanceCrystal: DrawResonanceCrystalIcon(tex, slot.SubId); break;
+                case InventoryItemKind.WindmillSailPanel: DrawRawHideIcon(tex); break;
+                case InventoryItemKind.WildGrainBundle: DrawPlantFiberIcon(tex); break;
+                case InventoryItemKind.MilledFlour: DrawSoilMoundIcon(tex, new Color(0.86f, 0.84f, 0.76f, 1f), new Color(0.96f, 0.95f, 0.90f, 1f)); break;
+                case InventoryItemKind.CrushedFluxPowder: DrawSoilMoundIcon(tex, new Color(0.76f, 0.78f, 0.82f, 1f), new Color(0.92f, 0.94f, 0.96f, 1f)); break;
+                case InventoryItemKind.WovenClothTunic: DrawChestplateIcon(tex, 1); break;
+                case InventoryItemKind.OiledLeatherWindbreaker: DrawHelmetIcon(tex, 1); break;
+                case InventoryItemKind.HeavyFurWinterParka: DrawChestplateIcon(tex, 2); break;
+                case InventoryItemKind.FurLinedWinterBoots: DrawGreavesIcon(tex, 1); break;
             }
 
             tex.Apply(false, false);
@@ -4005,9 +4286,9 @@ namespace Stratocraft.Character
         {
             "🧱 Bloklar (25)",
             "⚔️ Silah & Aletler (21)",
-            "🛡️ Zırhlar (12)",
+            "🛡️ Zırh & Kış Giysi (17)",
             "🧪 İksir & Tıp (3)",
-            "🌿 Doğa, Yontma & Metalurji (34)",
+            "🌿 Doğa, Değirmen & Metalurji (42)",
             "🌦️ Hava Aletleri (6)"
         };
 
@@ -4093,10 +4374,15 @@ namespace Stratocraft.Character
             (InventoryItemKind.ArmorChestplate, 2),
             (InventoryItemKind.ArmorChestplate, 3),
             (InventoryItemKind.ArmorChestplate, 4),
+            (InventoryItemKind.ArmorChestplate, 6),
             (InventoryItemKind.ArmorVambrace, 1),
             (InventoryItemKind.ArmorVambrace, 4),
             (InventoryItemKind.ArmorGreaves, 1),
-            (InventoryItemKind.ArmorGreaves, 4)
+            (InventoryItemKind.ArmorGreaves, 4),
+            (InventoryItemKind.WovenClothTunic, MaterialIdCatalog.TacticalCloth),
+            (InventoryItemKind.OiledLeatherWindbreaker, MaterialIdCatalog.LeatherPadding),
+            (InventoryItemKind.HeavyFurWinterParka, MaterialIdCatalog.CreatureFurAsh),
+            (InventoryItemKind.FurLinedWinterBoots, MaterialIdCatalog.CreatureFurAsh)
         };
 
         private static readonly (InventoryItemKind kind, byte subId)[] CreativePotions =
@@ -4132,6 +4418,14 @@ namespace Stratocraft.Character
             (InventoryItemKind.CharcoalChunk, 0),
             (InventoryItemKind.RoastedOreChunk, MaterialIdCatalog.IronOre),
             (InventoryItemKind.CrushedOrePowder, MaterialIdCatalog.IronOre),
+            (InventoryItemKind.CrushedOrePowder, MaterialIdCatalog.CopperOre),
+            (InventoryItemKind.CrushedFluxPowder, MaterialIdCatalog.Marble),
+            (InventoryItemKind.WindmillSailPanel, MaterialIdCatalog.TacticalCloth),
+            (InventoryItemKind.WildGrainBundle, MaterialIdCatalog.ThatchTile),
+            (InventoryItemKind.MilledFlour, MaterialIdCatalog.Marble),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.TacticalCloth),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.LeatherPadding),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CreatureFurAsh),
             (InventoryItemKind.ClayTuyerePipe, 0),
             (InventoryItemKind.LeatherBellows, 0),
             (InventoryItemKind.ClayCruciblePot, 0),

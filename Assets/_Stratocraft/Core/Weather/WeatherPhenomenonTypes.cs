@@ -91,18 +91,45 @@ namespace Stratocraft.Core.Weather
                 WindZCentiMps = (short)System.Math.Clamp((int)MathF.Round(windZMps * 100f), short.MinValue, short.MaxValue),
                 CloudBase16m = (byte)System.Math.Clamp((cloudBaseWorldY + 8) / 16, 0, 255),
                 CloudThickness32m = (byte)System.Math.Clamp((depthM + 16) / 32, 0, 255),
-                ActiveKindRaw = (byte)SanitizePrecipitationForPaket4A(activeKind),
-                HazardFlagsLowByte = (byte)((ushort)SanitizeHazardsForPaket4A(hazards) & 0xFFu)
+                ActiveKindRaw = (byte)SanitizePrecipitationForPaket4B(activeKind),
+                HazardFlagsLowByte = (byte)((ushort)SanitizeHazardsForPaket4B(hazards) & 0xFFu)
             };
         }
 
+        /// <summary>
+        /// Paket 4B kapsaminda aktif simule edilen 5-bit atmosfer tehlike bayraklari maskesi (&amp; 0x1Fu ile tam uyumlu).
+        /// Kuvvetli firtina (Strong Gale, Beaufort &gt;= 7) bayrak yerine WindSpeedMps &gt;= 13.9f uzerinden turetilir.
+        /// </summary>
+        public const AtmosphericHazardFlags Paket4BAllowedMask =
+            AtmosphericHazardFlags.ThunderLightning |
+            AtmosphericHazardFlags.GroundFog |
+            AtmosphericHazardFlags.Blizzard;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static PrecipitationKind SanitizePrecipitationForPaket4B(PrecipitationKind kind)
+        {
+            return kind == PrecipitationKind.Rain ||
+                   kind == PrecipitationKind.Snow ||
+                   kind == PrecipitationKind.Hail
+                ? kind
+                : PrecipitationKind.None;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static AtmosphericHazardFlags SanitizeHazardsForPaket4B(AtmosphericHazardFlags flags)
+            => flags & Paket4BAllowedMask;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static PrecipitationKind SanitizePrecipitationForPaket4A(PrecipitationKind kind)
-            => kind == PrecipitationKind.Rain ? PrecipitationKind.Rain : PrecipitationKind.None;
+            => SanitizePrecipitationForPaket4B(kind);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static AtmosphericHazardFlags SanitizeHazardsForPaket4A(AtmosphericHazardFlags flags)
-            => flags & AtmosphericHazardFlags.ThunderLightning;
+            => SanitizeHazardsForPaket4B(flags);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsStrongGaleOrStormWind(float windSpeedMps)
+            => windSpeedMps >= 13.9f;
     }
 }
 

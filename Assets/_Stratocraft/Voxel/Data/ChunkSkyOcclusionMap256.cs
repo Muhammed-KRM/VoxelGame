@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
@@ -7,7 +8,8 @@ namespace Stratocraft.Voxel.Data
     /// <summary>
     /// Chunk basina 16x16 = 256 Byte dikey gokyuzu tikaniklik haritasi (SkyOcclusionY).
     /// Her (lx, lz) sutununda gokyuzunu tam kapatan en ust kati vokselin (Density &gt;= 64 ve gecirimsiz)
-    /// Y indeksini (0..255) tutar. EnclosedOxygenFloodFillSystem icinde O(1) gokyuzu acikligi testi saglar.
+    /// Y indeksini (0..255) tutar. EnclosedOxygenFloodFillSystem ve SnowAccumulationAndMeltSystem
+    /// icinde O(1) gokyuzu acikligi testi saglar.
     /// </summary>
     public sealed class ChunkSkyOcclusionMap256
     {
@@ -18,14 +20,23 @@ namespace Stratocraft.Voxel.Data
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public byte GetMaxOccluderY(int lx, int lz)
         {
-            return _maxOccluderY[(lz << 4) | (lx & 0x0F)];
+            return _maxOccluderY[((lz & 0x0F) << 4) | (lx & 0x0F)];
         }
 
         /// <summary>Verilen (lx, y, lz) hucresinin dogrudan acik gokyuzunu gorup gormedigini O(1) surede doner.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool HasOpenSkyAbove(int lx, int y, int lz)
         {
-            return y > _maxOccluderY[(lz << 4) | (lx & 0x0F)];
+            return y > _maxOccluderY[((lz & 0x0F) << 4) | (lx & 0x0F)];
+        }
+
+        /// <summary>
+        /// Verilen (lx, surfaceY, lz) yuzey blogunun uzerinde cati/tavan engeli olmadan acik gokyuzu bulunup bulunmadigini doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsSurfaceExposedToSky(int lx, int surfaceY, int lz)
+        {
+            return surfaceY >= _maxOccluderY[((lz & 0x0F) << 4) | (lx & 0x0F)];
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -63,10 +74,13 @@ namespace Stratocraft.Voxel.Data
 
         public void RebuildSingleColumn(ReadOnlySpan<uint> chunkVoxels, int lx, int lz)
         {
+            int x = lx & 0x0F;
+            int z = lz & 0x0F;
+            int maxAvailableY = Math.Min(StratocraftConstants.ChunkSizeY - 1, (chunkVoxels.Length >> 8) - 1);
             byte highestY = 0;
-            for (int y = StratocraftConstants.ChunkSizeY - 1; y >= 0; y--)
+            for (int y = maxAvailableY; y >= 0; y--)
             {
-                int idx = (y * StratocraftConstants.ChunkSizeZ + lz) * StratocraftConstants.ChunkSizeX + lx;
+                int idx = (y << 8) | (z << 4) | x;
                 if (BlocksSkyOxygenColumn(chunkVoxels[idx]))
                 {
                     highestY = (byte)y;
@@ -74,22 +88,44 @@ namespace Stratocraft.Voxel.Data
                 }
             }
 
-            _maxOccluderY[(lz << 4) | (lx & 0x0F)] = highestY;
+            _maxOccluderY[(z << 4) | x] = highestY;
         }
 
         public void UpdateOnCellChanged(ReadOnlySpan<uint> chunkVoxels, int lx, int y, int lz, uint newRawVoxel)
         {
-            int colIdx = (lz << 4) | (lx & 0x0F);
+            if ((uint)lx >= StratocraftConstants.ChunkSizeX ||
+                (uint)lz >= StratocraftConstants.ChunkSizeZ ||
+                (uint)y >= StratocraftConstants.ChunkSizeY)
+            {
+                return;
+            }
+
+            int colIdx = (lz << 4) | lx;
             byte currentMax = _maxOccluderY[colIdx];
             bool nowBlocks = BlocksSkyOxygenColumn(newRawVoxel);
 
-            if (nowBlocks && y > currentMax)
+            if (nowBlocks)
             {
-                _maxOccluderY[colIdx] = (byte)y;
+                if (y > currentMax)
+                {
+                    _maxOccluderY[colIdx] = (byte)y;
+                }
             }
-            else if (!nowBlocks && y == currentMax)
+            else if (y == currentMax)
             {
-                RebuildSingleColumn(chunkVoxels, lx, lz);
+                int maxAvailableY = Math.Min(y - 1, (chunkVoxels.Length >> 8) - 1);
+                byte highestBelow = 0;
+                for (int sy = maxAvailableY; sy >= 0; sy--)
+                {
+                    int idx = (sy << 8) | colIdx;
+                    if (BlocksSkyOxygenColumn(chunkVoxels[idx]))
+                    {
+                        highestBelow = (byte)sy;
+                        break;
+                    }
+                }
+
+                _maxOccluderY[colIdx] = highestBelow;
             }
         }
     }

@@ -28,6 +28,8 @@ namespace Stratocraft.Physics.Jobs
         [ThreadStatic] private static int[]? _tlsVisitedStamp;
         [ThreadStatic] private static int[]? _tlsBfsQueue;
         [ThreadStatic] private static byte[]? _tlsActiveNext;
+        [ThreadStatic] private static int[]? _tlsFluxX;
+        [ThreadStatic] private static int[]? _tlsFluxZ;
         [ThreadStatic] private static int _lastStepSiphonTransfers;
         private static int _globalStampCounter = 1;
 
@@ -106,6 +108,35 @@ namespace Stratocraft.Physics.Jobs
             int stepParity = 0,
             ulong[]? salinityBits = null)
         {
+            return StepFluidGridVolumeConservative(
+                voxels,
+                fluids,
+                sizeX,
+                sizeY,
+                sizeZ,
+                out obsidianFormedCount,
+                out steamSlagFizzleCount,
+                stepParity,
+                salinityBits,
+                kinematicsSlice: null);
+        }
+
+        /// <summary>
+        /// 3B izgara uzerinde hacim korunumlu 1 adim akiskan + U-borusu/sifon + stokiyometrik obsidyen
+        /// ve sifir-GC kinematik yan-tampon (PrevMass, VelX_Q7, VelZ_Q7) simulasyonu calistirir.
+        /// </summary>
+        public static long StepFluidGridVolumeConservative(
+            Span<uint> voxels,
+            Span<ushort> fluids,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            out int obsidianFormedCount,
+            out int steamSlagFizzleCount,
+            int stepParity,
+            ulong[]? salinityBits,
+            ActiveChunkFluidKinematicsSlice? kinematicsSlice)
+        {
             obsidianFormedCount = 0;
             steamSlagFizzleCount = 0;
             _lastStepSiphonTransfers = 0;
@@ -114,6 +145,14 @@ namespace Stratocraft.Physics.Jobs
             if (voxels.Length < totalCells || fluids.Length < totalCells)
             {
                 throw new ArgumentException("Fluid or voxel buffer smaller than grid dimensions.");
+            }
+
+            if (kinematicsSlice != null &&
+                (kinematicsSlice.PrevMass.Length < totalCells ||
+                 kinematicsSlice.VelX_Q7.Length < totalCells ||
+                 kinematicsSlice.VelZ_Q7.Length < totalCells))
+            {
+                throw new ArgumentException("Kinematics slice buffer smaller than grid dimensions.", nameof(kinematicsSlice));
             }
 
             // Hizli %0 CPU Durgunluk Erken Cikisi + Aktif Y-Dilimi Penceresi [minFluidY..maxFluidY]:
@@ -142,11 +181,29 @@ namespace Stratocraft.Physics.Jobs
 
             if (!anyActive)
             {
+                if (kinematicsSlice != null)
+                {
+                    kinematicsSlice.SnapshotPrevMassBeforeStep(fluids, totalCells);
+                    Array.Clear(kinematicsSlice.VelX_Q7, 0, totalCells);
+                    Array.Clear(kinematicsSlice.VelZ_Q7, 0, totalCells);
+                }
+
                 return fastMassSum;
             }
 
-            EnsureScratch(totalCells, out int[] visitedStamp, out int[] bfsQueue, out byte[] changedMask);
+            if (kinematicsSlice != null)
+            {
+                kinematicsSlice.SnapshotPrevMassBeforeStep(fluids, totalCells);
+            }
+
+            bool trackKinematics = kinematicsSlice != null;
+            EnsureScratch(totalCells, out int[] visitedStamp, out int[] bfsQueue, out byte[] changedMask, trackKinematics, out int[]? fluxX, out int[]? fluxZ);
             Array.Clear(changedMask, 0, totalCells);
+            if (trackKinematics && fluxX != null && fluxZ != null)
+            {
+                Array.Clear(fluxX, 0, totalCells);
+                Array.Clear(fluxZ, 0, totalCells);
+            }
 
             int startY = Math.Max(1, minFluidY);
             int endY = Math.Min(sizeY - 1, maxFluidY + 1);
@@ -198,9 +255,32 @@ namespace Stratocraft.Physics.Jobs
                                     MarkChangedWithNeighbors(changedMask, x, y - 1, z, sizeX, sizeY, sizeZ);
                                     if (belowWasDry)
                                     {
-                                        // Split-Tick Cascade: Bu tikte yukaridan yeni dusen su ayni tikte yatay sicramaz;
-                                        // boylece selale/basamak inisi gozle gorulur kademeli ilerler!
-                                        changedMask[belowIdx] |= NewlyWetFromGravityFlag;
+                                        // Egim Kaskadi Duzeltmesi:
+                                        // Yalnizca alti bos hava / yari-dolu serbest dusus sutununa NewlyWetFromGravityFlag koy;
+                                        // y - 2 kati zemin veya tam dolu havuzsa tabana carpmistir -> ayni tikte yatay yayilabilir!
+                                        bool belowHitFloor = (y - 1) <= 0;
+                                        if (!belowHitFloor)
+                                        {
+                                            int twoBelowIdx = belowIdx - strideY;
+                                            byte twoBelowCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[twoBelowIdx]);
+                                            if (twoBelowCap == 0)
+                                            {
+                                                belowHitFloor = true;
+                                            }
+                                            else
+                                            {
+                                                byte twoBelowMass = (byte)(fluids[twoBelowIdx] & 0xFF);
+                                                if (twoBelowMass >= twoBelowCap)
+                                                {
+                                                    belowHitFloor = true;
+                                                }
+                                            }
+                                        }
+
+                                        if (!belowHitFloor)
+                                        {
+                                            changedMask[belowIdx] |= NewlyWetFromGravityFlag;
+                                        }
                                     }
                                 }
                             }
@@ -229,16 +309,16 @@ namespace Stratocraft.Physics.Jobs
                 switch (mode)
                 {
                     case 0: // Even-X: (0,1), (2,3), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits, kinematicsSlice, fluxX, fluxZ);
                         break;
                     case 1: // Odd-X: (1,2), (3,4), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: true, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits, kinematicsSlice, fluxX, fluxZ);
                         break;
                     case 2: // Even-Z: (0,1), (2,3), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 0, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits, kinematicsSlice, fluxX, fluxZ);
                         break;
                     default: // Odd-Z: (1,2), (3,4), ...
-                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits);
+                        RunLateralPairPass(voxels, fluids, changedMask, sizeX, sizeY, sizeZ, alongX: false, oddOffset: 1, ref obsidianFormedCount, ref steamSlagFizzleCount, salinityBits, kinematicsSlice, fluxX, fluxZ);
                         break;
                 }
             }
@@ -247,7 +327,7 @@ namespace Stratocraft.Physics.Jobs
             UpdateHydrostaticHeadAndSolveUPipes(
                 voxels, fluids, changedMask, visitedStamp, bfsQueue, sizeX, sizeY, sizeZ, salinityBits);
 
-            // 4. Gecis: Degismeyen durgun hucreleri IsSettled = 1 (%0 CPU) uykusuna yatir ve toplam kutleyi don
+            // 4. Gecis: Degismeyen durgun hucreleri IsSettled = 1 (%0 CPU) uykusuna yatir, hizlari guncelle ve toplam kutleyi don
             long totalRemainingMass = 0;
             for (int i = 0; i < totalCells; i++)
             {
@@ -260,10 +340,30 @@ namespace Stratocraft.Physics.Jobs
                     {
                         SetGridSalinityBit(salinityBits, i, false);
                     }
+                    if (kinematicsSlice != null)
+                    {
+                        kinematicsSlice.VelX_Q7[i] = 0;
+                        kinematicsSlice.VelZ_Q7[i] = 0;
+                    }
                     continue;
                 }
 
                 totalRemainingMass += m;
+                if (kinematicsSlice != null)
+                {
+                    FluidType cellType = (FluidType)((raw >> 8) & 0x03u);
+                    float visc = cellType == FluidType.Lava ? 0.45f : (cellType == FluidType.Acid ? 0.85f : 0.82f);
+                    float maxV = cellType == FluidType.Lava ? 1.20f : ActiveChunkFluidKinematicsSlice.MaxVelocityMetersPerSec;
+                    float prevVx = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(kinematicsSlice.VelX_Q7[i]);
+                    float prevVz = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(kinematicsSlice.VelZ_Q7[i]);
+                    float netFluxX = fluxX![i] * (1.0f / 64.0f);
+                    float netFluxZ = fluxZ![i] * (1.0f / 64.0f);
+                    float newVx = Math.Clamp((prevVx * visc) + (netFluxX * (1.0f - visc) * 3.2f), -maxV, maxV);
+                    float newVz = Math.Clamp((prevVz * visc) + (netFluxZ * (1.0f - visc) * 3.2f), -maxV, maxV);
+                    kinematicsSlice.VelX_Q7[i] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(newVx);
+                    kinematicsSlice.VelZ_Q7[i] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(newVz);
+                }
+
                 if (changedMask[i] == 0)
                 {
                     fluids[i] = FluidCell16.SettleRaw(raw);
@@ -313,7 +413,8 @@ namespace Stratocraft.Physics.Jobs
             HashSet<(int cx, int cz)>? dirtySolidChunks = null,
             IReadOnlyList<(int cx, int cz)>? activeChunks = null,
             HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null,
-            ChunkSalinityBitset? salinityBitset = null)
+            ChunkSalinityBitset? salinityBitset = null,
+            ActiveChunkFluidKinematicsPool? kinematicsPool = null)
         {
             if (worldChunks == null || fluidChunks == null || fluidChunks.Count == 0)
             {
@@ -346,7 +447,8 @@ namespace Stratocraft.Physics.Jobs
                             dirtyFluidChunks,
                             dirtySolidChunks,
                             wakeActiveFluidChunks,
-                            salinityBitset);
+                            salinityBitset,
+                            kinematicsPool);
                     }
 
                     // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0)
@@ -362,7 +464,8 @@ namespace Stratocraft.Physics.Jobs
                             dirtyFluidChunks,
                             dirtySolidChunks,
                             wakeActiveFluidChunks,
-                            salinityBitset);
+                            salinityBitset,
+                            kinematicsPool);
                     }
 
                     // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -378,7 +481,8 @@ namespace Stratocraft.Physics.Jobs
                             dirtyFluidChunks,
                             dirtySolidChunks,
                             wakeActiveFluidChunks,
-                            salinityBitset);
+                            salinityBitset,
+                            kinematicsPool);
                     }
 
                     // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
@@ -394,7 +498,8 @@ namespace Stratocraft.Physics.Jobs
                             dirtyFluidChunks,
                             dirtySolidChunks,
                             wakeActiveFluidChunks,
-                            salinityBitset);
+                            salinityBitset,
+                            kinematicsPool);
                     }
                 }
 
@@ -425,7 +530,8 @@ namespace Stratocraft.Physics.Jobs
                         dirtyFluidChunks,
                         dirtySolidChunks,
                         wakeActiveFluidChunks,
-                        salinityBitset);
+                        salinityBitset,
+                        kinematicsPool);
                 }
 
                 // +Z Sınırı: keyA (lz = 15) <-> (cx, cz + 1) (lz = 0)
@@ -443,7 +549,8 @@ namespace Stratocraft.Physics.Jobs
                         dirtyFluidChunks,
                         dirtySolidChunks,
                         wakeActiveFluidChunks,
-                        salinityBitset);
+                        salinityBitset,
+                        kinematicsPool);
                 }
             }
 
@@ -462,7 +569,8 @@ namespace Stratocraft.Physics.Jobs
             HashSet<(int cx, int cz)>? dirtyFluidChunks,
             HashSet<(int cx, int cz)>? dirtySolidChunks,
             HashSet<(int cx, int cz)>? wakeActiveFluidChunks = null,
-            ChunkSalinityBitset? salinityBitset = null)
+            ChunkSalinityBitset? salinityBitset = null,
+            ActiveChunkFluidKinematicsPool? kinematicsPool = null)
         {
             int limitY = Math.Min(maxY, Math.Min(fluidsA.Length >> 8, fluidsB.Length >> 8));
             limitY = Math.Min(limitY, Math.Min(voxelsA.Length >> 8, voxelsB.Length >> 8));
@@ -515,6 +623,21 @@ namespace Stratocraft.Physics.Jobs
                             {
                                 fluidsA[idxA] = 0;
                                 fluidsB[idxB] = 0;
+                                if (kinematicsPool != null)
+                                {
+                                    if (kinematicsPool.TryGetLeased(keyA.cx, keyA.cz, out ActiveChunkFluidKinematicsSlice? sliceA) &&
+                                        sliceA != null && (uint)idxA < (uint)sliceA.VelX_Q7.Length)
+                                    {
+                                        sliceA.VelX_Q7[idxA] = 0;
+                                        sliceA.VelZ_Q7[idxA] = 0;
+                                    }
+                                    if (kinematicsPool.TryGetLeased(keyB.cx, keyB.cz, out ActiveChunkFluidKinematicsSlice? sliceB) &&
+                                        sliceB != null && (uint)idxB < (uint)sliceB.VelX_Q7.Length)
+                                    {
+                                        sliceB.VelX_Q7[idxB] = 0;
+                                        sliceB.VelZ_Q7[idxB] = 0;
+                                    }
+                                }
                                 salinityBitset?.SetSaltWaterFlat(keyA.cx, keyA.cz, idxA, false);
                                 salinityBitset?.SetSaltWaterFlat(keyB.cx, keyB.cz, idxB, false);
                                 if (formedObsidian)
@@ -557,19 +680,36 @@ namespace Stratocraft.Physics.Jobs
 
                     if (aCell.Mass > 0 && headA > headB)
                     {
-                        // Durgun gol sinirinda 1-2 birimlik mikro seviye farkinin iki chunk'i sonsuza dek uyanik tutmasini onle
-                        if (bedA <= bedB && (headA - headB) < 3)
+                        if (bedA <= bedB && (headA - headB) < 1)
                         {
                             continue;
                         }
 
                         int transfer = ComputeStableLateralTransfer(
                             activeType, aCell.Mass, bCell.Mass, bCap, bedA, bedB);
+                        if (transfer == 0 && activeType == FluidType.Water && (headA - headB) == 1 && (aCell.Mass - bCell.Mass) >= 2 && bCap > bCell.Mass)
+                        {
+                            transfer = 1;
+                        }
+
                         if (transfer > 0)
                         {
+                            ActiveChunkFluidKinematicsSlice? sliceA = null;
+                            ActiveChunkFluidKinematicsSlice? sliceB = null;
+                            if (kinematicsPool != null)
+                            {
+                                sliceA = kinematicsPool.RentOrGetAndSyncBaseline(keyA.cx, keyA.cz, fluidsA, fluidsA.Length, 0);
+                                sliceB = kinematicsPool.RentOrGetAndSyncBaseline(keyB.cx, keyB.cz, fluidsB, fluidsB.Length, 0);
+                            }
+
                             byte remA = (byte)(aCell.Mass - transfer);
                             fluidsA[idxA] = FluidCell16.Pack(activeType, remA, isSettled: false, aCell.PressureHead).RawValue;
                             fluidsB[idxB] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false, bCell.PressureHead).RawValue;
+                            if (kinematicsPool != null)
+                            {
+                                ApplySeamVelocityImpulse(sliceA, idxA, alongXSeam, dirSign: 1, transfer, activeType, remA == 0);
+                                ApplySeamVelocityImpulse(sliceB, idxB, alongXSeam, dirSign: 1, transfer, activeType, clearOnEmpty: false);
+                            }
                             PropagateSeamSalinityOnTransfer(salinityBitset, activeType, keyA, idxA, remA, keyB, idxB, bCell.Mass == 0);
                             WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
                             WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
@@ -580,18 +720,36 @@ namespace Stratocraft.Physics.Jobs
                     }
                     else if (bCell.Mass > 0 && headB > headA)
                     {
-                        if (bedB <= bedA && (headB - headA) < 3)
+                        if (bedB <= bedA && (headB - headA) < 1)
                         {
                             continue;
                         }
 
                         int transfer = ComputeStableLateralTransfer(
                             activeType, bCell.Mass, aCell.Mass, aCap, bedB, bedA);
+                        if (transfer == 0 && activeType == FluidType.Water && (headB - headA) == 1 && (bCell.Mass - aCell.Mass) >= 2 && aCap > aCell.Mass)
+                        {
+                            transfer = 1;
+                        }
+
                         if (transfer > 0)
                         {
+                            ActiveChunkFluidKinematicsSlice? sliceA = null;
+                            ActiveChunkFluidKinematicsSlice? sliceB = null;
+                            if (kinematicsPool != null)
+                            {
+                                sliceA = kinematicsPool.RentOrGetAndSyncBaseline(keyA.cx, keyA.cz, fluidsA, fluidsA.Length, 0);
+                                sliceB = kinematicsPool.RentOrGetAndSyncBaseline(keyB.cx, keyB.cz, fluidsB, fluidsB.Length, 0);
+                            }
+
                             byte remB = (byte)(bCell.Mass - transfer);
                             fluidsB[idxB] = FluidCell16.Pack(activeType, remB, isSettled: false, bCell.PressureHead).RawValue;
                             fluidsA[idxA] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false, aCell.PressureHead).RawValue;
+                            if (kinematicsPool != null)
+                            {
+                                ApplySeamVelocityImpulse(sliceB, idxB, alongXSeam, dirSign: -1, transfer, activeType, remB == 0);
+                                ApplySeamVelocityImpulse(sliceA, idxA, alongXSeam, dirSign: -1, transfer, activeType, clearOnEmpty: false);
+                            }
                             PropagateSeamSalinityOnTransfer(salinityBitset, activeType, keyB, idxB, remB, keyA, idxA, aCell.Mass == 0);
                             WakeChunkCellAndNeighbors(fluidsA, ax, y, az, limitY);
                             WakeChunkCellAndNeighbors(fluidsB, bx, y, bz, limitY);
@@ -622,6 +780,44 @@ namespace Stratocraft.Physics.Jobs
             }
 
             return seamTransfers;
+        }
+
+        private static void ApplySeamVelocityImpulse(
+            ActiveChunkFluidKinematicsSlice? slice,
+            int cellIdx,
+            bool alongX,
+            int dirSign,
+            int transfer,
+            FluidType fluidType,
+            bool clearOnEmpty)
+        {
+            if (slice == null || (uint)cellIdx >= (uint)slice.VelX_Q7.Length)
+            {
+                return;
+            }
+
+            if (clearOnEmpty)
+            {
+                slice.VelX_Q7[cellIdx] = 0;
+                slice.VelZ_Q7[cellIdx] = 0;
+                return;
+            }
+
+            float visc = fluidType == FluidType.Lava ? 0.45f : (fluidType == FluidType.Acid ? 0.85f : 0.82f);
+            float maxV = fluidType == FluidType.Lava ? 1.20f : ActiveChunkFluidKinematicsSlice.MaxVelocityMetersPerSec;
+            float flux = (dirSign * transfer) * (1.0f / 64.0f);
+            if (alongX)
+            {
+                float prev = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(slice.VelX_Q7[cellIdx]);
+                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 3.2f), -maxV, maxV);
+                slice.VelX_Q7[cellIdx] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(next);
+            }
+            else
+            {
+                float prev = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(slice.VelZ_Q7[cellIdx]);
+                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 3.2f), -maxV, maxV);
+                slice.VelZ_Q7[cellIdx] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(next);
+            }
         }
 
         private static void WakeChunkCellAndNeighbors(ushort[] fluids, int lx, int ly, int lz, int limitY)
@@ -675,7 +871,10 @@ namespace Stratocraft.Physics.Jobs
             int oddOffset,
             ref int obsidianFormedCount,
             ref int steamSlagFizzleCount,
-            ulong[]? salinityBits = null)
+            ulong[]? salinityBits = null,
+            ActiveChunkFluidKinematicsSlice? kinematicsSlice = null,
+            int[]? fluxX = null,
+            int[]? fluxZ = null)
         {
             int strideY = sizeZ * sizeX;
             int primaryLimit = alongX ? sizeX - 1 : sizeZ - 1;
@@ -765,15 +964,35 @@ namespace Stratocraft.Physics.Jobs
                                 continue;
                             }
 
+                            float forwardVelA = 0f;
+                            if (kinematicsSlice != null)
+                            {
+                                forwardVelA = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(
+                                    alongX ? kinematicsSlice.VelX_Q7[aIdx] : kinematicsSlice.VelZ_Q7[aIdx]);
+                            }
+
                             int transfer = ComputeStableLateralTransfer(
                                 activeType, aCell.Mass, bCell.Mass, bCap, bedA, bedB,
-                                hasSteeperAlternativeA, slopeShare256A);
+                                hasSteeperAlternativeA, slopeShare256A, forwardVelA);
                             if (transfer > 0)
                             {
                                 bool bWasDry = bCell.Mass == 0;
                                 byte remA = (byte)(aCell.Mass - transfer);
                                 fluids[aIdx] = FluidCell16.Pack(activeType, remA, isSettled: false).RawValue;
                                 fluids[bIdx] = FluidCell16.Pack(activeType, (byte)(bCell.Mass + transfer), isSettled: false).RawValue;
+                                if (fluxX != null && fluxZ != null)
+                                {
+                                    if (alongX)
+                                    {
+                                        fluxX[aIdx] += transfer;
+                                        fluxX[bIdx] += transfer;
+                                    }
+                                    else
+                                    {
+                                        fluxZ[aIdx] += transfer;
+                                        fluxZ[bIdx] += transfer;
+                                    }
+                                }
                                 PropagateGridSalinityOnTransfer(salinityBits, activeType, aIdx, remA, bIdx, bWasDry);
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
@@ -799,15 +1018,35 @@ namespace Stratocraft.Physics.Jobs
                                 continue;
                             }
 
+                            float forwardVelB = 0f;
+                            if (kinematicsSlice != null)
+                            {
+                                forwardVelB = -ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(
+                                    alongX ? kinematicsSlice.VelX_Q7[bIdx] : kinematicsSlice.VelZ_Q7[bIdx]);
+                            }
+
                             int transfer = ComputeStableLateralTransfer(
                                 activeType, bCell.Mass, aCell.Mass, aCap, bedB, bedA,
-                                hasSteeperAlternativeB, slopeShare256B);
+                                hasSteeperAlternativeB, slopeShare256B, forwardVelB);
                             if (transfer > 0)
                             {
                                 bool aWasDry = aCell.Mass == 0;
                                 byte remB = (byte)(bCell.Mass - transfer);
                                 fluids[bIdx] = FluidCell16.Pack(activeType, remB, isSettled: false).RawValue;
                                 fluids[aIdx] = FluidCell16.Pack(activeType, (byte)(aCell.Mass + transfer), isSettled: false).RawValue;
+                                if (fluxX != null && fluxZ != null)
+                                {
+                                    if (alongX)
+                                    {
+                                        fluxX[bIdx] -= transfer;
+                                        fluxX[aIdx] -= transfer;
+                                    }
+                                    else
+                                    {
+                                        fluxZ[bIdx] -= transfer;
+                                        fluxZ[aIdx] -= transfer;
+                                    }
+                                }
                                 PropagateGridSalinityOnTransfer(salinityBits, activeType, bIdx, remB, aIdx, aWasDry);
                                 MarkChangedWithNeighbors(changedMask, ax, y, az, sizeX, sizeY, sizeZ);
                                 MarkChangedWithNeighbors(changedMask, bx, y, bz, sizeX, sizeY, sizeZ);
@@ -970,7 +1209,8 @@ namespace Stratocraft.Physics.Jobs
             int bedSrc,
             int bedDst,
             bool hasSteeperAlternative = false,
-            int slopeShare256 = 256)
+            int slopeShare256 = 256,
+            float forwardVelocityMps = 0f)
         {
             if (srcMass == 0 || dstCap <= dstMass || slopeShare256 <= 0)
             {
@@ -995,27 +1235,37 @@ namespace Stratocraft.Physics.Jobs
             if (isDownhill)
             {
                 int safeDrain = bedSrc - (bedDst + dstMass);
-                if (activeType == FluidType.Water && srcMass <= 24 && safeDrain >= srcMass && !hasSteeperAlternative)
+                if (activeType == FluidType.Water && srcMass <= 2 && safeDrain >= srcMass && !hasSteeperAlternative)
                 {
-                    // Kuru / dusuk seviyeli yamacta ince su filminin takilmadan tamamen asagi suzulmesi
+                    // Kalan mikroskobik damlacik (<= 2) alt yamaca temizlenir
                     desired = srcMass;
+                }
+                else if (activeType == FluidType.Water && srcMass <= 24 && safeDrain >= srcMass && !hasSteeperAlternative)
+                {
+                    // Kademeli suzulme (<= %45): sig su cephesi tek tikte %100 isinlanmaz
+                    desired = Math.Max(2, (srcMass * 11) / 24);
                 }
                 else
                 {
-                    if (diffH < 2)
+                    if (diffH < 2 && !(activeType == FluidType.Water && forwardVelocityMps >= 0.25f))
                     {
                         return 0;
                     }
 
+                    int momentumBonus = activeType == FluidType.Water && forwardVelocityMps > 0.0f
+                        ? (int)MathF.Round(forwardVelocityMps * 3.0f)
+                        : 0;
                     int rawPipe = activeType == FluidType.Water
-                        ? Math.Max(1, (diffH * 102) >> 8) // ~%40 dengeli su akis hizi (sel patlamasi yok)
+                        ? Math.Max(1, ((diffH * 102) >> 8) + momentumBonus) // ~%40 dengeli su akis hizi + momentum
                         : diffH / viscosityDiv;
                     if (rawPipe <= 0)
                     {
                         return 0;
                     }
 
-                    int slopeCap = Math.Max(16, (srcMass * 42) / 100);
+                    int slopeCap = (activeType == FluidType.Water && srcMass <= 24)
+                        ? Math.Max(2, (srcMass * 11) / 24)
+                        : Math.Max(16, (srcMass * 42) / 100);
                     desired = Math.Min(rawPipe, slopeCap);
                     if (slopeShare256 < 256)
                     {
@@ -1025,7 +1275,7 @@ namespace Stratocraft.Physics.Jobs
             }
             else
             {
-                if (diffH < 2)
+                if (diffH < 2 && !(activeType == FluidType.Water && forwardVelocityMps >= 0.35f && dstMass > 0))
                 {
                     return 0;
                 }
@@ -1043,8 +1293,11 @@ namespace Stratocraft.Physics.Jobs
                 }
                 else
                 {
+                    int momentumBonus = activeType == FluidType.Water && forwardVelocityMps > 0.0f
+                        ? (int)MathF.Round(forwardVelocityMps * 3.0f)
+                        : 0;
                     desired = activeType == FluidType.Water
-                        ? Math.Min(72, Math.Max(1, (diffH * 112) >> 8)) // Duzlukte kontrollu yayilim (max 72 birim/tik)
+                        ? Math.Min(72, Math.Max(1, ((diffH * 112) >> 8) + momentumBonus)) // Duzlukte kontrollu yayilim (max 72 birim/tik)
                         : diffH / viscosityDiv;
                 }
 
@@ -1354,7 +1607,14 @@ namespace Stratocraft.Physics.Jobs
             if (y + 1 < sizeY) changedMask[idx + strideY] |= 1;
         }
 
-        private static void EnsureScratch(int totalCells, out int[] visitedStamp, out int[] bfsQueue, out byte[] activeNext)
+        private static void EnsureScratch(
+            int totalCells,
+            out int[] visitedStamp,
+            out int[] bfsQueue,
+            out byte[] activeNext,
+            bool needFluxBuffers,
+            out int[]? fluxX,
+            out int[]? fluxZ)
         {
             if (_tlsVisitedStamp == null || _tlsVisitedStamp.Length < totalCells)
             {
@@ -1366,6 +1626,24 @@ namespace Stratocraft.Physics.Jobs
             if (_tlsBfsQueue == null || _tlsBfsQueue.Length < 2048)
             {
                 _tlsBfsQueue = new int[2048];
+            }
+
+            if (needFluxBuffers)
+            {
+                if (_tlsFluxX == null || _tlsFluxX.Length < totalCells || _tlsFluxZ == null || _tlsFluxZ.Length < totalCells)
+                {
+                    int cap = Math.Max(totalCells, 4096);
+                    _tlsFluxX = new int[cap];
+                    _tlsFluxZ = new int[cap];
+                }
+
+                fluxX = _tlsFluxX;
+                fluxZ = _tlsFluxZ;
+            }
+            else
+            {
+                fluxX = null;
+                fluxZ = null;
             }
 
             visitedStamp = _tlsVisitedStamp;

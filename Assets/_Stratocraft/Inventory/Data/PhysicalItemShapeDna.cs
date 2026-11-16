@@ -47,6 +47,21 @@ namespace Stratocraft.Inventory.Data
         ToolPrimitivePickaxe = 35,
         ToolPrimitiveKnife = 36,
         ToolPrimitiveHammer = 37,
+        WeatherBarometer = 38,
+        WeatherThermometer = 39,
+        WeatherHygrometer = 40,
+        WeatherWindVaneAnemometer = 41,
+        WeatherRainGauge = 42,
+        MetalLightningRod = 43,
+        WindmillSailPanel = 44,
+        WildGrainBundle = 45,
+        MilledFlour = 46,
+        CrushedOrePowder = 47,
+        CrushedFluxPowder = 48,
+        WovenClothTunic = 49,
+        OiledLeatherWindbreaker = 50,
+        HeavyFurWinterParka = 51,
+        FurLinedWinterBoots = 52,
         None = 255
     }
 

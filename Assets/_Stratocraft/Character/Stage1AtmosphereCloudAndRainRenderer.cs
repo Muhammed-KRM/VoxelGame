@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using Stratocraft.Core.Weather;
 using SysVec3 = System.Numerics.Vector3;
 
 #if UNITY_5_3_OR_NEWER
@@ -10,8 +11,8 @@ using UnityEngine.Rendering;
 namespace Stratocraft.Character
 {
     /// <summary>
-    /// Paket 4A Faz 4A.3: 64m x 64m atmosfer hucresi basina 3B bulut hacmi, golge izdusumu
-    /// ve yerel yagmur perdesi/cizgisi icin kullanilan hafifsiklet, sifir-GC (blittable) ornek yapisi.
+    /// Paket 4A Faz 4A.3 / Paket 4B: 64m x 64m atmosfer hucresi basina 3B bulut hacmi, golge izdusumu
+    /// ve yerel yagis (yagmur/kar/dolu) perdesi icin kullanilan hafifsiklet, sifir-GC (blittable) ornek yapisi.
     /// </summary>
     public struct CloudCellRenderSample
     {
@@ -23,6 +24,7 @@ namespace Stratocraft.Character
         public float PrecipMmPerHour;
         public float WindX;
         public float WindZ;
+        public PrecipitationKind PrecipKind;
 
         public float X
         {
@@ -65,7 +67,8 @@ namespace Stratocraft.Character
             float cloudTopY,
             float precipMmPerHour,
             float windX = 0.0f,
-            float windZ = 0.0f)
+            float windZ = 0.0f,
+            PrecipitationKind precipKind = PrecipitationKind.None)
         {
             WorldCenterX = worldCenterX;
             WorldCenterZ = worldCenterZ;
@@ -75,6 +78,9 @@ namespace Stratocraft.Character
             PrecipMmPerHour = precipMmPerHour;
             WindX = windX;
             WindZ = windZ;
+            PrecipKind = precipKind != PrecipitationKind.None
+                ? precipKind
+                : (precipMmPerHour > Stage1AtmosphereCloudAndRainRenderer.MinLocalRainPrecipMmPerHour ? PrecipitationKind.Rain : PrecipitationKind.None);
         }
 
         public static CloudCellRenderSample FromCellIndices(
@@ -85,7 +91,8 @@ namespace Stratocraft.Character
             float cloudTopY = 235.0f,
             float precipMmPerHour = 0.0f,
             float windX = 0.0f,
-            float windZ = 0.0f)
+            float windZ = 0.0f,
+            PrecipitationKind precipKind = PrecipitationKind.None)
         {
             const float cellSize = Stage1AtmosphereCloudAndRainRenderer.AtmosphereCellSizeMeters;
             return new CloudCellRenderSample(
@@ -96,7 +103,8 @@ namespace Stratocraft.Character
                 cloudTopY,
                 precipMmPerHour,
                 windX,
-                windZ);
+                windZ,
+                precipKind);
         }
     }
 
@@ -517,6 +525,8 @@ namespace Stratocraft.Character
         private static readonly int s_globalCloudGridParamsId = Shader.PropertyToID("_GlobalCloudGridParams");
         private static readonly int s_globalWindVectorId = Shader.PropertyToID("_GlobalWindVector");
         private static readonly int s_globalHorizonOpticsParamsId = Shader.PropertyToID("_GlobalHorizonOpticsParams");
+        private static readonly int s_globalPrecipKindId = Shader.PropertyToID("_GlobalPrecipKind");
+        private static readonly int s_globalBlizzardFactor01Id = Shader.PropertyToID("_GlobalBlizzardFactor01");
 
         private readonly Matrix4x4[] _cloudMatrices = new Matrix4x4[MaxActiveCloudCells];
         private readonly Matrix4x4[] _rainShaftMatrices = new Matrix4x4[MaxActiveCloudCells];
@@ -552,7 +562,8 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Kuresel bulut golgesi, ruzgar vektoru ve Rayleigh ufuk parametrelerini GPU'ya yazar.
+        /// Kuresel bulut golgesi, ruzgar vektoru, yagis fazi (_GlobalPrecipKind: Snow=2, Hail=3),
+        /// tipi siddeti (_GlobalBlizzardFactor01) ve Rayleigh ufuk parametrelerini GPU'ya yazar.
         /// Bulut olmadiginda _GlobalCloudGridParams.w = 0.0 yazilarak StratocraftUberShader.hlsl
         /// nesnelerinin %100 orijinal parlakligini korumasi garanti edilir.
         /// </summary>
@@ -560,7 +571,9 @@ namespace Stratocraft.Character
             float sunDirY,
             float westHumidity01 = 0.45f,
             float eastHumidity01 = 0.45f,
-            float airPressureHpa = 1013.25f)
+            float airPressureHpa = 1013.25f,
+            PrecipitationKind? activePrecipKindOverride = null,
+            float blizzardFactor01Override = -1.0f)
         {
             float sumWater = 0.0f;
             float sumBaseY = 0.0f;
@@ -569,6 +582,8 @@ namespace Stratocraft.Character
             float sumWindZ = 0.0f;
             float maxPrecip = 0.0f;
             int cloudCount = 0;
+            PrecipitationKind dominantPrecipKind = PrecipitationKind.None;
+            float dominantPrecipRate = 0.0f;
 
             for (int i = 0; i < _activeCellCount; i++)
             {
@@ -578,6 +593,12 @@ namespace Stratocraft.Character
                 if (c.PrecipMmPerHour > maxPrecip)
                 {
                     maxPrecip = c.PrecipMmPerHour;
+                }
+
+                if (c.PrecipMmPerHour > dominantPrecipRate && c.PrecipMmPerHour > MinLocalRainPrecipMmPerHour)
+                {
+                    dominantPrecipRate = c.PrecipMmPerHour;
+                    dominantPrecipKind = c.PrecipKind != PrecipitationKind.None ? c.PrecipKind : PrecipitationKind.Rain;
                 }
 
                 if (c.CloudWaterKgPerM2 > MinVisibleCloudWaterKgPerM2)
@@ -595,6 +616,23 @@ namespace Stratocraft.Character
             float windSpeed = Mathf.Sqrt(avgWindX * avgWindX + avgWindZ * avgWindZ);
             float stormDarkening01 = Mathf.Clamp01(maxPrecip / 18.0f);
 
+            PrecipitationKind resolvedPrecipKind = activePrecipKindOverride ?? dominantPrecipKind;
+            float resolvedBlizzard01;
+            if (blizzardFactor01Override >= 0.0f)
+            {
+                resolvedBlizzard01 = Mathf.Clamp01(blizzardFactor01Override);
+            }
+            else if (resolvedPrecipKind == PrecipitationKind.Snow && windSpeed >= 10.0f && maxPrecip >= 2.0f)
+            {
+                float windFactor = Mathf.Clamp01((windSpeed - 10.0f) / 10.0f);
+                float precipFactor = Mathf.Clamp01(maxPrecip / 6.0f);
+                resolvedBlizzard01 = windFactor * precipFactor;
+            }
+            else
+            {
+                resolvedBlizzard01 = 0.0f;
+            }
+
             if (cloudCount > 0)
             {
                 float invCloud = 1.0f / cloudCount;
@@ -611,6 +649,8 @@ namespace Stratocraft.Character
             }
 
             Shader.SetGlobalVector(s_globalWindVectorId, new Vector4(avgWindX, windSpeed, avgWindZ, stormDarkening01));
+            Shader.SetGlobalFloat(s_globalPrecipKindId, (float)(byte)resolvedPrecipKind);
+            Shader.SetGlobalFloat(s_globalBlizzardFactor01Id, resolvedBlizzard01);
 
             RayleighHorizonTint horizonTint = ComputeRayleighSunriseSunsetTint(sunDirY, westHumidity01, eastHumidity01, airPressureHpa);
             Shader.SetGlobalVector(
@@ -795,6 +835,8 @@ namespace Stratocraft.Character
             Shader.SetGlobalVector(s_globalCloudGridParamsId, Vector4.zero);
             Shader.SetGlobalVector(s_globalWindVectorId, Vector4.zero);
             Shader.SetGlobalVector(s_globalHorizonOpticsParamsId, Vector4.zero);
+            Shader.SetGlobalFloat(s_globalPrecipKindId, 0.0f);
+            Shader.SetGlobalFloat(s_globalBlizzardFactor01Id, 0.0f);
 
             if (_sharedCloudVolumeMesh != null)
             {

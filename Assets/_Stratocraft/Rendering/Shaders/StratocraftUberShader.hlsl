@@ -365,16 +365,33 @@ StratocraftVaryings StratocraftUberVert(StratocraftAttributes input)
     VertexPositionInputs posInputs = GetVertexPositionInputs(input.positionOS.xyz);
     VertexNormalInputs nrmInputs = GetVertexNormalInputs(input.normalOS);
 
-    output.positionCS = posInputs.positionCS;
-    output.positionWS = posInputs.positionWS;
-    output.normalWS = NormalizeNormalPerVertex(nrmInputs.normalWS);
-    output.positionOS = input.positionOS.xyz;
-
     // VertexAttributeFormat.UNorm8 (DXGI_FORMAT_R8G8B8A8_UNORM) baytlari dogrudan byte / 255.0f olarak gecirir
     uint rawMatId = (uint)round(saturate(input.color.r) * 255.0);
-    output.matId = (rawMatId == 0u && input.uv1.x > 0.001)
+    uint resolvedMatId = (rawMatId == 0u && input.uv1.x > 0.001)
         ? (uint)round(saturate(input.uv1.x) * 255.0)
         : rawMatId;
+
+    float3 posWS = posInputs.positionWS;
+    float4 posCS = posInputs.positionCS;
+
+    // Paket 4B: Yaprak / cali ruzgar salinimi YALNIZCA Grass (3u) icin uygulanir!
+    // Floatstone (18u) gokyuzu adasi kayasi oldugu icin KESINLIKLE harictir!
+    float windSpeed = _GlobalWindVector.y;
+    if (resolvedMatId == 3u && resolvedMatId != 18u && windSpeed > 0.1)
+    {
+        float2 windDir = _GlobalWindVector.xz / max(windSpeed, 0.001);
+        float foliageWeight = (input.positionOS.y < 3.0) ? saturate(input.positionOS.y * 1.6) : 0.35;
+        float swayPhase = sin(_Time.y * 2.8 + dot(posWS.xyz, 0.7));
+        float swayAmp = clamp(windSpeed * 0.012, 0.0, 0.22) * foliageWeight;
+        posWS.xz += windDir * (swayPhase * swayAmp);
+        posCS = TransformWorldToHClip(posWS);
+    }
+
+    output.positionCS = posCS;
+    output.positionWS = posWS;
+    output.normalWS = NormalizeNormalPerVertex(nrmInputs.normalWS);
+    output.positionOS = input.positionOS.xyz;
+    output.matId = resolvedMatId;
 
     output.tempSharpAo = float3(
         saturate(input.color.g),
@@ -383,7 +400,7 @@ StratocraftVaryings StratocraftUberVert(StratocraftAttributes input)
 
     output.directColorAndFog = float4(
         input.color.rgb,
-        ComputeFogFactor(posInputs.positionCS.z));
+        ComputeFogFactor(posCS.z));
 
     return output;
 }
@@ -397,18 +414,36 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float3 viewDirWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
     float2 normalizedScreenUV = GetNormalizedScreenSpaceUV(input.positionCS);
 
-    float heatNorm = input.tempSharpAo.x;
+    float rawHeatNorm = input.tempSharpAo.x;
+    float rawTempByte = round(rawHeatNorm * 255.0);
+    float heatNorm = rawHeatNorm;
     float sharpnessOrTone = input.tempSharpAo.y;
     float cavityAo = lerp(0.42, 1.0, input.tempSharpAo.z);
 
-    // Dogal emici zemin malzemeleri (Dirt=2, Grass=3, Sand=4, Gravel=9, LooseRubble=15, Clay=16) icin
-    // Temp kanalinin kor olmayan alt bandi (1..120 -> 0.003..0.50) Toprak Nem/Camur Doygunlugunu tasir!
+    // Akkor isima ureten malzemeler: Magma=11, Lava=13, StarCore=46, Campfire=166, Kiln=167
+    bool isIntrinsicHotMat = (input.matId == 11u || input.matId == 13u || input.matId == 46u ||
+                              input.matId == 166u || input.matId == 167u);
+    // Dogal emici zemin malzemeleri (Dirt=2, Grass=3, Sand=4, Gravel=9, LooseRubble=15, Clay=16)
     bool isWettableSoilMat = (input.matId == 2u || input.matId == 3u || input.matId == 4u ||
                               input.matId == 9u || input.matId == 15u || input.matId == 16u);
     float soilWetness01 = 0.0;
-    if (isWettableSoilMat && heatNorm > 0.002 && heatNorm <= 0.50)
+    float snowCover01 = 0.0;
+
+    if (!isIntrinsicHotMat && rawTempByte < 169.5)
     {
-        soilWetness01 = saturate(heatNorm / (120.0 / 255.0));
+        if (rawTempByte >= 1.0 && rawTempByte <= 120.4 && isWettableSoilMat)
+        {
+            // BANT 1 [1..120]: Paket 4A Islak Toprak ve Camur
+            soilWetness01 = saturate(rawTempByte / 120.0);
+        }
+        else if (rawTempByte >= 125.5 && rawTempByte <= 166.5)
+        {
+            // BANT 3 [126..166]: Paket 4B Prosedurel Kar Ortusu (41 kademe SWE)
+            snowCover01 = saturate((rawTempByte - 125.0) / 41.0);
+        }
+
+        // KRITIK EMNIYET KILIDI: rawTempByte < 169.5 icin heatNorm = 0.0 ZORUNLU sifirlamasi!
+        // Kar [126..166], koruma bandi [121..125] ve islak toprak [1..120] Blackbody (>= 170) blogunda ASLA turuncu parlamaz!
         heatNorm = 0.0;
     }
 
@@ -482,6 +517,21 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
         roughness = lerp(roughness, 0.11, smoothstep(0.08, 0.80, soilWetness01));
     }
 
+    // Paket 4B Prosedurel Kar Ortusu (0.0 MB doku VRAM): egim + mikro-yama + normal yumusatma
+    float snowMask = 0.0;
+    if (snowCover01 > 0.001)
+    {
+        float slopeAccept = smoothstep(0.18, 0.62, normalWS.y);
+        float microPatch = frac(sin(dot(floor(input.positionWS * 6.0), float3(12.9898, 78.233, 37.719))) * 43758.5453);
+        snowMask = saturate(snowCover01 * 1.35 * slopeAccept - (1.0 - snowCover01) * microPatch * 0.35);
+
+        float3 freshSnowAlbedo = ConvertLutSrgbToActiveColorSpace(float3(0.90, 0.94, 0.98));
+        albedo = lerp(albedo, freshSnowAlbedo, snowMask);
+        roughness = lerp(roughness, 0.62, snowMask);
+        metallic = lerp(metallic, 0.0, snowMask);
+        normalWS = normalize(lerp(normalWS, float3(0.0, 1.0, 0.0), snowMask * 0.35));
+    }
+
     // Yukseklik bazli hafif jeolojik derinlik gradyani (magara ve falez tabanlarina hacim katar)
     float heightFactor = saturate((input.positionWS.y + 4.0) / 18.0);
     albedo *= lerp(0.78, 1.06, heightFactor);
@@ -536,6 +586,21 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
         float mainGlintSpec = pow(saturate(mainGlintDot), 96.0) * (veinMask01 * 1.45) * mainLight.shadowAttenuation;
         float3 mainGlintTint = lerp(float3(1.0, 0.98, 0.94), max(albedo * 1.45, float3(0.35, 0.35, 0.35)), saturate(metallic * 0.75));
         totalSpecular += mainLight.color * mainGlintSpec * mainGlintTint;
+    }
+
+    if (snowMask > 0.01)
+    {
+        // Bakis-bagimli buz kristali mikro-pariltisi (Procedural Snow Micro-Glint, 0 MB Doku)
+        float3 glintCell = floor(input.positionWS * 42.0);
+        float3 glintHash = frac(sin(float3(
+            dot(glintCell, float3(127.1, 311.7, 74.7)),
+            dot(glintCell, float3(269.5, 183.3, 246.1)),
+            dot(glintCell, float3(113.5, 271.9, 124.6)))) * 43758.5453);
+        float3 glintDir = normalize(glintHash * 2.0 - 1.0);
+        float glintSpec = pow(saturate(dot(halfDir, glintDir)), 96.0);
+        float glintGate = step(0.965, glintHash.x);
+        float extraSnowGlint = glintSpec * glintGate * snowMask * 1.8;
+        totalSpecular += mainLight.color * (extraSnowGlint * mainLight.shadowAttenuation);
     }
 
     // URP 17 Forward+ (_CLUSTER_LIGHT_LOOP) ve Ek Nokta/Spot Isiklar (Mesale, Kamp Atesi, Magma)

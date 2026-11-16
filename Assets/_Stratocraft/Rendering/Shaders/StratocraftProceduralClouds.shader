@@ -68,6 +68,8 @@ Shader "Stratocraft/ProceduralClouds"
             float4 _GlobalHorizonOpticsParams; // x/y = bati/dogu nem, z = basinc, w = kizil ufuk siddeti
             float4 _CloudGridOrigin;           // x = izgara min X, y = izgara min Z, z = hucre boyu (64), w = kenar hucre sayisi (9)
             float4 _CloudSlabParams;           // x = bulut taban Y, y = bulut tepe Y, z = yagmur zemin Y, w = genel ortu (0..1)
+            float _GlobalPrecipKind;           // 0 = None, 1 = Rain, 2 = Snow, 3 = Hail
+            float _GlobalBlizzardFactor01;     // 0..1 tipi / bora beyazlama siddeti
             float _CloudWater81[81];
             float _CloudPrecip81[81];
 
@@ -220,10 +222,14 @@ Shader "Stratocraft/ProceduralClouds"
                 float3 ambientUp = max(SampleSH(float3(0.0, 1.0, 0.0)), 0.02);
                 float3 wind = float3(_GlobalWindVector.x, 0.0, _GlobalWindVector.z);
                 float storm01 = saturate(_GlobalWindVector.w);
+                int precipKind = (int)round(_GlobalPrecipKind);
+                float blizzard01 = saturate(_GlobalBlizzardFactor01);
+                bool isSnow = (precipKind == 2);
+                bool isHail = (precipKind == 3);
                 float jitter = Hash31(float3(input.positionCS.xy, _Time.y * 13.0));
 
                 // ==============================================================
-                // YAGMUR HACMI (COLOR.r >= 0.5)
+                // YAGIS HACMI (COLOR.r >= 0.5): Yagmur (1), Kar / Tipi (2), Dolu (3)
                 // ==============================================================
                 if (input.vtxColor.r >= 0.5)
                 {
@@ -235,12 +241,16 @@ Shader "Stratocraft/ProceduralClouds"
                         float tt = tEnter + segLen * ((s + jitter) / 5.0);
                         float3 p = ro + rd * tt;
                         float precipMm = SamplePrecipGrid(p.xz);
-                        haze += saturate(precipMm / 10.0) * (segLen / 5.0);
+                        haze += saturate(precipMm / (isSnow ? 5.0 : 10.0)) * (segLen / 5.0);
                     }
-                    float hazeAlpha = 1.0 - exp(-haze * 0.0065);
+                    float hazeRate = isSnow ? lerp(0.0085, 0.024, blizzard01) : 0.0065;
+                    float hazeAlpha = 1.0 - exp(-haze * hazeRate);
 
-                    // Yakin dusen yagmur cizgileri (2 katman, ruzgarla egik)
+                    // Yakin dusen yagis parcaciklari (v_term: yagmur ~7.5 m/s, kar ~1.2 m/s, dolu ~14.0 m/s)
                     float streak = 0.0;
+                    float windTiltScale = isSnow ? 0.16 : (isHail ? 0.016 : 0.030);
+                    float fallSpeedScale = isSnow ? 2.4 : (isHail ? max(_RainFallSpeed * 1.35, 9.0) * 0.45 : max(_RainFallSpeed, 4.0) * 0.35);
+
                     [unroll]
                     for (int k = 0; k < 2; k++)
                     {
@@ -249,23 +259,39 @@ Shader "Stratocraft/ProceduralClouds"
                         if (tt < tExit)
                         {
                             float3 p = ro + rd * tt;
-                            float precip01 = saturate(SamplePrecipGrid(p.xz) / 8.0);
+                            float precip01 = saturate(SamplePrecipGrid(p.xz) / (isSnow ? 4.0 : 8.0));
                             float3 tp = p;
-                            tp.xz -= wind.xz * (p.y * 0.03);
-                            float fall = tp.y * 0.35 + _Time.y * max(_RainFallSpeed, 4.0) * 0.35;
-                            float2 cell = tp.xz * (k == 0 ? 9.0 : 5.0);
+                            tp.xz -= wind.xz * (p.y * windTiltScale);
+                            if (isSnow)
+                            {
+                                tp.x += sin(_Time.y * 2.6 + p.y * 1.3 + k * 1.7) * 0.35;
+                                tp.z += cos(_Time.y * 2.1 + p.y * 1.1) * 0.35;
+                            }
+                            float fall = tp.y * 0.35 + _Time.y * fallSpeedScale;
+                            float2 cell = tp.xz * (isSnow ? (k == 0 ? 6.5 : 4.0) : (k == 0 ? 9.0 : 5.0));
                             float h = Hash31(float3(floor(cell), k * 7.0));
                             float2 fr = frac(cell) - 0.5;
-                            float core = smoothstep(0.10, 0.0, abs(fr.x)) * smoothstep(0.45, 0.2, abs(fr.y));
-                            float pulse = smoothstep(0.6, 0.95, frac(fall + h * 5.3));
-                            streak += core * pulse * step(0.55, h) * precip01;
+                            float core = isSnow
+                                ? smoothstep(0.24, 0.04, length(fr))
+                                : (isHail
+                                    ? smoothstep(0.16, 0.02, abs(fr.x)) * smoothstep(0.26, 0.06, abs(fr.y))
+                                    : smoothstep(0.10, 0.0, abs(fr.x)) * smoothstep(0.45, 0.2, abs(fr.y)));
+                            float pulse = isSnow
+                                ? smoothstep(0.25, 0.85, frac(fall + h * 5.3))
+                                : smoothstep(0.6, 0.95, frac(fall + h * 5.3));
+                            float densityGate = isSnow ? step(lerp(0.45, 0.15, blizzard01), h) : step(0.55, h);
+                            streak += core * pulse * densityGate * precip01;
                         }
                     }
 
-                    float3 rainCol = _RainStreakColor.rgb * (lightCol * 0.55 + ambientUp * 0.9);
-                    float alpha = saturate(hazeAlpha * 0.75 + streak * 0.45) * _RainStreakColor.a * 1.4;
+                    float3 baseTint = isSnow
+                        ? float3(0.90, 0.94, 0.99)
+                        : (isHail ? float3(0.88, 0.93, 0.99) : _RainStreakColor.rgb);
+                    float3 precipCol = baseTint * (lightCol * (isSnow ? 0.72 : 0.55) + ambientUp * (isSnow ? 1.15 : 0.9));
+                    float alphaMult = isSnow ? lerp(1.35, 1.85, blizzard01) : 1.4;
+                    float alpha = saturate(hazeAlpha * (isSnow ? 0.90 : 0.75) + streak * (isSnow ? 0.65 : 0.45)) * _RainStreakColor.a * alphaMult;
                     if (alpha <= 0.003) discard;
-                    return half4(rainCol, (half)alpha);
+                    return half4(precipCol, (half)alpha);
                 }
 
                 // ==============================================================
@@ -311,9 +337,11 @@ Shader "Stratocraft/ProceduralClouds"
                     float ext = density * sigma;
                     float stepT = exp(-ext * stepLen);
 
-                    // Isik: tepeye ve gunese bakan kisim parlak beyaz, taban (ozellikle firtinada) koyu kursuni
+                    // Isik: tepeye ve gunese bakan kisim parlak beyaz, taban (ozellikle firtinada) koyu kursuni;
+                    // kar/tipi bulutlarinda soguk gumus-arduvaz kapali gokyuzu tonu
                     float sunLit = saturate(0.45 + h01 * 0.75) * (0.6 + 0.4 * saturate(sunDir.y + 0.2));
-                    float3 underbelly = lerp(_CloudShadowColor.rgb, float3(0.16, 0.18, 0.22), storm01);
+                    float3 stormUnderbelly = lerp(_CloudShadowColor.rgb, float3(0.16, 0.18, 0.22), storm01);
+                    float3 underbelly = lerp(stormUnderbelly, float3(0.42, 0.46, 0.54), (isSnow ? 0.50 : 0.0) + blizzard01 * 0.35);
                     float3 lit = _CloudBaseColor.rgb * (lightCol * sunLit * (0.95 + 0.30 * phase) + ambientUp * 1.15);
                     float3 shade = underbelly * (ambientUp * 1.35 + lightCol * 0.30);
                     float3 col = lerp(shade, lit, saturate(h01 * 0.85 + 0.35 - density * 0.30));

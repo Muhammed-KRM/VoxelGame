@@ -15,7 +15,8 @@ namespace Stratocraft.Inventory.Systems
         Campfire = 0,          // Kamp Atesi
         CharcoalPit = 1,       // Odun Komuru Ocagi
         BloomeryFurnace = 2,   // Ilkel Izabe Firini (Bloomery)
-        WoodenWheelbarrow = 3  // Ahsap El Arabasi
+        WoodenWheelbarrow = 3, // Ahsap El Arabasi
+        Windmill = 4           // Fiziksel Yel Degirmeni (Paket 4B Faz 4B.5)
     }
 
     /// <summary>
@@ -39,7 +40,8 @@ namespace Stratocraft.Inventory.Systems
         CharcoalChunk = 13,
         RoastedOreChunk = 14,
         CrushedOrePowder = 15,
-        IronBloomSponge = 16
+        IronBloomSponge = 16,
+        WindmillSailPanel = 17
     }
 
     /// <summary>
@@ -85,6 +87,7 @@ namespace Stratocraft.Inventory.Systems
             MindStructureBlueprintId.CharcoalPit => "Odun Kömürü Ocağı",
             MindStructureBlueprintId.BloomeryFurnace => "İlkel İzabe Fırını (Bloomery)",
             MindStructureBlueprintId.WoodenWheelbarrow => "Ahşap El Arabası",
+            MindStructureBlueprintId.Windmill => "Fiziksel Yel Değirmeni",
             _ => "Fiziksel Yapı"
         };
 
@@ -98,6 +101,8 @@ namespace Stratocraft.Inventory.Systems
                 "Yere en az 8 taş ve 6 kil topağı diz; mühürlenince taş tabanlı silindirik kil izabe fırınına dönüşür (hava borusu ve körük takılır).",
             MindStructureBlueprintId.WoodenWheelbarrow =>
                 "Öne 1 ahşap tekerlek koy, arkasına en az 2 yarılmış odun + 2 dal (toplam 6 ahşap) ve 2 bitki lifi diz.",
+            MindStructureBlueprintId.Windmill =>
+                "Tabana en az 4 taş kaide, üzerine en az 4 ahşap direk/odun ve üst göbeğe 4 Yelken Kanat (WindmillSailPanel) diz; tahıl ve cevher öğütür.",
             _ => string.Empty
         };
 
@@ -114,6 +119,7 @@ namespace Stratocraft.Inventory.Systems
                 MindStructureBlueprintId.CharcoalPit => ValidateCharcoalPit(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 MindStructureBlueprintId.BloomeryFurnace => ValidateBloomeryFurnace(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 MindStructureBlueprintId.WoodenWheelbarrow => ValidateWheelbarrow(aimOrigin, allParts, matchedIndicesOut, scanRadius),
+                MindStructureBlueprintId.Windmill => ValidateWindmill(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 _ => new MindValidationResult
                 {
                     IsValid = false,
@@ -511,6 +517,133 @@ namespace Stratocraft.Inventory.Systems
                 ClusterBaseY = minY,
                 MatchedPartCount = writeCount,
                 FeedbackMessage = "🛞 Ahşap El Arabası çatıldı ve bağlandı! Ağır kütük ve cevher taşımaya hazır."
+            };
+        }
+
+        private static MindValidationResult ValidateWindmill(
+            Vector3 aimOrigin,
+            ReadOnlySpan<LoosePartPoint> allParts,
+            Span<int> matchedIndicesOut,
+            float scanRadius)
+        {
+            float horizRad = MathF.Max(scanRadius, 2.65f);
+            float horizRadSq = horizRad * horizRad;
+            float minY = float.MaxValue;
+            int candidateCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx) + (dz * dz) > horizRadSq) continue;
+                if (MathF.Abs(p.Position.Y - aimOrigin.Y) > 4.60f) continue;
+
+                candidateCount++;
+                if (p.Position.Y < minY) minY = p.Position.Y;
+            }
+
+            if (candidateCount == 0)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.Windmill,
+                    FeedbackMessage = "Önünde yel değirmeni için dizilmiş parça yok! Tabana 4 Taş, üzerine 4 Ahşap Direk/Odun ve 4 Yelken Kanat diz."
+                };
+            }
+
+            int stoneBaseCount = 0;
+            int woodShaftCount = 0;
+            int sailPanelCount = 0;
+            Vector3 centerSum = Vector3.Zero;
+            int writeCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx) + (dz * dz) > horizRadSq) continue;
+                if (MathF.Abs(p.Position.Y - aimOrigin.Y) > 4.60f) continue;
+
+                float relY = p.Position.Y - minY;
+                bool relevant = false;
+
+                if (p.Kind == LooseBuildPartKind.RoughStoneChunk && relY <= 1.50f)
+                {
+                    stoneBaseCount++;
+                    relevant = true;
+                }
+                else if ((p.Kind == LooseBuildPartKind.SplitFirewood ||
+                          p.Kind == LooseBuildPartKind.Stick ||
+                          p.Kind == LooseBuildPartKind.WoodenWheel) &&
+                         relY <= 3.80f)
+                {
+                    woodShaftCount++;
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.WindmillSailPanel && relY <= 4.20f)
+                {
+                    sailPanelCount++;
+                    relevant = true;
+                }
+
+                if (relevant)
+                {
+                    centerSum += p.Position;
+                    if (writeCount < matchedIndicesOut.Length)
+                    {
+                        matchedIndicesOut[writeCount++] = i;
+                    }
+                }
+            }
+
+            if (stoneBaseCount < 4)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.Windmill,
+                    FeedbackMessage = $"Yel Değirmeni kâgir kaidesi ve değirmen taşı yatağı için tabana en az 4 Taş Parçası dizmelisin! (Şu an: {stoneBaseCount}/4)"
+                };
+            }
+
+            if (woodShaftCount < 4)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.Windmill,
+                    FeedbackMessage = $"Yel Değirmeni dikey kulesi ve ana mili için en az 4 Ahşap (Yarılmış Odun / Dal / Tekerlek) dizmelisin! (Şu an: {woodShaftCount}/4)"
+                };
+            }
+
+            if (sailPanelCount < 4)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.Windmill,
+                    FeedbackMessage = $"Yel Değirmeni 4 kanatlı Betz rotoru için en az 4 adet Yel Değirmeni Yelken Kanadı (WindmillSailPanel) yerleştirmelisin! (Şu an: {sailPanelCount}/4)"
+                };
+            }
+
+            Vector3 center = centerSum / Math.Max(1, writeCount);
+            return new MindValidationResult
+            {
+                IsValid = true,
+                Blueprint = MindStructureBlueprintId.Windmill,
+                ClusterCenter = new Vector3(center.X, minY, center.Z),
+                ClusterBaseY = minY,
+                BonusEfficiency01 = 1.0f,
+                MatchedPartCount = writeCount,
+                HasStoneRing = true,
+                FeedbackMessage = "🌬️ Fiziksel Yel Değirmeni kuruldu! ([Sağ Tık] Tahıl/Cevher Yükle | [E] Un/Toz Topla | [Shift+E] Fırtına Freni)"
             };
         }
     }

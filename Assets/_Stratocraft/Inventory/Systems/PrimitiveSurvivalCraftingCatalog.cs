@@ -31,7 +31,12 @@ namespace Stratocraft.Inventory.Systems
         WeatherHygrometer = 9,
         WeatherWindVaneAnemometer = 10,
         WeatherRainGauge = 11,
-        MetalLightningRod = 12
+        MetalLightningRod = 12,
+        WindmillSailPanel = 13,
+        WovenClothTunic = 14,
+        OiledLeatherWindbreaker = 15,
+        HeavyFurWinterParka = 16,
+        FurLinedWinterBoots = 17
     }
 
     /// <summary>
@@ -53,7 +58,13 @@ namespace Stratocraft.Inventory.Systems
         CopperIngot = 11,
         WroughtIronBar = 12,
         ClayLump = 13,
-        SlagGlassShard = 14
+        SlagGlassShard = 14,
+        TacticalCloth = 15,
+        LeatherPadding = 16,
+        CreatureFurAsh = 17,
+        WildGrainBundle = 18,
+        MilledFlour = 19,
+        CrushedFluxPowder = 20
     }
 
     public readonly struct ClothMatCraftMatch
@@ -166,10 +177,52 @@ namespace Stratocraft.Inventory.Systems
                 "Topraklamalı Metal Paratoner Direği (Yıldırım Kalkanı)")
         };
 
+        private static readonly ClothMatCraftMatch[] CachedWinterAndWindmillRecipes =
+        {
+            new(
+                PrimitiveCraftOutputId.WindmillSailPanel,
+                CraftIngredientToken.Stick, 2,
+                CraftIngredientToken.TacticalCloth, 2,
+                CraftIngredientToken.PlantFiber, 1,
+                "Yel Değirmeni Yelken Kanadı (Betz Rotor Yelkeni)"),
+            new(
+                PrimitiveCraftOutputId.WovenClothTunic,
+                CraftIngredientToken.TacticalCloth, 3,
+                CraftIngredientToken.PlantFiber, 2,
+                CraftIngredientToken.None, 0,
+                "Dokuma Kumaş İçlik / Tunik (0.45 clo İç Katman)"),
+            new(
+                PrimitiveCraftOutputId.OiledLeatherWindbreaker,
+                CraftIngredientToken.LeatherPadding, 3,
+                CraftIngredientToken.TacticalCloth, 1,
+                CraftIngredientToken.PlantFiber, 1,
+                "Yağlı Deri Rüzgârlık Pelerin (0.80 clo, %88 Rüzgâr Kesici)"),
+            new(
+                PrimitiveCraftOutputId.HeavyFurWinterParka,
+                CraftIngredientToken.CreatureFurAsh, 3,
+                CraftIngredientToken.LeatherPadding, 2,
+                CraftIngredientToken.PlantFiber, 1,
+                "Ağır Kürk Kış Parkası (1.45 clo Tipi Koruması)"),
+            new(
+                PrimitiveCraftOutputId.FurLinedWinterBoots,
+                CraftIngredientToken.CreatureFurAsh, 2,
+                CraftIngredientToken.LeatherPadding, 1,
+                CraftIngredientToken.PlantFiber, 1,
+                "Kürk Astarlı Kış Çizmesi (Derin Kar & Donma Direnci)")
+        };
+
         public static ReadOnlySpan<ClothMatCraftMatch> WeatherInstrumentAndRodRecipes => CachedWeatherAndRodRecipes;
+
+        public static ReadOnlySpan<ClothMatCraftMatch> WinterGarmentAndWindmillRecipes => CachedWinterAndWindmillRecipes;
 
         public static bool IsWeatherInstrumentOrLightningRod(PrimitiveCraftOutputId outputId) =>
             outputId >= PrimitiveCraftOutputId.WeatherBarometer && outputId <= PrimitiveCraftOutputId.MetalLightningRod;
+
+        public static bool IsWinterGarmentOutput(PrimitiveCraftOutputId outputId) =>
+            outputId >= PrimitiveCraftOutputId.WovenClothTunic && outputId <= PrimitiveCraftOutputId.FurLinedWinterBoots;
+
+        public static bool IsPaket4BCraftOutput(PrimitiveCraftOutputId outputId) =>
+            outputId >= PrimitiveCraftOutputId.WindmillSailPanel && outputId <= PrimitiveCraftOutputId.FurLinedWinterBoots;
 
         public static bool TryGetWeatherInstrumentRecipe(PrimitiveCraftOutputId outputId, out ClothMatCraftMatch recipe)
         {
@@ -178,6 +231,20 @@ namespace Stratocraft.Inventory.Systems
                 if (CachedWeatherAndRodRecipes[i].OutputId == outputId)
                 {
                     recipe = CachedWeatherAndRodRecipes[i];
+                    return true;
+                }
+            }
+            recipe = default;
+            return false;
+        }
+
+        public static bool TryGetPaket4BRecipe(PrimitiveCraftOutputId outputId, out ClothMatCraftMatch recipe)
+        {
+            for (int i = 0; i < CachedWinterAndWindmillRecipes.Length; i++)
+            {
+                if (CachedWinterAndWindmillRecipes[i].OutputId == outputId)
+                {
+                    recipe = CachedWinterAndWindmillRecipes[i];
                     return true;
                 }
             }
@@ -208,7 +275,7 @@ namespace Stratocraft.Inventory.Systems
             match = default;
             if (padTokens.Length < 3 || padCounts.Length < 3) return false;
 
-            Span<int> totals = stackalloc int[16];
+            Span<int> totals = stackalloc int[24];
             int distinctNonZeroTypes = 0;
             for (int i = 0; i < 3; i++)
             {
@@ -367,6 +434,56 @@ namespace Stratocraft.Inventory.Systems
                 totals[(int)CraftIngredientToken.RoughStoneChunk] >= 1)
             {
                 match = CachedWeatherAndRodRecipes[5];
+                return true;
+            }
+
+            // 13) Yel Degirmeni Yelken Kanadi: 2x Stick + 2x TacticalCloth (veya LeatherPadding) + 1x PlantFiber
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.Stick] >= 2 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1 &&
+                (totals[(int)CraftIngredientToken.TacticalCloth] >= 2 ||
+                 totals[(int)CraftIngredientToken.LeatherPadding] >= 2))
+            {
+                match = CachedWinterAndWindmillRecipes[0];
+                return true;
+            }
+
+            // 14) Dokuma Kumas Iclik / Tunik: 3x TacticalCloth + 2x PlantFiber
+            if (distinctNonZeroTypes == 2 &&
+                totals[(int)CraftIngredientToken.TacticalCloth] >= 3 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 2)
+            {
+                match = CachedWinterAndWindmillRecipes[1];
+                return true;
+            }
+
+            // 15) Yagli Deri Ruzgarlik Pelerin: 3x LeatherPadding + 1x TacticalCloth + 1x PlantFiber
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.LeatherPadding] >= 3 &&
+                totals[(int)CraftIngredientToken.TacticalCloth] >= 1 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1)
+            {
+                match = CachedWinterAndWindmillRecipes[2];
+                return true;
+            }
+
+            // 16) Agir Kurk Kis Parkasi: 3x CreatureFurAsh + 2x LeatherPadding + 1x PlantFiber
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.CreatureFurAsh] >= 3 &&
+                totals[(int)CraftIngredientToken.LeatherPadding] >= 2 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1)
+            {
+                match = CachedWinterAndWindmillRecipes[3];
+                return true;
+            }
+
+            // 17) Kurk Astarli Kis Cizmesi: 2x CreatureFurAsh + 1x LeatherPadding + 1x PlantFiber
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.CreatureFurAsh] >= 2 &&
+                totals[(int)CraftIngredientToken.LeatherPadding] >= 1 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1)
+            {
+                match = CachedWinterAndWindmillRecipes[4];
                 return true;
             }
 

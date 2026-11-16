@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Weather;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
@@ -20,6 +21,7 @@ namespace Stratocraft.Physics.Systems
         public readonly bool IsWater;
         public readonly bool IsFlammable;
         public readonly bool HasOpenSkyAbove;
+        public readonly float ConductiveMetalLoad01;
 
         public LightningTargetCandidate(
             int worldX,
@@ -28,7 +30,8 @@ namespace Stratocraft.Physics.Systems
             bool isLightningRod,
             bool isWater = false,
             bool isFlammable = false,
-            bool hasOpenSkyAbove = true)
+            bool hasOpenSkyAbove = true,
+            float conductiveMetalLoad01 = 0.0f)
         {
             WorldX = worldX;
             WorldYTop = worldYTop;
@@ -37,6 +40,7 @@ namespace Stratocraft.Physics.Systems
             IsWater = isWater;
             IsFlammable = isFlammable;
             HasOpenSkyAbove = hasOpenSkyAbove;
+            ConductiveMetalLoad01 = Math.Clamp(float.IsFinite(conductiveMetalLoad01) ? conductiveMetalLoad01 : 0.0f, 0.0f, 1.0f);
         }
     }
 
@@ -54,6 +58,8 @@ namespace Stratocraft.Physics.Systems
         public readonly bool HarmlesslyGrounded;
         public readonly bool IgnitedTarget;
         public readonly float ThunderAudioDelaySeconds;
+        public readonly bool IsThundersnow;
+        public readonly float MaxAudibleRangeMeters;
 
         public bool DivertedToLightningRod => HitLightningRod;
 
@@ -66,7 +72,8 @@ namespace Stratocraft.Physics.Systems
             bool hitLightningRod,
             bool harmlesslyGrounded,
             bool ignitedTarget,
-            float thunderAudioDelaySeconds)
+            float thunderAudioDelaySeconds,
+            bool isThundersnow = false)
         {
             DidStrike = didStrike;
             TargetWorldX = targetWorldX;
@@ -77,23 +84,32 @@ namespace Stratocraft.Physics.Systems
             HarmlesslyGrounded = harmlesslyGrounded;
             IgnitedTarget = ignitedTarget;
             ThunderAudioDelaySeconds = thunderAudioDelaySeconds;
+            IsThundersnow = isThundersnow;
+            MaxAudibleRangeMeters = isThundersnow
+                ? ConvectiveLightningAndRodSystem.ThundersnowMaxAudibleRangeMeters
+                : ConvectiveLightningAndRodSystem.StandardThunderMaxAudibleRangeMeters;
         }
     }
 
     /// <summary>
-    /// Paket 4A Faz 4A.4 (IP-6.4 / AK-9) — CAPE Konvektif Yildirim, Gok Gurultusu Gecikmesi ve Metal Paratoner Sistemi:
-    /// - Yalnizca <c>capeJPerKg &gt; 1000</c> konvektif kararsizlik altinda yildirim uretir (0 rastgele sahte zamanlayici).
-    /// - Hedef secim skoru: <c>S = yTop + 24 * isRod + 8 * isWater - 0.25 * horizDist</c>.
+    /// Paket 4A Faz 4A.4 (IP-6.4 / AK-9) &amp; Paket 4B Faz 4B.4 (IP-6 / AK-10) —
+    /// CAPE Konvektif Yildirim, Metal Ekipman Risk Agirligi, Thundersnow ve Metal Paratoner Sistemi:
+    /// - Klasik konvektif firtinada <c>capeJPerKg &gt; 1000</c> veya kis tipisinde (<c>Snow + Blizzard + CAPE &gt;= 450</c>, Thundersnow) yildirim uretir.
+    /// - Hedef secim skoru: <c>S = yTop + 24 * isRod + 8 * isWater + 18 * metalLoad01 - 0.25 * horizDist</c>.
     /// - <c>24m</c> yatay koruma konisi icinde acik gokyuzu goren bir Metal Paratoner varsa yildirim %100 paratonere cekilir
     ///   ve hasarsiz/yanginsiz (<c>IgnitedTarget = false</c>) topraga iletilir.
-    /// - Koruma disindaki en yuksek acik agac veya ahsap/saman cati vuruldugunda tutusur (<c>IgnitedTarget = true</c>).
+    /// - Koruma disindaki iletken metal zirh/alet tasiyan oyuncu <c>1.0 + 3.5 * metalLoad01</c> (4.5x'e kadar) daha yuksek risk agirligi alir.
     /// - Gok gurultusu sesi dinleyiciye olan 3B mesafeye gore <c>distance / 343.0f</c> saniye gecikmeyle ulasir.
     /// </summary>
     public sealed class ConvectiveLightningAndRodSystem
     {
         public const ushort MinConvectiveCapeJPerKg = 1000;
+        public const ushort MinThundersnowCapeJPerKg = 450;
         public const float LightningRodProtectionRadiusMeters = 24.0f;
         public const float SpeedOfSoundMetersPerSecond = 343.0f;
+        public const float StandardThunderMaxAudibleRangeMeters = 2800.0f;
+        public const float ThundersnowMaxAudibleRangeMeters = 950.0f;
+        public const float MaxConductiveMetalRiskBonusMultiplier = 3.5f;
         public const int MaxRegisteredRods = 256;
 
         private struct RegisteredRodEntry
@@ -117,15 +133,105 @@ namespace Stratocraft.Physics.Systems
         }
 
         /// <summary>
+        /// Paket 4B (IP-6): Kar yagisi + Tipi (Blizzard) + CAPE &gt;= 450 J/kg kosulunda kis yildirimi (Thundersnow) aktifligini denetler.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsThundersnowConditions(
+            PrecipitationKind activeKind,
+            AtmosphericHazardFlags hazards,
+            ushort capeJPerKg)
+        {
+            return activeKind == PrecipitationKind.Snow
+                && (hazards & AtmosphericHazardFlags.Blizzard) != 0
+                && capeJPerKg >= MinThundersnowCapeJPerKg;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsThundersnowCell(in AtmosphereCellState cell)
+        {
+            return IsThundersnowConditions(cell.ActiveKind, cell.Hazards, cell.CapeJPerKg);
+        }
+
+        /// <summary>
+        /// Bir atmosfer hucresinin klasik konvektif yildirim (CAPE &gt;= 1000 ve aktif yagis) veya
+        /// Thundersnow (Snow + Blizzard + CAPE &gt;= 450) uretmeye uygun olup olmadigini doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsCellEligibleForLightning(in AtmosphereCellState cell)
+        {
+            if (IsThundersnowCell(in cell))
+            {
+                return true;
+            }
+
+            return cell.CapeJPerKg >= MinConvectiveCapeJPerKg && cell.ActiveKind != PrecipitationKind.None;
+        }
+
+        /// <summary>
+        /// Paket 4B (AK-10): Acik arazide iletken metal zirh/silah tasiyan oyuncunun yildirim hedef agirlik carpanini hesaplar.
+        /// conductiveMetalLoad01 == 0 iken 1.0f, conductiveMetalLoad01 == 1.0 iken 4.5f (&gt;= 3.0x) doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputePlayerConductiveMetalRiskWeight(float conductiveMetalLoad01)
+        {
+            float clamped = Math.Clamp(float.IsFinite(conductiveMetalLoad01) ? conductiveMetalLoad01 : 0.0f, 0.0f, 1.0f);
+            return 1.0f + (MaxConductiveMetalRiskBonusMultiplier * clamped);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputePlayerConductiveMetalRiskWeight(float baseElevationWeight, float conductiveMetalLoad01)
+        {
+            float safeBase = MathF.Max(0.01f, float.IsFinite(baseElevationWeight) ? baseElevationWeight : 1.0f);
+            return safeBase * ComputePlayerConductiveMetalRiskWeight(conductiveMetalLoad01);
+        }
+
+        /// <summary>
+        /// Oyuncunun elindeki aktif alet/silah ve giydigi zirh yuvalarindaki MaterialID degerlerinden
+        /// [0.0 .. 1.0] araliginda iletken metal yuk oranini hesaplar (0 B GC).
+        /// </summary>
+        public static float ComputeConductiveMetalLoad01(byte heldToolMaterialId, ReadOnlySpan<byte> equippedArmorMaterialIds)
+        {
+            float load = MaterialIdCatalog.IsMetallicConductive(heldToolMaterialId) ? 0.30f : 0.0f;
+            int count = equippedArmorMaterialIds.Length;
+            if (count > 0)
+            {
+                float slotShare = 0.70f / Math.Max(1, Math.Min(4, count));
+                for (int i = 0; i < count && i < 4; i++)
+                {
+                    if (MaterialIdCatalog.IsMetallicConductive(equippedArmorMaterialIds[i]))
+                    {
+                        load += slotShare;
+                    }
+                }
+            }
+            return Math.Clamp(load, 0.0f, 1.0f);
+        }
+
+        /// <summary>
         /// Kanonik yildirim hedef secim skoru:
         /// <c>S = yTop + 24 * isRod + 8 * isWater - 0.25 * horizDist</c>.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static float ComputeTargetScore(float yTop, bool isRod, bool isWater, float horizDist)
         {
+            return ComputeTargetScore(yTop, isRod, isWater, horizDist, conductiveMetalLoad01: 0.0f);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputeTargetScore(
+            float yTop,
+            bool isRod,
+            bool isWater,
+            float horizDist,
+            float conductiveMetalLoad01)
+        {
             float score = yTop - 0.25f * MathF.Max(0.0f, horizDist);
             if (isRod) score += 24.0f;
             if (isWater) score += 8.0f;
+            if (conductiveMetalLoad01 > 0.0f)
+            {
+                score += 18.0f * Math.Clamp(conductiveMetalLoad01, 0.0f, 1.0f);
+            }
             return score;
         }
 
@@ -222,12 +328,11 @@ namespace Stratocraft.Physics.Systems
         }
 
         /// <summary>
-        /// Verilen aday hedefler arasindan <c>capeJPerKg &gt; 1000</c> kosulunda yildirim hedefini secer.
-        /// Eger secilen hedefin veya yildirim sutununun <c>24m</c> koruma konisi icinde acik bir Metal Paratoner varsa,
-        /// yildirim %100 paratonere cekilir ve hasarsiz topraga iletilir.
+        /// Atmosfer hucresi durumuna gore (klasik CAPE &gt;= 1000 veya Thundersnow Snow + Blizzard + CAPE &gt;= 450)
+        /// aday hedefler arasindan yildirim hedefini secer ve 24m paratoner kalkanini uygular.
         /// </summary>
         public static bool TryResolveLightningStrike(
-            ushort capeJPerKg,
+            in AtmosphereCellState cell,
             float boltOriginX,
             float boltOriginZ,
             ReadOnlySpan<LightningTargetCandidate> candidates,
@@ -237,7 +342,45 @@ namespace Stratocraft.Physics.Systems
             out LightningStrikeResult strikeResult)
         {
             strikeResult = default;
-            if (!IsConvectiveLightningActive(capeJPerKg) || candidates.Length == 0)
+            if (!IsCellEligibleForLightning(in cell))
+            {
+                return false;
+            }
+
+            bool isThundersnow = IsThundersnowCell(in cell);
+            return TryResolveLightningStrike(
+                cell.CapeJPerKg,
+                boltOriginX,
+                boltOriginZ,
+                candidates,
+                listenerX,
+                listenerY,
+                listenerZ,
+                out strikeResult,
+                isThundersnow);
+        }
+
+        /// <summary>
+        /// Verilen aday hedefler arasindan <c>capeJPerKg &gt; 1000</c> (veya <c>isThundersnow</c> iken <c>capeJPerKg &gt;= 450</c>)
+        /// kosulunda yildirim hedefini secer. Eger secilen hedefin veya yildirim sutununun <c>24m</c> koruma konisi icinde
+        /// acik bir Metal Paratoner varsa, yildirim %100 paratonere cekilir ve hasarsiz topraga iletilir.
+        /// </summary>
+        public static bool TryResolveLightningStrike(
+            ushort capeJPerKg,
+            float boltOriginX,
+            float boltOriginZ,
+            ReadOnlySpan<LightningTargetCandidate> candidates,
+            float listenerX,
+            float listenerY,
+            float listenerZ,
+            out LightningStrikeResult strikeResult,
+            bool isThundersnow = false)
+        {
+            strikeResult = default;
+            bool eligible = isThundersnow
+                ? capeJPerKg >= MinThundersnowCapeJPerKg
+                : IsConvectiveLightningActive(capeJPerKg);
+            if (!eligible || candidates.Length == 0)
             {
                 return false;
             }
@@ -256,7 +399,7 @@ namespace Stratocraft.Physics.Systems
                 float dx = c.WorldX - boltOriginX;
                 float dz = c.WorldZ - boltOriginZ;
                 float horizDist = MathF.Sqrt(dx * dx + dz * dz);
-                float s = ComputeTargetScore(c.WorldYTop, c.IsLightningRod, c.IsWater, horizDist);
+                float s = ComputeTargetScore(c.WorldYTop, c.IsLightningRod, c.IsWater, horizDist, c.ConductiveMetalLoad01);
                 if (s > bestScore)
                 {
                     bestScore = s;
@@ -317,7 +460,7 @@ namespace Stratocraft.Physics.Systems
 
             bool hitRod = chosen.IsLightningRod;
             bool harmlesslyGrounded = hitRod;
-            bool ignited = !hitRod && !chosen.IsWater && chosen.IsFlammable;
+            bool ignited = !hitRod && !chosen.IsWater && chosen.IsFlammable && !isThundersnow;
             float delaySec = ComputeThunderDelaySeconds(
                 chosen.WorldX, chosen.WorldYTop, chosen.WorldZ,
                 listenerX, listenerY, listenerZ);
@@ -331,7 +474,8 @@ namespace Stratocraft.Physics.Systems
                 hitLightningRod: hitRod,
                 harmlesslyGrounded: harmlesslyGrounded,
                 ignitedTarget: ignited,
-                thunderAudioDelaySeconds: delaySec);
+                thunderAudioDelaySeconds: delaySec,
+                isThundersnow: isThundersnow);
             return true;
         }
 
@@ -349,10 +493,14 @@ namespace Stratocraft.Physics.Systems
             float listenerY,
             float listenerZ,
             out LightningStrikeResult strikeResult,
-            int searchRadiusBlocks = 24)
+            int searchRadiusBlocks = 24,
+            bool isThundersnow = false)
         {
             strikeResult = default;
-            if (!IsConvectiveLightningActive(capeJPerKg) || worldChunks == null || worldChunks.Count == 0)
+            bool eligible = isThundersnow
+                ? capeJPerKg >= MinThundersnowCapeJPerKg
+                : IsConvectiveLightningActive(capeJPerKg);
+            if (!eligible || worldChunks == null || worldChunks.Count == 0)
             {
                 return false;
             }
@@ -410,7 +558,8 @@ namespace Stratocraft.Physics.Systems
                     hitLightningRod: true,
                     harmlesslyGrounded: true,
                     ignitedTarget: false,
-                    thunderAudioDelaySeconds: rodDelay);
+                    thunderAudioDelaySeconds: rodDelay,
+                    isThundersnow: isThundersnow);
                 return true;
             }
 
@@ -500,7 +649,7 @@ namespace Stratocraft.Physics.Systems
                         bestWx = wx;
                         bestWy = topY;
                         bestWz = wz;
-                        bestFlammable = !topIsWater && IsFlammableLightningTargetMaterial(topMat);
+                        bestFlammable = !topIsWater && !isThundersnow && IsFlammableLightningTargetMaterial(topMat);
                         foundTerrain = true;
                     }
                 }
@@ -536,7 +685,8 @@ namespace Stratocraft.Physics.Systems
                         hitLightningRod: true,
                         harmlesslyGrounded: true,
                         ignitedTarget: false,
-                        thunderAudioDelaySeconds: rodDelay);
+                        thunderAudioDelaySeconds: rodDelay,
+                        isThundersnow: isThundersnow);
                     return true;
                 }
             }
@@ -554,7 +704,8 @@ namespace Stratocraft.Physics.Systems
                 hitLightningRod: false,
                 harmlesslyGrounded: false,
                 ignitedTarget: bestFlammable,
-                thunderAudioDelaySeconds: delay);
+                thunderAudioDelaySeconds: delay,
+                isThundersnow: isThundersnow);
             return true;
         }
 
@@ -573,6 +724,30 @@ namespace Stratocraft.Physics.Systems
             float excessCape = capeJPerKg - MinConvectiveCapeJPerKg;
             float precipBoost = 1.0f + Math.Clamp(precipMmPerHour / 20.0f, 0.0f, 1.5f);
             // CAPE = 2000 J/kg ve kuvetli yagista ~25-45 oyun saniyesinde 1 konvektif desarj
+            float chargeRatePerSec = (0.008f + excessCape * 0.000018f) * precipBoost;
+            _convectiveChargeAccumulator += chargeRatePerSec * gameDeltaSeconds;
+
+            if (_convectiveChargeAccumulator >= 1.0f)
+            {
+                _convectiveChargeAccumulator -= MathF.Floor(_convectiveChargeAccumulator);
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool StepConvectiveCharge(in AtmosphereCellState cell, float gameDeltaSeconds, out bool isThundersnow)
+        {
+            isThundersnow = IsThundersnowCell(in cell);
+            if (!IsCellEligibleForLightning(in cell) || gameDeltaSeconds <= 0.0f)
+            {
+                _convectiveChargeAccumulator = MathF.Max(0.0f, _convectiveChargeAccumulator - 0.02f * MathF.Max(0.0f, gameDeltaSeconds));
+                return false;
+            }
+
+            ushort minCape = isThundersnow ? MinThundersnowCapeJPerKg : MinConvectiveCapeJPerKg;
+            float excessCape = MathF.Max(0.0f, cell.CapeJPerKg - minCape);
+            float precipBoost = 1.0f + Math.Clamp(cell.SurfacePrecipMmPerHour / 20.0f, 0.0f, 1.5f);
             float chargeRatePerSec = (0.008f + excessCape * 0.000018f) * precipBoost;
             _convectiveChargeAccumulator += chargeRatePerSec * gameDeltaSeconds;
 

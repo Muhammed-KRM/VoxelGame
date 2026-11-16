@@ -48,6 +48,8 @@ namespace Stratocraft.Voxel.Jobs
     public static class HybridSurfaceNetsAndShapeMesher
     {
         public const byte IsoLevel = StratocraftConstants.SdfIsoLevel;
+        public const byte SnowTempByteMin = 126;
+        public const byte SnowTempByteMax = 166;
         private const int MaxPadX = 18;
         private const int MaxPadY = 258;
         private const int MaxPadZ = 18;
@@ -72,6 +74,21 @@ namespace Stratocraft.Voxel.Jobs
         [ThreadStatic] private static bool[]? _tsSliceAllSolid;
         [ThreadStatic] private static bool[]? _tsSliceHasShape;
         [ThreadStatic] private static byte[]? _tsPaddedMoisture;
+        [ThreadStatic] private static byte[]? _tsPaddedSnowSwe;
+        [ThreadStatic] private static byte[]? _tsPaddedTopOccluderY;
+        [ThreadStatic] private static bool[]? _tsPaddedHasSkyMap;
+
+        /// <summary>
+        /// Kar SWE (0..255) degerini Blackbody (>=170) ile cakismayan [126..166] TempByte bandina kodlar.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte EncodeSnowSweToSafeTempByte(byte sweUnits)
+        {
+            if (sweUnits == 0) return 0;
+            float cover01 = Math.Clamp(sweUnits / 60.0f, 0.025f, 1.0f);
+            int encoded = SnowTempByteMin + (int)MathF.Round(cover01 * (SnowTempByteMax - SnowTempByteMin));
+            return (byte)Math.Clamp(encoded, SnowTempByteMin, SnowTempByteMax);
+        }
 
         /// <summary>
         /// Komsu chunk apronunu ve istege bagli MicroVoxelPool4096 sozlugunu okuyarak chunk sinirlarinda ve
@@ -84,7 +101,9 @@ namespace Stratocraft.Voxel.Jobs
             List<FacetedVoxelTriangle> outTriangles,
             IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools,
             int minY = 0,
-            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null)
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null,
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? snowSweChunks256 = null,
+            IReadOnlyDictionary<(int cx, int cz), ChunkSkyOcclusionMap256>? skyOcclusionMaps = null)
         {
             if (worldChunks == null) throw new ArgumentNullException(nameof(worldChunks));
             if (!worldChunks.TryGetValue((chunkX, chunkZ), out uint[]? centerChunk) || centerChunk == null) return;
@@ -150,6 +169,77 @@ namespace Stratocraft.Voxel.Jobs
                 Array.Clear(paddedMoisture, (padY - 1) * padSliceStride, padSliceStride);
             }
 
+            byte[]? snowC = null, snowW = null, snowE = null, snowS = null, snowN = null;
+            byte[]? snowSW = null, snowSE = null, snowNW = null, snowNE = null;
+            bool hasAnyNeighborhoodSnow = false;
+            if (snowSweChunks256 != null && snowSweChunks256.Count > 0)
+            {
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX, chunkZ), out snowC) && snowC != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX - 1, chunkZ), out snowW) && snowW != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX + 1, chunkZ), out snowE) && snowE != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX, chunkZ - 1), out snowS) && snowS != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX, chunkZ + 1), out snowN) && snowN != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX - 1, chunkZ - 1), out snowSW) && snowSW != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX + 1, chunkZ - 1), out snowSE) && snowSE != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX - 1, chunkZ + 1), out snowNW) && snowNW != null;
+                hasAnyNeighborhoodSnow |= snowSweChunks256.TryGetValue((chunkX + 1, chunkZ + 1), out snowNE) && snowNE != null;
+            }
+
+            byte[]? paddedSnowSwe = null;
+            byte[]? paddedTopOccluderY = null;
+            bool[]? paddedHasSkyMap = null;
+            if (hasAnyNeighborhoodSnow)
+            {
+                paddedSnowSwe = _tsPaddedSnowSwe ??= new byte[padX * padZ];
+                paddedTopOccluderY = _tsPaddedTopOccluderY ??= new byte[padX * padZ];
+                paddedHasSkyMap = _tsPaddedHasSkyMap ??= new bool[padX * padZ];
+
+                ChunkSkyOcclusionMap256? skyC = null, skyW = null, skyE = null, skyS = null, skyN = null;
+                ChunkSkyOcclusionMap256? skySW = null, skySE = null, skyNW = null, skyNE = null;
+                if (skyOcclusionMaps != null && skyOcclusionMaps.Count > 0)
+                {
+                    skyOcclusionMaps.TryGetValue((chunkX, chunkZ), out skyC);
+                    skyOcclusionMaps.TryGetValue((chunkX - 1, chunkZ), out skyW);
+                    skyOcclusionMaps.TryGetValue((chunkX + 1, chunkZ), out skyE);
+                    skyOcclusionMaps.TryGetValue((chunkX, chunkZ - 1), out skyS);
+                    skyOcclusionMaps.TryGetValue((chunkX, chunkZ + 1), out skyN);
+                    skyOcclusionMaps.TryGetValue((chunkX - 1, chunkZ - 1), out skySW);
+                    skyOcclusionMaps.TryGetValue((chunkX + 1, chunkZ - 1), out skySE);
+                    skyOcclusionMaps.TryGetValue((chunkX - 1, chunkZ + 1), out skyNW);
+                    skyOcclusionMaps.TryGetValue((chunkX + 1, chunkZ + 1), out skyNE);
+                }
+
+                for (int pz = 0; pz < padZ; pz++)
+                {
+                    int lz = pz - 1;
+                    for (int px = 0; px < padX; px++)
+                    {
+                        int lx = px - 1;
+                        int colPad = (pz * padX) + px;
+                        int cLx = lx & 15;
+                        int cLz = lz & 15;
+                        int col256 = (cLz << 4) | cLx;
+
+                        byte[]? srcSnow = ResolvePaddedMoistureChunk(
+                            lx, lz, snowC, snowW, snowE, snowS, snowN, snowSW, snowSE, snowNW, snowNE);
+                        paddedSnowSwe[colPad] = (srcSnow != null && col256 < srcSnow.Length) ? srcSnow[col256] : (byte)0;
+
+                        ChunkSkyOcclusionMap256? srcSky = ResolvePaddedSkyMapChunk(
+                            lx, lz, skyC, skyW, skyE, skyS, skyN, skySW, skySE, skyNW, skyNE);
+                        if (srcSky != null)
+                        {
+                            paddedTopOccluderY[colPad] = srcSky.GetMaxOccluderY(cLx, cLz);
+                            paddedHasSkyMap[colPad] = true;
+                        }
+                        else
+                        {
+                            paddedTopOccluderY[colPad] = 0;
+                            paddedHasSkyMap[colPad] = false;
+                        }
+                    }
+                }
+            }
+
             // Kita dis sinirlarinda (chunkW/E/S/N == null) 92m derinligindeki 5 katmanli 3B yeralti kesit duvarini (Y=4m..96m) tam or!
             bool clampUnloadedContinentEdges = false;
 
@@ -184,8 +274,30 @@ namespace Stratocraft.Voxel.Jobs
                         else
                         {
                             byte shape = VoxelBitUtility.GetShapeId(raw);
-                            if (shape != 0) { hasShape = true; hasSolid = true; allSolid = false; }
-                            else if (VoxelBitUtility.GetDensityOrLiquid(raw) >= IsoLevel) { hasSolid = true; }
+                            if (shape != 0)
+                            {
+                                hasShape = true; hasSolid = true; allSolid = false;
+                                if (paddedTopOccluderY != null && paddedHasSkyMap != null)
+                                {
+                                    int colPad = (pz * padX) + px;
+                                    if (!paddedHasSkyMap[colPad] && wy > paddedTopOccluderY[colPad] && ChunkSkyOcclusionMap256.BlocksSkyOxygenColumn(raw))
+                                    {
+                                        paddedTopOccluderY[colPad] = (byte)wy;
+                                    }
+                                }
+                            }
+                            else if (VoxelBitUtility.GetDensityOrLiquid(raw) >= IsoLevel)
+                            {
+                                hasSolid = true;
+                                if (paddedTopOccluderY != null && paddedHasSkyMap != null)
+                                {
+                                    int colPad = (pz * padX) + px;
+                                    if (!paddedHasSkyMap[colPad] && wy > paddedTopOccluderY[colPad] && ChunkSkyOcclusionMap256.BlocksSkyOxygenColumn(raw))
+                                    {
+                                        paddedTopOccluderY[colPad] = (byte)wy;
+                                    }
+                                }
+                            }
                             else { allSolid = false; }
                         }
                     }
@@ -233,7 +345,7 @@ namespace Stratocraft.Voxel.Jobs
                     {
                         int wCellX = chunkWorldOffsetX + dx - 1;
                         int insideMask = 0;
-                        byte dominantMat = 0, highestPrio = 0, maxDamage = 0, maxMoisture = 0;
+                        byte dominantMat = 0, highestPrio = 0, maxDamage = 0, maxMoisture = 0, maxSnowSwe = 0;
                         float densitySum = 0f;
 
                         for (int c = 0; c < 8; c++)
@@ -256,6 +368,15 @@ namespace Stratocraft.Voxel.Jobs
                                 {
                                     byte mByte = paddedMoisture[pCornerIdx];
                                     if (mByte > maxMoisture) maxMoisture = mByte;
+                                }
+                                if (paddedSnowSwe != null && paddedTopOccluderY != null)
+                                {
+                                    int colPad = ((dz + oz) * padX) + (dx + ox);
+                                    byte sweByte = paddedSnowSwe[colPad];
+                                    if (sweByte > maxSnowSwe && (wCellY + oy) == paddedTopOccluderY[colPad])
+                                    {
+                                        maxSnowSwe = sweByte;
+                                    }
                                 }
                                 byte prio = GetMaterialVisualPriority(mat);
                                 if (prio >= highestPrio) { highestPrio = prio; dominantMat = mat; }
@@ -301,9 +422,22 @@ namespace Stratocraft.Voxel.Jobs
                         dualVertices[dualIdx] = new Vector3((dx - 1) + Quantize256(localPos.X), (dy - 1) + Quantize256(localPos.Y), (dz - 1) + Quantize256(localPos.Z));
                         dualMaterials[dualIdx] = resolvedMat;
                         byte defaultTemp = ResolveMaterialDefaultTemperature(resolvedMat);
-                        dualTemps[dualIdx] = (defaultTemp == 0 && maxMoisture > 0)
-                            ? EncodeSoilMoistureTemp(resolvedMat, maxMoisture)
-                            : defaultTemp;
+                        if (defaultTemp != 0)
+                        {
+                            dualTemps[dualIdx] = defaultTemp;
+                        }
+                        else if (maxSnowSwe > 0)
+                        {
+                            dualTemps[dualIdx] = EncodeSnowSweToSafeTempByte(maxSnowSwe);
+                        }
+                        else if (maxMoisture > 0)
+                        {
+                            dualTemps[dualIdx] = EncodeSoilMoistureTemp(resolvedMat, maxMoisture);
+                        }
+                        else
+                        {
+                            dualTemps[dualIdx] = 0;
+                        }
                         byte cavityAo8 = (byte)Math.Clamp((int)(255f - Math.Clamp(densitySum / (8f * 127f), 0f, 1f) * 76f), 138, 255);
                         dualAo[dualIdx] = PackAoAndWear(cavityAo8, maxDamage);
                         dualValid[dualIdx] = true;
@@ -417,9 +551,29 @@ namespace Stratocraft.Voxel.Jobs
                             continue;
                         }
 
+                        int triStartIdx = outTriangles.Count;
                         EmitArchitecturalShape(
                             new Vector3(lx, ly, lz), matId, shapeId, VoxelBitUtility.GetRotationState(raw), dmg,
                             outTriangles, extendFoundationSkirt: restsOnNaturalSdf, occludedFaceMask: occludedMask);
+
+                        if (paddedSnowSwe != null && paddedTopOccluderY != null && ResolveMaterialDefaultTemperature(matId) == 0)
+                        {
+                            int colPad = (pz * padX) + px;
+                            byte swe = paddedSnowSwe[colPad];
+                            if (swe > 0 && ly == paddedTopOccluderY[colPad])
+                            {
+                                byte snowTemp = EncodeSnowSweToSafeTempByte(swe);
+                                for (int ti = triStartIdx; ti < outTriangles.Count; ti++)
+                                {
+                                    FacetedVoxelTriangle tri = outTriangles[ti];
+                                    if (tri.Temperature == 0)
+                                    {
+                                        tri.Temperature = snowTemp;
+                                        outTriangles[ti] = tri;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -475,6 +629,18 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static ChunkSkyOcclusionMap256? ResolvePaddedSkyMapChunk(
+            int lx, int lz, ChunkSkyOcclusionMap256? skyC,
+            ChunkSkyOcclusionMap256? skyW, ChunkSkyOcclusionMap256? skyE, ChunkSkyOcclusionMap256? skyS, ChunkSkyOcclusionMap256? skyN,
+            ChunkSkyOcclusionMap256? skySW, ChunkSkyOcclusionMap256? skySE, ChunkSkyOcclusionMap256? skyNW, ChunkSkyOcclusionMap256? skyNE)
+        {
+            if ((uint)lx < 16u && (uint)lz < 16u) return skyC;
+            if (lx < 0) return lz < 0 ? skySW : (lz >= 16 ? skyNW : skyW);
+            if (lx >= 16) return lz < 0 ? skySE : (lz >= 16 ? skyNE : skyE);
+            return lz < 0 ? skyS : skyN;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte EncodeSoilMoistureTemp(byte matId, byte moisture)
         {
             if (moisture == 0) return 0;
@@ -493,8 +659,10 @@ namespace Stratocraft.Voxel.Jobs
             IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
             List<FacetedVoxelTriangle> outTriangles,
             int minY = 0,
-            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null)
-            => GenerateSeamlessHybridChunkMesh(chunkX, chunkZ, maxY, worldChunks, outTriangles, worldMicroPools: null, minY: minY, soilMoistureChunks: soilMoistureChunks);
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null,
+            IReadOnlyDictionary<(int cx, int cz), byte[]>? snowSweChunks256 = null,
+            IReadOnlyDictionary<(int cx, int cz), ChunkSkyOcclusionMap256>? skyOcclusionMaps = null)
+            => GenerateSeamlessHybridChunkMesh(chunkX, chunkZ, maxY, worldChunks, outTriangles, worldMicroPools: null, minY: minY, soilMoistureChunks: soilMoistureChunks, snowSweChunks256: snowSweChunks256, skyOcclusionMaps: skyOcclusionMaps);
 
         public static void GenerateHybridChunkMesh(
             ReadOnlySpan<uint> chunkVoxels65536, int maxY, int chunkWorldOffsetX, int chunkWorldOffsetZ, List<FacetedVoxelTriangle> outTriangles)
@@ -1226,14 +1394,18 @@ namespace Stratocraft.Voxel.Jobs
         };
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static byte ResolveQuadVertexTemperature(byte matId, byte cornerSoilTempMax)
+        private static byte ResolveQuadVertexTemperature(byte matId, byte cornerTempMax)
         {
             byte defaultTemp = ResolveMaterialDefaultTemperature(matId);
             if (defaultTemp != 0) return defaultTemp;
+            if (cornerTempMax >= SnowTempByteMin && cornerTempMax <= SnowTempByteMax)
+            {
+                return cornerTempMax;
+            }
             bool isWettable = matId == MaterialIdCatalog.Dirt || matId == MaterialIdCatalog.Grass ||
                               matId == MaterialIdCatalog.Sand || matId == MaterialIdCatalog.Gravel ||
                               matId == MaterialIdCatalog.LooseRubble || matId == MaterialIdCatalog.Clay;
-            return (isWettable && cornerSoilTempMax > 0 && cornerSoilTempMax <= 120) ? cornerSoilTempMax : (byte)0;
+            return (isWettable && cornerTempMax > 0 && cornerTempMax <= 120) ? cornerTempMax : (byte)0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

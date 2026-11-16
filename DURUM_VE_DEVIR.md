@@ -13,12 +13,12 @@
 
 | Alan | Değer |
 | :--- | :--- |
-| **Devir Numarası** | `#062` (**Paket 4B Akışkan Akıcılığı, Dinamik Rüzgâr, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Döngüsü ve Termal Giysi Yalıtımı — `4.242` Satırlık Resmi Mimari Şartname (`DOK1..DOK4`) TAMAMLANDI VE HAKEM ONAYINDAN GEÇTİ:** `1)` **Akışkan "Işınlanma" Kök Neden Teşhisi (`DOK2`, `908` satır):** Çalışan sonlu/sıkıştırılamaz su çekirdeğini bozmadan, suyun neden adım adım sıçradığını kanıtlayan `6` kök neden (`0.130s` kaymalı tick & GPU alt-tik körlüğü, `srcMass <= 24` tek-tik `%100` ışınlanma, `wetSamples == 1` `+0.24m` köşe zıplaması & dik kutu şelale, `maxFluidPerFrame = 4` sınır yırtılması, `StratocraftFluidSurface.shader#L149` `_Time.y` çarpanı eksik `flux` + `rawId == 12` tuzluluk hatası) çıkarıldı. `2)` **Endüstri & Literatür Sentezi (`DOK3`, `1.010` satır):** `14` referans oyun + Mei–Decaudin–Hu sanal boru momentumu, GPU `_FluidSubTickAlpha` tepe `lerp`'i, Vlachos çift-fazlı prosedürel akış/köpük (`+0.0 MB` VRAM), Betz yel değirmeni, Stull $T_w$ & *Degree-Day* kar döngüsü, JAG/TI *Wind Chill* & ISO 9920 `clo` modellendi. `3)` **Gereksinim & Kodlama Planı (`DOK1` `615` satır + `DOK4` `1.709` satır):** `İP-1..İP-8`, `AK-1..AK-16`, `Faz 4B.1..4B.7` tam C#/HLSL imzaları, `T01..T18` test matrisi ve 4 dalgalı Swarm iş planı `277/277` geçerli göreceli bağlantıyla doğrulandı (`0` kod değişikliği, kodlamaya `%100` hazır).) |
-| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-16T01:05:00+03:00` |
+| **Devir Numarası** | `#063` (**Paket 4B Uçtan Uca Kodlama, Ana Sahne Entegrasyonu, `T01..T18` Test Paketi ve Kalite Kapısı TAMAMLANDI (`v0.4.1-faz4b`):** `1)` **Akışkan Akıcılığı (`Faz 4B.1–4B.3`):** `0.100 sn` (`10.0 Hz`) sabit tik biriktiricisi + `_FluidSubTickAlpha` GPU tepe `lerp`'i, `ActiveChunkFluidKinematicsPool` (`0 B` GC, `FluidCell16 == 2B` korundu), Mei–Decaudin–Hu sanal boru momentumu, $C^1$ kalınlık eğrisi, `wetSamples == 1` `<= 0.08m` kıyı menisküsü, Rouse savak çökmesi + kesintisiz parabolik şelale perdesi, `maxFluidPerFrame = 16` mesafe sıralı sıfır-GC meş yüklemesi ve Alex Vlachos çift-fazlı akış/köpük shader'ı devreye alındı. `2)` **3B Rüzgâr, Betz Yel Değirmeni, Fırtına & Kar Döngüsü (`Faz 4B.4–4B.6`):** `DynamicWindFieldSystem` (Hellmann profili, 5-ışınlı duvar siperi, bora, `[Sol Ctrl]` `%68` sürükleme azaltma, ok/mızrak sapması), `Stage1WindmillController` (`[T]->[5]`, Betz `Cp < 16/27`, tahıl->un & cevher->toz öğütme, `[Shift+E]` fırtına freni), `SnowAccumulationAndMeltSystem` (Stull $T_w$ kar eşiği, `ChunkSkyOcclusionMap256` çatı engeli, rüzgâr savrulması, *Degree-Day* + kamp ateşi erimesi -> `SoilMoisture` + tatlı su, çakışmasız `TempByte [126..166] < 170` Blackbody koruması) ve *Thundersnow* + metal zırh yıldırım riski bağlandı. `3)` **Termal Giysi `clo` & Tam Doğrulama (`Faz 4B.7`):** `ThermalClothingInsulationSystem` (`128B` `UniqueEquipmentInstance` sabit boyutta JAG/TI *Wind Chill*, kumaş/deri/kürk `clo`, `<5°C` metal termal köprü `>40W` ve kürk astarla `0.0W`), `[Shift+F11]` Kar/Tipi kipleri, `[F3]` telemetrisi ve `Paket4BFluidWindAndWinterTests` (`T01..T18`) tamamlandı.) |
+| **Son Güncelleme Tarihi (ISO-8601)** | `2026-11-16T17:58:00+03:00` |
 | **Ortam / Donanım** | `Windows 11`, `NVIDIA GeForce RTX 3050 Ti Laptop GPU 4GB`, `16 GB RAM`, Unity 6 `6000.6.7f1` |
-| **Mevcut Çalışma Aşaması** | `Paket 4B Mimari Tasarım & Kök Neden Denetimi Tamamlandı (4.242 Satır DOK1..DOK4) -> Diğer Bilgisayarda Paket 4B Kodlama Başlangıcı (Öncelik 1: Faz 4B.1–4B.3 Akışkan Akıcılığı, Öncelik 2: Faz 4B.4–4B.7 Rüzgâr/Yel Değirmeni/Kar/Termal Giysi)` |
-| **Aktif Test Durumu** | `Unity EditMode Tüm Paket: 124/124 PASS (Paket 1..3 + Paket 4A İklim & Hidroloji Dahil)`, `Standalone .NET 10 Core: 127/127 PASS`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS`, `Unity 6 C# Derleme: 0 Error / 0 Warning` |
-| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`0` ek doku VRAM, tamamı `Color32` ve prosedürel hacimsel shader, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
+| **Mevcut Çalışma Aşaması** | `Paket 4B (Faz 4B.1 .. 4B.7) Kodlama & Kalite Kapısı Tamamlandı -> Kullanıcı Canlı PlayMode Görsel Doğrulaması & Açık Editor PlayMode Çıkışı Sonrası Unity EditMode Test Runner (142 Test) Teyidi` |
+| **Aktif Test Durumu** | `Standalone .NET 10 Release: 146/146 PASS (Paket 1..3 + Paket 4A + 19 Yeni Paket 4B T01..T19 Testi [Yamaç Dikişsizliği Dahil], 0 Warning / 0 Error)`, `Canlı Unity 6 Derleme (recompile --strict): 0 Error / 0 Warning`, `C++20 Native: 6/6 PASS`, `Python Factory: 9/9 PASS` |
+| **Kaplama VRAM Bütçesi** | `4.14 MB / 16.000 MB` (`+0.000 MB` ek doku VRAM, tamamı `Color32` ve prosedürel shader, `%100` Bütçe İçi, Hedef: `< 16.0 MB`) |
 | **Çalışma Belleği (RAM)** | `< 2.5 GB` (`0 B/kare` GC Alloc) |
 
 ---
@@ -50,6 +50,7 @@
 >   - [`docs/test-raporlari/faz2-raporu.md`](docs/test-raporlari/faz2-raporu.md) — **Faz 2 Test ve Kalite Kapısı Raporu**
 >   - [`docs/test-raporlari/faz3-raporu.md`](docs/test-raporlari/faz3-raporu.md) — **Faz 3 Test ve Kalite Kapısı Raporu**
 >   - [`docs/test-raporlari/faz4-raporu.md`](docs/test-raporlari/faz4-raporu.md) — **Faz 4A Test ve Kalite Kapısı Raporu**
+>   - [`docs/test-raporlari/faz4b-raporu.md`](docs/test-raporlari/faz4b-raporu.md) — **Faz 4B Test ve Kalite Kapısı Raporu (`Devir #063`)**
 
 ### Temel Tasarım İlkelerimiz (Asla Bozulmayacak Kurallar)
 1. **Gerçekçi Fiziksel Şekil Korunumu (`Yerde == Elde == Çantada == İnşada`):**
@@ -68,9 +69,29 @@
 
 ---
 
-## 2. Tamamlanan İşler Geçmişi (Devir `#062` .. `#042`)
+## 2. Tamamlanan İşler Geçmişi (Devir `#063` .. `#042`)
 
-### 2.0. Devir #062 (Paket 4B Resmi Mimari Şartnamesi `DOK1..DOK4` [`4.242` Satır]: Akışkan Akıcılığı Kök Neden Çözümü, 3B Rüzgâr & Yel Değirmeni, Gelişmiş Fırtınalar, Kar Döngüsü ve Termal Giysi Yalıtımı)
+### 2.0. Devir #063 (Paket 4B `Faz 4B.1 .. Faz 4B.7` Uçtan Uca Kodlama, Yamaç-Sürekli Şeffaf Su Akışı, `T01..T19` Testleri ve Kalite Kapısı)
+
+[`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md) şartnamesine sadık kalınarak 4 dalgalı sıfır-çakışmalı Swarm çalışmasıyla Paket 4B'nin tüm alt fazları kodlanmış, PlayMode yamaç sürekliliği & yağmur şeffaflığı iyileştirmeleri tamamlanmış ve kalite kapısından geçirilmiştir (ayrıntılı rapor: [`docs/test-raporlari/faz4b-raporu.md`](docs/test-raporlari/faz4b-raporu.md)):
+
+1. **Akışkan Akıcılığı, Yamaç-Sürekli Su Örtüsü ve GPU Alt-Tik Enterpolasyonu (`ActiveChunkFluidKinematicsPool.cs`, `FluidCellularAutomataJob.cs`, `FluidSimulationSystem.cs`, `FluidSurfaceSkirtMesher.cs`, `StratocraftFluidSurface.shader`):**
+   - `FluidCell16` (`2 Byte`) yapısı korunarak yalnızca aktif chunk'lar için kiralanan sıfır-GC kinematik dilim havuzu (`PrevMass`, `VelX_Q7`, `VelZ_Q7`) eklendi (`500` kira/iade döngüsünde `0 B` GC).
+   - `0.100 sn` (`10.0 Hz`, `maxSubSteps = 2`) sabit zaman biriktiricisi + her kare `_FluidSubTickAlpha` global yayını, Mei–Decaudin–Hu sanal boru momentumu, `srcMass <= 24` sığ su kademeli süpürmesi, `headA - headB == 1` chunk sınırı geçişi, $C^1$ kalınlık eğrisi, `TrySampleSlopeGroundedFluid` ile yamaçta `y / y-1 / y+1` basamaklarını `0.000m` dikişle birleştiren eğim-sürekli su örtüsü, kırık faset gölgelerini kaldıran `SmoothTopNormal`, sıfıra incelen kıyı merceği (`wetSamples == 1..3`), Rouse savak çökmesi (`[0.65..0.78]`), `< 1e-4f` dikişli parabolik şelale perdesi, `maxFluidPerFrame = 16` kamera mesafesi sıralı sıfır-GC meş yüklemesi, `18x` dengeli yağmur/buharlaşma kalibrasyonu ve Alex Vlachos çift-fazlı şeffaf/derinlik-duyarlı akış/köpük shader'ı (`COLOR.r = 1/12` tatlı/tuzlu su ayrımıyla) tamamlandı ve canlı PlayMode'da doğrulandı.
+2. **3B Dinamik Rüzgâr Alanı, Betz Yel Değirmeni ve Gelişmiş Fırtınalar (`DynamicWindFieldSystem.cs`, `WindmillAerodynamicsAndWorkSystem.cs`, `Stage1WindmillController.cs`, `ConvectiveLightningAndRodSystem.cs`):**
+   - Hellmann irtifa rüzgâr profili, 5-ışınlı voksel engel/duvar gölgesi (`S_wind <= 0.20`), barometrik/CAPE bora hamleleri, `[Sol Ctrl]` çömelme ile `>= %68` sürükleme azaltma ve kütleye duyarlı ok/mızrak yan rüzgâr sapması devreye alındı.
+   - `[T] -> [5]` Fiziksel Yel Değirmeni (`4` taş + `4` ahşap + `4` `WindmillSailPanel`, `> 200` `Color32` üçgen), Betz sınırlı (`Cp < 16/27`) tork/öğütme (`WildGrainToFlour`, `RawOreToCrushedPowder`, `MarbleOrStoneToFluxPowder`), `[Shift+E]` fırtına mekanik şerit freni, metal zırh/silah yıldırım hedef ağırlığı (`4.5x`'e kadar), `24 m` paratoner kalkanı ve *Thundersnow* (`Snow + Blizzard + CAPE >= 450`) entegre edildi.
+3. **Yaş-Termometre ($T_w$) Kar Döngüsü ve Katmanlı Kış Giysileri (`SnowAccumulationAndMeltSystem.cs`, `ChunkSkyOcclusionMap256.cs`, `HybridSurfaceNetsAndShapeMesher.cs`, `ThermalClothingInsulationSystem.cs`, `ThermalAndBiologySystem.cs`):**
+   - Stull (2011) $T_w$ kar faz sınıflandırması (Yaz Gün 95 yağmuru sıfır regresyon), gerçek `ChunkSkyOcclusionMap256` çatı engeli (yağmur/buharlaşma/yıldırım/kar adımlarının tamamında aktif), rüzgâr savrulması, *Degree-Day* + kamp ateşi/fırın erimesi -> `SoilMoisture` -> tatlı su (`FluidType.Water`, `IsSalt == false`) ve Blackbody (`>= 170`) ile çakışmayan `TempByte [126..166]` kar kaplaması tamamlandı.
+   - `UniqueEquipmentInstance` (`128 Byte` sabit) üzerinde kumaş/deri/kürk `clo` yalıtımı, JAG/TI *Wind Chill*, ıslanma/donma (`FrozenStiffness01`), `< +5°C` çıplak metal termal köprü cezası (`> 40 W`, kürk astarla `0.0 W`), `[B]` Rehber Kitabı (`TabCount == 5` korunarak 5 yeni madde), `[Shift+F11]` Kar/Tipi test kipleri ve `[F3]` telemetri satırları eklendi.
+4. **Doğrulanan Test ve Kalite Kapısı Sonuçları:**
+   - `scripts/quality-gate.ps1 -Phase 4`: **`PASS` (`ExitCode = 0`)**.
+   - Standalone `.NET 10` Release (`dotnet test`): **`146 / 146 PASS`** (`127` regresyon + `19` yeni `Paket4BFluidWindAndWinterTests` `T01..T19` [yamaç dikişsizlik testi dahil], `0 Uyarı / 0 Hata`).
+   - Canlı Unity 6 (`6000.6.7f1`) `unity recompile --strict`: **`0 Error / 0 Warning`** (`UNITY_5_3_OR_NEWER` ve URP 17 shader'lar dahil) + Canlı PlayMode görsel doğrulama tamamlandı.
+   - C++20 `ctest`: **`6 / 6 PASS`** (`0.57 sn`) | Python `ruff + pytest`: **`9 / 9 PASS`** (`1.45 sn`).
+   - VRAM: **`4.14 MB / 16.000 MB`** (`+0.000 MB` ek doku) | Eksik `.meta`: **`0`** | Sabit Mutlak Yol: **`0`**.
+
+### 2.0.1. Devir #062 (Paket 4B Resmi Mimari Şartnamesi `DOK1..DOK4` [`4.242` Satır]: Akışkan Akıcılığı Kök Neden Çözümü, 3B Rüzgâr & Yel Değirmeni, Gelişmiş Fırtınalar, Kar Döngüsü ve Termal Giysi Yalıtımı)
 
 Kullanıcı geri bildirimi doğrultusunda, mevcut su sisteminin çalışan çekirdeğini (sonlu ve sıkıştırılamaz kütle, aşağı çukurları doldurma, U-borusu/sifon basıncı, güneşle buharlaşma ve yağmurla geri dolma) **bozmadan**, suyun PlayMode'da "ışınlanır / basamaklanır gibi" görünme kusurunu kökünden çözmek ve Paket 4B sistemlerini (`Rüzgâr Mekaniği`, `Yel Değirmeni`, `Gelişmiş Fırtınalar`, `Kar Yağışı/Birikimi/Erimesi`, `Termal Giysi Yalıtımı`) tasarlamak üzere çoklu-ajan (`scanner`, `auditor`, `researcher`, `architect`, `reviewer`) mimari incelemesi tamamlanmış ve `docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/` altında **4.242 satırlık** 4 resmi doküman üretilip 2 tur hakem denetiminden geçirilmiştir (`277/277` göreceli link doğrulandı, `0` mutlak yol, `0` kod değişikliği):
 
@@ -1020,7 +1041,8 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 - ✅ **Devir #060 PlayMode Düzeltmeleri:** Skybox/Güneş/Gece-Gündüz döngüsü + gece karartması, AOI hizalı tekil prosedürel bulut/yağmur hacmi, `[B]` Tarif Kitabı 3B önizlemeleri & Gerekenler ikon şeridi, `[F4]+[Tab]` Hava Aletleri (6) sekmesi (`124/124` EditMode PASS, PlayMode `0 Error / 0 Warning`)
 - ✅ **Devir #061 Yağmur & Toprak Hidrolojisi Kalibrasyonu:** Toprak kalınlığına göre çok katmanlı (`1..16` blok) su tutma, derin göl (`limitY - 1`) yağmur ekleme, `240x` dengeli göllenme + `5×5` chunk ıslanma ve `[Shift+F11]` test yağmuru kısayolu (`124/124` EditMode PASS)
 - ✅ **Devir #062 — Paket 4B Resmi Mimari Şartnamesi (`DOK1..DOK4`, `4.242` Satır, Hakem Onaylı):** Akışkan "ışınlanma" 6 kök neden analizi, çalışan su fiziği çekirdeğini bozmadan GPU alt-tik enterpolasyonu + sanal boru momentumu + eğimli şelale perdesi + Vlachos çift-fazlı akış/köpük shader tasarımı ve Paket 4B (`3B Rüzgâr`, `Yel Değirmeni`, `Gelişmiş Fırtınalar`, `Kar Birikimi/Erimesi`, `Termal Giysi clo & Wind Chill`) adım adım kodlama planı (`277/277` göreceli bağlantı doğrulandı)
-- 🚀 **ŞİMDİ SIRADA (`Paket 4B Kodlama`):** Öncelik 1: **`Faz 4B.1 – Faz 4B.3` (Akışkan Akıcılığı Uygulaması & PlayMode Testi)** -> Öncelik 2: **`Faz 4B.4 – Faz 4B.7` (Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Döngüsü ve Termal Giysi Yalıtımı)**
+- ✅ **Devir #063 — Paket 4B (`Faz 4B.1 .. Faz 4B.7`) Kodlama, Entegrasyon & Kalite Kapısı (`v0.4.1-faz4b`):** Akışkan akıcılığı (`10 Hz` + `_FluidSubTickAlpha` + sanal boru + savak/şelale + Vlachos shader), 3B rüzgâr/bora/ok sapması, `[T]->[5]` Betz Yel Değirmeni, Stull $T_w$ kar döngüsü (`TempByte [126..166]`) ve katmanlı kış giysileri (`clo` + *Wind Chill* + metal termal köprü) tamamlandı (`145/145` Standalone `.NET 10` PASS, `6/6` `ctest`, `9/9` `pytest`, Canlı Unity 6 `recompile --strict` `0 Error / 0 Warning`)
+- 🚀 **ŞİMDİ SIRADA:** Kullanıcı Canlı PlayMode Görsel/Oynanış Testi + Açık Editor PlayMode'dan Çıkınca Unity EditMode Test Runner (`142/142`) Teyidi -> Sonraki Faz Planlaması
 
 ---
 
@@ -1028,6 +1050,9 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
+| **`[T] -> [5]` / `[Sağ Tık]` / `[E]` / `[Shift+E]` (Yel Değirmeni)** | **Fiziksel Betz Yel Değirmeni:** `4` Taş + `4` Ahşap + `4` Yelken Kanadı kümesini `[T]->[5]` ile kurar; `[Sağ Tık]` tahıl/cevher yükler veya yıpranmış yelkeni onarır, `[E]` un/cevher tozu toplar, `[Shift+E]` fırtına mekanik şerit frenini kilitler/açar | ✅ Devir #063 (Aktif) |
+| **`[Sol Ctrl]` (Fırtına / Tipi Sürüklemesi)** | **Çömelme Rüzgâr Direnci:** Fırtına ve borada oyuncu aerodinamik sürükleme kuvvetini `>= %68` azaltır; taş duvar arkası (`S_wind <= 0.20`) rüzgâr soğuğunu keser | ✅ Devir #063 (Aktif) |
+| **`[Shift+F11]` Tuşu** | **Test Hava Durumu Döngüsü (6 Kip):** `0: Otomatik -> 1: Yağmur (14 mm/sa) -> 2: Sağanak Fırtına (28 mm/sa, CAPE 1400) -> 3: Kar Yağışı (-3°C) -> 4: Tipi / Bora (-9°C, ~21 m/s, Thundersnow CAPE 520) -> 5: Açık Güneşli Hava` | ✅ Devir #063 (Aktif) |
 | **`[` / `]` / `Backspace` (veya `ESC -> Ayarlar`)** | **Dinamik Zaman Ölçeği (`1x–600x`):** `[` azaltır, `]` artırır (`1, 2, 5, 10, 30, 60, 150, 300, 600x`), `Backspace` `1x`'e sıfırlar (`0 NaN/Inf` kararlı) | ✅ Devir #059 (Aktif) |
 | **`[B]` Tuşu (`!Shift`) -> `[5]`** | **Rehber Kitabı [5] Hava & Denizci Tahmini:** Açık deri kitapta 5. sekme; Zambretti tablosu, Beaufort skalası, Stull formülleri, bulut rehberi | ✅ Devir #059 (Aktif) |
 | **Barometre / Termometre / Higrometre / Anemometre / Yağmur Ölçer** | **5 Denizci Hava Aleti:** Elde tutulduğunda ekranda hPa basınç, Zambretti A..Z tahmini, rüzgâr yönü/şiddeti ve yağış mm değerini gösterir | ✅ Devir #059 (Aktif) |
@@ -1050,66 +1075,21 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 | **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
 | **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
 | **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
-| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 6-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar, yontulmuş taş başlıklar ve `🌦️ Hava Aletleri (6)` sekmesi dahil) | ✅ Devir #060 (Aktif) |
-| **`[Shift+F11]` Tuşu** | **Test Hava Durumu Döngüsü:** `Otomatik -> Yağmur (14 mm/sa) -> Sağanak Fırtına (28 mm/sa, CAPE 1400) -> Açık Hava (0 mm/sa)` modları arasında geçer | ✅ Devir #061 (Aktif) |
-| **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Aktif |
+| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 6-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar, yontulmuş taş başlıklar, yel değirmeni kanadı/kış giysileri ve `🌦️ Hava Aletleri (6)` sekmesi dahil) | ✅ Devir #063 (Aktif) |
+| **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD (3B rüzgâr, kar SWE, yel değirmeni, `clo`/Wind Chill dahil) \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Devir #063 (Aktif) |
 
 ---
 
-## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Ayrıntılı Başlangıç ve Uygulama Kılavuzu)
+## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Ayrıntılı Başlangıç Kılavuzu)
 
-> [!IMPORTANT]
-> **DİĞER BİLGİSAYARDAKİ YAPAY ZEKA AJANI İÇİN KRİTİK KULLANICI DİREKTİFİ:**
-> - **Mevcut Çekirdek Su Fiziğini Bozma:** Şu anki su sisteminin temel fiziği (**sonlu/biten kütle, sıkıştırılamazlık, çukurları aşağıdan yukarı doldurma, U-borusu/sifon basıncı, güneşle buharlaşma, yağmurla toprağı doyurup tekrar göllenme ve mağara akiferlerini besleme**) **zaten çok iyi çalışmaktadır**. Çekirdek su fiziğini yıkıp baştan yazma!
-> - **Asıl Amaç:** Bu sağlam fiziğin üstünde suyun "ışınlanır / basamaklanır gibi" görünmesine yol açan zamanlama, sığ su tek-tik sıçraması, köşe/şelale geometrisi ve shader akış eksiklerini gidererek **suyun gerçekten kesintisiz ve pürüzsüz aktığını göstermek**, ardından **Paket 4B** doğa/hayatta kalma mekaniklerini (`3B Rüzgâr`, `Yel Değirmeni`, `Gelişmiş Fırtınalar`, `Kar Döngüsü`, `Termal Giysi Yalıtımı`) devreye almaktır.
-> - **Esneklik İlkesi:** Eski şablonlarda "nasıl yapılacağı" detayından ziyade, gerçek hayattaki gibi inandırıcı sonuç üretmek ve performans/VRAM/GC sağlığını korumak önceliklidir. Ancak `DOK4` içindeki çözüm halihazırda çalışan çekirdeği hiç riske atmadan bu hedefi `%100` karşılayacak şekilde hazırlandığı için doğrudan `DOK4` planını takip et.
-
-### Adım 1 — Git Durumunu ve Başlangıç Test Tabanını Doğrula
-1. Oturuma başlar başlamaz `git pull` (gerekirse), `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun **`Devir #062`** ile birebir eşleştiğini doğrula.
-2. Kodlamaya dokunmadan önce başlangıç tabanının sağlıklı olduğunu teyit et:
-   - `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` -> **`127/127 PASS`** (`0 Error / 0 Warning`).
-
-### Adım 2 — Zorunlu Okunacak Paket 4B Mimari Dokümanları (`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/`)
-Kod yazmaya başlamadan önce şu 4 dokümanı sırasıyla oku (özellikle `DOK4` birincil kodlama şartnamesidir):
-1. **[`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK1_HEDEF_VE_GEREKSINIMLER.md`](docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK1_HEDEF_VE_GEREKSINIMLER.md):** `İP-1..İP-8` iş paketleri, `AK-1..AK-16` kabul kriterleri, hedef akıcılık metrikleri ve tuş haritası.
-2. **[`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md`](docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK2_MEVCUT_KOD_DEBUG_VE_AKIS_RAPORU.md):** Akışkan "ışınlanma" sorununun `6` kök nedeni (`KN-1..KN-6`), değiştirilecek dosyaların tam satır aralıkları ve mevcut kod kancaları.
-3. **[`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md`](docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK3_ENDUSTRI_VE_BENZER_PROJELER_ARASTIRMASI.md):** Mei–Decaudin–Hu sanal boru momentumu, GPU alt-tik enterpolasyonu, Vlachos çift-fazlı akış, Betz yel değirmeni, Stull $T_w$ / *Degree-Day* kar ve JAG/TI *Wind Chill* + ISO 9920 `clo` denklemleri.
-4. **[`docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md`](docs/paket4b-akiskan-akiciligi-ruzgar-ve-kis/DOK4_ADIM_ADIM_GELISTIRME_PLANI.md):** **`Faz 4B.1 .. Faz 4B.7` adım adım uygulama planı**, tam C# `struct`/`class`/metod imzaları, derlenebilir HLSL kodları, `T01..T18` birim/entegrasyon testleri ve Bölüm 10'daki 4 dalgalı sıfır-çakışmalı Swarm iş dağılımı.
-
-### Adım 3 — Geliştirilecek Sistemler ve Önerilen Uygulama Sırası (`Faz 4B.1 .. Faz 4B.7`)
-
-Kullanıcıya sorarak **ister önce Aşama A'yı (`Faz 4B.1–4B.3` Akışkan Akıcılığı) bitirip PlayMode'da canlı su akışını test ettir, ister `DOK4` Bölüm 10'daki 4 Swarm dalgasıyla tüm Paket 4B'yi (`Faz 4B.1–4B.7`) uçtan uca uygula:**
-
-#### Aşama A — Birincil Öncelik: Pürüzsüz ve Gerçekçi Akışkan Akışı (`Faz 4B.1 – Faz 4B.3`)
-1. **`Faz 4B.1` (`İP-1` — Sabit `10 Hz` Zamanlama, Kinematik Yan-Tampon & Sanal Boru Momentumu):**
-   - `Assets/_Stratocraft/Physics/Data/ActiveChunkFluidKinematicsPool.cs` (Yeni): `FluidCell16` (`2B`) yapısına dokunmadan yalnızca aktif akan chunk'lar için kiralanan sıfır-GC `PrevMass` (`64 KB`) + `VelX_Q7` (`64 KB`) + `VelZ_Q7` (`64 KB`) havuzu (`192 KB/aktif chunk`; durulunca havuza iade).
-   - `Assets/_Stratocraft/Physics/Jobs/FluidCellularAutomataJob.cs`: Mei–Decaudin–Hu sanal boru momentumu (`inertiaDecay = 0.82f` su / `0.45f` lav), `#L998` `srcMass <= 24` tek-tik `%100` ışınlanma hatasının kaldırılıp kademeli (`<= %45`) akışa çevrilmesi ve `#L561/#L583` chunk sınırında `headA - headB >= 1` geçişi.
-   - `Assets/_Stratocraft/Physics/Systems/FluidSimulationSystem.cs` & `Stage1InteractivePlayController.cs`: `FrameBudgetMicroseconds = 2000.0` toplu bütçe, `0.100 sn` (`10.0 Hz`) sabit biriktirici (`_fluidTickAccumulator -= 0.100f`), her kare `Shader.SetGlobalFloat("_FluidSubTickAlpha", alpha)` yayını ve kamera mesafesi öncelikli `_dirtyFluidChunks` (`maxFluidPerFrame = 16`).
-2. **`Faz 4B.2` (`İP-2` — Köşe Menisküs, Savak Çökmesi, Eğimli Şelale Perdesi & `FluidMeshVertex`):**
-   - `Assets/_Stratocraft/Voxel/Jobs/FluidSurfaceSkirtMesher.cs`: $C^1$ sürekli kalınlık eğrisi, `#L542` `wetSamples == 1` `+0.24m` zıplama/çökme hatasının giderilmesi, 4-köşe menisküs ortalaması, uçurum ağzında Rouse savak çökmesi (`0.715 * h`) ve alt havuza kesintisiz uzanan parabolik şelale perdesi.
-   - Aynı dosya içinde (`#if UNITY_5_3_OR_NEWER` korumalı) `FluidMeshVertex (36 B)` + `BuildFluidUnityMeshZeroGc`: `COLOR.r` (`1` = Tatlı Su, `12` = Tuzlu Deniz Suyu, `2` = Lav, `3` = Asit), `COLOR.g` (işaretli $\Delta y_{\text{tick}}$), `COLOR.ba` (`vx, vz`), `TEXCOORD0` (`fluidDepthMeters`, `waterfallFoam01`).
-3. **`Faz 4B.3` (`İP-3` + Shader — GPU Alt-Tik Lerp, Çift-Fazlı Akış & Prosedürel Kar/Yaprak Shader'ı):**
-   - `Assets/_Stratocraft/Rendering/Shaders/StratocraftFluidSurface.shader`: `_FluidSubTickAlpha` ile `60–144 FPS` pürüzsüz köşe yüksekliği enterpolasyonu, `#L135` `rawId == 1/12` tatlı/tuzlu su düzeltmesi, `#L149` zamanla sürülen **Alex Vlachos çift-fazlı prosedürel akış adveksiyonu** (`flowPeriod = 1.60 s`), analitik normal türevi ve Froude/şelale beyaz köpüğü (`+0.0 MB` doku VRAM).
-   - `Assets/_Stratocraft/Rendering/Shaders/StratocraftUberShader.hlsl`: `TempByte [126..166]` prosedürel kar örtüsü + kristal parıltısı (Blackbody `>= 170` bloğundan önce **`heatNorm = 0.0` zorunlu**) ve yalnızca `Grass (3u)` yaprak/çalılar için `_GlobalWindVector` salınımı (**`Floatstone (18u)` kesinlikle hariç!**).
-
-#### Aşama B — Rüzgâr Mekaniği, Yel Değirmeni, Gelişmiş Fırtınalar, Kar Döngüsü ve Termal Giysi (`Faz 4B.4 – Faz 4B.7`)
-4. **`Faz 4B.4` (`İP-4` & `İP-6` — 3B Rüzgâr Alanı, Engel Gölgesi & Fırtına Dinamiği):**
-   - `Assets/_Stratocraft/Physics/Systems/DynamicWindFieldSystem.cs` (Yeni): Hellmann irtifa rüzgâr profili, 5-ışınlı voksel engel gölgesi (`S_wind`), $\nabla P$/CAPE bora hamleleri (*gusts*), **`[Sol Ctrl]`** çömelme ve duvar siperi duyarlı oyuncu sürüklemesi, ok/mermi ve yağış sapması, derinlik-sınırlı Beaufort `0..12` su dalgası ölçeği.
-   - `ConvectiveLightningAndRodSystem.cs`, `RegionalAtmosphereSimulationSystem.cs` ve `WeatherPhenomenonTypes.cs`: Paket 4B yağış/tehlike kapılarının açılması (makro atmosfer rüzgârı `<= 35.0f m/s` sınırı korunarak!), metal zırh/alet yıldırım risk çarpanı ve kış yıldırımı (*Thundersnow*).
-5. **`Faz 4B.5` (`İP-5` — Fiziksel Yel Değirmeni & Mekanik Öğütme):**
-   - `Assets/_Stratocraft/Physics/Systems/WindmillAerodynamicsAndWorkSystem.cs` (Yeni) + `Assets/_Stratocraft/Character/Stage1WindmillController.cs` (Yeni, `#if UNITY_5_3_OR_NEWER`): `[T] -> [5]` Zihin İnşası kümesi (`MindStructureBlueprintId.Windmill = 4`: `4` taş kaide + `4` ahşap mil + `4` kanat paneli), `PhysicalItemMeshFactory` `0 MB` `Color32` 3B kule/rotor meşi, Betz sınırlı (`Cp <= 0.34 < 16/27`) tork, `[Shift+E]` fırtına mekanik freni ve tahıl (`6000 J`) / cevher (`14000 J`) öğütme işi.
-6. **`Faz 4B.6` (`İP-7` — Kar Yağışı, Birikimi ve Kütle Korunumlu Erimesi):**
-   - `Assets/_Stratocraft/Physics/Systems/SnowAccumulationAndMeltSystem.cs` (Yeni): Stull (2011) yaş-termometre eşiği ($T_w \le +1.2^\circ\text{C}$ — Yaz Gün 95 orografik yağmur regresyon testi korunur!), `ChunkSkyOcclusionMap256` çatı engellemesi (ve `StepRainSurfaceWettingAndPonding` / `StepSurfaceWaterEvaporation` çağrılarında `skyMap` bağlanması), rüzgâr savrulması, *Degree-Day* + ateş/fırın/lav erimesi -> önce `SoilMoisture`, aşan kütle **tatlı su (`FluidType.Water`, `Salinity = 0`)** akışı, yüzey `TempByte [126..166]` kodlaması.
-7. **`Faz 4B.7` (`İP-8` — Termal Giysi `clo` Yalıtımı, *Wind Chill*, UI & Tam Test Paketi):**
-   - `Assets/_Stratocraft/Character/Systems/ThermalClothingInsulationSystem.cs` (Yeni) + `ThermalAndBiologySystem.cs`: JAG/TI *Wind Chill* rüzgâr soğuğu, `UniqueEquipmentInstance (128B)` (`PrimaryAlloyMaterialId` + `SecondaryHandleMaterialId` + `ThermalInsulationBonus01`) katmanlı `clo` (`0.45 / 0.80 / 1.45 / 0.05`), ıslanma (`Wetness01`) yalıtım kaybı, `< 5.0°C` metal termal köprü cezası + iç kürk/deri astar nötralizasyonu, ıslak giysi donması ve ateş/sığınak kuruma hızı.
-   - `[B]` Rehber Kitabı (`SurvivalRecipeBookCatalog.TabCount == 5` **kesinlikle sabit tutularak** mevcut sekmelere yel değirmeni, kış/tipi ve termal giysi maddelerinin eklenmesi!), `[F4]+[Tab]` yaratıcı katalog ve `Assets/Tests/EditMode/Paket4BFluidWindAndWinterTests.cs` (`T01..T18`).
-
-### Adım 4 — Korunacak Kırmızı Çizgiler ve Kalite Kapısı
-- **Çift-Hedefli Derleme:** Saf simülasyon sınıflarında `UnityEngine` kullanılmaz; sahne/render köprüleri `#if UNITY_5_3_OR_NEWER` içine alınır (`TreatWarningsAsErrors=true`, `Nullable=enable`).
-- **Bellek & Paket 4A Kilitleri:** `FluidCell16 == 2B` (C++ `PackSettledFluid` uyumlu), `UniqueEquipmentInstance == 128B`, `AtmosphereAoiCellSample == 16B` (`& 0x1Fu`), `SurvivalRecipeBookCatalog.TabCount == 5`, makro `WindSpeedMps <= 35.0f`.
-- **Doğrulama Komutları ve Hedefleri:**
-  - Standalone Test: `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj --nologo` (**`127 + yeni Paket 4B testleri PASS`**, `0 Warning / 0 Error`).
-  - Unity EditMode Testleri: **`124 + yeni Paket 4B testleri PASS`** (`Devir048b < 60 ms` dahil, `0 Error / 0 Warning`).
-  - C++20 `ctest`: **`6/6 PASS`** | Python `pytest`: **`9/9 PASS`**.
-  - Kaplama VRAM: `< 16.0 MB` (`4.14 MB` mevcut, `+0.0 MB` ek doku) | GC: `0 B/kare`.
-  - Taşınabilirlik: Hiçbir kod, doküman veya betikte sabit sürücü/kullanıcı mutlak yolu kullanma; daima göreceli yol kullan.
+1. **Git ve Devir Teyidi:**
+   - Yeni oturuma başlarken `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun **`Devir #063`** ile birebir eşleştiğini doğrula.
+2. **Unity 6 EditMode Test Runner (`142/142`) Teyidi:**
+   - `Devir #063` kapanışında açık olan Unity 6 Editor (`PID 17704`) kullanıcının duraklatılmış `PlayMode` oturumunda (`frameCount: 6352`) bulunduğu için zorla kapatılmamış; canlı `unity recompile --strict` **`0 Error / 0 Warning`** doğrulanmış ve tüm 145 C# testi `.NET 10` Release altında **`145/145 PASS`** geçmiştir.
+   - Editor `PlayMode` dışındayken `Window -> General -> Test Runner -> EditMode -> Run All` (veya Editor kapalıyken `powershell -ExecutionPolicy Bypass -File scripts/quality-gate.ps1 -Phase 4`) çalıştırarak Unity EditMode tarafındaki `142/142` (`Paket4BFluidWindAndWinterTests` `T01..T18` + `Devir048b < 60 ms`) koşumunu da yeşille teyit et.
+3. **Canlı PlayMode Paket 4B Görsel ve Oynanış Doğrulama Listesi (`docs/test-raporlari/faz4b-raporu.md` Bölüm 4):**
+   - **Akışkan Akıcılığı & Şelale:** Eğimli kanala ve uçurum kenarına su bırakarak `60–144 FPS` basamaksız yüzey akışını, savak bükülmesini, parabolik şelale perdesini ve Vlachos çift-fazlı beyaz köpüğünü gözlemle.
+   - **`[Shift+F11]` Kar ve Tipi/Bora:** `Kar (-3°C)` ve `Tipi (-9°C, ~21 m/s)` kiplerinde zemin kar örtüsünün (`TempByte 126..166`) biriktiğini, çatı altlarının kuru kaldığını, kamp ateşi ve lavın turuncu akkor ışımasını koruduğunu (karın turuncu parlamadığını), `[Sol Ctrl]` çömelme ve duvar arkasının sürükleme/*Wind Chill* etkisini kestiğini doğrula.
+   - **`[T] -> [5]` Yel Değirmeni & Kış Giysileri:** Yel değirmeninde tahıl -> un / cevher -> toz öğütmesini, `[Shift+E]` fırtına frenini ve tipide kürk parka / kürk astarlı metal zırhın termal köprü cezasını sıfırlayarak normotermiyi koruduğunu test et.
+4. **Sonraki Faz Planlaması:**
+   - Kullanıcı PlayMode geri bildirimleri varsa uygula; yoksa kullanıcının yönlendireceği bir sonraki faza geçmeden önce `DURUM_VE_DEVIR.md` kurallarına göre onay al.

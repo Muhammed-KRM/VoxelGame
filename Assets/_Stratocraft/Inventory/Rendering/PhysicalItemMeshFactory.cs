@@ -31,6 +31,17 @@ namespace Stratocraft.Inventory.Rendering
         public const PhysicalItemArchetype WeatherRainGauge = (PhysicalItemArchetype)42;
         public const PhysicalItemArchetype MetalLightningRod = (PhysicalItemArchetype)43;
 
+        // Paket 4B (Faz 4B.5..4B.7) — Yel Degirmeni Yelken Kanadi, Tahil/Un/Aki Tozu ve Kis Giysileri
+        public const PhysicalItemArchetype WindmillSailPanel = PhysicalItemArchetype.WindmillSailPanel;
+        public const PhysicalItemArchetype WildGrainBundle = PhysicalItemArchetype.WildGrainBundle;
+        public const PhysicalItemArchetype MilledFlour = PhysicalItemArchetype.MilledFlour;
+        public const PhysicalItemArchetype CrushedOrePowder = PhysicalItemArchetype.CrushedOrePowder;
+        public const PhysicalItemArchetype CrushedFluxPowder = PhysicalItemArchetype.CrushedFluxPowder;
+        public const PhysicalItemArchetype WovenClothTunic = PhysicalItemArchetype.WovenClothTunic;
+        public const PhysicalItemArchetype OiledLeatherWindbreaker = PhysicalItemArchetype.OiledLeatherWindbreaker;
+        public const PhysicalItemArchetype HeavyFurWinterParka = PhysicalItemArchetype.HeavyFurWinterParka;
+        public const PhysicalItemArchetype FurLinedWinterBoots = PhysicalItemArchetype.FurLinedWinterBoots;
+
         private static readonly List<FacetedVoxelTriangle> SharedBuildTris = new(256);
 
 #if UNITY_5_3_OR_NEWER
@@ -214,6 +225,15 @@ namespace Stratocraft.Inventory.Rendering
                 WeatherWindVaneAnemometer => MaterialIdCatalog.Steel,
                 WeatherRainGauge => MaterialIdCatalog.QuartzGem,
                 MetalLightningRod => MaterialIdCatalog.CopperOre,
+                PhysicalItemArchetype.WindmillSailPanel => MaterialIdCatalog.TacticalCloth,
+                PhysicalItemArchetype.WildGrainBundle => MaterialIdCatalog.ThatchTile,
+                PhysicalItemArchetype.MilledFlour => MaterialIdCatalog.Marble,
+                PhysicalItemArchetype.CrushedOrePowder => subMaterialId != 0 ? subMaterialId : MaterialIdCatalog.IronOre,
+                PhysicalItemArchetype.CrushedFluxPowder => MaterialIdCatalog.Marble,
+                PhysicalItemArchetype.WovenClothTunic => MaterialIdCatalog.TacticalCloth,
+                PhysicalItemArchetype.OiledLeatherWindbreaker => MaterialIdCatalog.LeatherPadding,
+                PhysicalItemArchetype.HeavyFurWinterParka => MaterialIdCatalog.CreatureFurAsh,
+                PhysicalItemArchetype.FurLinedWinterBoots => MaterialIdCatalog.CreatureFurAsh,
                 _ => subMaterialId != 0 ? subMaterialId : MaterialIdCatalog.Stone
             };
         }
@@ -229,6 +249,11 @@ namespace Stratocraft.Inventory.Rendering
             PrimitiveCraftOutputId.WeatherWindVaneAnemometer => WeatherWindVaneAnemometer,
             PrimitiveCraftOutputId.WeatherRainGauge => WeatherRainGauge,
             PrimitiveCraftOutputId.MetalLightningRod => MetalLightningRod,
+            PrimitiveCraftOutputId.WindmillSailPanel => PhysicalItemArchetype.WindmillSailPanel,
+            PrimitiveCraftOutputId.WovenClothTunic => PhysicalItemArchetype.WovenClothTunic,
+            PrimitiveCraftOutputId.OiledLeatherWindbreaker => PhysicalItemArchetype.OiledLeatherWindbreaker,
+            PrimitiveCraftOutputId.HeavyFurWinterParka => PhysicalItemArchetype.HeavyFurWinterParka,
+            PrimitiveCraftOutputId.FurLinedWinterBoots => PhysicalItemArchetype.FurLinedWinterBoots,
             _ => PhysicalItemArchetype.RoughStone
         };
 
@@ -479,6 +504,33 @@ namespace Stratocraft.Inventory.Rendering
 
                 case MetalLightningRod:
                     EmitMetalLightningRodModel(in dna, outTris);
+                    break;
+
+                case PhysicalItemArchetype.WindmillSailPanel:
+                    EmitWindmillSailPanelItemModel(outTris);
+                    break;
+
+                case PhysicalItemArchetype.WildGrainBundle:
+                    EmitWildGrainBundleModel(vSeed, outTris);
+                    break;
+
+                case PhysicalItemArchetype.MilledFlour:
+                case PhysicalItemArchetype.CrushedFluxPowder:
+                    EmitPowderSackOrMoundModel(vSeed, MaterialIdCatalog.Marble, temp, outTris);
+                    break;
+
+                case PhysicalItemArchetype.CrushedOrePowder:
+                    EmitCrushedGravelCluster(vSeed, primaryMatId != 0 ? primaryMatId : MaterialIdCatalog.IronOre, temp, outTris);
+                    break;
+
+                case PhysicalItemArchetype.WovenClothTunic:
+                case PhysicalItemArchetype.OiledLeatherWindbreaker:
+                case PhysicalItemArchetype.HeavyFurWinterParka:
+                    EmitWinterGarmentTorsoModel(archetype, primaryMatId, outTris);
+                    break;
+
+                case PhysicalItemArchetype.FurLinedWinterBoots:
+                    EmitWinterBootsPairModel(primaryMatId, outTris);
                     break;
 
                 default:
@@ -1066,6 +1118,277 @@ namespace Stratocraft.Inventory.Rendering
             EmitHollowTubeSegment(new SysVec3(0f, 0.26f, 0f), new SysVec3(0f, 0.38f, 0f), 0.018f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 5);
             EmitHollowTubeSegment(new SysVec3(0f, 0.25f, 0f), new SysVec3(-0.065f, 0.34f, 0f), 0.012f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 4);
             EmitHollowTubeSegment(new SysVec3(0f, 0.25f, 0f), new SysVec3(0.065f, 0.34f, 0f), 0.012f, 0.002f, MaterialIdCatalog.GoldOre, dna.ThermalTempByte, outTris, sides: 4);
+        }
+
+        /// <summary>
+        /// Paket 4B Faz 4B.5 (IP-5): Fiziksel Yel Degirmeni kagir sekizgen tas kaidesi, 4 ahsap kule dikmesi,
+        /// capraz payandalar, cift degirmen tasi (yatak tasi + doner ust tas), tahil hunisi ve [Shift+E] fren kolu
+        /// geometrisini sifir doku (0.0 MB VRAM, %100 Color32) ile uretir.
+        /// </summary>
+        public static void EmitWindmillTowerTriangles(
+            bool isBrakeEngaged,
+            float millstoneFillRatio01,
+            List<FacetedVoxelTriangle> outputTriangles)
+        {
+            if (outputTriangles == null) return;
+
+            // 1) Sekizgen kagir tas kaide (y = 0.0m .. 0.72m)
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0.0f, 0f),
+                new SysVec3(0f, 0.42f, 0f),
+                1.08f, 0.96f,
+                MaterialIdCatalog.Cobblestone, 0, outputTriangles, sides: 8);
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0.42f, 0f),
+                new SysVec3(0f, 0.72f, 0f),
+                0.98f, 0.88f,
+                MaterialIdCatalog.StoneBrick, 0, outputTriangles, sides: 8);
+
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = (i / 8.0f) * MathF.PI * 2.0f;
+                SysVec3 radial = new SysVec3(MathF.Cos(ang), 0f, MathF.Sin(ang));
+                SysVec3 tangent = new SysVec3(-radial.Z, 0f, radial.X);
+                EmitOrientedBox(
+                    radial * 0.96f + new SysVec3(0f, 0.24f, 0f),
+                    new SysVec3(0.14f, 0.24f, 0.18f),
+                    tangent, SysVec3.UnitY, radial,
+                    MaterialIdCatalog.Cobblestone, 0, outputTriangles);
+            }
+
+            // 2) Alt haznede cift silindirik ogutme tasi (Bedstone = Stone, Runner Stone = Marble)
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0.72f, 0f),
+                new SysVec3(0f, 0.96f, 0f),
+                0.56f, 0.56f,
+                MaterialIdCatalog.Stone, 0, outputTriangles, sides: 8);
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0.97f, 0f),
+                new SysVec3(0f, 1.20f, 0f),
+                0.52f, 0.52f,
+                MaterialIdCatalog.Marble, 0, outputTriangles, sides: 8);
+
+            // Ahsap besleme hunisi ve hammadde doluluk gostergesi
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 1.22f, 0f),
+                new SysVec3(0f, 1.54f, 0f),
+                0.18f, 0.36f,
+                MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 6);
+            float clampedFill = Math.Clamp(float.IsFinite(millstoneFillRatio01) ? millstoneFillRatio01 : 0f, 0f, 1f);
+            if (clampedFill > 0.02f)
+            {
+                float fillTopY = 1.25f + (0.26f * clampedFill);
+                EmitHollowTubeSegment(
+                    new SysVec3(0f, 1.24f, 0f),
+                    new SysVec3(0f, fillTopY, 0f),
+                    0.15f, 0.15f + (0.16f * clampedFill),
+                    MaterialIdCatalog.ThatchTile, 0, outputTriangles, sides: 6);
+            }
+
+            // 3) 4 kose mese kule dikmesi + 2 kademe yatay kusak + X capraz payandalar (y = 0.68m .. 3.10m)
+            ReadOnlySpan<float> signsX = stackalloc float[4] { -1f, 1f, 1f, -1f };
+            ReadOnlySpan<float> signsZ = stackalloc float[4] { -1f, -1f, 1f, 1f };
+
+            for (int c = 0; c < 4; c++)
+            {
+                SysVec3 botCorner = new SysVec3(signsX[c] * 0.64f, 0.68f, signsZ[c] * 0.64f);
+                SysVec3 topCorner = new SysVec3(signsX[c] * 0.38f, 3.08f, signsZ[c] * 0.38f);
+                EmitHollowTubeSegment(botCorner, topCorner, 0.075f, 0.062f, MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 6);
+
+                int next = (c + 1) & 3;
+                SysVec3 nextBot = new SysVec3(signsX[next] * 0.64f, 0.68f, signsZ[next] * 0.64f);
+                SysVec3 nextTop = new SysVec3(signsX[next] * 0.38f, 3.08f, signsZ[next] * 0.38f);
+
+                SysVec3 midA = SysVec3.Lerp(botCorner, topCorner, 0.48f);
+                SysVec3 midB = SysVec3.Lerp(nextBot, nextTop, 0.48f);
+
+                // Yatay kirisler
+                EmitHollowTubeSegment(midA, midB, 0.048f, 0.048f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 5);
+                EmitHollowTubeSegment(topCorner, nextTop, 0.052f, 0.052f, MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 5);
+
+                // Alt ve ust X capraz payandalar
+                EmitHollowTubeSegment(botCorner, midB, 0.038f, 0.038f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+                EmitHollowTubeSegment(nextBot, midA, 0.038f, 0.038f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+                EmitHollowTubeSegment(midA, nextTop, 0.034f, 0.034f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+                EmitHollowTubeSegment(midB, topCorner, 0.034f, 0.034f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+            }
+
+            // 4) Merkez dikey ana tahrik mili + ust doner yatak bilezigi
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 1.18f, 0f),
+                new SysVec3(0f, 3.20f, 0f),
+                0.068f, 0.068f,
+                MaterialIdCatalog.Steel, 0, outputTriangles, sides: 6);
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 3.04f, 0f),
+                new SysVec3(0f, 3.20f, 0f),
+                0.50f, 0.48f,
+                MaterialIdCatalog.Bronze, 0, outputTriangles, sides: 8);
+
+            // 5) [Shift+E] Mekanik firtina serit freni kolu (kilitliyken asagi cekili ve bronz pabuclu)
+            SysVec3 brakePivot = new SysVec3(0.58f, 1.42f, 0.0f);
+            SysVec3 brakeHandleTip = isBrakeEngaged
+                ? new SysVec3(0.98f, 1.04f, 0.24f)
+                : new SysVec3(0.96f, 1.78f, -0.18f);
+            byte brakeTipMat = isBrakeEngaged ? MaterialIdCatalog.CopperOre : MaterialIdCatalog.Bronze;
+            EmitHollowTubeSegment(brakePivot, brakeHandleTip, 0.036f, 0.028f, MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 5);
+            EmitOrientedBox(
+                brakeHandleTip,
+                new SysVec3(0.055f, 0.055f, 0.055f),
+                SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ,
+                brakeTipMat, 0, outputTriangles);
+        }
+
+        /// <summary>
+        /// Paket 4B Faz 4B.5 (IP-5): Doner ust sapka, yatay ruzgar mili, kuyruk yelpazesi ve
+        /// 90 derece aralikli 4 ahsap kafes kol + keten kumas yelken kanatlarini sifir doku (0.0 MB VRAM, %100 Color32) ile uretir.
+        /// sailIntegrity01 &lt; 0.5f dustugunde firtina yirtiklari geometrik olarak gorunur.
+        /// </summary>
+        public static void EmitWindmillRotorTriangles(
+            float sailIntegrity01,
+            List<FacetedVoxelTriangle> outputTriangles)
+        {
+            if (outputTriangles == null) return;
+
+            float integrity = Math.Clamp(float.IsFinite(sailIntegrity01) ? sailIntegrity01 : 1.0f, 0.0f, 1.0f);
+
+            // 1) Ust doner ahsap sapka govdesi + yatay ana mil + bronz rotor gobegi (yerel Z ekseni boyunca)
+            EmitOrientedBox(
+                new SysVec3(0f, 0.06f, -0.22f),
+                new SysVec3(0.42f, 0.28f, 0.52f),
+                SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ,
+                MaterialIdCatalog.OakWood, 0, outputTriangles);
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0f, -0.78f),
+                new SysVec3(0f, 0f, 0.62f),
+                0.088f, 0.078f,
+                MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 6);
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0f, 0.38f),
+                new SysVec3(0f, 0f, 0.66f),
+                0.18f, 0.15f,
+                MaterialIdCatalog.Bronze, 0, outputTriangles, sides: 8);
+
+            // Arka kuyruk yelpazesi (fantail) destek kolu ve yön çarkı
+            EmitHollowTubeSegment(
+                new SysVec3(0f, 0.04f, -0.72f),
+                new SysVec3(0f, 0.14f, -1.42f),
+                0.045f, 0.032f,
+                MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 5);
+            EmitOrientedBox(
+                new SysVec3(0f, 0.18f, -1.48f),
+                new SysVec3(0.025f, 0.32f, 0.24f),
+                SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ,
+                MaterialIdCatalog.WoodPlank, 0, outputTriangles);
+
+            // 2) 4 adet 90 derece aralikli kanat kolu (R = 2.25m) + ahsap kafes cubuklari + keten yelken panelleri
+            const float hubZ = 0.52f;
+            const float bladeRadius = 2.25f;
+            const float cantCos = 0.9510565f; // cos(18 deg) Betz kalkis egim acisi
+            const float cantSin = 0.3090170f; // sin(18 deg)
+
+            for (int b = 0; b < 4; b++)
+            {
+                float angle = b * (MathF.PI * 0.5f);
+                SysVec3 radial = new SysVec3(MathF.Cos(angle), MathF.Sin(angle), 0f);
+                SysVec3 tangentInPlane = new SysVec3(-radial.Y, radial.X, 0f);
+                SysVec3 sailWidthAxis = SysVec3.Normalize((tangentInPlane * cantCos) + (SysVec3.UnitZ * cantSin));
+                SysVec3 sailNormalAxis = SysVec3.Normalize(SysVec3.Cross(radial, sailWidthAxis));
+
+                SysVec3 armStart = new SysVec3(0f, 0f, hubZ) + (radial * 0.14f);
+                SysVec3 armTip = new SysVec3(0f, 0f, hubZ) + (radial * bladeRadius);
+
+                // Ana ahsap kanat diregi (whip stock)
+                EmitHollowTubeSegment(armStart, armTip, 0.046f, 0.028f, MaterialIdCatalog.OakWood, 0, outputTriangles, sides: 5);
+
+                // Yan boyuna kafes citasi
+                SysVec3 outerRailStart = new SysVec3(0f, 0f, hubZ) + (radial * 0.48f) + (sailWidthAxis * 0.42f);
+                SysVec3 outerRailTip = new SysVec3(0f, 0f, hubZ) + (radial * (bladeRadius - 0.06f)) + (sailWidthAxis * 0.42f);
+                EmitHollowTubeSegment(outerRailStart, outerRailTip, 0.020f, 0.018f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+
+                // 5 enine kafes basamagi ve 4 kumas yelken bolmesi
+                for (int r = 0; r < 5; r++)
+                {
+                    float frac = 0.22f + (r * 0.185f);
+                    SysVec3 rungRoot = new SysVec3(0f, 0f, hubZ) + (radial * (bladeRadius * frac));
+                    SysVec3 rungEnd = rungRoot + (sailWidthAxis * 0.44f);
+                    EmitHollowTubeSegment(rungRoot - (sailWidthAxis * 0.06f), rungEnd, 0.018f, 0.015f, MaterialIdCatalog.WoodPlank, 0, outputTriangles, sides: 4);
+
+                    if (r < 4 && integrity > 0.05f)
+                    {
+                        // Firtina hasari varsa (integrity < 0.5) dis yelken dilimlerinde yirtik gedikler birak
+                        if (integrity < 0.50f && ((b + r) & 1) == 1)
+                        {
+                            continue;
+                        }
+
+                        float segMidFrac = frac + 0.0925f;
+                        float widthScale = integrity < 0.50f ? 0.62f : 1.0f;
+                        SysVec3 panelCenter = new SysVec3(0f, 0f, hubZ)
+                            + (radial * (bladeRadius * segMidFrac))
+                            + (sailWidthAxis * (0.22f * widthScale));
+                        EmitOrientedBox(
+                            panelCenter,
+                            new SysVec3(bladeRadius * 0.088f, 0.012f, 0.20f * widthScale),
+                            radial, sailNormalAxis, sailWidthAxis,
+                            MaterialIdCatalog.TacticalCloth, 0, outputTriangles);
+                    }
+                }
+            }
+        }
+
+        private static void EmitWindmillSailPanelItemModel(List<FacetedVoxelTriangle> outTris)
+        {
+            // Ahsap cerceveli gergin keten yelken kanadi (elde, yerde ve [I] canta bezinde)
+            EmitHollowTubeSegment(new SysVec3(-0.14f, 0f, -0.24f), new SysVec3(-0.14f, 0f, 0.24f), 0.020f, 0.018f, MaterialIdCatalog.OakWood, 0, outTris, sides: 5);
+            EmitHollowTubeSegment(new SysVec3(0.14f, 0f, -0.24f), new SysVec3(0.14f, 0f, 0.24f), 0.016f, 0.016f, MaterialIdCatalog.WoodPlank, 0, outTris, sides: 4);
+            EmitHollowTubeSegment(new SysVec3(-0.14f, 0f, -0.20f), new SysVec3(0.14f, 0f, -0.20f), 0.015f, 0.015f, MaterialIdCatalog.WoodPlank, 0, outTris, sides: 4);
+            EmitHollowTubeSegment(new SysVec3(-0.14f, 0f, 0.0f), new SysVec3(0.14f, 0f, 0.0f), 0.015f, 0.015f, MaterialIdCatalog.WoodPlank, 0, outTris, sides: 4);
+            EmitHollowTubeSegment(new SysVec3(-0.14f, 0f, 0.20f), new SysVec3(0.14f, 0f, 0.20f), 0.015f, 0.015f, MaterialIdCatalog.WoodPlank, 0, outTris, sides: 4);
+            EmitOrientedBox(
+                new SysVec3(0f, 0.008f, 0f),
+                new SysVec3(0.125f, 0.010f, 0.21f),
+                SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ,
+                MaterialIdCatalog.TacticalCloth, 0, outTris);
+        }
+
+        private static void EmitWildGrainBundleModel(uint seed, List<FacetedVoxelTriangle> outTris)
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                float ang = (i / 5f) * MathF.PI * 2f;
+                SysVec3 offset = new SysVec3(MathF.Cos(ang) * 0.032f, 0f, MathF.Sin(ang) * 0.032f);
+                EmitHollowTubeSegment(offset + new SysVec3(0f, -0.16f, 0f), offset + new SysVec3(0f, 0.16f, 0f), 0.022f, 0.028f, MaterialIdCatalog.ThatchTile, 0, outTris, sides: 5);
+            }
+            EmitHollowTubeSegment(new SysVec3(0f, -0.02f, 0f), new SysVec3(0f, 0.02f, 0f), 0.062f, 0.062f, MaterialIdCatalog.GlowingMoss, 0, outTris, sides: 6);
+            _ = seed;
+        }
+
+        private static void EmitPowderSackOrMoundModel(uint seed, byte powderMat, byte temp, List<FacetedVoxelTriangle> outTris)
+        {
+            EmitDeformedOctaSphere(seed, new SysVec3(0f, -0.02f, 0f), 0.12f, 0.085f, 0.12f, 0.65f, 0.10f, MaterialIdCatalog.TacticalCloth, temp, outTris);
+            EmitDeformedOctaSphere(seed ^ 0x55AAu, new SysVec3(0f, 0.035f, 0f), 0.095f, 0.045f, 0.095f, 0.30f, 0.12f, powderMat, temp, outTris);
+        }
+
+        private static void EmitWinterGarmentTorsoModel(PhysicalItemArchetype archetype, byte primaryMat, List<FacetedVoxelTriangle> outTris)
+        {
+            byte trimMat = archetype == PhysicalItemArchetype.HeavyFurWinterParka
+                ? MaterialIdCatalog.LeatherPadding
+                : MaterialIdCatalog.TacticalCloth;
+            EmitOrientedBox(new SysVec3(0f, 0f, 0f), new SysVec3(0.14f, 0.18f, 0.075f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMat, 0, outTris);
+            EmitHollowTubeSegment(new SysVec3(-0.14f, 0.10f, 0f), new SysVec3(-0.24f, -0.06f, 0f), 0.048f, 0.040f, primaryMat, 0, outTris, sides: 5);
+            EmitHollowTubeSegment(new SysVec3(0.14f, 0.10f, 0f), new SysVec3(0.24f, -0.06f, 0f), 0.048f, 0.040f, primaryMat, 0, outTris, sides: 5);
+            EmitHollowTubeSegment(new SysVec3(0f, 0.16f, 0f), new SysVec3(0f, 0.23f, 0f), 0.085f, 0.095f, trimMat, 0, outTris, sides: 6);
+        }
+
+        private static void EmitWinterBootsPairModel(byte primaryMat, List<FacetedVoxelTriangle> outTris)
+        {
+            for (int side = -1; side <= 1; side += 2)
+            {
+                float x = side * 0.075f;
+                EmitHollowTubeSegment(new SysVec3(x, -0.08f, -0.02f), new SysVec3(x, 0.10f, -0.02f), 0.048f, 0.052f, primaryMat, 0, outTris, sides: 6);
+                EmitOrientedBox(new SysVec3(x, -0.09f, 0.03f), new SysVec3(0.046f, 0.032f, 0.085f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, MaterialIdCatalog.LeatherPadding, 0, outTris);
+            }
         }
 
         private static void EmitDeformedOctaSphere(

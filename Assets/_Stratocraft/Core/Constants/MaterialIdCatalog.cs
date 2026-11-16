@@ -291,5 +291,55 @@ namespace Stratocraft.Core.Constants
                 _ => 2
             };
         }
+
+        /// <summary>
+        /// Verilen MaterialID'nin elektriksel ve isil olarak iletken bir metal, alasim veya metalik cevher olup olmadigini doner.
+        /// Paket 4B (IP-6 Yildirim hedef agirligi ve IP-8 Metal Termal Kopru) tarafindan kullanilir.
+        /// </summary>
+        public static bool IsMetallicConductive(byte materialId)
+        {
+            return materialId == CopperOre ||
+                   materialId == TinOre ||
+                   materialId == IronOre ||
+                   materialId == BauxiteAluminumOre ||
+                   materialId == SilverOre ||
+                   materialId == GoldOre ||
+                   materialId == TitaniumOre ||
+                   materialId == MithrilOre ||
+                   materialId == OrichalcumOre ||
+                   materialId == HellIronOre ||
+                   materialId == DivineMetalOre ||
+                   materialId == AdamantiteOre ||
+                   materialId == VoidMetalOre ||
+                   materialId == Bronze ||
+                   materialId == Steel ||
+                   materialId == DamascusSteel ||
+                   materialId == ReinforcedSteelBlock ||
+                   materialId == IronGrating ||
+                   materialId == BatteryCore;
+        }
+
+        /// <summary>
+        /// Verilen MaterialID'nin dogustan yuksek sicaklikli akkor (Stefan-Boltzmann T^4 Blackbody >= 170) kaynagi olup olmadigini doner.
+        /// </summary>
+        public static bool IsIntrinsicHotEmissiveMaterial(byte materialId)
+        {
+            return materialId == FiniteLavaSurface ||
+                   materialId == MagmaBlock ||
+                   materialId == CampfireBlock ||
+                   materialId == PrimitiveStoneKilnBlock ||
+                   materialId == StarCore;
+        }
+
+        /// <summary>
+        /// Verilen MaterialID'nin kis giysisi veya metal zirh ic astari olarak kullanilabilen yalitim malzemesi olup olmadigini doner.
+        /// </summary>
+        public static bool IsThermalInsulatingLinerMaterial(byte materialId)
+        {
+            return materialId == TacticalCloth ||
+                   materialId == LeatherPadding ||
+                   materialId == CreatureFurAsh ||
+                   materialId == PhoenixFeatherGold;
+        }
     }
 }

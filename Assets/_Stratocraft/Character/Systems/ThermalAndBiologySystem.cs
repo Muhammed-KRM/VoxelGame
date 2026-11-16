@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using Stratocraft.Character.Data;
 
@@ -21,6 +22,60 @@ namespace Stratocraft.Character.Systems
         /// Paket 4A: Son hesaplanan oyuncu yagmur/su islaklik orani (0.0 = Tam Kuru, 1.0 = Sirilsiklam).
         /// </summary>
         public float Wetness01;
+
+        /// <summary>
+        /// Paket 4B (İP-8): Son hesaplanan JAG/TI rüzgâr soğuğu sıcaklığı (°C).
+        /// </summary>
+        public float EffectiveWindChillCelsius { get; private set; } = 21.0f;
+
+        /// <summary>
+        /// Paket 4B (İP-8): Son hesaplanan toplam etkin giysi yalıtımı (clo).
+        /// </summary>
+        public float TotalEffectiveClo { get; private set; }
+
+        /// <summary>
+        /// Paket 4B (İP-8): Son hesaplanan astarsız metal zırh termal köprü iletim ısı kaybı (W).
+        /// </summary>
+        public float ThermalBridgePenaltyWatts { get; private set; }
+
+        /// <summary>
+        /// Paket 4B (İP-8): Son hesaplanan ıslak yüzey buharlaşmalı ısı kaybı (W).
+        /// </summary>
+        public float EvaporativeHeatLossWatts { get; private set; }
+
+        /// <summary>
+        /// Paket 4B (DOK3 §3.4.4): Toplam etkin giysi yalıtımı (clo) ve metabolik aktiviteye göre
+        /// minimum nötr konfor sıcaklığı eşiğini (°C) hesaplar (baz 15.0°C, her 1.0 clo için -6.5°C).
+        /// </summary>
+        public static float ComputeComfortThresholdCelsius(
+            float totalEffectiveClo,
+            float metabolicActivityBonusCelsius = 0.0f)
+        {
+            float safeClo = float.IsFinite(totalEffectiveClo) ? MathF.Max(0.0f, totalEffectiveClo) : 0.0f;
+            float safeMetabolic = float.IsFinite(metabolicActivityBonusCelsius) ? MathF.Max(0.0f, metabolicActivityBonusCelsius) : 0.0f;
+            return 15.0f - (6.5f * safeClo) - safeMetabolic;
+        }
+
+        /// <summary>
+        /// Paket 4B (İP-8): Islaklık oranı (0..1) ve cilde ulaşan etkin rüzgâr hızına göre
+        /// buharlaşmalı + ıslak iletim ısı kaybını (Watt) hesaplar.
+        /// </summary>
+        public static float ComputeEvaporativeWetHeatLossWatts(
+            float wetness01,
+            float localWindSpeedMps,
+            float clothingWindBlock01 = 0.0f)
+        {
+            float w = float.IsFinite(wetness01) ? Math.Clamp(wetness01, 0.0f, 1.0f) : 0.0f;
+            if (w <= 0.0001f)
+            {
+                return 0.0f;
+            }
+
+            float safeWind = float.IsFinite(localWindSpeedMps) ? MathF.Max(0.0f, localWindSpeedMps) : 0.0f;
+            float safeBlock = float.IsFinite(clothingWindBlock01) ? Math.Clamp(clothingWindBlock01, 0.0f, 0.95f) : 0.0f;
+            float effectiveWind = safeWind * (1.0f - safeBlock);
+            return w * (42.0f + (6.5f * Math.Clamp(effectiveWind, 0.0f, 30.0f)));
+        }
 
         /// <summary>
         /// Paket 4A: Acik gokyuzunde yagmur altinda islanma, cati altinda veya ates/firin isisi yaninda hizla kuruma
@@ -370,6 +425,221 @@ namespace Stratocraft.Character.Systems
             {
                 vitals.BleedOutTimerSeconds = MathF.Max(0.0f, vitals.BleedOutTimerSeconds - deltaTime);
             }
+        }
+
+        /// <summary>
+        /// Paket 4B (İP-8): Çıplak hava sıcaklığı yerine JAG/TI EffectiveWindChillCelsius, giysi etkin TotalEffectiveClo
+        /// ısıl direnci, astarsız metal zırh ThermalBridgePenaltyWatts iletim kaybı ve ıslak buharlaşma ısı kaybını
+        /// 37.0°C çekirdek termodinamiğine bağlayan aşırı yüklenmiş biyoloji adımı.
+        /// </summary>
+        public void StepBiology(
+            ref CharacterVitalsComponent vitals,
+            float airTempCelsius,
+            float localWindSpeedMps,
+            in PlayerThermalGearSummary gearSummary,
+            float deltaTime)
+        {
+            StepBiology(
+                ref vitals,
+                airTempCelsius,
+                localWindSpeedMps,
+                in gearSummary,
+                isSubmergedOrInRain: false,
+                deltaTime: deltaTime);
+        }
+
+        /// <summary>
+        /// Paket 4B (İP-8): JAG/TI Wind Chill, katmanlı clo, ıslak buharlaşma ve metal termal köprü
+        /// ile tam entegre A-kararlı çekirdek vücut ısısı ve biyoloji adımı.
+        /// </summary>
+        public void StepBiology(
+            ref CharacterVitalsComponent vitals,
+            float airTempCelsius,
+            float localWindSpeedMps,
+            in PlayerThermalGearSummary gearSummary,
+            bool isSubmergedOrInRain,
+            float deltaTime)
+        {
+            if (!float.IsFinite(deltaTime) || deltaTime <= 0.0f)
+            {
+                return;
+            }
+
+            float safeAirTemp = float.IsFinite(airTempCelsius) ? airTempCelsius : 20.0f;
+            float safeWind = float.IsFinite(localWindSpeedMps) ? MathF.Max(0.0f, localWindSpeedMps) : 0.0f;
+            float effectiveClo = float.IsFinite(gearSummary.TotalEffectiveClo)
+                ? Math.Clamp(gearSummary.TotalEffectiveClo, 0.0f, ThermalClothingInsulationSystem.MaxTotalEffectiveClo)
+                : 0.0f;
+            float windBlock01 = float.IsFinite(gearSummary.AggregateWindBlock01)
+                ? Math.Clamp(gearSummary.AggregateWindBlock01, 0.0f, ThermalClothingInsulationSystem.MaxAggregateWindBlock01)
+                : 0.0f;
+            float bridgeWatts = float.IsFinite(gearSummary.ThermalBridgePenaltyWatts)
+                ? MathF.Max(0.0f, gearSummary.ThermalBridgePenaltyWatts)
+                : 0.0f;
+            float gearWetness = float.IsFinite(gearSummary.AverageWetness01)
+                ? Math.Clamp(gearSummary.AverageWetness01, 0.0f, 1.0f)
+                : 0.0f;
+
+            if (isSubmergedOrInRain && gearWetness <= 0.001f)
+            {
+                float wetTarget = vitals.SubmergedDepthMeters > 0.1f ? 1.0f : 0.85f;
+                float wetAlpha = 1.0f - MathF.Exp(-1.2f * deltaTime);
+                vitals.Wetness01 = Math.Clamp(vitals.Wetness01 + (wetTarget - vitals.Wetness01) * wetAlpha, 0.0f, 1.0f);
+                gearWetness = MathF.Max(gearWetness, vitals.Wetness01);
+            }
+            else
+            {
+                vitals.Wetness01 = gearWetness;
+            }
+
+            Wetness01 = gearWetness;
+            TotalEffectiveClo = effectiveClo;
+            ThermalBridgePenaltyWatts = bridgeWatts;
+
+            float effectiveWindChill = ThermalClothingInsulationSystem.ComputeJagTiWindChillCelsius(
+                safeAirTemp,
+                safeWind,
+                windBlock01);
+            EffectiveWindChillCelsius = effectiveWindChill;
+
+            float evapWatts = ComputeEvaporativeWetHeatLossWatts(gearWetness, safeWind, windBlock01);
+            EvaporativeHeatLossWatts = evapWatts;
+
+            // Termal denge (T_eq) ve iletkenlik (lambda) hesabı:
+            // - Kuru kürk parka (1.45 clo) veya kürk astarlı metal zırh (1.35 clo) T_a = -10°C, V = 18 m/s tipide >= 36.5°C normotermiyi korur.
+            // - Çıplak, ıslak kumaşlı (0.08 clo) veya astarsız metal zırhlı (> 40W köprü cezası) oyuncu hızla < 35.0°C hipotermiye girer.
+            float targetCoreTemp;
+            float baseConductance;
+
+            if (effectiveWindChill < 22.0f)
+            {
+                float cloWarmthShift = effectiveClo * 19.5f * (1.0f - 0.65f * gearWetness);
+                float bridgeCoolingShift = bridgeWatts * 0.32f;
+                float evapCoolingShift = evapWatts * 0.08f;
+                float microclimateTemp = effectiveWindChill + cloWarmthShift - bridgeCoolingShift - evapCoolingShift;
+
+                float coldDeficit = MathF.Min(0.0f, microclimateTemp - 18.0f);
+                float cloResistance = 1.0f + (1.85f * effectiveClo * (1.0f - 0.75f * gearWetness));
+                float equilibriumShift = (coldDeficit * 0.145f) / MathF.Max(1.0f, cloResistance);
+                targetCoreTemp = Math.Clamp(NormalBodyTempCelsius + equilibriumShift, 26.0f, NormalBodyTempCelsius);
+
+                float coldLossMultiplier = 1.0f + (2.2f * gearWetness) + (bridgeWatts * 0.025f);
+                baseConductance = (0.065f * coldLossMultiplier) / MathF.Max(1.0f, cloResistance);
+            }
+            else
+            {
+                float heatExcess = effectiveWindChill - 22.0f;
+                float heatRetention = 1.0f + (0.12f * effectiveClo) - (0.35f * gearWetness);
+                float equilibriumShift = heatExcess * 0.085f * Math.Clamp(heatRetention, 0.4f, 1.4f);
+                targetCoreTemp = Math.Clamp(NormalBodyTempCelsius + equilibriumShift, NormalBodyTempCelsius, 44.0f);
+                baseConductance = 0.035f;
+            }
+
+            float decay = MathF.Exp(-baseConductance * deltaTime);
+            vitals.CoreBodyTempCelsius = targetCoreTemp + (vitals.CoreBodyTempCelsius - targetCoreTemp) * decay;
+
+            // Hipotermi (< 35.0 C) ve Hipertermi (> 39.5 C) Etkileri
+            bool isHypothermic = vitals.CoreBodyTempCelsius < HypothermiaThresholdCelsius;
+            bool isHyperthermic = vitals.CoreBodyTempCelsius > HyperthermiaThresholdCelsius;
+
+            if (isHypothermic)
+            {
+                vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.Hypothermia;
+                float severity = vitals.CoreBodyTempCelsius < SevereHypothermiaThresholdCelsius
+                    ? (1.0f + (SevereHypothermiaThresholdCelsius - vitals.CoreBodyTempCelsius) * 0.8f)
+                    : 1.0f;
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.5f * severity * deltaTime);
+            }
+            else
+            {
+                vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.Hypothermia;
+            }
+
+            if (isHyperthermic)
+            {
+                vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.Hyperthermia;
+                vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.9f * deltaTime);
+                vitals.Stamina = MathF.Max(0.0f, vitals.Stamina - 2.5f * deltaTime);
+                if (vitals.CoreBodyTempCelsius > SevereHyperthermiaThresholdCelsius)
+                {
+                    vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.8f * deltaTime);
+                }
+            }
+            else
+            {
+                vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.Hyperthermia;
+            }
+
+            float coldShiverMultiplier = isHypothermic
+                ? 2.0f
+                : (vitals.CoreBodyTempCelsius < 36.0f ? 1.6f : 1.0f);
+            float heatThirstMultiplier = isHyperthermic ? 2.0f : 1.0f;
+            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 0.35f * coldShiverMultiplier * deltaTime);
+            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.05f * heatThirstMultiplier * deltaTime);
+
+            if (vitals.HungerKcal <= 0.01f || vitals.ThirstHydration <= 0.01f)
+            {
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.5f * deltaTime);
+                float maxStarvedStamina = vitals.MaxStamina * 0.40f;
+                if (vitals.Stamina > maxStarvedStamina)
+                {
+                    vitals.Stamina = maxStarvedStamina;
+                }
+            }
+            else if (vitals.HungerKcal >= 1600.0f &&
+                     vitals.ThirstHydration >= 80.0f &&
+                     vitals.CurrentHp > 0.0f &&
+                     !isHypothermic &&
+                     !isHyperthermic &&
+                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush)) == 0)
+            {
+                vitals.CurrentHp = MathF.Min(vitals.MaxHp, vitals.CurrentHp + 0.8f * deltaTime);
+                vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 4.0f * deltaTime);
+            }
+
+            float activeBleed = MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec);
+            if ((vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 && activeBleed <= 0.001f)
+            {
+                activeBleed = 1.5f;
+                BleedRateHpPerSec = 1.5f;
+            }
+            if (activeBleed > 0.001f)
+            {
+                vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.HeavyBleeding;
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - activeBleed * deltaTime);
+                float clotStep = 0.35f * deltaTime;
+                BleedRateHpPerSec = MathF.Max(0.0f, BleedRateHpPerSec - clotStep);
+                GlobalPlayerBleedRateHpPerSec = MathF.Max(0.0f, GlobalPlayerBleedRateHpPerSec - clotStep);
+                if (MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec) <= 0.001f)
+                {
+                    vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.HeavyBleeding;
+                }
+            }
+
+            if (vitals.CurrentHp <= 0.0f && vitals.BleedOutTimerSeconds > 0.0f)
+            {
+                vitals.BleedOutTimerSeconds = MathF.Max(0.0f, vitals.BleedOutTimerSeconds - deltaTime);
+            }
+        }
+
+        /// <summary>
+        /// Paket 4B (İP-8): Eş-anlamlı açık adlandırılmış termal giysi biyoloji adımı.
+        /// </summary>
+        public void StepBiologyWithThermalGear(
+            ref CharacterVitalsComponent vitals,
+            float airTempCelsius,
+            float localWindSpeedMps,
+            in PlayerThermalGearSummary gearSummary,
+            float deltaTime,
+            bool isSubmergedOrInRain = false)
+        {
+            StepBiology(
+                ref vitals,
+                airTempCelsius,
+                localWindSpeedMps,
+                in gearSummary,
+                isSubmergedOrInRain,
+                deltaTime);
         }
     }
 }

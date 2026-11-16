@@ -33,7 +33,7 @@ namespace Stratocraft.Character
 
         private readonly List<RegisteredMindStationInfo> _registeredNonCampfireStations = new(8);
         private readonly List<FacetedVoxelTriangle> _silhouetteTris = new(256);
-        private readonly Mesh?[] _silhouetteMeshes = new Mesh?[4];
+        private readonly Mesh?[] _silhouetteMeshes = new Mesh?[5];
 
         private uint _nextStationId = 100u;
         private int _hoveredBlueprintIndex;
@@ -71,7 +71,8 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
             Material? sharedVoxelMat,
             Stage1BloomeryAndForgingController? bloomeryCtrl = null,
-            Stage1WheelbarrowController? wheelbarrowCtrl = null)
+            Stage1WheelbarrowController? wheelbarrowCtrl = null,
+            Stage1WindmillController? windmillCtrl = null)
         {
             if (_finishingCrouchTimer > 0f)
             {
@@ -115,31 +116,36 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // Hizli klavye kisayollari: [1..4] dogrulama, [G] secili kartin 2.8 sn dusunce silueti ipucu
+            // Hizli klavye kisayollari: [1..5] dogrulama, [G] secili kartin 2.8 sn dusunce silueti ipucu
             if (Input.GetKeyDown(KeyCode.Alpha1))
             {
-                ExecuteValidateAndBind(MindStructureBlueprintId.Campfire, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl);
+                ExecuteValidateAndBind(MindStructureBlueprintId.Campfire, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                 return;
             }
             if (Input.GetKeyDown(KeyCode.Alpha2))
             {
-                ExecuteValidateAndBind(MindStructureBlueprintId.CharcoalPit, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl);
+                ExecuteValidateAndBind(MindStructureBlueprintId.CharcoalPit, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                 return;
             }
             if (Input.GetKeyDown(KeyCode.Alpha3))
             {
-                ExecuteValidateAndBind(MindStructureBlueprintId.BloomeryFurnace, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl);
+                ExecuteValidateAndBind(MindStructureBlueprintId.BloomeryFurnace, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                 return;
             }
             if (Input.GetKeyDown(KeyCode.Alpha4))
             {
-                ExecuteValidateAndBind(MindStructureBlueprintId.WoodenWheelbarrow, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl);
+                ExecuteValidateAndBind(MindStructureBlueprintId.WoodenWheelbarrow, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha5))
+            {
+                ExecuteValidateAndBind(MindStructureBlueprintId.Windmill, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                 return;
             }
 
             if (Input.GetKeyDown(KeyCode.G))
             {
-                MindStructureBlueprintId bp = (MindStructureBlueprintId)Mathf.Clamp(_hoveredBlueprintIndex, 0, 3);
+                MindStructureBlueprintId bp = (MindStructureBlueprintId)Mathf.Clamp(_hoveredBlueprintIndex, 0, 4);
                 SpawnThoughtSilhouetteHint(bp, cam, playerTransform, miningCtrl, worldChunks, sharedVoxelMat);
                 CloseMindMenu(restoreCursorLock: true);
             }
@@ -155,7 +161,8 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
             Material? sharedVoxelMat,
             Stage1BloomeryAndForgingController? bloomeryCtrl = null,
-            Stage1WheelbarrowController? wheelbarrowCtrl = null)
+            Stage1WheelbarrowController? wheelbarrowCtrl = null,
+            Stage1WindmillController? windmillCtrl = null)
         {
             EnsureGuiStyles();
 
@@ -167,7 +174,7 @@ namespace Stratocraft.Character
             if (!IsMindMenuOpen) return;
 
             float panelW = Mathf.Min(700f, Screen.width - 40f);
-            float panelH = 408f;
+            float panelH = 490f;
             float px = (Screen.width - panelW) * 0.5f;
             float py = (Screen.height - panelH) * 0.5f;
 
@@ -179,7 +186,7 @@ namespace Stratocraft.Character
             GUI.Label(new Rect(px + 18f, py + 12f, panelW - 36f, 26f),
                 "🧠 ZİHİN İNŞA FİKİRLERİ  ([T] / [ESC] Kapat)", _titleStyle!);
             GUI.Label(new Rect(px + 18f, py + 38f, panelW - 36f, 22f),
-                "Önce malzemeleri yere [Sağ Tık] ile dizin -> Ardından buradan [Sol Tık / 1..4] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
+                "Önce malzemeleri yere [Sağ Tık] ile dizin -> Ardından buradan [Sol Tık / 1..5] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
                 _subTitleStyle!);
 
             float cardStartY = py + 68f;
@@ -187,7 +194,7 @@ namespace Stratocraft.Character
             float cardGap = 8f;
             Vector2 mousePos = Event.current.mousePosition;
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 5; i++)
             {
                 MindStructureBlueprintId bp = (MindStructureBlueprintId)i;
                 Rect cardRect = new Rect(px + 18f, cardStartY + i * (cardH + cardGap), panelW - 36f, cardH);
@@ -205,7 +212,8 @@ namespace Stratocraft.Character
                     MindStructureBlueprintId.Campfire => "🔥",
                     MindStructureBlueprintId.CharcoalPit => "🪵",
                     MindStructureBlueprintId.BloomeryFurnace => "🏺",
-                    _ => "🛞"
+                    MindStructureBlueprintId.WoodenWheelbarrow => "🛞",
+                    _ => "🌬️"
                 };
 
                 string header = $"[{i + 1}] {icon} {MindStructureClusterValidator.GetDisplayName(bp)}";
@@ -223,7 +231,7 @@ namespace Stratocraft.Character
                     if (Event.current.button == 0)
                     {
                         Event.current.Use();
-                        ExecuteValidateAndBind(bp, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl);
+                        ExecuteValidateAndBind(bp, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                         return;
                     }
                     if (Event.current.button == 1)
@@ -275,7 +283,8 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
             Material? sharedVoxelMat,
             Stage1BloomeryAndForgingController? bloomeryCtrl = null,
-            Stage1WheelbarrowController? wheelbarrowCtrl = null)
+            Stage1WheelbarrowController? wheelbarrowCtrl = null,
+            Stage1WindmillController? windmillCtrl = null)
         {
             CloseMindMenu(restoreCursorLock: true);
 
@@ -319,6 +328,10 @@ namespace Stratocraft.Character
             else if (blueprint == MindStructureBlueprintId.WoodenWheelbarrow && wheelbarrowCtrl != null)
             {
                 wheelbarrowCtrl.RegisterWheelbarrowStation(newStationId, in res, looseBuildSystem, sharedVoxelMat);
+            }
+            else if (blueprint == MindStructureBlueprintId.Windmill && windmillCtrl != null)
+            {
+                windmillCtrl.RegisterWindmillStation(newStationId, in res, looseBuildSystem, sharedVoxelMat);
             }
             else
             {
@@ -552,6 +565,22 @@ namespace Stratocraft.Character
                     EmitThinLineBar(new SysVec3(0.08f, 0.22f, 0.46f), new SysVec3(0.30f, 0.46f, -0.55f), 0.014f, chalkBlue, 20, _silhouetteTris);
                     EmitThinLineBar(new SysVec3(-0.24f, 0.36f, 0.22f), new SysVec3(0.24f, 0.36f, 0.22f), 0.014f, chalkBlue, 20, _silhouetteTris);
                     EmitThinLineBar(new SysVec3(-0.26f, 0.40f, -0.25f), new SysVec3(0.26f, 0.40f, -0.25f), 0.014f, chalkBlue, 20, _silhouetteTris);
+                    break;
+
+                case MindStructureBlueprintId.Windmill:
+                    // Sekizgen tas kaide halkasi + 4 dikey kule diregi + ust 4 yelken kanat arti cizgisi
+                    EmitRingStrips(new SysVec3(0f, 0.08f, 0f), 0.88f, 8, 0.016f, chalkBlue, 20, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.85f, 0f), 0.56f, 8, 0.014f, chalkGlow, 30, _silhouetteTris);
+                    for (int p = 0; p < 4; p++)
+                    {
+                        float a = (p / 4f) * MathF.PI * 2f + (MathF.PI * 0.25f);
+                        EmitThinLineBar(
+                            new SysVec3(MathF.Cos(a) * 0.78f, 0.08f, MathF.Sin(a) * 0.78f),
+                            new SysVec3(MathF.Cos(a) * 0.36f, 2.80f, MathF.Sin(a) * 0.36f),
+                            0.015f, chalkBlue, 22, _silhouetteTris);
+                    }
+                    EmitThinLineBar(new SysVec3(-1.65f, 2.85f, 0.42f), new SysVec3(1.65f, 2.85f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0f, 1.20f, 0.42f), new SysVec3(0f, 4.50f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
                     break;
             }
 

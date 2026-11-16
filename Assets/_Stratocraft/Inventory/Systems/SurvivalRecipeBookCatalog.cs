@@ -341,7 +341,25 @@ namespace Stratocraft.Inventory.Systems
                 title: "Bitkisel Sargı Bezi & Taşınabilir İstasyon Kitleri",
                 ingredientsOrSource: "Sargı Bezi = 2x Yaprak + 2x Lif | Kamp Ateşi Kiti = 3x Dal + 2x Çakmaktaşı + 1x Lif | Taş Ocak Kiti = 5x Taş + 2x Dal + 1x Toprak",
                 toolOrKeybind: "[I] Çanta Ortası veya 3'lü Birleştirme Yuvası -> [R / İple Bağla]",
-                stepByStepGuide: "Bitkisel Sargı Bezi kanamayı durdurur ve can yeniler. İstasyon kitleri ise acil durumda çantada hazır taşınabilen alternatif kurulum paketleridir.")
+                stepByStepGuide: "Bitkisel Sargı Bezi kanamayı durdurur ve can yeniler. İstasyon kitleri ise acil durumda çantada hazır taşınabilen alternatif kurulum paketleridir."),
+
+            new(
+                id: "craft_windmill_sail_panel",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "[I] Değirmen Kanadı",
+                title: "Yel Değirmeni Yelken Kanadı (2× Sopa + 2× Kumaş + 1× Lif İp)",
+                ingredientsOrSource: "2x Kuru Dal (Stick) + 2x Dokuma Kumaş / Deri (TacticalCloth / LeatherPadding) + 1x Bitki Lifi (PlantFiber).",
+                toolOrKeybind: "[I] Çanta Bezi 3'lü Birleştirme Alanı -> [R / İple Bağla]",
+                stepByStepGuide: "[T] -> [5] Fiziksel Yel Değirmeni rotorunu kurmak için 4 adet Yelken Kanadı üretilir. Ayrıca fırtınada (> 8.5 rad/s) mekanik şerit freni [Shift+E] ile kilitlenmezse yırtılan değirmen kanatlarını [Sağ Tık] ile onarmak için kullanılır."),
+
+            new(
+                id: "craft_winter_layered_garments",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "[I] Katmanlı Kış Giysileri (clo)",
+                title: "Kış Giysileri: Kumaş İçlik, Yağlı Deri Rüzgârlık, Ağır Kürk Parka ve Astarlı Zırh",
+                ingredientsOrSource: "Kumaş İçlik = 3x Kumaş + 2x Lif (0.45 clo) | Yağlı Deri Rüzgârlık = 3x Deri + 1x Kumaş + 1x Lif (0.80 clo, %88 rüzgâr kesici) | Ağır Kürk Parka = 3x Kürk + 2x Deri + 1x Lif (1.45 clo) | Kürk Çizme = 2x Kürk + 1x Deri + 1x Lif.",
+                toolOrKeybind: "[I] Çanta Bezi Birleştirme Alanı -> [R / İple Bağla] -> [Sağ Tık] ile Zırh Yuvasına Kuşan",
+                stepByStepGuide: "ISO 9920 clo yalıtım sistemi: Kumaş İçlik hızlı kurur ama ıslandığında yalıtımının %82'sini kaybeder. Yağlı Deri Rüzgârlık rüzgâr soğuğunu (Wind Chill) %88 keser ve yağmuru kaydırır. Ağır Kürk Parka (1.45 clo) ve Kürk Astarlı Çizme dondurucu tipide normotermiyi korur. Metal zırhlara iç kürk/deri astar takıldığında soğuktaki (> 40W) metal termal köprü cezası %100 sıfırlanır!")
         };
 
         // =====================================================================
@@ -383,7 +401,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "[T]->[4] 36 Yuvalı Ahşap El Arabası (WoodenWheelbarrow)",
                 ingredientsOrSource: "1x Ahşap Tekerlek + En az 4-6x Odun/Dal (en az 2 Yarılmış Odun + 2 Kuru Dal) + 2x Bitki Lifi.",
                 toolOrKeybind: "Yere [Sağ Tık] ile Diz -> [T] Zihin İnşası -> [4] Ahşap El Arabası",
-                stepByStepGuide: "1) Önce [I] çantada 1x Ahşap Tekerlek üret ve [Sağ Tık] ile yere koy. 2) Arkasına tekne ve tutma kolları için Yarılmış Odun + Kuru Dal ve bağlamak için 2x Bitki Lifi diz. 3) [T] -> [4] ile mühürlendiğinde 36 yuvalı gerçek 3B Ahşap El Arabası oluşur; kasasına [Sağ Tık] ile yük koyup [E] ile geri alabilir, arka kollarına bakıp [E] ile sürebilirsin.")
+                stepByStepGuide: "1) Önce [I] çantada 1x Ahşap Tekerlek üret ve [Sağ Tık] ile yere koy. 2) Arkasına tekne ve tutma kolları için Yarılmış Odun + Kuru Dal ve bağlamak için 2x Bitki Lifi diz. 3) [T] -> [4] ile mühürlendiğinde 36 yuvalı gerçek 3B Ahşap El Arabası oluşur; kasasına [Sağ Tık] ile yük koyup [E] ile geri alabilir, arka kollarına bakıp [E] ile sürebilirsin."),
+
+            new(
+                id: "mind_physical_windmill_grinder",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] -> [5] Rüzgâr & Öğütme",
+                title: "[T]->[5] Fiziksel Yel Değirmeni: 4 Taş Kaide + 4 Ahşap Direk + 4 Yelken Kanat, Betz Verimi ve [Shift+E] Fırtına Freni",
+                ingredientsOrSource: "En az 4x Kaba Taş / Taş Kaide + 4x Ahşap Direk / Odun / Çark + 4x Yel Değirmeni Yelken Kanadı (veya 4x Kumaş/Deri + 4x Sopa).",
+                toolOrKeybind: "Yere [Sağ Tık] ile Diz -> [T] Zihin İnşası -> [5] Yel Değirmeni | Yükle: [Sağ Tık] | Topla: [E] | Fren: [Shift+E]",
+                stepByStepGuide: "1) Hellmann irtifa profili gereği rüzgâr tepelerde vadiden >= 1.3x güçlü eser; duvar arkası rüzgâr gölgesinden ve diğer değirmenlerin 14m iz konisinden kaçınarak açık sırta 4 Taş + 4 Ahşap + 4 Yelken Kanat dizip [T] -> [5] ile mühürle. 2) Betz sınırı (Cp <= 0.34 < 16/27) ve cos^2(Δψ) yönelim torkuyla dönen değirmene [Sağ Tık] ile Tahıl (6.000 J -> 2x Un), Ham Cevher (14.000 J -> Zengin Cevher Tozu) veya Mermer/Kalker (9.000 J -> 2x Kalsiyum Akı Tozu) yükle, [E] ile topla. 3) Şiddetli fırtınada (> 8.5 rad/s) kumaş yelkenlerin yırtılmaması için [Shift+E] ile mekanik şerit frenini kilitle!")
         };
 
         // =====================================================================
@@ -548,7 +575,25 @@ namespace Stratocraft.Inventory.Systems
                 title: "8. Bulut Tipleri, Orografik Yağmur Gölgesi ve Denizci Kızıl Gökyüzü Kuralı",
                 ingredientsOrSource: "3B Dünya-Uzayı Bulutları (Cumulus, Cirrus, Cumulonimbus) + Rayleigh Ufuk Saçılması.",
                 toolOrKeybind: "\"Akşam kızıllığı güne iyilik, sabah kızıllığı fırtına habercisi\" (Rayleigh Optik Yolu)",
-                stepByStepGuide: "1) Bulutlar: Yüksek ince tüy bulutlar (Cirrus) yaklaşan cephenin öncüsüdür; pamuksu Cumulus iyi havayı, koyu tabanlı dev örs bulutu Cumulonimbus ise yalnızca kendi 3B izdüşümü altına yağan sağanak ve şimşeği gösterir. 2) Orografi: Nemli rüzgâr dağın rüzgâr alan yamacına yağış bırakır, arka yamaçta kuru Föhn Yağmur Gölgesi oluşur. 3) Kızıl Gökyüzü Kuralı: Hava sistemleri batıdan doğuya ilerler; akşam batı ufku kızardığında batıdaki hava kuru ve açıktır (iyi hava geliyor), sabah doğu kızardığında ise batıdaki fırtına bulutları alttan aydınlanmaktadır (yağmur/fırtına yaklaşıyor)!")
+                stepByStepGuide: "1) Bulutlar: Yüksek ince tüy bulutlar (Cirrus) yaklaşan cephenin öncüsüdür; pamuksu Cumulus iyi havayı, koyu tabanlı dev örs bulutu Cumulonimbus ise yalnızca kendi 3B izdüşümü altına yağan sağanak ve şimşeği gösterir. 2) Orografi: Nemli rüzgâr dağın rüzgâr alan yamacına yağış bırakır, arka yamaçta kuru Föhn Yağmur Gölgesi oluşur. 3) Kızıl Gökyüzü Kuralı: Hava sistemleri batıdan doğuya ilerler; akşam batı ufku kızardığında batıdaki hava kuru ve açıktır (iyi hava geliyor), sabah doğu kızardığında ise batıdaki fırtına bulutları alttan aydınlanmaktadır (yağmur/fırtına yaklaşıyor)!"),
+
+            new(
+                id: "weather_wetbulb_snow_and_blizzard",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Kar Eşiği & Tipi (Tw)",
+                title: "9. Yaş-Termometre (Tw) Kar Eşiği, Kar Savrulması ve Şimşekli Tipi (Thundersnow)",
+                ingredientsOrSource: "Stull (2011) Islak Hazne Sıcaklığı Tw <= +1.2 °C (Kuru Kar <= -0.5 °C) + Rüzgâr >= 14 m/s (Tipi) + CAPE >= 450 J/kg.",
+                toolOrKeybind: "Higrometre/Termometre Okuma | Çatı Sığınağı & Sundurma İnşası | [Shift+F11] Hava Test Kipi",
+                stepByStepGuide: "1) Yaş-Termometre (Tw) Kar Eşiği: Kuru hava sıcaklığı +1.0 °C iken bile bağıl nem düşükse (%RH <= %40 -> Tw < -0.5 °C) yağış süblimleşme soğumasıyla kuru toz kar (Snow) olarak yağar. 2) Çatı & Savrulma: Çatı altlarına dikey kar yağmaz (ChunkSkyOcclusionMap256), fakat >= 7 m/s rüzgârda kar sırtlardan aşınıp duvar diplerine yığılır ve kamp ateşi/güneş ile eriyen kar önce toprağı nemlendirip (SoilMoisture) doygunlukta tatlı suya dönüşür. 3) Şimşekli Tipi (Thundersnow): Kar fırtınasında CAPE >= 450 J/kg aşıldığında nadir kış yıldırımı çakar; üzerinde metal zırh/silah taşıyan açıkta kalan oyuncunun yıldırım çekme riski 4.5 kata kadar artar (24m Paratoner konisi %100 korur)!"),
+
+            new(
+                id: "weather_windchill_clo_and_thermal_bridge",
+                tab: SurvivalRecipeBookTab.WeatherAndMaritimeForecast,
+                categoryBadge: "Wind Chill, clo & Termal Köprü",
+                title: "10. Rüzgâr Soğuğu (Wind Chill), Duvar Siperi, Islak Giysi Donması ve Metal Termal Köprü",
+                ingredientsOrSource: "JAG/TI Wind Chill (Ta <= 10 °C, V > 4.8 km/sa) + ISO 9920 Giysi Yalıtımı (clo) + UniqueEquipmentInstance İç Astar.",
+                toolOrKeybind: "[Sol Ctrl] Çömelme (%68 Sürükleme Azaltma) | Duvar Siperi (Swind <= 0.20) | Kamp Ateşinde Kuruma",
+                stepByStepGuide: "1) JAG/TI Wind Chill & Siper: -10 °C havada 18 m/s tipi rüzgârı hissedilen sıcaklığı -22 °C'ye düşürür; taş duvar arkasına geçmek (Swind <= 0.20) rüzgâr soğuğunu anında keser ve [Sol Ctrl] ile çömelmek fırtına sürüklemesini >%65 azaltır. 2) Giysi Yalıtımı (clo) & Donma: Kumaş (0.45 clo) ıslandığında yalıtımının %82'sini kaybeder ve dondurucu rüzgârda buz tutarak (FrozenStiffness01) hareket hızını %15 düşürür; Ağır Kürk Parka (1.45 clo) normotermiyi korur. 3) Metal Termal Köprü: < +5 °C soğukta astarsız çıplak metal zırh giymek > 40W iletim ısı kaybıyla (ThermalBridgePenaltyWatts) oyuncuyu hızla dondurur; metal zırha kürk veya deri iç astar takıldığında termal köprü cezası 0.0W olarak tamamen nötralize edilir!")
         };
 
         private static readonly SurvivalRecipeBookTabDefinition[] CachedTabs =
@@ -643,9 +688,15 @@ namespace Stratocraft.Inventory.Systems
         {
             if (!string.IsNullOrEmpty(id))
             {
-                string lookupId = string.Equals(id, "mat_ores_all", StringComparison.OrdinalIgnoreCase)
-                    ? "mat_metal_ores"
-                    : id;
+                string lookupId = id switch
+                {
+                    _ when string.Equals(id, "mat_ores_all", StringComparison.OrdinalIgnoreCase) => "mat_metal_ores",
+                    _ when string.Equals(id, "mind_windmill", StringComparison.OrdinalIgnoreCase) => "mind_physical_windmill_grinder",
+                    _ when string.Equals(id, "craft_winter_garments", StringComparison.OrdinalIgnoreCase) => "craft_winter_layered_garments",
+                    _ when string.Equals(id, "weather_snow_and_blizzard", StringComparison.OrdinalIgnoreCase) => "weather_wetbulb_snow_and_blizzard",
+                    _ when string.Equals(id, "weather_windchill_and_clo", StringComparison.OrdinalIgnoreCase) => "weather_windchill_clo_and_thermal_bridge",
+                    _ => id
+                };
                 for (int i = 0; i < CachedAllEntries.Length; i++)
                 {
                     if (string.Equals(CachedAllEntries[i].Id, lookupId, StringComparison.OrdinalIgnoreCase))

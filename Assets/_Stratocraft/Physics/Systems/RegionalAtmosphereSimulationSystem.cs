@@ -398,6 +398,40 @@ namespace Stratocraft.Physics.Systems
             ushort topY = (ushort)Math.Clamp((int)MathF.Round(
                 (c00.CloudTopWorldY * w00) + (c10.CloudTopWorldY * w10) + (c01.CloudTopWorldY * w01) + (c11.CloudTopWorldY * w11)), 0, 65535);
 
+            PrecipitationKind resolvedKind = PrecipitationKind.None;
+            if (precip >= 0.1f)
+            {
+                if (nearest.ActiveKind != PrecipitationKind.None)
+                {
+                    resolvedKind = nearest.ActiveKind;
+                }
+                else
+                {
+                    float interpAirT = (c00.AirTempCelsius * w00) + (c10.AirTempCelsius * w10) + (c01.AirTempCelsius * w01) + (c11.AirTempCelsius * w11);
+                    float interpEa = (c00.VaporPressureHpa * w00) + (c10.VaporPressureHpa * w10) + (c01.VaporPressureHpa * w01) + (c11.VaporPressureHpa * w11);
+                    float interpEs = ComputeTetensSaturationVaporHpa(interpAirT);
+                    float interpRh01 = interpEs > 1e-4f ? Math.Clamp(interpEa / interpEs, 0.0f, 1.0f) : 0.0f;
+                    resolvedKind = ClassifyPrecipitationPhasePaket4B(precip, interpAirT, interpRh01, capeUshort, out _);
+                }
+            }
+            else if (precip > 0.05f && nearest.ActiveKind != PrecipitationKind.None)
+            {
+                resolvedKind = nearest.ActiveKind;
+            }
+
+            float interpWindX = (c00.WindVelX * w00) + (c10.WindVelX * w10) + (c01.WindVelX * w01) + (c11.WindVelX * w11);
+            float interpWindZ = (c00.WindVelZ * w00) + (c10.WindVelZ * w10) + (c01.WindVelZ * w01) + (c11.WindVelZ * w11);
+            float interpWindSpd = MathF.Sqrt((interpWindX * interpWindX) + (interpWindZ * interpWindZ));
+
+            AtmosphericHazardFlags resolvedHazards = capeUshort > ThunderstormCapeThresholdJPerKg
+                ? AtmosphericHazardFlags.ThunderLightning
+                : AtmosphericHazardFlags.None;
+            if ((nearest.Hazards & AtmosphericHazardFlags.Blizzard) != 0 ||
+                (resolvedKind == PrecipitationKind.Snow && precip >= 3.5f && interpWindSpd >= 14.0f))
+            {
+                resolvedHazards |= AtmosphericHazardFlags.Blizzard;
+            }
+
             return new AtmosphereCellState
             {
                 SurfaceTempCelsius = (c00.SurfaceTempCelsius * w00) + (c10.SurfaceTempCelsius * w10) + (c01.SurfaceTempCelsius * w01) + (c11.SurfaceTempCelsius * w11),
@@ -406,13 +440,13 @@ namespace Stratocraft.Physics.Systems
                 VaporPressureHpa = (c00.VaporPressureHpa * w00) + (c10.VaporPressureHpa * w10) + (c01.VaporPressureHpa * w01) + (c11.VaporPressureHpa * w11),
                 CloudWaterKgPerM2 = (c00.CloudWaterKgPerM2 * w00) + (c10.CloudWaterKgPerM2 * w10) + (c01.CloudWaterKgPerM2 * w01) + (c11.CloudWaterKgPerM2 * w11),
                 SurfacePrecipMmPerHour = precip,
-                WindVelX = (c00.WindVelX * w00) + (c10.WindVelX * w10) + (c01.WindVelX * w01) + (c11.WindVelX * w11),
-                WindVelZ = (c00.WindVelZ * w00) + (c10.WindVelZ * w10) + (c01.WindVelZ * w01) + (c11.WindVelZ * w11),
+                WindVelX = interpWindX,
+                WindVelZ = interpWindZ,
                 CloudBaseWorldY = baseY,
                 CloudTopWorldY = Math.Max(baseY, topY),
                 CapeJPerKg = capeUshort,
-                ActiveKind = precip >= 0.1f ? PrecipitationKind.Rain : nearest.ActiveKind == PrecipitationKind.Rain && precip > 0.05f ? PrecipitationKind.Rain : PrecipitationKind.None,
-                Hazards = capeUshort > ThunderstormCapeThresholdJPerKg ? AtmosphericHazardFlags.ThunderLightning : AtmosphericHazardFlags.None
+                ActiveKind = resolvedKind,
+                Hazards = resolvedHazards
             };
         }
 
@@ -637,16 +671,18 @@ namespace Stratocraft.Physics.Systems
                     float esAmbient = ComputeTetensSaturationVaporHpa(nextAirTempC);
                     float esLifted = liftedCoolingC > 0.01f ? ComputeTetensSaturationVaporHpa(liftedTempC) : esAmbient;
 
+                    float rhAmbient = Math.Clamp(ea / MathF.Max(1e-4f, esAmbient), 0.0f, 1.0f);
+
                     if (ea > esLifted && wOrographic >= -0.08f)
                     {
                         float boost = totalUpdraftMps > 0.2f ? Math.Min(1.0f, alphaCondense * (1.0f + (0.65f * totalUpdraftMps))) : alphaCondense;
                         float deltaHpa = (ea - esLifted) * boost;
                         ea -= deltaHpa;
                         qc += deltaHpa * VaporKgPerM2PerHpa;
+                        rhAmbient = Math.Clamp(ea / MathF.Max(1e-4f, esAmbient), 0.0f, 1.0f);
                     }
                     else if (qc > 0.0f)
                     {
-                        float rhAmbient = ea / MathF.Max(1e-4f, esAmbient);
                         if (rhAmbient < 0.85f || wOrographic < -0.04f)
                         {
                             // Kuru havada veya arka yamac Fohn cokmesinde bulut sivi suyu hizla buharlasir -> Yagmur Golgesi!
@@ -656,13 +692,14 @@ namespace Stratocraft.Physics.Systems
                             float evaporatedCloudKgM2 = Math.Min(qc * evapFrac, maxEvapKgM2);
                             qc -= evaporatedCloudKgM2;
                             ea += evaporatedCloudKgM2 / VaporKgPerM2PerHpa;
+                            rhAmbient = Math.Clamp(ea / MathF.Max(1e-4f, esAmbient), 0.0f, 1.0f);
                         }
                     }
 
                     ea = ClampFinite(ea, 0.05f, 95.0f);
                     qc = ClampFinite(qc, 0.0f, 6.0f);
 
-                    // Kessler (1969) oto-donusum ile yagmur olusumu (0 RNG! Gercekci MODIS LWP 0.3..6.0 kg/m^2 -> 0.5..24 mm/saat!)
+                    // Kessler (1969) oto-donusum ile yagis olusumu (0 RNG! Gercekci MODIS LWP 0.3..6.0 kg/m^2 -> 0.5..24 mm/saat!)
                     float qcCrit = totalUpdraftMps > 0.25f ? 0.28f : 0.48f;
                     float precipMmPerHour = 0.0f;
                     PrecipitationKind activeKind = PrecipitationKind.None;
@@ -676,11 +713,7 @@ namespace Stratocraft.Physics.Systems
 
                         qc = MathF.Max(0.0f, qc - rainedOutKgM2);
                         precipMmPerHour = ClampFinite((rainedOutKgM2 / MathF.Max(0.05f, dt)) * 3600.0f, 0.0f, 85.0f);
-                        if (precipMmPerHour >= 0.1f)
-                        {
-                            activeKind = PrecipitationKind.Rain;
-                        }
-                        else
+                        if (precipMmPerHour < 0.1f)
                         {
                             precipMmPerHour = 0.0f;
                         }
@@ -691,11 +724,25 @@ namespace Stratocraft.Physics.Systems
                     float lclWorldY = ComputeLclCloudBaseWorldY(h, nextAirTempC, dewPointC);
                     ushort cloudBaseY = (ushort)Math.Clamp((int)MathF.Round(lclWorldY), 0, 65535);
 
-                    // Konvektif CAPE ve ThunderLightning (CAPE > 1000 J/kg)
+                    // Konvektif CAPE ve Stull Tw yagis fazi + ThunderLightning / Blizzard
                     ushort capeJPerKg = EvaluateColumnCapeJPerKg(cur.SurfaceTempCelsius, nextAirTempC, ea, qc);
+                    if (precipMmPerHour >= 0.1f)
+                    {
+                        activeKind = ClassifyPrecipitationPhasePaket4B(
+                            precipMmPerHour,
+                            nextAirTempC,
+                            rhAmbient,
+                            capeJPerKg,
+                            out _);
+                    }
+
                     AtmosphericHazardFlags hazards = capeJPerKg > ThunderstormCapeThresholdJPerKg
                         ? AtmosphericHazardFlags.ThunderLightning
                         : AtmosphericHazardFlags.None;
+                    if (activeKind == PrecipitationKind.Snow && precipMmPerHour >= 3.5f && windSpeed >= 14.0f)
+                    {
+                        hazards |= AtmosphericHazardFlags.Blizzard;
+                    }
 
                     ushort cloudTopY = cloudBaseY;
                     if (qc > 0.02f)
@@ -769,6 +816,62 @@ namespace Stratocraft.Physics.Systems
             cloudKgM2 = (c00.CloudWaterKgPerM2 * w00) + (c10.CloudWaterKgPerM2 * w10) + (c01.CloudWaterKgPerM2 * w01) + (c11.CloudWaterKgPerM2 * w11);
             airTempC = (c00.AirTempCelsius * w00) + (c10.AirTempCelsius * w10) + (c01.AirTempCelsius * w01) + (c11.AirTempCelsius * w11);
             terrainH = (_terrainHeightMeters[i00] * w00) + (_terrainHeightMeters[i10] * w10) + (_terrainHeightMeters[i01] * w01) + (_terrainHeightMeters[i11] * w11);
+        }
+
+        /// <summary>
+        /// Stull (2011, J. Appl. Meteor. Climatol.) ampirik yas-termometre sicakligi denklemi (0 B GC).
+        /// Kuru soguk havada T_air &gt; 0°C iken bile kar tanelerinin erimeden yere ulasmasini fiziksel olarak yakalar.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputeStullWetBulbCelsius(float airTempCelsius, float relativeHumidity01)
+        {
+            float ta = Math.Clamp(float.IsFinite(airTempCelsius) ? airTempCelsius : 15.0f, -60.0f, 55.0f);
+            float rhPct = Math.Clamp((float.IsFinite(relativeHumidity01) ? relativeHumidity01 : 0.5f) * 100.0f, 1.0f, 99.9f);
+
+            float term1 = ta * MathF.Atan(0.151977f * MathF.Sqrt(rhPct + 8.313659f));
+            float term2 = MathF.Atan(ta + rhPct);
+            float term3 = -MathF.Atan(rhPct - 1.676331f);
+            float term4 = 0.00391838f * MathF.Pow(rhPct, 1.5f) * MathF.Atan(0.023101f * rhPct);
+            return term1 + term2 + term3 + term4 - 4.686035f;
+        }
+
+        /// <summary>
+        /// Stull (2011) yas-termometre sicakligi Tw &lt;= +1.2°C esigine gore kar, sulusepken, dolu ve yagmur fazini siniflandirir.
+        /// </summary>
+        public static PrecipitationKind ClassifyPrecipitationPhasePaket4B(
+            float surfacePrecipMmPerHour,
+            float airTempCelsius,
+            float relativeHumidity01,
+            ushort capeJPerKg,
+            out float snowFraction01)
+        {
+            if (surfacePrecipMmPerHour < 0.08f || !float.IsFinite(surfacePrecipMmPerHour))
+            {
+                snowFraction01 = 0.0f;
+                return PrecipitationKind.None;
+            }
+
+            float tw = ComputeStullWetBulbCelsius(airTempCelsius, relativeHumidity01);
+            if (tw <= -0.50f)
+            {
+                snowFraction01 = 1.0f;
+                return PrecipitationKind.Snow;
+            }
+
+            if (tw <= 1.20f)
+            {
+                float u = Math.Clamp((1.20f - tw) / 1.70f, 0.0f, 1.0f);
+                snowFraction01 = u * u * (3.0f - (2.0f * u));
+                return tw <= 0.40f ? PrecipitationKind.Snow : PrecipitationKind.Rain;
+            }
+
+            snowFraction01 = 0.0f;
+            if (capeJPerKg >= 2400 && airTempCelsius < 14.0f)
+            {
+                return PrecipitationKind.Hail;
+            }
+
+            return PrecipitationKind.Rain;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
