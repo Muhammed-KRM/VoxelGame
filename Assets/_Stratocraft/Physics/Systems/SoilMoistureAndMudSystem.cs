@@ -135,18 +135,22 @@ namespace Stratocraft.Physics.Systems
             Span<ushort> fluids,
             int maxY,
             out ushort visualDirtySubChunkMask,
-            out bool fluidChanged)
+            out bool fluidChanged,
+            int minY = 1,
+            int maxYInclusive = 254)
         {
             visualDirtySubChunkMask = 0;
             fluidChanged = false;
             _infiltrationParity ^= 1;
 
             int limitY = Math.Clamp(maxY, 2, 255);
+            int startY = Math.Clamp(minY, 1, limitY - 1);
+            int endY = Math.Clamp(maxYInclusive, 0, limitY - 1);
             byte[]? moisture = null;
             int totalAbsorbedMass = 0;
             bool anyMoistInChunk = false;
 
-            for (int y = 1; y < limitY; y++)
+            for (int y = startY; y <= endY; y++)
             {
                 int yBase = y << 8;
                 for (int col = 0; col < 256; col++)
@@ -268,10 +272,27 @@ namespace Stratocraft.Physics.Systems
                     {
                         fluids[idx] = FluidCell16.Pack(cell.Type, (byte)remainingFluidMass, isSettled: false, cell.PressureHead).RawValue;
                     }
+
+                    // Paket 4B.2 Kiyi Dengeleme Garantisi: Toprak su emdiginde yan/ust/alt su komsularini uyandir ki
+                    // kuruyan kiyi hucresini yanindaki durgun gol/deniz aninda geri doldursun!
+                    int lx = col & 15;
+                    int lz = col >> 4;
+                    if (lx > 0 && (fluids[idx - 1] & 0xFF) != 0) fluids[idx - 1] = FluidCell16.WakeRaw(fluids[idx - 1]);
+                    if (lx < 15 && (fluids[idx + 1] & 0xFF) != 0) fluids[idx + 1] = FluidCell16.WakeRaw(fluids[idx + 1]);
+                    if (lz > 0 && (fluids[idx - 16] & 0xFF) != 0) fluids[idx - 16] = FluidCell16.WakeRaw(fluids[idx - 16]);
+                    if (lz < 15 && (fluids[idx + 16] & 0xFF) != 0) fluids[idx + 16] = FluidCell16.WakeRaw(fluids[idx + 16]);
+                    if (y > 1 && (fluids[idx - 256] & 0xFF) != 0) fluids[idx - 256] = FluidCell16.WakeRaw(fluids[idx - 256]);
+                    if (y + 1 < limitY && (fluids[idx + 256] & 0xFF) != 0) fluids[idx + 256] = FluidCell16.WakeRaw(fluids[idx + 256]);
                 }
             }
 
-            if (anyMoistInChunk || (SoilMoistureChunks.TryGetValue((cx, cz), out byte[]? existing) && HasAnyMoisture(existing, limitY)))
+            if (anyMoistInChunk)
+            {
+                ActiveMoistChunks.Add((cx, cz));
+            }
+            else if (!ActiveMoistChunks.Contains((cx, cz)) &&
+                     SoilMoistureChunks.TryGetValue((cx, cz), out byte[]? existing) &&
+                     HasAnyMoisture(existing, limitY))
             {
                 ActiveMoistChunks.Add((cx, cz));
             }

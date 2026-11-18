@@ -108,13 +108,42 @@ namespace Stratocraft.Physics.Systems
             int maxY,
             float deltaTime,
             Func<int, int, int, float> sampleLocalAmbientTempCelsius,
-            out ushort dirtySubChunkMask)
+            out ushort dirtySubChunkMask,
+            bool skipIfKnownLavaFree = false)
         {
             dirtySubChunkMask = 0;
             LastStepCoolingLavaCells = 0;
 
+            if (skipIfKnownLavaFree)
+            {
+                return 0;
+            }
+
             int safeMaxY = Math.Min(maxY, Math.Min(solidVoxels.Length >> 8, fluids.Length >> 8));
             if (safeMaxY <= 1 || deltaTime <= 0f)
+            {
+                return 0;
+            }
+
+            // Paket 4B.2 Hizli On-Tarama: Chunk'ta hic FluidType.Lava hucresi yoksa sayac/tablo islemine girmeden O(N_fast) cik!
+            int minLavaY = safeMaxY;
+            int maxLavaY = -1;
+            for (int y = 0; y < safeMaxY; y++)
+            {
+                int yBase = y << 8;
+                for (int c = 0; c < 256; c++)
+                {
+                    ushort raw = fluids[yBase | c];
+                    if ((raw & 0xFF) != 0 && ((raw >> 8) & 0x03) == (int)FluidType.Lava)
+                    {
+                        if (y < minLavaY) minLavaY = y;
+                        if (y > maxLavaY) maxLavaY = y;
+                        break;
+                    }
+                }
+            }
+
+            if (maxLavaY < 0)
             {
                 return 0;
             }
@@ -139,7 +168,7 @@ namespace Stratocraft.Physics.Systems
             int batchCount = 0;
             int coolingCellsInChunk = 0;
 
-            for (int y = 0; y < safeMaxY; y++)
+            for (int y = minLavaY; y <= maxLavaY; y++)
             {
                 int yBase = y << 8;
                 for (int lz = 0; lz < 16; lz++)

@@ -205,6 +205,27 @@ namespace Stratocraft.Physics.Systems
 
             float[]? chunkCarry = null;
 
+            // Paket 4B.2 O(1) Isi Kaynagi On-Taramasi: Chunk'ta hic lav veya termal ocak/ates yoksa
+            // her kolonda 75-komsu (480.000 hucre!) IsNearThermalHeatSourceInChunk taramasini %100 atla!
+            bool chunkMayContainHeatSource = false;
+            int totalSliceCells = limitY << 8;
+            for (int i = 0; i < totalSliceCells; i++)
+            {
+                ushort fl = fluids[i];
+                if ((fl & 0xFF) != 0 && ((fl >> 8) & 0x03) == (int)FluidType.Lava)
+                {
+                    chunkMayContainHeatSource = true;
+                    break;
+                }
+
+                byte mat = VoxelBitUtility.GetMaterialId(voxels[i]);
+                if (mat != 0 && IsThermalHeatSourceMaterial(mat))
+                {
+                    chunkMayContainHeatSource = true;
+                    break;
+                }
+            }
+
             for (int lz = 0; lz < 16; lz++)
             {
                 for (int lx = 0; lx < 16; lx++)
@@ -249,7 +270,8 @@ namespace Stratocraft.Physics.Systems
 
                     bool hasOpenSky = !roofBlockedBeforeWater &&
                         (skyMap == null || skyMap.HasOpenSkyAbove(lx, Math.Min(255, topWaterY + 1), lz));
-                    bool nearHeat = IsNearThermalHeatSourceInChunk(voxels, fluids, lx, topWaterY, lz, limitY);
+                    bool nearHeat = chunkMayContainHeatSource &&
+                        IsNearThermalHeatSourceInChunk(voxels, fluids, lx, topWaterY, lz, limitY);
 
                     // Kapali magara tavanindaki durgun yeralti sulari yalnizca yaninda lav/ates varsa kaynayip buharlasir!
                     if (!hasOpenSky && !nearHeat)
@@ -293,7 +315,7 @@ namespace Stratocraft.Physics.Systems
                     bool topIsSalt = salinityBitset != null && salinityBitset.IsSaltWaterFlat(cx, cz, (topWaterY << 8) | col);
 
                     // Derin okyanus makro denge modu aciksa: deniz atmosfere saf tatli su buhari uretir, SeaLevelY seviyesi korunur
-                    if (maintainOceanMacroBalance && topIsSalt && topWaterY <= seaLevelY && contiguousWaterCells >= 3)
+                    if (maintainOceanMacroBalance && topIsSalt && topWaterY <= seaLevelY && contiguousWaterCells >= 2)
                     {
                         totalEvaporatedKg += potKg;
                         continue;
@@ -599,36 +621,157 @@ namespace Stratocraft.Physics.Systems
             byte[]? moisture = null;
             int totalSpawnedWaterUnits = 0;
 
+            // Paket 4B.2 Sirt -> Vadi Olugu (Sub-Unit Talweg) Yuzey Suzulmesi icin 16x16 yuzey kotu on-tablosu
+            Span<short> colSurfaceY = stackalloc short[256];
+            Span<short> colBedUnits = stackalloc short[256];
             for (int lz = 0; lz < 16; lz++)
             {
                 for (int lx = 0; lx < 16; lx++)
                 {
                     int col = (lz << 4) | lx;
-
-                    // En ust kati arazi/yapi blogunu bul
-                    int surfaceY = -1;
+                    int sY = -1;
                     for (int y = limitY - 2; y >= 1; y--)
                     {
                         uint raw = voxels[(y << 8) | col];
                         if (raw != 0u && VoxelBitUtility.IsPhysicallySolid(raw))
                         {
-                            surfaceY = y;
+                            sY = y;
                             break;
                         }
                     }
 
+                    colSurfaceY[col] = (short)sY;
+                    if (sY >= 1)
+                    {
+                        uint belowSolid = voxels[(sY << 8) | col];
+                        uint aboveSolid = (sY + 1 < limitY) ? voxels[((sY + 1) << 8) | col] : 0u;
+                        colBedUnits[col] = (short)Math.Clamp(
+                            FluidPorosityUtility.ComputeCellBedElevationUnits255(belowSolid, aboveSolid, sY + 1),
+                            0, short.MaxValue);
+                    }
+                    else
+                    {
+                        colBedUnits[col] = -1;
+                    }
+                }
+            }
+
+            // 1. Asama: Acik gokyuzu altindaki kolonlara yagisi ekle ve gecirimsiz dik sirtlardaki (Stone/Basalt/Marble)
+            // mikroskobik yagmur filmini (< 3 birim) tum tepeyi mavi sel levhasi yapmadan dogrudan alt vadi oluguna aktar!
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    int col = (lz << 4) | lx;
+                    int surfaceY = colSurfaceY[col];
+                    if (surfaceY < 1) continue;
+                    if (skyMap != null && !skyMap.HasOpenSkyAbove(lx, Math.Min(255, surfaceY + 1), lz)) continue;
+
+                    rainCarry[col] += rainFluidUnitsPerCol;
+                }
+            }
+
+            Span<byte> isSlopedRunoffCol = stackalloc byte[256];
+            isSlopedRunoffCol.Clear();
+
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    int col = (lz << 4) | lx;
+                    int surfaceY = colSurfaceY[col];
+                    if (surfaceY < 1) continue;
+
+                    short myBed = colBedUnits[col];
+                    int bestNeighbor = -1;
+                    int bestDrop = 8;
+
+                    if (lx > 0 && colBedUnits[col - 1] >= 0)
+                    {
+                        int d = myBed - colBedUnits[col - 1];
+                        if (d > bestDrop && d <= 780) { bestDrop = d; bestNeighbor = col - 1; }
+                    }
+                    if (lx < 15 && colBedUnits[col + 1] >= 0)
+                    {
+                        int d = myBed - colBedUnits[col + 1];
+                        if (d > bestDrop && d <= 780) { bestDrop = d; bestNeighbor = col + 1; }
+                    }
+                    if (lz > 0 && colBedUnits[col - 16] >= 0)
+                    {
+                        int d = myBed - colBedUnits[col - 16];
+                        if (d > bestDrop && d <= 780) { bestDrop = d; bestNeighbor = col - 16; }
+                    }
+                    if (lz < 15 && colBedUnits[col + 16] >= 0)
+                    {
+                        int d = myBed - colBedUnits[col + 16];
+                        if (d > bestDrop && d <= 780) { bestDrop = d; bestNeighbor = col + 16; }
+                    }
+
+                    if (bestNeighbor >= 0)
+                    {
+                        isSlopedRunoffCol[col] = 1;
+                    }
+
+                    if (rainCarry[col] < 0.35f) continue;
+
+                    byte surfMat = VoxelBitUtility.GetMaterialId(voxels[(surfaceY << 8) | col]);
+                    if (SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(surfMat)) continue;
+
+                    // Eger bu gecirimsiz kaya/buzul kolonu 4 komsusundan birine gore egimli bir sirt/dag yamaci ise (<= 780 ~ 3 blok/m),
+                    // yeni dusen yagmur artisinin %70'ini alt vadi oluguna kaydir; boylece dik daglarda 256 ayri damla patlayip sonmez!
+                    if (bestNeighbor >= 0)
+                    {
+                        float moved = MathF.Min(rainCarry[col], rainFluidUnitsPerCol * 0.70f);
+                        rainCarry[col] -= moved;
+                        rainCarry[bestNeighbor] += moved;
+                    }
+                }
+            }
+
+            for (int lz = 0; lz < 16; lz++)
+            {
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    int col = (lz << 4) | lx;
+                    int surfaceY = colSurfaceY[col];
                     if (surfaceY < 1)
                     {
                         continue;
                     }
 
-                    // Cati / magara tavani altindaysa yagmur ulasmaz
                     if (skyMap != null && !skyMap.HasOpenSkyAbove(lx, Math.Min(255, surfaceY + 1), lz))
                     {
                         continue;
                     }
 
-                    float nextCarry = rainCarry[col] + rainFluidUnitsPerCol;
+                    float nextCarry = rainCarry[col];
+                    if (nextCarry < 1.0f)
+                    {
+                        continue;
+                    }
+
+                    int surfIdx = (surfaceY << 8) | col;
+                    byte surfMat = VoxelBitUtility.GetMaterialId(voxels[surfIdx]);
+                    bool isAbsorptiveSoil = SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(surfMat);
+                    bool hasStandingWaterAbove = (surfaceY + 1 < limitY) &&
+                        (fluids[((surfaceY + 1) << 8) | col] & 0xFF) > 0 &&
+                        (((fluids[((surfaceY + 1) << 8) | col] >> 8) & 0x03) == (int)FluidType.Water);
+
+                    bool needsDrySoilWetting = false;
+                    if (!hasStandingWaterAbove && isAbsorptiveSoil)
+                    {
+                        moisture ??= soilSystem.GetOrCreateChunkMoisture(cx, cz);
+                        needsDrySoilWetting = moisture[surfIdx] < SoilMoistureAndMudSystem.MaxMoistureSaturation;
+                    }
+
+                    // Paket 4B.2 Yagmur Derecik Surekliligi:
+                    // Kuru yamaclarda tekil damlacik firlatip isinlaniyormus/yok oluyormus gibi gorunmesini onlemek icin
+                    // yamac kolonlarinda en az 5 birimlik (Mass >= 5) bagli akis parseli birikene kadar bekle!
+                    if (isSlopedRunoffCol[col] != 0 && !hasStandingWaterAbove && !needsDrySoilWetting && nextCarry < 5.0f)
+                    {
+                        continue;
+                    }
+
                     int incomingUnits = (int)MathF.Floor(nextCarry);
                     rainCarry[col] = nextCarry - incomingUnits;
                     if (incomingUnits <= 0)
@@ -636,15 +779,12 @@ namespace Stratocraft.Physics.Systems
                         continue;
                     }
 
-                    int surfIdx = (surfaceY << 8) | col;
-                    byte surfMat = VoxelBitUtility.GetMaterialId(voxels[surfIdx]);
-
-                    if (SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(surfMat))
+                    if (!hasStandingWaterAbove && isAbsorptiveSoil)
                     {
                         moisture ??= soilSystem.GetOrCreateChunkMoisture(cx, cz);
-                        // Toprak kalinligina bagli su tutma: 1m toprak 1 katman (~29 birim), 5m toprak 5 katman (~145 birim) tutar.
-                        // Gecirimsiz kaya/kil/bosluk tabakasina ulasana kadar asagi dogru suzulur.
-                        int minSoilY = Math.Max(1, surfaceY - 15);
+                        // Horton Yuzey Hidrolojisi: Firtina yagmuru once ust 2 kok-bolgesi toprak katmanini (surfaceY ve surfaceY-1)
+                        // hizla islatip camurlastirir; doygunluk sonrasinda yagmur 16 blok derine gomulmek yerine yuzeyden gollere akar!
+                        int minSoilY = Math.Max(1, surfaceY - 1);
                         for (int sy = surfaceY; sy >= minSoilY && incomingUnits > 0; sy--)
                         {
                             int sIdx = (sy << 8) | col;

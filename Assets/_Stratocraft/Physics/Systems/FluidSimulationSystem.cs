@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
@@ -7,24 +8,23 @@ using Stratocraft.Physics.Jobs;
 namespace Stratocraft.Physics.Systems
 {
     /// <summary>
-    /// GAME LOGIC BIBLE v7.0 Bolum 2.7.D &amp; Paket 4B (IP-1):
-    /// 2000 us (2.0 ms) yigin kare butceli AIMD ve 10.0 Hz (0.100s) sabit-adimli Akiskan Simulasyon Yoneticisi:
-    /// - Durgun (%100 IsSettled) chunk'larda %0 CPU tuketir.
-    /// - Kinematik yan-tampon dilimlerini aktif chunk'lara yonlendirir.
-    /// - Yogun sel / baraj yikimi anlarinda kutle kaybi yasatmadan AIMD TickStride (1..20) ile kare suresini korur.
+    /// GAME LOGIC BIBLE v7.0 Bolum 2.7.D &amp; Paket 4B / 4B.2:
+    /// 2000 us (2.0 ms) yigin kare butceli AIMD, 10.0 Hz (0.100s) sabit-adim ve 192-Bit Alt-Hacim Maskeli
+    /// Akiskan Simulasyon Yoneticisi.
     /// </summary>
     public sealed class FluidSimulationSystem
     {
-        public const double FrameBudgetMicroseconds = 2000.0;
-        public const float FixedTickIntervalSeconds = 0.100f;
-        public const float FixedTickRateHz = 10.0f;
-        public const int MaxCatchupTicksPerFrame = 2;
+        public const double FrameBudgetMicroseconds = 2500.0;
+        public const float FixedTickIntervalSeconds = 1.0f / 12.5f;
+        public const float FixedTickRateHz = 12.5f;
+        public const int MaxCatchupTicksPerFrame = 1;
 
+        private readonly Dictionary<(int cx, int cz), ChunkFluidActivityMask> _chunkActivityMasks = new(128);
         private int _stepCounter;
         private bool _inBatch;
         private long _batchStartTicks;
 
-        public int MaxChunksPerTick { get; private set; } = 16;
+        public int MaxChunksPerTick { get; private set; } = 48;
         public int CurrentTickStride { get; private set; } = 1;
         public double LastStepMicroseconds { get; private set; }
         public double LastBatchMicroseconds { get; private set; }
@@ -33,6 +33,50 @@ namespace Stratocraft.Physics.Systems
         public int LastStepSiphonTransfers { get; private set; }
         public float SubTickAccumulatorSeconds { get; private set; }
         public float SubTickAlpha01 { get; private set; }
+
+        public bool ShouldStepChunkAtDistance(int chebyshevDistanceChunks, int tickIndex)
+        {
+            // Kamera cevresindeki 4 chunk (144m x 144m) icindeki tum aktif sular HER TIKTE guncellenir;
+            // boylece gorunur alandaki _FluidSubTickAlpha 0..1 dongusunde geriye sicrama %100 sifirlanir!
+            if (chebyshevDistanceChunks <= 4 || CurrentTickStride <= 1)
+            {
+                return true;
+            }
+
+            int effectiveStride = Math.Min(3, CurrentTickStride);
+            return ((tickIndex + chebyshevDistanceChunks) % effectiveStride) == 0;
+        }
+
+        public ChunkFluidActivityMask GetOrBuildActivityMask(int cx, int cz, ReadOnlySpan<ushort> fluids, int maxY)
+        {
+            if (_chunkActivityMasks.TryGetValue((cx, cz), out ChunkFluidActivityMask existing) && existing.IsInitialized != 0)
+            {
+                return existing;
+            }
+
+            ChunkFluidActivityMask built = ChunkFluidActivityMask.BuildFromChunkFluids(fluids, maxY);
+            _chunkActivityMasks[(cx, cz)] = built;
+            return built;
+        }
+
+        public void SetActivityMask(int cx, int cz, in ChunkFluidActivityMask mask)
+        {
+            _chunkActivityMasks[(cx, cz)] = mask;
+        }
+
+        public void MarkChunkWetAndActive(int cx, int cz, int y, bool hasLava = false)
+        {
+            if (_chunkActivityMasks.TryGetValue((cx, cz), out ChunkFluidActivityMask mask) && mask.IsInitialized != 0)
+            {
+                mask.MarkLayerWetAndActive(y, hasLava);
+                _chunkActivityMasks[(cx, cz)] = mask;
+            }
+        }
+
+        public void InvalidateChunkActivityMask(int cx, int cz)
+        {
+            _chunkActivityMasks.Remove((cx, cz));
+        }
 
         public int AdvanceTickParity()
         {
@@ -96,15 +140,15 @@ namespace Stratocraft.Physics.Systems
                 return;
             }
 
-            if (LastBatchMicroseconds <= FrameBudgetMicroseconds * 0.8)
+            if (LastBatchMicroseconds <= FrameBudgetMicroseconds * 0.85)
             {
-                MaxChunksPerTick = Math.Clamp(MaxChunksPerTick + 1, 12, 24);
+                MaxChunksPerTick = Math.Clamp(MaxChunksPerTick + 6, 32, 64);
                 CurrentTickStride = Math.Max(1, CurrentTickStride - 1);
             }
             else if (LastBatchMicroseconds > FrameBudgetMicroseconds)
             {
-                MaxChunksPerTick = Math.Clamp(MaxChunksPerTick / 2, 12, 24);
-                CurrentTickStride = Math.Min(20, CurrentTickStride + 2);
+                MaxChunksPerTick = Math.Clamp((MaxChunksPerTick * 3) / 4, 32, 64);
+                CurrentTickStride = Math.Min(4, CurrentTickStride + 1);
             }
         }
 
@@ -150,7 +194,11 @@ namespace Stratocraft.Physics.Systems
             ActiveChunkFluidKinematicsSlice? slice = kinematicsPool?.RentOrGetAndSyncBaseline(
                 chunkX, chunkZ, fluids, activeVolume, currentTickIndex);
 
-            return StepChunkFluid(
+            ChunkFluidActivityMask mask = GetOrBuildActivityMask(chunkX, chunkZ, fluids, sizeY);
+            long startTicks = Stopwatch.GetTimestamp();
+            int parity = explicitTickParity ?? _stepCounter++;
+
+            long remainingMass = FluidCellularAutomataJob.StepFluidGridVolumeConservative(
                 solidVoxels,
                 fluids,
                 sizeX,
@@ -158,9 +206,18 @@ namespace Stratocraft.Physics.Systems
                 sizeZ,
                 out obsidianFormedCount,
                 out steamSlagFizzleCount,
-                explicitTickParity,
-                slice,
-                salinityBits);
+                stepParity: parity,
+                salinityBits: salinityBits,
+                kinematicsSlice: slice,
+                ref mask);
+
+            _chunkActivityMasks[(chunkX, chunkZ)] = mask;
+            TotalRemainingFluidMass = remainingMass;
+            LastStepSiphonTransfers = FluidCellularAutomataJob.LastStepSiphonTransfers;
+
+            long elapsedTicks = Stopwatch.GetTimestamp() - startTicks;
+            LastStepMicroseconds = (elapsedTicks * 1_000_000.0) / Stopwatch.Frequency;
+            return remainingMass;
         }
 
         public long StepChunkFluid(

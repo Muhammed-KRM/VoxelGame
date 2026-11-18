@@ -172,13 +172,15 @@ namespace Stratocraft.Character
                 if (belowFluid.Type != FluidType.None && belowFluid.Mass >= 16)
                 {
                     bedY = fluidWy;
-                    surfY = MathF.Min(fluidWy + 0.98f, bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness(curCell.Mass, 255));
+                    surfY = MathF.Min(fluidWy + 1.0f, bedY + FluidSurfaceSkirtMesher.MassToFluidThickness(curCell.Mass));
                     return;
                 }
             }
 
-            bedY = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowRaw, curRaw, fluidWy) / 255.0f;
-            surfY = MathF.Min(fluidWy + 0.98f, bedY + FluidSurfaceSkirtMesher.ComputeVisualFluidThickness(curCell.Mass, 255));
+            int bedUnits = FluidPorosityUtility.ComputeCellBedElevationUnits255(belowRaw, curRaw, fluidWy);
+            byte cap = FluidPorosityUtility.ComputeCellFluidCapacity(curRaw);
+            bedY = bedUnits * (1.0f / 255.0f);
+            surfY = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedUnits, fluidWy, curCell.Mass, cap) * (1.0f / 255.0f);
         }
 
         /// <summary>
@@ -873,16 +875,15 @@ namespace Stratocraft.Character
                         _verticalVelocity *= 0.45f;
                     }
 
-                    int splashUnits = Mathf.Clamp(Mathf.RoundToInt(8f + impactSpeed * 2.2f), 8, 22);
-                    ApplyMassConservingSwimmerSurge(
-                        worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, wx, surfaceWy, wz, splashUnits);
-                    _swimmerSurgeCooldownSec = 0.24f;
-                }
-                else if (horizSpd > 0.65f && _swimmerSurgeCooldownSec <= 0f)
-                {
-                    ApplyMassConservingSwimmerSurge(
-                        worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, wx, surfaceWy, wz, maxPushUnits: 10);
-                    _swimmerSurgeCooldownSec = 0.28f;
+                    // Yalnizca sig birikintiye yuksek hizla atlandiginda tek seferlik fiziksel sicrama uygula;
+                    // derin deniz/gol icinde yuzerken her 0.28s'de voksel sokup kare dalgalanma URETME (GPU halkasi cizer)!
+                    if (!inWater && impactSpeed >= 4.5f)
+                    {
+                        int splashUnits = Mathf.Clamp(Mathf.RoundToInt(4f + impactSpeed * 1.2f), 4, 12);
+                        ApplyMassConservingSwimmerSurge(
+                            worldChunks, fluidChunks, dirtyFluidChunks, activeFluidChunks, wx, surfaceWy, wz, splashUnits);
+                    }
+                    _swimmerSurgeCooldownSec = 0.50f;
                 }
             }
             else

@@ -63,15 +63,30 @@ namespace Stratocraft.Physics.Data
         public void SnapshotPrevMassBeforeStep(ReadOnlySpan<ushort> fluids, int activeVolume)
         {
             int count = Math.Min(activeVolume, Math.Min(fluids.Length, PrevMass.Length));
-            for (int i = 0; i < count; i++)
+            SnapshotPrevMassWindow(fluids, 0, count);
+        }
+
+        /// <summary>
+        /// Paket 4B.2 Alt-Hacim Optimizasyonu: Yalnizca aktif sivi penceresindeki [startCell .. endCellExclusive)
+        /// araliginda PrevMass kopyalar ve kuru hucrelerde yalnizca sifir olmayan hizlari sifirlayarak L2 kirlenmesini onler.
+        /// </summary>
+        public void SnapshotPrevMassWindow(ReadOnlySpan<ushort> fluids, int startCell, int endCellExclusive)
+        {
+            int maxLen = Math.Min(fluids.Length, PrevMass.Length);
+            int s = Math.Clamp(startCell, 0, maxLen);
+            int e = Math.Clamp(endCellExclusive, s, maxLen);
+            for (int i = s; i < e; i++)
             {
-                ushort raw = fluids[i];
-                byte mass = (byte)(raw & 0xFFu);
-                PrevMass[i] = mass;
+                byte mass = (byte)(fluids[i] & 0xFFu);
+                if (PrevMass[i] != mass)
+                {
+                    PrevMass[i] = mass;
+                }
+
                 if (mass == 0)
                 {
-                    VelX_Q7[i] = 0;
-                    VelZ_Q7[i] = 0;
+                    if (VelX_Q7[i] != 0) VelX_Q7[i] = 0;
+                    if (VelZ_Q7[i] != 0) VelZ_Q7[i] = 0;
                 }
             }
 
@@ -117,8 +132,8 @@ namespace Stratocraft.Physics.Data
     /// </summary>
     public sealed class ActiveChunkFluidKinematicsPool
     {
-        public const int DefaultPrewarmSlices = 32;
-        public const int HardMaxSlices = 64;
+        public const int DefaultPrewarmSlices = 64;
+        public const int HardMaxSlices = 128;
 
         private readonly Stack<ActiveChunkFluidKinematicsSlice> _freeStack;
         private readonly Dictionary<(int cx, int cz), ActiveChunkFluidKinematicsSlice> _leasedByChunk;

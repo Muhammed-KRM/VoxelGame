@@ -1419,9 +1419,9 @@ namespace Stratocraft.WorldGen.Generators
 
             float waterDx = wx - 2.6f, waterDz = wz - (-7.2f);
             float waterPoolDist = MathF.Sqrt(waterDx * waterDx + waterDz * waterDz);
-            inWaterPool = !isObsidianSeam && !inLavaCaldera && wx >= 1 && wx <= 4 && wz >= -9 && wz <= -5 && waterPoolDist < 2.25f && radialMargin > 2.2f;
+            inWaterPool = !isObsidianSeam && !inLavaCaldera && wx >= 1 && wx <= 4 && wz >= -9 && wz <= -5 && waterPoolDist < 2.45f && radialMargin > 2.2f;
 
-            bool nearStarterWater = wx >= 0 && wx <= 5 && wz >= -11 && wz <= -3 && waterPoolDist < 3.65f;
+            bool nearStarterWater = wx >= 0 && wx <= 5 && wz >= -11 && wz <= -3 && waterPoolDist < 3.85f;
             bool nearStarterLava = wx >= 6 && wx <= 13 && wz >= -11 && wz <= -3 && calderaDist < 4.55f;
             inBasinWall = (isObsidianSeam || nearStarterWater || nearStarterLava) && !inWaterPool && !inLavaCaldera;
         }
@@ -1628,12 +1628,38 @@ namespace Stratocraft.WorldGen.Generators
                         if (isNaturalSea && y > solidFloorY && y <= SeaLevelY)
                         {
                             FluidType seaFluidType = inLavaCaldera ? FluidType.Lava : (inAcidPool ? FluidType.Acid : FluidType.Water);
-                            byte head = y < SeaLevelY ? (byte)Math.Min(15, SeaLevelY - y) : (byte)0;
-                            fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: true, pressureHead: head).RawValue;
-                            if (seaFluidType == FluidType.Water && salinityBitset != null)
+                            if (y < SeaLevelY)
                             {
-                                chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);
-                                ChunkSalinityBitset.SetBit(chunkSaltBits, idx, true);
+                                byte head = (byte)Math.Min(15, (SeaLevelY - 1) - y);
+                                fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: true, pressureHead: head).RawValue;
+                                if (seaFluidType == FluidType.Water && salinityBitset != null)
+                                {
+                                    chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);
+                                    ChunkSalinityBitset.SetBit(chunkSaltBits, idx, true);
+                                }
+                                continue;
+                            }
+
+                            // Paket 4B.2 Mutlak Y = SeaLevelY (90.000m) Deniz Duzlemi Kalibrasyonu:
+                            // Derin denizde (solidFloorY < SeaLevelY - 1) y = 89 tam 255 dolu oldugu icin su yuzeyi zaten 90.000m'dedir (y=90 bos kalir).
+                            // Sig sahil bandinda (solidFloorY == SeaLevelY - 1, yani y=89 kati SDF kum) ise kumun ustundeki boslugu
+                            // tam head == SeaLevelY * 255 (90.000m) yapacak kesirli kutleyle doldurarak 0.000m ayna duzlugu saglar!
+                            if (solidFloorY == SeaLevelY - 1)
+                            {
+                                uint belowBeachSolid = voxels[((SeaLevelY - 1) << 8) | colIndex];
+                                int bedUnits = Stratocraft.Physics.Data.FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(
+                                    belowBeachSolid, 0, 0u, seaFluidType, SeaLevelY);
+                                byte shoreMass = Stratocraft.Physics.Data.FluidPorosityUtility.ComputeMassNeededForTargetHeadUnits255(
+                                    bedUnits, SeaLevelY, SeaLevelY * 255, 255);
+                                if (shoreMass > 0)
+                                {
+                                    fluids[idx] = FluidCell16.Pack(seaFluidType, shoreMass, isSettled: true, pressureHead: 0).RawValue;
+                                    if (seaFluidType == FluidType.Water && salinityBitset != null)
+                                    {
+                                        chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);
+                                        ChunkSalinityBitset.SetBit(chunkSaltBits, idx, true);
+                                    }
+                                }
                             }
                             continue;
                         }
@@ -1762,6 +1788,49 @@ namespace Stratocraft.WorldGen.Generators
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids, cachedBiomes);
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
             StampSurfaceFloraAndLandmarksInternal(chunkX, chunkZ, voxels, cachedTopH, cachedBiomes);
+
+            // Paket 4B.2 Sahil Son-Uzlastirma: Yapi/agac/kaya cikintisi (outcrop) damgalama adimlari y = SeaLevelY - 1 veya
+            // y = SeaLevelY kiyi voksellerini degistirdiyse, sig kiyi suyunu tam Y == SeaLevelY (90.000m) duzlemine kalibre et!
+            if (fluids.Length > (SeaLevelY << 8) + 255 && voxels.Length > (SeaLevelY << 8) + 255)
+            {
+                int seaRowBase = SeaLevelY << 8;
+                int belowRowBase = (SeaLevelY - 1) << 8;
+                for (int col = 0; col < 256; col++)
+                {
+                    if ((colFlags[col] & 64) == 0) continue; // Yalnizca dogal deniz (isNaturalSea) kolonlari
+
+                    int seaIdx = seaRowBase | col;
+                    ushort curSeaRaw = fluids[seaIdx];
+                    if ((curSeaRaw & 0xFF) == 0) continue;
+
+                    FluidCell16 curSeaCell = new FluidCell16(curSeaRaw);
+                    byte capAtSea = Stratocraft.Physics.Data.FluidPorosityUtility.ComputeCellFluidCapacity(voxels[seaIdx]);
+                    if (capAtSea == 0)
+                    {
+                        fluids[seaIdx] = 0;
+                        if (chunkSaltBits != null) ChunkSalinityBitset.SetBit(chunkSaltBits, seaIdx, false);
+                        continue;
+                    }
+
+                    int bedUnits = Stratocraft.Physics.Data.FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(
+                        voxels[belowRowBase | col],
+                        fluids[belowRowBase | col],
+                        voxels[seaIdx],
+                        curSeaCell.Type,
+                        SeaLevelY);
+                    byte calibratedMass = Stratocraft.Physics.Data.FluidPorosityUtility.ComputeMassNeededForTargetHeadUnits255(
+                        bedUnits, SeaLevelY, SeaLevelY * 255, capAtSea);
+                    if (calibratedMass == 0)
+                    {
+                        fluids[seaIdx] = 0;
+                        if (chunkSaltBits != null) ChunkSalinityBitset.SetBit(chunkSaltBits, seaIdx, false);
+                    }
+                    else
+                    {
+                        fluids[seaIdx] = FluidCell16.Pack(curSeaCell.Type, calibratedMass, isSettled: true, pressureHead: 0).RawValue;
+                    }
+                }
+            }
         }
 
         private static bool IsSolidCarvableNaturalRock(uint raw)
