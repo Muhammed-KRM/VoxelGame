@@ -1669,6 +1669,15 @@ namespace Stratocraft.WorldGen.Generators
                     bool isNaturalSea = (flags & 64) != 0;
                     bool inAnyFluidBasin = inWaterPool || inLavaCaldera || inAcidPool;
                     int fluidSurfaceY = isNaturalSea ? SeaLevelY : (DefaultSurfaceBaseY - 1);
+                    bool wakeNaturalLavaSeaBorder = false;
+                    if (isNaturalSea && inLavaCaldera)
+                    {
+                        wakeNaturalLavaSeaBorder =
+                            (lx > 0 ? colBiomeIds[colIndex - 1] != 8 : GetBiomeId(wx - 1, wz) != 8) ||
+                            (lx < 15 ? colBiomeIds[colIndex + 1] != 8 : GetBiomeId(wx + 1, wz) != 8) ||
+                            (lz > 0 ? colBiomeIds[colIndex - 16] != 8 : GetBiomeId(wx, wz - 1) != 8) ||
+                            (lz < 15 ? colBiomeIds[colIndex + 16] != 8 : GetBiomeId(wx, wz + 1) != 8);
+                    }
 
                     int maxColumnY = Math.Min(MaxEditableVoxelY - 1, Math.Max(fluidSurfaceY + 3, (int)MathF.Ceiling(topH) + 3));
                     ColumnCaveEntranceInfo colEntrance = PrecomputeColumnCaveEntrance(wx, wz);
@@ -1712,7 +1721,7 @@ namespace Stratocraft.WorldGen.Generators
                             if (y < SeaLevelY)
                             {
                                 byte head = (byte)Math.Min(15, (SeaLevelY - 1) - y);
-                                fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: true, pressureHead: head).RawValue;
+                                fluids[idx] = FluidCell16.Pack(seaFluidType, 255, isSettled: !wakeNaturalLavaSeaBorder, pressureHead: head).RawValue;
                                 if (seaFluidType == FluidType.Water && salinityBitset != null)
                                 {
                                     chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);
@@ -1734,7 +1743,7 @@ namespace Stratocraft.WorldGen.Generators
                                     bedUnits, SeaLevelY, SeaLevelY * 255, 255);
                                 if (shoreMass > 0)
                                 {
-                                    fluids[idx] = FluidCell16.Pack(seaFluidType, shoreMass, isSettled: true, pressureHead: 0).RawValue;
+                                    fluids[idx] = FluidCell16.Pack(seaFluidType, shoreMass, isSettled: !wakeNaturalLavaSeaBorder, pressureHead: 0).RawValue;
                                     if (seaFluidType == FluidType.Water && salinityBitset != null)
                                     {
                                         chunkSaltBits ??= salinityBitset.GetOrCreateChunkBits(chunkX, chunkZ);

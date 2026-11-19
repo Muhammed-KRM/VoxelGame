@@ -997,6 +997,7 @@ namespace Stratocraft.Character
                     IsCreativeFlying = false;
                     _verticalVelocity = 0f;
                 }
+                _lastCreativeSpaceTapTime = -10f;
             }
             else
             {
@@ -1008,7 +1009,7 @@ namespace Stratocraft.Character
 
                 if (jumpOrMantlePressed && !isBackpackOpen)
                 {
-                    if ((_creativeFlightClockSec - _lastCreativeSpaceTapTime) <= 0.48f)
+                    if ((_creativeFlightClockSec - _lastCreativeSpaceTapTime) <= 0.38f)
                     {
                         IsCreativeFlying = !IsCreativeFlying;
                         _lastCreativeSpaceTapTime = -10f;
@@ -1032,7 +1033,7 @@ namespace Stratocraft.Character
                         else
                         {
                             // Cift Space ile ucusu kapatinca yercekimiyle hemen dusmeye basla (Minecraft gibi)
-                            _verticalVelocity = -0.5f;
+                            _verticalVelocity = 0f;
                             _movementState.IsGrounded = 0;
                             _coyoteGroundedTimer = 0f;
                             statusFeedback = "🦶 [YARATICI UÇUŞ KAPANDI]: Serbest düşüş / normal yürüyüş aktif.";
@@ -1286,10 +1287,11 @@ namespace Stratocraft.Character
             Vector3 wishDir = forwardFlat * moveInput.y + rightFlat * moveInput.x;
             if (wishDir.sqrMagnitude > 1f) wishDir.Normalize();
 
-            float flyHorizSpeed = (wantSprint ? 18.5f : 9.8f) * Stage1GameSettings.PlayerMoveSpeedMultiplier;
+            float flyHorizSpeed = (wantSprint ? 21.6f : 10.9f) * Stage1GameSettings.PlayerMoveSpeedMultiplier;
             Vector3 targetHorizVel = wishDir * flyHorizSpeed;
             Vector3 curHorizVel = new Vector3(_movementState.VelocityX, 0f, _movementState.VelocityZ);
-            curHorizVel = Vector3.MoveTowards(curHorizVel, targetHorizVel, deltaTime * 85f);
+            float horizAccel = wishDir.sqrMagnitude > 0.01f ? 75f : 36f;
+            curHorizVel = Vector3.MoveTowards(curHorizVel, targetHorizVel, deltaTime * horizAccel);
 
             _movementState.VelocityX = curHorizVel.x;
             _movementState.VelocityZ = curHorizVel.z;
@@ -1298,13 +1300,13 @@ namespace Stratocraft.Character
             float targetVertVel = 0f;
             if (ascendHeld && !descendHeld)
             {
-                targetVertVel = wantSprint ? 13.5f : 8.2f;
+                targetVertVel = wantSprint ? 14.0f : 8.5f;
             }
             else if (descendHeld && !ascendHeld)
             {
-                targetVertVel = wantSprint ? -15.0f : -9.5f;
+                targetVertVel = wantSprint ? -14.0f : -8.5f;
             }
-            _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, targetVertVel, deltaTime * 85f);
+            _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, targetVertVel, deltaTime * 90f);
 
             Vector3 pos = playerTransform.position;
             float prevFeetY = pos.y;
@@ -1359,8 +1361,8 @@ namespace Stratocraft.Character
                         : (hitUnbreakableFloor ? unbreakableFloorY : nextGroundY);
                     pos.y = floorY;
                     _verticalVelocity = 0f;
-                    // Minecraft gibi alcalirken zemine dokunuldugunda ucusu otomatik kapatip yere bas!
-                    if (_creativeFlyTakeoffGraceSec <= 0f && descendHeld)
+                    // Minecraft gibi zemine dokunuldugunda ucusu otomatik kapatip yere bas!
+                    if (_creativeFlyTakeoffGraceSec <= 0f && !ascendHeld)
                     {
                         IsCreativeFlying = false;
                         _movementState.IsGrounded = 1;
@@ -1825,14 +1827,18 @@ namespace Stratocraft.Character
 
                 // Kirilmaz Kati Taban Kilidi: Duvar kosesine sikisilsa veya kati blok icine gomulunse bile
                 // altindaki kati maddenin icinden asagi dusmek %100 imkansizdir (magarada yukari isinlama YOK!).
+                // NOT: ComputeUnbreakableSolidFloorStopY havada zemin bulamadiginda candidateFeetY (pos.y) doner;
+                // yalnizca gercek temas (unbreakableFloorY > pos.y + 0.0001f || hitSurfaceGround) aninda zemine oturt!
                 float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(
                     worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
-                float effectiveGroundStopY = nextGroundY > -20f
-                    ? Mathf.Max(nextGroundY, unbreakableFloorY)
-                    : unbreakableFloorY;
+                bool hitUnbreakableFloor = unbreakableFloorY > pos.y + 0.0001f;
+                bool hitSurfaceGround = nextGroundY > -20f && pos.y <= nextGroundY;
 
-                if (_jumpLaunchTimer <= 0.001f && _verticalVelocity <= 0.05f && pos.y <= effectiveGroundStopY)
+                if (_jumpLaunchTimer <= 0.001f && _verticalVelocity <= 0.05f && (hitUnbreakableFloor || hitSurfaceGround))
                 {
+                    float effectiveGroundStopY = hitUnbreakableFloor && hitSurfaceGround
+                        ? Mathf.Max(nextGroundY, unbreakableFloorY)
+                        : (hitUnbreakableFloor ? unbreakableFloorY : nextGroundY);
                     pos.y = effectiveGroundStopY;
                     _verticalVelocity = 0f;
                     _movementState.IsGrounded = 1;

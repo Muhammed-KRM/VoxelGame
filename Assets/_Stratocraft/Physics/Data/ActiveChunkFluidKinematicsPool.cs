@@ -26,6 +26,7 @@ namespace Stratocraft.Physics.Data
         public int ChunkZ { get; internal set; }
         public int LastTouchedTickIndex { get; internal set; }
         public bool IsInitializedFromCurrentMass { get; internal set; }
+        public byte QuiescentTicks { get; internal set; }
 
         public ActiveChunkFluidKinematicsSlice(int sliceVolume = MaxSliceVolume)
         {
@@ -55,6 +56,7 @@ namespace Stratocraft.Physics.Data
             }
 
             IsInitializedFromCurrentMass = true;
+            QuiescentTicks = 0;
         }
 
         /// <summary>
@@ -91,6 +93,7 @@ namespace Stratocraft.Physics.Data
             }
 
             IsInitializedFromCurrentMass = true;
+            QuiescentTicks = 0;
         }
 
         /// <summary>
@@ -107,6 +110,7 @@ namespace Stratocraft.Physics.Data
             }
 
             IsInitializedFromCurrentMass = false;
+            QuiescentTicks = 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

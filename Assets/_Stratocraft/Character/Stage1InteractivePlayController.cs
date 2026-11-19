@@ -154,8 +154,8 @@ namespace Stratocraft.Character
         private readonly ChunkSubMeshEntry[] _parallelMeshEntries = new ChunkSubMeshEntry[MaxParallelMeshBatch];
         private readonly ushort[] _parallelMeshVisibleMasks = new ushort[MaxParallelMeshBatch];
         public const float FluidFixedTickSeconds = FluidSimulationSystem.FixedTickIntervalSeconds;
-        public const int MaxFluidMeshRebuildsPerFrame = 16;
-        private const double MaxFluidGpuUploadBudgetMsPerFrame = 1.10;
+        public const int MaxFluidMeshRebuildsPerFrame = 24;
+        private const double MaxFluidGpuUploadBudgetMsPerFrame = 1.60;
 
         private readonly (int cx, int cz)[] _parallelFluidOnlyKeys = new (int cx, int cz)[MaxFluidMeshRebuildsPerFrame];
         private readonly List<FluidRichTriangle>[] _parallelFluidOnlyTris = new List<FluidRichTriangle>[MaxFluidMeshRebuildsPerFrame];
@@ -2174,6 +2174,7 @@ namespace Stratocraft.Character
                         foreach (var dk in _dirtyFluidChunks)
                         {
                             _fluidSystem.InvalidateChunkActivityMask(dk.cx, dk.cz);
+                            _lastUploadedFluidVisualHash.Remove(dk);
                             if (_fluidKinematicsPool.TryGetLeased(dk.cx, dk.cz, out ActiveChunkFluidKinematicsSlice? seamSlice) &&
                                 seamSlice != null)
                             {
@@ -5138,7 +5139,9 @@ namespace Stratocraft.Character
                                 ApplyRichFluidMeshToChunkZeroGc(fmf, key, _parallelFluidOnlyTris[bIdx]);
                             }
 
-                            if (bIdx >= 3 && (_meshRebuildStopwatch.Elapsed.TotalMilliseconds - uploadStartMs) >= MaxFluidGpuUploadBudgetMsPerFrame)
+                            int uploadChebDist = Mathf.Max(Mathf.Abs(key.cx - pCx), Mathf.Abs(key.cz - pCz));
+                            if (uploadChebDist > 3 && bIdx >= 4 &&
+                                (_meshRebuildStopwatch.Elapsed.TotalMilliseconds - uploadStartMs) >= MaxFluidGpuUploadBudgetMsPerFrame)
                             {
                                 break;
                             }

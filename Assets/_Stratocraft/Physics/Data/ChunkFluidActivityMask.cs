@@ -31,7 +31,7 @@ namespace Stratocraft.Physics.Data
         public byte HasAnyLava;
         public byte DirtyVisualFlag;
         public byte IsInitialized;
-        private byte _pad0;
+        public byte QuiescentTicks;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly bool HasAnyWetLayer() => (WetY0 | WetY1 | WetY2) != 0UL;

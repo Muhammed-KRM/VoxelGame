@@ -20,61 +20,12 @@ namespace Stratocraft.Physics.Data
     public static class FluidPorosityUtility
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static byte ComputeCellFluidCapacity(uint solidVoxelRaw, ulong optionalMicroMask64 = ulong.MaxValue)
-        {
-            byte matId = VoxelBitUtility.GetMaterialId(solidVoxelRaw);
-            if (matId == MaterialIdCatalog.Air)
-            {
-                return 255;
-            }
-
-            if (matId == MaterialIdCatalog.IronGrating)
-            {
-                return 224;
-            }
-
-            byte shapeId = VoxelBitUtility.GetShapeId(solidVoxelRaw);
-            if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
-            {
-                int filledSubVoxels = BitOps.PopCount(optionalMicroMask64);
-                int openSubVoxels = Math.Clamp(64 - filledSubVoxels, 0, 64);
-                return (byte)((openSubVoxels * 255) / 64);
-            }
-
-            if (shapeId == 0)
-            {
-                byte density = VoxelBitUtility.GetDensityOrLiquid(solidVoxelRaw);
-                if (density < StratocraftConstants.SdfIsoLevel)
-                {
-                    // Hava tarafindaki dar-bant SDF hucresi tam akiskan alabilir
-                    return 255;
-                }
-
-                // SurfaceNets kati arazi vokselleri (Density >= 64) gecirimsiz tabandir;
-                // su kati vokselin icine bolunmez, ustundeki hucrede alt-voksel taban kotu b(x,y,z) uzerine oturur.
-                return 0;
-            }
-
-            // Mimari yarim levha / kiris sekillerinde kismi bosluk kapasitesi, tam kup (1) ise 0
-            return shapeId switch
-            {
-                ArchitecturalShapeCatalog.HalfSlab => 128,
-                ArchitecturalShapeCatalog.QuarterBeam => 192,
-                ArchitecturalShapeCatalog.Ramp22Low => 160,
-                ArchitecturalShapeCatalog.Ramp45 => 128,
-                _ => 0
-            };
-        }
+        public static byte ComputeCellFluidCapacity(uint solidVoxelRaw, ulong optionalMicroMask64 = ulong.MaxValue) =>
+            FluidHydrostaticsShared.ComputeCellFluidCapacity(solidVoxelRaw, optionalMicroMask64);
 
         /// <summary>
         /// Bir (x, y, z) sivi hucresinin hidrostatik taban yuksekligini (b) [0..255] sabit noktali kutle esdegeri
-        /// biriminde (255 birim = 1.0 metre) hesaplar (Paket 4B.2 Kiyi Hidrostatik Duzluk Garantisi):
-        /// - Eger alt hucrede (y - 1) ayni tipte tam dolu akiskan sutunu varsa: taban kesinlikle y * 255 doner!
-        ///   (Boylece derin denizin ust katmani "alti bos ucurum" sanilip -255 birim hatali head uretmez!)
-        /// - Eger alt hucre (y - 1) ShapeId == 0 dogal SurfaceNets arazisiyse: WorldGen (66..124) yogunlugu ile
-        ///   tam tersinir dogrusal [0..255] alt-voksel kotu doner.
-        /// - Eger alt hucre tam mimari bloksa (ShapeId != 0): y * 255 doner.
-        /// - Yalnizca alt hucre gercekten bos/kismi-dolu selale dususu ise (y - 1) * 255 doner.
+        /// biriminde (255 birim = 1.0 metre) hesaplar (FluidHydrostaticsShared uzerinden tek gercek kaynak).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int ComputeCellHydrostaticBedUnits255(
@@ -82,185 +33,39 @@ namespace Stratocraft.Physics.Data
             ushort belowFluidRaw,
             uint currentSolidRaw,
             FluidType activeFluidType,
-            int y)
-        {
-            byte curMat = VoxelBitUtility.GetMaterialId(currentSolidRaw);
-            byte curShape = VoxelBitUtility.GetShapeId(currentSolidRaw);
-            if (curMat != MaterialIdCatalog.Air && curShape != 0 && curShape != VoxelBitUtility.ChiseledMicroVoxelShapeId)
-            {
-                byte cap = ComputeCellFluidCapacity(currentSolidRaw);
-                if (cap > 0 && cap < 255)
-                {
-                    return y * 255 + (255 - cap);
-                }
-            }
-
-            if (y <= 0)
-            {
-                return 0;
-            }
-
-            byte belowFMass = (byte)(belowFluidRaw & 0xFFu);
-            FluidType belowFType = (FluidType)((belowFluidRaw >> 8) & 0x03u);
-            if (belowFMass > 0 && (activeFluidType == FluidType.None || belowFType == activeFluidType))
-            {
-                byte belowCap = ComputeCellFluidCapacity(belowSolidRaw);
-                if (belowCap > 0 && belowFMass >= belowCap)
-                {
-                    return y * 255;
-                }
-            }
-
-            return ComputeCellBedElevationUnits255(belowSolidRaw, currentSolidRaw, y);
-        }
+            int y) =>
+            FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(
+                belowSolidRaw, belowFluidRaw, currentSolidRaw, (byte)activeFluidType, y);
 
         /// <summary>
         /// Bir (x, y, z) sivi hucresinin oturdugu alt-voksel kati taban yuksekligini (b) [0..255] sabit noktali
         /// kutle esdegeri biriminde (255 birim = 1.0 metre) hesaplar.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ComputeCellBedElevationUnits255(uint belowSolidRaw, uint currentSolidRaw, int y)
-        {
-            byte curMat = VoxelBitUtility.GetMaterialId(currentSolidRaw);
-            byte curShape = VoxelBitUtility.GetShapeId(currentSolidRaw);
-            if (curMat != MaterialIdCatalog.Air && curShape != 0 && curShape != VoxelBitUtility.ChiseledMicroVoxelShapeId)
-            {
-                byte cap = ComputeCellFluidCapacity(currentSolidRaw);
-                if (cap > 0 && cap < 255)
-                {
-                    return y * 255 + (255 - cap);
-                }
-            }
-
-            if (y <= 0)
-            {
-                return 0;
-            }
-
-            if (!VoxelBitUtility.IsPhysicallySolid(belowSolidRaw))
-            {
-                // Alt hucre fiziksel olarak kati degil (yamaç kenari / bosluk): su buraya dogru hizla akar
-                return (y - 1) * 255;
-            }
-
-            byte belowShape = VoxelBitUtility.GetShapeId(belowSolidRaw);
-            if (belowShape == 0)
-            {
-                int dBelow = VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw);
-                if (dBelow <= StratocraftConstants.SdfIsoLevel)
-                {
-                    return (y - 1) * 255;
-                }
-
-                int dCurr = (curMat != MaterialIdCatalog.Air && curShape == 0)
-                    ? VoxelBitUtility.GetDensityOrLiquid(currentSolidRaw)
-                    : 0;
-
-                // WorldGen y==solidFloorY kodlamasi: slopeDensity = 66 + Round(frac * 58) -> [66..124] (veya FullDensity=127).
-                // Eski (dBelow - 64)/dBelow formulu dCurr==0 iken en fazla 0.496m'ye cikabiliyordu (hiperbolik tavan hatasi!).
-                // Yeni dogrusal esleme tam [0..255] (0.00m .. 1.00m) araligini tersinir olarak uretir!
-                int isoOffset255 = dCurr > 0
-                    ? Math.Clamp(((dBelow - StratocraftConstants.SdfIsoLevel) * 255) / Math.Max(1, dBelow - dCurr), 4, 251)
-                    : Math.Clamp(((dBelow - StratocraftConstants.SdfIsoLevel) * 255 + 30) / 60, 4, 255);
-                return (y - 1) * 255 + isoOffset255;
-            }
-
-            return y * 255;
-        }
+        public static int ComputeCellBedElevationUnits255(uint belowSolidRaw, uint currentSolidRaw, int y) =>
+            FluidHydrostaticsShared.ComputeCellBedElevationUnits255(belowSolidRaw, currentSolidRaw, y);
 
         /// <summary>
-        /// Paket 4B.2 Kesintisiz Hidrostatik Yukseklik (Head) Hesabi:
-        /// Altinda sub-voxel SurfaceNets tabani ((y-1)*255 &lt; bedUnits &lt; y*255) bulunan bir y hucresi,
-        /// Mass == 255 oldugunda tam y+1 katman tabanina ((y+1)*255) ulasmalidir; aksi halde [bed+255 .. (y+1)*255]
-        /// araliginda temsil edilemeyen bir olu bolge olusur ve derinlesen deniz/gol tabanlarinda yuzey coker!
-        /// - m in [1..32]: ince yamac filmi sabit kalinlik korunur (bedUnits + m),
-        /// - m in [32..255]: dogrusal ve kesin monoton olarak (y + 1) * 255 tavanina baglanir.
+        /// Paket 4B.2 Kesintisiz Hidrostatik Yukseklik (Head) Hesabi (FluidHydrostaticsShared tek gercek kaynak).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static int ComputeCellHydrostaticHeadUnits255(int bedUnits, int y, byte mass, byte capacity = 255)
-        {
-            if (mass == 0)
-            {
-                return bedUnits;
-            }
-
-            int ceilUnits = (y + 1) * 255;
-            if (capacity == 0 || mass >= capacity)
-            {
-                // Yalnizca zeminli hucrelerde (bedUnits > (y-1)*255) tam dolu hucre tavani (y+1)*255'tir;
-                // altinda bos ucurum olan (bedUnits == (y-1)*255) selale/dusus hucrelerinde yercekimi farki korunur.
-                return bedUnits > (y - 1) * 255 ? Math.Max(bedUnits + mass, ceilUnits) : (bedUnits + mass);
-            }
-
-            if (capacity != 255)
-            {
-                return bedUnits + (mass * 255) / capacity;
-            }
-
-            if (bedUnits >= y * 255 || bedUnits <= (y - 1) * 255)
-            {
-                return bedUnits + mass;
-            }
-
-            if (mass <= 32)
-            {
-                return bedUnits + mass;
-            }
-
-            int base32 = bedUnits + 32;
-            int remSpan = ceilUnits - base32;
-            return base32 + ((mass - 32) * remSpan + 111) / 223;
-        }
+        public static int ComputeCellHydrostaticHeadUnits255(int bedUnits, int y, byte mass, byte capacity = 255) =>
+            FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(bedUnits, y, mass, capacity);
 
         /// <summary>
         /// Verilen hidrostatik hedef yukseklige (targetHeadUnits, orn. SeaLevelY * 255) ulasmak icin
         /// (bedUnits, y) hucresine konulmasi gereken tam [0..capacity] sivi kutlesini hesaplar.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static byte ComputeMassNeededForTargetHeadUnits255(int bedUnits, int y, int targetHeadUnits, byte capacity = 255)
-        {
-            if (capacity == 0 || targetHeadUnits <= bedUnits)
-            {
-                return 0;
-            }
-
-            int ceilUnits = (y + 1) * 255;
-            if (targetHeadUnits >= ceilUnits)
-            {
-                return capacity;
-            }
-
-            if (capacity != 255)
-            {
-                int scaled = ((targetHeadUnits - bedUnits) * capacity + 127) / 255;
-                return (byte)Math.Clamp(scaled, 1, (int)capacity);
-            }
-
-            if (bedUnits >= y * 255 || bedUnits <= (y - 1) * 255)
-            {
-                return (byte)Math.Clamp(targetHeadUnits - bedUnits, 1, 255);
-            }
-
-            int delta = targetHeadUnits - bedUnits;
-            if (delta <= 32)
-            {
-                return (byte)Math.Clamp(delta, 1, 32);
-            }
-
-            int base32 = bedUnits + 32;
-            int remSpan = Math.Max(223, ceilUnits - base32);
-            int m = 32 + ((targetHeadUnits - base32) * 223 + (remSpan >> 1)) / remSpan;
-            return (byte)Math.Clamp(m, 1, 255);
-        }
+        public static byte ComputeMassNeededForTargetHeadUnits255(int bedUnits, int y, int targetHeadUnits, byte capacity = 255) =>
+            FluidHydrostaticsShared.ComputeMassNeededForTargetHeadUnits255(bedUnits, y, targetHeadUnits, capacity);
 
         /// <summary>
         /// Mesh uretimi icin (x, y, z) sutununda SurfaceNets arazi yuzeyinin tam metre cinsinden yuksekligini doner.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float ComputeColumnSurfaceNetsBedMeters(uint belowSolidRaw, uint currentSolidRaw, int y)
-        {
-            return ComputeCellBedElevationUnits255(belowSolidRaw, currentSolidRaw, y) * (1.0f / 255.0f);
-        }
+        public static float ComputeColumnSurfaceNetsBedMeters(uint belowSolidRaw, uint currentSolidRaw, int y) =>
+            FluidHydrostaticsShared.ComputeColumnSurfaceNetsBedMeters(belowSolidRaw, currentSolidRaw, y);
 
         /// <summary>
         /// Bir hucreye kati blok konuldugunda veya Madde Kristali ile SDF kutlesi eklendiginde,

@@ -15,8 +15,8 @@ namespace Stratocraft.Physics.Systems
     public sealed class FluidSimulationSystem
     {
         public const double FrameBudgetMicroseconds = 2500.0;
-        public const float FixedTickIntervalSeconds = 1.0f / 12.5f;
-        public const float FixedTickRateHz = 12.5f;
+        public const float FixedTickIntervalSeconds = 1.0f / 16.0f;
+        public const float FixedTickRateHz = 16.0f;
         public const int MaxCatchupTicksPerFrame = 1;
 
         private readonly Dictionary<(int cx, int cz), ChunkFluidActivityMask> _chunkActivityMasks = new(128);
@@ -102,7 +102,7 @@ namespace Stratocraft.Physics.Systems
         public int AdvanceFixedStepAccumulator(float deltaTimeSeconds)
         {
             float clampedDt = float.IsFinite(deltaTimeSeconds) ? MathF.Max(0f, deltaTimeSeconds) : 0f;
-            float maxAccum = FixedTickIntervalSeconds * MaxCatchupTicksPerFrame;
+            float maxAccum = FixedTickIntervalSeconds * (MaxCatchupTicksPerFrame + 0.999f);
             SubTickAccumulatorSeconds = MathF.Min(SubTickAccumulatorSeconds + clampedDt, maxAccum);
 
             int ticksToRun = 0;

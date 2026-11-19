@@ -101,7 +101,7 @@ Shader "Stratocraft/FluidSurface"
                 nointerpolation uint fluidType : TEXCOORD3;
                 float4 flowAndFoam  : TEXCOORD4; // xy=VelXZ (m/s), z=Depth (m), w=WaterfallFoam01
                 float fogFactor     : TEXCOORD5;
-                float salinity01    : TEXCOORD6;
+                float2 salinityAndDy : TEXCOORD6; // x=salinity01, y=subTickDy (m)
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -229,11 +229,12 @@ Shader "Stratocraft/FluidSurface"
 
                 // #L135 Tamiri: rawId == 1u kesinlikle Tatli Su (0.0), rawId == 12u Tuzlu Deniz Suyu (1.0)
                 float isSaltVertex = (rawId == 12u || rawId == 4u) ? 1.0 : 0.0;
-                output.salinity01 = (rawId == 1u) ? 0.0 : saturate(max(isSaltVertex, _GlobalWaterSalinityParams.x));
+                float salinity01 = (rawId == 1u) ? 0.0 : saturate(max(isSaltVertex, _GlobalWaterSalinityParams.x));
 
                 // 1) Alt-Tik Yukseklik Farki Dekodlamasi: COLOR.g == 128 -> dy = 0.0m
                 float encodedDy = round(input.color.g * 255.0);
                 float subTickDy = (encodedDy > 0.5) ? clamp((encodedDy - 128.0) / 127.0, -1.0, 1.0) : 0.0;
+                output.salinityAndDy = float2(salinity01, subTickDy);
 
                 // 2) Kose Yatay Hiz Vektoru Dekodlamasi: COLOR.ba == 128 -> v = 0.0 m/s
                 float rawVx = round(input.color.b * 255.0);
@@ -374,15 +375,22 @@ Shader "Stratocraft/FluidSurface"
                     cloudShadowAtten = lerp(1.0, rawCloudAtten, saturate(_GlobalCloudGridParams.w));
                 }
 
-                // Paket 4B.3 Egim-Yonlu Yercekimi Akis Vektoru + Alex Vlachos Cift-Fazli Prosedurel Akis (0.0 MB VRAM)
-                float slopeSin = saturate(length(faceNormalWS.xz));
-                float slopeFlowMask = smoothstep(0.12, 0.38, slopeSin) * (1.0 - sideWallMask);
-                float2 downhillDirXZ = (slopeSin > 0.05) ? (faceNormalWS.xz / slopeSin) : float2(0.0, 0.0);
+                // Paket 4B.3 F4: Durgun Su Kapisi + Yumusak Kose Normali Tabanli Egim Akis Vektoru (0.0 MB VRAM)
+                // ddx/ddy yuz normali yerine kose-paylasimli yumusak geomNormalWS kullanilir ve durgun suda (flowSpeed==0, subTickDy==0)
+                // egim bazli yapay dere akisi %100 kapatilir -> kazilmis cukur ve durgun goller ayna gibi sakin kalir!
+                float subTickDyFrag = input.salinityAndDy.y;
+                float stillness01 = (1.0 - saturate(flowSpeed * 6.0)) * (1.0 - saturate(abs(subTickDyFrag) * 40.0));
+                float activeMotionGate = 1.0 - stillness01;
+
+                float slopeSin = saturate(length(geomNormalWS.xz));
+                float slopeFlowMask = smoothstep(0.12, 0.38, slopeSin) * (1.0 - sideWallMask) * activeMotionGate;
+                float2 downhillDirXZ = (slopeSin > 0.05) ? (geomNormalWS.xz / slopeSin) : float2(0.0, 0.0);
                 float2 gravitySlopeVel = downhillDirXZ * (slopeFlowMask * lerp(0.95, 2.60, slopeSin));
                 float2 activeStreamVel = (flowSpeed > 0.25) ? (flowVel + gravitySlopeVel * 0.50) : (flowVel + gravitySlopeVel);
                 float activeFlowSpeed = length(activeStreamVel);
 
-                float2 effectiveFlow = activeStreamVel + _GlobalWindVector.xz * 0.06;
+                float windFetchGate = smoothstep(0.10, 0.90, depthMeters);
+                float2 effectiveFlow = activeStreamVel + _GlobalWindVector.xz * (0.015 + 0.045 * windFetchGate);
                 float3 rippleCoarse = SampleDualPhaseAdvectedRipples(input.positionWS.xz, effectiveFlow, 1.65, _Time.y);
                 float3 rippleFine = SampleDualPhaseAdvectedRipples(input.positionWS.xz + float2(7.3, 11.1), effectiveFlow * 1.15, 3.30, _Time.y * 1.25);
                 float rippleHeight01 = saturate(0.5 + 0.5 * (0.60 * rippleCoarse.x + 0.40 * rippleFine.x));
@@ -397,7 +405,8 @@ Shader "Stratocraft/FluidSurface"
                 float3 wallRipple = ProceduralRippleHeightAndGrad(wallFlowUV, _Time.y * 2.2);
 
                 float upwardMask = saturate(abs(faceNormalWS.y) * 1.25);
-                float bumpStrength = lerp(0.18, 0.46, saturate(activeFlowSpeed * 0.42 + slopeFlowMask * 0.55 + windSpeed * 0.03)) * upwardMask;
+                float calmBaseBump = lerp(0.06, 0.16, windFetchGate);
+                float bumpStrength = lerp(calmBaseBump, 0.46, saturate(activeFlowSpeed * 0.42 + slopeFlowMask * 0.55 + windSpeed * 0.025 * windFetchGate)) * upwardMask;
                 float3 horizontalPerturb = float3(-analyticalGrad.x * bumpStrength, 0.0, -analyticalGrad.y * bumpStrength);
                 float3 wallPerturb = float3(0.0, -wallRipple.z * 0.24 * activeWallMask, 0.0);
                 float3 normalWS = normalize(geomNormalWS + horizontalPerturb + wallPerturb);
@@ -409,7 +418,7 @@ Shader "Stratocraft/FluidSurface"
                 // ==================== 1. SU (FluidType == 1: Tatli Su vs Tuzlu Deniz Suyu) ====================
                 if (input.fluidType == 1u)
                 {
-                    float salt01 = saturate(input.salinity01);
+                    float salt01 = saturate(input.salinityAndDy.x);
                     // Tatli nehir/gol suyu berrak turkuaz-camgobegi; tuzlu deniz suyu daha derin zumrut-kobalt
                     float3 shallowTint = lerp(_WaterColorShallow.rgb, float3(0.15, 0.62, 0.86), salt01 * 0.45);
                     float3 deepTint = lerp(_WaterColorDeep.rgb, float3(0.05, 0.30, 0.66), salt01 * 0.48);
@@ -428,7 +437,7 @@ Shader "Stratocraft/FluidSurface"
                     // Beer-Lambert Derinlik Sogurmasi:
                     // Gercek selaleler (activeWallMask) dolgun mavi; durgun zemin muhur etekleri gercek derinlik + yumusak erimeyle
                     // kar/topraga sert akvaryum cami gibi degil dogal su kenari gibi oturur!
-                    float flowingContrastBoost = max(slopeFlowMask * 0.34, saturate((activeFlowSpeed - 0.30) * 0.35) * 0.24);
+                    float flowingContrastBoost = max(slopeFlowMask * 0.34, saturate((activeFlowSpeed - 0.30) * 0.35) * 0.24) * activeMotionGate;
                     float horizontalDepth = max(min(opticalDepth, max(depthMeters * 1.65, 0.02)), flowingContrastBoost);
                     float effectiveColumnDepth = lerp(horizontalDepth, max(depthMeters, 0.72), activeWallMask);
                     float3 extinction = _WaterExtinction.rgb * lerp(1.0, 1.16, salt01);
@@ -468,7 +477,7 @@ Shader "Stratocraft/FluidSurface"
                     float slopeRapidFoam = 0.0;
                     float slopeRapidGate = saturate(max(
                         slopeFlowMask * smoothstep(0.012, 0.065, depthMeters),
-                        smoothstep(0.45, 1.35, activeFlowSpeed) * smoothstep(0.018, 0.085, depthMeters))) * (1.0 - sideWallMask);
+                        smoothstep(0.45, 1.35, activeFlowSpeed) * smoothstep(0.018, 0.085, depthMeters))) * (1.0 - sideWallMask) * activeMotionGate;
                     if (slopeRapidGate > 0.01 && activeFlowSpeed > 0.05)
                     {
                         float2 flowDir = activeStreamVel / max(activeFlowSpeed, 0.001);
