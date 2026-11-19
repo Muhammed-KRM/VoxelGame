@@ -1917,7 +1917,7 @@ namespace Stratocraft.WorldGen.Generators
                     }
                     else
                     {
-                        fluids[seaIdx] = FluidCell16.Pack(curSeaCell.Type, calibratedMass, isSettled: true, pressureHead: 0).RawValue;
+                        fluids[seaIdx] = FluidCell16.Pack(curSeaCell.Type, calibratedMass, isSettled: curSeaCell.IsSettled, pressureHead: 0).RawValue;
                     }
                 }
             }

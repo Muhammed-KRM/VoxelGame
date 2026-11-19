@@ -141,7 +141,7 @@ namespace Stratocraft.Voxel.Data
             if (belowShape == 0)
             {
                 int dBelow = VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw);
-                if (dBelow <= StratocraftConstants.SdfIsoLevel)
+                if (dBelow < StratocraftConstants.SdfIsoLevel)
                 {
                     return (y - 1) * 255;
                 }

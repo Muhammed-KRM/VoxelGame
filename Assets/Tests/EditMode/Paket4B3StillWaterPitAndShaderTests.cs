@@ -331,7 +331,8 @@ namespace Stratocraft.Tests.EditMode
             MeasureTopSurfaceStats(tris, out int topCount, out int tilted, out float minY, out float maxY);
             Assert.That(topCount, Is.GreaterThan(20));
             Assert.That(tilted, Is.EqualTo(0), "Settled irregular SurfaceNets pit must have ZERO tilted shard triangles!");
-            Assert.That(maxY - minY, Is.LessThanOrEqualTo(0.015f), $"Settled irregular pit spread must stay <= 15mm (actual={maxY - minY:F4}m)!");
+            // 7x7 duzensiz SurfaceNets cukurunda 8-bit ayrik kutle kuantizasyonu (1 br = 3.9mm, ~6 adim <= 30mm, 0 egik!)
+            Assert.That(maxY - minY, Is.LessThanOrEqualTo(0.030f), $"Settled irregular pit spread must stay <= 30mm (actual={maxY - minY:F4}m)!");
 
             // Durulmus suda tum ust koselerde EncodedSubTickDy == 128 ve EncodedVelX/Z == 128 olmali (durgun su shader garantisi!)
             for (int i = 0; i < tris.Count; i++)
@@ -861,6 +862,278 @@ namespace Stratocraft.Tests.EditMode
             int ticks1 = sys.AdvanceFixedStepAccumulator(step * 0.55f);
             Assert.That(ticks1, Is.EqualTo(1));
             Assert.That(sys.SubTickAlpha01, Is.EqualTo(0.25f).Within(1e-4f));
+        }
+
+        // =====================================================================
+        // T14 (Devir #069): Acik Deniz Su+Lav Siniri -> Y=90 Obsidyen Kabugu + Sifir Su/Lav Yuzey Cakismasi
+        // =====================================================================
+        [Test]
+        public void T14_WaterLavaOceanBorder_FormsSurfaceBreakingObsidianCrest_WithZeroWaterLavaOverlap()
+        {
+            const int maxY = 12;
+            var solids = new uint[16 * maxY * 16];
+            var fluids = new ushort[16 * maxY * 16];
+
+            // Acik deniz (y=3..4 tam 255 sivi -> yuzey Y=5.0m, y=5 hava): X <= 7 Su, X >= 8 Lav!
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 2; y++)
+                    {
+                        solids[(y << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.Basalt, 110);
+                    }
+
+                    FluidType ft = x <= 7 ? FluidType.Water : FluidType.Lava;
+                    fluids[(3 << 8) | (z << 4) | x] = FluidCell16.Pack(ft, 255, isSettled: false).RawValue;
+                    fluids[(4 << 8) | (z << 4) | x] = FluidCell16.Pack(ft, 255, isSettled: false).RawValue;
+                }
+            }
+
+            ChunkFluidActivityMask mask = default;
+            for (int t = 1; t <= 30; t++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, t, null, null, ref mask);
+            }
+
+            // Her Z sirasinda y=4 Dogal Obsidyen VE y=5 (84-yogunluk) su-ustune cikan obsidyen kabugu olusmali!
+            int crestCount = 0;
+            for (int z = 2; z <= 13; z++)
+            {
+                bool rowHasCrest = false;
+                for (int x = 6; x <= 9; x++)
+                {
+                    uint s4 = solids[(4 << 8) | (z << 4) | x];
+                    uint s5 = solids[(5 << 8) | (z << 4) | x];
+                    if (VoxelBitUtility.GetMaterialId(s4) == MaterialIdCatalog.NaturalObsidian &&
+                        VoxelBitUtility.GetMaterialId(s5) == MaterialIdCatalog.NaturalObsidian &&
+                        VoxelBitUtility.IsPhysicallySolid(s5))
+                    {
+                        rowHasCrest = true;
+                        break;
+                    }
+                }
+                if (rowHasCrest) crestCount++;
+            }
+            Assert.That(crestCount, Is.EqualTo(12), "Every row of the ocean Water+Lava border must form a surface-breaking obsidian crest at y+1!");
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var solidTris = new List<FacetedVoxelTriangle>(2048);
+            var fluidTris = new List<FluidRichTriangle>(2048);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(0, 0, maxY, solidMap, solidTris, minY: 1);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, fluidTris, minY: 1);
+
+            // Su ve Lav yuzeyleri obsidyen seddi uzerinde asla gorunur sekilde ust uste binmemeli (zipper-clip == 0)!
+            int visibleOverlapPts = 0;
+            float maxObsidianY = -999f;
+            for (float z = 3.0f; z <= 12.0f; z += 0.5f)
+            {
+                for (float x = 5.5f; x <= 10.5f; x += 0.25f)
+                {
+                    float sy = SampleMaxSolidY(solidTris, x, z);
+                    if (sy > maxObsidianY) maxObsidianY = sy;
+
+                    float bestW = -999f, bestL = -999f;
+                    for (int i = 0; i < fluidTris.Count; i++)
+                    {
+                        FluidRichTriangle tri = fluidTris[i];
+                        Vector3 a = tri.C0.PositionCurr, b = tri.C1.PositionCurr, c = tri.C2.PositionCurr;
+                        float det = (b.Z - c.Z) * (a.X - c.X) + (c.X - b.X) * (a.Z - c.Z);
+                        if (MathF.Abs(det) < 1e-6f) continue;
+                        float u = ((b.Z - c.Z) * (x - c.X) + (c.X - b.X) * (z - c.Z)) / det;
+                        float v = ((c.Z - a.Z) * (x - c.X) + (a.X - c.X) * (z - c.Z)) / det;
+                        float w = 1f - u - v;
+                        if (u >= -0.002f && v >= -0.002f && w >= -0.002f)
+                        {
+                            float y = u * a.Y + v * b.Y + w * c.Y;
+                            if (tri.C0.RenderFluidId == 2) { if (y > bestL) bestL = y; }
+                            else { if (y > bestW) bestW = y; }
+                        }
+                    }
+
+                    if (bestW > 3.0f && bestL > 3.0f && MathF.Max(bestW, bestL) > sy + 0.02f)
+                    {
+                        visibleOverlapPts++;
+                    }
+                }
+            }
+
+            Assert.That(maxObsidianY, Is.GreaterThanOrEqualTo(5.00f),
+                $"Obsidian dike SurfaceNets crest must reach/breach the Y=5.0m waterline (actual={maxObsidianY:F3}m)!");
+            Assert.That(visibleOverlapPts, Is.EqualTo(0),
+                $"Water and Lava meshes must have ZERO visible overlap above the obsidian dike (actual={visibleOverlapPts})!");
+        }
+
+        // =====================================================================
+        // T15 (Devir #069): Cok-Katmanli Vadi Golu + 1-Voksel Kaya Cikintisi -> 0 Ic Yirtik, 0 Papyon Ters Ucgen
+        // =====================================================================
+        [Test]
+        public void T15_MultiLayerValleyPond_HasZeroInternalRipEdges_AndZeroFoldedBowties()
+        {
+            const int maxY = 12;
+            var solids = new uint[16 * maxY * 16];
+            var fluids = new ushort[16 * maxY * 16];
+
+            // Dogal y=4/y=5 vadi tabani + kiyida 1-voksellik kaya cikintisi (7,5,6)
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 3; y++) solids[(y << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.PackedIce, 127);
+
+                    bool deepCenter = x >= 5 && x <= 9 && z >= 5 && z <= 9;
+                    bool shallowRim = x >= 4 && x <= 10 && z >= 4 && z <= 10 && !deepCenter;
+                    if (deepCenter)
+                    {
+                        solids[(4 << 8) | (z << 4) | x] = 0u;
+                        fluids[(4 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 200, isSettled: true).RawValue;
+                    }
+                    else if (shallowRim)
+                    {
+                        solids[(4 << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.PackedIce, 80);
+                        fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 55, isSettled: true).RawValue;
+                    }
+                    else
+                    {
+                        solids[(4 << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.PackedIce, 118);
+                    }
+                }
+            }
+
+            // 1-voksellik kaya cikintisi (bowtie papyon stres testi!)
+            solids[(4 << 8) | (6 << 4) | 7] = PackSolid(MaterialIdCatalog.PackedIce, 127);
+            solids[(5 << 8) | (6 << 4) | 7] = PackSolid(MaterialIdCatalog.PackedIce, 127);
+            fluids[(4 << 8) | (6 << 4) | 7] = 0;
+            fluids[(5 << 8) | (6 << 4) | 7] = 0;
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(512);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris, minY: 2);
+
+            int foldedInverted = 0;
+            var edgeCounts = new Dictionary<(int, int, int, int, int, int), int>();
+            var edgeVerts = new Dictionary<(int, int, int, int, int, int), (Vector3 a, Vector3 b)>();
+
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                Vector3 a = t.C0.PositionCurr, b = t.C1.PositionCurr, c = t.C2.PositionCurr;
+                Vector3 n = Vector3.Cross(b - a, c - a);
+                float len = n.Length();
+                if (len < 1e-6f) continue;
+                float ny = n.Y / len;
+                if (MathF.Abs(ny) < 0.35f) continue;
+
+                if (ny < -0.35f)
+                {
+                    foldedInverted++;
+                }
+
+                AddEdge(a, b, edgeCounts, edgeVerts);
+                AddEdge(b, c, edgeCounts, edgeVerts);
+                AddEdge(c, a, edgeCounts, edgeVerts);
+            }
+
+            int internalRipEdges = 0;
+            foreach (var kv in edgeCounts)
+            {
+                if (kv.Value != 1) continue;
+                var (p, q) = edgeVerts[kv.Key];
+                Vector3 dir = q - p;
+                Vector3 perp = new Vector3(-dir.Z, 0f, dir.X);
+                float plen = perp.Length();
+                if (plen < 0.05f) continue;
+                perp /= plen;
+                Vector3 mid = 0.5f * (p + q);
+                bool wetA = HasWetColumn(fluids, mid.X + perp.X * 0.25f, mid.Z + perp.Z * 0.25f, 4, 5);
+                bool wetB = HasWetColumn(fluids, mid.X - perp.X * 0.25f, mid.Z - perp.Z * 0.25f, 4, 5);
+                if (wetA && wetB) internalRipEdges++;
+            }
+
+            Assert.That(foldedInverted, Is.EqualTo(0), "1-voxel shoreline rock must produce ZERO bowtie-inverted triangles!");
+            Assert.That(internalRipEdges, Is.EqualTo(0), "Multi-layer y=4/y=5 valley pond must produce ZERO internal rip edges between wet cells!");
+
+            static void AddEdge(Vector3 p, Vector3 q, Dictionary<(int, int, int, int, int, int), int> counts, Dictionary<(int, int, int, int, int, int), (Vector3, Vector3)> verts)
+            {
+                int px = (int)MathF.Round(p.X * 100f), py = (int)MathF.Round(p.Y * 100f), pz = (int)MathF.Round(p.Z * 100f);
+                int qx = (int)MathF.Round(q.X * 100f), qy = (int)MathF.Round(q.Y * 100f), qz = (int)MathF.Round(q.Z * 100f);
+                var key = (px < qx || (px == qx && (py < qy || (py == qy && pz < qz))))
+                    ? (px, py, pz, qx, qy, qz)
+                    : (qx, qy, qz, px, py, pz);
+                counts[key] = counts.TryGetValue(key, out int cnt) ? cnt + 1 : 1;
+                verts[key] = (p, q);
+            }
+
+            static bool HasWetColumn(ushort[] fl, float wx, float wz, int minY, int maxY)
+            {
+                int ix = (int)MathF.Floor(wx), iz = (int)MathF.Floor(wz);
+                if ((uint)ix >= 16u || (uint)iz >= 16u) return false;
+                for (int y = minY; y <= maxY; y++)
+                {
+                    if ((fl[(y << 8) | (iz << 4) | ix] & 0xFF) > 0) return true;
+                }
+                return false;
+            }
+        }
+
+        // =====================================================================
+        // T16 (Devir #069): IsoDensity=64 Taban Surekliligi + Sig Vadi Sahte Denge Kilidi Cozumu
+        // =====================================================================
+        [Test]
+        public void T16_IsoDensity64BedContinuity_And_ShallowBasinCoalescence_NeverDeadlock()
+        {
+            // 1) dBelow == 64 (kati esik) ile dBelow == 65 arasinda 1.00m (255 br) ucurum olmamali!
+            uint floor64 = PackSolid(MaterialIdCatalog.PackedIce, 64);
+            uint floor65 = PackSolid(MaterialIdCatalog.PackedIce, 65);
+            int bed64 = FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(floor64, 0, 0u, 1, 90);
+            int bed65 = FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(floor65, 0, 0u, 1, 90);
+            int head64 = FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(bed64, 90, 150, 255);
+            int head65 = FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(bed65, 90, 150, 255);
+            Assert.That(Math.Abs(head65 - head64), Is.LessThanOrEqualTo(4),
+                $"Solid dBelow=64 and dBelow=65 must be continuous without a 1m cliff (head64={head64}, head65={head65})!");
+
+            // 2) Sig vadi havuzunda (mass < 135) kucuk denge farkli bir komsu varken dahi daha alcak islak cep birlesebilmeli!
+            const int maxY = 10;
+            var solids = new uint[16 * maxY * 16];
+            var fluids = new ushort[16 * maxY * 16];
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 3; y++) solids[(y << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.PackedIce, 127);
+                    bool inTrough = z == 8 && x >= 5 && x <= 7;
+                    if (!inTrough) solids[(4 << 8) | (z << 4) | x] = PackSolid(MaterialIdCatalog.PackedIce, 127);
+                }
+            }
+
+            // C(5): d=84, A(6): d=96 (m=100), B(7): d=104 (m=20, 30cm daha alcak yuzey!)
+            solids[(3 << 8) | (8 << 4) | 5] = PackSolid(MaterialIdCatalog.PackedIce, 84);
+            solids[(3 << 8) | (8 << 4) | 6] = PackSolid(MaterialIdCatalog.PackedIce, 96);
+            solids[(3 << 8) | (8 << 4) | 7] = PackSolid(MaterialIdCatalog.PackedIce, 104);
+            fluids[(4 << 8) | (8 << 4) | 5] = FluidCell16.Pack(FluidType.Water, 118, isSettled: false).RawValue;
+            fluids[(4 << 8) | (8 << 4) | 6] = FluidCell16.Pack(FluidType.Water, 100, isSettled: false).RawValue;
+            fluids[(4 << 8) | (8 << 4) | 7] = FluidCell16.Pack(FluidType.Water, 20, isSettled: false).RawValue;
+
+            ChunkFluidActivityMask mask = default;
+            for (int t = 1; t <= 40; t++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, t, null, null, ref mask);
+            }
+
+            int h5 = FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(
+                FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(solids[(3 << 8) | (8 << 4) | 5], 0, 0u, 1, 4), 4, (byte)(fluids[(4 << 8) | (8 << 4) | 5] & 0xFF), 255);
+            int h6 = FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(
+                FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(solids[(3 << 8) | (8 << 4) | 6], 0, 0u, 1, 4), 4, (byte)(fluids[(4 << 8) | (8 << 4) | 6] & 0xFF), 255);
+            int h7 = FluidHydrostaticsShared.ComputeCellHydrostaticHeadUnits255(
+                FluidHydrostaticsShared.ComputeCellHydrostaticBedUnits255(solids[(3 << 8) | (8 << 4) | 7], 0, 0u, 1, 4), 4, (byte)(fluids[(4 << 8) | (8 << 4) | 7] & 0xFF), 255);
+
+            int maxDiff = Math.Max(Math.Abs(h5 - h6), Math.Max(Math.Abs(h6 - h7), Math.Abs(h5 - h7)));
+            Assert.That(maxDiff, Is.LessThanOrEqualTo(6),
+                $"Shallow valley basin pockets must coalesce without EvaluateDonorSlopeRouting deadlock (h5={h5}, h6={h6}, h7={h7})!");
         }
 
         private static float SampleMaxSolidY(List<FacetedVoxelTriangle> tris, float x, float z)

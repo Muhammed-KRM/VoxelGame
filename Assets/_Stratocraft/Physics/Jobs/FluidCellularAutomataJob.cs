@@ -32,6 +32,7 @@ namespace Stratocraft.Physics.Jobs
         [ThreadStatic] private static byte[]? _tlsStartMass;
         [ThreadStatic] private static int[]? _tlsFluxX;
         [ThreadStatic] private static int[]? _tlsFluxZ;
+        [ThreadStatic] private static HashSet<(int cx, int cz)>? _tlsActiveSeamSnapshot;
         [ThreadStatic] private static int _lastStepSiphonTransfers;
         private static int _globalStampCounter = 1;
 
@@ -389,7 +390,7 @@ namespace Stratocraft.Physics.Jobs
                                 voxels, fluids, changedMask,
                                 idx, x, y, z,
                                 belowIdx, x, y - 1, z,
-                                reactionTargetIsSecond: true,
+                                reactionTargetIsSecond: belowCell.Type == FluidType.Lava,
                                 sizeX, sizeY, sizeZ,
                                 ref obsidianFormedCount,
                                 ref steamSlagFizzleCount,
@@ -712,6 +713,13 @@ namespace Stratocraft.Physics.Jobs
 
             if (activeChunks != null && activeChunks.Count > 0)
             {
+                HashSet<(int cx, int cz)> activeSnap = _tlsActiveSeamSnapshot ??= new HashSet<(int cx, int cz)>(64);
+                activeSnap.Clear();
+                for (int i = 0; i < activeChunks.Count; i++)
+                {
+                    activeSnap.Add(activeChunks[i]);
+                }
+
                 for (int i = 0; i < activeChunks.Count; i++)
                 {
                     (int cx, int cz) keyA = activeChunks[i];
@@ -738,9 +746,9 @@ namespace Stratocraft.Physics.Jobs
                             kinematicsPool);
                     }
 
-                    // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0) (iki aktif chunk arasinda cift kosumu onle!)
+                    // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0) (snapshot ile mutasyon-bagimsiz tek kosum!)
                     (int cx, int cz) keyWest = (keyA.cx - 1, keyA.cz);
-                    bool westAlreadyActive = wakeActiveFluidChunks != null && wakeActiveFluidChunks.Contains(keyWest);
+                    bool westAlreadyActive = activeSnap.Contains(keyWest);
                     if (!westAlreadyActive &&
                         fluidChunks.TryGetValue(keyWest, out ushort[]? fluidsWest) && fluidsWest != null &&
                         worldChunks.TryGetValue(keyWest, out uint[]? voxelsWest) && voxelsWest != null)
@@ -776,7 +784,7 @@ namespace Stratocraft.Physics.Jobs
 
                     // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
                     (int cx, int cz) keySouth = (keyA.cx, keyA.cz - 1);
-                    bool southAlreadyActive = wakeActiveFluidChunks != null && wakeActiveFluidChunks.Contains(keySouth);
+                    bool southAlreadyActive = activeSnap.Contains(keySouth);
                     if (!southAlreadyActive &&
                         fluidChunks.TryGetValue(keySouth, out ushort[]? fluidsSouth) && fluidsSouth != null &&
                         worldChunks.TryGetValue(keySouth, out uint[]? voxelsSouth) && voxelsSouth != null)
@@ -962,6 +970,8 @@ namespace Stratocraft.Physics.Jobs
                                 }
                             }
 
+                            byte preReactW = water.Mass;
+                            byte preReactL = lava.Mass;
                             if (TryReactWaterAndLava(ref water, ref lava, out VoxelCell formedSolid, out bool formedObsidian))
                             {
                                 fluidsA[idxA] = 0;
@@ -988,11 +998,13 @@ namespace Stratocraft.Physics.Jobs
                                     if (bCell.Type == FluidType.Lava)
                                     {
                                         voxelsB[idxB] = formedSolid.RawValue;
+                                        TryStampSurfaceObsidianCrest(voxelsB, fluidsB, idxB, 16, limitY, 16, y, preReactW, preReactL);
                                         dirtySolidB = true;
                                     }
                                     else
                                     {
                                         voxelsA[idxA] = formedSolid.RawValue;
+                                        TryStampSurfaceObsidianCrest(voxelsA, fluidsA, idxA, 16, limitY, 16, y, preReactW, preReactL);
                                         dirtySolidA = true;
                                     }
                                 }
@@ -1036,9 +1048,18 @@ namespace Stratocraft.Physics.Jobs
 
                         int transfer = ComputeStableLateralTransfer(
                             activeType, aCell.Mass, aCap, bCell.Mass, bCap, bedA, bedB, y, headA, headB);
-                        if (transfer == 0 && activeType == FluidType.Water && (headA - headB) == 1 && (aCell.Mass - bCell.Mass) >= 2 && bCap > bCell.Mass)
+                        if (transfer == 0 && activeType == FluidType.Water && (headA - headB) == 1 && bCell.Mass > 0 && (aCell.Mass - bCell.Mass) >= 2 && bCap > bCell.Mass)
                         {
                             transfer = 1;
+                        }
+                        if (transfer == 1 && bCell.Mass > 0 && (headA - headB) <= 4)
+                        {
+                            int nextHeadA = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedA, y, (byte)(aCell.Mass - 1), aCap);
+                            int nextHeadB = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedB, y, (byte)(bCell.Mass + 1), bCap);
+                            if (Math.Abs(nextHeadA - nextHeadB) >= (headA - headB))
+                            {
+                                transfer = 0;
+                            }
                         }
 
                         if (transfer > 0)
@@ -1080,9 +1101,18 @@ namespace Stratocraft.Physics.Jobs
 
                         int transfer = ComputeStableLateralTransfer(
                             activeType, bCell.Mass, bCap, aCell.Mass, aCap, bedB, bedA, y, headB, headA);
-                        if (transfer == 0 && activeType == FluidType.Water && (headB - headA) == 1 && (bCell.Mass - aCell.Mass) >= 2 && aCap > aCell.Mass)
+                        if (transfer == 0 && activeType == FluidType.Water && (headB - headA) == 1 && aCell.Mass > 0 && (bCell.Mass - aCell.Mass) >= 2 && aCap > aCell.Mass)
                         {
                             transfer = 1;
+                        }
+                        if (transfer == 1 && aCell.Mass > 0 && (headB - headA) <= 4)
+                        {
+                            int nextHeadB = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedB, y, (byte)(bCell.Mass - 1), bCap);
+                            int nextHeadA = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedA, y, (byte)(aCell.Mass + 1), aCap);
+                            if (Math.Abs(nextHeadB - nextHeadA) >= (headB - headA))
+                            {
+                                transfer = 0;
+                            }
                         }
 
                         if (transfer > 0)
@@ -1333,6 +1363,8 @@ namespace Stratocraft.Physics.Jobs
                     }
                 }
 
+                byte preReactW = water.Mass;
+                byte preReactL = lava.Mass;
                 if (TryReactWaterAndLava(ref water, ref lava, out VoxelCell formedSolid, out bool formedObsidian))
                 {
                     fluidsShore[shoreTopIdx] = 0;
@@ -1344,11 +1376,13 @@ namespace Stratocraft.Physics.Jobs
                         if (shoreIsWater)
                         {
                             voxelsPool[poolBotIdx] = formedSolid.RawValue;
+                            TryStampSurfaceObsidianCrest(voxelsPool, fluidsPool, poolBotIdx, 16, limitY, 16, poolY, preReactW, preReactL);
                             dirtySolidPool = true;
                         }
                         else
                         {
                             voxelsShore[shoreTopIdx] = formedSolid.RawValue;
+                            TryStampSurfaceObsidianCrest(voxelsShore, fluidsShore, shoreTopIdx, 16, limitY, 16, shoreY, preReactW, preReactL);
                             dirtySolidShore = true;
                         }
                     }
@@ -1412,6 +1446,12 @@ namespace Stratocraft.Physics.Jobs
                     : Math.Min(shoreTopCell.Mass - 1, Math.Max(1, (shoreTopCell.Mass * (isFreeOverfall ? 18 : 15)) / 24));
                 int transfer = Math.Min((int)shoreTopCell.Mass, Math.Min(spacePool, Math.Min(maxStepCap, eqMass)));
                 if (transfer <= 0) return 0;
+                if (transfer == 1 && poolBotCell.Mass > 0 && diff <= 4)
+                {
+                    int nextHeadShore = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedShore, shoreY, (byte)(shoreTopCell.Mass - 1), shoreTopCap);
+                    int nextHeadPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedPool, poolY, (byte)(poolBotCell.Mass + 1), poolBotCap);
+                    if (Math.Abs(nextHeadShore - nextHeadPool) >= diff) return 0;
+                }
 
                 ActiveChunkFluidKinematicsSlice? sliceShore = null;
                 ActiveChunkFluidKinematicsSlice? slicePool = null;
@@ -1441,6 +1481,12 @@ namespace Stratocraft.Physics.Jobs
                 int eqMass = Math.Max(1, (((-diff) * 223) + (slopeSum >> 1)) / slopeSum);
                 int transfer = Math.Min((int)poolBotCell.Mass, Math.Min(spaceShore, eqMass));
                 if (transfer <= 0) return 0;
+                if (transfer == 1 && shoreTopCell.Mass > 0 && (-diff) <= 4)
+                {
+                    int nextHeadPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedPool, poolY, (byte)(poolBotCell.Mass - 1), poolBotCap);
+                    int nextHeadShore = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedShore, shoreY, (byte)(shoreTopCell.Mass + 1), shoreTopCap);
+                    if (Math.Abs(nextHeadShore - nextHeadPool) >= (-diff)) return 0;
+                }
 
                 ActiveChunkFluidKinematicsSlice? sliceShore = null;
                 ActiveChunkFluidKinematicsSlice? slicePool = null;
@@ -1644,7 +1690,7 @@ namespace Stratocraft.Physics.Jobs
 
                             if (transfer > 0)
                             {
-                                if (bedA > bedB + 8 || (headA - headB) > 4) anyDownhillDrain = true;
+                                if (bedA > bedB + 8 || (headA - headB) > 4 || transfer >= 3) anyDownhillDrain = true;
                                 bool bWasDry = bCell.Mass == 0;
                                 byte remA = (byte)(aCell.Mass - transfer);
                                 fluids[aIdx] = FluidCell16.Pack(activeType, remA, isSettled: false).RawValue;
@@ -1717,7 +1763,7 @@ namespace Stratocraft.Physics.Jobs
 
                             if (transfer > 0)
                             {
-                                if (bedB > bedA + 8 || (headB - headA) > 4) anyDownhillDrain = true;
+                                if (bedB > bedA + 8 || (headB - headA) > 4 || transfer >= 3) anyDownhillDrain = true;
                                 bool aWasDry = aCell.Mass == 0;
                                 byte remB = (byte)(bCell.Mass - transfer);
                                 fluids[bIdx] = FluidCell16.Pack(activeType, remB, isSettled: false).RawValue;
@@ -1927,7 +1973,7 @@ namespace Stratocraft.Physics.Jobs
                     if (Math.Abs(nextHeadShore - nextHeadPool) >= diff) return true;
                 }
 
-                if (diff > 4 || bedShore > bedPool + 8) anyDownhillDrain = true;
+                if (diff > 4 || transfer >= 3 || bedShore > bedPool + 8) anyDownhillDrain = true;
 
                 bool poolWasDry = poolBotCell.Mass == 0;
                 byte remShore = (byte)(shoreTopCell.Mass - transfer);
@@ -2018,8 +2064,11 @@ namespace Stratocraft.Physics.Jobs
             byte srcMass = (byte)(fluids[srcIdx] & 0xFF);
 
             int maxDownhillDrop = 0;
+            int maxFreeOverfallDrop = 0;
             int sumWeights = 0;
             int targetWeight = 0;
+            int targetIdx = yBase + targetZ * sizeX + targetX;
+            byte targetMass = (uint)targetIdx < (uint)fluids.Length ? (byte)(fluids[targetIdx] & 0xFF) : (byte)0;
 
             for (int d = 0; d < 4; d++)
             {
@@ -2053,7 +2102,7 @@ namespace Stratocraft.Physics.Jobs
                         ushort below2FluidN = y > 1 ? fluids[nIdx - 2 * strideY] : (ushort)0;
                         int bedBelowPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(below2N, below2FluidN, belowN, activeType, y - 1);
                         int headBelowPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedBelowPool, y - 1, (byte)(belowFluidN & 0xFF), belowPoolCap);
-                        if (headBelowPool >= headSrc - 1)
+                        if (headBelowPool >= headSrc - 4)
                         {
                             continue;
                         }
@@ -2061,7 +2110,18 @@ namespace Stratocraft.Physics.Jobs
                 }
                 int bedN = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(belowN, belowFluidN, voxels[nIdx], activeType, y);
                 int headN = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedN, y, nMass, nCap);
-                if (headN >= headSrc)
+                int dh = headSrc - headN;
+                if (dh <= 0)
+                {
+                    continue;
+                }
+
+                // Havuz-Kiyi Yatak Terslenmesi & Sahte Denge Kilidi Tamiri (Devir #069):
+                // 1) Lyapunov sinirindaki neredeyse esit komsular (dh <= 3) veya yuzeyi kaynak tabanini yakalamis dolu kiyi hucreleri
+                //    (nMass > 0 && headN >= bedSrc - 4) diger yonlerdeki havuz/vadi birlesmesini ASLA 0'a kilitlememelidir!
+                // 2) Derin havuz (bedSrc == y*255) komsusu sig kiyiyi (bedN < y*255, nMass > 0) dik ucurum sanmamalidir!
+                bool isRealDrainableDrop = (nMass == 0 && dh >= 2) || (dh >= 4 && headN < bedSrc - 4);
+                if (!isRealDrainableDrop)
                 {
                     continue;
                 }
@@ -2070,6 +2130,11 @@ namespace Stratocraft.Physics.Jobs
                 if (drop > maxDownhillDrop)
                 {
                     maxDownhillDrop = drop;
+                }
+                int freeOverfall = bedSrc - headN;
+                if (freeOverfall > maxFreeOverfallDrop)
+                {
+                    maxFreeOverfallDrop = freeOverfall;
                 }
             }
 
@@ -2082,9 +2147,9 @@ namespace Stratocraft.Physics.Jobs
             if (targetDrop + 6 < maxDownhillDrop)
             {
                 hasSteeperAlternative = true;
-                // Yalnizca duz veya yokus yukari yan komsuda (targetDrop <= 3) ince suyun dagilmasini kes;
-                // egimli oluk yonlerinin (targetDrop > 3) Quinn MFD payi almasina izin ver!
-                if (targetDrop <= 3 && srcMass < 135)
+                // Kuru yan hucrelere (targetMass == 0) ince yamac suyunun gereksiz dagilmasini kes;
+                // ANCAK zaten islak komsu suyla birlesme/seviyeleme (targetMass > 0) yalnizca gercek serbest ucurumda (maxFreeOverfallDrop > 64) kesilir!
+                if (targetDrop <= 3 && srcMass < 135 && (targetMass == 0 || maxFreeOverfallDrop > 64))
                 {
                     slopeShare256 = 0;
                     return;
@@ -2120,7 +2185,7 @@ namespace Stratocraft.Physics.Jobs
                         ushort below2FluidN = y > 1 ? fluids[nIdx - 2 * strideY] : (ushort)0;
                         int bedBelowPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(below2N, below2FluidN, belowN, activeType, y - 1);
                         int headBelowPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedBelowPool, y - 1, (byte)(belowFluidN & 0xFF), belowPoolCap);
-                        if (headBelowPool >= headSrc - 1)
+                        if (headBelowPool >= headSrc - 4)
                         {
                             continue;
                         }
@@ -2137,7 +2202,7 @@ namespace Stratocraft.Physics.Jobs
                 int drop = Math.Max(0, bedSrc - bedN);
                 int w = drop > 3
                     ? (dh + drop * 3)
-                    : (srcMass >= 135 ? Math.Max(1, dh / 5) : 0);
+                    : ((srcMass >= 135 || (nMass > 0 && maxFreeOverfallDrop <= 64)) ? Math.Max(1, dh / 3) : 0);
 
                 sumWeights += w;
                 if (nx == targetX && nz == targetZ)
@@ -2184,10 +2249,10 @@ namespace Stratocraft.Physics.Jobs
             for (int y = maxY; y >= minY; y--)
             {
                 int yBase = y * strideY;
-                for (int z = 1; z < sizeZ - 1; z++)
+                for (int z = 0; z < sizeZ; z++)
                 {
                     int rowBase = yBase + z * sizeX;
-                    for (int x = 1; x < sizeX - 1; x++)
+                    for (int x = 0; x < sizeX; x++)
                     {
                         int idx = rowBase + x;
                         if (changedMask[idx] != 0)
@@ -2244,18 +2309,55 @@ namespace Stratocraft.Physics.Jobs
                             int d = (startDir + k) & 3;
                             int ox = (d & 1) == 0 ? -1 : 1;
                             int oz = d < 2 ? -1 : 1;
+                            int nx = x + ox;
+                            int nz = z + oz;
+                            if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
+                            {
+                                continue;
+                            }
 
                             // KATI DUVAR GUVENCESI (T14/T15/T16): En az bir ara kardinal hucre (x+ox, z) veya (x, z+oz) acik olmali!
-                            byte flankCapA = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + z * sizeX + (x + ox)]);
-                            byte flankCapB = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + (z + oz) * sizeX + x]);
+                            byte flankCapA = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + z * sizeX + nx]);
+                            byte flankCapB = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + nz * sizeX + x]);
                             if (flankCapA == 0 && flankCapB == 0)
                             {
                                 continue;
                             }
 
-                            int nx = x + ox;
-                            int nz = z + oz;
                             int nColBase = nz * sizeX + nx;
+                            // 0) Capraz ust basamak (y + 1) zaten islak sig vadi kiyisiysa hidrostatik birlesme (tMass > 0)
+                            if (y + 1 < sizeY && VoxelBitUtility.IsPhysicallySolid(voxels[yBase + nColBase]) &&
+                                VoxelBitUtility.GetShapeId(voxels[yBase + nColBase]) == 0)
+                            {
+                                int upIdx = (y + 1) * strideY + nColBase;
+                                byte upCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[upIdx]);
+                                ushort upRaw = fluids[upIdx];
+                                byte upMass = (byte)(upRaw & 0xFF);
+                                if (upCap > upMass && upMass > 0 && (FluidType)((upRaw >> 8) & 0x03u) == fType)
+                                {
+                                    int bedUp = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(voxels[yBase + nColBase], 0, voxels[upIdx], fType, y + 1);
+                                    int headUp = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedUp, y + 1, upMass, upCap);
+                                    int upDiff = headSrc - headUp;
+                                    if (upDiff >= 2)
+                                    {
+                                        int score = upDiff + 64;
+                                        if (score > bestScore)
+                                        {
+                                            bestScore = score;
+                                            bestTargetIdx = upIdx;
+                                            bestTargetY = y + 1;
+                                            bestDx = ox;
+                                            bestDz = oz;
+                                            bestBedDst = bedUp;
+                                            bestHeadDst = headUp;
+                                            bestTargetMass = upMass;
+                                            bestTargetCap = upCap;
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+
                             if (FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + nColBase]) == 0)
                             {
                                 continue;
@@ -2272,7 +2374,9 @@ namespace Stratocraft.Physics.Jobs
                                 uint tBelowS = voxels[tIdx - strideY];
                                 ushort tBelowF = fluids[tIdx - strideY];
                                 bool tBelowSolid = VoxelBitUtility.IsPhysicallySolid(tBelowS);
-                                bool tBelowSame = !tBelowSolid && (tBelowF & 0xFF) > 0 && (FluidType)((tBelowF >> 8) & 0x03u) == fType;
+                                byte tBelowFMass = (byte)(tBelowF & 0xFF);
+                                bool tBelowSame = !tBelowSolid && tBelowFMass > 0 && (FluidType)((tBelowF >> 8) & 0x03u) == fType;
+                                byte tBelowCap = !tBelowSolid ? FluidPorosityUtility.ComputeCellFluidCapacity(tBelowS) : (byte)0;
 
                                 if (!tBelowSolid && !tBelowSame)
                                 {
@@ -2291,6 +2395,13 @@ namespace Stratocraft.Physics.Jobs
                                     break;
                                 }
 
+                                // Eger (nx, ty, nz) kuru ama altindaki (nx, ty-1, nz) kismi dolu bir havuzsa (< tBelowCap),
+                                // ty katmaninda break etmek yerine dogrudan ty-1 havuzuna inip hacim birlestir (Devir #069 P0-3B)!
+                                if (tMass == 0 && tBelowSame && tBelowCap > 0 && tBelowFMass < tBelowCap)
+                                {
+                                    continue;
+                                }
+
                                 if (tCap <= tMass)
                                 {
                                     break;
@@ -2302,9 +2413,9 @@ namespace Stratocraft.Physics.Jobs
                                 int headDiff = headSrc - headDst;
 
                                 // 1) Capraz vadi havuzu kaynasmasi: Hedef zaten islaksa (tMass > 0) ve headDiff >= 2 ise hacim/seviye esitle!
-                                // 2) Kuru capraz dogal vadi olugu (tMass == 0): 10°-65° yamac/vadi ceplerinde (bedDrop >= 28 ~0.11m, mass <= 120) suzul!
+                                // 2) Kuru capraz dogal vadi olugu (tMass == 0): 10°-65° yamac/vadi ceplerinde (bedDrop >= 28 ~0.11m) suzul!
                                 bool validWetCoalesce = tMass > 0 && headDiff >= 2;
-                                bool validDryTalweg = tMass == 0 && belowSrcNaturalSolid && mass <= 120 && bedDrop >= 28 && headDiff >= 8;
+                                bool validDryTalweg = tMass == 0 && belowSrcNaturalSolid && bedDrop >= 28 && headDiff >= 8;
                                 if (validWetCoalesce || validDryTalweg)
                                 {
                                     int score = headDiff + Math.Max(0, bedDrop) * 2 + (tMass > 0 ? 64 : 0);
@@ -2352,14 +2463,14 @@ namespace Stratocraft.Physics.Jobs
 
                             if (transfer > 0)
                             {
-                                if (bedSrc > bestBedDst + 8 || diffH > 4) anyDownhillDrain = true;
+                                if (bedSrc > bestBedDst + 8 || diffH > 4 || transfer >= 3) anyDownhillDrain = true;
                                 bool targetWasDry = bestTargetMass == 0;
                                 byte rem = (byte)(mass - transfer);
                                 fluids[idx] = rem > 0 ? FluidCell16.Pack(fType, rem, isSettled: false).RawValue : (ushort)0;
                                 fluids[bestTargetIdx] = FluidCell16.Pack(fType, (byte)(bestTargetMass + transfer), isSettled: false).RawValue;
                                 PropagateGridSalinityOnTransfer(salinityBits, fType, idx, rem, bestTargetIdx, targetWasDry);
-                                MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
-                                MarkChangedWithNeighbors(changedMask, x + bestDx, bestTargetY, z + bestDz, sizeX, sizeY, sizeZ);
+                                MarkChanged3x3Horizontal(changedMask, fluids, x, y, z, sizeX, sizeY, sizeZ);
+                                MarkChanged3x3Horizontal(changedMask, fluids, x + bestDx, bestTargetY, z + bestDz, sizeX, sizeY, sizeZ);
                                 if (bestTargetY <= y - 2)
                                 {
                                     changedMask[bestTargetIdx] |= 0x06;
@@ -2798,6 +2909,8 @@ namespace Stratocraft.Physics.Jobs
                 }
             }
 
+            byte preReactW = water.Mass;
+            byte preReactL = lava.Mass;
             if (!TryReactWaterAndLava(ref water, ref lava, out VoxelCell formedSolid, out bool formedObsidian))
             {
                 return;
@@ -2815,7 +2928,9 @@ namespace Stratocraft.Physics.Jobs
             if (formedObsidian)
             {
                 int targetIdx = reactionTargetIsSecond ? idxB : idxA;
+                int targetY = reactionTargetIsSecond ? by : ay;
                 voxels[targetIdx] = formedSolid.RawValue;
+                TryStampSurfaceObsidianCrest(voxels, fluids, targetIdx, sizeX, sizeY, sizeZ, targetY, preReactW, preReactL);
                 obsidianFormedCount++;
             }
             else
@@ -2826,6 +2941,65 @@ namespace Stratocraft.Physics.Jobs
 
             MarkChanged3x3Horizontal(changedMask, fluids, ax, ay, az, sizeX, sizeY, sizeZ);
             MarkChanged3x3Horizontal(changedMask, fluids, bx, by, bz, sizeX, sizeY, sizeZ);
+        }
+
+        /// <summary>
+        /// Derin deniz/gol yuzeyindeki (orn. Y=89 tam 255 su/lav, Y=90 hava -> sivi duzlemi Y=90.0m) Su+Lav reaksiyonunda,
+        /// 1-voksellik SurfaceNets obsidyen duvarinin 89.25m'de su altinda gomulu kalip ustten su ile lavin zip-cakismasini onler:
+        /// Yalnizca ust hucre (targetY+1) bos hava VE taban derin deniz/obsidyen/dogal tam-dolu yuzey ise (y+1)'e
+        /// 84-yogunluklu sogumus volkanik obsidyen kabugu yerlestirir (SurfaceNets tepe kotu ~90.12..90.24m).
+        /// Laboratuvar/test reaksiyonlarina (y+1 su dolu veya mimari ShapeId!=0 taban) kesinlikle dokunmaz.
+        /// </summary>
+        private static void TryStampSurfaceObsidianCrest(
+            Span<uint> voxels,
+            ReadOnlySpan<ushort> fluids,
+            int targetIdx,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int targetY,
+            byte waterMass,
+            byte lavaMass)
+        {
+            if (targetY <= 0 || targetY + 1 >= sizeY)
+            {
+                return;
+            }
+
+            int strideY = sizeZ * sizeX;
+            int aboveIdx = targetIdx + strideY;
+            if ((uint)aboveIdx >= (uint)voxels.Length || (uint)aboveIdx >= (uint)fluids.Length)
+            {
+                return;
+            }
+
+            if (voxels[aboveIdx] != 0u || (fluids[aboveIdx] & 0xFF) != 0)
+            {
+                return;
+            }
+
+            int belowIdx = targetIdx - strideY;
+            uint belowVoxel = voxels[belowIdx];
+            ushort belowFluid = fluids[belowIdx];
+            bool hasFluidBelow = (belowFluid & 0xFF) >= 128;
+            bool hasObsidianBelow = VoxelBitUtility.IsPhysicallySolid(belowVoxel) &&
+                                    VoxelBitUtility.GetMaterialId(belowVoxel) == MaterialIdCatalog.NaturalObsidian;
+            bool hasFullSurfaceOnNaturalBed = Math.Max(waterMass, lavaMass) >= 200 &&
+                                              VoxelBitUtility.IsPhysicallySolid(belowVoxel) &&
+                                              VoxelBitUtility.GetShapeId(belowVoxel) == 0;
+
+            if (!hasFluidBelow && !hasObsidianBelow && !hasFullSurfaceOnNaturalBed)
+            {
+                return;
+            }
+
+            voxels[aboveIdx] = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.NaturalObsidian,
+                84,
+                0,
+                0,
+                BlokKokenDurumu.DogalKutle,
+                0);
         }
 
         private static int SumImmediateGridNeighborMass(

@@ -539,14 +539,16 @@ namespace Stratocraft.Character
             }
         }
 
-        /// <summary>Kazi, insa veya yikim olan bir chunk'i ve 4 komsusunu aktif akiskan simulasyon kumesine (_activeFluidChunks) uyandirir.</summary>
+        /// <summary>Kazi, insa veya yikim olan bir chunk'i ve 8 komsusunu aktif akiskan simulasyon kumesine (_activeFluidChunks) uyandirir.</summary>
         public void WakeChunkAndNeighborsFluid((int cx, int cz) key)
         {
-            WakeSingleFluidChunk(key);
-            WakeSingleFluidChunk((key.cx - 1, key.cz));
-            WakeSingleFluidChunk((key.cx + 1, key.cz));
-            WakeSingleFluidChunk((key.cx, key.cz - 1));
-            WakeSingleFluidChunk((key.cx, key.cz + 1));
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    WakeSingleFluidChunk((key.cx + dx, key.cz + dz));
+                }
+            }
         }
 
         private void WakeSingleFluidChunk((int cx, int cz) k)
@@ -736,12 +738,13 @@ namespace Stratocraft.Character
             if (_dirtyFluidChunks.Count == 0) return;
             int pCx = Mathf.FloorToInt(transform.position.x / 16f);
             int pCz = Mathf.FloorToInt(transform.position.z / 16f);
+            int wakeRadius = NearPhysicsColliderRadius < 0 ? 4 : (NearPhysicsColliderRadius + 2);
             foreach (var k in _dirtyFluidChunks)
             {
                 // Yalnizca oyuncunun kazi/insa/yikim yaptigi yakin cevredeki (r <= 4) chunk'larin akiskan simulasyonunu uyandir;
                 // uzakta yeni akisla yuklenen dogal deniz/gol chunk'lari zaten isSettled=true oldugu icin bosuna 65.536 hucre taramasin!
-                if (Mathf.Abs(k.cx - pCx) <= NearPhysicsColliderRadius + 2 &&
-                    Mathf.Abs(k.cz - pCz) <= NearPhysicsColliderRadius + 2)
+                if (Mathf.Abs(k.cx - pCx) <= wakeRadius &&
+                    Mathf.Abs(k.cz - pCz) <= wakeRadius)
                 {
                     WakeChunkAndNeighborsFluid(k);
                 }
@@ -2293,8 +2296,27 @@ namespace Stratocraft.Character
             in ChunkFluidActivityMask activityMask,
             int sliceVolume)
         {
-            if (fluids == null || !activityMask.HasAnyWetLayer())
+            if (fluids == null)
             {
+                return;
+            }
+
+            // Tamamen kuruyan (HasAnyWetLayer == false) chunk sinirindaki komsularin eski hayalet kose yuksekliklerini
+            // temizlemek icin 8 komsuyu (4 kardinal + 4 capraz kose) guvenle kirlet (Devir #069 P1-2B)!
+            if (!activityMask.HasAnyWetLayer())
+            {
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dz == 0) continue;
+                        var nk = (key.cx + dx, key.cz + dz);
+                        if (_fluidChunks.ContainsKey(nk))
+                        {
+                            _dirtyFluidChunks.Add(nk);
+                        }
+                    }
+                }
                 return;
             }
 
@@ -2313,10 +2335,11 @@ namespace Stratocraft.Character
 
                 for (int i = 0; i < 16; i++)
                 {
-                    if (!westWet && (fluids[yBase | (i << 4)] & 0xFFu) != 0u) westWet = true;
-                    if (!eastWet && (fluids[yBase | (i << 4) | 15] & 0xFFu) != 0u) eastWet = true;
-                    if (!southWet && (fluids[yBase | i] & 0xFFu) != 0u) southWet = true;
-                    if (!northWet && (fluids[yBase | (15 << 4) | i] & 0xFFu) != 0u) northWet = true;
+                    // Kose normali 2-hucrelik (lx = 0..1 / 14..15) sablon okudugu icin her iki sinir sutununu da tara!
+                    if (!westWet && ((fluids[yBase | (i << 4)] & 0xFFu) != 0u || (fluids[yBase | (i << 4) | 1] & 0xFFu) != 0u)) westWet = true;
+                    if (!eastWet && ((fluids[yBase | (i << 4) | 15] & 0xFFu) != 0u || (fluids[yBase | (i << 4) | 14] & 0xFFu) != 0u)) eastWet = true;
+                    if (!southWet && ((fluids[yBase | i] & 0xFFu) != 0u || (fluids[yBase | (1 << 4) | i] & 0xFFu) != 0u)) southWet = true;
+                    if (!northWet && ((fluids[yBase | (15 << 4) | i] & 0xFFu) != 0u || (fluids[yBase | (14 << 4) | i] & 0xFFu) != 0u)) northWet = true;
                 }
 
                 if (westWet && eastWet && southWet && northWet)
@@ -2329,6 +2352,11 @@ namespace Stratocraft.Character
             if (eastWet && _fluidChunks.ContainsKey((key.cx + 1, key.cz))) _dirtyFluidChunks.Add((key.cx + 1, key.cz));
             if (southWet && _fluidChunks.ContainsKey((key.cx, key.cz - 1))) _dirtyFluidChunks.Add((key.cx, key.cz - 1));
             if (northWet && _fluidChunks.ContainsKey((key.cx, key.cz + 1))) _dirtyFluidChunks.Add((key.cx, key.cz + 1));
+            // 4-chunk kose dikisleri (3x3 FluidNeighborhood3x3Cache + Marching Squares capraz kose):
+            if (westWet && southWet && _fluidChunks.ContainsKey((key.cx - 1, key.cz - 1))) _dirtyFluidChunks.Add((key.cx - 1, key.cz - 1));
+            if (eastWet && southWet && _fluidChunks.ContainsKey((key.cx + 1, key.cz - 1))) _dirtyFluidChunks.Add((key.cx + 1, key.cz - 1));
+            if (westWet && northWet && _fluidChunks.ContainsKey((key.cx - 1, key.cz + 1))) _dirtyFluidChunks.Add((key.cx - 1, key.cz + 1));
+            if (eastWet && northWet && _fluidChunks.ContainsKey((key.cx + 1, key.cz + 1))) _dirtyFluidChunks.Add((key.cx + 1, key.cz + 1));
         }
 
         private void ComputeFluidTelemetryDiagnostics(

@@ -93,7 +93,6 @@ namespace Stratocraft.Physics.Data
             }
 
             IsInitializedFromCurrentMass = true;
-            QuiescentTicks = 0;
         }
 
         /// <summary>

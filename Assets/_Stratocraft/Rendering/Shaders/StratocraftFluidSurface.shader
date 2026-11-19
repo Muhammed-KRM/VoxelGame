@@ -274,7 +274,10 @@ Shader "Stratocraft/FluidSurface"
                     float waveAmp = min(0.16, max(shallowAmp, beaufortAmp));
 
                     float time = _Time.y * (_WaterWaveSpeed + clamp(windSpeed * 0.08, 0.0, 1.4));
-                    float2 advectedXZ = posWS.xz - velXZ * (_Time.y * 0.45) + windXZ * (_Time.y * 0.06);
+                    // Devir #069 P1-3: Kose-basina degisen velXZ'yi sinirsiz _Time.y ile carpmak 2-3 dakika sonra
+                    // komsu tepe noktalarinda rastgele ±16cm kirisik faz patlamasi uretir -> akis adveksiyonu fragment
+                    // shaderdaki cift-fazli Vlachos fonksiyonunda (SampleDualPhaseAdvectedRipples) yapilir!
+                    float2 advectedXZ = posWS.xz + windXZ * (_Time.y * 0.06);
                     float wave1 = sin(advectedXZ.x * _WaterWaveFrequency + time) *
                                   cos(advectedXZ.y * _WaterWaveFrequency * 1.3 + time * 0.8);
                     float wave2 = sin(dot(posWS.xz, windDir * 0.55) - (_Time.y * (1.6 + windSpeed * 0.12)));
@@ -338,7 +341,11 @@ Shader "Stratocraft/FluidSurface"
                 {
                     faceNormalWS = -faceNormalWS;
                 }
-                float sideWallMask = 1.0 - smoothstep(0.28, 0.68, abs(faceNormalWS.y));
+                // Devir #069 P1-4: Duz ucgen faset normali (ddx/ddy) yerine yumusak paylasilan kose normali kullan
+                // (yalnizca gercek dikey selale duvarlarinda |faceNormalWS.y| < 0.25 iken yan duvar maskesi acilir -> 0 faset kirigi!)
+                float smoothSideMask = 1.0 - smoothstep(0.28, 0.62, abs(geomNormalWS.y));
+                float hardWallMask = 1.0 - smoothstep(0.18, 0.34, abs(faceNormalWS.y));
+                float sideWallMask = lerp(smoothSideMask, hardWallMask, saturate(input.flowAndFoam.w * 4.0));
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - input.positionWS);
 
                 float2 flowVel = input.flowAndFoam.xy;
@@ -360,7 +367,7 @@ Shader "Stratocraft/FluidSurface"
                 float sceneDepthWS = LinearEyeDepth(rawDepth, _ZBufferParams);
                 float surfaceDepthWS = LinearEyeDepth(input.positionCS.z, _ZBufferParams);
                 float rawDiff = sceneDepthWS - surfaceDepthWS;
-                float opticalDepth = (validDepth && rawDiff >= 0.0 && rawDiff < 24.0) ? rawDiff : max(0.35, depthMeters);
+                float opticalDepth = (validDepth && rawDiff >= -0.06 && rawDiff < 24.0) ? max(0.0, rawDiff) : max(0.35, depthMeters);
 
                 // Bulut Golgesi Zayiflatmasi
                 Light mainLight = GetMainLight();
@@ -375,12 +382,12 @@ Shader "Stratocraft/FluidSurface"
                     cloudShadowAtten = lerp(1.0, rawCloudAtten, saturate(_GlobalCloudGridParams.w));
                 }
 
-                // Paket 4B.3 F4: Durgun Su Kapisi + Yumusak Kose Normali Tabanli Egim Akis Vektoru (0.0 MB VRAM)
-                // ddx/ddy yuz normali yerine kose-paylasimli yumusak geomNormalWS kullanilir ve durgun suda (flowSpeed==0, subTickDy==0)
-                // egim bazli yapay dere akisi %100 kapatilir -> kazilmis cukur ve durgun goller ayna gibi sakin kalir!
+                // Paket 4B.3 F4 + Devir #069: Yumusak Durgun Su Kapisi (1-2 LSB kuantalama gurultusunde yamali gorunum 0!)
                 float subTickDyFrag = input.salinityAndDy.y;
-                float stillness01 = (1.0 - saturate(flowSpeed * 6.0)) * (1.0 - saturate(abs(subTickDyFrag) * 40.0));
-                float activeMotionGate = 1.0 - stillness01;
+                float flowMotion01 = smoothstep(0.04, 0.28, flowSpeed);
+                float dyMotion01 = smoothstep(0.025, 0.14, abs(subTickDyFrag));
+                float activeMotionGate = saturate(max(flowMotion01, dyMotion01));
+                float stillness01 = 1.0 - activeMotionGate;
 
                 float slopeSin = saturate(length(geomNormalWS.xz));
                 float slopeFlowMask = smoothstep(0.12, 0.38, slopeSin) * (1.0 - sideWallMask) * activeMotionGate;
@@ -547,11 +554,11 @@ Shader "Stratocraft/FluidSurface"
                                             smoothstep(0.008, 0.050, depthMeters) * 0.58;
                     float columnThicknessAlpha = max(slopeAlphaFloor, lerp(0.24, max(0.76, _WaterColorShallow.a), depthVis01));
                     float deepVolumeBonus = clamp(effectiveColumnDepth, 0.0, 4.0) * 0.05;
-                    float edgeContactFeather = validDepth ? lerp(smoothstep(0.0, 0.035, opticalDepth), 1.0, max(activeWallMask, slopeFlowMask * 0.85)) : 1.0;
-                    float thinRimFeather = lerp(smoothstep(0.004, 0.036, depthMeters), 1.0, max(activeWallMask, slopeFlowMask * 0.70));
+                    float edgeContactFeather = validDepth ? lerp(smoothstep(0.0, 0.045, opticalDepth), 1.0, max(activeWallMask, slopeFlowMask * 0.85)) : 1.0;
+                    float thinRimFeather = lerp(smoothstep(0.004, 0.040, depthMeters), 1.0, max(activeWallMask, slopeFlowMask * 0.70));
                     float baseAlpha = saturate(columnThicknessAlpha + deepVolumeBonus + fresnel * lerp(0.16, 0.0, sideWallMask));
                     float foamTargetAlpha = activeWallMask > 0.5 ? 0.84 : (waterfallAttrFoam > 0.05 ? 0.78 : 0.90);
-                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * lerp(0.45, 1.0, thinRimFeather * edgeContactFeather);
+                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * lerp(0.16, 1.0, thinRimFeather * edgeContactFeather);
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 
