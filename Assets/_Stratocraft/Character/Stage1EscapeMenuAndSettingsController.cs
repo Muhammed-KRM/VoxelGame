@@ -74,6 +74,7 @@ namespace Stratocraft.Character
         public static bool EnableDistantHorizonLod = true;
         public static bool EnableBurstAndAsyncBakeMesh = true;
         public static bool EnableFlowFieldAndSpatialBoids = true;
+        public static bool EnableViewConeChunkStreaming = false;
 
 #if UNITY_5_3_OR_NEWER
         // 5) Değiştirilebilir Kontrol Tuşları

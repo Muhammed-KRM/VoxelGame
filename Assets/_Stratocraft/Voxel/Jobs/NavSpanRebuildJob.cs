@@ -101,15 +101,38 @@ namespace Stratocraft.Voxel.Jobs
                 throw new ArgumentNullException(nameof(chunk));
             }
 
+            ExecuteMultiLayer(
+                chunk.Voxels,
+                chunk.Fluids,
+                StratocraftConstants.ChunkSizeY,
+                chunk.IsInsideClan ? (ushort)1 : (ushort)0,
+                outputColumns256,
+                out totalDiscoveredSpans);
+        }
+
+        /// <summary>
+        /// Paket 4C-3: Ham voksel ve sivi tamponlari uzerinden 0-GC, 256-Bit Bitboard tabanli
+        /// 4-katmanli NavSpan insasi (&lt; 30 us / chunk).
+        /// </summary>
+        public static void ExecuteMultiLayer(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> fluids,
+            int maxEditableY,
+            ushort clanId,
+            Span<NavSpanColumn4Layer> outputColumns256,
+            out int totalDiscoveredSpans)
+        {
             if (outputColumns256.Length < ColumnsPerChunk)
             {
                 throw new ArgumentException("Output span must hold at least 256 NavSpanColumn4Layer items.", nameof(outputColumns256));
             }
 
             totalDiscoveredSpans = 0;
-            uint[] voxels = chunk.Voxels;
-            ushort[] fluids = chunk.Fluids;
-            ushort clanId = chunk.IsInsideClan ? (ushort)1 : (ushort)0;
+            const int yStride = StratocraftConstants.ChunkSizeX * StratocraftConstants.ChunkSizeZ; // 256
+            int maxBufferY = Math.Min(StratocraftConstants.ChunkSizeY, voxels.Length / yStride);
+            int clampedMaxY = Math.Clamp(maxEditableY, 1, maxBufferY);
+            int wordCount = Math.Clamp((clampedMaxY + 63) >> 6, 1, 4);
+            bool hasFluids = !fluids.IsEmpty;
 
             Span<ulong> solidBits = stackalloc ulong[4];
 
@@ -123,15 +146,15 @@ namespace Stratocraft.Voxel.Jobs
                     solidBits[3] = 0UL;
 
                     int colOffset = lz * StratocraftConstants.ChunkSizeX + lx;
-                    const int yStride = StratocraftConstants.ChunkSizeX * StratocraftConstants.ChunkSizeZ; // 256
 
-                    // 1. 256 dikey hucryi 4 adet 64-bit Bitboard kelimesine paketle
-                    for (int word = 0; word < 4; word++)
+                    // 1. Dikey hucreleri 64-bit Bitboard kelimelerine paketle
+                    for (int word = 0; word < wordCount; word++)
                     {
                         ulong mask = 0UL;
                         int baseY = word << 6;
+                        int maxBit = Math.Min(64, clampedMaxY - baseY);
                         int flatIdx = baseY * yStride + colOffset;
-                        for (int bit = 0; bit < 64; bit++, flatIdx += yStride)
+                        for (int bit = 0; bit < maxBit; bit++, flatIdx += yStride)
                         {
                             if (VoxelBitUtility.IsPhysicallySolid(voxels[flatIdx]))
                             {
@@ -141,11 +164,11 @@ namespace Stratocraft.Voxel.Jobs
                         solidBits[word] = mask;
                     }
 
-                    // 2. Yukaridan asagiya (word 3 -> 0) [y=Solid && (y+1)=Empty] taban gecislerini Bitwise ile cikar!
+                    // 2. Yukaridan asagiya [y=Solid && (y+1)=Empty] taban gecislerini Bitwise ile cikar!
                     NavSpanColumn4Layer colRecord = default;
                     int layerWriteIdx = 0;
 
-                    for (int word = 3; word >= 0 && layerWriteIdx < 4; word--)
+                    for (int word = wordCount - 1; word >= 0 && layerWriteIdx < 4; word--)
                     {
                         ulong curSolid = solidBits[word];
                         if (curSolid == 0UL)
@@ -153,27 +176,26 @@ namespace Stratocraft.Voxel.Jobs
                             continue;
                         }
 
-                        ulong nextWordLowestBit = (word < 3) ? (solidBits[word + 1] & 1UL) : 1UL; // y=255 ust sinir kapali
+                        ulong nextWordLowestBit = (word < 3) ? (solidBits[word + 1] & 1UL) : 1UL;
                         ulong shiftedAboveSolid = (curSolid >> 1) | (nextWordLowestBit << 63);
-                        ulong walkableTransitionMask = curSolid & ~shiftedAboveSolid; // bit=1 -> y kati ve y+1 bos!
+                        ulong walkableTransitionMask = curSolid & ~shiftedAboveSolid;
 
                         while (walkableTransitionMask != 0UL && layerWriteIdx < 4)
                         {
-                            // En yuksek biti (LeadingZeroCount ile yukaridan asagiya siralama) sec
                             int highestBit = 63 - BitOps.LeadingZeroCount(walkableTransitionMask);
                             walkableTransitionMask &= ~(1UL << highestBit);
 
                             int solidY = (word << 6) + highestBit;
                             int floorY = solidY + 1;
-                            if (floorY >= StratocraftConstants.ChunkSizeY)
+                            if (floorY >= clampedMaxY)
                             {
                                 continue;
                             }
 
-                            // Bitboard uzerinden O(1) TrailingZeroCount ile tavan acikligini (Clearance) olc!
                             int clearance = CountEmptyBitsAbove(solidBits, floorY);
                             uint groundRaw = voxels[solidY * yStride + colOffset];
-                            ushort fluidAbove = fluids[floorY * yStride + colOffset];
+                            int flIdx = floorY * yStride + colOffset;
+                            ushort fluidAbove = (hasFluids && (uint)flIdx < (uint)fluids.Length) ? fluids[flIdx] : (ushort)0;
 
                             NavSpanTerrainCode terrainCode = ClassifyTerrainCode(groundRaw, fluidAbove);
                             bool isPillarTarget = IsTrueLoadBearingSupportPillar(voxels, colOffset, solidY, groundRaw);
@@ -224,9 +246,9 @@ namespace Stratocraft.Voxel.Jobs
             if (fluidLevel >= 16)
             {
                 int fluidType = (fluidAboveRaw >> 8) & 0x03;
-                if (fluidType == 1) return NavSpanTerrainCode.LavaLethal;
-                if (fluidType == 2) return NavSpanTerrainCode.AcidCorrosive;
-                return fluidLevel >= 160 ? NavSpanTerrainCode.DeepWater : NavSpanTerrainCode.ShallowWater;
+                if (fluidType == 2) return NavSpanTerrainCode.LavaLethal;
+                if (fluidType == 3) return NavSpanTerrainCode.AcidCorrosive;
+                if (fluidType == 1) return fluidLevel >= 160 ? NavSpanTerrainCode.DeepWater : NavSpanTerrainCode.ShallowWater;
             }
 
             byte groundMat = VoxelBitUtility.GetMaterialId(groundRaw);
@@ -245,7 +267,7 @@ namespace Stratocraft.Voxel.Jobs
             return NavSpanTerrainCode.DryGround;
         }
 
-        private static bool IsTrueLoadBearingSupportPillar(uint[] voxels, int colOffset, int solidY, uint groundRaw)
+        private static bool IsTrueLoadBearingSupportPillar(ReadOnlySpan<uint> voxels, int colOffset, int solidY, uint groundRaw)
         {
             if (VoxelBitUtility.GetOriginState(groundRaw) != BlokKokenDurumu.OyuncuItemBlogu)
             {

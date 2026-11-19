@@ -78,6 +78,18 @@ namespace Stratocraft.Physics.Systems
             _chunkActivityMasks.Remove((cx, cz));
         }
 
+        public int TrackedActivityMaskCount => _chunkActivityMasks.Count;
+
+        public bool TryGetCachedActivityMask(int cx, int cz, out ChunkFluidActivityMask mask)
+        {
+            return _chunkActivityMasks.TryGetValue((cx, cz), out mask) && mask.IsInitialized != 0;
+        }
+
+        public void ClearAllActivityMasks()
+        {
+            _chunkActivityMasks.Clear();
+        }
+
         public int AdvanceTickParity()
         {
             return _stepCounter++;

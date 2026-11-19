@@ -278,6 +278,438 @@ namespace Stratocraft.Character
         /// <summary>Kati kor MagmaBlock (11) temasinda saniyelik vucut cekirdek isi artisi (C/s).</summary>
         public const float MagmaBlockCoreHeatGainCelsiusPerSecond = 2.8f;
 
+        /// <summary>Kati blok icinde sikisma / toprak altinda bogulma saniyelik ezilme hasari (HP/s).</summary>
+        public const float SolidBlockSuffocationDamagePerSecond = 6.0f;
+
+        /// <summary>Kati blok icinde sikisma / gomulme sirasinda akciger oksijen kaybi (%/s).</summary>
+        public const float SolidBlockSuffocationOxygenDrainPerSecond = 28.0f;
+
+        /// <summary>Saf C# kati voksel carpismasi kontrolu (Air ve GlowingMoss haric tum fiziksel kati vokseller).</summary>
+        public static bool IsHardCollisionVoxelPure(uint raw)
+        {
+            if (!VoxelBitUtility.IsPhysicallySolid(raw)) return false;
+            byte mat = VoxelBitUtility.GetMaterialId(raw);
+            return mat != MaterialIdCatalog.Air && mat != MaterialIdCatalog.GlowingMoss;
+        }
+
+        /// <summary>
+        /// HybridSurfaceNetsAndShapeMesher (IsoLevel = 64) ile birebir ayni dikey kenar kesisimini saf C# olarak hesaplar.
+        /// </summary>
+        public static float GetVoxelWalkableTopYPure(uint raw, uint aboveRaw, int wy)
+        {
+            if (VoxelBitUtility.GetShapeId(raw) != 0)
+            {
+                return wy + 1.0f;
+            }
+
+            int d = VoxelBitUtility.GetDensityOrLiquid(raw);
+            int dAbove = (VoxelBitUtility.GetMaterialId(aboveRaw) != MaterialIdCatalog.Air &&
+                          VoxelBitUtility.GetShapeId(aboveRaw) == 0)
+                ? VoxelBitUtility.GetDensityOrLiquid(aboveRaw)
+                : 0;
+            float denom = MathF.Max(1f, d - dAbove);
+            float t = Math.Clamp((d - VoxelBitUtility.IsoDensity) / denom, 0.08f, 0.92f);
+            return wy + t;
+        }
+
+        /// <summary>
+        /// Dogal SurfaceNets (ShapeId == 0) arazi voksellerinin [wx, wy, wz] kose izgara yogunluk alanini
+        /// surekli 3B Trilinear SDF olarak ornekler; analitik gradyani ve baskin kati MaterialID'yi doner (0 B GC).
+        /// </summary>
+        public static void SampleTrilinearSolidSdfPure(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float px,
+            float py,
+            float pz,
+            out float rho,
+            out float gradX,
+            out float gradY,
+            out float gradZ,
+            out byte dominantMaterialId)
+        {
+            int x0 = (int)MathF.Floor(px);
+            int y0 = (int)MathF.Floor(py);
+            int z0 = (int)MathF.Floor(pz);
+
+            float tx = Math.Clamp(px - x0, 0f, 1f);
+            float ty = Math.Clamp(py - y0, 0f, 1f);
+            float tz = Math.Clamp(pz - z0, 0f, 1f);
+
+            dominantMaterialId = MaterialIdCatalog.Air;
+            float bestCornerWeight = 0f;
+
+            float SampleCorner(int dx, int dy, int dz, float w, ref byte bestMat, ref float bestW)
+            {
+                uint raw = ReadWorldVoxelRaw(worldChunks, x0 + dx, y0 + dy, z0 + dz);
+                if (!IsHardCollisionVoxelPure(raw) || VoxelBitUtility.GetShapeId(raw) != 0)
+                {
+                    return 0f;
+                }
+
+                float d = VoxelBitUtility.GetDensityOrLiquid(raw);
+                float weighted = d * w;
+                if (weighted > bestW)
+                {
+                    bestW = weighted;
+                    bestMat = VoxelBitUtility.GetMaterialId(raw);
+                }
+                return d;
+            }
+
+            float ox = 1f - tx, oy = 1f - ty, oz = 1f - tz;
+            float c000 = SampleCorner(0, 0, 0, ox * oy * oz, ref dominantMaterialId, ref bestCornerWeight);
+            float c100 = SampleCorner(1, 0, 0, tx * oy * oz, ref dominantMaterialId, ref bestCornerWeight);
+            float c010 = SampleCorner(0, 1, 0, ox * ty * oz, ref dominantMaterialId, ref bestCornerWeight);
+            float c110 = SampleCorner(1, 1, 0, tx * ty * oz, ref dominantMaterialId, ref bestCornerWeight);
+            float c001 = SampleCorner(0, 0, 1, ox * oy * tz, ref dominantMaterialId, ref bestCornerWeight);
+            float c101 = SampleCorner(1, 0, 1, tx * oy * tz, ref dominantMaterialId, ref bestCornerWeight);
+            float c011 = SampleCorner(0, 1, 1, ox * ty * tz, ref dominantMaterialId, ref bestCornerWeight);
+            float c111 = SampleCorner(1, 1, 1, tx * ty * tz, ref dominantMaterialId, ref bestCornerWeight);
+
+            float c00 = c000 * ox + c100 * tx;
+            float c10 = c010 * ox + c110 * tx;
+            float c01 = c001 * ox + c101 * tx;
+            float c11 = c011 * ox + c111 * tx;
+
+            float c0 = c00 * oy + c10 * ty;
+            float c1 = c01 * oy + c11 * ty;
+
+            rho = c0 * oz + c1 * tz;
+            gradX = ((c100 - c000) * oy + (c110 - c010) * ty) * oz +
+                    ((c101 - c001) * oy + (c111 - c011) * ty) * tz;
+            gradY = (c10 - c00) * oz + (c11 - c01) * tz;
+            gradZ = c1 - c0;
+        }
+
+        /// <summary>
+        /// Verilen dunya noktasinin (kafa/goz veya kamera) kati bir blok icinde olup olmadigini denetler.
+        /// Ucgen yuzey (rho = 64 veya kubik yuzey) gecilmeden hemen once <paramref name="opaqueAlpha01"/> = 1.0f uretir;
+        /// boylece blok icinde bosluk (X-Ray) gorulmesi %100 imkansizdir ve tam o blogun malzemesi gosterilir.
+        /// </summary>
+        public static bool EvaluateSolidBlockContainmentAtPoint(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float px,
+            float py,
+            float pz,
+            float cubicSkinMeters,
+            float sdfFullOpaqueRho,
+            out byte blockMaterialId,
+            out float opaqueAlpha01)
+        {
+            blockMaterialId = MaterialIdCatalog.Air;
+            opaqueAlpha01 = 0f;
+            if (worldChunks == null || worldChunks.Count == 0 || py < 0.5f || py >= 255f)
+            {
+                return false;
+            }
+
+            // 1) Kubik / sekilli mimari vokseller (ShapeId != 0 -> [wx .. wx+1] x [wy .. wy+1] x [wz .. wz+1])
+            int baseWx = (int)MathF.Floor(px);
+            int baseWy = (int)MathF.Floor(py);
+            int baseWz = (int)MathF.Floor(pz);
+            float skin = MathF.Max(0f, cubicSkinMeters);
+
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                int wy = baseWy + dy;
+                if (wy < 1 || wy >= 255) continue;
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    int wz = baseWz + dz;
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int wx = baseWx + dx;
+                        uint raw = ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                        if (!IsHardCollisionVoxelPure(raw) || VoxelBitUtility.GetShapeId(raw) == 0)
+                        {
+                            continue;
+                        }
+
+                        if (px >= wx - skin && px <= wx + 1f + skin &&
+                            py >= wy - skin && py <= wy + 1f + skin &&
+                            pz >= wz - skin && pz <= wz + 1f + skin)
+                        {
+                            blockMaterialId = VoxelBitUtility.GetMaterialId(raw);
+                            opaqueAlpha01 = 1.0f;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // 2) Dogal SurfaceNets (ShapeId == 0) surekli 3B Trilinear SDF alani (gorsel yuzey rho = 64.0f)
+            SampleTrilinearSolidSdfPure(
+                worldChunks, px, py, pz, out float rho, out _, out _, out _, out byte sdfMat);
+            float startRho = sdfFullOpaqueRho - 3.5f;
+            if (rho >= startRho && sdfMat != MaterialIdCatalog.Air)
+            {
+                blockMaterialId = sdfMat;
+                opaqueAlpha01 = rho >= sdfFullOpaqueRho
+                    ? 1.0f
+                    : Math.Clamp((rho - startRho) / MathF.Max(0.5f, sdfFullOpaqueRho - startRho), 0f, 1f);
+                return true;
+            }
+
+            // 3) Tam gomulu kati sutun emniyeti (merkez, alt ve ust vokselin ucu de kati ise %100 opak)
+            uint centerRaw = ReadWorldVoxelRaw(worldChunks, baseWx, baseWy, baseWz);
+            if (IsHardCollisionVoxelPure(centerRaw) &&
+                IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, baseWx, baseWy + 1, baseWz)) &&
+                IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, baseWx, Math.Max(1, baseWy - 1), baseWz)))
+            {
+                blockMaterialId = VoxelBitUtility.GetMaterialId(centerRaw);
+                opaqueAlpha01 = 1.0f;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Minecraft tarzi kati blok icinde sikisma / gomulme hasari (-6 HP/sn) ve tam ekran opak malzeme tespiti.
+        /// </summary>
+        public static bool StepSolidBlockSuffocationHazard(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float headX,
+            float headY,
+            float headZ,
+            float dt,
+            ref CharacterVitalsComponent vitals,
+            out byte blockMaterialId,
+            out float overlayAlpha01,
+            out float appliedDamageHp)
+        {
+            appliedDamageHp = 0f;
+            bool contained = EvaluateSolidBlockContainmentAtPoint(
+                worldChunks,
+                headX,
+                headY,
+                headZ,
+                cubicSkinMeters: 0.04f,
+                sdfFullOpaqueRho: 53.0f,
+                out blockMaterialId,
+                out overlayAlpha01);
+
+            if (!contained || overlayAlpha01 < 0.35f)
+            {
+                return false;
+            }
+
+            if (dt > 0f)
+            {
+                vitals.LungOxygenPercent = MathF.Max(0f, vitals.LungOxygenPercent - SolidBlockSuffocationOxygenDrainPerSecond * dt);
+                float prevHp = vitals.CurrentHp;
+                float loss = SolidBlockSuffocationDamagePerSecond * dt;
+                vitals.CurrentHp = MathF.Max(1.0f, prevHp - loss);
+                appliedDamageHp = MathF.Max(0f, prevHp - vitals.CurrentHp);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Iki kati fiziksel cismin ic ice girmesini onleyen gercek 3B yatay kapsul depenetrasyonu (MTV + SDF gradyani).
+        /// ASLA Y koordinatini yukari firlatmaz (magara tavani isinlamasi %100 imkansizdir); yalnizca acik hava yonune yatay iter!
+        /// </summary>
+        public static bool ResolveHorizontalSolidCapsuleDepenetrationPure(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            ref float posX,
+            float posY,
+            ref float posZ,
+            float capsuleHeightMeters = 1.8f,
+            float capsuleRadiusMeters = 0.34f)
+        {
+            if (worldChunks == null || worldChunks.Count == 0) return false;
+
+            float r = Math.Clamp(capsuleRadiusMeters, 0.20f, 0.34f);
+            float rSq = r * r;
+            float waistY = posY + Math.Clamp(capsuleHeightMeters * 0.42f, 0.30f, 0.72f);
+            float headY = posY + Math.Clamp(capsuleHeightMeters - 0.16f, 0.42f, 1.56f);
+            bool movedAny = false;
+
+            ReadOnlySpan<float> probeYs = stackalloc float[2] { waistY, headY };
+
+            for (int iter = 0; iter < 2; iter++)
+            {
+                for (int p = 0; p < 2; p++)
+                {
+                    float py = probeYs[p];
+                    int wy = (int)MathF.Floor(py);
+                    if (wy < 1 || wy >= 254) continue;
+
+                    // A) Kubik (ShapeId != 0) duvar bloklarindan 2B daire-kutu MTV itmesi
+                    int baseWx = (int)MathF.Floor(posX);
+                    int baseWz = (int)MathF.Floor(posZ);
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        int wz = baseWz + dz;
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            int wx = baseWx + dx;
+                            uint raw = ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                            if (!IsHardCollisionVoxelPure(raw) || VoxelBitUtility.GetShapeId(raw) == 0)
+                            {
+                                continue;
+                            }
+
+                            bool isWall = IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, wx, wy + 1, wz)) ||
+                                          ((wy + 1.0f) - posY) > 1.08f;
+                            if (!isWall) continue;
+
+                            float closestX = Math.Clamp(posX, (float)wx, wx + 1.0f);
+                            float closestZ = Math.Clamp(posZ, (float)wz, wz + 1.0f);
+                            float ox = posX - closestX;
+                            float oz = posZ - closestZ;
+                            float distSq = ox * ox + oz * oz;
+                            if (distSq >= rSq) continue;
+
+                            float candX = posX;
+                            float candZ = posZ;
+                            if (distSq > 1e-6f)
+                            {
+                                float dist = MathF.Sqrt(distSq);
+                                float push = MathF.Min(0.22f, r - dist + 0.004f);
+                                candX += (ox / dist) * push;
+                                candZ += (oz / dist) * push;
+                            }
+                            else
+                            {
+                                // Merkez tam kubik blogun icindeyse 4 komsudan acik olana dogru cikar
+                                float dWest = posX - wx;
+                                float dEast = (wx + 1.0f) - posX;
+                                float dSouth = posZ - wz;
+                                float dNorth = (wz + 1.0f) - posZ;
+                                bool westOpen = !IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, wx - 1, wy, wz));
+                                bool eastOpen = !IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, wx + 1, wy, wz));
+                                bool southOpen = !IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, wx, wy, wz - 1));
+                                bool northOpen = !IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, wx, wy, wz + 1));
+
+                                float bestDist = float.MaxValue;
+                                if (westOpen && dWest < bestDist) { bestDist = dWest; candX = wx - r - 0.01f; candZ = posZ; }
+                                if (eastOpen && dEast < bestDist) { bestDist = dEast; candX = wx + 1.0f + r + 0.01f; candZ = posZ; }
+                                if (southOpen && dSouth < bestDist) { bestDist = dSouth; candX = posX; candZ = wz - r - 0.01f; }
+                                if (northOpen && dNorth < bestDist) { bestDist = dNorth; candX = posX; candZ = wz + 1.0f + r + 0.01f; }
+                                if (bestDist == float.MaxValue) continue;
+                            }
+
+                            int dstWx = (int)MathF.Floor(candX);
+                            int dstWz = (int)MathF.Floor(candZ);
+                            if (!IsHardCollisionVoxelPure(ReadWorldVoxelRaw(worldChunks, dstWx, wy, dstWz)))
+                            {
+                                posX = candX;
+                                posZ = candZ;
+                                movedAny = true;
+                            }
+                        }
+                    }
+
+                    // B) Dogal SurfaceNets (ShapeId == 0) falez / magara duvarlarindan surekli SDF gradyani ile itme:
+                    //    Yurunebilir dogal yokuslari ASLA yana itmemek icin ust hizada (posY + 1.25m) duvar devamliligini dogrula!
+                    SampleTrilinearSolidSdfPure(worldChunks, posX, posY + 1.25f, posZ, out float upperWallRho, out _, out _, out _, out _);
+                    SampleTrilinearSolidSdfPure(worldChunks, posX, py, posZ, out float centerRho, out float gx, out float gy, out float gz, out _);
+
+                    float horizGradSq = gx * gx + gz * gz;
+                    bool isSteepWall = upperWallRho >= 46.0f || (horizGradSq > 1.0f && MathF.Sqrt(horizGradSq) > MathF.Abs(gy) * 0.90f);
+                    if (isSteepWall && centerRho > 44.0f && horizGradSq > 1.0f)
+                    {
+                        float horizGrad = MathF.Sqrt(horizGradSq);
+                        float pushMeters = Math.Clamp((centerRho - 42.0f) / horizGrad, 0.005f, 0.20f);
+                        float candX = posX - (gx / horizGrad) * pushMeters;
+                        float candZ = posZ - (gz / horizGrad) * pushMeters;
+
+                        SampleTrilinearSolidSdfPure(worldChunks, candX, py, candZ, out float afterRho, out _, out _, out _, out _);
+                        if (afterRho + 0.25f < centerRho)
+                        {
+                            posX = candX;
+                            posZ = candZ;
+                            movedAny = true;
+                        }
+                    }
+                }
+            }
+
+            return movedAny;
+        }
+
+        /// <summary>
+        /// Kirilmaz Kati Taban Kilidi: Oyuncu bir duvar kosesine sikissa veya basindan asagi kum/toprak dokulup
+        /// tamamen kati blok icine gomulse dahi (SampleSingleColumnGroundY -30f dondugu anlarda bile!)
+        /// yercekiminin oyuncuyu altindaki kati vokselin icinden asagi dusurmesini %100 imkansiz kilar.
+        /// ASLA magara tavanina veya ada tepesine yukari isinlamaz!
+        /// </summary>
+        public static float ComputeUnbreakableSolidFloorStopY(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float posX,
+            float posZ,
+            float prevFeetY,
+            float candidateFeetY,
+            float footRadiusMeters = 0.20f)
+        {
+            if (worldChunks == null || worldChunks.Count == 0 || candidateFeetY > prevFeetY + 0.001f)
+            {
+                return candidateFeetY;
+            }
+
+            float minAllowedY = candidateFeetY;
+            float r = Math.Clamp(footRadiusMeters, 0.12f, 0.26f);
+            ReadOnlySpan<float> ox = stackalloc float[5] { 0f, r, -r, 0f, 0f };
+            ReadOnlySpan<float> oz = stackalloc float[5] { 0f, 0f, 0f, r, -r };
+
+            int scanTopWy = Math.Clamp((int)MathF.Floor(prevFeetY + 0.05f), 1, 253);
+            int scanBottomWy = Math.Clamp((int)MathF.Floor(candidateFeetY - 0.02f), 1, scanTopWy);
+
+            // 1) Ustunde hava olan tum yurunebilir kati basamak/tabanlari 5 noktali ayak diskinde tara (duvar kosesi siyirmalarini yakalar)
+            for (int i = 0; i < 5; i++)
+            {
+                int wx = (int)MathF.Floor(posX + ox[i]);
+                int wz = (int)MathF.Floor(posZ + oz[i]);
+                for (int wy = scanTopWy; wy >= scanBottomWy; wy--)
+                {
+                    uint raw = ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                    if (!IsHardCollisionVoxelPure(raw)) continue;
+
+                    uint aboveRaw = ReadWorldVoxelRaw(worldChunks, wx, wy + 1, wz);
+                    if (!IsHardCollisionVoxelPure(aboveRaw))
+                    {
+                        float topY = GetVoxelWalkableTopYPure(raw, aboveRaw, wy);
+                        if (prevFeetY >= topY - 0.28f && topY > minAllowedY)
+                        {
+                            minAllowedY = topY;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // 2) Eger oyuncunun TAM MERKEZ omurgasinin altindaki hucre kati bloksa (orn. 3x3 toprak mezar / duvar ici sikisma),
+            //    ustteki voksel de kati olsa bile kati maddenin icinden daha asagi dusmesi fiziksel olarak YASAKTIR!
+            int centerWx = (int)MathF.Floor(posX);
+            int centerWz = (int)MathF.Floor(posZ);
+            int belowSoleWy = Math.Clamp((int)MathF.Floor(candidateFeetY - 0.02f), 1, 253);
+            uint centerBelowRaw = ReadWorldVoxelRaw(worldChunks, centerWx, belowSoleWy, centerWz);
+            if (IsHardCollisionVoxelPure(centerBelowRaw))
+            {
+                uint centerAboveRaw = ReadWorldVoxelRaw(worldChunks, centerWx, belowSoleWy + 1, centerWz);
+                if (!IsHardCollisionVoxelPure(centerAboveRaw))
+                {
+                    float topY = GetVoxelWalkableTopYPure(centerBelowRaw, centerAboveRaw, belowSoleWy);
+                    if (prevFeetY >= topY - 0.32f && topY > minAllowedY)
+                    {
+                        minAllowedY = topY;
+                    }
+                }
+                else if (candidateFeetY < prevFeetY)
+                {
+                    // Gomulu kati sutun: Yukari firlatma YOK (magara guvenli!), asagi dusme YOK (prevFeetY korunur)!
+                    if (prevFeetY > minAllowedY)
+                    {
+                        minAllowedY = prevFeetY;
+                    }
+                }
+            }
+
+            return minAllowedY;
+        }
+
         /// <summary>Dunya (wx, wy, wz) koordinatindaki 32-bit vokseli okur.</summary>
         public static uint ReadWorldVoxelRaw(Dictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
         {
@@ -437,6 +869,45 @@ namespace Stratocraft.Character
 
         /// <summary>Oyuncunun kesintisiz kati MagmaBlock (11) temasinda kaldigi sure (sn; temas yoksa 0).</summary>
         public float LastMagmaContactSeconds { get; private set; }
+
+        /// <summary>Oyuncunun kafasi su anda kati bir blok icinde sikismis / gomulmus durumda mi?</summary>
+        public bool IsHeadSuffocatingInSolidBlock { get; private set; }
+
+        /// <summary>Kafanin veya kameranin icinde bulundugu kati blogun MaterialID degeri (Toprak, Tas, Kum vb.).</summary>
+        public byte SuffocatingBlockMaterialId { get; private set; }
+
+        /// <summary>Minecraft tarzi tam ekran kati blok kaplama opakligi (0..1; 1.0 = %100 opak, sifir X-Ray!).</summary>
+        public float SuffocationOverlayAlpha01 { get; private set; }
+
+        /// <summary>Son fizik adiminda blok icinde sikisma nedeniyle kesilen can miktari (HP).</summary>
+        public float LastSuffocationDamageHp { get; private set; }
+
+        /// <summary>
+        /// Kamera konumu (StepRigAnimation sonrasi) hala kati bir yuzeyin/blogun icinde sikismissa
+        /// ucgen yuzey (X-Ray) gorulmeden once tam ekran opak blok dokusunu zorlar.
+        /// </summary>
+        public void EvaluateCameraSolidBlockShield(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 cameraWorldPos)
+        {
+            if (EvaluateSolidBlockContainmentAtPoint(
+                    worldChunks,
+                    cameraWorldPos.x,
+                    cameraWorldPos.y,
+                    cameraWorldPos.z,
+                    cubicSkinMeters: 0.055f,
+                    sdfFullOpaqueRho: 50.0f,
+                    out byte camMat,
+                    out float camAlpha) &&
+                camAlpha > SuffocationOverlayAlpha01)
+            {
+                SuffocationOverlayAlpha01 = camAlpha;
+                if (camMat != MaterialIdCatalog.Air)
+                {
+                    SuffocatingBlockMaterialId = camMat;
+                }
+            }
+        }
 
         /// <summary>Biriken kati MagmaBlock yanik telemetrisini okur ve sifirlar.</summary>
         public bool ConsumePendingMagmaBurn(out float burnDamageHp, out float coreHeatDeltaCelsius)
@@ -696,6 +1167,37 @@ namespace Stratocraft.Character
 
             IntegrateHorizontalAndVerticalMotion(playerTransform, worldChunks, _dodgeRemainingSec > 0f ? _dodgeDirectionWorld : wishDir, deltaTime);
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
+            EvaluatePlayerHeadSuffocationInSolidBlock(playerTransform, worldChunks, deltaTime, ref statusFeedback);
+        }
+
+        private void EvaluatePlayerHeadSuffocationInSolidBlock(
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float deltaTime,
+            ref string statusFeedback)
+        {
+            float eyeOffset = Mathf.Clamp(_movementState.CapsuleHeightMeters * 0.84f, 0.38f, 1.52f);
+            Vector3 headPos = playerTransform.position + Vector3.up * eyeOffset;
+            bool suffocating = StepSolidBlockSuffocationHazard(
+                worldChunks,
+                headPos.x,
+                headPos.y,
+                headPos.z,
+                deltaTime,
+                ref _vitals,
+                out byte blockMat,
+                out float alpha01,
+                out float dmgHp);
+
+            IsHeadSuffocatingInSolidBlock = suffocating;
+            SuffocatingBlockMaterialId = blockMat;
+            SuffocationOverlayAlpha01 = suffocating ? Mathf.Max(0.96f, alpha01) : alpha01;
+            LastSuffocationDamageHp = dmgHp;
+
+            if (suffocating)
+            {
+                statusFeedback = $"⚠ BLOK İÇİNDE SIKIŞMA / BOĞULMA! (-{SolidBlockSuffocationDamagePerSecond:0} CAN/sn) Kazarak veya hareket ederek çıkın!";
+            }
         }
 
         private static bool IsHardCollisionVoxel(uint raw)
@@ -1051,6 +1553,7 @@ namespace Stratocraft.Character
             Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 wishDir, float deltaTime)
         {
             Vector3 pos = playerTransform.position;
+            float prevFeetY = pos.y;
             Vector3 horizVel = new Vector3(_movementState.VelocityX, 0f, _movementState.VelocityZ);
             if (_movementState.Stance == CharacterStance.Sliding && horizVel.sqrMagnitude < 0.01f)
             {
@@ -1092,6 +1595,7 @@ namespace Stratocraft.Character
             bool stickToSlope = _jumpLaunchTimer <= 0.001f &&
                                 (_movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f) &&
                                 _verticalVelocity <= 0.10f &&
+                                nextGroundY > -20f &&
                                 (nextGroundY - pos.y) <= MaxKneeStepUpMeters &&
                                 (pos.y - nextGroundY) <= 0.65f;
             if (stickToSlope)
@@ -1115,9 +1619,17 @@ namespace Stratocraft.Character
                     _jumpLaunchTimer = 0f;
                 }
 
-                if (_jumpLaunchTimer <= 0.001f && _verticalVelocity <= 0.05f && pos.y <= nextGroundY)
+                // Kirilmaz Kati Taban Kilidi: Duvar kosesine sikisilsa veya kati blok icine gomulunse bile
+                // altindaki kati maddenin icinden asagi dusmek %100 imkansizdir (magarada yukari isinlama YOK!).
+                float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(
+                    worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
+                float effectiveGroundStopY = nextGroundY > -20f
+                    ? Mathf.Max(nextGroundY, unbreakableFloorY)
+                    : unbreakableFloorY;
+
+                if (_jumpLaunchTimer <= 0.001f && _verticalVelocity <= 0.05f && pos.y <= effectiveGroundStopY)
                 {
-                    pos.y = nextGroundY;
+                    pos.y = effectiveGroundStopY;
                     _verticalVelocity = 0f;
                     _movementState.IsGrounded = 1;
                     _coyoteGroundedTimer = 0.16f;
@@ -1151,7 +1663,7 @@ namespace Stratocraft.Character
                 }
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
-                if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f)
+                if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f && nextGroundY > -20f)
                 {
                     float diff = nextGroundY - pos.y;
                     pos.y = diff > 0f ? nextGroundY : (Mathf.Abs(diff) < 0.05f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 24f));
@@ -1166,38 +1678,35 @@ namespace Stratocraft.Character
         /// Boylece fiziksel ayak tabani gorsel cimen/toprak ucgenlerinin tam uzerine oturur; ne havada durma ne de 20-30 Hz ziplatma yasanir.
         /// </summary>
         public static float GetVoxelWalkableTopY(uint raw, uint aboveRaw, int wy)
-        {
-            if (VoxelBitUtility.GetShapeId(raw) != 0)
-            {
-                return wy + 1.0f;
-            }
+            => GetVoxelWalkableTopYPure(raw, aboveRaw, wy);
 
-            int d = VoxelBitUtility.GetDensityOrLiquid(raw);
-            int dAbove = (VoxelBitUtility.GetMaterialId(aboveRaw) != MaterialIdCatalog.Air &&
-                          VoxelBitUtility.GetShapeId(aboveRaw) == 0)
-                ? VoxelBitUtility.GetDensityOrLiquid(aboveRaw)
-                : 0;
-            float denom = Mathf.Max(1f, d - dAbove);
-            float t = Mathf.Clamp((d - VoxelBitUtility.IsoDensity) / denom, 0.08f, 0.92f);
-            return wy + t;
-        }
-
-        /// <summary>Oyuncu kapsulunun kati voksel icine girmesini tespit edip guvenli ust yuzeye cikarir (magara tavani ve agaclarda ASLA yukari isinlamaz ve puruzsuz arazide ASLA +1m ziplatmaz!).</summary>
+        /// <summary>Oyuncu kapsulunun kati voksel icine girmesini tespit edip guvenli acik yone cikarir (magara tavani ve agaclarda ASLA yukari isinlamaz ve puruzsuz arazide ASLA +1m ziplatmaz!).</summary>
         public void ResolveVoxelAndColliderDepenetration(Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
-            // Yukari ziplarken asla zemin yakalama calistirma (magara tavanina tutunup yukari cekmeyi %100 engeller)
+            Vector3 pos = playerTransform.position;
+
+            // 1) Gercek 3B Yatay Kati Kapsul Depenetrasyonu (iki fiziksel kati cismin yatayda ic ice girmesini engeller, Y'ye ASLA dokunmaz!)
+            float hx = pos.x, hz = pos.z;
+            if (ResolveHorizontalSolidCapsuleDepenetrationPure(
+                    worldChunks, ref hx, pos.y, ref hz, _movementState.CapsuleHeightMeters, _movementState.CapsuleRadiusMeters))
+            {
+                pos.x = hx;
+                pos.z = hz;
+                playerTransform.position = pos;
+            }
+
+            // Yukari ziplarken asla dikey zemin yakalama calistirma (magara tavanina tutunup yukari cekmeyi %100 engeller)
             if (_jumpLaunchTimer > 0.001f || _verticalVelocity > 0.05f) return;
 
-            Vector3 pos = playerTransform.position;
             bool wasGroundedOrCoyote = _movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f;
             if (wasGroundedOrCoyote)
             {
                 float supportY = SampleSupportGroundHeight(worldChunks, pos);
-                float maxSafeRecovery = !IsHardCollisionVoxel(ReadWorldVoxelRaw(
+                float maxSafeRecovery = supportY > -20f && !IsHardCollisionVoxel(ReadWorldVoxelRaw(
                         worldChunks, Mathf.FloorToInt(pos.x), Mathf.FloorToInt(supportY + 1.55f), Mathf.FloorToInt(pos.z)))
                     ? 1.72f
                     : MaxKneeStepUpMeters;
-                if (pos.y < supportY - 0.005f && (supportY - pos.y) <= maxSafeRecovery)
+                if (supportY > -20f && pos.y < supportY - 0.005f && (supportY - pos.y) <= maxSafeRecovery)
                 {
                     float burialDepth = supportY - pos.y;
                     pos.y = burialDepth <= 0.24f
@@ -1293,9 +1802,36 @@ namespace Stratocraft.Character
             int minBodyWy = Mathf.Max(1, Mathf.FloorToInt(cur.y + 0.16f));
             int maxBodyWy = Mathf.Min(Stage1InteractivePlayController.MaxEditableVoxelY - 3, Mathf.FloorToInt(cur.y + topOffset));
 
-            // 360° Simetrik 8-Noktali Kapsul Cevre Kontrolu:
-            // Ileri (W), Geri (S), Yana (A/D) ve Wall-Slide adimlarinin tamaminda agac govdesi ve magara duvarina sizmayi onler;
-            // hangi kesirli Y yuksekliginde olunursa olunsun diz boyunu (<=1.08m) asmayan ve ustu acik tumsek/basamaklara cikilmasina izin verir!
+            // A) Simetrik 3B Trilinear SDF On-Kenar Duvar Korumasi:
+            //    SurfaceNets (ShapeId == 0) izo-yuzeyi [wx - 0.50 .. wx + 0.50] araligindadir; FloorToInt tek basina
+            //    -X/-Z duvarlarinda 0.50m gecikme yaratir. Ust govde/bas hizasinda SDF yogunlugu rho >= 56.0f duvara girisi simetrik engeller!
+            Vector2 stepDir = step2D.normalized;
+            float leadR = r * 0.92f;
+            float chestY = cur.y + Mathf.Clamp(capsuleHeightMeters * 0.62f, 0.40f, 1.18f);
+            float headY = cur.y + topOffset;
+            ReadOnlySpan<float> sdfProbeYs = stackalloc float[2] { chestY, headY };
+            for (int p = 0; p < 2; p++)
+            {
+                float py = sdfProbeYs[p];
+                float curPx = cur.x + stepDir.x * leadR;
+                float curPz = cur.z + stepDir.y * leadR;
+                float nextPx = next.x + stepDir.x * leadR;
+                float nextPz = next.z + stepDir.y * leadR;
+
+                SampleTrilinearSolidSdfPure(worldChunks, curPx, py, curPz, out float curRho, out _, out _, out _, out _);
+                SampleTrilinearSolidSdfPure(worldChunks, nextPx, py, nextPz, out float nextRho, out float gx, out float gy, out float gz, out _);
+                if (nextRho >= 56.0f && nextRho > curRho + 0.05f)
+                {
+                    float horizGrad = Mathf.Sqrt(gx * gx + gz * gz);
+                    SampleTrilinearSolidSdfPure(worldChunks, nextPx, cur.y + MaxKneeStepUpMeters + 0.22f, nextPz, out float aboveKneeRho, out _, out _, out _, out _);
+                    if (aboveKneeRho >= 48.0f || horizGrad > Mathf.Abs(gy) * 0.85f)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            // B) 360° Simetrik 8-Noktali Kapsul Cevre Kontrolu:
             ReadOnlySpan<float> ringX = stackalloc float[8] { r, -r, 0f, 0f, d, -d, d, -d };
             ReadOnlySpan<float> ringZ = stackalloc float[8] { 0f, 0f, r, -r, d, d, -d, -d };
 
@@ -1315,8 +1851,13 @@ namespace Stratocraft.Character
                     uint nextRaw = ReadWorldVoxelRaw(worldChunks, nextWx, wy, nextWz);
                     if (!IsHardCollisionVoxel(nextRaw)) continue;
 
-                    // Eger oyuncu zaten mevcut konumunda ayni Y seviyesinde kati voksel icindeyse sikismamasi icin bu katmani atla
-                    if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, curWx, wy, curWz))) continue;
+                    // DIKKAT: Yalnizca ayni sutunda degilken YENI bir kati sutuna (nextWx, nextWz) gecis yapiliyor!
+                    // Eger next sutununda ustu kapali bir duvar (wy + 1 dolu) varsa ASLA atlama; yalnizca acik basamaksa gecise izin ver.
+                    bool nextIsMultiBlockWall = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, nextWx, wy + 1, nextWz));
+                    if (!nextIsMultiBlockWall && IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, curWx, wy, curWz)))
+                    {
+                        continue;
+                    }
 
                     topSolidWy = wy;
                     topSolidRaw = nextRaw;
@@ -1528,6 +2069,29 @@ namespace Stratocraft.Character
             if (smoothVoxelY > -20f)
             {
                 return smoothVoxelY;
+            }
+
+            // Merkez nokta 1cm duvar sutununa (aboveRaw kati) denk gelip -30f donduyse ayak diskinin 4 acik kenarini tara:
+            const float footR = 0.22f;
+            int startWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + MaxKneeStepUpMeters), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+            ReadOnlySpan<float> ox = stackalloc float[4] { footR, -footR, 0f, 0f };
+            ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, footR, -footR };
+            float bestFootY = -30f;
+            for (int i = 0; i < 4; i++)
+            {
+                float py = SampleSingleColumnGroundY(
+                    worldChunks,
+                    Mathf.FloorToInt(pos.x + ox[i]),
+                    Mathf.FloorToInt(pos.z + oz[i]),
+                    startWy);
+                if (py > bestFootY && py <= pos.y + MaxKneeStepUpMeters)
+                {
+                    bestFootY = py;
+                }
+            }
+            if (bestFootY > -20f)
+            {
+                return bestFootY;
             }
 
             int terrainMask = LayerMask.GetMask("VoxelTerrain");

@@ -61,6 +61,7 @@ namespace Stratocraft.Physics.Systems
         public const float DriftWindThresholdMps = 7.0f;
         public const float SnowAlbedoFresh = 0.78f;
         public const int MaxDeltaSweUnitsPerStep = 32;
+        public const int MaxPooledSlices = 128;
 
         private const byte FlagHasOpenSky = 1 << 0;
         private const byte FlagIsHotSurface = 1 << 1;
@@ -72,6 +73,7 @@ namespace Stratocraft.Physics.Systems
         private readonly Dictionary<(int cx, int cz), byte[]> _mesherSnowViews = new Dictionary<(int cx, int cz), byte[]>(128);
 
         public int ActiveSnowChunkCount => _activeSnowChunks.Count;
+        public int PooledSliceCount => _freePool.Count;
 
         /// <summary>
         /// HybridSurfaceNetsAndShapeMesher'a dogrudan gecilebilen sifir-tahsisli (0 B/kare GC) ham byte[256] SWE sozlugu.
@@ -148,6 +150,56 @@ namespace Stratocraft.Physics.Systems
             }
         }
 
+        public void ClearAll()
+        {
+            foreach (var kv in _activeSnowChunks)
+            {
+                kv.Value.Clear();
+                if (_freePool.Count < MaxPooledSlices)
+                {
+                    _freePool.Push(kv.Value);
+                }
+            }
+            _activeSnowChunks.Clear();
+            _mesherSnowViews.Clear();
+        }
+
+        public byte[]? ExportSweUnits256OrNull(int chunkX, int chunkZ)
+        {
+            if (!_activeSnowChunks.TryGetValue((chunkX, chunkZ), out ChunkSnowColumnSlice? slice) || slice.NonZeroColumnCount <= 0)
+            {
+                return null;
+            }
+            var copy = new byte[256];
+            Array.Copy(slice.SweUnits, copy, 256);
+            return copy;
+        }
+
+        public void ImportSweUnits256(int chunkX, int chunkZ, ReadOnlySpan<byte> sweUnits256)
+        {
+            if (sweUnits256.Length < 256)
+            {
+                ReleaseChunk(chunkX, chunkZ);
+                return;
+            }
+
+            int nonZero = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                if (sweUnits256[i] != 0) nonZero++;
+            }
+
+            if (nonZero == 0)
+            {
+                ReleaseChunk(chunkX, chunkZ);
+                return;
+            }
+
+            ChunkSnowColumnSlice slice = GetOrRentSlice(chunkX, chunkZ);
+            sweUnits256.Slice(0, 256).CopyTo(slice.SweUnits);
+            slice.NonZeroColumnCount = nonZero;
+        }
+
         public void CopyActiveChunkKeys(List<(int cx, int cz)> outKeys)
         {
             outKeys.Clear();
@@ -164,6 +216,36 @@ namespace Stratocraft.Physics.Systems
         /// tam kutle korunumlu aktarimi adimlarini calistirir.
         /// Donus degeri: Bu adimda yuzeye cikan erime kaynakli tatli FluidCell16.Water birimi sayisi.
         /// </summary>
+        /// <summary>
+        /// Paket 4C-1: 4-koseli bilineer kar gradyaniyla (ChunkPrecipCornerField) firtina sinirlarinda
+        /// cetvel cizgisi olmadan sutun bazli kar birikimi, savrulma ve erime calistirir.
+        /// </summary>
+        public int StepChunkSnowWithGradient(
+            int chunkX,
+            int chunkZ,
+            ReadOnlySpan<uint> chunkVoxels,
+            Span<ushort> chunkFluids,
+            ChunkSkyOcclusionMap256? skyOcclusionMap,
+            SoilMoistureAndMudSystem soilMoistureSystem,
+            ChunkSalinityBitset? salinityBitset,
+            int maxVoxelY,
+            in ChunkPrecipCornerField precipField,
+            float clearSkyInsolationWm2,
+            ReadOnlySpan<ThermalHeatSourcePoint> pointHeatSources,
+            float stepGameSeconds,
+            out ushort visualDirtySubChunkMask,
+            out bool spawnedMeltRunoffFluid)
+        {
+            return StepChunkSnowCore(
+                chunkX, chunkZ, chunkVoxels, chunkFluids, skyOcclusionMap, soilMoistureSystem, salinityBitset,
+                maxVoxelY, precipField.MaxSnowPrecipMmHr, precipField.MaxSnowPrecipMmHr > 0.001f ? 1.0f : 0.0f,
+                precipField.MeanAirTempCelsius, clearSkyInsolationWm2,
+                new Vector2(precipField.MeanWindVelX, precipField.MeanWindVelZ),
+                pointHeatSources, stepGameSeconds,
+                useGradientField: true, in precipField,
+                out visualDirtySubChunkMask, out spawnedMeltRunoffFluid);
+        }
+
         public int StepChunkSnowAccumulationDriftAndMelt(
             int chunkX,
             int chunkZ,
@@ -180,6 +262,36 @@ namespace Stratocraft.Physics.Systems
             Vector2 windVelocityXZ,
             ReadOnlySpan<ThermalHeatSourcePoint> pointHeatSources,
             float stepGameSeconds,
+            out ushort visualDirtySubChunkMask,
+            out bool spawnedMeltRunoffFluid)
+        {
+            ChunkPrecipCornerField unused = default;
+            return StepChunkSnowCore(
+                chunkX, chunkZ, chunkVoxels, chunkFluids, skyOcclusionMap, soilMoistureSystem, salinityBitset,
+                maxVoxelY, precipMmPerHour, snowFraction01, airTempCelsius, clearSkyInsolationWm2,
+                windVelocityXZ, pointHeatSources, stepGameSeconds,
+                useGradientField: false, in unused,
+                out visualDirtySubChunkMask, out spawnedMeltRunoffFluid);
+        }
+
+        private int StepChunkSnowCore(
+            int chunkX,
+            int chunkZ,
+            ReadOnlySpan<uint> chunkVoxels,
+            Span<ushort> chunkFluids,
+            ChunkSkyOcclusionMap256? skyOcclusionMap,
+            SoilMoistureAndMudSystem soilMoistureSystem,
+            ChunkSalinityBitset? salinityBitset,
+            int maxVoxelY,
+            float precipMmPerHour,
+            float snowFraction01,
+            float airTempCelsius,
+            float clearSkyInsolationWm2,
+            Vector2 windVelocityXZ,
+            ReadOnlySpan<ThermalHeatSourcePoint> pointHeatSources,
+            float stepGameSeconds,
+            bool useGradientField,
+            in ChunkPrecipCornerField gradientField,
             out ushort visualDirtySubChunkMask,
             out bool spawnedMeltRunoffFluid)
         {
@@ -341,17 +453,25 @@ namespace Stratocraft.Physics.Systems
                 }
             }
 
-            // 1) Kar Yagisi Birikimi (ChunkSkyOcclusionMap256 acik gokyuzu altinda)
+            // 1) Kar Yagisi Birikimi (ChunkSkyOcclusionMap256 acik gokyuzu altinda; 4-koseli gradyan destekli!)
             if (isSnowing)
             {
-                float snowMm = safePrecip * clampedSnowFrac * (stepGameSeconds / 3600.0f);
-                float incomingSweUnits = snowMm / MmSwePerUnit;
+                float uniformSnowMm = safePrecip * clampedSnowFrac * (stepGameSeconds / 3600.0f);
+                float uniformIncomingSweUnits = uniformSnowMm / MmSwePerUnit;
 
                 for (int col = 0; col < 256; col++)
                 {
                     int topY = colTopY[col];
                     byte flags = colFlags[col];
                     if (topY < 1 || (flags & FlagHasOpenSky) == 0)
+                    {
+                        continue;
+                    }
+
+                    float incomingSweUnits = useGradientField
+                        ? (gradientField.SampleSnowPrecipAtColumn(col & 15, col >> 4) * (stepGameSeconds / 3600.0f) / MmSwePerUnit)
+                        : uniformIncomingSweUnits;
+                    if (incomingSweUnits <= 0.0f)
                     {
                         continue;
                     }
@@ -999,7 +1119,10 @@ namespace Stratocraft.Physics.Systems
             _activeSnowChunks.Remove((chunkX, chunkZ));
             _mesherSnowViews.Remove((chunkX, chunkZ));
             slice.Clear();
-            _freePool.Push(slice);
+            if (_freePool.Count < MaxPooledSlices)
+            {
+                _freePool.Push(slice);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

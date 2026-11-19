@@ -267,6 +267,87 @@ namespace Stratocraft.WorldGen.Generators
             };
         }
 
+        /// <summary>
+        /// Paket 4C-1: RegionalAtmosphereSimulationSystem ve WorldHydrologyLedger icin gercek
+        /// WorldGen irtifa, deniz orani, albedo, biyom sicaklik ofseti ve vadi canakligi orneklemesi (0 B GC).
+        /// </summary>
+        public static Stratocraft.Physics.Data.AtmosphereTerrainSample SampleMacroAtmosphereTerrain(
+            float cellWorldCenterX,
+            float cellWorldCenterZ,
+            float cellSizeMeters)
+        {
+            float q = MathF.Max(4.0f, cellSizeMeters * 0.25f);
+            float outer = MathF.Max(8.0f, cellSizeMeters * 0.45f);
+
+            float meanTopY = 0.0f;
+            float openWaterCount = 0.0f;
+            float soilCount = 0.0f;
+            float imperviousCount = 0.0f;
+            float albedoSum = 0.0f;
+            float tempSum = 0.0f;
+
+            float centerY = SampleIslandTopSurfaceY(cellWorldCenterX, cellWorldCenterZ);
+            int centerBiome = GetBiomeId(cellWorldCenterX, cellWorldCenterZ);
+
+            for (int k = 0; k < 5; k++)
+            {
+                float px = k == 0 ? cellWorldCenterX : (cellWorldCenterX + ((k & 1) == 1 ? -q : q));
+                float pz = k == 0 ? cellWorldCenterZ : (cellWorldCenterZ + (k <= 2 ? -q : q));
+                float topY = k == 0 ? centerY : SampleIslandTopSurfaceY(px, pz);
+                int bId = k == 0 ? centerBiome : GetBiomeId(px, pz);
+                float r = MathF.Sqrt(px * px + pz * pz);
+
+                (_, _, _, byte matId) = SampleBiomeColor(px, topY, pz);
+                bool isOpenWater = r > 28.0f && topY < SeaLevelY && bId != 8 && bId != 3;
+                bool isSoil = !isOpenWater && Stratocraft.Physics.Systems.SoilMoistureAndMudSystem.IsAbsorptiveSoilMaterial(matId);
+
+                meanTopY += topY;
+                if (isOpenWater)
+                {
+                    openWaterCount += 1.0f;
+                    albedoSum += 0.08f;
+                }
+                else
+                {
+                    if (isSoil) soilCount += 1.0f;
+                    else imperviousCount += 1.0f;
+
+                    albedoSum += matId switch
+                    {
+                        MaterialIdCatalog.PackedIce => 0.72f,
+                        MaterialIdCatalog.Sand => 0.34f,
+                        MaterialIdCatalog.Basalt => 0.11f,
+                        MaterialIdCatalog.Grass => 0.17f,
+                        _ => 0.22f
+                    };
+                }
+
+                tempSum += SampleSurfaceBiomeBaseTemperatureCelsius(px, pz);
+            }
+
+            float avgY = meanTopY * 0.2f;
+            float outerMeanY = 0.25f * (
+                SampleIslandTopSurfaceY(cellWorldCenterX - outer, cellWorldCenterZ) +
+                SampleIslandTopSurfaceY(cellWorldCenterX + outer, cellWorldCenterZ) +
+                SampleIslandTopSurfaceY(cellWorldCenterX, cellWorldCenterZ - outer) +
+                SampleIslandTopSurfaceY(cellWorldCenterX, cellWorldCenterZ + outer));
+
+            float altAboveSea = MathF.Max(0.0f, avgY - SeaLevelY);
+            float tempOffset = Math.Clamp((tempSum * 0.2f) - 18.0f, -28.0f, 26.0f);
+            float concavity01 = Math.Clamp(((outerMeanY - centerY) + 1.2f) / 6.0f, 0.05f, 1.0f);
+
+            return new Stratocraft.Physics.Data.AtmosphereTerrainSample(
+                altitudeAboveSeaMeters: altAboveSea,
+                openWaterFraction01: openWaterCount * 0.2f,
+                surfaceAlbedo01: Math.Clamp(albedoSum * 0.2f, 0.04f, 0.85f),
+                biomeTempOffsetCelsius: tempOffset,
+                soilFraction01: soilCount * 0.2f,
+                imperviousFraction01: imperviousCount * 0.2f,
+                basinConcavity01: concavity01,
+                meanTopSurfaceWorldY: avgY,
+                dominantBiomeId: (byte)Math.Clamp(centerBiome, 0, 11));
+        }
+
         public static float SampleBiomeAmbientTemperatureCelsius(float worldX, float worldY, float worldZ)
         {
             float baseTemp = SampleSurfaceBiomeBaseTemperatureCelsius(worldX, worldZ);

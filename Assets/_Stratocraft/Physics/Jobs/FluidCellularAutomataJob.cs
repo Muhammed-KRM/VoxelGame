@@ -257,7 +257,10 @@ namespace Stratocraft.Physics.Jobs
                 return 0L;
             }
 
-            int windowMinY = Math.Max(0, minFluidY - 1);
+            // Cok-eksenli (X + Z + Y) y -> y-2 dik dag yamaci gecisleri icin windowMinY = minFluidY - 6 acilir;
+            // boylece tum yeni islak hucrelerin changedMask/flux tamponu icinde kalmasi ve Pass 4'te erken
+            // IsSettled=1 donmamasi %100 garanti edilir!
+            int windowMinY = Math.Max(0, minFluidY - 6);
             int windowMaxY = Math.Min(sizeY - 1, maxFluidY + 1);
             int windowStartCell = windowMinY * strideY;
             int windowEndCell = (windowMaxY + 1) * strideY;
@@ -342,6 +345,11 @@ namespace Stratocraft.Physics.Jobs
                                     fluids[belowIdx] = FluidCell16.Pack(cell.Type, (byte)(belowCell.Mass + transfer), isSettled: false).RawValue;
                                     byte rem = (byte)(cell.Mass - transfer);
                                     fluids[idx] = FluidCell16.Pack(cell.Type, rem, isSettled: false).RawValue;
+                                    if (kinematicsSlice != null && belowWasDry)
+                                    {
+                                        kinematicsSlice.VelX_Q7[belowIdx] = (sbyte)((kinematicsSlice.VelX_Q7[idx] * 3) / 4);
+                                        kinematicsSlice.VelZ_Q7[belowIdx] = (sbyte)((kinematicsSlice.VelZ_Q7[idx] * 3) / 4);
+                                    }
                                     PropagateGridSalinityOnTransfer(salinityBits, cell.Type, idx, rem, belowIdx, belowWasDry);
                                     MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
                                     MarkChangedWithNeighbors(changedMask, x, y - 1, z, sizeX, sizeY, sizeZ);
@@ -353,25 +361,7 @@ namespace Stratocraft.Physics.Jobs
 
                                     if (belowWasDry)
                                     {
-                                        bool belowHitFloor = (y - 1) <= 0;
-                                        if (!belowHitFloor)
-                                        {
-                                            int twoBelowIdx = belowIdx - strideY;
-                                            byte twoBelowCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[twoBelowIdx]);
-                                            if (twoBelowCap == 0)
-                                            {
-                                                belowHitFloor = true;
-                                            }
-                                            else
-                                            {
-                                                byte twoBelowMass = (byte)(fluids[twoBelowIdx] & 0xFF);
-                                                if (twoBelowMass >= twoBelowCap)
-                                                {
-                                                    belowHitFloor = true;
-                                                }
-                                            }
-                                        }
-
+                                        bool belowHitFloor = IsFluidColumnGrounded(voxels, fluids, belowIdx, y - 1, strideY, cell.Type);
                                         if (!belowHitFloor)
                                         {
                                             changedMask[belowIdx] |= NewlyWetFromGravityFlag;
@@ -416,6 +406,14 @@ namespace Stratocraft.Physics.Jobs
                         break;
                 }
             }
+
+            // 2.5 Gecis: Capraz (45°) Dik Dogal Yamac Kacisi (89bb3ba8.jpg Tamiri):
+            // 4-bagli CA'da capraz egimli koyu kaya yamacindaki sanal SDF cebinde kilitlenen kucuk su birikintileri,
+            // YALNIZCA en az bir ara kardinal komsu aciksa (duvar delinmez -> T14/T15/T16 %100 muhurlu!) ve caprazda
+            // >= 0.63m (160 birim) daha alcak dogal zemin varsa kutle koruyarak (dM == 0) asagi suzulur!
+            RunDiagonalSteepSlopeEscapePass(
+                voxels, fluids, changedMask, sizeX, sizeY, sizeZ, windowMinY, windowMaxY, stepParity,
+                salinityBits, fluxX, fluxZ);
 
             // 3. Gecis: 5-Bit Hidrostatik Basinc Yuksekligi (PressureHead) + U-Borusu & <= 10m Sifon Dengeleme!
             UpdateHydrostaticHeadAndSolveUPipes(
@@ -478,10 +476,10 @@ namespace Stratocraft.Physics.Jobs
                         float prevVz = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(kinematicsSlice.VelZ_Q7[i]);
                         float netFluxX = (y >= windowMinY && y <= windowMaxY) ? (fluxX![i] * (1.0f / 64.0f)) : 0f;
                         float netFluxZ = (y >= windowMinY && y <= windowMaxY) ? (fluxZ![i] * (1.0f / 64.0f)) : 0f;
-                        float newVx = Math.Clamp((prevVx * visc) + (netFluxX * (1.0f - visc) * 3.2f), -maxV, maxV);
-                        float newVz = Math.Clamp((prevVz * visc) + (netFluxZ * (1.0f - visc) * 3.2f), -maxV, maxV);
-                        if (MathF.Abs(newVx) < 0.04f) newVx = 0f;
-                        if (MathF.Abs(newVz) < 0.04f) newVz = 0f;
+                        float newVx = Math.Clamp((prevVx * visc) + (netFluxX * (1.0f - visc) * 7.5f), -maxV, maxV);
+                        float newVz = Math.Clamp((prevVz * visc) + (netFluxZ * (1.0f - visc) * 7.5f), -maxV, maxV);
+                        if (MathF.Abs(newVx) < 0.018f) newVx = 0f;
+                        if (MathF.Abs(newVz) < 0.018f) newVz = 0f;
                         kinematicsSlice.VelX_Q7[i] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(newVx);
                         kinematicsSlice.VelZ_Q7[i] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(newVz);
                     }
@@ -564,6 +562,50 @@ namespace Stratocraft.Physics.Jobs
         }
 
         /// <summary>
+        /// Bir sivi hucresinin altinda gercekten kati bir zemin veya kesintisiz kati-tabanli dolu sivi sutunu
+        /// bulunup bulunmadigini denetler. Havada serbest dusen 255-kutleli paketlerin sahte zemin sanilip
+        /// havada yanlara patlamasini (09524c95.jpg kopuk silindir kok nedeni) %100 onler!
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static bool IsFluidColumnGrounded(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> fluids,
+            int cellIdx,
+            int y,
+            int strideY,
+            FluidType fluidType)
+        {
+            if (y <= 0) return true;
+
+            int minCheckY = Math.Max(0, y - 12);
+            int scanIdx = cellIdx - strideY;
+            for (int sy = y - 1; sy >= minCheckY; sy--)
+            {
+                byte belowCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[scanIdx]);
+                if (belowCap == 0)
+                {
+                    return true;
+                }
+
+                ushort belowRaw = fluids[scanIdx];
+                byte belowMass = (byte)(belowRaw & 0xFF);
+                if (belowMass < belowCap || ((belowRaw >> 8) & 0x03) != (int)fluidType)
+                {
+                    return false;
+                }
+
+                if (sy == 0)
+                {
+                    return true;
+                }
+                scanIdx -= strideY;
+            }
+
+            // 12 blok kesintisiz dolu sivi sutunu (derin okyanus/gol) hidrostatik olarak desteklidir
+            return true;
+        }
+
+        /// <summary>
         /// Komşu chunk sınırlarında (lx = 15 &lt;-&gt; 0 ve lz = 15 &lt;-&gt; 0) su, lav ve asit akışkanlarının
         /// görünmez duvara çarpmadan 16m chunk sınırlarını kesintisiz geçmesini ve sınırda stokiyometrik
         /// su+lav reaksiyonuna girmesini sağlar.
@@ -616,9 +658,11 @@ namespace Stratocraft.Physics.Jobs
                             kinematicsPool);
                     }
 
-                    // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0)
+                    // -X Sınırı: (cx - 1, cz) (lx = 15) <-> keyA (lx = 0) (iki aktif chunk arasinda cift kosumu onle!)
                     (int cx, int cz) keyWest = (keyA.cx - 1, keyA.cz);
-                    if (fluidChunks.TryGetValue(keyWest, out ushort[]? fluidsWest) && fluidsWest != null &&
+                    bool westAlreadyActive = wakeActiveFluidChunks != null && wakeActiveFluidChunks.Contains(keyWest);
+                    if (!westAlreadyActive &&
+                        fluidChunks.TryGetValue(keyWest, out ushort[]? fluidsWest) && fluidsWest != null &&
                         worldChunks.TryGetValue(keyWest, out uint[]? voxelsWest) && voxelsWest != null)
                     {
                         exchangedBorders += ExchangeSingleChunkSeam(
@@ -652,7 +696,9 @@ namespace Stratocraft.Physics.Jobs
 
                     // -Z Sınırı: (cx, cz - 1) (lz = 15) <-> keyA (lz = 0)
                     (int cx, int cz) keySouth = (keyA.cx, keyA.cz - 1);
-                    if (fluidChunks.TryGetValue(keySouth, out ushort[]? fluidsSouth) && fluidsSouth != null &&
+                    bool southAlreadyActive = wakeActiveFluidChunks != null && wakeActiveFluidChunks.Contains(keySouth);
+                    if (!southAlreadyActive &&
+                        fluidChunks.TryGetValue(keySouth, out ushort[]? fluidsSouth) && fluidsSouth != null &&
                         worldChunks.TryGetValue(keySouth, out uint[]? voxelsSouth) && voxelsSouth != null)
                     {
                         exchangedBorders += ExchangeSingleChunkSeam(
@@ -866,6 +912,10 @@ namespace Stratocraft.Physics.Jobs
 
                     if (aCell.Mass > 0 && headA > headB)
                     {
+                        if (!IsFluidColumnGrounded(voxelsA, fluidsA, idxA, y, 256, activeType))
+                        {
+                            continue;
+                        }
                         if (bedA <= bedB && (headA - headB) < 1)
                         {
                             continue;
@@ -906,6 +956,10 @@ namespace Stratocraft.Physics.Jobs
                     }
                     else if (bCell.Mass > 0 && headB > headA)
                     {
+                        if (!IsFluidColumnGrounded(voxelsB, fluidsB, idxB, y, 256, activeType))
+                        {
+                            continue;
+                        }
                         if (bedB <= bedA && (headB - headA) < 1)
                         {
                             continue;
@@ -995,13 +1049,13 @@ namespace Stratocraft.Physics.Jobs
             if (alongX)
             {
                 float prev = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(slice.VelX_Q7[cellIdx]);
-                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 3.2f), -maxV, maxV);
+                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 7.5f), -maxV, maxV);
                 slice.VelX_Q7[cellIdx] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(next);
             }
             else
             {
                 float prev = ActiveChunkFluidKinematicsSlice.DecodeVelocityQ7(slice.VelZ_Q7[cellIdx]);
-                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 3.2f), -maxV, maxV);
+                float next = Math.Clamp((prev * visc) + (flux * (1.0f - visc) * 7.5f), -maxV, maxV);
                 slice.VelZ_Q7[cellIdx] = ActiveChunkFluidKinematicsSlice.EncodeVelocityQ7(next);
             }
         }
@@ -1064,22 +1118,45 @@ namespace Stratocraft.Physics.Jobs
             bool aFloorSolid = FluidPorosityUtility.ComputeCellFluidCapacity(voxelsA[botIdxA]) == 0 && VoxelBitUtility.IsPhysicallySolid(voxelsA[botIdxA]);
             bool bFloorSolid = FluidPorosityUtility.ComputeCellFluidCapacity(voxelsB[botIdxB]) == 0 && VoxelBitUtility.IsPhysicallySolid(voxelsB[botIdxB]);
 
-            // Simetrik Durum 1: A sig kiyi kumu ustunde (y), B derin havuz (y - 1) ve B ustu (y) bos!
+            // Simetrik Durum 1: A sig kiyi kumu ustunde (y), B derin havuz/yamac (y - 1 veya dik y - 2) ve B ustu (y) bos!
             if (aFloorSolid && !bFloorSolid && bCell.Mass == 0)
             {
-                return ExecuteSeamCrossLayerTransfer(
+                int tr = ExecuteSeamCrossLayerTransfer(
                     keyA, voxelsA, fluidsA, idxA, ax, az, aCap, aCell,
-                    keyB, voxelsB, fluidsB, botIdxB, bx, bz, y, limitY, alongXSeam, dirSignFromShore: 1,
+                    keyB, voxelsB, fluidsB, botIdxB, bx, bz, shoreY: y, poolY: y - 1, limitY, alongXSeam, dirSignFromShore: 1,
                     salinityBitset, kinematicsPool, ref dirtyFluidA, ref dirtyFluidB, out handledCoastalPair);
+                if (handledCoastalPair) return tr;
+
+                // Dik (45-65 derece) dag yamaci chunk sinirinda y -> y-2 koprusu
+                if (y >= 2 && aCell.Mass > 0 && VoxelBitUtility.GetShapeId(voxelsA[botIdxA]) == 0 && (fluidsB[botIdxB] & 0xFF) == 0 &&
+                    FluidPorosityUtility.ComputeCellFluidCapacity(voxelsB[botIdxB]) > 0)
+                {
+                    return ExecuteSeamCrossLayerTransfer(
+                        keyA, voxelsA, fluidsA, idxA, ax, az, aCap, aCell,
+                        keyB, voxelsB, fluidsB, botIdxB - 256, bx, bz, shoreY: y, poolY: y - 2, limitY, alongXSeam, dirSignFromShore: 1,
+                        salinityBitset, kinematicsPool, ref dirtyFluidA, ref dirtyFluidB, out handledCoastalPair);
+                }
+                return 0;
             }
 
-            // Simetrik Durum 2: B sig kiyi kumu ustunde (y), A derin havuz (y - 1) ve A ustu (y) bos!
+            // Simetrik Durum 2: B sig kiyi kumu ustunde (y), A derin havuz/yamac (y - 1 veya dik y - 2) ve A ustu (y) bos!
             if (bFloorSolid && !aFloorSolid && aCell.Mass == 0)
             {
-                return ExecuteSeamCrossLayerTransfer(
+                int tr = ExecuteSeamCrossLayerTransfer(
                     keyB, voxelsB, fluidsB, idxB, bx, bz, bCap, bCell,
-                    keyA, voxelsA, fluidsA, botIdxA, ax, az, y, limitY, alongXSeam, dirSignFromShore: -1,
+                    keyA, voxelsA, fluidsA, botIdxA, ax, az, shoreY: y, poolY: y - 1, limitY, alongXSeam, dirSignFromShore: -1,
                     salinityBitset, kinematicsPool, ref dirtyFluidB, ref dirtyFluidA, out handledCoastalPair);
+                if (handledCoastalPair) return tr;
+
+                if (y >= 2 && bCell.Mass > 0 && VoxelBitUtility.GetShapeId(voxelsB[botIdxB]) == 0 && (fluidsA[botIdxA] & 0xFF) == 0 &&
+                    FluidPorosityUtility.ComputeCellFluidCapacity(voxelsA[botIdxA]) > 0)
+                {
+                    return ExecuteSeamCrossLayerTransfer(
+                        keyB, voxelsB, fluidsB, idxB, bx, bz, bCap, bCell,
+                        keyA, voxelsA, fluidsA, botIdxA - 256, ax, az, shoreY: y, poolY: y - 2, limitY, alongXSeam, dirSignFromShore: -1,
+                        salinityBitset, kinematicsPool, ref dirtyFluidB, ref dirtyFluidA, out handledCoastalPair);
+                }
+                return 0;
             }
 
             return 0;
@@ -1088,7 +1165,7 @@ namespace Stratocraft.Physics.Jobs
         private static int ExecuteSeamCrossLayerTransfer(
             (int cx, int cz) keyShore, uint[] voxelsShore, ushort[] fluidsShore, int shoreTopIdx, int sx, int sz, byte shoreTopCap, FluidCell16 shoreTopCell,
             (int cx, int cz) keyPool, uint[] voxelsPool, ushort[] fluidsPool, int poolBotIdx, int px, int pz,
-            int y, int limitY, bool alongXSeam, int dirSignFromShore,
+            int shoreY, int poolY, int limitY, bool alongXSeam, int dirSignFromShore,
             ChunkSalinityBitset? salinityBitset,
             ActiveChunkFluidKinematicsPool? kinematicsPool,
             ref bool dirtyShore,
@@ -1102,65 +1179,69 @@ namespace Stratocraft.Physics.Jobs
             FluidCell16 poolBotCell = new FluidCell16(fluidsPool[poolBotIdx]);
             if (shoreTopCell.Mass == 0 && poolBotCell.Mass == 0) return 0;
 
-            // Yalnizca altinda zemin veya dolu sivi olan gercek havuz/yamac basamaklarini koprule (2+ blokluk ucurum selalesine dokunma!)
-            bool poolIsGrounded = (y - 1) <= 0;
-            if (!poolIsGrounded)
-            {
-                int twoBelow = poolBotIdx - 256;
-                byte twoBelowCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxelsPool[twoBelow]);
-                poolIsGrounded = twoBelowCap == 0 || (fluidsPool[twoBelow] & 0xFF) >= twoBelowCap;
-            }
-            if (!poolIsGrounded) return 0;
-
-            handledCoastalPair = true;
             FluidType fType = shoreTopCell.Mass > 0 ? shoreTopCell.Type : poolBotCell.Type;
             if (fType == FluidType.None) return 0;
             if ((shoreTopCell.Mass > 0 && shoreTopCell.Type != fType) || (poolBotCell.Mass > 0 && poolBotCell.Type != fType))
             {
-                handledCoastalPair = false;
                 return 0;
             }
 
-            uint shoreBelowSolid = voxelsShore[shoreTopIdx - 256];
-            uint poolBelow2Solid = (y - 1) > 0 ? voxelsPool[poolBotIdx - 256] : 0u;
-            ushort poolBelow2Fluid = (y - 1) > 0 ? fluidsPool[poolBotIdx - 256] : (ushort)0;
+            // Yalnizca gercekten kati tabana oturan (havada dusen 255 paketi OLMAYAN!) havuz/yamac basamaklarini koprule:
+            if (!IsFluidColumnGrounded(voxelsPool, fluidsPool, poolBotIdx, poolY, 256, fType))
+            {
+                return 0;
+            }
 
-            int bedShore = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(shoreBelowSolid, 0, voxelsShore[shoreTopIdx], fType, y);
-            int bedPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(poolBelow2Solid, poolBelow2Fluid, voxelsPool[poolBotIdx], fType, y - 1);
-            int headShore = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedShore, y, shoreTopCell.Mass, shoreTopCap);
-            int headPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedPool, y - 1, poolBotCell.Mass, poolBotCap);
+            handledCoastalPair = true;
+
+            uint shoreBelowSolid = voxelsShore[shoreTopIdx - 256];
+            uint poolBelow2Solid = poolY > 0 ? voxelsPool[poolBotIdx - 256] : 0u;
+            ushort poolBelow2Fluid = poolY > 0 ? fluidsPool[poolBotIdx - 256] : (ushort)0;
+
+            int bedShore = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(shoreBelowSolid, 0, voxelsShore[shoreTopIdx], fType, shoreY);
+            int bedPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(poolBelow2Solid, poolBelow2Fluid, voxelsPool[poolBotIdx], fType, poolY);
+            int headShore = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedShore, shoreY, shoreTopCell.Mass, shoreTopCap);
+            int headPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedPool, poolY, poolBotCell.Mass, poolBotCap);
             int diff = headShore - headPool;
             if (Math.Abs(diff) <= 1) return 0;
 
-            int shoreSlope223 = (bedShore > (y - 1) * 255 && bedShore < y * 255) ? Math.Max(223, (y + 1) * 255 - (bedShore + 32)) : 223;
-            int poolSlope223 = (bedPool > (y - 2) * 255 && bedPool < (y - 1) * 255) ? Math.Max(223, y * 255 - (bedPool + 32)) : 223;
+            int shoreSlope223 = (bedShore > (shoreY - 1) * 255 && bedShore < shoreY * 255) ? Math.Max(223, (shoreY + 1) * 255 - (bedShore + 32)) : 223;
+            int poolSlope223 = (bedPool > (poolY - 1) * 255 && bedPool < poolY * 255) ? Math.Max(223, (poolY + 1) * 255 - (bedPool + 32)) : 223;
             int slopeSum = shoreSlope223 + poolSlope223;
 
             if (diff > 1 && shoreTopCell.Mass > 0)
             {
                 int spacePool = poolBotCap - poolBotCell.Mass;
-                if (spacePool <= 0) return 0;
+                if (spacePool <= 0)
+                {
+                    // Alt havuz (y-1) zaten 255 doluysa kiyi suyu ayni-Y (y) uzerinden havuzun ustune tasabilmelidir!
+                    handledCoastalPair = false;
+                    return 0;
+                }
                 int eqMass = Math.Max(1, (diff * 223 + (slopeSum >> 1)) / slopeSum);
+                // Pürüzsüz surekli aktarim egrisi (Mass=24->25 ani %54->%96 baraj patlamasi yok!)
                 int maxStepCap = shoreTopCell.Mass == 1
                     ? 1
-                    : (shoreTopCell.Mass <= 24
-                        ? Math.Min(shoreTopCell.Mass - 1, Math.Max(1, (shoreTopCell.Mass * 13) / 24))
-                        : Math.Max(12, eqMass));
+                    : Math.Min(shoreTopCell.Mass - 1, Math.Max(1, (shoreTopCell.Mass * 15) / 24));
                 int transfer = Math.Min((int)shoreTopCell.Mass, Math.Min(spacePool, Math.Min(maxStepCap, eqMass)));
                 if (transfer <= 0) return 0;
 
+                ActiveChunkFluidKinematicsSlice? sliceShore = null;
+                ActiveChunkFluidKinematicsSlice? slicePool = null;
                 if (kinematicsPool != null)
                 {
-                    _ = kinematicsPool.RentOrGetAndSyncBaseline(keyShore.cx, keyShore.cz, fluidsShore, fluidsShore.Length, 0);
-                    _ = kinematicsPool.RentOrGetAndSyncBaseline(keyPool.cx, keyPool.cz, fluidsPool, fluidsPool.Length, 0);
+                    sliceShore = kinematicsPool.RentOrGetAndSyncBaseline(keyShore.cx, keyShore.cz, fluidsShore, fluidsShore.Length, 0);
+                    slicePool = kinematicsPool.RentOrGetAndSyncBaseline(keyPool.cx, keyPool.cz, fluidsPool, fluidsPool.Length, 0);
                 }
 
                 byte remShore = (byte)(shoreTopCell.Mass - transfer);
                 fluidsShore[shoreTopIdx] = FluidCell16.Pack(fType, remShore, isSettled: false, shoreTopCell.PressureHead).RawValue;
                 fluidsPool[poolBotIdx] = FluidCell16.Pack(fType, (byte)(poolBotCell.Mass + transfer), isSettled: false, poolBotCell.PressureHead).RawValue;
+                ApplySeamVelocityImpulse(sliceShore, shoreTopIdx, alongXSeam, dirSignFromShore, transfer, fType, clearOnEmpty: remShore == 0);
+                ApplySeamVelocityImpulse(slicePool, poolBotIdx, alongXSeam, dirSignFromShore, transfer, fType, clearOnEmpty: false);
                 PropagateSeamSalinityOnTransfer(salinityBitset, fType, keyShore, shoreTopIdx, remShore, keyPool, poolBotIdx, poolBotCell.Mass == 0);
-                WakeChunkCellAndNeighbors(fluidsShore, sx, y, sz, limitY);
-                WakeChunkCellAndNeighbors(fluidsPool, px, y - 1, pz, limitY);
+                WakeChunkCellAndNeighbors(fluidsShore, sx, shoreY, sz, limitY);
+                WakeChunkCellAndNeighbors(fluidsPool, px, poolY, pz, limitY);
                 dirtyShore = true;
                 dirtyPool = true;
                 return transfer;
@@ -1174,18 +1255,22 @@ namespace Stratocraft.Physics.Jobs
                 int transfer = Math.Min((int)poolBotCell.Mass, Math.Min(spaceShore, eqMass));
                 if (transfer <= 0) return 0;
 
+                ActiveChunkFluidKinematicsSlice? sliceShore = null;
+                ActiveChunkFluidKinematicsSlice? slicePool = null;
                 if (kinematicsPool != null)
                 {
-                    _ = kinematicsPool.RentOrGetAndSyncBaseline(keyShore.cx, keyShore.cz, fluidsShore, fluidsShore.Length, 0);
-                    _ = kinematicsPool.RentOrGetAndSyncBaseline(keyPool.cx, keyPool.cz, fluidsPool, fluidsPool.Length, 0);
+                    sliceShore = kinematicsPool.RentOrGetAndSyncBaseline(keyShore.cx, keyShore.cz, fluidsShore, fluidsShore.Length, 0);
+                    slicePool = kinematicsPool.RentOrGetAndSyncBaseline(keyPool.cx, keyPool.cz, fluidsPool, fluidsPool.Length, 0);
                 }
 
                 byte remPool = (byte)(poolBotCell.Mass - transfer);
                 fluidsPool[poolBotIdx] = FluidCell16.Pack(fType, remPool, isSettled: false, poolBotCell.PressureHead).RawValue;
                 fluidsShore[shoreTopIdx] = FluidCell16.Pack(fType, (byte)(shoreTopCell.Mass + transfer), isSettled: false, shoreTopCell.PressureHead).RawValue;
+                ApplySeamVelocityImpulse(slicePool, poolBotIdx, alongXSeam, -dirSignFromShore, transfer, fType, clearOnEmpty: remPool == 0);
+                ApplySeamVelocityImpulse(sliceShore, shoreTopIdx, alongXSeam, -dirSignFromShore, transfer, fType, clearOnEmpty: false);
                 PropagateSeamSalinityOnTransfer(salinityBitset, fType, keyPool, poolBotIdx, remPool, keyShore, shoreTopIdx, shoreTopCell.Mass == 0);
-                WakeChunkCellAndNeighbors(fluidsShore, sx, y, sz, limitY);
-                WakeChunkCellAndNeighbors(fluidsPool, px, y - 1, pz, limitY);
+                WakeChunkCellAndNeighbors(fluidsShore, sx, shoreY, sz, limitY);
+                WakeChunkCellAndNeighbors(fluidsPool, px, poolY, pz, limitY);
                 dirtyShore = true;
                 dirtyPool = true;
                 return transfer;
@@ -1323,7 +1408,8 @@ namespace Stratocraft.Physics.Jobs
 
                         if (aCell.Mass > 0 && headA > headB)
                         {
-                            if ((changedMask[aIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0)
+                            if ((changedMask[aIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0 ||
+                                !IsFluidColumnGrounded(voxels, fluids, aIdx, y, strideY, activeType))
                             {
                                 continue;
                             }
@@ -1385,7 +1471,8 @@ namespace Stratocraft.Physics.Jobs
                         }
                         else if (bCell.Mass > 0 && headB > headA)
                         {
-                            if ((changedMask[bIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0)
+                            if ((changedMask[bIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0 ||
+                                !IsFluidColumnGrounded(voxels, fluids, bIdx, y, strideY, activeType))
                             {
                                 continue;
                             }
@@ -1542,23 +1629,19 @@ namespace Stratocraft.Physics.Jobs
             FluidCell16 poolBotCell = new FluidCell16(fluids[poolBotIdx]);
             if (shoreTopCell.Mass == 0 && poolBotCell.Mass == 0) return false;
 
-            bool poolIsGrounded = poolY <= 0;
-            if (!poolIsGrounded)
+            FluidType fType = shoreTopCell.Mass > 0 ? shoreTopCell.Type : poolBotCell.Type;
+            if (fType == FluidType.None) return true;
+            if ((shoreTopCell.Mass > 0 && shoreTopCell.Type != fType) || (poolBotCell.Mass > 0 && poolBotCell.Type != fType)) return false;
+
+            if (!IsFluidColumnGrounded(voxels, fluids, poolBotIdx, poolY, strideY, fType))
             {
-                int twoBelow = poolBotIdx - strideY;
-                byte twoBelowCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[twoBelow]);
-                poolIsGrounded = twoBelowCap == 0 || (fluids[twoBelow] & 0xFF) >= twoBelowCap;
+                return false;
             }
-            if (!poolIsGrounded) return false;
 
             if (shoreTopCell.IsSettled && poolBotCell.IsSettled && changedMask[shoreTopIdx] == 0 && changedMask[poolBotIdx] == 0)
             {
                 return true;
             }
-
-            FluidType fType = shoreTopCell.Mass > 0 ? shoreTopCell.Type : poolBotCell.Type;
-            if (fType == FluidType.None) return true;
-            if ((shoreTopCell.Mass > 0 && shoreTopCell.Type != fType) || (poolBotCell.Mass > 0 && poolBotCell.Type != fType)) return false;
 
             byte axisNewlyWetFlag = alongX ? (byte)0x02 : (byte)0x04;
             const byte gravityNewlyWetMask = 0x08;
@@ -1583,13 +1666,16 @@ namespace Stratocraft.Physics.Jobs
                 if ((changedMask[shoreTopIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0) return true;
 
                 int spacePool = poolBotCap - poolBotCell.Mass;
-                if (spacePool <= 0) return true;
+                if (spacePool <= 0)
+                {
+                    // Alt havuz (y-1) tamamen 255 doluysa kiyi suyu ayni-Y (y) uzerinden havuzun ustune tasabilmelidir!
+                    return false;
+                }
                 int eqMass = Math.Max(1, (diff * 223 + (slopeSum >> 1)) / slopeSum);
+                // Pürüzsüz surekli aktarim egrisi (Mass=24->25 ani %54->%96 baraj patlamasi yok!)
                 int maxStepCap = shoreTopCell.Mass == 1
                     ? 1
-                    : (shoreTopCell.Mass <= 24
-                        ? Math.Min(shoreTopCell.Mass - 1, Math.Max(1, (shoreTopCell.Mass * 13) / 24))
-                        : Math.Max(12, eqMass));
+                    : Math.Min(shoreTopCell.Mass - 1, Math.Max(1, (shoreTopCell.Mass * 15) / 24));
                 int transfer = Math.Min((int)shoreTopCell.Mass, Math.Min(spacePool, Math.Min(maxStepCap, eqMass)));
                 if (transfer <= 0) return true;
 
@@ -1606,7 +1692,12 @@ namespace Stratocraft.Physics.Jobs
                 PropagateGridSalinityOnTransfer(salinityBits, fType, shoreTopIdx, remShore, poolBotIdx, poolWasDry);
                 MarkChangedWithNeighbors(changedMask, sx, shoreY, sz, sizeX, sizeY, sizeZ);
                 MarkChangedWithNeighbors(changedMask, px, poolY, pz, sizeX, sizeY, sizeZ);
-                if (poolWasDry) changedMask[poolBotIdx] |= axisNewlyWetFlag;
+                if (poolWasDry)
+                {
+                    // Dik 2-blokluk (y -> y-2) dususte her iki yatay ekseni de isaretle (0x06) ki
+                    // su tek tikte 6 blok inip windowMinY disinda erken IsSettled=1 donmasin!
+                    changedMask[poolBotIdx] |= (poolY <= shoreY - 2) ? (byte)0x06 : axisNewlyWetFlag;
+                }
                 return true;
             }
 
@@ -1674,13 +1765,10 @@ namespace Stratocraft.Physics.Jobs
             int sumWeights = 0;
             int targetWeight = 0;
 
-            ReadOnlySpan<int> ndx = stackalloc int[4] { 1, -1, 0, 0 };
-            ReadOnlySpan<int> ndz = stackalloc int[4] { 0, 0, 1, -1 };
-
             for (int d = 0; d < 4; d++)
             {
-                int nx = sx + ndx[d];
-                int nz = sz + ndz[d];
+                int nx = sx + (d == 0 ? 1 : (d == 1 ? -1 : 0));
+                int nz = sz + (d == 2 ? 1 : (d == 3 ? -1 : 0));
                 if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
                 {
                     continue;
@@ -1696,6 +1784,25 @@ namespace Stratocraft.Physics.Jobs
 
                 uint belowN = y > 0 ? voxels[nIdx - strideY] : 0u;
                 ushort belowFluidN = y > 0 ? fluids[nIdx - strideY] : (ushort)0;
+                // Hayali Ucurum Kilitlenme Tamiri (0e08a74a.jpg):
+                // Eger komsu y'de bos ama y-1'de ayni tipte dengeli su (Mass < 255 olsa bile!) varsa,
+                // gercek alt-katman hidrostatik kotunu kontrol et; zaten esit seviyedeki havuzu 1m ucurum sanip yan akisi kilitleme!
+                if (nMass == 0 && y > 0 && !VoxelBitUtility.IsPhysicallySolid(belowN) &&
+                    (belowFluidN & 0xFF) > 0 && (FluidType)((belowFluidN >> 8) & 0x03u) == activeType)
+                {
+                    byte belowPoolCap = FluidPorosityUtility.ComputeCellFluidCapacity(belowN);
+                    if (belowPoolCap > 0)
+                    {
+                        uint below2N = y > 1 ? voxels[nIdx - 2 * strideY] : 0u;
+                        ushort below2FluidN = y > 1 ? fluids[nIdx - 2 * strideY] : (ushort)0;
+                        int bedBelowPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(below2N, below2FluidN, belowN, activeType, y - 1);
+                        int headBelowPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedBelowPool, y - 1, (byte)(belowFluidN & 0xFF), belowPoolCap);
+                        if (headBelowPool >= headSrc - 1)
+                        {
+                            continue;
+                        }
+                    }
+                }
                 int bedN = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(belowN, belowFluidN, voxels[nIdx], activeType, y);
                 int headN = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedN, y, nMass, nCap);
                 if (headN >= headSrc)
@@ -1730,8 +1837,8 @@ namespace Stratocraft.Physics.Jobs
 
             for (int d = 0; d < 4; d++)
             {
-                int nx = sx + ndx[d];
-                int nz = sz + ndz[d];
+                int nx = sx + (d == 0 ? 1 : (d == 1 ? -1 : 0));
+                int nz = sz + (d == 2 ? 1 : (d == 3 ? -1 : 0));
                 if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
                 {
                     continue;
@@ -1747,6 +1854,22 @@ namespace Stratocraft.Physics.Jobs
 
                 uint belowN = y > 0 ? voxels[nIdx - strideY] : 0u;
                 ushort belowFluidN = y > 0 ? fluids[nIdx - strideY] : (ushort)0;
+                if (nMass == 0 && y > 0 && !VoxelBitUtility.IsPhysicallySolid(belowN) &&
+                    (belowFluidN & 0xFF) > 0 && (FluidType)((belowFluidN >> 8) & 0x03u) == activeType)
+                {
+                    byte belowPoolCap = FluidPorosityUtility.ComputeCellFluidCapacity(belowN);
+                    if (belowPoolCap > 0)
+                    {
+                        uint below2N = y > 1 ? voxels[nIdx - 2 * strideY] : 0u;
+                        ushort below2FluidN = y > 1 ? fluids[nIdx - 2 * strideY] : (ushort)0;
+                        int bedBelowPool = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(below2N, below2FluidN, belowN, activeType, y - 1);
+                        int headBelowPool = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedBelowPool, y - 1, (byte)(belowFluidN & 0xFF), belowPoolCap);
+                        if (headBelowPool >= headSrc - 1)
+                        {
+                            continue;
+                        }
+                    }
+                }
                 int bedN = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(belowN, belowFluidN, voxels[nIdx], activeType, y);
                 int headN = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedN, y, nMass, nCap);
                 int dh = headSrc - headN;
@@ -1774,6 +1897,191 @@ namespace Stratocraft.Physics.Jobs
             }
 
             slopeShare256 = Math.Clamp((targetWeight * 256) / sumWeights, 20, 256);
+        }
+
+        /// <summary>
+        /// Pass 2.5 — 45° Capraz Dik Dogal Yamac Kacisi (0-GC, Katı Duvar Sizdirmaz, dM == 0):
+        /// 4-bagli Pass 2'de komsu kardinal hucrelerin yogunluk/SDF tabani yuzunden kilitlenen (changedMask == 0)
+        /// kucuk su birikintilerinin, en az 1 ara kardinal gecit acik (cap > 0) olmak sartiyla, >= 0.63m (160 br)
+        /// daha alcak capraz dogal arazi sutununa (y, y-1, y-2) suzulmesini saglar.
+        /// </summary>
+        private static void RunDiagonalSteepSlopeEscapePass(
+            Span<uint> voxels,
+            Span<ushort> fluids,
+            byte[] changedMask,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int windowMinY,
+            int windowMaxY,
+            int stepParity,
+            ulong[]? salinityBits,
+            int[]? fluxX,
+            int[]? fluxZ)
+        {
+            int strideY = sizeX * sizeZ;
+            int minY = Math.Max(1, windowMinY);
+            int maxY = Math.Min(sizeY - 1, windowMaxY);
+            int startDir = stepParity & 3;
+
+            for (int y = maxY; y >= minY; y--)
+            {
+                int yBase = y * strideY;
+                for (int z = 1; z < sizeZ - 1; z++)
+                {
+                    int rowBase = yBase + z * sizeX;
+                    for (int x = 1; x < sizeX - 1; x++)
+                    {
+                        int idx = rowBase + x;
+                        if (changedMask[idx] != 0)
+                        {
+                            continue;
+                        }
+
+                        ushort raw = fluids[idx];
+                        byte mass = (byte)(raw & 0xFF);
+                        if (mass == 0 || mass > 120 || (raw & 0x0400u) != 0u)
+                        {
+                            continue;
+                        }
+
+                        FluidType fType = (FluidType)((raw >> 8) & 0x03u);
+                        if (fType != FluidType.Water)
+                        {
+                            continue;
+                        }
+
+                        // Yalnizca dogal SDF arazi zemini (ShapeId == 0) ustunde oturan su; mimari havuz/kanala dokunma!
+                        uint belowSrc = voxels[idx - strideY];
+                        if (!VoxelBitUtility.IsPhysicallySolid(belowSrc) || VoxelBitUtility.GetShapeId(belowSrc) != 0)
+                        {
+                            continue;
+                        }
+
+                        byte srcCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[idx]);
+                        if (srcCap == 0)
+                        {
+                            continue;
+                        }
+
+                        int bedSrc = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(belowSrc, fluids[idx - strideY], voxels[idx], fType, y);
+                        int headSrc = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedSrc, y, mass, srcCap);
+
+                        int bestTargetIdx = -1;
+                        int bestTargetY = y;
+                        int bestDx = 0;
+                        int bestDz = 0;
+                        int bestBedDrop = 159; // En az 160 br (~0.63m) daha alcak capraz yamaç gerektirir!
+                        byte bestTargetMass = 0;
+                        byte bestTargetCap = 0;
+
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int d = (startDir + k) & 3;
+                            int ox = (d & 1) == 0 ? -1 : 1;
+                            int oz = d < 2 ? -1 : 1;
+
+                            // KATI DUVAR GUVENCESI (T14/T15/T16): En az bir ara kardinal hucre (x+ox, z) veya (x, z+oz) acik olmali!
+                            byte flankCapA = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + z * sizeX + (x + ox)]);
+                            byte flankCapB = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + (z + oz) * sizeX + x]);
+                            if (flankCapA == 0 && flankCapB == 0)
+                            {
+                                continue;
+                            }
+
+                            int nx = x + ox;
+                            int nz = z + oz;
+                            int nColBase = nz * sizeX + nx;
+                            // Hedef sutunun y katmani kapaliysa (duvar) capraz gecis yasak
+                            if (FluidPorosityUtility.ComputeCellFluidCapacity(voxels[yBase + nColBase]) == 0)
+                            {
+                                continue;
+                            }
+
+                            // y, y-1 ve y-2 (en fazla 2 blok dusus) katmanlarinda dogal araziye oturan en ust acik hedefi bul
+                            for (int dy = 0; dy <= 2; dy++)
+                            {
+                                int ty = y - dy;
+                                if (ty < 1) break;
+                                int tIdx = ty * strideY + nColBase;
+                                byte tCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[tIdx]);
+                                if (tCap == 0) break;
+
+                                uint tBelowS = voxels[tIdx - strideY];
+                                ushort tBelowF = fluids[tIdx - strideY];
+                                bool tBelowSolid = VoxelBitUtility.IsPhysicallySolid(tBelowS);
+                                bool tBelowSame = !tBelowSolid && (tBelowF & 0xFF) > 0 && (FluidType)((tBelowF >> 8) & 0x03u) == fType;
+
+                                if (!tBelowSolid && !tBelowSame)
+                                {
+                                    // Havada (y-1 bos), bir alt katmana inmeye devam et
+                                    continue;
+                                }
+
+                                if (tBelowSolid && VoxelBitUtility.GetShapeId(tBelowS) != 0)
+                                {
+                                    break;
+                                }
+
+                                ushort tRaw = fluids[tIdx];
+                                byte tMass = (byte)(tRaw & 0xFF);
+                                if (tMass > 0 && (FluidType)((tRaw >> 8) & 0x03u) != fType)
+                                {
+                                    break;
+                                }
+
+                                if (tCap <= tMass)
+                                {
+                                    break;
+                                }
+
+                                int bedDst = FluidPorosityUtility.ComputeCellHydrostaticBedUnits255(tBelowS, tBelowF, voxels[tIdx], fType, ty);
+                                int headDst = FluidPorosityUtility.ComputeCellHydrostaticHeadUnits255(bedDst, ty, tMass, tCap);
+                                int bedDrop = bedSrc - bedDst;
+                                if (bedDrop > bestBedDrop && headSrc > headDst + 1)
+                                {
+                                    bestBedDrop = bedDrop;
+                                    bestTargetIdx = tIdx;
+                                    bestTargetY = ty;
+                                    bestDx = ox;
+                                    bestDz = oz;
+                                    bestTargetMass = tMass;
+                                    bestTargetCap = tCap;
+                                }
+                                break;
+                            }
+                        }
+
+                        if (bestTargetIdx >= 0)
+                        {
+                            int maxStepCap = mass == 1 ? 1 : Math.Min(mass - 1, Math.Max(1, (mass * 13) / 24));
+                            int transfer = Math.Min(maxStepCap, bestTargetCap - bestTargetMass);
+                            if (transfer > 0)
+                            {
+                                bool targetWasDry = bestTargetMass == 0;
+                                byte rem = (byte)(mass - transfer);
+                                fluids[idx] = rem > 0 ? FluidCell16.Pack(fType, rem, isSettled: false).RawValue : (ushort)0;
+                                fluids[bestTargetIdx] = FluidCell16.Pack(fType, (byte)(bestTargetMass + transfer), isSettled: false).RawValue;
+                                PropagateGridSalinityOnTransfer(salinityBits, fType, idx, rem, bestTargetIdx, targetWasDry);
+                                MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
+                                MarkChangedWithNeighbors(changedMask, x + bestDx, bestTargetY, z + bestDz, sizeX, sizeY, sizeZ);
+                                if (bestTargetY <= y - 2)
+                                {
+                                    changedMask[bestTargetIdx] |= 0x06;
+                                }
+                                if (fluxX != null && fluxZ != null)
+                                {
+                                    int fScaled = Math.Max(1, (transfer * 181) >> 8);
+                                    fluxX[idx] += bestDx * fScaled;
+                                    fluxZ[idx] += bestDz * fScaled;
+                                    fluxX[bestTargetIdx] += bestDx * fScaled;
+                                    fluxZ[bestTargetIdx] += bestDz * fScaled;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -1865,8 +2173,8 @@ namespace Stratocraft.Physics.Jobs
                         return 0;
                     }
 
-                    int slopeCap = (activeType == FluidType.Water && srcMass <= 24)
-                        ? Math.Max(2, (srcMass * 13) / 24)
+                    int slopeCap = activeType == FluidType.Water
+                        ? Math.Max(2, (srcMass * 15) / 24)
                         : Math.Max(24, (srcMass * 65) / 100);
                     desired = Math.Min(rawPipe, Math.Min(slopeCap, maxEquilibriumTransfer));
                     if (slopeShare256 < 256)
@@ -1966,10 +2274,6 @@ namespace Stratocraft.Physics.Jobs
             }
 
             // B) Birlesik Kaplar (U-Borusu) & <= 10m Sifon BFS (Yalnizca [scanMinY..scanMaxY] bandi!)
-            ReadOnlySpan<int> dx = stackalloc int[6] { 1, -1, 0, 0, 0, 0 };
-            ReadOnlySpan<int> dy = stackalloc int[6] { 0, 0, 1, -1, 0, 0 };
-            ReadOnlySpan<int> dz = stackalloc int[6] { 0, 0, 0, 0, 1, -1 };
-
             int stamp = ++_globalStampCounter;
             if (stamp >= int.MaxValue - 16)
             {
@@ -2036,9 +2340,12 @@ namespace Stratocraft.Physics.Jobs
 
                             for (int d = 0; d < 6; d++)
                             {
-                                int nx = cx + dx[d];
-                                int ny = cy + dy[d];
-                                int nz = cz + dz[d];
+                                int dOx = d == 0 ? 1 : (d == 1 ? -1 : 0);
+                                int dOy = d == 2 ? 1 : (d == 3 ? -1 : 0);
+                                int dOz = d == 4 ? 1 : (d == 5 ? -1 : 0);
+                                int nx = cx + dOx;
+                                int ny = cy + dOy;
+                                int nz = cz + dOz;
                                 if ((uint)nx >= (uint)sizeX || (uint)ny >= (uint)sizeY || (uint)nz >= (uint)sizeZ)
                                 {
                                     continue;
@@ -2054,7 +2361,7 @@ namespace Stratocraft.Physics.Jobs
                                 FluidCell16 nCell = new FluidCell16(fluids[nIdx]);
 
                                 // Dikey sutunun en tepesindeki kismi dolu (< 192) serbest yuzey hucresi de gecerli kaynak yuzeyidir!
-                                if (dy[d] == 1 && nCell.Type == pipeType && nCell.Mass > 0)
+                                if (dOy == 1 && nCell.Type == pipeType && nCell.Mass > 0)
                                 {
                                     bool topFree = ny + 1 >= sizeY ||
                                                    new FluidCell16(fluids[nIdx + strideY]).Type != pipeType ||
@@ -2066,7 +2373,7 @@ namespace Stratocraft.Physics.Jobs
                                     }
                                 }
 
-                                if (dy[d] == 1 && (nCell.Type == FluidType.None || nCell.Type == pipeType) && nCap >= 128 && (nCap - nCell.Mass) >= 16)
+                                if (dOy == 1 && (nCell.Type == FluidType.None || nCell.Type == pipeType) && nCap >= 128 && (nCap - nCell.Mass) >= 16)
                                 {
                                     // Yalnizca yukari (+Y) dikey U-kolu cikis agzi adayi (yanal yayilim RunLateralPairPass ile CFL <= 1 olarak cozulur!)
                                     if (ny < bestOutletY)

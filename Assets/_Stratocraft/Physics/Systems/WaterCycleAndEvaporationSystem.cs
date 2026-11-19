@@ -73,10 +73,62 @@ namespace Stratocraft.Physics.Systems
 
         /// <summary>1 birim sivi emiliminin emici toprakta artirdigi Moisture puani (SoilMoistureAndMudSystem ile uyumlu).</summary>
         public const int RainMoistureGainPerFluidUnit = 9;
+        public const int MaxPooledCarryBuffers = 256; // 256 x 1 KB = 256 KB ust sinir
 
         private readonly Dictionary<(int cx, int cz), float[]> _evapUnitCarryChunks = new(32);
         private readonly Dictionary<(int cx, int cz), float[]> _rainUnitCarryChunks = new(32);
         private readonly Dictionary<(int cx, int cz), float> _solarDryCarryChunks = new(32);
+        private readonly Stack<float[]> _carryBufferPool = new(64);
+
+        public int TrackedEvapCarryChunkCount => _evapUnitCarryChunks.Count;
+        public int TrackedRainCarryChunkCount => _rainUnitCarryChunks.Count;
+        public int TrackedSolarDryCarryChunkCount => _solarDryCarryChunks.Count;
+        public int PooledCarryBufferCount => _carryBufferPool.Count;
+
+        public bool ReleaseChunk(int cx, int cz)
+        {
+            var key = (cx, cz);
+            bool removed = false;
+            if (_evapUnitCarryChunks.Remove(key, out float[]? evArr) && evArr != null)
+            {
+                RecycleCarryBuffer(evArr);
+                removed = true;
+            }
+            if (_rainUnitCarryChunks.Remove(key, out float[]? rnArr) && rnArr != null)
+            {
+                RecycleCarryBuffer(rnArr);
+                removed = true;
+            }
+            if (_solarDryCarryChunks.Remove(key))
+            {
+                removed = true;
+            }
+            return removed;
+        }
+
+        public void ClearAll()
+        {
+            foreach (var kv in _evapUnitCarryChunks)
+            {
+                if (kv.Value != null) RecycleCarryBuffer(kv.Value);
+            }
+            foreach (var kv in _rainUnitCarryChunks)
+            {
+                if (kv.Value != null) RecycleCarryBuffer(kv.Value);
+            }
+            _evapUnitCarryChunks.Clear();
+            _rainUnitCarryChunks.Clear();
+            _solarDryCarryChunks.Clear();
+        }
+
+        private void RecycleCarryBuffer(float[] arr)
+        {
+            if (arr.Length == 256 && _carryBufferPool.Count < MaxPooledCarryBuffers)
+            {
+                Array.Clear(arr, 0, arr.Length);
+                _carryBufferPool.Push(arr);
+            }
+        }
 
         /// <summary>
         /// Magnus-Tetens doygunluk su buhari basinci e_s(T) (hPa).
@@ -205,27 +257,49 @@ namespace Stratocraft.Physics.Systems
 
             float[]? chunkCarry = null;
 
-            // Paket 4B.2 O(1) Isi Kaynagi On-Taramasi: Chunk'ta hic lav veya termal ocak/ates yoksa
-            // her kolonda 75-komsu (480.000 hucre!) IsNearThermalHeatSourceInChunk taramasini %100 atla!
-            bool chunkMayContainHeatSource = false;
+            // Paket 4C-1 O(1) Kuru-Chunk Erken Cikisi + Isi Kaynagi On-Taramasi:
+            // Once sivi tamponunda herhangi bir Su hucresi ve en yuksek su Y kotunu bul;
+            // 0 su varsa tum 40.960 voksel isi ve kolon taramasini %100 atla (~0.015 ms)!
             int totalSliceCells = limitY << 8;
+            int highestWaterY = -1;
+            bool chunkMayContainHeatSource = false;
             for (int i = 0; i < totalSliceCells; i++)
             {
                 ushort fl = fluids[i];
-                if ((fl & 0xFF) != 0 && ((fl >> 8) & 0x03) == (int)FluidType.Lava)
+                if ((fl & 0xFF) != 0)
                 {
-                    chunkMayContainHeatSource = true;
-                    break;
-                }
-
-                byte mat = VoxelBitUtility.GetMaterialId(voxels[i]);
-                if (mat != 0 && IsThermalHeatSourceMaterial(mat))
-                {
-                    chunkMayContainHeatSource = true;
-                    break;
+                    int fType = (fl >> 8) & 0x03;
+                    if (fType == (int)FluidType.Water)
+                    {
+                        int wy = i >> 8;
+                        if (wy > highestWaterY) highestWaterY = wy;
+                    }
+                    else if (fType == (int)FluidType.Lava)
+                    {
+                        chunkMayContainHeatSource = true;
+                    }
                 }
             }
 
+            if (highestWaterY < 1)
+            {
+                return 0.0f;
+            }
+
+            if (!chunkMayContainHeatSource)
+            {
+                for (int i = 0; i < totalSliceCells; i++)
+                {
+                    byte mat = VoxelBitUtility.GetMaterialId(voxels[i]);
+                    if (mat != 0 && IsThermalHeatSourceMaterial(mat))
+                    {
+                        chunkMayContainHeatSource = true;
+                        break;
+                    }
+                }
+            }
+
+            int evapScanTopY = Math.Min(limitY - 1, highestWaterY);
             for (int lz = 0; lz < 16; lz++)
             {
                 for (int lx = 0; lx < 16; lx++)
@@ -236,7 +310,7 @@ namespace Stratocraft.Physics.Systems
                     int topWaterY = -1;
                     bool roofBlockedBeforeWater = false;
 
-                    for (int y = limitY - 1; y >= 1; y--)
+                    for (int y = evapScanTopY; y >= 1; y--)
                     {
                         int idx = (y << 8) | col;
                         ushort rawFl = fluids[idx];
@@ -553,6 +627,33 @@ namespace Stratocraft.Physics.Systems
         ///   acik tas oyuklarda aninda) fazla yagmur uste gercek <see cref="FluidCell16"/> Tatli Su (<c>Salinity = false</c>) olarak dogar!
         /// - Yagis durdugunda (<c>precipMmPerHour == 0</c>) gunes/acik hava altindaki islak topraklar kademeli olarak kurur.
         /// </summary>
+        /// <summary>
+        /// Paket 4C-1: 4-koseli bilineer yagmur gradyaniyla (ChunkPrecipCornerField) firtina sinirinda
+        /// cetvel cizgisi olmadan islatma, camurlasma ve gollenme (dis halkada durgun gollenme opsiyonlu) calistirir.
+        /// </summary>
+        public int StepRainSurfaceWettingAndPondingGradient(
+            int cx,
+            int cz,
+            ReadOnlySpan<uint> voxels,
+            Span<ushort> fluids,
+            SoilMoistureAndMudSystem soilSystem,
+            int maxY,
+            in ChunkPrecipCornerField precipField,
+            float gameDeltaSeconds,
+            bool allowSolarDrying,
+            bool spawnSettledPondingOnly,
+            out ushort visualDirtySubChunkMask,
+            out bool fluidChanged,
+            ChunkSkyOcclusionMap256? skyMap = null,
+            ChunkSalinityBitset? salinityBitset = null)
+        {
+            return StepRainCore(
+                cx, cz, voxels, fluids, soilSystem, maxY,
+                precipField.MaxLiquidRainMmHr, precipField.MeanAirTempCelsius, gameDeltaSeconds,
+                useGradientField: true, in precipField, allowSolarDrying, spawnSettledPondingOnly,
+                out visualDirtySubChunkMask, out fluidChanged, skyMap, salinityBitset);
+        }
+
         public int StepRainSurfaceWettingAndPonding(
             int cx,
             int cz,
@@ -568,6 +669,33 @@ namespace Stratocraft.Physics.Systems
             ChunkSkyOcclusionMap256? skyMap = null,
             ChunkSalinityBitset? salinityBitset = null)
         {
+            ChunkPrecipCornerField unused = default;
+            return StepRainCore(
+                cx, cz, voxels, fluids, soilSystem, maxY,
+                precipMmPerHour, airTempC, gameDeltaSeconds,
+                useGradientField: false, in unused, allowSolarDrying: true, spawnSettledPondingOnly: false,
+                out visualDirtySubChunkMask, out fluidChanged, skyMap, salinityBitset);
+        }
+
+        private int StepRainCore(
+            int cx,
+            int cz,
+            ReadOnlySpan<uint> voxels,
+            Span<ushort> fluids,
+            SoilMoistureAndMudSystem soilSystem,
+            int maxY,
+            float precipMmPerHour,
+            float airTempC,
+            float gameDeltaSeconds,
+            bool useGradientField,
+            in ChunkPrecipCornerField gradientField,
+            bool allowSolarDrying,
+            bool spawnSettledPondingOnly,
+            out ushort visualDirtySubChunkMask,
+            out bool fluidChanged,
+            ChunkSkyOcclusionMap256? skyMap,
+            ChunkSalinityBitset? salinityBitset)
+        {
             visualDirtySubChunkMask = 0;
             fluidChanged = false;
 
@@ -581,6 +709,11 @@ namespace Stratocraft.Physics.Systems
             // 1) Yagissiz (precip == 0) gunesli/acik havada nemli topragin kurumasi:
             if (precipMmPerHour <= 0.001f)
             {
+                if (!allowSolarDrying)
+                {
+                    return 0;
+                }
+
                 if (soilSystem.SoilMoistureChunks.TryGetValue((cx, cz), out byte[]? moistArr) && moistArr != null)
                 {
                     float dryRatePerSec = airTempC >= 25.0f
@@ -621,7 +754,7 @@ namespace Stratocraft.Physics.Systems
             byte[]? moisture = null;
             int totalSpawnedWaterUnits = 0;
 
-            // Paket 4B.2 Sirt -> Vadi Olugu (Sub-Unit Talweg) Yuzey Suzulmesi icin 16x16 yuzey kotu on-tablosu
+            // Paket 4C-1 O(1) skyMap Yuzey Kotu Tablosu (~60x daha hizli: 15.872 okuma -> 256 okuma!)
             Span<short> colSurfaceY = stackalloc short[256];
             Span<short> colBedUnits = stackalloc short[256];
             for (int lz = 0; lz < 16; lz++)
@@ -630,13 +763,36 @@ namespace Stratocraft.Physics.Systems
                 {
                     int col = (lz << 4) | lx;
                     int sY = -1;
-                    for (int y = limitY - 2; y >= 1; y--)
+                    if (skyMap != null)
                     {
-                        uint raw = voxels[(y << 8) | col];
-                        if (raw != 0u && VoxelBitUtility.IsPhysicallySolid(raw))
+                        byte occY = skyMap.GetMaxOccluderY(lx, lz);
+                        if (occY >= 1 && occY <= limitY - 2 && VoxelBitUtility.IsPhysicallySolid(voxels[(occY << 8) | col]))
                         {
-                            sY = y;
-                            break;
+                            sY = occY;
+                        }
+                        else if (occY < limitY - 1)
+                        {
+                            for (int y = Math.Min(limitY - 2, (int)occY); y >= 1; y--)
+                            {
+                                uint raw = voxels[(y << 8) | col];
+                                if (raw != 0u && VoxelBitUtility.IsPhysicallySolid(raw))
+                                {
+                                    sY = y;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (int y = limitY - 2; y >= 1; y--)
+                        {
+                            uint raw = voxels[(y << 8) | col];
+                            if (raw != 0u && VoxelBitUtility.IsPhysicallySolid(raw))
+                            {
+                                sY = y;
+                                break;
+                            }
                         }
                     }
 
@@ -656,8 +812,8 @@ namespace Stratocraft.Physics.Systems
                 }
             }
 
-            // 1. Asama: Acik gokyuzu altindaki kolonlara yagisi ekle ve gecirimsiz dik sirtlardaki (Stone/Basalt/Marble)
-            // mikroskobik yagmur filmini (< 3 birim) tum tepeyi mavi sel levhasi yapmadan dogrudan alt vadi oluguna aktar!
+            // 1. Asama: Acik gokyuzu altindaki kolonlara yagisi ekle (4-koseli gradyan destekli!)
+            float dtHoursToUnits = (gameDeltaSeconds / SecondsPerGameHour) * FluidUnitsPerMm;
             for (int lz = 0; lz < 16; lz++)
             {
                 for (int lx = 0; lx < 16; lx++)
@@ -667,7 +823,13 @@ namespace Stratocraft.Physics.Systems
                     if (surfaceY < 1) continue;
                     if (skyMap != null && !skyMap.HasOpenSkyAbove(lx, Math.Min(255, surfaceY + 1), lz)) continue;
 
-                    rainCarry[col] += rainFluidUnitsPerCol;
+                    float colUnits = useGradientField
+                        ? (gradientField.SampleLiquidRainAtColumn(lx, lz) * dtHoursToUnits)
+                        : rainFluidUnitsPerCol;
+                    if (colUnits > 0.0f)
+                    {
+                        rainCarry[col] += colUnits;
+                    }
                 }
             }
 
@@ -764,15 +926,19 @@ namespace Stratocraft.Physics.Systems
                         needsDrySoilWetting = moisture[surfIdx] < SoilMoistureAndMudSystem.MaxMoistureSaturation;
                     }
 
-                    // Paket 4B.2 Yagmur Derecik Surekliligi:
-                    // Kuru yamaclarda tekil damlacik firlatip isinlaniyormus/yok oluyormus gibi gorunmesini onlemek icin
-                    // yamac kolonlarinda en az 5 birimlik (Mass >= 5) bagli akis parseli birikene kadar bekle!
-                    if (isSlopedRunoffCol[col] != 0 && !hasStandingWaterAbove && !needsDrySoilWetting && nextCarry < 5.0f)
+                    // Paket 4B.3 Yumusak Yagmur Akisi (15df271a.jpg Domino Dalga Tamiri):
+                    // Eski 5.0 esigi kuru dagda yuzlerce birimi gizlice sarj edip tek damla deyince domino gibi
+                    // aniden sel dalgasi bosaltiyordu! Esigi 2.0'a cekip egimli yuzeyde adim basina en fazla 2 birim
+                    // salarak dogal, surekli ve ani patlamasiz yagmur derecikleri uretiyoruz.
+                    if (isSlopedRunoffCol[col] != 0 && !hasStandingWaterAbove && !needsDrySoilWetting && nextCarry < 2.0f)
                     {
                         continue;
                     }
 
-                    int incomingUnits = (int)MathF.Floor(nextCarry);
+                    int rawFloorUnits = (int)MathF.Floor(nextCarry);
+                    int incomingUnits = (isSlopedRunoffCol[col] != 0 && !needsDrySoilWetting)
+                        ? Math.Min(2, rawFloorUnits)
+                        : rawFloorUnits;
                     rainCarry[col] = nextCarry - incomingUnits;
                     if (incomingUnits <= 0)
                     {
@@ -843,9 +1009,8 @@ namespace Stratocraft.Physics.Systems
                     }
 
                     // Toprak doygunluga (Moisture == 255) ulastiysa veya zemin gecirimsiz tas canaksa:
-                    // Fazla yagmur uste gercek FluidCell16 Tatli Su (Salinity = false, isSettled = false) olarak dogar!
-                    // Not: Derin gollerin (>4m) ust yuzeyine de yagmur eklenebilmesi icin limitY-1'e kadar tarar.
-                    if (incomingUnits > 0)
+                    // Dis halkada (spawnSettledPondingOnly) yalnizca duz/canak kolonlara durgun (isSettled=true) gol suyu dogar!
+                    if (incomingUnits > 0 && (!spawnSettledPondingOnly || isSlopedRunoffCol[col] == 0))
                     {
                         int maxPondY = limitY - 1;
                         for (int py = surfaceY + 1; py <= maxPondY && incomingUnits > 0; py++)
@@ -874,7 +1039,7 @@ namespace Stratocraft.Physics.Systems
                             fluids[pIdx] = FluidCell16.Pack(
                                 FluidType.Water,
                                 (byte)(existing.Mass + add),
-                                isSettled: false,
+                                isSettled: spawnSettledPondingOnly,
                                 existing.PressureHead).RawValue;
 
                             if (wasDry)
@@ -979,7 +1144,7 @@ namespace Stratocraft.Physics.Systems
         {
             if (!_evapUnitCarryChunks.TryGetValue((cx, cz), out float[]? arr) || arr == null || arr.Length < 256)
             {
-                arr = new float[256];
+                arr = RentCarryBuffer();
                 _evapUnitCarryChunks[(cx, cz)] = arr;
             }
 
@@ -990,11 +1155,22 @@ namespace Stratocraft.Physics.Systems
         {
             if (!_rainUnitCarryChunks.TryGetValue((cx, cz), out float[]? arr) || arr == null || arr.Length < 256)
             {
-                arr = new float[256];
+                arr = RentCarryBuffer();
                 _rainUnitCarryChunks[(cx, cz)] = arr;
             }
 
             return arr;
+        }
+
+        private float[] RentCarryBuffer()
+        {
+            if (_carryBufferPool.Count > 0)
+            {
+                float[] recycled = _carryBufferPool.Pop();
+                Array.Clear(recycled, 0, recycled.Length);
+                return recycled;
+            }
+            return new float[256];
         }
 
         private static void DeductColumnWaterTopDown(

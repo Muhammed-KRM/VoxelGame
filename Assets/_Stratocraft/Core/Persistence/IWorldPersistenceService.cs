@@ -38,6 +38,21 @@ namespace Stratocraft.Core.Persistence
         /// <summary>Seyrek 4x4x4 Mikro-Voxel yontma kayitlari (SubChunkY, SlotIndex12, Mask64).</summary>
         public (byte SubChunkY, ushort SlotIndex12, ulong Mask64)[] MicroPoolEntries { get; }
 
+        /// <summary>Paket 4C-2: Chunk'in son simule edildigi oyun-ici saniye (ekran-disi yakalama/catch-up icin).</summary>
+        public double LastSimulatedGameSeconds { get; set; }
+
+        /// <summary>Paket 4C-2: Bu chunk'in hangi alt-sistemlerde degisiklik tasidigi.</summary>
+        public ChunkDirtyFlags DirtyFlags { get; set; }
+
+        /// <summary>Paket 4C-2: Seyrek toprak nemi kayitlari (FlatIndex, Moisture[1..255]); kuru chunk'larda 0 uzunluk.</summary>
+        public (ushort FlatIndex, byte Moisture)[] SparseSoilMoisture { get; }
+
+        /// <summary>Paket 4C-2: 16x16 kar SWE birimleri (256 B); karsiz chunk'larda null.</summary>
+        public byte[]? SnowSwe256 { get; }
+
+        /// <summary>Paket 4C-2: Ozel tuzluluk bitset'i (ulong[1024]); varsayilan tuzlulukta null.</summary>
+        public ulong[]? SalinityBits1024 { get; }
+
         /// <summary>Yeni bir chunk serilestirme goruntusu olusturur.</summary>
         public ChunkSerializationSnapshot(
             int chunkX,
@@ -48,7 +63,12 @@ namespace Stratocraft.Core.Persistence
             bool isInsideClan = false,
             bool hasActiveStructures = false,
             uint lastVisitedUtcMinutes = 0,
-            (byte SubChunkY, ushort SlotIndex12, ulong Mask64)[]? microPoolEntries = null)
+            (byte SubChunkY, ushort SlotIndex12, ulong Mask64)[]? microPoolEntries = null,
+            double lastSimulatedGameSeconds = 0.0,
+            ChunkDirtyFlags dirtyFlags = ChunkDirtyFlags.Terrain | ChunkDirtyFlags.Fluid,
+            (ushort FlatIndex, byte Moisture)[]? sparseSoilMoisture = null,
+            byte[]? snowSwe256 = null,
+            ulong[]? salinityBits1024 = null)
         {
             ChunkX = chunkX;
             ChunkZ = chunkZ;
@@ -59,6 +79,11 @@ namespace Stratocraft.Core.Persistence
             HasActiveStructures = hasActiveStructures;
             LastVisitedUtcMinutes = lastVisitedUtcMinutes;
             MicroPoolEntries = microPoolEntries ?? Array.Empty<(byte, ushort, ulong)>();
+            LastSimulatedGameSeconds = lastSimulatedGameSeconds;
+            DirtyFlags = dirtyFlags;
+            SparseSoilMoisture = sparseSoilMoisture ?? Array.Empty<(ushort, byte)>();
+            SnowSwe256 = snowSwe256;
+            SalinityBits1024 = salinityBits1024;
         }
     }
 

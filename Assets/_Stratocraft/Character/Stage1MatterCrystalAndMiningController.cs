@@ -2630,8 +2630,33 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks, HashSet<(int cx, int cz)>? dirtyFluidChunks)
         {
             if (fluidChunks == null || !fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) || fluids == null) return;
-            FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, 16 * maxY * 16), 16, maxY, 16, lx, wy, lz, radius: 2);
+            int vol = 16 * maxY * 16;
+            FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, vol), 16, maxY, 16, lx, wy, lz, radius: 2);
             dirtyFluidChunks?.Add((cx, cz));
+
+            // Chunk sinirindan <= 2 blok mesafedeki kazilarda komsu chunk'in durgun (IsSettled=1) gol/deniz hucrelerini de
+            // uyandir ki sinir komsusu su havaya karsi donmus dik duvar gibi asili kalmasin!
+            if (lx <= 2 && fluidChunks.TryGetValue((cx - 1, cz), out ushort[]? wFl) && wFl != null)
+            {
+                FluidSimulationSystem.WakeFluidNeighborhood(wFl.AsSpan(0, vol), 16, maxY, 16, 15, wy, lz, radius: 2);
+                dirtyFluidChunks?.Add((cx - 1, cz));
+            }
+            if (lx >= 13 && fluidChunks.TryGetValue((cx + 1, cz), out ushort[]? eFl) && eFl != null)
+            {
+                FluidSimulationSystem.WakeFluidNeighborhood(eFl.AsSpan(0, vol), 16, maxY, 16, 0, wy, lz, radius: 2);
+                dirtyFluidChunks?.Add((cx + 1, cz));
+            }
+            if (lz <= 2 && fluidChunks.TryGetValue((cx, cz - 1), out ushort[]? sFl) && sFl != null)
+            {
+                FluidSimulationSystem.WakeFluidNeighborhood(sFl.AsSpan(0, vol), 16, maxY, 16, lx, wy, 15, radius: 2);
+                dirtyFluidChunks?.Add((cx, cz - 1));
+            }
+            if (lz >= 13 && fluidChunks.TryGetValue((cx, cz + 1), out ushort[]? nFl) && nFl != null)
+            {
+                FluidSimulationSystem.WakeFluidNeighborhood(nFl.AsSpan(0, vol), 16, maxY, 16, lx, wy, 0, radius: 2);
+                dirtyFluidChunks?.Add((cx, cz + 1));
+            }
+
             Stage1InteractivePlayController.WakeFluidChunkAndNeighborsStatic(cx, cz);
         }
 

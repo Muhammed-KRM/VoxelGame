@@ -287,7 +287,10 @@ namespace Stratocraft.Voxel.Systems
             List<FacetedVoxelTriangle> outFluidTriangles,
             Func<float, float, float>? customTopSurfaceSampler = null,
             Func<float, float, float, (float r, float g, float b, byte matId)>? customBiomeColorSampler = null,
-            float[]? scratchCornerHeights = null)
+            float[]? scratchCornerHeights = null,
+            Func<float, float, float, byte, byte>? customClimateTempByteSampler = null,
+            ulong[]? meshedChunkBitmask = null,
+            int meshedBitmaskRadius = 0)
         {
             outSolidTriangles.Clear();
             outFluidTriangles.Clear();
@@ -325,6 +328,75 @@ namespace Stratocraft.Voxel.Systems
 
             const float seaLevel = NaturalSeaLevelY; // 90.0f
             const float innerSkirtDrop = 6.0f; // 3D chunk sinirinda bosluk olusmamasi icin dikey etek
+            bool useMeshedMask = meshedChunkBitmask != null && meshedBitmaskRadius > 0;
+            int maskSide = useMeshedMask ? (meshedBitmaskRadius * 2 + 1) : 0;
+            int fineBandMaxDist = Math.Max(0, innerRadiusChunks) + 10; // Ilk 160m ufuk kusaginda 8m x 8m (4x detay) alt-ornekleme!
+
+            float SampleH(float wx, float wz) => customTopSurfaceSampler != null
+                ? customTopSurfaceSampler(wx, wz)
+                : SampleDefaultAnalyticalContinentSurfaceY(wx, wz);
+
+            bool IsCoveredBy3D(int checkCx, int checkCz)
+            {
+                int cdx = Math.Abs(checkCx - centerChunkX);
+                int cdz = Math.Abs(checkCz - centerChunkZ);
+                if (Math.Max(cdx, cdz) <= innerRadiusChunks)
+                {
+                    return true;
+                }
+                if (!useMeshedMask || cdx > meshedBitmaskRadius || cdz > meshedBitmaskRadius)
+                {
+                    return false;
+                }
+                int lx = (checkCx - centerChunkX) + meshedBitmaskRadius;
+                int lz = (checkCz - centerChunkZ) + meshedBitmaskRadius;
+                int bitIdx = lz * maskSide + lx;
+                int word = bitIdx >> 6;
+                if ((uint)word >= (uint)meshedChunkBitmask!.Length) return false;
+                return ((meshedChunkBitmask[word] >> (bitIdx & 63)) & 1UL) != 0UL;
+            }
+
+            void EmitQuad(
+                float qx0, float qx1, float qz0, float qz1,
+                float qy00, float qy10, float qy11, float qy01,
+                float solidBias, float waterLevelY, byte shadeA, byte shadeB)
+            {
+                if (qy00 <= 4.0f && qy10 <= 4.0f && qy11 <= 4.0f && qy01 <= 4.0f) return;
+
+                float midX = (qx0 + qx1) * 0.5f;
+                float midZ = (qz0 + qz1) * 0.5f;
+                float avgY = (qy00 + qy10 + qy11 + qy01) * 0.25f;
+
+                (float r, float g, float b, byte matId) biomeInfo = customBiomeColorSampler != null
+                    ? customBiomeColorSampler(midX, avgY, midZ)
+                    : (0.24f, 0.56f, 0.22f, MaterialIdCatalog.Grass);
+
+                byte mat = biomeInfo.matId;
+                if (mat == MaterialIdCatalog.Air) mat = MaterialIdCatalog.Grass;
+
+                bool hasWater = avgY < seaLevel || qy00 < seaLevel - 0.1f || qy10 < seaLevel - 0.1f || qy11 < seaLevel - 0.1f || qy01 < seaLevel - 0.1f;
+                if (hasWater)
+                {
+                    Vector3 w00 = new(qx0, waterLevelY, qz0);
+                    Vector3 w10 = new(qx1, waterLevelY, qz0);
+                    Vector3 w11 = new(qx1, waterLevelY, qz1);
+                    Vector3 w01 = new(qx0, waterLevelY, qz1);
+                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w01, w11, MaterialIdCatalog.FiniteWaterSurface, 0, 210, 0xE0, outFluidTriangles);
+                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w11, w10, MaterialIdCatalog.FiniteWaterSurface, 0, 205, 0xE0, outFluidTriangles);
+                }
+
+                Vector3 v00 = new(qx0, qy00 + solidBias, qz0);
+                Vector3 v10 = new(qx1, qy10 + solidBias, qz0);
+                Vector3 v11 = new(qx1, qy11 + solidBias, qz1);
+                Vector3 v01 = new(qx0, qy01 + solidBias, qz1);
+
+                byte temp = (avgY >= seaLevel && customClimateTempByteSampler != null)
+                    ? customClimateTempByteSampler(midX, avgY, midZ, mat)
+                    : (byte)0;
+
+                HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v01, v11, mat, temp, shadeA, 0xE0, outSolidTriangles);
+                HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v11, v10, mat, temp, shadeB, 0xE0, outSolidTriangles);
+            }
 
             for (int cz = minCz; cz <= maxCz; cz++)
             {
@@ -337,8 +409,8 @@ namespace Stratocraft.Voxel.Systems
                     int dx = Math.Abs(cx - centerChunkX);
                     int chebDist = Math.Max(dx, dz);
 
-                    // Aktif 3D voksel alani icindeyse (gercek chunk'lar oruluyor) atla
-                    if (chebDist <= innerRadiusChunks) continue;
+                    // Aktif 3D voksel alani veya gorus konisi 3D mesh'i icindeyse atla
+                    if (IsCoveredBy3D(cx, cz)) continue;
 
                     int gx = cx - minCx;
                     float wx0 = cx * 16.0f;
@@ -354,79 +426,98 @@ namespace Stratocraft.Voxel.Systems
                     // Gokyuzu adasi/kita disindaki bosluk (y <= 4m)
                     if (y00 <= 4.0f && y10 <= 4.0f && y11 <= 4.0f && y01 <= 4.0f) continue;
 
-                    float midX = wx0 + 8.0f;
-                    float midZ = wz0 + 8.0f;
-                    float avgY = (y00 + y10 + y11 + y01) * 0.25f;
-
-                    (float r, float g, float b, byte matId) biomeInfo = customBiomeColorSampler != null
-                        ? customBiomeColorSampler(midX, avgY, midZ)
-                        : (0.24f, 0.56f, 0.22f, MaterialIdCatalog.Grass);
-
-                    byte mat = biomeInfo.matId;
-                    if (mat == MaterialIdCatalog.Air) mat = MaterialIdCatalog.Grass;
-
-                    // Okyanus/Göl Yüzeyi: Eğer bu chunk deniz seviyesi altındaysa, su yüzeyini Fluid mesh'e ekle
-                    bool hasWater = avgY < seaLevel;
-                    if (hasWater)
-                    {
-                        Vector3 w00 = new(wx0, seaLevel, wz0);
-                        Vector3 w10 = new(wx1, seaLevel, wz0);
-                        Vector3 w11 = new(wx1, seaLevel, wz1);
-                        Vector3 w01 = new(wx0, seaLevel, wz1);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w01, w11, MaterialIdCatalog.FiniteWaterSurface, 0, 210, 0xE0, outFluidTriangles);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(w00, w11, w10, MaterialIdCatalog.FiniteWaterSurface, 0, 205, 0xE0, outFluidTriangles);
-                    }
-
-                    // Katı Arazi / Deniz Tabanı Yüzeyi
-                    Vector3 v00 = new(wx0, y00, wz0);
-                    Vector3 v10 = new(wx1, y10, wz0);
-                    Vector3 v11 = new(wx1, y11, wz1);
-                    Vector3 v01 = new(wx0, y01, wz1);
-
+                    float solidYBias = (useMeshedMask && chebDist <= meshedBitmaskRadius) ? -0.22f : (chebDist <= innerRadiusChunks + 1 ? -0.18f : 0.0f);
+                    float waterY = (useMeshedMask && chebDist <= meshedBitmaskRadius) ? (seaLevel - 0.04f) : seaLevel;
                     byte shadeA = (byte)(186 + ((cx * 7 + cz * 13) & 15));
                     byte shadeB = (byte)(shadeA - 8);
-                    byte ao = 0xE0;
-                    byte temp = 0;
 
-                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v01, v11, mat, temp, shadeA, ao, outSolidTriangles);
-                    HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v11, v10, mat, temp, shadeB, ao, outSolidTriangles);
+                    bool useFine8m = chebDist <= fineBandMaxDist;
+                    float ymS = 0f, ymN = 0f, ymW = 0f, ymE = 0f;
+                    if (useFine8m)
+                    {
+                        float wxM = wx0 + 8.0f;
+                        float wzM = wz0 + 8.0f;
+                        bool southCoarse = Math.Max(dx, Math.Abs((cz - 1) - centerChunkZ)) > fineBandMaxDist;
+                        bool northCoarse = Math.Max(dx, Math.Abs((cz + 1) - centerChunkZ)) > fineBandMaxDist;
+                        bool westCoarse = Math.Max(Math.Abs((cx - 1) - centerChunkX), dz) > fineBandMaxDist;
+                        bool eastCoarse = Math.Max(Math.Abs((cx + 1) - centerChunkX), dz) > fineBandMaxDist;
 
-                    // 3D Chunk Sınır Eteği (Boundary Skirt):
-                    // Eğer bu chunk'ın herhangi bir kenarı aktif 3D bölgesiyle (innerRadiusChunks) komşuysa,
-                    // o kenardan aşağıya doğru dikey 6m etek sarkıtarak 0 boşluk garantisi sağla!
-                    bool touchWest = cx - 1 >= centerChunkX - innerRadiusChunks && cx - 1 <= centerChunkX + innerRadiusChunks && dz <= innerRadiusChunks;
-                    bool touchEast = cx + 1 >= centerChunkX - innerRadiusChunks && cx + 1 <= centerChunkX + innerRadiusChunks && dz <= innerRadiusChunks;
-                    bool touchSouth = cz - 1 >= centerChunkZ - innerRadiusChunks && cz - 1 <= centerChunkZ + innerRadiusChunks && dx <= innerRadiusChunks;
-                    bool touchNorth = cz + 1 >= centerChunkZ - innerRadiusChunks && cz + 1 <= centerChunkZ + innerRadiusChunks && dx <= innerRadiusChunks;
+                        ymS = southCoarse ? (y00 + y10) * 0.5f : SampleH(wxM, wz0);
+                        ymN = northCoarse ? (y01 + y11) * 0.5f : SampleH(wxM, wz1);
+                        ymW = westCoarse ? (y00 + y01) * 0.5f : SampleH(wx0, wzM);
+                        ymE = eastCoarse ? (y10 + y11) * 0.5f : SampleH(wx1, wzM);
+                        float ymC = SampleH(wxM, wzM);
 
+                        EmitQuad(wx0, wxM, wz0, wzM, y00, ymS, ymC, ymW, solidYBias, waterY, shadeA, shadeB);
+                        EmitQuad(wxM, wx1, wz0, wzM, ymS, y10, ymE, ymC, solidYBias, waterY, (byte)(shadeA - 3), (byte)(shadeB - 3));
+                        EmitQuad(wx0, wxM, wzM, wz1, ymW, ymC, ymN, y01, solidYBias, waterY, (byte)(shadeA - 2), (byte)(shadeB - 2));
+                        EmitQuad(wxM, wx1, wzM, wz1, ymC, ymE, y11, ymN, solidYBias, waterY, shadeA, shadeB);
+                    }
+                    else
+                    {
+                        EmitQuad(wx0, wx1, wz0, wz1, y00, y10, y11, y01, solidYBias, waterY, shadeA, shadeB);
+                    }
+
+                    // 3D Chunk Sinir Etegi (Boundary Skirt): 3D mesh'e komsu herhangi bir kenardan 6m dikey etek sarkit!
+                    bool touchWest = IsCoveredBy3D(cx - 1, cz);
+                    bool touchEast = IsCoveredBy3D(cx + 1, cz);
+                    bool touchSouth = IsCoveredBy3D(cx, cz - 1);
+                    bool touchNorth = IsCoveredBy3D(cx, cz + 1);
+
+                    const byte ao = 0xE0;
                     byte skirtMat = MaterialIdCatalog.Stone;
+                    Vector3 c00 = new(wx0, y00 + solidYBias, wz0);
+                    Vector3 c10 = new(wx1, y10 + solidYBias, wz0);
+                    Vector3 c11 = new(wx1, y11 + solidYBias, wz1);
+                    Vector3 c01 = new(wx0, y01 + solidYBias, wz1);
+
+                    static void EmitSkirtSegment(Vector3 a, Vector3 b, byte mat, byte aoVal, List<FacetedVoxelTriangle> tris)
+                    {
+                        Vector3 ba = new(a.X, a.Y - innerSkirtDrop, a.Z);
+                        Vector3 bb = new(b.X, b.Y - innerSkirtDrop, b.Z);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(a, b, bb, mat, 0, 168, aoVal, tris);
+                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(a, bb, ba, mat, 0, 164, aoVal, tris);
+                    }
+
                     if (touchWest)
                     {
-                        Vector3 b00 = new(v00.X, v00.Y - innerSkirtDrop, v00.Z);
-                        Vector3 b01 = new(v01.X, v01.Y - innerSkirtDrop, v01.Z);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v01, v00, b00, skirtMat, 0, 168, ao, outSolidTriangles);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v01, b00, b01, skirtMat, 0, 164, ao, outSolidTriangles);
+                        if (useFine8m)
+                        {
+                            Vector3 cW = new(wx0, ymW + solidYBias, wz0 + 8.0f);
+                            EmitSkirtSegment(c01, cW, skirtMat, ao, outSolidTriangles);
+                            EmitSkirtSegment(cW, c00, skirtMat, ao, outSolidTriangles);
+                        }
+                        else EmitSkirtSegment(c01, c00, skirtMat, ao, outSolidTriangles);
                     }
                     if (touchEast)
                     {
-                        Vector3 b10 = new(v10.X, v10.Y - innerSkirtDrop, v10.Z);
-                        Vector3 b11 = new(v11.X, v11.Y - innerSkirtDrop, v11.Z);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v10, v11, b11, skirtMat, 0, 168, ao, outSolidTriangles);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v10, b11, b10, skirtMat, 0, 164, ao, outSolidTriangles);
+                        if (useFine8m)
+                        {
+                            Vector3 cE = new(wx1, ymE + solidYBias, wz0 + 8.0f);
+                            EmitSkirtSegment(c10, cE, skirtMat, ao, outSolidTriangles);
+                            EmitSkirtSegment(cE, c11, skirtMat, ao, outSolidTriangles);
+                        }
+                        else EmitSkirtSegment(c10, c11, skirtMat, ao, outSolidTriangles);
                     }
                     if (touchSouth)
                     {
-                        Vector3 b00 = new(v00.X, v00.Y - innerSkirtDrop, v00.Z);
-                        Vector3 b10 = new(v10.X, v10.Y - innerSkirtDrop, v10.Z);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, v10, b10, skirtMat, 0, 168, ao, outSolidTriangles);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v00, b10, b00, skirtMat, 0, 164, ao, outSolidTriangles);
+                        if (useFine8m)
+                        {
+                            Vector3 cS = new(wx0 + 8.0f, ymS + solidYBias, wz0);
+                            EmitSkirtSegment(c00, cS, skirtMat, ao, outSolidTriangles);
+                            EmitSkirtSegment(cS, c10, skirtMat, ao, outSolidTriangles);
+                        }
+                        else EmitSkirtSegment(c00, c10, skirtMat, ao, outSolidTriangles);
                     }
                     if (touchNorth)
                     {
-                        Vector3 b01 = new(v01.X, v01.Y - innerSkirtDrop, v01.Z);
-                        Vector3 b11 = new(v11.X, v11.Y - innerSkirtDrop, v11.Z);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v11, v01, b01, skirtMat, 0, 168, ao, outSolidTriangles);
-                        HybridSurfaceNetsAndShapeMesher.AddFacetedTriangleWithTemp(v11, b01, b11, skirtMat, 0, 164, ao, outSolidTriangles);
+                        if (useFine8m)
+                        {
+                            Vector3 cN = new(wx0 + 8.0f, ymN + solidYBias, wz1);
+                            EmitSkirtSegment(c11, cN, skirtMat, ao, outSolidTriangles);
+                            EmitSkirtSegment(cN, c01, skirtMat, ao, outSolidTriangles);
+                        }
+                        else EmitSkirtSegment(c11, c01, skirtMat, ao, outSolidTriangles);
                     }
                 }
             }

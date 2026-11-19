@@ -19,6 +19,7 @@ namespace Stratocraft.Physics.Systems
     public sealed class SoilMoistureAndMudSystem
     {
         public const int ChunkVolume = 65536;
+        public const int MaxPooledMoistureBuffers = 128; // 128 x 64 KB = 8 MB ust sinir
         public const byte MaxMoistureSaturation = 255;
         public const byte DampVisualThreshold = 20;
         public const byte MudSlowdownThreshold = 150;
@@ -29,9 +30,14 @@ namespace Stratocraft.Physics.Systems
         /// <summary>Su an icinde nem &gt; 0 bulunan aktif chunk anahtarlari (0 nemli chunk'lar 0 CPU harcar).</summary>
         public readonly HashSet<(int cx, int cz)> ActiveMoistChunks = new();
 
+        private readonly Stack<byte[]> _moistureBufferPool = new(32);
         private readonly List<(int cx, int cz)> _moistChunkIterScratch = new(64);
+        private readonly List<(ushort FlatIndex, byte Moisture)> _sparseExportScratch = new(512);
         private WaterCycleAndEvaporationSystem? _rainHydrologyHelper;
         private int _infiltrationParity;
+
+        public int AllocatedMoistureChunkCount => SoilMoistureChunks.Count;
+        public int PooledMoistureBufferCount => _moistureBufferPool.Count;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsAbsorptiveSoilMaterial(byte matId)
@@ -64,10 +70,138 @@ namespace Stratocraft.Physics.Systems
         {
             if (!SoilMoistureChunks.TryGetValue((cx, cz), out byte[]? arr) || arr == null || arr.Length < ChunkVolume)
             {
-                arr = new byte[ChunkVolume];
+                if (_moistureBufferPool.Count > 0)
+                {
+                    arr = _moistureBufferPool.Pop();
+                    Array.Clear(arr, 0, arr.Length);
+                }
+                else
+                {
+                    arr = new byte[ChunkVolume];
+                }
                 SoilMoistureChunks[(cx, cz)] = arr;
             }
             return arr;
+        }
+
+        /// <summary>
+        /// Paket 4C-2 Bellek Sizintisi Tamiri: Unload edilen chunk'in 64 KB nem tamponunu ve ic rain yardimcisini havuza iade eder.
+        /// (Arka plan mesher bosken cagrilmalidir.)
+        /// </summary>
+        public bool ReleaseChunk(int cx, int cz)
+        {
+            var key = (cx, cz);
+            ActiveMoistChunks.Remove(key);
+            _rainHydrologyHelper?.ReleaseChunk(cx, cz);
+
+            if (SoilMoistureChunks.Remove(key, out byte[]? arr) && arr != null)
+            {
+                if (arr.Length == ChunkVolume && _moistureBufferPool.Count < MaxPooledMoistureBuffers)
+                {
+                    Array.Clear(arr, 0, arr.Length);
+                    _moistureBufferPool.Push(arr);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        public void ClearAll()
+        {
+            foreach (var kv in SoilMoistureChunks)
+            {
+                byte[]? arr = kv.Value;
+                if (arr != null && arr.Length == ChunkVolume && _moistureBufferPool.Count < MaxPooledMoistureBuffers)
+                {
+                    Array.Clear(arr, 0, arr.Length);
+                    _moistureBufferPool.Push(arr);
+                }
+            }
+            SoilMoistureChunks.Clear();
+            ActiveMoistChunks.Clear();
+            _rainHydrologyHelper?.ClearAll();
+        }
+
+        public int PruneCompletelyDryChunks()
+        {
+            _moistChunkIterScratch.Clear();
+            foreach (var kv in SoilMoistureChunks)
+            {
+                if (!ActiveMoistChunks.Contains(kv.Key))
+                {
+                    _moistChunkIterScratch.Add(kv.Key);
+                }
+            }
+
+            int pruned = 0;
+            for (int i = 0; i < _moistChunkIterScratch.Count; i++)
+            {
+                var key = _moistChunkIterScratch[i];
+                if (SoilMoistureChunks.TryGetValue(key, out byte[]? arr) && arr != null)
+                {
+                    bool any = false;
+                    for (int k = 0; k < arr.Length; k++)
+                    {
+                        if (arr[k] != 0) { any = true; break; }
+                    }
+                    if (!any && ReleaseChunk(key.cx, key.cz))
+                    {
+                        pruned++;
+                    }
+                }
+            }
+            return pruned;
+        }
+
+        public (ushort FlatIndex, byte Moisture)[] ExportSparseMoisture(int cx, int cz, int maxY = 256)
+        {
+            if (!SoilMoistureChunks.TryGetValue((cx, cz), out byte[]? arr) || arr == null)
+            {
+                return Array.Empty<(ushort, byte)>();
+            }
+
+            int limit = Math.Clamp(maxY, 1, 256) << 8;
+            if (limit > arr.Length) limit = arr.Length;
+
+            _sparseExportScratch.Clear();
+            for (int i = 0; i < limit; i++)
+            {
+                byte m = arr[i];
+                if (m != 0)
+                {
+                    _sparseExportScratch.Add(((ushort)i, m));
+                }
+            }
+
+            return _sparseExportScratch.Count > 0
+                ? _sparseExportScratch.ToArray()
+                : Array.Empty<(ushort, byte)>();
+        }
+
+        public void ImportSparseMoisture(int cx, int cz, ReadOnlySpan<(ushort FlatIndex, byte Moisture)> entries)
+        {
+            if (entries.IsEmpty)
+            {
+                return;
+            }
+
+            byte[] arr = GetOrCreateChunkMoisture(cx, cz);
+            bool any = false;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                ushort idx = entries[i].FlatIndex;
+                byte m = entries[i].Moisture;
+                if (m != 0 && idx < arr.Length)
+                {
+                    arr[idx] = m;
+                    any = true;
+                }
+            }
+
+            if (any)
+            {
+                ActiveMoistChunks.Add((cx, cz));
+            }
         }
 
         public byte ReadWorldMoisture(int wx, int wy, int wz)
@@ -348,15 +482,20 @@ namespace Stratocraft.Physics.Systems
             int maxY,
             bool isSunnyDaytime,
             float ambientTempCelsius,
-            Action<int, int, ushort>? onChunkVisualMoistureChanged)
+            Action<int, int, ushort>? onChunkVisualMoistureChanged,
+            float precipMmPerHour = 0f)
         {
             if (ActiveMoistChunks.Count == 0) return;
+
+            // Yagmur/kar altinda veya gunes/sicaklik yokken toprak kurumaz (gercekci hidroloji!)
+            if (precipMmPerHour > 0.05f) return;
+            if (!isSunnyDaytime && ambientTempCelsius < 24f) return;
 
             _moistChunkIterScratch.Clear();
             foreach (var key in ActiveMoistChunks) _moistChunkIterScratch.Add(key);
 
             int baseDryStep = isSunnyDaytime
-                ? (ambientTempCelsius >= 25f ? 7 : (ambientTempCelsius > 2f ? 5 : 2))
+                ? (ambientTempCelsius >= 25f ? 5 : (ambientTempCelsius > 6f ? 3 : 1))
                 : 1;
 
             int limitY = Math.Clamp(maxY, 2, 255);
@@ -438,35 +577,43 @@ namespace Stratocraft.Physics.Systems
             ref ushort visualDirtySubChunkMask)
         {
             bool anyRemaining = false;
+            if (sunExposedDryStep <= 0)
+            {
+                for (int i = 0; i < moisture.Length; i++)
+                {
+                    if (moisture[i] > 0) return true;
+                }
+                return false;
+            }
             int shadedDryStep = Math.Max(1, sunExposedDryStep / 3);
 
             for (int col = 0; col < 256; col++)
             {
                 bool blockedFromSky = false;
+                int standingWaterProtectionLayers = 0;
                 for (int y = maxY - 1; y >= 1; y--)
                 {
                     int idx = (y << 8) | col;
                     byte curM = moisture[idx];
                     uint rawVox = voxels[idx];
                     bool isSolid = VoxelBitUtility.IsPhysicallySolid(rawVox);
+                    bool cellHasWater = !fluids.IsEmpty && idx < fluids.Length &&
+                                        fluids[idx] != 0 && new FluidCell16(fluids[idx]).Type == FluidType.Water;
+                    if (cellHasWater)
+                    {
+                        // Su katmaninin altindaki yuzey topragi VE 2 alt toprak katmani su varken ASLA kurumaz!
+                        standingWaterProtectionLayers = 3;
+                    }
 
                     if (curM > 0)
                     {
-                        // Ustunde veya kendi icinde hala su varsa KURUMAZ!
-                        bool coveredByWater = false;
-                        if (!fluids.IsEmpty && idx < fluids.Length)
+                        bool coveredByWater = cellHasWater || standingWaterProtectionLayers > 0;
+                        if (!coveredByWater && !fluids.IsEmpty && y + 1 < maxY && (((y + 1) << 8) | col) < fluids.Length)
                         {
-                            if (fluids[idx] != 0 && new FluidCell16(fluids[idx]).Type == FluidType.Water)
+                            ushort aboveFl = fluids[((y + 1) << 8) | col];
+                            if (aboveFl != 0 && new FluidCell16(aboveFl).Type == FluidType.Water)
                             {
                                 coveredByWater = true;
-                            }
-                            else if (y + 1 < maxY && ((y + 1) << 8 | col) < fluids.Length)
-                            {
-                                ushort aboveFl = fluids[((y + 1) << 8) | col];
-                                if (aboveFl != 0 && new FluidCell16(aboveFl).Type == FluidType.Water)
-                                {
-                                    coveredByWater = true;
-                                }
                             }
                         }
 
@@ -490,6 +637,14 @@ namespace Stratocraft.Physics.Systems
                     if (isSolid)
                     {
                         blockedFromSky = true;
+                        if (standingWaterProtectionLayers > 0)
+                        {
+                            standingWaterProtectionLayers--;
+                        }
+                    }
+                    else if (!cellHasWater)
+                    {
+                        standingWaterProtectionLayers = 0;
                     }
                 }
             }

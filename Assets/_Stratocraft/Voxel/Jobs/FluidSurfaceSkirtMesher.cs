@@ -199,6 +199,18 @@ namespace Stratocraft.Voxel.Jobs
             }
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public bool IsColumnLoaded(int lx, int lz)
+            {
+                if ((uint)lx < 16u && (uint)lz < 16u) return true;
+                int cdx = lx < 0 ? -1 : (lx >= 16 ? 1 : 0);
+                int cdz = lz < 0 ? -1 : (lz >= 16 ? 1 : 0);
+                int nlx = lx - cdx * 16;
+                int nlz = lz - cdz * 16;
+                if ((uint)nlx >= 16u || (uint)nlz >= 16u) return false;
+                return Solids[(cdz + 1) * 3 + (cdx + 1)] != null;
+            }
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public void SampleCellFast(int lx, int y, int lz, out uint solidRaw, out ushort fluidRaw)
             {
                 if ((uint)lx < 16u && (uint)lz < 16u)
@@ -562,7 +574,7 @@ namespace Stratocraft.Voxel.Jobs
                             ushort rawFluid = centerFluids[cellIdx];
                             byte level = (byte)(rawFluid & 0xFFu);
                             byte fType = (byte)((rawFluid >> 8) & 0x03u);
-                            if (level == 0 || fType == 0) continue;
+                            if (level < 200 || fType == 0) continue;
 
                             if (suppressUndergroundCaveFluids && y < 74 && HasThickUndergroundCaveRoof(centerSolids, lx, y, lz, maxBufferY))
                             {
@@ -618,7 +630,9 @@ namespace Stratocraft.Voxel.Jobs
                             }
 
                             if (MathF.Abs(c00.VelX) > 0.02f || MathF.Abs(c00.VelZ) > 0.02f ||
-                                MathF.Abs(c11.VelX) > 0.02f || MathF.Abs(c11.VelZ) > 0.02f)
+                                MathF.Abs(c10.VelX) > 0.02f || MathF.Abs(c10.VelZ) > 0.02f ||
+                                MathF.Abs(c11.VelX) > 0.02f || MathF.Abs(c11.VelZ) > 0.02f ||
+                                MathF.Abs(c01.VelX) > 0.02f || MathF.Abs(c01.VelZ) > 0.02f)
                             {
                                 continue;
                             }
@@ -673,39 +687,68 @@ namespace Stratocraft.Voxel.Jobs
                             byte aboveMass = (byte)(aboveFluid & 0xFFu);
                             bool hasAboveSameType = aboveMass > 0 && (((aboveFluid >> 8) & 0x03u) == fType);
 
-                            // CFL Yamac Gecis Korumasi (AK-7): Yamactan asagi inen ince yagmurda (level < 180 && aboveMass < 120)
-                            // alt hucre henuz tam dolmadan ustten damla geciyorsa gomulu 1m okyanus sutunu uretme; yuzeyi ust hucre cizer!
-                            if (hasAboveSameType && level < 180 && aboveMass < 120)
-                            {
-                                continue;
-                            }
-
-                            bool hasFreeTopSurface = !hasAboveSameType;
-
-                            ushort belowFluid = (y > 0) ? centerFluids[((y - 1) << 8) | (lz << 4) | lx] : (ushort)0;
-                            uint belowSolid = (y > 0) ? centerSolids[((y - 1) << 8) | (lz << 4) | lx] : 0u;
-                            bool hasExposedBottom = (y == 0) ||
-                                (((belowFluid & 0xFFu) == 0u || ((belowFluid >> 8) & 0x03u) != fType) &&
-                                 !VoxelBitUtility.IsPhysicallySolid(belowSolid));
-
-                            // Gomulu su hucresi (!hasFreeTopSurface) ne alt yuzeye ne de acik hava selale kenarina sahipse 0 ucgen -> aninda atla!
-                            if (!hasFreeTopSurface && !hasExposedBottom && !HasAnyOpenAirSideNeighbor(nb, lx, y, lz, fType))
-                            {
-                                continue;
-                            }
-
                             byte renderId = ResolveFluidRenderIdFromBits(fType, lx, y, lz, nb.CenterSalinity);
 
-                            // Paket 4B.2 Yuksekten Dokulen Su Silindirik Sutun Tamiri (706fc114.jpg):
-                            // Havada serbest dusen sivi hucrelerini 1m x 1m keskin koseli beyaz kutu (veya 4 yone firlayan duz kagit perde)
-                            // olarak ormek yerine, merkeze daraltilmis 8-kenarli puruzsuz yari-seffaf su sutunu olarak or!
-                            if (y >= 2 && IsMidAirFreeFallStreamCell(nb, lx, y, lz, fType))
+                            // Paket 4B.3 Hacimli 3B Minecraft Tarzi Selale Sutunu (09524c95.jpg Tamiri):
+                            // Bu kontrol CFL (level < 180 && aboveMass < 120) atlamasindan ONCE yapilir ki
+                            // orta debili dusen selale hucreleri ve y = floor + 1 baglanti segmenti ASLA gorunmez kalmasin!
+                            if (y >= 2 && IsMidAirFreeFallStreamCell(nb, lx, y, lz, fType, maxBufferY))
                             {
                                 byte fallPrevMass = (nb.KinInit[4] && (uint)cellIdx < (uint)nb.PrevMass[4]!.Length)
                                     ? nb.PrevMass[4]![cellIdx]
                                     : level;
-                                EmitMidAirFallingStreamSegment(
+                                EmitVolumetricWaterfallColumnCell(
                                     nb, lx, y, lz, fType, renderId, level, fallPrevMass, maxBufferY, outRichTriangles);
+                                continue;
+                            }
+
+                            // Selale dusus havuzu yuzey muhru (ea997276.jpg): Hemen ustunde (y+1) dar 3B selale sutunu varsa,
+                            // altindaki havuz hucresi ust yuzeyini (hasFreeTopSurface) KORUMALIDIR -> sutun etrafinda 1x1 delik olusmaz!
+                            bool aboveIsMidAirWaterfall = hasAboveSameType && (y + 1 >= 2) && (y + 1 < maxBufferY) &&
+                                                          IsMidAirFreeFallStreamCell(nb, lx, y + 1, lz, fType, maxBufferY);
+                            bool hasAbovePoolLayer = hasAboveSameType && !aboveIsMidAirWaterfall;
+
+                            ushort belowFluid = (y > 0) ? centerFluids[((y - 1) << 8) | (lz << 4) | lx] : (ushort)0;
+                            uint belowSolid = (y > 0) ? centerSolids[((y - 1) << 8) | (lz << 4) | lx] : 0u;
+                            byte belowMass = (byte)(belowFluid & 0xFFu);
+                            bool hasBelowSameType = y > 0 && belowMass > 0 && (((belowFluid >> 8) & 0x03u) == fType);
+                            bool belowIsSolid = y > 0 && VoxelBitUtility.IsPhysicallySolid(belowSolid);
+                            bool belowSupported = belowIsSolid || (hasBelowSameType && belowMass >= 200);
+
+                            // CFL Yamac Gecis Korumasi (AK-7 + 4511a295.jpg & 21e8ab19.jpg Delik Tamiri):
+                            // Alt hucre (y-1) kati zemin veya dolu havuz ustunde ve ince/orta kutleliyken (belowMass < 180)
+                            // hemen ustundeki (y) gecici CFL damlasini (level < 120, ustu bos) havada ayri katman olarak cizmek yerine
+                            // alt hucrede birlesik kalinlikla or -> 0 yuzey kopugu, 0 sahte 1m derinlik (T08)!
+                            if (!hasAbovePoolLayer && hasBelowSameType && !belowIsSolid && belowMass < 180 && level < 120 && y >= 2)
+                            {
+                                uint twoBelowSolid = centerSolids[((y - 2) << 8) | (lz << 4) | lx];
+                                ushort twoBelowFluid = centerFluids[((y - 2) << 8) | (lz << 4) | lx];
+                                bool twoBelowSupported = VoxelBitUtility.IsPhysicallySolid(twoBelowSolid) ||
+                                                         ((twoBelowFluid & 0xFFu) >= 200u && ((twoBelowFluid >> 8) & 0x03u) == fType);
+                                if (twoBelowSupported)
+                                {
+                                    continue;
+                                }
+                            }
+
+                            bool isGroundedCflMerged = hasAbovePoolLayer && belowSupported && level < 180 && aboveMass < 120;
+                            if (hasAbovePoolLayer && !isGroundedCflMerged && level < 180 && aboveMass < 120)
+                            {
+                                continue;
+                            }
+
+                            if (isGroundedCflMerged)
+                            {
+                                level = (byte)Math.Min(255, level + aboveMass);
+                            }
+
+                            bool hasFreeTopSurface = !hasAbovePoolLayer || isGroundedCflMerged;
+
+                            bool hasExposedBottom = (y == 0) || (!hasBelowSameType && !belowIsSolid);
+
+                            // Gomulu su hucresi (!hasFreeTopSurface) ne alt yuzeye ne de acik hava selale kenarina sahipse 0 ucgen -> aninda atla!
+                            if (!hasFreeTopSurface && !hasExposedBottom && !HasAnyOpenAirSideNeighbor(nb, lx, y, lz, fType))
+                            {
                                 continue;
                             }
 
@@ -768,10 +811,18 @@ namespace Stratocraft.Voxel.Jobs
                             v11.SmoothTopNormal = smoothCellNormal;
                             v01.SmoothTopNormal = smoothCellNormal;
 
-                            bool bevel00 = !wetNegX && !wetNegZ && !wet00Diag && !wallNegX && !wallNegZ && !wall00Diag && !c00.HasSlopeConnection;
-                            bool bevel01 = !wetNegX && !wetPosZ && !wet01Diag && !wallNegX && !wallPosZ && !wall01Diag && !c01.HasSlopeConnection;
-                            bool bevel11 = !wetPosX && !wetPosZ && !wet11Diag && !wallPosX && !wallPosZ && !wall11Diag && !c11.HasSlopeConnection;
-                            bool bevel10 = !wetPosX && !wetNegZ && !wet10Diag && !wallPosX && !wallNegZ && !wall10Diag && !c10.HasSlopeConnection;
+                            bool rawWetNegX = HasAnySameFluidAt(nb, lx - 1, y, lz, fType);
+                            bool rawWetPosX = HasAnySameFluidAt(nb, lx + 1, y, lz, fType);
+                            bool rawWetNegZ = HasAnySameFluidAt(nb, lx, y, lz - 1, fType);
+                            bool rawWetPosZ = HasAnySameFluidAt(nb, lx, y, lz + 1, fType);
+                            bool bevel00 = !wetNegX && !wetNegZ && !wet00Diag && !wallNegX && !wallNegZ && !wall00Diag && !c00.HasSlopeConnection &&
+                                           !rawWetNegX && !rawWetNegZ && !HasAnySameFluidAt(nb, lx - 1, y, lz - 1, fType);
+                            bool bevel01 = !wetNegX && !wetPosZ && !wet01Diag && !wallNegX && !wallPosZ && !wall01Diag && !c01.HasSlopeConnection &&
+                                           !rawWetNegX && !rawWetPosZ && !HasAnySameFluidAt(nb, lx - 1, y, lz + 1, fType);
+                            bool bevel11 = !wetPosX && !wetPosZ && !wet11Diag && !wallPosX && !wallPosZ && !wall11Diag && !c11.HasSlopeConnection &&
+                                           !rawWetPosX && !rawWetPosZ && !HasAnySameFluidAt(nb, lx + 1, y, lz + 1, fType);
+                            bool bevel10 = !wetPosX && !wetNegZ && !wet10Diag && !wallPosX && !wallNegZ && !wall10Diag && !c10.HasSlopeConnection &&
+                                           !rawWetPosX && !rawWetNegZ && !HasAnySameFluidAt(nb, lx + 1, y, lz - 1, fType);
 
                             RichContourVertex midNegX = LerpRichContourVertex(in v00, in v01, 0.5f, -1, 0);
                             RichContourVertex midPosZ = LerpRichContourVertex(in v01, in v11, 0.5f, 0, 1);
@@ -803,10 +854,14 @@ namespace Stratocraft.Voxel.Jobs
 
                             float avgCornerCurrY = 0.25f * (v00.TopCurr.Y + v10.TopCurr.Y + v11.TopCurr.Y + v01.TopCurr.Y);
                             float avgCornerPrevY = 0.25f * (c00.TopPrevY + c10.TopPrevY + c11.TopPrevY + c01.TopPrevY);
-                            float centerCurrY = hasFreeTopSurface && cellHasOverfall && !cellHasSlopeConn
+                            // Yalnizca gercek savak agizlarinda (mimari kanal veya >=80 kutleli bagli akis) merkez savak kalkmasi uygula;
+                            // izole yamac birikintileri asla 3B mavi piramit/cadir tepesine donusmez (89bb3ba8.jpg)!
+                            bool allowOverfallCenterLift = hasFreeTopSurface && cellHasOverfall && !cellHasSlopeConn &&
+                                                           (isArchFloor || (!isIsolatedMicroPuddle && level >= 80 && (wetNegX || wetPosX || wetNegZ || wetPosZ)));
+                            float centerCurrY = allowOverfallCenterLift
                                 ? MathF.Min(y + 1.0f, MathF.Max(avgCornerCurrY, selfBedY + selfCurrThick))
                                 : avgCornerCurrY;
-                            float centerPrevY = hasFreeTopSurface && cellHasOverfall && !cellHasSlopeConn
+                            float centerPrevY = allowOverfallCenterLift
                                 ? MathF.Min(y + 1.0f, MathF.Max(avgCornerPrevY, selfBedY + selfPrevThick))
                                 : avgCornerPrevY;
 
@@ -961,7 +1016,7 @@ namespace Stratocraft.Voxel.Jobs
                                         });
                                     }
 
-                                    if (hasExposedBottom)
+                                    if (hasExposedBottom && (isArchFloor || !hasFreeTopSurface))
                                     {
                                         Vector3 botNorm = SafeCrossNormalize(vb.Bottom - bCenter, va.Bottom - bCenter, -Vector3.UnitY);
                                         outRichTriangles.Add(new FluidRichTriangle
@@ -974,9 +1029,13 @@ namespace Stratocraft.Voxel.Jobs
 
                                     if (va.EdgeDirX == 0 && va.EdgeDirZ == 0)
                                     {
-                                        if (isArchFloor || hasExposedBottom)
+                                        if (isArchFloor)
                                         {
                                             EmitRichBevelSkirtQuad(in vb, in va, renderId, outRichTriangles);
+                                        }
+                                        else if (level >= 6 || !hasFreeTopSurface)
+                                        {
+                                            EmitGroundSealedBevelSkirtQuad(nb, y, maxBufferY, level, hasFreeTopSurface, in vb, in va, renderId, outRichTriangles);
                                         }
                                     }
                                     else
@@ -984,7 +1043,7 @@ namespace Stratocraft.Voxel.Jobs
                                         EmitRichSideOrWaterfallCurtain(
                                             nb, lx, y, lz, va.EdgeDirX, va.EdgeDirZ, fType, renderId,
                                             level, pressureHead, selfVelX, selfVelZ, centerCurrY,
-                                            hasFreeTopSurface, isArchFloor || hasExposedBottom, maxBufferY,
+                                            hasFreeTopSurface, isArchFloor, maxBufferY,
                                             in vb, in va, outRichTriangles);
                                     }
                                 }
@@ -1158,7 +1217,10 @@ namespace Stratocraft.Voxel.Jobs
         private static FluidCornerSample MakePoolGridSample(
             ReadOnlySpan<RichCornerResult> cornerGrid, int gx, int gz, float refY, byte renderId)
         {
-            return MakeSample(new Vector3(gx, refY, gz), Vector3.UnitY, renderId, 128, 128, 128, cornerGrid[gz * 17 + gx].DepthMeters, 0f);
+            RichCornerResult c = cornerGrid[gz * 17 + gx];
+            byte encVx = FluidCornerSample.EncodeSignedUnitToByte(c.VelX / MaxKinematicsVelocityMps);
+            byte encVz = FluidCornerSample.EncodeSignedUnitToByte(c.VelZ / MaxKinematicsVelocityMps);
+            return MakeSample(new Vector3(gx, refY, gz), Vector3.UnitY, renderId, 128, encVx, encVz, c.DepthMeters, 0f);
         }
 
         private static void EmitStitched4mEdge(
@@ -1393,7 +1455,9 @@ namespace Stratocraft.Voxel.Jobs
             if (!VoxelBitUtility.IsPhysicallySolid(s) && y > 0)
             {
                 nb.SampleCellFast(nx, y - 1, nz, out uint ds, out ushort df);
-                if (!VoxelBitUtility.IsPhysicallySolid(ds) && (df & 0xFFu) >= 16u)
+                byte dMass = (byte)(df & 0xFFu);
+                // Derin havuz/deniz katmanini (dMass >= 200) ust katmandaki kuru kiyiya capraz dikme -> testere disi cikintisi 0 (d5e24a60.jpg)!
+                if (!VoxelBitUtility.IsPhysicallySolid(ds) && dMass >= 16 && dMass < 200)
                 {
                     return (byte)((df >> 8) & 0x03u);
                 }
@@ -1419,6 +1483,13 @@ namespace Stratocraft.Voxel.Jobs
             RichCornerResult c10 = GetOrComputeFreeSurfaceCorner(nb, lx + 1, lz, y, fType, maxBufferY, cornerGrid, cornerBuiltType);
             RichCornerResult c11 = GetOrComputeFreeSurfaceCorner(nb, lx + 1, lz + 1, y, fType, maxBufferY, cornerGrid, cornerBuiltType);
             RichCornerResult c01 = GetOrComputeFreeSurfaceCorner(nb, lx, lz + 1, y, fType, maxBufferY, cornerGrid, cornerBuiltType);
+
+            // Kayaya gomulu (SkirtOffset > 0.2m) kiyi koselerinde ek 45° kopru ucgeni orme -> kiyida testere disi ucgenler 0 (d5e24a60.jpg)!
+            if (c00.SkirtOffset.LengthSquared() > 0.04f || c10.SkirtOffset.LengthSquared() > 0.04f ||
+                c11.SkirtOffset.LengthSquared() > 0.04f || c01.SkirtOffset.LengthSquared() > 0.04f)
+            {
+                return;
+            }
 
             RichContourVertex v00 = BuildCornerVertex(lx, lz, in c00, 0, 0);
             RichContourVertex v10 = BuildCornerVertex(lx + 1, lz, in c10, 0, 0);
@@ -1468,6 +1539,23 @@ namespace Stratocraft.Voxel.Jobs
                 C1 = MakeSample(pClockA.TopCurr, nrm, renderId, pClockA.EncodedSubTickDy, pClockA.EncodedVelX, pClockA.EncodedVelZ, pClockA.DepthMeters, 0f),
                 C2 = MakeSample(pClockB.TopCurr, nrm, renderId, pClockB.EncodedSubTickDy, pClockB.EncodedVelX, pClockB.EncodedVelZ, pClockB.DepthMeters, 0f)
             });
+
+            // Diyagonal Marching Squares kopru ucgeninin dis hipotenusu (pClockA -> pClockB) YALNIZCA gercek yerel zeminden
+            // > 35cm yukarida kaliyorsa altini kapat (290e83e5.jpg cam kanat engeli + 8368bcc1.jpg alt muhur)!
+            float localGroundY = SampleMinTrueSurfaceNetsFloorYAtCorner(nb, lx, lz, y, maxBufferY);
+            if (pClockA.TopCurr.Y > localGroundY + 0.35f && pClockB.TopCurr.Y > localGroundY + 0.35f)
+            {
+                pClockA.SmoothTopNormal = nrm;
+                pClockB.SmoothTopNormal = nrm;
+                EmitGroundSealedBevelSkirtQuad(nb, y, maxBufferY, selfMass: 16, selfHasFreeTopSurface: true, in pClockB, in pClockA, renderId, outRichTriangles);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool HasAnySameFluidAt(FluidNeighborhood3x3Cache nb, int nx, int y, int nz, byte fluidType)
+        {
+            nb.SampleCellFast(nx, y, nz, out uint ns, out ushort nf);
+            return !VoxelBitUtility.IsPhysicallySolid(ns) && (nf & 0xFFu) > 0u && ((nf >> 8) & 0x03u) == fluidType;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1614,9 +1702,19 @@ namespace Stratocraft.Voxel.Jobs
             if (sy + 1 < maxBufferY)
             {
                 nb.SampleCellFast(sx, sy + 1, sz, out _, out ushort aboveFRaw);
-                if ((aboveFRaw & 0xFFu) > 0u && ((aboveFRaw >> 8) & 0x03u) == fluidType)
+                byte aboveM = (byte)(aboveFRaw & 0xFFu);
+                if (aboveM > 0 && ((aboveFRaw >> 8) & 0x03u) == fluidType)
                 {
-                    return false;
+                    // Ince/orta CFL yamac gecisinde (cellMass < 180 && aboveM < 120) yuzeyi zemin katmaninda birlestirip
+                    // yamaç baglantisini koparmadan devam ettir!
+                    if (cellMass < 180 && aboveM < 120)
+                    {
+                        cellMass = (byte)Math.Min(255, cellMass + aboveM);
+                    }
+                    else
+                    {
+                        return false;
+                    }
                 }
             }
 
@@ -1628,7 +1726,7 @@ namespace Stratocraft.Voxel.Jobs
                 nb.SampleCellFast(sx, sy - 1, sz, out belowSRaw, out belowFRaw);
                 bool belowSolid = VoxelBitUtility.IsPhysicallySolid(belowSRaw);
                 byte belowFMass = (byte)(belowFRaw & 0xFFu);
-                supportedByPool = !belowSolid && belowFMass >= 200 && ((belowFRaw >> 8) & 0x03u) == fluidType;
+                supportedByPool = !belowSolid && belowFMass >= 128 && ((belowFRaw >> 8) & 0x03u) == fluidType;
                 if (!belowSolid && !supportedByPool)
                 {
                     return false;
@@ -1677,7 +1775,7 @@ namespace Stratocraft.Voxel.Jobs
 
             if ((nFluid & 0xFFu) > 0u && ((nFluid >> 8) & 0x03u) == fluidType)
             {
-                if (selfHasFreeTopSurface && y >= 2 && IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType))
+                if (selfHasFreeTopSurface && y >= 2 && IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType, maxBufferY))
                 {
                     return false;
                 }
@@ -1763,7 +1861,11 @@ namespace Stratocraft.Voxel.Jobs
             int shoreAirSamples = 0;
             int overfallSamples = 0;
             bool touchesSdfShore = false;
+            bool anyRealSdfBank = false;
+            bool anyBankAtYPlus1 = false;
+            byte maxVirtualBankDens = 0;
             bool hasSharpArchFloor = false;
+            bool hasBelowPoolSupport = false;
 
             float wetBedSum = 0f;
             float minWetBedY = float.MaxValue;
@@ -1814,11 +1916,14 @@ namespace Stratocraft.Voxel.Jobs
                     byte curFMass = (byte)(fluidRaw & 0xFFu);
                     bool isSampleMidAirDrop = selfHasFreeTopSurface && embedFoundationIntoGround && y >= 2 &&
                                               !isCurrentCellSolidWall && curFMass > 0 && ((fluidRaw >> 8) & 0x03u) == fluidType &&
-                                              IsMidAirFreeFallStreamCell(nb, sx, y, sz, fluidType);
+                                              IsMidAirFreeFallStreamCell(nb, sx, y, sz, fluidType, maxBufferY);
                     bool hasCurrentSameFluid = !isCurrentCellSolidWall && !isSampleMidAirDrop && curFMass > 0 && ((fluidRaw >> 8) & 0x03u) == fluidType;
                     byte aboveFMass = (byte)(aboveFluidRaw & 0xFFu);
-                    bool hasAboveSameFluid = y + 1 < maxBufferY && !VoxelBitUtility.IsPhysicallySolid(aboveSolidRaw) &&
+                    bool aboveRawSameFluid = y + 1 < maxBufferY && !VoxelBitUtility.IsPhysicallySolid(aboveSolidRaw) &&
                                              aboveFMass > 0 && ((aboveFluidRaw >> 8) & 0x03u) == fluidType;
+                    bool aboveIsMidAirWaterfall = aboveRawSameFluid && (y + 1 >= 2) &&
+                                                  IsMidAirFreeFallStreamCell(nb, sx, y + 1, sz, fluidType, maxBufferY);
+                    bool hasAboveSameFluid = aboveRawSameFluid && !aboveIsMidAirWaterfall;
 
                     if (y > 0 && VoxelBitUtility.IsPhysicallySolid(belowSolidRaw) && VoxelBitUtility.GetShapeId(belowSolidRaw) != 0)
                     {
@@ -1896,8 +2001,10 @@ namespace Stratocraft.Voxel.Jobs
                             if (clampedCurr < minWetSurfY) minWetSurfY = clampedCurr;
                             if (clampedCurr > maxWetSurfY) maxWetSurfY = clampedCurr;
                             wetSamples++;
-                            velXSum += vx;
-                            velZSum += vz;
+                            bool useAboveVel = selfHasFreeTopSurface ||
+                                               (aboveVx * aboveVx + aboveVz * aboveVz > vx * vx + vz * vz);
+                            velXSum += useAboveVel ? aboveVx : vx;
+                            velZSum += useAboveVel ? aboveVz : vz;
 
                             float trueD = ComputeTrueFluidColumnDepthMeters(nb, sx, y + 1, sz, fluidType, aboveCurrT);
                             depthSum += trueD;
@@ -1913,6 +2020,7 @@ namespace Stratocraft.Voxel.Jobs
 
                         byte cap = ComputeSdfPorousCapacity(solidRaw);
                         bool isSupportedByBelowPool = hasBelowSameFluid && belowFMass >= 200;
+                        if (isSupportedByBelowPool) hasBelowPoolSupport = true;
                         float trueD = ComputeTrueFluidColumnDepthMeters(nb, sx, y, sz, fluidType, curFMass / (float)Math.Max((byte)1, cap));
                         bool sampleIsPool = isSupportedByBelowPool || curFMass >= 180 || trueD >= 0.45f;
                         if (sampleIsPool) poolSampleCount++;
@@ -2074,6 +2182,7 @@ namespace Stratocraft.Voxel.Jobs
                             {
                                 touchesSdfShore = true;
                                 byte virtualWallDens = VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw);
+                                if (virtualWallDens > maxVirtualBankDens) maxVirtualBankDens = virtualWallDens;
                                 if (dx == -1) sdfNegX += virtualWallDens; else sdfPosX += virtualWallDens;
                                 if (dz == -1) sdfNegZ += virtualWallDens; else sdfPosZ += virtualWallDens;
                             }
@@ -2094,6 +2203,11 @@ namespace Stratocraft.Voxel.Jobs
                     if (sDens >= 48)
                     {
                         touchesSdfShore = true;
+                        anyRealSdfBank = true;
+                        if (VoxelBitUtility.IsPhysicallySolid(aboveSolidRaw))
+                        {
+                            anyBankAtYPlus1 = true;
+                        }
                     }
 
                     if (dx == -1) sdfNegX += sDens;
@@ -2125,20 +2239,41 @@ namespace Stratocraft.Voxel.Jobs
             // Paket 4B.2 Kiyi-Duvar Sizdirmaz Gomulme + Icbukey SurfaceNets Kose Muhru (67a8ad6a.jpg & 07180972.jpg Tamiri):
             // 3 su + 1 kati SurfaceNets kosesinde (wetSamples == 3, shoreAirSamples == 0) SurfaceNets dual duvari kosegen boyunca
             // 1.06m (0.75m X, 0.75m Z) geriye cekildiginden, 1.18m uzatma ile su kosesini arazi duvarinin 8cm icine gom!
+            // NOT (3ed66b74.jpg Tamiri): Acik tasima kenarinda (shoreAirSamples > 0) uzatmayi 0.30m ile sinirla ki su kosesi
+            // yandaki kuru kayanin altina uzayip ucgen kırığı uretmesin!
             Vector3 skirtOffset = Vector3.Zero;
-            if (touchesSdfShore && wetSamples < 4 && !hasSharpArchFloor)
+            bool allowCrossLayerSkirt = (slopeConnectedCount == 0 && submergedStackCount == 0) || anyBankAtYPlus1;
+            if (touchesSdfShore && wetSamples < 4 && !hasSharpArchFloor && allowCrossLayerSkirt)
             {
-                bool isConcavePoolCorner = wetSamples == 3 && shoreAirSamples == 0 && (isPoolRegime || meanRawThick >= 0.07f);
-                float maxShoreExt = isConcavePoolCorner ? 1.18f : (shoreAirSamples == 0 ? 0.80f : ShorelineSkirtExtensionMeters);
-                float minWallEmbed = (isPoolRegime || meanRawThick >= 0.07f)
-                    ? (isConcavePoolCorner ? 1.16f : (shoreAirSamples == 0 ? 0.78f : 0.62f))
-                    : 0.16f;
-                float adaptiveSkirtExt = Math.Clamp(MathF.Max(minWallEmbed, meanRawThick * 1.25f), 0.14f, maxShoreExt);
-                Vector3 gradXZ = new Vector3(sdfPosX - sdfNegX, 0f, sdfPosZ - sdfNegZ);
-                float lenSq = gradXZ.LengthSquared();
-                if (lenSq > 1e-4f)
+                bool onlyVirtualBank = !anyRealSdfBank;
+                float adaptiveSkirtExt;
+                if (onlyVirtualBank)
                 {
-                    skirtOffset = (gradXZ / MathF.Sqrt(lenSq)) * adaptiveSkirtExt;
+                    adaptiveSkirtExt = Math.Clamp((maxVirtualBankDens - 72.0f) / 55.0f, 0.0f, 1.0f) * 0.42f;
+                }
+                else
+                {
+                    // 1.16..1.18m icbukey kose gomulmesi YALNIZCA duz kapali havuz/gollerde (T26); yamac dereleri 0.50m ile sinirli (T23 + d5e24a60.jpg)!
+                    bool isConcavePoolCorner = wetSamples == 3 && shoreAirSamples == 0 && isPoolRegime && slopeConnectedCount == 0;
+                    float maxShoreExt = shoreAirSamples > 0
+                        ? 0.30f
+                        : (isConcavePoolCorner ? 1.18f : (isPoolRegime ? 0.80f : 0.50f));
+                    float minWallEmbed = shoreAirSamples > 0
+                        ? Math.Clamp(meanRawThick * 0.55f, 0.14f, 0.30f)
+                        : (isConcavePoolCorner
+                            ? 1.16f
+                            : (isPoolRegime ? 0.78f : (meanRawThick >= 0.07f ? 0.48f : 0.16f)));
+                    adaptiveSkirtExt = Math.Clamp(MathF.Max(minWallEmbed, meanRawThick * 1.25f), 0.14f, maxShoreExt);
+                }
+
+                if (adaptiveSkirtExt > 0.02f)
+                {
+                    Vector3 gradXZ = new Vector3(sdfPosX - sdfNegX, 0f, sdfPosZ - sdfNegZ);
+                    float lenSq = gradXZ.LengthSquared();
+                    if (lenSq > 1e-4f)
+                    {
+                        skirtOffset = (gradXZ / MathF.Sqrt(lenSq)) * adaptiveSkirtExt;
+                    }
                 }
             }
 
@@ -2165,8 +2300,21 @@ namespace Stratocraft.Voxel.Jobs
                 };
             }
 
+            float snTerrainY = 0f;
+            int snHigherBanks = 0;
+            int snMaxStepDelta = 0;
+            bool hasSnTerrainInfo = false;
+            if (!hasSharpArchFloor)
+            {
+                snTerrainY = EvaluateSurfaceNetsTerrainYAtCorner(nb, baseCornerX, baseCornerZ, y, maxBufferY, out snHigherBanks, out snMaxStepDelta);
+                hasSnTerrainInfo = true;
+            }
+
             float avgCurrSurfY;
             float avgPrevSurfY;
+            float avgCurrThickOut = wetSamples > 0 ? (wetCurrThickSum / wetSamples) : MinVisibleFilmThickness;
+            float avgPrevThickOut = wetSamples > 0 ? (wetPrevThickSum / wetSamples) : 0f;
+
             if (wetSamples > 0)
             {
                 if (isPoolRegime && (overfallSamples == 0 || slopeConnectedCount > 0))
@@ -2179,8 +2327,8 @@ namespace Stratocraft.Voxel.Jobs
                 }
                 else
                 {
-                    float avgCurrThick = wetCurrThickSum / wetSamples;
-                    float avgPrevThick = wetPrevThickSum / wetSamples;
+                    float avgCurrThick = avgCurrThickOut;
+                    float avgPrevThick = avgPrevThickOut;
                     float avgBedPortion = (wetCurrSurfSum - wetCurrThickSum) / wetSamples;
 
                     if (overfallSamples > 0 && slopeConnectedCount == 0)
@@ -2195,27 +2343,62 @@ namespace Stratocraft.Voxel.Jobs
                     }
                     else if (shoreAirSamples > 0)
                     {
-                        // Gorsel 5 Kubbe & Yamac Kenar Kapanisi:
-                        // Acik kuru havaya (shoreAirSamples > 0) bakan su kenarini dogrudan dual-grid SurfaceNets arazi kotuna indir!
-                        float targetGroundY = (!hasSharpArchFloor && cornerTerrainCount > 0)
-                            ? (cornerTerrainSum / cornerTerrainCount)
-                            : avgBedPortion;
-
-                        if (!hasSharpArchFloor && avgCurrThick > 0.08f)
+                        // Paket 4B.3 Surekli 3-Rejimli Acik Kenar Cozumu (3ed66b74.jpg & 4511a295.jpg Tamiri):
+                        // Eski -1.25m..-1.72m ani cokertme ve 0.08m kesikli sicrama tamamen kaldirildi!
+                        if (slopeConnectedCount > 0)
                         {
-                            // Kazanla dokulen kalin su kubbesinin kenari SurfaceNets cimeninin 2.5cm icine gomulur -> 0 alt bosluk!
-                            avgCurrSurfY = targetGroundY - 0.025f;
-                            avgPrevSurfY = avgPrevThick > 0f ? (targetGroundY - 0.025f) : targetGroundY;
-                            outCornerBedY = Math.Min(outCornerBedY, targetGroundY - 0.05f);
+                            // Rejim 1: Egimli akan yamac deresi kenari — katman bagimsiz yumusak incelme (0 dikey yirtilma!)
+                            // Acik havaya bakan yamac kenari (snHigherBanks == 0 && !touchesSdfShore) gercek SurfaceNets zeminine yaklasir (ef3129b3.jpg)!
+                            float slopeFeather = wetSamples == 1 ? 0.55f : (wetSamples == 2 ? 0.72f : 0.85f);
+                            avgCurrSurfY = avgBedPortion + avgCurrThick * slopeFeather;
+                            avgPrevSurfY = avgBedPortion + avgPrevThick * slopeFeather;
+                            if (hasSnTerrainInfo && !touchesSdfShore && snHigherBanks == 0 && !hasBelowPoolSupport)
+                            {
+                                float tuckedCurr = snTerrainY + Math.Clamp(avgCurrThick * slopeFeather, 0.03f, 0.22f);
+                                float tuckedPrev = snTerrainY + Math.Clamp(avgPrevThick * slopeFeather, 0.03f, 0.22f);
+                                avgCurrSurfY = MathF.Min(avgCurrSurfY, tuckedCurr);
+                                avgPrevSurfY = avgPrevThick > 0f ? MathF.Min(avgPrevSurfY, tuckedPrev) : avgPrevSurfY;
+                            }
+                            if (hasSnTerrainInfo) outCornerBedY = Math.Min(outCornerBedY, snTerrainY - 0.16f);
+                        }
+                        else if (poolSampleCount > 0 && (hasBelowPoolSupport || touchesSdfShore))
+                        {
+                            // Rejim 2: Gercek golet/havuz tasma dudagi (3ed66b74.jpg) — duz havuz yuzeyini -1.5m asagi bukme,
+                            // yumusak 0.84x savak dudagiyla koru; altindaki acikligi dikey 3B zemin muhur etegi kapatir!
+                            avgCurrSurfY = avgBedPortion + avgCurrThick * 0.84f;
+                            avgPrevSurfY = avgBedPortion + avgPrevThick * 0.84f;
+                            if (hasSnTerrainInfo) outCornerBedY = Math.Min(outCornerBedY, snTerrainY - 0.22f);
                         }
                         else
                         {
+                            // Rejim 3: Acik duvarsiz duzluge/cimene dokulen su kubbesi (T25 / T30) — kesintisiz gecis ve
+                            // SurfaceNets (+0.12m jitter) ustunde temiz cimen temasi (asla -0.04m yerin altina batmaz!)
+                            float targetGroundY = (!hasSharpArchFloor && cornerTerrainCount > 0)
+                                ? (cornerTerrainSum / cornerTerrainCount)
+                                : avgBedPortion;
                             float feather = wetSamples == 1 ? 0.25f : (wetSamples == 2 ? 0.45f : 0.72f);
                             float thinCurr = MathF.Min(0.065f, MathF.Max(0.004f, avgCurrThick * feather));
                             float thinPrev = avgPrevThick > 0f ? MathF.Min(0.065f, MathF.Max(0.004f, avgPrevThick * feather)) : 0f;
-                            avgCurrSurfY = targetGroundY + thinCurr;
-                            avgPrevSurfY = targetGroundY + thinPrev;
-                            outCornerBedY = Math.Min(outCornerBedY, targetGroundY - 0.015f);
+                            float thinRimY = targetGroundY + thinCurr;
+                            float thinPrevY = targetGroundY + thinPrev;
+
+                            if (!hasSharpArchFloor && hasSnTerrainInfo)
+                            {
+                                float rimFloorY = MathF.Max(targetGroundY, snTerrainY + 0.06f);
+                                float moundRimY = MathF.Min(rimFloorY + 0.03f, snTerrainY + 0.14f);
+                                float thickBlend = Math.Clamp((avgCurrThick - 0.04f) / 0.14f, 0.0f, 1.0f);
+                                avgCurrSurfY = thinRimY + (moundRimY - thinRimY) * thickBlend;
+                                avgPrevSurfY = avgPrevThick > 0f
+                                    ? (thinPrevY + (moundRimY - thinPrevY) * Math.Clamp((avgPrevThick - 0.04f) / 0.14f, 0.0f, 1.0f))
+                                    : thinPrevY;
+                                outCornerBedY = Math.Min(outCornerBedY, snTerrainY - 0.22f);
+                            }
+                            else
+                            {
+                                avgCurrSurfY = thinRimY;
+                                avgPrevSurfY = thinPrevY;
+                                outCornerBedY = Math.Min(outCornerBedY, targetGroundY - 0.015f);
+                            }
                         }
                     }
                     else
@@ -2231,17 +2414,52 @@ namespace Stratocraft.Voxel.Jobs
                 avgPrevSurfY = avgCurrSurfY;
             }
 
-            if (y + 1 < maxBufferY)
+            // Paket 4B.3 SurfaceNets Arazi Aciklik Kilidi (4511a295.jpg & 08d658f5.jpg Tamiri):
+            // -X/-Z egimli dag yamaclarinda (-0.5m XZ kaymasi) ve icbukey V-vadi oluklarinda (+0.33..0.50m dual kalkma)
+            // akan derenin gercek SurfaceNets kaya/kar ucgenlerinin (+0.12m jitter) altinda kalip kaybolmasini onler!
+            // NOT (8368bcc1.jpg): V-vadi duvarina yasli olmayan acik dis kenarlarda (shoreAirSamples > 0 && snHigherBanks == 0)
+            // kenari +0.24m havaya kaldirma; yalnizca +0.04m ile gercek buza yasla!
+            if (hasSnTerrainInfo && !isPoolRegime && !hasBelowPoolSupport && selfHasFreeTopSurface && overfallSamples == 0)
             {
-                nb.SampleCellFast(baseCornerX == 16 ? 15 : baseCornerX, y + 1, baseCornerZ == 16 ? 15 : baseCornerZ, out uint selfAboveSolid, out _);
-                if (VoxelBitUtility.IsPhysicallySolid(selfAboveSolid) && slopeConnectedCount == 0)
+                bool isOpenExposedRim = shoreAirSamples > 0 && snHigherBanks == 0 && slopeConnectedCount == 0;
+                bool needsJitterEnvelope = !isOpenExposedRim && (snMaxStepDelta >= 1 || snHigherBanks > 0);
+                float terrainClearance = needsJitterEnvelope
+                    ? (0.14f + MathF.Min(0.10f, avgCurrThickOut * 0.55f))
+                    : 0.03f;
+                float minVisibleSurfY = snTerrainY + terrainClearance;
+                if (avgCurrSurfY < minVisibleSurfY)
+                {
+                    avgCurrSurfY = minVisibleSurfY;
+                    if (avgPrevThickOut > 0f && avgPrevSurfY < minVisibleSurfY)
+                    {
+                        avgPrevSurfY = minVisibleSurfY;
+                    }
+                }
+            }
+
+            if (y + 1 < maxBufferY && slopeConnectedCount == 0 && submergedStackCount == 0)
+            {
+                bool allFourAboveSolid = true;
+                for (int cdz = -1; cdz <= 0 && allFourAboveSolid; cdz++)
+                {
+                    for (int cdx = -1; cdx <= 0; cdx++)
+                    {
+                        nb.SampleCellFast(baseCornerX + cdx, y + 1, baseCornerZ + cdz, out uint upS, out _);
+                        if (!VoxelBitUtility.IsPhysicallySolid(upS))
+                        {
+                            allFourAboveSolid = false;
+                            break;
+                        }
+                    }
+                }
+                if (allFourAboveSolid)
                 {
                     avgCurrSurfY = Math.Min(y + 0.98f, avgCurrSurfY);
                     avgPrevSurfY = Math.Min(y + 0.98f, avgPrevSurfY);
                 }
             }
 
-            float maxAllowedCornerY = (slopeConnectedCount > 0 || isPoolRegime) ? (y + 2.0f) : (y + 1.0f);
+            float maxAllowedCornerY = (slopeConnectedCount > 0 || submergedStackCount > 0 || isPoolRegime) ? (y + 2.0f) : (y + 1.0f);
             avgCurrSurfY = Math.Min(maxAllowedCornerY, avgCurrSurfY);
             avgPrevSurfY = Math.Min(maxAllowedCornerY, avgPrevSurfY);
 
@@ -2289,6 +2507,58 @@ namespace Stratocraft.Voxel.Jobs
             });
         }
 
+        private static void EmitGroundSealedBevelSkirtQuad(
+            FluidNeighborhood3x3Cache nb,
+            int y,
+            int maxBufferY,
+            byte selfMass,
+            bool selfHasFreeTopSurface,
+            in RichContourVertex v0,
+            in RichContourVertex v1,
+            byte renderId,
+            List<FluidRichTriangle> outRichTriangles)
+        {
+            int c0X = (int)MathF.Floor(v0.TopCurr.X + 0.5f);
+            int c0Z = (int)MathF.Floor(v0.TopCurr.Z + 0.5f);
+            int c1X = (int)MathF.Floor(v1.TopCurr.X + 0.5f);
+            int c1Z = (int)MathF.Floor(v1.TopCurr.Z + 0.5f);
+            float g0 = SampleMinTrueSurfaceNetsFloorYAtCorner(nb, c0X, c0Z, y, maxBufferY);
+            float g1 = SampleMinTrueSurfaceNetsFloorYAtCorner(nb, c1X, c1Z, y, maxBufferY);
+            if (selfHasFreeTopSurface && v0.TopCurr.Y <= g0 + 0.16f && v1.TopCurr.Y <= g1 + 0.16f)
+            {
+                return;
+            }
+            float minBot = MathF.Max(0f, y - 2.0f);
+            float botY0 = MathF.Max(minBot, g0 - 0.18f);
+            float botY1 = MathF.Max(minBot, g1 - 0.18f);
+            if (v0.TopCurr.Y <= botY0 + 0.06f && v1.TopCurr.Y <= botY1 + 0.06f)
+            {
+                return;
+            }
+
+            Vector3 b0 = new Vector3(v0.TopCurr.X, MathF.Min(v0.TopCurr.Y - 0.02f, botY0), v0.TopCurr.Z);
+            Vector3 b1 = new Vector3(v1.TopCurr.X, MathF.Min(v1.TopCurr.Y - 0.02f, botY1), v1.TopCurr.Z);
+            Vector3 norm = SafeCrossNormalize(v0.TopCurr - b0, v1.TopCurr - b0, Vector3.UnitX);
+            norm.Y = 0f;
+            float nLenSq = norm.LengthSquared();
+            norm = nLenSq > 1e-6f ? (norm / MathF.Sqrt(nLenSq)) : Vector3.UnitX;
+            float d0 = MathF.Max(0.06f, v0.DepthMeters);
+            float d1 = MathF.Max(0.06f, v1.DepthMeters);
+
+            outRichTriangles.Add(new FluidRichTriangle
+            {
+                C0 = MakeSample(b0, norm, renderId, 128, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                C1 = MakeSample(v0.TopCurr, v0.SmoothTopNormal, renderId, v0.EncodedSubTickDy, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                C2 = MakeSample(v1.TopCurr, v1.SmoothTopNormal, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f)
+            });
+            outRichTriangles.Add(new FluidRichTriangle
+            {
+                C0 = MakeSample(b0, norm, renderId, 128, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                C1 = MakeSample(v1.TopCurr, v1.SmoothTopNormal, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f),
+                C2 = MakeSample(b1, norm, renderId, 128, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f)
+            });
+        }
+
         private static void EmitRichSideOrWaterfallCurtain(
             FluidNeighborhood3x3Cache nb,
             int lx,
@@ -2314,7 +2584,7 @@ namespace Stratocraft.Voxel.Jobs
             int nz = lz + dirZ;
             nb.SampleCellFast(nx, y, nz, out uint nSolid, out ushort nFluid);
             bool neighborHasSameFluid = (nFluid & 0xFFu) > 0u && ((nFluid >> 8) & 0x03u) == fluidType;
-            bool neighborIsMidAirDrop = neighborHasSameFluid && y >= 2 && IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType);
+            bool neighborIsMidAirDrop = neighborHasSameFluid && y >= 2 && IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType, maxBufferY);
 
             if (neighborHasSameFluid && !neighborIsMidAirDrop)
             {
@@ -2350,34 +2620,50 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            // Savak agzindan hemen onundeki silindirik hava dusus sutununa (neighborIsMidAirDrop) yumusak baglanti basligi!
+            // Savak agzindan hemen onundeki 3B hacimli selale sutununa (neighborIsMidAirDrop) dikissiz savak dudagi!
             if (neighborIsMidAirDrop && selfHasFreeTopSurface)
             {
                 byte dropMass = (byte)(nFluid & 0xFFu);
-                float rDrop = ComputeFallingStreamRadius(dropMass);
-                Vector3 streamCenter = new Vector3(nx + 0.5f, y + 0.72f, nz + 0.5f);
+                float dropTopY = ComputeVolumetricWaterfallTopY(nb, nx, y, nz, fluidType, dropMass, maxBufferY, out bool dropHasAboveSame);
+                if (dropHasAboveSame)
+                {
+                    // Ustten gelen selale zaten y..y+1 boyunca savak kenarina yasli -> ust uste binen ic yuzey orme!
+                    return;
+                }
+
+                float dropInset = ComputeVolumetricWaterfallInset(dropMass);
                 Vector3 top0 = v0.TopCurr;
                 Vector3 top1 = v1.TopCurr;
-                Vector3 sideSpan = Vector3.Normalize(new Vector3(top1.X - top0.X, 0f, top1.Z - top0.Z));
-                Vector3 bot0 = streamCenter - sideSpan * rDrop;
-                Vector3 bot1 = streamCenter + sideSpan * rDrop;
                 Vector3 outDir = new Vector3(dirX, 0f, dirZ);
-                Vector3 topNorm = Vector3.Normalize(outDir * 0.45f + Vector3.UnitY * 0.893f);
-                Vector3 hoodNorm = Vector3.Normalize(outDir * 0.55f + Vector3.UnitY * 0.835f);
-                byte flowVx = FluidCornerSample.EncodeSignedUnitToByte(Math.Clamp(dirX * 0.65f, -1.0f, 1.0f));
-                byte flowVz = FluidCornerSample.EncodeSignedUnitToByte(Math.Clamp(dirZ * 0.65f, -1.0f, 1.0f));
+
+                // Hedef dudak kenarini hacimli sutunun uzak ust kenarina (veya en az 0.35m iceri) oturt
+                float lipReach = Math.Clamp(0.50f, 0.25f, 1.0f - dropInset);
+                Vector3 bot0 = new Vector3(
+                    dirX != 0 ? (nx + (dirX > 0 ? lipReach : (1.0f - lipReach))) : Math.Clamp(top0.X, nx + dropInset, nx + 1.0f - dropInset),
+                    MathF.Min(top0.Y, dropTopY),
+                    dirZ != 0 ? (nz + (dirZ > 0 ? lipReach : (1.0f - lipReach))) : Math.Clamp(top0.Z, nz + dropInset, nz + 1.0f - dropInset));
+                Vector3 bot1 = new Vector3(
+                    dirX != 0 ? (nx + (dirX > 0 ? lipReach : (1.0f - lipReach))) : Math.Clamp(top1.X, nx + dropInset, nx + 1.0f - dropInset),
+                    MathF.Min(top1.Y, dropTopY),
+                    dirZ != 0 ? (nz + (dirZ > 0 ? lipReach : (1.0f - lipReach))) : Math.Clamp(top1.Z, nz + dropInset, nz + 1.0f - dropInset));
+
+                Vector3 topNorm = Vector3.Normalize(outDir * 0.38f + Vector3.UnitY * 0.925f);
+                Vector3 lipNorm = Vector3.Normalize(outDir * 0.62f + Vector3.UnitY * 0.785f);
+                byte flowVx = FluidCornerSample.EncodeSignedUnitToByte(Math.Clamp(dirX * 0.75f, -1.0f, 1.0f));
+                byte flowVz = FluidCornerSample.EncodeSignedUnitToByte(Math.Clamp(dirZ * 0.75f, -1.0f, 1.0f));
+                float lipDepth = MathF.Max(0.48f, MathF.Max(v0.DepthMeters, v1.DepthMeters));
 
                 outRichTriangles.Add(new FluidRichTriangle
                 {
-                    C0 = MakeSample(bot0, hoodNorm, renderId, 128, flowVx, flowVz, v0.DepthMeters, 0.22f),
-                    C1 = MakeSample(top0, topNorm, renderId, v0.EncodedSubTickDy, v0.EncodedVelX, v0.EncodedVelZ, v0.DepthMeters, 0.16f),
-                    C2 = MakeSample(top1, topNorm, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, v1.DepthMeters, 0.16f)
+                    C0 = MakeSample(bot0, lipNorm, renderId, 128, flowVx, flowVz, lipDepth, 0.22f),
+                    C1 = MakeSample(top0, topNorm, renderId, v0.EncodedSubTickDy, v0.EncodedVelX, v0.EncodedVelZ, lipDepth, 0.14f),
+                    C2 = MakeSample(top1, topNorm, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, lipDepth, 0.14f)
                 });
                 outRichTriangles.Add(new FluidRichTriangle
                 {
-                    C0 = MakeSample(bot0, hoodNorm, renderId, 128, flowVx, flowVz, v0.DepthMeters, 0.22f),
-                    C1 = MakeSample(top1, topNorm, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, v1.DepthMeters, 0.16f),
-                    C2 = MakeSample(bot1, hoodNorm, renderId, 128, flowVx, flowVz, v1.DepthMeters, 0.22f)
+                    C0 = MakeSample(bot0, lipNorm, renderId, 128, flowVx, flowVz, lipDepth, 0.22f),
+                    C1 = MakeSample(top1, topNorm, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, lipDepth, 0.14f),
+                    C2 = MakeSample(bot1, lipNorm, renderId, 128, flowVx, flowVz, lipDepth, 0.22f)
                 });
                 return;
             }
@@ -2425,16 +2711,30 @@ namespace Stratocraft.Voxel.Jobs
                 float verticalDrop = selfSurfaceY - targetBotY;
                 float orthoSpeed = MathF.Abs(selfVelX * dirZ - selfVelZ * dirX);
                 bool flowsAlongSideSlope = orthoSpeed > 0.18f && edgeFlowDot <= 0.05f;
-                float minRequiredDrop = allowSharpSkirtWall ? 1.25f : 1.95f;
+
+                // Dogal arazide (!allowSharpSkirtWall) 2:1 yamaci (y-2 kati dogal zemin) ucurum selalesi sanip
+                // golet onune cam kanat firlatma (290e83e5.jpg)!
+                bool isNaturalTwoToOneSlope = false;
+                if (!allowSharpSkirtWall && y >= 2)
+                {
+                    nb.SampleCellFast(nx, y - 2, nz, out uint n2BelowSolid, out _);
+                    isNaturalTwoToOneSlope = VoxelBitUtility.IsPhysicallySolid(n2BelowSolid) &&
+                                             VoxelBitUtility.GetShapeId(n2BelowSolid) == 0;
+                }
+
+                float minRequiredDrop = allowSharpSkirtWall ? 1.25f : 2.65f;
+                bool hasOverfallFlowOrHead = allowSharpSkirtWall
+                    ? (selfMass >= 28 || edgeFlowDot > 0.10f)
+                    : (edgeFlowDot > 0.12f || (selfMass >= 140 && verticalDrop >= 3.0f));
 
                 // Kose ucurumlarda (706fc114.jpg) ayni hucreden 90 derece dik iki ayri duz beyaz kagit serit firlatma!
                 bool isPrimaryDropSide = IsPrimaryOverfallDirection(nb, lx, y, lz, dirX, dirZ, fluidType, verticalDrop, selfVelX, selfVelZ);
 
-                if (verticalDrop >= minRequiredDrop && meanEdgeDepth >= 0.055f && (selfMass >= 28 || edgeFlowDot > 0.10f) &&
-                    !flowsAlongSideSlope && isPrimaryDropSide)
+                if (!isNaturalTwoToOneSlope && verticalDrop >= minRequiredDrop && meanEdgeDepth >= 0.055f &&
+                    hasOverfallFlowOrHead && !flowsAlongSideSlope && isPrimaryDropSide)
                 {
                     float foamScale = Math.Clamp((meanEdgeDepth - 0.10f) / 0.28f, 0.25f, 1.0f);
-                    float botPinch = Math.Clamp(0.32f - meanEdgeDepth * 0.30f, 0.12f, 0.30f);
+                    float botPinch = Math.Clamp(0.05f - meanEdgeDepth * 0.05f, 0.0f, 0.04f);
 
                     Vector3 outDir = new Vector3(dirX, 0f, dirZ);
                     float jetOut = Math.Clamp(0.06f * MathF.Sqrt(Math.Max(1, (int)pressureHead)), 0.08f, 0.18f) *
@@ -2499,12 +2799,61 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            // PAKET 4B.2 KURAL 3 (AK-9 & Gorsel 8 Kazan Dokumu Tamiri):
-            // Dogal SurfaceNets arazisi (!allowSharpSkirtWall) uzerinde su 2 katman ust uste binse dahi (!selfHasFreeTopSurface)
-            // havaya dikilen 1m x 1m beyaz kopuklu kutu yan duvar (wallFoam = 0.75) ASLA ORME!
-            // Keskin yan duvar yalnizca mimari kup/kanal ustunde (allowSharpSkirtWall) uretilir.
+            // PAKET 4B.3 GERCEK SURFACENETS ZEMIN MUHURLEME ETEGI (67e4eff3.jpg, c973801a.jpg & 8368bcc1.jpg Tamiri):
+            // Dogal SurfaceNets arazisi (!allowSharpSkirtWall) uzerinde beyaz kopuklu kutu duvar (wallFoam = 0.75) ASLA ORULMEZ (T23);
+            // ancak acik kuru havaya bakan kalin/tasan su (selfMass >= 32 veya !selfHasFreeTopSurface) ile havada > 16cm asili kalan
+            // orta/ince yamac kenarlarinda (selfMass >= 6 && !flowsAlongSideSlope — T07/T08/T10 korumali!) 4-kolonlu gercek SurfaceNets
+            // alt buz/cimen kotuna kadar temiz yari-seffaf su etegi (wallFoam = 0.0f) indirerek alt boslugu %100 muhurler!
             if (!allowSharpSkirtWall)
             {
+                float orthoSpeedSkirt = MathF.Abs(selfVelX * dirZ - selfVelZ * dirX);
+                float edgeFlowDotSkirt = selfVelX * dirX + selfVelZ * dirZ;
+                bool flowsAlongSideSlopeSkirt = selfHasFreeTopSurface && orthoSpeedSkirt > 0.18f && edgeFlowDotSkirt <= 0.05f;
+
+                if (neighborIsOpenAir && nb.IsColumnLoaded(nx, nz) && !flowsAlongSideSlopeSkirt && (selfMass >= 6 || !selfHasFreeTopSurface))
+                {
+                    int c0X = (int)MathF.Floor(v0.TopCurr.X + 0.5f);
+                    int c0Z = (int)MathF.Floor(v0.TopCurr.Z + 0.5f);
+                    int c1X = (int)MathF.Floor(v1.TopCurr.X + 0.5f);
+                    int c1Z = (int)MathF.Floor(v1.TopCurr.Z + 0.5f);
+                    // 4-kolonlu kose zemin taramasi zaten (lx,lz) ve (nx,nz) sutunlarini kapsar; 2m asagiya uzanip
+                    // yuzeyden sarkan cam kanat uretme (290e83e5.jpg & ef3129b3.jpg)!
+                    float g0 = SampleMinTrueSurfaceNetsFloorYAtCorner(nb, c0X, c0Z, y, maxBufferY);
+                    float g1 = SampleMinTrueSurfaceNetsFloorYAtCorner(nb, c1X, c1Z, y, maxBufferY);
+
+                    if (selfHasFreeTopSurface && v0.TopCurr.Y <= g0 + 0.16f && v1.TopCurr.Y <= g1 + 0.16f)
+                    {
+                        return;
+                    }
+
+                    float minAllowedBot = MathF.Max(0f, y - 2.0f);
+                    float botY0 = MathF.Max(minAllowedBot, g0 - 0.18f);
+                    float botY1 = MathF.Max(minAllowedBot, g1 - 0.18f);
+
+                    if (v0.TopCurr.Y > botY0 + 0.06f || v1.TopCurr.Y > botY1 + 0.06f)
+                    {
+                        Vector3 b0 = new Vector3(v0.TopCurr.X, MathF.Min(v0.TopCurr.Y - 0.02f, botY0), v0.TopCurr.Z);
+                        Vector3 b1 = new Vector3(v1.TopCurr.X, MathF.Min(v1.TopCurr.Y - 0.02f, botY1), v1.TopCurr.Z);
+                        Vector3 skirtNorm = new Vector3(dirX, 0f, dirZ);
+                        Vector3 topNorm0 = selfHasFreeTopSurface ? v0.SmoothTopNormal : skirtNorm;
+                        Vector3 topNorm1 = selfHasFreeTopSurface ? v1.SmoothTopNormal : skirtNorm;
+                        float d0 = MathF.Max(0.06f, v0.DepthMeters);
+                        float d1 = MathF.Max(0.06f, v1.DepthMeters);
+
+                        outRichTriangles.Add(new FluidRichTriangle
+                        {
+                            C0 = MakeSample(b0, skirtNorm, renderId, 128, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                            C1 = MakeSample(v0.TopCurr, topNorm0, renderId, v0.EncodedSubTickDy, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                            C2 = MakeSample(v1.TopCurr, topNorm1, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f)
+                        });
+                        outRichTriangles.Add(new FluidRichTriangle
+                        {
+                            C0 = MakeSample(b0, skirtNorm, renderId, 128, v0.EncodedVelX, v0.EncodedVelZ, d0, 0.0f),
+                            C1 = MakeSample(v1.TopCurr, topNorm1, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f),
+                            C2 = MakeSample(b1, skirtNorm, renderId, 128, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f)
+                        });
+                    }
+                }
                 return;
             }
 
@@ -2533,16 +2882,47 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static float ComputeFallingStreamRadius(byte mass)
+        public static float ComputeVolumetricWaterfallWidth(byte mass)
         {
-            return Math.Clamp(0.095f + 0.185f * MathF.Sqrt(mass / 255.0f), 0.10f, 0.28f);
+            // Az suda bile fark edilir hacimli 3B akis (~0.45m), yogun sel/selalede tam 1.00m Minecraft sutunu!
+            return Math.Clamp(0.36f + 0.64f * MathF.Sqrt(mass / 255.0f), 0.36f, 1.00f);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ComputeVolumetricWaterfallInset(byte mass)
+        {
+            return 0.5f * (1.0f - ComputeVolumetricWaterfallWidth(mass));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool HasLoadedOpenAirSideNeighbor(FluidNeighborhood3x3Cache nb, int lx, int y, int lz, byte fluidType)
+        {
+            return IsLoadedOpenAirCell(nb, lx - 1, y, lz, fluidType) ||
+                   IsLoadedOpenAirCell(nb, lx + 1, y, lz, fluidType) ||
+                   IsLoadedOpenAirCell(nb, lx, y, lz - 1, fluidType) ||
+                   IsLoadedOpenAirCell(nb, lx, y, lz + 1, fluidType);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsLoadedOpenAirCell(FluidNeighborhood3x3Cache nb, int nx, int y, int nz, byte fluidType)
+        {
+            if (!nb.IsColumnLoaded(nx, nz)) return false;
+            nb.SampleCellFast(nx, y, nz, out uint s, out ushort f);
+            if (VoxelBitUtility.IsPhysicallySolid(s)) return false;
+            return (f & 0xFFu) == 0u || ((f >> 8) & 0x03u) != fluidType;
         }
 
         /// <summary>
         /// Bir sivi hucresinin kati zemin/havuz sutununa oturmak yerine gercekten havada serbest dusen bir selale/dokulme
-        /// damlasi veya sutunu olup olmadigini denetler (altinda y=0'a kadar kati zemin/havuz bulunan gercek dunya sutunlarinda aktif).
+        /// sutunu olup olmadigini denetler (y = floor + 1 taban baglanti deligi giderilmis, T08/T09/T23 korumali).
         /// </summary>
-        private static bool IsMidAirFreeFallStreamCell(FluidNeighborhood3x3Cache nb, int lx, int y, int lz, byte fluidType)
+        private static bool IsMidAirFreeFallStreamCell(
+            FluidNeighborhood3x3Cache nb,
+            int lx,
+            int y,
+            int lz,
+            byte fluidType,
+            int maxBufferY)
         {
             if (y <= 1) return false;
 
@@ -2555,14 +2935,103 @@ namespace Stratocraft.Voxel.Jobs
             byte belowMass = (byte)(belowFluid & 0xFFu);
             bool belowSame = belowMass > 0 && ((belowFluid >> 8) & 0x03u) == fluidType;
 
-            // T08 Korumasi: Eger y-1'de ince yagmur suyu varsa VE y-2 dogrudan kati zemin ise (1-blokluk yamac CFL gecisi!),
-            // bu yuksek selale dususu degil zemin ustu yamac akisidir!
-            if (belowSame)
+            bool hasAboveSame = false;
+            byte aboveMass = 0;
+            if (y + 1 < maxBufferY)
             {
-                nb.SampleCellFast(lx, y - 2, lz, out uint twoBelowSolid, out _);
+                nb.SampleCellFast(lx, y + 1, lz, out uint upSolid, out ushort upFluid);
+                aboveMass = (byte)(upFluid & 0xFFu);
+                hasAboveSame = !VoxelBitUtility.IsPhysicallySolid(upSolid) && aboveMass > 0 && ((upFluid >> 8) & 0x03u) == fluidType;
+            }
+
+            // T08 & Yamac Kupu Korumasi (bac92275.jpg & ef3129b3.jpg):
+            // Ustte (y+1) besleyen yuksek selale sutunu YOKSA (!hasAboveSame):
+            // 1) Hemen 2 altinda (y-2) kati zemin varsa 1-blokluk yamac basamagidir -> asla kup orme!
+            // 2) Hem ustu hem alti su degilse (yalniz sirt damlasi) en az 3 blok acik hava dususu + >=24 kutle yoksa kup orme!
+            if (!hasAboveSame)
+            {
+                nb.SampleCellFast(lx, y - 2, lz, out uint twoBelowSolid, out ushort twoBelowFluid);
                 if (VoxelBitUtility.IsPhysicallySolid(twoBelowSolid))
                 {
                     return false;
+                }
+
+                if (!belowSame)
+                {
+                    nb.SampleCellFast(lx, y, lz, out _, out ushort selfF);
+                    byte selfM = (byte)(selfF & 0xFFu);
+                    bool twoBelowSame = (twoBelowFluid & 0xFFu) > 0u && ((twoBelowFluid >> 8) & 0x03u) == fluidType;
+                    bool threeBelowSolid = y < 3;
+                    if (y >= 3)
+                    {
+                        nb.SampleCellFast(lx, y - 3, lz, out uint threeBelowS, out _);
+                        threeBelowSolid = VoxelBitUtility.IsPhysicallySolid(threeBelowS);
+                    }
+                    if (!twoBelowSame && (selfM < 24 || threeBelowSolid))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (hasAboveSame && HasLoadedOpenAirSideNeighbor(nb, lx, y, lz, fluidType))
+            {
+                // Dusus havuzuna gomulu hucre korumasi (ea997276.jpg):
+                // Altinda dolu havuz (belowMass >= 200) ve ayni katmanda >= 2 oturmus havuz komsusu varsa,
+                // bu hucre selale sutunu DEGIL dusus havuzunun kendi yuzeyidir -> 1x1 delik olusmasini engelle!
+                if (belowSame && belowMass >= 200)
+                {
+                    int groundedPoolCardinals = 0;
+                    ReadOnlySpan<int> cdx = stackalloc int[4] { -1, 1, 0, 0 };
+                    ReadOnlySpan<int> cdz = stackalloc int[4] { 0, 0, -1, 1 };
+                    for (int ck = 0; ck < 4; ck++)
+                    {
+                        nb.SampleCellFast(lx + cdx[ck], y, lz + cdz[ck], out uint cs, out ushort cf);
+                        if (!VoxelBitUtility.IsPhysicallySolid(cs) && (cf & 0xFFu) >= 32u && ((cf >> 8) & 0x03u) == fluidType)
+                        {
+                            nb.SampleCellFast(lx + cdx[ck], y - 1, lz + cdz[ck], out uint cbs, out ushort cbf);
+                            if (VoxelBitUtility.IsPhysicallySolid(cbs) ||
+                                ((cbf & 0xFFu) >= 160u && ((cbf >> 8) & 0x03u) == fluidType))
+                            {
+                                groundedPoolCardinals++;
+                            }
+                        }
+                    }
+                    if (groundedPoolCardinals >= 2)
+                    {
+                        return false;
+                    }
+                }
+
+                bool hasTwoAboveSame = false;
+                if (y + 2 < maxBufferY)
+                {
+                    nb.SampleCellFast(lx, y + 2, lz, out uint up2Solid, out ushort up2Fluid);
+                    hasTwoAboveSame = !VoxelBitUtility.IsPhysicallySolid(up2Solid) &&
+                                      (up2Fluid & 0xFFu) > 0u && ((up2Fluid >> 8) & 0x03u) == fluidType;
+                }
+
+                // Yalnizca gercek >= 3 blokluk selale sutunu (hasTwoAboveSame) VEYA altinda dolu havuz olmayan (!belowSame || belowMass < 200)
+                // dusus segmentleri selale sutununa girer -> 2-katmanli durgun kenar hucreleri asla kup olmaz!
+                if (hasTwoAboveSame || !belowSame || belowMass < 200)
+                {
+                    nb.SampleCellFast(lx, y, lz, out _, out ushort selfFluid);
+                    byte selfMass = (byte)(selfFluid & 0xFFu);
+                    bool aboveAlsoOpen = (y + 1 < maxBufferY) && HasLoadedOpenAirSideNeighbor(nb, lx, y + 1, lz, fluidType);
+                    if (selfMass < 220 || aboveMass < 220 || aboveAlsoOpen)
+                    {
+                        int minFloorY = Math.Max(0, y - 24);
+                        for (int sy = y - 1; sy >= minFloorY; sy--)
+                        {
+                            nb.SampleCellFast(lx, sy, lz, out uint sRaw, out ushort fRaw);
+                            if (VoxelBitUtility.IsPhysicallySolid(sRaw) ||
+                                ((fRaw & 0xFFu) > 0u && ((fRaw >> 8) & 0x03u) == fluidType))
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
                 }
             }
 
@@ -2675,11 +3144,61 @@ namespace Stratocraft.Voxel.Jobs
             return true;
         }
 
+        private static float ComputeVolumetricWaterfallTopY(
+            FluidNeighborhood3x3Cache nb,
+            int lx,
+            int y,
+            int lz,
+            byte fluidType,
+            byte selfMass,
+            int maxBufferY,
+            out bool hasAboveSame)
+        {
+            hasAboveSame = false;
+            if (y + 1 < maxBufferY)
+            {
+                nb.SampleCellFast(lx, y + 1, lz, out uint upS, out ushort upF);
+                byte upMass = (byte)(upF & 0xFFu);
+                if (!VoxelBitUtility.IsPhysicallySolid(upS) && upMass > 0 && ((upF >> 8) & 0x03u) == fluidType)
+                {
+                    hasAboveSame = true;
+                    return y + 1.0f;
+                }
+            }
+
+            float baseTopY = y + Math.Clamp(0.55f + 0.45f * (selfMass / 255.0f), 0.55f, 1.00f);
+
+            // Eger y katmaninda bitisik kati zemine oturan bir savak/nehir komsusu varsa, selale tepe kotu
+            // nehirden yukari firlamasin; savak yuzeyiyle ayni veya hafif altinda kivrilip aksin!
+            float maxGroundedBrinkY = -1.0f;
+            ReadOnlySpan<int> dxs = stackalloc int[4] { -1, 1, 0, 0 };
+            ReadOnlySpan<int> dzs = stackalloc int[4] { 0, 0, -1, 1 };
+            for (int k = 0; k < 4; k++)
+            {
+                int nx = lx + dxs[k];
+                int nz = lz + dzs[k];
+                nb.SampleCellFast(nx, y, nz, out uint ns, out ushort nf);
+                byte nm = (byte)(nf & 0xFFu);
+                if (!VoxelBitUtility.IsPhysicallySolid(ns) && nm > 0 && ((nf >> 8) & 0x03u) == fluidType &&
+                    !IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType, maxBufferY))
+                {
+                    float brinkY = y + Math.Clamp(MassToFluidThickness(nm) * 0.78f, 0.25f, 0.96f);
+                    if (brinkY > maxGroundedBrinkY) maxGroundedBrinkY = brinkY;
+                }
+            }
+
+            return maxGroundedBrinkY > 0f ? MathF.Min(baseTopY, maxGroundedBrinkY) : baseTopY;
+        }
+
         /// <summary>
-        /// Havada dusen su hucresini 1m x 1m beyaz kare kutu yerine merkeze daraltilmis 8-kenarli puruzsuz yari-seffaf
-        /// silindirik su sutunu olarak orer; alt/ust dusen hucrelerle ve alt havuzla 0.000m kesintisiz birlesir!
+        /// Paket 4B.3 Minecraft Tarzi 3B Hacimli Akiskan Selale Sutunu (09524c95.jpg Tamiri):
+        /// - Eski 8-kenarli kopuk PVC borulari ve 2B kagit seritleri tamamen kaldirir!
+        /// - Kutleye gore hacmi esner (az su ~0.45m, orta ~0.70m, sel ~1.00m); her zaman fark edilir 3B hacme sahiptir.
+        /// - Yan yana dusen selale hucreleri aralarinda ic duvar olmadan (0 internal wall) ve simetrik kose paylasimiyla
+        ///   tek parca genis selale perdesi halinde kaynasir; kaya duvarlarina 0.000m yaslanir.
+        /// - Gercek yatay dis normaller (ny == 0) ile StratocraftFluidSurface.shader dikey akis cizgilerini tetikler.
         /// </summary>
-        private static void EmitMidAirFallingStreamSegment(
+        private static void EmitVolumetricWaterfallColumnCell(
             FluidNeighborhood3x3Cache nb,
             int lx,
             int y,
@@ -2691,106 +3210,225 @@ namespace Stratocraft.Voxel.Jobs
             int maxBufferY,
             List<FluidRichTriangle> outRichTriangles)
         {
-            float cx = lx + 0.5f;
-            float cz = lz + 0.5f;
-
+            float topY = ComputeVolumetricWaterfallTopY(nb, lx, y, lz, fluidType, selfMass, maxBufferY, out bool hasAboveSame);
             byte aboveMass = 0;
-            bool hasAboveSame = false;
-            if (y + 1 < maxBufferY)
+            if (hasAboveSame && y + 1 < maxBufferY)
             {
-                nb.SampleCellFast(lx, y + 1, lz, out uint upS, out ushort upF);
+                nb.SampleCellFast(lx, y + 1, lz, out _, out ushort upF);
                 aboveMass = (byte)(upF & 0xFFu);
-                hasAboveSame = !VoxelBitUtility.IsPhysicallySolid(upS) && aboveMass > 0 && ((upF >> 8) & 0x03u) == fluidType;
             }
 
-            // Eger hemen altta durgun/derin karsilama havuzu varsa sutunun alt ucunu havuz yuzeyinin icine batir;
-            // eger altta baska bir dusen damla varsa tam y sinirinda onun rTop yaricapiyla (= rBot) 0.000m dikisle birles!
+            float botInset = ComputeVolumetricWaterfallInset(selfMass);
+            float topInset = hasAboveSame ? ComputeVolumetricWaterfallInset(aboveMass) : botInset;
+            float width = 1.0f - 2.0f * botInset;
+
+            // 4 kardinal komsu analizi (ayni sivi -> ic duvar yok + kenari 0/1'e yapistir; kati kaya -> kayaya yasla!)
+            ProbeWaterfallSideNeighbor(nb, lx - 1, y, lz, fluidType, out bool fluidNegX, out bool solidNegX, out byte massNegX);
+            ProbeWaterfallSideNeighbor(nb, lx + 1, y, lz, fluidType, out bool fluidPosX, out bool solidPosX, out byte massPosX);
+            ProbeWaterfallSideNeighbor(nb, lx, y, lz - 1, fluidType, out bool fluidNegZ, out bool solidNegZ, out byte massNegZ);
+            ProbeWaterfallSideNeighbor(nb, lx, y, lz + 1, fluidType, out bool fluidPosZ, out bool solidPosZ, out byte massPosZ);
+
+            // Ust kenar (y+1) komsularini da kontrol ederek iki katman arasindaki dikey dikisi %100 sifir-yarik tut
+            bool topPinNegX = fluidNegX || solidNegX;
+            bool topPinPosX = fluidPosX || solidPosX;
+            bool topPinNegZ = fluidNegZ || solidNegZ;
+            bool topPinPosZ = fluidPosZ || solidPosZ;
+            byte upMassNegX = massNegX, upMassPosX = massPosX, upMassNegZ = massNegZ, upMassPosZ = massPosZ;
+            if (hasAboveSame && y + 1 < maxBufferY)
+            {
+                ProbeWaterfallSideNeighbor(nb, lx - 1, y + 1, lz, fluidType, out bool uFNX, out bool uSNX, out upMassNegX);
+                ProbeWaterfallSideNeighbor(nb, lx + 1, y + 1, lz, fluidType, out bool uFPX, out bool uSPX, out upMassPosX);
+                ProbeWaterfallSideNeighbor(nb, lx, y + 1, lz - 1, fluidType, out bool uFNZ, out bool uSNZ, out upMassNegZ);
+                ProbeWaterfallSideNeighbor(nb, lx, y + 1, lz + 1, fluidType, out bool uFPZ, out bool uSPZ, out upMassPosZ);
+                topPinNegX = uFNX || uSNX;
+                topPinPosX = uFPX || uSPX;
+                topPinNegZ = uFNZ || uSNZ;
+                topPinPosZ = uFPZ || uSPZ;
+            }
+
+            // Alt kot (botY): altinda baska selale varsa y'de 0.000m birles; havuz/zemin varsa icine dal;
+            // y-1 anlik gecis boslugu ise y-2'ye kopru at ki selale parca parca kopmasin!
             float botY = y;
-            float rBot = ComputeFallingStreamRadius(selfMass);
+            bool hitsPoolOrGroundBelow = false;
+            bool emitBottomCap = false;
             if (y > 0)
             {
                 nb.SampleCellFast(lx, y - 1, lz, out uint dnS, out ushort dnF);
                 byte dnMass = (byte)(dnF & 0xFFu);
                 bool dnSame = !VoxelBitUtility.IsPhysicallySolid(dnS) && dnMass > 0 && ((dnF >> 8) & 0x03u) == fluidType;
-                if (dnSame && !IsMidAirFreeFallStreamCell(nb, lx, y - 1, lz, fluidType))
+                if (dnSame && IsMidAirFreeFallStreamCell(nb, lx, y - 1, lz, fluidType, maxBufferY))
                 {
-                    botY = (y - 1) + MassToFluidThickness(dnMass) * 0.90f;
-                    rBot = MathF.Min(0.34f, rBot * 1.22f);
+                    botY = y;
                 }
-                else if (!dnSame && y >= 2)
+                else if (dnSame)
                 {
-                    // Alt hucre bos hava ama 2 altinda zemin/havuz varsa damla kuyrugunu asagi dogru uzat ki kopuk nokta kalmasin
+                    float poolTop = (y - 1) + MathF.Max(0.15f, MassToFluidThickness(dnMass) * 0.72f);
+                    botY = MathF.Min(y - 0.12f, poolTop);
+                    hitsPoolOrGroundBelow = true;
+                }
+                else if (y >= 2)
+                {
                     nb.SampleCellFast(lx, y - 2, lz, out uint dn2S, out ushort dn2F);
                     if (VoxelBitUtility.IsPhysicallySolid(dn2S))
                     {
-                        botY = MathF.Max(y - 0.55f, ComputeHydrostaticSurfaceNetsBedMeters(dn2S, 0u, y - 1));
+                        float trueFloor = SampleTrueSurfaceNetsFloorYAtCorner(nb, lx, lz, y - 1, maxBufferY);
+                        botY = MathF.Max(y - 1.75f, trueFloor - 0.18f);
+                        hitsPoolOrGroundBelow = true;
                     }
                     else if ((dn2F & 0xFFu) > 0u && ((dn2F >> 8) & 0x03u) == fluidType)
                     {
-                        botY = y - 0.45f;
+                        botY = y - 1.0f;
+                    }
+                    else
+                    {
+                        botY = y - 0.30f;
+                        emitBottomCap = true;
                     }
                 }
             }
 
-            float topY = hasAboveSame
-                ? (y + 1.0f)
-                : (y + Math.Clamp(0.45f + 0.55f * (selfMass / 255.0f), 0.45f, 1.0f));
-            float rTop = hasAboveSame ? ComputeFallingStreamRadius(aboveMass) : (rBot * 0.85f);
+            // Alt carpma noktasinda selale asla ustteki genisliginden ince sivri igne ucuna sikismasin (ea997276.jpg)!
+            if (hitsPoolOrGroundBelow || hasAboveSame)
+            {
+                botInset = MathF.Min(botInset, topInset + (hitsPoolOrGroundBelow ? 0.0f : 0.04f));
+                width = 1.0f - 2.0f * botInset;
+            }
+
+            // 4 kose koordinati (simetrik komsu ortalamasi -> farkli kutleli yan yana iki selale 0.000m dikisle kaynasir!)
+            float bX0 = (fluidNegX || solidNegX) ? lx : (lx + (topPinNegX ? MathF.Min(botInset, 0.12f) : botInset));
+            float bX1 = (fluidPosX || solidPosX) ? (lx + 1.0f) : (lx + 1.0f - (topPinPosX ? MathF.Min(botInset, 0.12f) : botInset));
+            float bZ0_atX0 = (fluidNegZ || solidNegZ) ? lz : (lz + (topPinNegZ ? MathF.Min(botInset, 0.12f) : (fluidNegX ? 0.5f * (botInset + ComputeVolumetricWaterfallInset(massNegX)) : botInset)));
+            float bZ0_atX1 = (fluidNegZ || solidNegZ) ? lz : (lz + (topPinNegZ ? MathF.Min(botInset, 0.12f) : (fluidPosX ? 0.5f * (botInset + ComputeVolumetricWaterfallInset(massPosX)) : botInset)));
+            float bZ1_atX0 = (fluidPosZ || solidPosZ) ? (lz + 1.0f) : (lz + 1.0f - (topPinPosZ ? MathF.Min(botInset, 0.12f) : (fluidNegX ? 0.5f * (botInset + ComputeVolumetricWaterfallInset(massNegX)) : botInset)));
+            float bZ1_atX1 = (fluidPosZ || solidPosZ) ? (lz + 1.0f) : (lz + 1.0f - (topPinPosZ ? MathF.Min(botInset, 0.12f) : (fluidPosX ? 0.5f * (botInset + ComputeVolumetricWaterfallInset(massPosX)) : botInset)));
+
+            float tX0 = topPinNegX ? lx : (lx + topInset);
+            float tX1 = topPinPosX ? (lx + 1.0f) : (lx + 1.0f - topInset);
+            bool topFluidNegX = hasAboveSame ? (upMassNegX > 0) : fluidNegX;
+            bool topFluidPosX = hasAboveSame ? (upMassPosX > 0) : fluidPosX;
+            float tZ0_atX0 = topPinNegZ ? lz : (lz + (topFluidNegX ? 0.5f * (topInset + ComputeVolumetricWaterfallInset(upMassNegX)) : topInset));
+            float tZ0_atX1 = topPinNegZ ? lz : (lz + (topFluidPosX ? 0.5f * (topInset + ComputeVolumetricWaterfallInset(upMassPosX)) : topInset));
+            float tZ1_atX0 = topPinPosZ ? (lz + 1.0f) : (lz + 1.0f - (topFluidNegX ? 0.5f * (topInset + ComputeVolumetricWaterfallInset(upMassNegX)) : topInset));
+            float tZ1_atX1 = topPinPosZ ? (lz + 1.0f) : (lz + 1.0f - (topFluidPosX ? 0.5f * (topInset + ComputeVolumetricWaterfallInset(upMassPosX)) : topInset));
+
+            // Kose noktalari: 00=(-X,-Z), 01=(-X,+Z), 11=(+X,+Z), 10=(+X,-Z)
+            Vector3 b00 = new Vector3(bX0, botY, bZ0_atX0);
+            Vector3 b01 = new Vector3(bX0, botY, bZ1_atX0);
+            Vector3 b11 = new Vector3(bX1, botY, bZ1_atX1);
+            Vector3 b10 = new Vector3(bX1, botY, bZ0_atX1);
+
+            Vector3 t00 = new Vector3(tX0, topY, tZ0_atX0);
+            Vector3 t01 = new Vector3(tX0, topY, tZ1_atX0);
+            Vector3 t11 = new Vector3(tX1, topY, tZ1_atX1);
+            Vector3 t10 = new Vector3(tX1, topY, tZ0_atX1);
 
             float prevTopY = prevMass > 0
-                ? (y + Math.Clamp(0.35f + 0.65f * (prevMass / 255.0f), 0.35f, 1.0f))
+                ? (y + Math.Clamp(0.45f + 0.55f * (prevMass / 255.0f), 0.45f, 1.0f))
                 : botY;
             byte encTopDy = hasAboveSame
                 ? (byte)128
                 : FluidCornerSample.EncodeSignedUnitToByte(Math.Clamp(topY - prevTopY, -1.0f, 1.0f));
 
-            float colDepth = Math.Clamp(rBot * 1.6f, 0.14f, 0.48f);
-            const float streamFoam = 0.22f;
+            float colDepth = Math.Clamp(width, 0.48f, 1.00f);
+            float topFoam = Math.Clamp(0.18f + 0.14f * (selfMass / 255.0f), 0.18f, 0.32f);
+            float botFoam = hitsPoolOrGroundBelow ? 0.44f : topFoam;
 
-            ReadOnlySpan<float> sin8 = stackalloc float[8] { 0.0f, 0.70710678f, 1.0f, 0.70710678f, 0.0f, -0.70710678f, -1.0f, -0.70710678f };
-            ReadOnlySpan<float> cos8 = stackalloc float[8] { 1.0f, 0.70710678f, 0.0f, -0.70710678f, -1.0f, -0.70710678f, 0.0f, 0.70710678f };
-
-            for (int k = 0; k < 8; k++)
+            // Yalnizca acik havaya bakan dis yuzleri or (komsu selale/kaya ic duvarlarini 0 uret -> saf tek parca 3B hacim!)
+            // Winding kurali (Unity sol-el, disaridan saat yonu = (topL - botL) x (topR - botL) dis normal!):
+            if (!fluidNegX && !solidNegX)
             {
-                int kNext = (k + 1) & 7;
-                float s0 = sin8[kNext], c0 = cos8[kNext];
-                float s1 = sin8[k], c1 = cos8[k];
-
-                Vector3 pBot0 = new Vector3(cx + s0 * rBot, botY, cz + c0 * rBot);
-                Vector3 pTop0 = new Vector3(cx + s0 * rTop, topY, cz + c0 * rTop);
-                Vector3 pBot1 = new Vector3(cx + s1 * rBot, botY, cz + c1 * rBot);
-                Vector3 pTop1 = new Vector3(cx + s1 * rTop, topY, cz + c1 * rTop);
-
-                // Yukari-egimli yumusak silindirik normal (N.y = 0.84 -> yan kenarda sert beyaz Fresnel cubugu %0!)
-                Vector3 n0 = Vector3.Normalize(new Vector3(s0 * 0.54f, 0.84f, c0 * 0.54f));
-                Vector3 n1 = Vector3.Normalize(new Vector3(s1 * 0.54f, 0.84f, c1 * 0.54f));
-
-                outRichTriangles.Add(new FluidRichTriangle
-                {
-                    C0 = MakeSample(pBot0, n0, renderId, 128, 128, 128, colDepth, streamFoam),
-                    C1 = MakeSample(pTop0, n0, renderId, encTopDy, 128, 128, colDepth, streamFoam),
-                    C2 = MakeSample(pTop1, n1, renderId, encTopDy, 128, 128, colDepth, streamFoam)
-                });
-                outRichTriangles.Add(new FluidRichTriangle
-                {
-                    C0 = MakeSample(pBot0, n0, renderId, 128, 128, 128, colDepth, streamFoam),
-                    C1 = MakeSample(pTop1, n1, renderId, encTopDy, 128, 128, colDepth, streamFoam),
-                    C2 = MakeSample(pBot1, n1, renderId, 128, 128, 128, colDepth, streamFoam)
-                });
-
-                if (!hasAboveSame)
-                {
-                    Vector3 pApex = new Vector3(cx, topY + rTop * 0.25f, cz);
-                    Vector3 pCapA = new Vector3(cx + sin8[k] * rTop, topY, cz + cos8[k] * rTop);
-                    Vector3 pCapB = new Vector3(cx + sin8[kNext] * rTop, topY, cz + cos8[kNext] * rTop);
-                    outRichTriangles.Add(new FluidRichTriangle
-                    {
-                        C0 = MakeSample(pApex, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.14f),
-                        C1 = MakeSample(pCapA, n1, renderId, encTopDy, 128, 128, colDepth, 0.14f),
-                        C2 = MakeSample(pCapB, n0, renderId, encTopDy, 128, 128, colDepth, 0.14f)
-                    });
-                }
+                EmitVolumetricWaterfallFace(in b01, in t01, in t00, in b00, -Vector3.UnitX, renderId, encTopDy, colDepth, topFoam, botFoam, outRichTriangles);
             }
+            if (!fluidPosX && !solidPosX)
+            {
+                EmitVolumetricWaterfallFace(in b10, in t10, in t11, in b11, Vector3.UnitX, renderId, encTopDy, colDepth, topFoam, botFoam, outRichTriangles);
+            }
+            if (!fluidNegZ && !solidNegZ)
+            {
+                EmitVolumetricWaterfallFace(in b00, in t00, in t10, in b10, -Vector3.UnitZ, renderId, encTopDy, colDepth, topFoam, botFoam, outRichTriangles);
+            }
+            if (!fluidPosZ && !solidPosZ)
+            {
+                EmitVolumetricWaterfallFace(in b11, in t11, in t01, in b01, Vector3.UnitZ, renderId, encTopDy, colDepth, topFoam, botFoam, outRichTriangles);
+            }
+
+            if (!hasAboveSame)
+            {
+                outRichTriangles.Add(new FluidRichTriangle
+                {
+                    C0 = MakeSample(t00, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f),
+                    C1 = MakeSample(t01, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f),
+                    C2 = MakeSample(t11, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f)
+                });
+                outRichTriangles.Add(new FluidRichTriangle
+                {
+                    C0 = MakeSample(t00, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f),
+                    C1 = MakeSample(t11, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f),
+                    C2 = MakeSample(t10, Vector3.UnitY, renderId, encTopDy, 128, 128, colDepth, 0.16f)
+                });
+            }
+
+            if (emitBottomCap)
+            {
+                outRichTriangles.Add(new FluidRichTriangle
+                {
+                    C0 = MakeSample(b00, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam),
+                    C1 = MakeSample(b11, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam),
+                    C2 = MakeSample(b01, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam)
+                });
+                outRichTriangles.Add(new FluidRichTriangle
+                {
+                    C0 = MakeSample(b00, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam),
+                    C1 = MakeSample(b10, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam),
+                    C2 = MakeSample(b11, -Vector3.UnitY, renderId, 128, 128, 128, colDepth, topFoam)
+                });
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void ProbeWaterfallSideNeighbor(
+            FluidNeighborhood3x3Cache nb,
+            int nx,
+            int y,
+            int nz,
+            byte fluidType,
+            out bool hasSameFluid,
+            out bool isSolid,
+            out byte fluidMass)
+        {
+            nb.SampleCellFast(nx, y, nz, out uint s, out ushort f);
+            isSolid = VoxelBitUtility.IsPhysicallySolid(s);
+            byte m = (byte)(f & 0xFFu);
+            hasSameFluid = !isSolid && m > 0 && ((f >> 8) & 0x03u) == fluidType;
+            fluidMass = hasSameFluid ? m : (byte)0;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void EmitVolumetricWaterfallFace(
+            in Vector3 botL,
+            in Vector3 topL,
+            in Vector3 topR,
+            in Vector3 botR,
+            Vector3 outwardNormal,
+            byte renderId,
+            byte encTopDy,
+            float colDepth,
+            float topFoam,
+            float botFoam,
+            List<FluidRichTriangle> outRichTriangles)
+        {
+            outRichTriangles.Add(new FluidRichTriangle
+            {
+                C0 = MakeSample(botL, outwardNormal, renderId, 128, 128, 128, colDepth, botFoam),
+                C1 = MakeSample(topL, outwardNormal, renderId, encTopDy, 128, 128, colDepth, topFoam),
+                C2 = MakeSample(topR, outwardNormal, renderId, encTopDy, 128, 128, colDepth, topFoam)
+            });
+            outRichTriangles.Add(new FluidRichTriangle
+            {
+                C0 = MakeSample(botL, outwardNormal, renderId, 128, 128, 128, colDepth, botFoam),
+                C1 = MakeSample(topR, outwardNormal, renderId, encTopDy, 128, 128, colDepth, topFoam),
+                C2 = MakeSample(botR, outwardNormal, renderId, 128, 128, 128, colDepth, botFoam)
+            });
         }
 
         private static bool HasThickUndergroundCaveRoof(uint[] centerSolids, int lx, int y, int lz, int maxBufferY)
@@ -2887,6 +3525,210 @@ namespace Stratocraft.Voxel.Jobs
             }
 
             return y;
+        }
+
+        /// <summary>
+        /// HybridSurfaceNetsAndShapeMesher'in (dx-1)+localPos.Y dual izo-yuzey yerlesimiyle birebir eslesen
+        /// gercek zemin kotu ornekleyicisi. Dogal SDF toprakta (ShapeId==0, d=127) cimenin gercek kotu
+        /// sy + 0.496m'dir (y+1.0m degil!); y+1..y-4 araligini tarayarak alt cukur/yamac dususlerini de gorur.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float SampleTrueSurfaceNetsFloorYAtCorner(
+            FluidNeighborhood3x3Cache nb,
+            int cornerX,
+            int cornerZ,
+            int y,
+            int maxBufferY)
+        {
+            int topScan = Math.Min(maxBufferY - 1, y + 1);
+            int botScan = Math.Max(0, y - 4);
+            for (int sy = topScan; sy >= botScan; sy--)
+            {
+                nb.SampleCellFast(cornerX, sy, cornerZ, out uint sRaw, out _);
+                if (VoxelBitUtility.IsPhysicallySolid(sRaw))
+                {
+                    if (VoxelBitUtility.GetShapeId(sRaw) != 0)
+                    {
+                        return sy + 1.0f;
+                    }
+
+                    byte d = VoxelBitUtility.GetDensityOrLiquid(sRaw);
+                    float t = Math.Clamp((d - (float)StratocraftConstants.SdfIsoLevel) / MathF.Max(64.0f, d), 0.08f, 0.496f);
+                    return sy + t;
+                }
+            }
+
+            return Math.Max(0f, y - 4.0f);
+        }
+
+        /// <summary>
+        /// Dual-grid SurfaceNets ucgenlerinin -0.5m XZ kaymasini (-X / -Z yamaclarinda) birebir kapsamak icin
+        /// kose (cornerX, cornerZ) cevresindeki 4 komsu kolonun {(0,0), (-1,0), (0,-1), (-1,-1)} en dusuk
+        /// gercek SurfaceNets taban kotunu doner (8368bcc1.jpg kisa kalan etek tamiri!).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float SampleMinTrueSurfaceNetsFloorYAtCorner(
+            FluidNeighborhood3x3Cache nb,
+            int cornerX,
+            int cornerZ,
+            int y,
+            int maxBufferY)
+        {
+            float minY = SampleTrueSurfaceNetsFloorYAtCorner(nb, cornerX, cornerZ, y, maxBufferY);
+            float gNegX = SampleTrueSurfaceNetsFloorYAtCorner(nb, cornerX - 1, cornerZ, y, maxBufferY);
+            float gNegZ = SampleTrueSurfaceNetsFloorYAtCorner(nb, cornerX, cornerZ - 1, y, maxBufferY);
+            float gNegXZ = SampleTrueSurfaceNetsFloorYAtCorner(nb, cornerX - 1, cornerZ - 1, y, maxBufferY);
+            if (gNegX < minY) minY = gNegX;
+            if (gNegZ < minY) minY = gNegZ;
+            if (gNegXZ < minY) minY = gNegXZ;
+            return minY;
+        }
+
+        /// <summary>
+        /// Paket 4B.3 Cift-Komsuluklu SurfaceNets Arazi Zarf Ornekleyicisi (4511a295.jpg &amp; 3ed66b74.jpg):
+        /// Tam dunya kosesi (cornerX, cornerZ) noktasindaki gercek SurfaceNets yuzey kotunu, 4 kardinal komsudaki
+        /// yuksek kaya duvarlarinin olusturdugu icbukey V-vadi dual-tepe kalkmasini (higherBanks) ve 1:1 / 2:1
+        /// yamac dikligini (maxStepDelta) 0-GC olarak hesaplar (y, y-1, y-2 katmanlarinda ozdes sonuc verir!).
+        /// </summary>
+        private static float EvaluateSurfaceNetsTerrainYAtCorner(
+            FluidNeighborhood3x3Cache nb,
+            int cornerX,
+            int cornerZ,
+            int y,
+            int maxBufferY,
+            out int higherBanks,
+            out int maxStepDelta)
+        {
+            higherBanks = 0;
+            maxStepDelta = 0;
+
+            // +X/+Z Kuru Kiyi Duvari Koruma Kurali (ef3129b3.jpg & d5e24a60.jpg Tamiri):
+            // Dere/golun kosesindeki (cornerX, y, cornerZ) hucresi kati dogal yamac duvariysa, onu suyun tabani sayip
+            // su kosesini +1.0..+2.0m havaya firlatma! Yalnizca y-1 ve altindaki gercek dere tabanini (veya 4 kose
+            // komsusu icindeki acik/islak taban sutununu) ornekle!
+            int topScan = Math.Max(0, y - 1);
+            int botScan = Math.Max(0, y - 4);
+            int sampleColX = cornerX;
+            int sampleColZ = cornerZ;
+            nb.SampleCellFast(cornerX, y, cornerZ, out uint atYCornerSolid, out _);
+            if (VoxelBitUtility.IsPhysicallySolid(atYCornerSolid))
+            {
+                // Bu sutun y katmaninda kati yamac duvari; koseye dokunan 4 sutundan y katmani acik olan en alcak tabani sec
+                int bestColY = int.MaxValue;
+                ReadOnlySpan<int> odx = stackalloc int[4] { -1, 0, -1, 0 };
+                ReadOnlySpan<int> odz = stackalloc int[4] { -1, -1, 0, 0 };
+                for (int ok = 0; ok < 4; ok++)
+                {
+                    int cx = cornerX + odx[ok];
+                    int cz = cornerZ + odz[ok];
+                    nb.SampleCellFast(cx, y, cz, out uint oAtY, out _);
+                    if (VoxelBitUtility.IsPhysicallySolid(oAtY)) continue;
+                    for (int sy = topScan; sy >= botScan; sy--)
+                    {
+                        nb.SampleCellFast(cx, sy, cz, out uint oBelow, out _);
+                        if (VoxelBitUtility.IsPhysicallySolid(oBelow))
+                        {
+                            if (sy < bestColY)
+                            {
+                                bestColY = sy;
+                                sampleColX = cx;
+                                sampleColZ = cz;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            int sy0 = -1;
+            uint sRaw0 = 0u;
+            for (int sy = topScan; sy >= botScan; sy--)
+            {
+                nb.SampleCellFast(sampleColX, sy, sampleColZ, out uint sRaw, out _);
+                if (VoxelBitUtility.IsPhysicallySolid(sRaw))
+                {
+                    sy0 = sy;
+                    sRaw0 = sRaw;
+                    break;
+                }
+            }
+
+            if (sy0 < 0)
+            {
+                return Math.Max(0f, y - 4.0f);
+            }
+
+            if (VoxelBitUtility.GetShapeId(sRaw0) != 0)
+            {
+                return sy0 + 1.0f;
+            }
+
+            byte d0 = VoxelBitUtility.GetDensityOrLiquid(sRaw0);
+            float t0 = Math.Clamp((d0 - (float)StratocraftConstants.SdfIsoLevel) / MathF.Max(64.0f, d0), 0.08f, 0.496f);
+            float baseY = sy0 + t0;
+
+            bool highNegX = false, highPosX = false, highNegZ = false, highPosZ = false;
+            int nScanTop = Math.Min(maxBufferY - 1, sy0 + 2);
+            int nScanBot = Math.Max(0, sy0 - 2);
+            ReadOnlySpan<int> dxs = stackalloc int[4] { -1, 1, 0, 0 };
+            ReadOnlySpan<int> dzs = stackalloc int[4] { 0, 0, -1, 1 };
+
+            for (int k = 0; k < 4; k++)
+            {
+                int nx = sampleColX + dxs[k];
+                int nz = sampleColZ + dzs[k];
+                int nTopY = nScanBot - 1;
+                byte nShape = 0;
+                for (int sy = nScanTop; sy >= nScanBot; sy--)
+                {
+                    nb.SampleCellFast(nx, sy, nz, out uint ns, out _);
+                    if (VoxelBitUtility.IsPhysicallySolid(ns))
+                    {
+                        nTopY = sy;
+                        nShape = VoxelBitUtility.GetShapeId(ns);
+                        break;
+                    }
+                }
+
+                if (nTopY >= nScanBot)
+                {
+                    int delta = Math.Abs(nTopY - sy0);
+                    if (delta > maxStepDelta) maxStepDelta = delta;
+                    if (nTopY > sy0 && nShape == 0)
+                    {
+                        higherBanks++;
+                        if (k == 0) highNegX = true;
+                        else if (k == 1) highPosX = true;
+                        else if (k == 2) highNegZ = true;
+                        else highPosZ = true;
+                    }
+                }
+            }
+
+            bool isOppositeVTrough = (highNegX && highPosX) || (highNegZ && highPosZ);
+            float concaveLift;
+            if (isOppositeVTrough)
+            {
+                concaveLift = 0.50f * (1.0f - t0);
+            }
+            else if (higherBanks >= 3)
+            {
+                concaveLift = 0.60f * (1.0f - t0);
+            }
+            else if (higherBanks == 2)
+            {
+                concaveLift = 0.45f * (1.0f - t0);
+            }
+            else if (higherBanks == 1)
+            {
+                concaveLift = 0.25f * (1.0f - t0);
+            }
+            else
+            {
+                concaveLift = 0.0f;
+            }
+
+            return baseY + concaveLift;
         }
 
         // ==================== GERIYE DONUK UYUMLU LEGACY MESHER (FacetedVoxelTriangle) ====================

@@ -76,6 +76,7 @@ Shader "Stratocraft/FluidSurface"
             // Global Oyuncu-Su Etkilesimi (SRP Batcher uyumlu, 0 B doku VRAM):
             float4 _StratocraftSwimmerPos;
             float4 _StratocraftSwimmerVel;
+            float _StratocraftCameraSubmerged;
 
             // Kuresel Ruzgar Vektoru, Bulut Golgesi ve Tuzluluk Parametreleri
             float4 _GlobalWindVector;
@@ -187,7 +188,10 @@ Shader "Stratocraft/FluidSurface"
 
                 float phase0 = frac((timeSec / flowPeriod) + spatialJitter);
                 float phase1 = frac((timeSec / flowPeriod) + 0.50 + spatialJitter);
-                float blend1 = 1.0 - abs(1.0 - 2.0 * phase0);
+                // Kanonik Alex Vlachos (SIGGRAPH 2010) ucgen dalga agirligi:
+                // phase0 = 0/1 (p0 geri sararken) -> blend1 = 1.0 (yalnizca r1 gorunur, %0 ziplama!);
+                // phase0 = 0.5 (p1 geri sararken) -> blend1 = 0.0 (yalnizca r0 gorunur, %0 ziplama!).
+                float blend1 = abs(1.0 - 2.0 * phase0);
 
                 float2 p0 = (worldXZ - flowVelXZ * (phase0 * flowPeriod)) * freqScale;
                 float2 p1 = (worldXZ - flowVelXZ * (phase1 * flowPeriod)) * freqScale;
@@ -275,9 +279,10 @@ Shader "Stratocraft/FluidSurface"
                     float wave2 = sin(dot(posWS.xz, windDir * 0.55) - (_Time.y * (1.6 + windSpeed * 0.12)));
                     posWS.y += (wave1 * 0.45 + wave2 * 0.55) * waveAmp;
 
-                    // Oyuncu yuzme dairesel dalga halkasi
+                    // Oyuncu yuzme dairesel dalga halkasi (yalnizca gercek derinligi olan sularda; ince yagmurda 0!)
                     float topMask = saturate(nrmWS.y * 1.5);
-                    float swimWeight = saturate(_StratocraftSwimmerPos.w);
+                    float swimDepthGate = smoothstep(0.12, 0.45, depthMeters);
+                    float swimWeight = saturate(_StratocraftSwimmerPos.w) * swimDepthGate;
                     if (swimWeight > 0.01 && topMask > 0.25 && abs(posWS.y - _StratocraftSwimmerPos.y) < 2.4)
                     {
                         float2 toVert = posWS.xz - _StratocraftSwimmerPos.xz;
@@ -313,7 +318,26 @@ Shader "Stratocraft/FluidSurface"
             {
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
+                // Paket 4B.3 Tek-Yuzlu Hacim Korumasi:
+                // Kamera su disindayken (_StratocraftCameraSubmerged < 0.05) arka yuzleri at (Cull Back esdegeri!) ->
+                // 3B selale sutunlarinda ve zemin muhur eteklerinde cift-duvar parlamasi / ters mavi levha %0!
+                // Kamera suya daldiginda yukari bakan su-hava ust yuzeyinde (normalWS.y >= 0.35) Snell gokyuzu penceresi acilir.
+                if (!isFrontFace)
+                {
+                    if (input.fluidType != 1u || _StratocraftCameraSubmerged < 0.05 || input.normalWS.y < 0.35)
+                    {
+                        discard;
+                    }
+                }
+
                 float3 geomNormalWS = normalize(isFrontFace ? input.normalWS : -input.normalWS);
+                float3 rawFaceCross = cross(ddx(input.positionWS), ddy(input.positionWS));
+                float3 faceNormalWS = dot(rawFaceCross, rawFaceCross) > 1e-10 ? normalize(rawFaceCross) : geomNormalWS;
+                if (dot(faceNormalWS, geomNormalWS) < 0.0)
+                {
+                    faceNormalWS = -faceNormalWS;
+                }
+                float sideWallMask = 1.0 - smoothstep(0.28, 0.68, abs(faceNormalWS.y));
                 float3 viewDirWS = normalize(_WorldSpaceCameraPos - input.positionWS);
 
                 float2 flowVel = input.flowAndFoam.xy;
@@ -350,16 +374,33 @@ Shader "Stratocraft/FluidSurface"
                     cloudShadowAtten = lerp(1.0, rawCloudAtten, saturate(_GlobalCloudGridParams.w));
                 }
 
-                // Alex Vlachos Cift-Fazli Prosedurel Akis & Analitik Normal Turevi (0.0 MB VRAM)
-                float2 effectiveFlow = flowVel + _GlobalWindVector.xz * 0.06;
+                // Paket 4B.3 Egim-Yonlu Yercekimi Akis Vektoru + Alex Vlachos Cift-Fazli Prosedurel Akis (0.0 MB VRAM)
+                float slopeSin = saturate(length(faceNormalWS.xz));
+                float slopeFlowMask = smoothstep(0.12, 0.38, slopeSin) * (1.0 - sideWallMask);
+                float2 downhillDirXZ = (slopeSin > 0.05) ? (faceNormalWS.xz / slopeSin) : float2(0.0, 0.0);
+                float2 gravitySlopeVel = downhillDirXZ * (slopeFlowMask * lerp(0.95, 2.60, slopeSin));
+                float2 activeStreamVel = (flowSpeed > 0.25) ? (flowVel + gravitySlopeVel * 0.50) : (flowVel + gravitySlopeVel);
+                float activeFlowSpeed = length(activeStreamVel);
+
+                float2 effectiveFlow = activeStreamVel + _GlobalWindVector.xz * 0.06;
                 float3 rippleCoarse = SampleDualPhaseAdvectedRipples(input.positionWS.xz, effectiveFlow, 1.65, _Time.y);
                 float3 rippleFine = SampleDualPhaseAdvectedRipples(input.positionWS.xz + float2(7.3, 11.1), effectiveFlow * 1.15, 3.30, _Time.y * 1.25);
                 float rippleHeight01 = saturate(0.5 + 0.5 * (0.60 * rippleCoarse.x + 0.40 * rippleFine.x));
                 float2 analyticalGrad = rippleCoarse.yz * (1.65 * 0.60) + rippleFine.yz * (3.30 * 0.40);
 
-                float upwardMask = saturate(abs(geomNormalWS.y) * 1.25);
-                float bumpStrength = lerp(0.14, 0.34, saturate(flowSpeed * 0.35 + windSpeed * 0.03)) * upwardMask;
-                float3 normalWS = normalize(geomNormalWS + float3(-analyticalGrad.x * bumpStrength, 0.0, -analyticalGrad.y * bumpStrength));
+                // Dikey 3B selale ve zemin muhur duvarlari icin asagi akan animasyonlu akis dalgalari
+                // (Yalnizca gercek selalelerde waterfallAttrFoam > 0; durgun zemin muhur eteklerinde dikey dalga/cizgi 0!)
+                float waterfallWallGate = saturate(waterfallAttrFoam * 5.0);
+                float activeWallMask = sideWallMask * waterfallWallGate;
+                float wallU = abs(faceNormalWS.x) > abs(faceNormalWS.z) ? input.positionWS.z : input.positionWS.x;
+                float2 wallFlowUV = float2(wallU * 2.4, input.positionWS.y * 0.90 + _Time.y * 4.6);
+                float3 wallRipple = ProceduralRippleHeightAndGrad(wallFlowUV, _Time.y * 2.2);
+
+                float upwardMask = saturate(abs(faceNormalWS.y) * 1.25);
+                float bumpStrength = lerp(0.18, 0.46, saturate(activeFlowSpeed * 0.42 + slopeFlowMask * 0.55 + windSpeed * 0.03)) * upwardMask;
+                float3 horizontalPerturb = float3(-analyticalGrad.x * bumpStrength, 0.0, -analyticalGrad.y * bumpStrength);
+                float3 wallPerturb = float3(0.0, -wallRipple.z * 0.24 * activeWallMask, 0.0);
+                float3 normalWS = normalize(geomNormalWS + horizontalPerturb + wallPerturb);
 
                 float NdotV = max(0.0, dot(normalWS, viewDirWS));
                 float NdotL = max(0.0, dot(normalWS, mainLight.direction)) * cloudShadowAtten;
@@ -375,15 +416,6 @@ Shader "Stratocraft/FluidSurface"
 
                     if (!isFrontFace)
                     {
-                        // Paket 4B.2 Sualti Korumasi: Snell gokyuzu penceresi YALNIZCA yukari bakan su-hava ust yuzeyinde
-                        // (input.normalWS.y >= 0.35) calisir! Dikey selale veya kenar yuzeylerinin arkasina bakildiginda
-                        // suyun dibinde sahte beyaz gokyuzu penceresi ASLA olusturulmaz!
-                        if (input.normalWS.y < 0.35)
-                        {
-                            float3 curtainUnder = lerp(deepTint, shallowTint, 0.45) * lightCol * 0.90;
-                            return float4(MixFog(curtainUnder, input.fogFactor), 0.72);
-                        }
-
                         float snellWindow = smoothstep(0.42, 0.78, NdotV);
                         float causticWave = SmoothValueNoise2D(input.positionWS.xz * 2.1 + _Time.y * 0.45);
                         float3 tirDeep = deepTint * lightCol * 0.92;
@@ -393,35 +425,67 @@ Shader "Stratocraft/FluidSurface"
                         return float4(MixFog(underColor, input.fogFactor), underAlpha);
                     }
 
-                    // Beer-Lambert Derinlik Sogurmasi (sığ yagmur filmi berrak, derin nehir/gol doygun mavi)
-                    float sideWallMask = 1.0 - saturate(abs(geomNormalWS.y) * 1.35);
-                    float effectiveColumnDepth = min(opticalDepth, max(depthMeters * 1.65, 0.02));
+                    // Beer-Lambert Derinlik Sogurmasi:
+                    // Gercek selaleler (activeWallMask) dolgun mavi; durgun zemin muhur etekleri gercek derinlik + yumusak erimeyle
+                    // kar/topraga sert akvaryum cami gibi degil dogal su kenari gibi oturur!
+                    float flowingContrastBoost = max(slopeFlowMask * 0.34, saturate((activeFlowSpeed - 0.30) * 0.35) * 0.24);
+                    float horizontalDepth = max(min(opticalDepth, max(depthMeters * 1.65, 0.02)), flowingContrastBoost);
+                    float effectiveColumnDepth = lerp(horizontalDepth, max(depthMeters, 0.72), activeWallMask);
                     float3 extinction = _WaterExtinction.rgb * lerp(1.0, 1.16, salt01);
-                    float3 absorb = exp(-extinction * clamp(effectiveColumnDepth + sideWallMask * 0.25, 0.03, 6.0));
+                    float3 absorb = exp(-extinction * clamp(effectiveColumnDepth + activeWallMask * 0.22 + flowingContrastBoost * 1.15, 0.03, 6.0));
                     float3 waterColor = lerp(deepTint, shallowTint, absorb);
+                    // Buz/Kar zeminle kamufle olmamasi icin akan derede hafif safir-kobalt doygunluk vurgusu
+                    waterColor = lerp(waterColor, float3(0.08, 0.44, 0.80), saturate(flowingContrastBoost * 0.85));
 
-                    // Schlick Fresnel + Gunes/Gok Yansimasi
-                    float fresnel = 0.06 + 0.94 * pow(1.0 - NdotV, 3.8);
+                    // Schlick Fresnel + Gunes/Gok Yansimasi + Canli Gunes Specular Pariltisi
+                    float fresnel = 0.06 + 0.94 * pow(saturate(1.0 - NdotV), 3.8);
                     float3 skyReflection = float3(0.42, 0.70, 0.96) * lightCol * 1.14;
-                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * (0.52 - sideWallMask * 0.18));
+                    float3 finalColor = lerp(waterColor * lightCol, skyReflection, fresnel * lerp(0.52, 0.10, sideWallMask));
+                    float3 halfDir = normalize(mainLight.direction + viewDirWS);
+                    float sunSpecPower = lerp(150.0, 60.0, slopeFlowMask);
+                    float sunSpec = pow(saturate(dot(normalWS, halfDir)), sunSpecPower) *
+                                    (0.65 + 0.50 * slopeFlowMask) * cloudShadowAtten * (1.0 - sideWallMask * 0.65);
+                    finalColor += mainLight.color * sunSpec;
 
                     // --- Birlesik Fiziksel Beyaz Kopuk (0.0 MB VRAM) ---
-                    // A. Superkritik Froude Sayisi Kopugu: yalnizca gercek kutlesi olan hizli nehirlerde (depth >= 0.14m)
-                    float froude = flowSpeed / sqrt(9.81 * max(depthMeters, 0.12));
-                    float froudeDepthGate = smoothstep(0.14, 0.42, depthMeters);
-                    float froudeFoam = smoothstep(1.05, 2.35, froude) * smoothstep(0.38, 0.78, rippleHeight01) * froudeDepthGate;
+                    // A. Superkritik Froude Sayisi Kopugu
+                    float froude = activeFlowSpeed / sqrt(9.81 * max(depthMeters, 0.10));
+                    float froudeDepthGate = smoothstep(0.08, 0.34, depthMeters);
+                    float froudeFoam = smoothstep(0.95, 2.15, froude) * smoothstep(0.36, 0.76, rippleHeight01) * froudeDepthGate;
 
-                    // B. Selale Perdesi ve Dusus Suyu cizgileri: Opak beyaz kagit serit (706fc114.jpg) yerine
-                    // yari-seffaf mavi-turkuaz su icinde asagi akan ince kopuk cizgileri!
-                    float lateralCoord = input.positionWS.x * 1.13 + input.positionWS.z * 0.97;
-                    float2 waterfallStreakUV = float2(lateralCoord * 2.4, input.positionWS.y * 0.85 + _Time.y * 4.4);
-                    float waterfallNoise = SmoothValueNoise2D(waterfallStreakUV * 2.8);
-                    float fineStreaks = 0.5 + 0.5 * sin(lateralCoord * 19.0 + waterfallNoise * 4.2 + _Time.y * 2.5);
-                    float waterfallFoam = waterfallAttrFoam * (0.16 + 0.46 * fineStreaks * waterfallNoise);
+                    // B. Minecraft Tarzi 3B Hacimli Selale Akis Cizgileri:
+                    // Yuzey eksenine hizali (wallU) asagi kayan yari-seffaf parlak turkuaz-beyaz akis damarlari
+                    // (Yalnizca gercek selalelerde waterfallAttrFoam > 0; durgun zemin muhur etekleri berrak su olarak kalir!)
+                    float2 waterfallStreakUV = float2(wallU * 2.6, input.positionWS.y * 0.92 + _Time.y * 4.8);
+                    float waterfallNoise = SmoothValueNoise2D(waterfallStreakUV * 2.4);
+                    float fineStreaks = 0.5 + 0.5 * sin(wallU * 16.0 + waterfallNoise * 3.8 + input.positionWS.y * 1.2 + _Time.y * 5.2);
+                    float flowVeins = smoothstep(0.38, 0.88, fineStreaks * (0.45 + 0.55 * waterfallNoise));
+                    float activeFlowIntensity = waterfallAttrFoam;
+                    float waterfallFoam = activeFlowIntensity * (0.14 + 0.68 * flowVeins);
+
+                    // B2. Egimli Yamac / Tasan Akinti Seritleri (71bfe469.jpg Tamiri):
+                    // Durgun golde 0.0; egimli yamacta ve hizli akan suda akis yonunde kayan canli beyaz-turkuaz akinti damarlari!
+                    float slopeRapidFoam = 0.0;
+                    float slopeRapidGate = saturate(max(
+                        slopeFlowMask * smoothstep(0.012, 0.065, depthMeters),
+                        smoothstep(0.45, 1.35, activeFlowSpeed) * smoothstep(0.018, 0.085, depthMeters))) * (1.0 - sideWallMask);
+                    if (slopeRapidGate > 0.01 && activeFlowSpeed > 0.05)
+                    {
+                        float2 flowDir = activeStreamVel / max(activeFlowSpeed, 0.001);
+                        float2 flowPerp = float2(-flowDir.y, flowDir.x);
+                        float alongFlow = dot(input.positionWS.xz, flowDir);
+                        float acrossFlow = dot(input.positionWS.xz, flowPerp);
+                        float scrollSpeed = 2.0 + activeFlowSpeed * 1.45;
+                        float2 rapidUV = float2(acrossFlow * 3.4, alongFlow * 1.05 - _Time.y * scrollSpeed);
+                        float rapidNoise = SmoothValueNoise2D(rapidUV * 1.9);
+                        float rapidWave = 0.5 + 0.5 * sin(acrossFlow * 13.5 + rapidNoise * 4.0 + alongFlow * 1.4 - _Time.y * (scrollSpeed * 1.35));
+                        float rapidStreaks = smoothstep(0.42, 0.88, rapidWave * (0.45 + 0.55 * rapidNoise));
+                        slopeRapidFoam = slopeRapidGate * (0.12 + 0.58 * rapidStreaks);
+                    }
 
                     // C. Kiyi ve Engel Carpma Kopugu: yalnizca derinligi olan gol/nehir/deniz kiyisinda (2-8 cm yagmur filminde 0!)
                     float shoreDist = max(0.05, _ShorelineFoamDistance);
-                    float bodyOfWaterGate = smoothstep(0.22, 0.68, depthMeters);
+                    float bodyOfWaterGate = smoothstep(0.22, 0.68, depthMeters) * (1.0 - sideWallMask);
                     float shoreFoam = smoothstep(shoreDist, 0.0, opticalDepth) * smoothstep(0.42, 0.80, rippleHeight01) * bodyOfWaterGate;
 
                     // D. WMO Beaufort >= 6 Ruzgar Dalga Tepesi Kopugu (Whitecaps)
@@ -462,19 +526,23 @@ Shader "Stratocraft/FluidSurface"
                         playerFoam = saturate((bodyRing * (0.65 + 0.55 * splashPulse) + wakeFoam) * swimWeight);
                     }
 
-                    float foam = saturate(max(max(froudeFoam, waterfallFoam), max(shoreFoam, max(beaufortWhitecap, playerFoam))));
-                    finalColor = lerp(finalColor, float3(0.92, 0.96, 1.0) * lightCol * 1.12, foam * 0.80);
+                    float foam = saturate(max(max(froudeFoam, max(waterfallFoam, slopeRapidFoam)), max(shoreFoam, max(beaufortWhitecap, playerFoam))));
+                    finalColor = lerp(finalColor, float3(0.92, 0.97, 1.0) * lightCol * 1.12, foam * lerp(0.78, 0.46, sideWallMask));
 
-                    // Fiziksel kalinliga duyarli seffaflik:
-                    // Ufacik yagmur sızıntısı (0.01..0.08m) seffaf islak film (~0.14..0.38 alpha) olur, sel gibi gorunmez;
-                    // olukta/golde biriktikce (>= 0.25m) doygun su opakligina (0.72..0.92) cikar!
-                    float columnThicknessAlpha = lerp(0.10, max(0.72, _WaterColorShallow.a), smoothstep(0.012, 0.32, depthMeters));
+                    // Fiziksel kalinliga + akisa duyarli seffaflik (71bfe469.jpg Tamiri):
+                    // - Durgun ince yagmur filmi berrak islak tabaka (~0.24..0.38 alpha),
+                    // - Kar/buz ustunde akan dere ve tasan akinti net gorunur (0.50..0.82 alpha),
+                    // - Dikey 3B selale/zemin muhru dolgun yari-seffaf su (0.74..0.84)!
+                    float depthVis01 = sqrt(saturate((effectiveColumnDepth - 0.006) / 0.24));
+                    float slopeAlphaFloor = max(slopeFlowMask, saturate((activeFlowSpeed - 0.35) * 0.85)) *
+                                            smoothstep(0.008, 0.050, depthMeters) * 0.58;
+                    float columnThicknessAlpha = max(slopeAlphaFloor, lerp(0.24, max(0.76, _WaterColorShallow.a), depthVis01));
                     float deepVolumeBonus = clamp(effectiveColumnDepth, 0.0, 4.0) * 0.05;
-                    float edgeContactFeather = validDepth ? smoothstep(0.0, 0.035, opticalDepth) : 1.0;
-                    float thinRimFeather = smoothstep(0.004, 0.042, depthMeters);
-                    float baseAlpha = saturate(columnThicknessAlpha + deepVolumeBonus + fresnel * (0.16 - sideWallMask * 0.11));
-                    float foamTargetAlpha = waterfallAttrFoam > 0.05 ? 0.68 : 0.90;
-                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * lerp(0.06, 1.0, thinRimFeather * edgeContactFeather);
+                    float edgeContactFeather = validDepth ? lerp(smoothstep(0.0, 0.035, opticalDepth), 1.0, max(activeWallMask, slopeFlowMask * 0.85)) : 1.0;
+                    float thinRimFeather = lerp(smoothstep(0.004, 0.036, depthMeters), 1.0, max(activeWallMask, slopeFlowMask * 0.70));
+                    float baseAlpha = saturate(columnThicknessAlpha + deepVolumeBonus + fresnel * lerp(0.16, 0.0, sideWallMask));
+                    float foamTargetAlpha = activeWallMask > 0.5 ? 0.84 : (waterfallAttrFoam > 0.05 ? 0.78 : 0.90);
+                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * lerp(0.45, 1.0, thinRimFeather * edgeContactFeather);
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 
@@ -484,7 +552,7 @@ Shader "Stratocraft/FluidSurface"
                     float lavaPeriod = 3.20;
                     float lavaP0 = frac(_Time.y / lavaPeriod);
                     float lavaP1 = frac((_Time.y / lavaPeriod) + 0.50);
-                    float lavaBlend = 1.0 - abs(1.0 - 2.0 * lavaP0);
+                    float lavaBlend = abs(1.0 - 2.0 * lavaP0);
 
                     float2 baseLavaUV = (input.positionWS.xz + float2(input.positionWS.y * 0.55, -input.positionWS.y * 0.45)) * 0.35;
                     float2 lavaDrift = flowVel * _LavaCrustSpeed;
@@ -505,7 +573,7 @@ Shader "Stratocraft/FluidSurface"
                 // ==================== 3. ASIT (FluidType == 3) ====================
                 float3 acidAbsorb = exp(-float3(0.12, 0.04, 0.35) * opticalDepth);
                 float3 acidColor = lerp(_AcidColorDeep.rgb, _AcidColorShallow.rgb, acidAbsorb);
-                float acidFresnel = 0.04 + 0.96 * pow(1.0 - NdotV, 4.0);
+                float acidFresnel = 0.04 + 0.96 * pow(saturate(1.0 - NdotV), 4.0);
                 float3 finalAcid = lerp(acidColor * lightCol, lightCol * 1.1, acidFresnel * 0.5);
 
                 return float4(MixFog(finalAcid, input.fogFactor), 0.85);

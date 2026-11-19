@@ -689,6 +689,10 @@ namespace Stratocraft.Physics.Data
                             int nwz = wz + dz;
                             int targetY = dy == 0 ? ResolvePourNeighborY(worldChunks, nwx, layerY, nwz, safeMaxY) : layerY;
                             if (targetY < 1) continue;
+                            if (dy > 0 && !HasPourSupportBelow(worldChunks, fluidChunks, nwx, targetY, nwz))
+                            {
+                                continue;
+                            }
                             addedTotal += TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, nwx, targetY, nwz, pourType, 255, ref remaining);
                         }
                     }
@@ -771,6 +775,33 @@ namespace Stratocraft.Physics.Data
             }
 
             return totalScooped;
+        }
+
+        private static bool HasPourSupportBelow(
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
+            Dictionary<(int cx, int cz), ushort[]> fluidChunks,
+            int wx, int wy, int wz)
+        {
+            if (wy <= 1) return true;
+            if (TryReadWorldSolidOnly(worldChunks, wx, wy - 1, wz, out uint belowSolid) &&
+                ComputeCellFluidCapacity(belowSolid) == 0)
+            {
+                return true;
+            }
+
+            int cx = FloorDiv16Pure(wx);
+            int cz = FloorDiv16Pure(wz);
+            if (fluidChunks.TryGetValue((cx, cz), out ushort[]? fl) && fl != null)
+            {
+                int lx = wx - cx * 16;
+                int lz = wz - cz * 16;
+                int bIdx = ((wy - 1) << 8) | (lz << 4) | lx;
+                if ((uint)bIdx < (uint)fl.Length && (fl[bIdx] & 0xFF) >= 128)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static int ResolvePourNeighborY(

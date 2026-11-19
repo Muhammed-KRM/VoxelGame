@@ -19,6 +19,9 @@ namespace Stratocraft.Voxel.Systems
         private readonly Action<int, VoxelChunkComponent>? _postSimdStampHook;
         private readonly Dictionary<(int Cx, int Cz), VoxelChunkComponent> _activeChunks = new();
         private readonly List<VoxelChunkComponent> _activeChunkList = new();
+        private readonly ViewConeChunkStreamingPolicy _viewConePolicy = new();
+        private readonly List<(int cx, int cz)> _viewConeUnloadScratch = new(64);
+        private readonly List<(int cx, int cz)> _viewConeSpawnScratch = new(128);
 
         /// <summary>Yeni bir ChunkStreamingSystem olusturur.</summary>
         public ChunkStreamingSystem(
@@ -134,6 +137,88 @@ namespace Stratocraft.Voxel.Systems
                         chunk.LastVisitedUtcMinutes = nowUtcMinutes;
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Paket 4C-2: 360 derece kare yerine 3-bolgeli gorus konisi (Zone 1 Cekirdek + Zone 2 Frustum + +1 Veri Etegi)
+        /// ile yalnizca bakilan yon ve yakin guvenlik cekirdegindeki chunk'lari yukler; geride kalan suresi dolmus
+        /// kirli chunk'lari .sregion dosyasina kaydedip bosaltir.
+        /// </summary>
+        public void UpdateStreamingWindowWithViewCone(
+            double playerWorldX,
+            double playerWorldZ,
+            float camFwdX,
+            float camFwdZ,
+            in ViewConeConfig config,
+            double nowSeconds,
+            uint currentGameDay = 0,
+            int maxUnloadsPerCall = 32,
+            int maxSpawnsPerCall = 64)
+        {
+            int centerCx = (int)Math.Floor(playerWorldX / StratocraftConstants.ChunkSizeX);
+            int centerCz = (int)Math.Floor(playerWorldZ / StratocraftConstants.ChunkSizeZ);
+            uint nowUtcMinutes = VoxelChunkComponent.GetCurrentUtcMinutes();
+
+            _viewConePolicy.EvaluateUnloadsWithGraceTimer(
+                _activeChunks.Keys,
+                centerCx,
+                centerCz,
+                camFwdX,
+                camFwdZ,
+                in config,
+                nowSeconds,
+                _viewConeUnloadScratch,
+                maxUnloadsPerCall);
+
+            if (_viewConeUnloadScratch.Count > 0)
+            {
+                List<ChunkSerializationSnapshot>? dirtyBatch = null;
+                for (int i = 0; i < _viewConeUnloadScratch.Count; i++)
+                {
+                    (int Cx, int Cz) key = _viewConeUnloadScratch[i];
+                    if (_activeChunks.Remove(key, out VoxelChunkComponent? unloaded))
+                    {
+                        if (_persistence != null && unloaded.IsPersistenceDirty)
+                        {
+                            dirtyBatch ??= new List<ChunkSerializationSnapshot>();
+                            dirtyBatch.Add(CreateSnapshotFromChunk(unloaded));
+                        }
+
+                        _activeChunkList.Remove(unloaded);
+                        unloaded.Dispose();
+                        _viewConePolicy.NotifyChunkUnloaded(key.Cx, key.Cz);
+                    }
+                }
+
+                if (_persistence != null && dirtyBatch != null && dirtyBatch.Count > 0)
+                {
+                    _persistence.SaveDirtyChunksBatchAsync(dirtyBatch.ToArray()).GetAwaiter().GetResult();
+                }
+            }
+
+            _viewConePolicy.CollectPrioritizedSpawnCandidates(
+                centerCx,
+                centerCz,
+                camFwdX,
+                camFwdZ,
+                in config,
+                (cx, cz) => _activeChunks.ContainsKey((cx, cz)),
+                _viewConeSpawnScratch,
+                maxSpawnsPerCall);
+
+            for (int i = 0; i < _viewConeSpawnScratch.Count; i++)
+            {
+                (int cx, int cz) = _viewConeSpawnScratch[i];
+                VoxelChunkComponent chunk = LoadOrCreateChunk(cx, cz, currentGameDay, nowUtcMinutes);
+                _activeChunks[(cx, cz)] = chunk;
+                _activeChunkList.Add(chunk);
+            }
+
+            for (int i = 0; i < _activeChunkList.Count; i++)
+            {
+                _activeChunkList[i].LastVisitedGameDay = currentGameDay;
+                _activeChunkList[i].LastVisitedUtcMinutes = nowUtcMinutes;
             }
         }
 

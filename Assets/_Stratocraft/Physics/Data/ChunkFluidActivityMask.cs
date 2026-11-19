@@ -122,7 +122,8 @@ namespace Stratocraft.Physics.Data
 
                 for (int c = 0; c < 256; c++)
                 {
-                    ushort raw = fluids[yBase | c];
+                    int idx = yBase | c;
+                    ushort raw = fluids[idx];
                     int m = raw & 0xFF;
                     if (m == 0) continue;
 
@@ -132,11 +133,23 @@ namespace Stratocraft.Physics.Data
                     if (fType == (int)FluidType.Lava) anyLava = 1;
                     if ((raw & FluidCell16.SettledBitMask) == 0) layerActive = true;
 
-                    // Ust yuzey hash katkisi (ustunde ayni tip sivi olmayan serbest yuzey hucreleri + sinirlar)
+                    // Ust yuzey + acik selale sutunu hash katkisi
                     bool hasAboveSame = (y + 1 < safeMaxY) &&
                                         ((fluids[((y + 1) << 8) | c] & 0xFF) != 0) &&
                                         (((fluids[((y + 1) << 8) | c] >> 8) & 0x03) == fType);
-                    if (!hasAboveSame || (c & 15) == 0 || (c & 15) == 15 || (c >> 4) == 0 || (c >> 4) == 15)
+                    bool isOpenInteriorColumn = m < 255;
+                    if (!isOpenInteriorColumn && hasAboveSame)
+                    {
+                        int lx = c & 15;
+                        int lz = c >> 4;
+                        isOpenInteriorColumn =
+                            (lx > 0 && (fluids[idx - 1] & 0xFF) == 0) ||
+                            (lx < 15 && (fluids[idx + 1] & 0xFF) == 0) ||
+                            (lz > 0 && (fluids[idx - 16] & 0xFF) == 0) ||
+                            (lz < 15 && (fluids[idx + 16] & 0xFF) == 0);
+                    }
+
+                    if (!hasAboveSame || isOpenInteriorColumn || (c & 15) == 0 || (c & 15) == 15 || (c >> 4) == 0 || (c >> 4) == 15)
                     {
                         uint token = (uint)((y << 18) | (c << 10) | (fType << 8) | m);
                         hash = (hash ^ token) * 16777619u;
@@ -223,7 +236,19 @@ namespace Stratocraft.Physics.Data
                                         ((fluids[((y + 1) << 8) | c] & 0xFF) != 0) &&
                                         (((fluids[((y + 1) << 8) | c] >> 8) & 0x03) == fType);
 
-                    if (!hasAboveSame || (c & 15) == 0 || (c & 15) == 15 || (c >> 4) == 0 || (c >> 4) == 15)
+                    bool isOpenInteriorColumn = mass < 255;
+                    if (!isOpenInteriorColumn && hasAboveSame)
+                    {
+                        int lx = c & 15;
+                        int lz = c >> 4;
+                        isOpenInteriorColumn =
+                            (lx > 0 && (fluids[idx - 1] & 0xFF) == 0) ||
+                            (lx < 15 && (fluids[idx + 1] & 0xFF) == 0) ||
+                            (lz > 0 && (fluids[idx - 16] & 0xFF) == 0) ||
+                            (lz < 15 && (fluids[idx + 16] & 0xFF) == 0);
+                    }
+
+                    if (!hasAboveSame || isOpenInteriorColumn || (c & 15) == 0 || (c & 15) == 15 || (c >> 4) == 0 || (c >> 4) == 15)
                     {
                         int prevM = mass;
                         int qVx = 0;

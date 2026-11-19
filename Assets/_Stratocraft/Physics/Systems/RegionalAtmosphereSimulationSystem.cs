@@ -34,10 +34,17 @@ namespace Stratocraft.Physics.Systems
         private AtmosphereCellState[] _cellsFront = new AtmosphereCellState[TotalCells];
         private AtmosphereCellState[] _cellsBack = new AtmosphereCellState[TotalCells];
 
-        private readonly float[] _terrainHeightMeters = new float[TotalCells];
-        private readonly float[] _seaFraction01 = new float[TotalCells];
-        private readonly float[] _surfaceAlbedo01 = new float[TotalCells];
+        private float[] _terrainHeightMeters = new float[TotalCells];
+        private float[] _terrainHeightBack = new float[TotalCells];
+        private float[] _seaFraction01 = new float[TotalCells];
+        private float[] _seaFractionBack = new float[TotalCells];
+        private float[] _surfaceAlbedo01 = new float[TotalCells];
+        private float[] _surfaceAlbedoBack = new float[TotalCells];
+        private float[] _biomeTempOffsetCelsius = new float[TotalCells];
+        private float[] _biomeTempOffsetBack = new float[TotalCells];
         private readonly float[] _seaLevelPressureAnomHpa = new float[TotalCells];
+        private AtmosphereTerrainSamplerDelegate? _terrainSampler;
+        private float _lastBaseSynopticLandTempC = 17.5f;
 
         private float _originWorldX = -0.5f * DomainSizeMeters; // -1024m
         private float _originWorldZ = -0.5f * DomainSizeMeters; // -1024m
@@ -114,16 +121,77 @@ namespace Stratocraft.Physics.Systems
             }
         }
 
+        public void BindRealTerrainSampler(
+            AtmosphereTerrainSamplerDelegate? sampler,
+            bool refreshNow = true,
+            bool reinitializeAtmosphere = false,
+            double totalWorldSeconds = 1800.0)
+        {
+            _terrainSampler = sampler;
+            if (refreshNow && _terrainSampler != null)
+            {
+                RefreshAllTerrainFromSampler(reinitializeAtmosphere, totalWorldSeconds);
+            }
+        }
+
+        public void RefreshAllTerrainFromSampler(bool reinitializeAtmosphere = false, double totalWorldSeconds = 1800.0)
+        {
+            if (_terrainSampler == null)
+            {
+                return;
+            }
+
+            for (int cz = 0; cz < GridSideCells; cz++)
+            {
+                float worldZ = _originWorldZ + (cz + 0.5f) * CellSizeMeters;
+                for (int cx = 0; cx < GridSideCells; cx++)
+                {
+                    float worldX = _originWorldX + (cx + 0.5f) * CellSizeMeters;
+                    AtmosphereTerrainSample ts = _terrainSampler(worldX, worldZ, CellSizeMeters);
+                    int idx = (cz * GridSideCells) + cx;
+                    _terrainHeightMeters[idx] = Math.Clamp(float.IsFinite(ts.AltitudeAboveSeaMeters) ? ts.AltitudeAboveSeaMeters : 0.0f, 0.0f, 5000.0f);
+                    _seaFraction01[idx] = Math.Clamp(float.IsFinite(ts.OpenWaterFraction01) ? ts.OpenWaterFraction01 : 0.0f, 0.0f, 1.0f);
+                    _surfaceAlbedo01[idx] = Math.Clamp(float.IsFinite(ts.SurfaceAlbedo01) ? ts.SurfaceAlbedo01 : 0.20f, 0.04f, 0.85f);
+                    _biomeTempOffsetCelsius[idx] = Math.Clamp(float.IsFinite(ts.BiomeTempOffsetCelsius) ? ts.BiomeTempOffsetCelsius : 0.0f, -28.0f, 26.0f);
+                }
+            }
+
+            if (reinitializeAtmosphere)
+            {
+                InitializeEquilibriumAtmosphere(totalWorldSeconds);
+            }
+            else
+            {
+                for (int i = 0; i < TotalCells; i++)
+                {
+                    ref AtmosphereCellState cell = ref _cellsFront[i];
+                    float h = _terrainHeightMeters[i];
+                    cell.StationPressureHpa = ComputeHydrostaticStationPressureHpa(1013.25f, h, cell.AirTempCelsius);
+                    float td = ComputeDewPointCelsius(cell.AirTempCelsius, cell.VaporPressureHpa);
+                    cell.CloudBaseWorldY = (ushort)Math.Clamp((int)MathF.Round(ComputeLclCloudBaseWorldY(h, cell.AirTempCelsius, td)), 0, 65535);
+                }
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float GetCellBiomeTempOffset(int cellX, int cellZ)
+        {
+            int cx = Math.Clamp(cellX, 0, GridSideCells - 1);
+            int cz = Math.Clamp(cellZ, 0, GridSideCells - 1);
+            return _biomeTempOffsetCelsius[(cz * GridSideCells) + cx];
+        }
+
         public void InitializeEquilibriumAtmosphere(double totalWorldSeconds = 1800.0)
         {
             EvaluateInternalSolar(totalWorldSeconds, LatitudeDegrees, out float declDeg, out _, out float clearSkyWm2);
             float baseSeaLevelTempC = 18.5f + (9.5f * (declDeg / StratocraftConstants.SolarAxialTiltDegrees)) + (1.4f * _ensoState.TeAnomalyK);
+            _lastBaseSynopticLandTempC = baseSeaLevelTempC;
 
             for (int i = 0; i < TotalCells; i++)
             {
                 float h = _terrainHeightMeters[i];
                 float sea = _seaFraction01[i];
-                float airT = baseSeaLevelTempC - (0.0065f * h);
+                float airT = Math.Clamp(baseSeaLevelTempC + _biomeTempOffsetCelsius[i] - (0.0065f * h), -60.0f, 65.0f);
                 float surfT = airT + ((1.0f - sea) * (clearSkyWm2 * 0.003f));
                 float pStation = ComputeHydrostaticStationPressureHpa(1013.25f, h, airT);
                 float es = ComputeTetensSaturationVaporHpa(airT);
@@ -180,20 +248,95 @@ namespace Stratocraft.Physics.Systems
                 return;
             }
 
-            _originWorldX = targetOriginX;
-            _originWorldZ = targetOriginZ;
+            if (_terrainSampler == null)
+            {
+                for (int cz = 0; cz < GridSideCells; cz++)
+                {
+                    int srcZ = Math.Clamp(cz + shiftZ, 0, GridSideCells - 1);
+                    for (int cx = 0; cx < GridSideCells; cx++)
+                    {
+                        int srcX = Math.Clamp(cx + shiftX, 0, GridSideCells - 1);
+                        _cellsBack[(cz * GridSideCells) + cx] = _cellsFront[(srcZ * GridSideCells) + srcX];
+                    }
+                }
 
+                _originWorldX = targetOriginX;
+                _originWorldZ = targetOriginZ;
+                (_cellsFront, _cellsBack) = (_cellsBack, _cellsFront);
+                return;
+            }
+
+            // Gercek WorldGen arazi delegesi bagliysa, 4 arazi dizisini ve atmosferi cift-tamponlu (0-GC, sifir srcIdx ezilmesi!) kaydir
             for (int cz = 0; cz < GridSideCells; cz++)
             {
-                int srcZ = Math.Clamp(cz + shiftZ, 0, GridSideCells - 1);
+                int rawSrcZ = cz + shiftZ;
+                int srcZ = Math.Clamp(rawSrcZ, 0, GridSideCells - 1);
+                bool zNew = (uint)rawSrcZ >= GridSideCells;
+                float worldZ = targetOriginZ + (cz + 0.5f) * CellSizeMeters;
+
                 for (int cx = 0; cx < GridSideCells; cx++)
                 {
-                    int srcX = Math.Clamp(cx + shiftX, 0, GridSideCells - 1);
-                    _cellsBack[(cz * GridSideCells) + cx] = _cellsFront[(srcZ * GridSideCells) + srcX];
+                    int rawSrcX = cx + shiftX;
+                    int srcX = Math.Clamp(rawSrcX, 0, GridSideCells - 1);
+                    bool isNewBorder = zNew || (uint)rawSrcX >= GridSideCells;
+                    int dstIdx = (cz * GridSideCells) + cx;
+                    int srcIdx = (srcZ * GridSideCells) + srcX;
+                    AtmosphereCellState copied = _cellsFront[srcIdx];
+
+                    if (isNewBorder)
+                    {
+                        float worldX = targetOriginX + (cx + 0.5f) * CellSizeMeters;
+                        AtmosphereTerrainSample ts = _terrainSampler(worldX, worldZ, CellSizeMeters);
+                        float h = Math.Clamp(float.IsFinite(ts.AltitudeAboveSeaMeters) ? ts.AltitudeAboveSeaMeters : 0.0f, 0.0f, 5000.0f);
+                        float sea = Math.Clamp(float.IsFinite(ts.OpenWaterFraction01) ? ts.OpenWaterFraction01 : 0.0f, 0.0f, 1.0f);
+                        float alb = Math.Clamp(float.IsFinite(ts.SurfaceAlbedo01) ? ts.SurfaceAlbedo01 : 0.20f, 0.04f, 0.85f);
+                        float bOff = Math.Clamp(float.IsFinite(ts.BiomeTempOffsetCelsius) ? ts.BiomeTempOffsetCelsius : 0.0f, -28.0f, 26.0f);
+
+                        // Kaydirilmamis orijinal srcIdx dizilerinden fark al + yerel sinoptik denge zarfiyla cift-sayma kaymasini engelle
+                        float deltaOff = bOff - _biomeTempOffsetCelsius[srcIdx];
+                        float deltaH = h - _terrainHeightMeters[srcIdx];
+
+                        _terrainHeightBack[dstIdx] = h;
+                        _seaFractionBack[dstIdx] = sea;
+                        _surfaceAlbedoBack[dstIdx] = alb;
+                        _biomeTempOffsetBack[dstIdx] = bOff;
+
+                        float eqBorderAirT = Math.Clamp(_lastBaseSynopticLandTempC + bOff - (0.0065f * h), -55.0f, 58.0f);
+                        float rawAirT = copied.AirTempCelsius + deltaOff - (0.0065f * deltaH);
+                        float adjAirT = Math.Clamp(rawAirT, MathF.Max(-60.0f, eqBorderAirT - 14.0f), MathF.Min(65.0f, eqBorderAirT + 14.0f));
+                        float rawSurfT = copied.SurfaceTempCelsius + deltaOff - (0.0065f * deltaH);
+                        float adjSurfT = Math.Clamp(rawSurfT, MathF.Max(-65.0f, eqBorderAirT - 18.0f), MathF.Min(70.0f, eqBorderAirT + 20.0f));
+
+                        float es = ComputeTetensSaturationVaporHpa(adjAirT);
+                        float maxVaporHpa = MathF.Max(0.01f, es);
+                        float minVaporHpa = MathF.Min(0.05f, maxVaporHpa);
+
+                        copied.AirTempCelsius = adjAirT;
+                        copied.SurfaceTempCelsius = adjSurfT;
+                        copied.VaporPressureHpa = Math.Clamp(copied.VaporPressureHpa, minVaporHpa, maxVaporHpa);
+                        copied.StationPressureHpa = ComputeHydrostaticStationPressureHpa(1013.25f, h, adjAirT);
+                        float td = ComputeDewPointCelsius(adjAirT, copied.VaporPressureHpa);
+                        copied.CloudBaseWorldY = (ushort)Math.Clamp((int)MathF.Round(ComputeLclCloudBaseWorldY(h, adjAirT, td)), 0, 65535);
+                    }
+                    else
+                    {
+                        _terrainHeightBack[dstIdx] = _terrainHeightMeters[srcIdx];
+                        _seaFractionBack[dstIdx] = _seaFraction01[srcIdx];
+                        _surfaceAlbedoBack[dstIdx] = _surfaceAlbedo01[srcIdx];
+                        _biomeTempOffsetBack[dstIdx] = _biomeTempOffsetCelsius[srcIdx];
+                    }
+
+                    _cellsBack[dstIdx] = copied;
                 }
             }
 
+            _originWorldX = targetOriginX;
+            _originWorldZ = targetOriginZ;
             (_cellsFront, _cellsBack) = (_cellsBack, _cellsFront);
+            (_terrainHeightMeters, _terrainHeightBack) = (_terrainHeightBack, _terrainHeightMeters);
+            (_seaFraction01, _seaFractionBack) = (_seaFractionBack, _seaFraction01);
+            (_surfaceAlbedo01, _surfaceAlbedoBack) = (_surfaceAlbedoBack, _surfaceAlbedo01);
+            (_biomeTempOffsetCelsius, _biomeTempOffsetBack) = (_biomeTempOffsetBack, _biomeTempOffsetCelsius);
         }
 
         public void ResetUniformTerrain(float altitudeAboveSeaMeters = 0.0f, float openWaterFraction01 = 0.0f)
@@ -532,6 +675,7 @@ namespace Stratocraft.Physics.Systems
             float seasonalFactor = declDeg / StratocraftConstants.SolarAxialTiltDegrees; // [-1 .. +1]
             float baseSeaTempC = 19.0f + (5.5f * seasonalFactor) + (1.35f * ensoTe);
             float baseSynopticLandTempC = 17.5f + (11.5f * seasonalFactor) + (1.65f * ensoTe);
+            _lastBaseSynopticLandTempC = baseSynopticLandTempC;
 
             // Analitik A-kararli ustel gevseme katsayilari: alpha = 1 - exp(-dt / tau) in (0, 1)
             float alphaSeaSurf = 1.0f - MathF.Exp(-dt / 5400.0f);
@@ -555,7 +699,7 @@ namespace Stratocraft.Physics.Systems
 
                 float eqSeaTs = baseSeaTempC + (0.0022f * netShortwaveWm2);
                 float nightLongwaveCooling = clearSkyWm2 <= 0.0f ? (-6.8f * (1.0f - (0.65f * cloudAlbedo))) : -2.2f;
-                float eqLandTs = baseSynopticLandTempC - (0.0065f * h) + (0.0185f * netShortwaveWm2) + nightLongwaveCooling;
+                float eqLandTs = baseSynopticLandTempC + _biomeTempOffsetCelsius[i] - (0.0065f * h) + (0.0185f * netShortwaveWm2) + nightLongwaveCooling;
 
                 float eqTs = (sea * eqSeaTs) + ((1.0f - sea) * eqLandTs);
                 float alphaTs = (sea * alphaSeaSurf) + ((1.0f - sea) * alphaLandSurf);
@@ -628,7 +772,7 @@ namespace Stratocraft.Physics.Systems
                         : 0.0125f; // Fohn kuru adyabatik isinma > nemli soguma!
                     float parcelAirTemp = advAirTempC - (lapseRate * stepClimbMeters);
 
-                    float eqLocalAirT = (0.64f * cur.SurfaceTempCelsius) + (0.36f * (baseSynopticLandTempC - (0.0065f * h)));
+                    float eqLocalAirT = (0.64f * cur.SurfaceTempCelsius) + (0.36f * (baseSynopticLandTempC + _biomeTempOffsetCelsius[idx] - (0.0065f * h)));
                     if (wOrographic < -0.05f)
                     {
                         // Arka yamac Fohn isinma katkisi

@@ -8,6 +8,7 @@ using Stratocraft.Core.Constants;
 using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.Data;
 using Stratocraft.CreaturesAI.HybridLod;
+using Stratocraft.CreaturesAI.OffScreen;
 using Stratocraft.CreaturesAI.Pathfinding;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
@@ -64,6 +65,10 @@ namespace Stratocraft.Character
             public AiSimulationTier CurrentLodTier = AiSimulationTier.Tier0_Full3DEntity;
             public OffScreenEntityRecord OffScreenRecord;
             public bool IsOffScreenAnalytical;
+            public uint EntityGuid;
+            public int OffScreenSlotId = -1;
+            public float OutsideViewConeSeconds;
+            public ushort MacroClanId;
             public Vector3 TargetPos;
             public Vector3 CachedDetourDir;
             public float NextAStarAllowedTime;
@@ -121,10 +126,15 @@ namespace Stratocraft.Character
         private int _dynamicSpawnCounter;
         private bool _outerContinentCreaturesSpawned;
         private int _lastResolvedBareFistPunchId = -1;
+        private OffScreenWorldSimulationService? _offScreenSim;
+        private readonly OffScreenPromotionSnapshot[] _promotionBuffer = new OffScreenPromotionSnapshot[HybridAiLodPromotionSystem.MaxPromotionsPerFrame];
+        private readonly Dictionary<uint, LiveCreatureAgent> _guidToLiveAgent = new(32);
+        private readonly Queue<LiveCreatureAgent> _recycledDynamicPool = new(16);
 
         public int AgentCount => _agents.Count;
         public IReadOnlyList<LiveCreatureAgent> Agents => _agents;
         public int OffScreenAnalyticalAgentCount { get; private set; }
+        public string OffScreenTelemetrySummary { get; private set; } = "DES: 0";
         public Stage1MatterCrystalAndMiningController? MiningControllerForLootDrops { get; set; }
         public Stage1CaveAcousticTelegraphController? AcousticTelegraphController { get; set; } = new Stage1CaveAcousticTelegraphController();
         public Action<CaveCreatureVariantKind, Vector3, Vector3>? OnCaveAmbushTelegraphTriggered { get; set; }
@@ -132,6 +142,61 @@ namespace Stratocraft.Character
         public string LastCreatureEventText { get; private set; } =
             "Canlilar: Devriyede (5 Noktali 3B Namlu Kesimi | Boids Kusatma | [E] Evcillestirme & Binek | Phoenix Gunes Patlamasi)";
         public string NearestCreatureHudSummary { get; private set; } = "Yakin Canli: Yok";
+
+        public void BindOffScreenSimulation(OffScreenWorldSimulationService? sim)
+        {
+            _offScreenSim = sim;
+            _guidToLiveAgent.Clear();
+            if (_offScreenSim == null) return;
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.EntityGuid == 0u)
+                {
+                    a.EntityGuid = _offScreenSim.AllocateGuid();
+                }
+                _guidToLiveAgent[a.EntityGuid] = a;
+            }
+        }
+
+        public void DemoteCreaturesInChunk(int cx, int cz, double simWorldTimeSec)
+        {
+            if (_offScreenSim == null) return;
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.Root == null || a.IsOffScreenAnalytical || a.State == CreatureAiState.Dead ||
+                    a.State == CreatureAiState.EmberEgg || a.IsTamed || a == MountedCreatureAgent)
+                {
+                    continue;
+                }
+
+                Vector3 pos = a.Root.position;
+                int acx = Mathf.FloorToInt(pos.x / 16f);
+                int acz = Mathf.FloorToInt(pos.z / 16f);
+                if (acx == cx && acz == cz)
+                {
+                    DemoteLiveAgentIntoDes(a, i, simWorldTimeSec);
+                }
+            }
+        }
+
+        public void ResetOffScreenSimulation(int newSeed, Vector3 playerPos, double simWorldTimeSec)
+        {
+            if (_offScreenSim == null) return;
+            _offScreenSim.ClearAll();
+            _guidToLiveAgent.Clear();
+            _recycledDynamicPool.Clear();
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                a.OffScreenSlotId = -1;
+                a.OutsideViewConeSeconds = 0f;
+                if (a.EntityGuid == 0u) a.EntityGuid = _offScreenSim.AllocateGuid();
+                _guidToLiveAgent[a.EntityGuid] = a;
+            }
+            _offScreenSim.SeedDistantOffScreenEcosystem(newSeed, playerPos.x, playerPos.z, simWorldTimeSec, count: 24);
+        }
 
         public void RegisterCreature(
             Transform creatureRoot, Vector3 anchorPos, float phaseOffset, bool isFlyingBoss = false, byte customArchetypeId = 0)
@@ -155,7 +220,8 @@ namespace Stratocraft.Character
 
             float hpMult = Mathf.Max(0.25f, Stage1GameSettings.CreatureHealthMultiplier);
             float scaledHp = canonicalHp * hpMult;
-            _agents.Add(new LiveCreatureAgent
+            uint assignedGuid = _offScreenSim != null ? _offScreenSim.AllocateGuid() : (uint)(_agents.Count + 1);
+            var created = new LiveCreatureAgent
             {
                 Root = creatureRoot,
                 AnchorPos = anchorPos,
@@ -176,8 +242,15 @@ namespace Stratocraft.Character
                 BaseSpeed = isStarterPhoenix ? 5.2f : Mathf.Clamp(def.BaseMoveSpeed * 0.76f, 3.0f, 7.8f),
                 VoxelSiegeDps = def.VoxelSiegeDps > 0f ? def.VoxelSiegeDps : (isStarterPhoenix ? 110f : 45f),
                 SpeedMultiplier = 1.0f,
-                Capabilities = caps
-            });
+                Capabilities = caps,
+                EntityGuid = assignedGuid,
+                MacroClanId = OffScreenWorldSimulationService.ResolveMacroFactionId(archId, 0)
+            };
+            _agents.Add(created);
+            if (_offScreenSim != null && assignedGuid != 0u)
+            {
+                _guidToLiveAgent[assignedGuid] = created;
+            }
         }
 
         public void ApplyLiveDifficultyMultipliers()
@@ -444,7 +517,10 @@ namespace Stratocraft.Character
             Stage1StructuralCollapseBridge collapseBridge, float time, float deltaTime,
             Stage1DirectionalCombatBridge? combatBridge = null,
             Material? sharedVoxelMat = null,
-            Transform? worldParent = null)
+            Transform? worldParent = null,
+            double simWorldTimeSec = -1.0,
+            Vector2? cameraForwardXZ = null,
+            Func<int, int, bool>? isChunkLoadedPredicate = null)
         {
             MiningControllerForLootDrops ??= collapseBridge.MiningControllerForItemDrops;
             EnsureOuterContinentCreaturesSpawned(worldParent, sharedVoxelMat, worldChunks);
@@ -475,10 +551,42 @@ namespace Stratocraft.Character
                 GeometryUtility.CalculateFrustumPlanes(cam!, _cameraFrustumPlanes);
             }
 
-            double nowSec = Time.timeAsDouble;
+            Vector2 camFwd = Vector2.up;
+            if (cameraForwardXZ.HasValue && cameraForwardXZ.Value.sqrMagnitude > 0.0001f)
+            {
+                camFwd = cameraForwardXZ.Value.normalized;
+            }
+            else if (cam != null)
+            {
+                Vector3 cf = cam.transform.forward;
+                Vector2 cf2 = new Vector2(cf.x, cf.z);
+                if (cf2.sqrMagnitude > 0.0001f) camFwd = cf2.normalized;
+            }
+
+            double nowSec = simWorldTimeSec >= 0.0 ? simWorldTimeSec : Time.timeAsDouble;
             int offScreenCount = 0;
             float nearestDist = float.MaxValue;
             LiveCreatureAgent? nearest = null;
+
+            // Paket 4C-3: Gercek Ekran-Disi DES + Lanchester + View-Cone Terfi Adimi (0 B/kare GC, < 0.35ms)
+            if (_offScreenSim != null)
+            {
+                _offScreenSim.StepSimulation(
+                    nowSec,
+                    playerPos.x,
+                    playerPos.y,
+                    playerPos.z,
+                    camFwd.x,
+                    camFwd.y,
+                    isChunkLoadedPredicate,
+                    _promotionBuffer,
+                    out int promotedCount);
+
+                for (int p = 0; p < promotedCount; p++)
+                {
+                    PromoteSnapshotFromDes(_promotionBuffer[p], worldParent, sharedVoxelMat, worldChunks);
+                }
+            }
 
             if (Stage1GameSettings.EnableFlowFieldAndSpatialBoids && _agents.Count > 0)
             {
@@ -514,7 +622,16 @@ namespace Stratocraft.Character
             for (int i = 0; i < _agents.Count; i++)
             {
                 LiveCreatureAgent a = _agents[i];
-                if (a.Root == null || a.State == CreatureAiState.Dead) continue;
+                if (a.Root == null) continue;
+                if (a.State == CreatureAiState.Dead)
+                {
+                    if (_offScreenSim != null && a.OffScreenSlotId >= 0)
+                    {
+                        _offScreenSim.MarkEntityDead(a.OffScreenSlotId);
+                        a.OffScreenSlotId = -1;
+                    }
+                    continue;
+                }
 
                 a.AttackCooldown = Mathf.Max(0f, a.AttackCooldown - deltaTime);
                 a.HitFlinchTimer = Mathf.Max(0f, a.HitFlinchTimer - deltaTime);
@@ -534,11 +651,16 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                // 1) Eger canli su an Arka Plan "Excel Tablosu" (OffScreenEntityRecord) modundaysa:
-                //    0% GPU ve 0% 3B animasyon/fizik calistir; yalnizca P(t) = P0 + v * dt analitik konumunu hesapla
-                //    ve oyuncu o yone dondugu salisede (TestPlanesAABB == true) tam olmasi gereken yerde 3B olarak belirmesini sagla!
+                // 1) Eger canli su an Arka Plan (OffScreenEntityRecord) modundaysa:
+                //    Paket 4C-3 aktifse bu canli OffScreenWorldSimulationService (DES Min-Heap + Lanchester) tarafindan yonetilir;
+                //    aksi halde geriye donuk uyumlu analitik spreadsheet mantigi calisir.
                 if (a.IsOffScreenAnalytical)
                 {
+                    if (_offScreenSim != null && a.OffScreenSlotId >= 0)
+                    {
+                        continue;
+                    }
+
                     AdvanceOffScreenSpreadsheetWaypointIfDue(a, i, nowSec);
                     var (ax, ay, az) = a.OffScreenRecord.EvaluatePositionAtTime(nowSec);
                     float analHorizDist = Vector2.Distance(new Vector2(playerPos.x, playerPos.z), new Vector2(ax, az));
@@ -562,9 +684,43 @@ namespace Stratocraft.Character
                 Vector3 toPlayer = playerPos - a.Root.position;
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
 
-                // 2) Yalnizca oyuncudan > 96m uzakta olan canlilari OffScreenEntityRecord ("Excel Tablosu") moduna gecir;
-                //    gorus ve savas menzilindeki (<= 96m) hicbir canliyi kamera dondu diye kaybetme / isinlama!
-                if (horizDist > 96.0f && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
+                // 2) Paket 4C-3 View-Cone / InnerCore / Yuklu-Olmayan-Chunk Tenzili:
+                if (_offScreenSim != null && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
+                {
+                    Vector3 pos = a.Root.position;
+                    int acx = Mathf.FloorToInt(pos.x / 16f);
+                    int acz = Mathf.FloorToInt(pos.z / 16f);
+                    bool chunkLoaded = isChunkLoadedPredicate != null ? isChunkLoadedPredicate(acx, acz) : worldChunks.ContainsKey((acx, acz));
+
+                    float invD = horizDist > 0.01f ? (1.0f / horizDist) : 0.0f;
+                    float camDot = horizDist > 0.01f ? (((pos.x - playerPos.x) * invD) * camFwd.x + ((pos.z - playerPos.z) * invD) * camFwd.y) : 1.0f;
+                    if (horizDist > _offScreenSim.Config.InnerCoreRadiusMeters && camDot < _offScreenSim.Config.ViewConeDemoteCosHalfAngle)
+                    {
+                        a.OutsideViewConeSeconds += deltaTime;
+                    }
+                    else
+                    {
+                        a.OutsideViewConeSeconds = 0f;
+                    }
+
+                    if (_offScreenSim.ShouldDemoteLiveEntity(
+                            a.CurrentLodTier,
+                            pos.x,
+                            pos.z,
+                            playerPos.x,
+                            playerPos.z,
+                            camFwd.x,
+                            camFwd.y,
+                            chunkLoaded,
+                            a.OutsideViewConeSeconds,
+                            out AiSimulationTier nextTier))
+                    {
+                        a.CurrentLodTier = nextTier;
+                        DemoteLiveAgentIntoDes(a, i, nowSec);
+                        continue;
+                    }
+                }
+                else if (horizDist > 96.0f && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
                 {
                     DemoteAgentToOffScreenSpreadsheet(a, i, nowSec);
                     offScreenCount++;
@@ -630,11 +786,23 @@ namespace Stratocraft.Character
                 }
             }
 
-            OffScreenAnalyticalAgentCount = offScreenCount;
+            int totalOffScreenCount = _offScreenSim != null ? _offScreenSim.ActiveOffScreenCount : offScreenCount;
+            OffScreenAnalyticalAgentCount = totalOffScreenCount;
 
             if (time >= _nextHudSummaryUpdateTime)
             {
                 _nextHudSummaryUpdateTime = time + 0.15f;
+                if (_offScreenSim != null)
+                {
+                    OffScreenTelemetrySummary =
+                        $"DES:{_offScreenSim.ActiveOffScreenCount} Olay:{_offScreenSim.TotalDesEventsProcessed} " +
+                        $"Savas:{_offScreenSim.TotalLanchesterBattlesResolved} Mut:{_offScreenSim.TotalWorldMutationsEmitted}";
+                }
+                else
+                {
+                    OffScreenTelemetrySummary = $"ExcelSim:{offScreenCount}";
+                }
+
                 if (nearest != null)
                 {
                     string eggInfo = nearest.State == CreatureAiState.EmberEgg ? $" [KOR YUMURTA: {nearest.EmberEggTimer:F1}sn]" : string.Empty;
@@ -644,13 +812,213 @@ namespace Stratocraft.Character
                             ? " [[E] EVCILESTIR!]" : string.Empty));
                     NearestCreatureHudSummary =
                         $"{nearest.DisplayName} [{nearest.State}]{eggInfo}{tameTag} HP:{Mathf.CeilToInt(nearest.CurrentHp)}/{Mathf.CeilToInt(nearest.MaxHp)} " +
-                        $"Hiz:%{Mathf.RoundToInt(nearest.SpeedMultiplier * 100f)} Mesafe:{nearestDist:F1}m (ExcelSim:{offScreenCount})";
+                        $"Hiz:%{Mathf.RoundToInt(nearest.SpeedMultiplier * 100f)} Mesafe:{nearestDist:F1}m ({OffScreenTelemetrySummary})";
                 }
                 else
                 {
-                    NearestCreatureHudSummary = $"Yakin 3B Canli: Yok (Arka Plan Excel Tablosu Sim: {offScreenCount} canli)";
+                    NearestCreatureHudSummary = $"Yakin 3B Canli: Yok ({OffScreenTelemetrySummary})";
                 }
             }
+        }
+
+        private void DemoteLiveAgentIntoDes(LiveCreatureAgent a, int agentIndex, double simWorldTimeSec)
+        {
+            if (_offScreenSim == null) return;
+            if (a.EntityGuid == 0u)
+            {
+                a.EntityGuid = _offScreenSim.AllocateGuid();
+            }
+            _guidToLiveAgent[a.EntityGuid] = a;
+
+            Vector3 pos = a.Root.position;
+            float effSpeed = Mathf.Max(0.8f, a.BaseSpeed * a.SpeedMultiplier);
+            byte limbBits = PackSeveredLimbBits(a);
+
+            if (a.OffScreenSlotId >= 0)
+            {
+                _offScreenSim.DemoteExistingEntity(
+                    a.OffScreenSlotId,
+                    pos.x, pos.y, pos.z,
+                    a.CurrentHp,
+                    a.Capabilities,
+                    limbBits,
+                    effSpeed,
+                    simWorldTimeSec,
+                    a.CompletedGrazingOrWorkCycles);
+            }
+            else
+            {
+                byte flags = 0;
+                if (a.IsTamed) flags |= OffScreenWorldSimulationService.FlagIsTamed;
+                if (a.IsFlyingBoss) flags |= OffScreenWorldSimulationService.FlagIsFlying;
+                if (a.IsBiped) flags |= OffScreenWorldSimulationService.FlagIsBiped;
+                if (a.IsPhoenixBoss) flags |= OffScreenWorldSimulationService.FlagIsPhoenixBoss;
+                if (a.IsDynamicBiomeSpawn) flags |= OffScreenWorldSimulationService.FlagIsDynamicBiomeSpawn;
+
+                var meta = new OffScreenEntityMeta
+                {
+                    AnchorX = a.AnchorPos.x,
+                    AnchorY = a.AnchorPos.y,
+                    AnchorZ = a.AnchorPos.z,
+                    MaxHp = a.MaxHp,
+                    OriginalMaxHp = a.OriginalMaxHp,
+                    BaseSpeed = a.BaseSpeed,
+                    VoxelSiegeDps = a.VoxelSiegeDps,
+                    Hunger01 = a.Hunger01,
+                    PhaseOffset = a.PhaseOffset,
+                    CompletedWorkCycles = a.CompletedGrazingOrWorkCycles,
+                    NextMutationCycle = a.CompletedGrazingOrWorkCycles + 1,
+                    CaveVariant = a.CaveVariant,
+                    EntityFlags = flags,
+                    SeveredLimbBits = limbBits,
+                    LiveBindingId = agentIndex,
+                    MacroFactionId = a.MacroClanId != 0
+                        ? a.MacroClanId
+                        : OffScreenWorldSimulationService.ResolveMacroFactionId(a.ArchetypeId, a.IsTamed ? (ushort)1 : (ushort)0)
+                };
+
+                a.OffScreenSlotId = _offScreenSim.RegisterOffScreenEntity(
+                    a.EntityGuid,
+                    pos.x, pos.y, pos.z,
+                    a.CurrentHp,
+                    a.MaxHp,
+                    a.ArchetypeId,
+                    a.IsTamed ? (ushort)1 : (ushort)0,
+                    a.Capabilities,
+                    effSpeed,
+                    a.VoxelSiegeDps,
+                    simWorldTimeSec,
+                    in meta);
+            }
+
+            a.IsOffScreenAnalytical = true;
+            a.OutsideViewConeSeconds = 0f;
+            if (a.Root != null && a.Root.gameObject.activeSelf)
+            {
+                a.Root.gameObject.SetActive(false);
+            }
+            if (a.IsDynamicBiomeSpawn && _recycledDynamicPool.Count < 16)
+            {
+                _recycledDynamicPool.Enqueue(a);
+            }
+        }
+
+        private void PromoteSnapshotFromDes(
+            in OffScreenPromotionSnapshot snap,
+            Transform? worldParent,
+            Material? sharedVoxelMat,
+            Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            if (snap.CurrentHp <= 0.5f) return;
+
+            if (_guidToLiveAgent.TryGetValue(snap.EntityGuid, out LiveCreatureAgent? existing) && existing != null && existing.Root != null)
+            {
+                ApplyPromotionSnapshotToAgent(existing, in snap, worldChunks, sharedVoxelMat);
+                return;
+            }
+
+            // Havuzda ayni arketipten bos duran dinamik ajan varsa sifir GameObject tahsisiyle yeniden kullan
+            LiveCreatureAgent? recycled = null;
+            int poolCount = _recycledDynamicPool.Count;
+            for (int i = 0; i < poolCount; i++)
+            {
+                LiveCreatureAgent cand = _recycledDynamicPool.Dequeue();
+                if (recycled == null && cand.Root != null && cand.IsOffScreenAnalytical &&
+                    cand.ArchetypeId == snap.ArchetypeId && cand.CaveVariant == snap.CaveVariant)
+                {
+                    recycled = cand;
+                    break;
+                }
+                _recycledDynamicPool.Enqueue(cand);
+            }
+
+            if (recycled != null)
+            {
+                if (recycled.EntityGuid != 0u) _guidToLiveAgent.Remove(recycled.EntityGuid);
+                recycled.EntityGuid = snap.EntityGuid;
+                recycled.OffScreenSlotId = snap.SlotId;
+                _guidToLiveAgent[snap.EntityGuid] = recycled;
+                ApplyPromotionSnapshotToAgent(recycled, in snap, worldChunks, sharedVoxelMat);
+                return;
+            }
+
+            // Tamamen ekran-disi dogmus yeni yaratigi ilk kez 3B sahnede materyalize et
+            Vector3 spawnPos = new Vector3(snap.WorldX, snap.WorldY, snap.WorldZ);
+            SpawnProceduralContinentCreature(worldParent, sharedVoxelMat, worldChunks, spawnPos, snap.PhaseOffset, snap.ArchetypeId);
+            LiveCreatureAgent created = _agents[_agents.Count - 1];
+            if (created.EntityGuid != 0u) _guidToLiveAgent.Remove(created.EntityGuid);
+            created.EntityGuid = snap.EntityGuid;
+            created.OffScreenSlotId = snap.SlotId;
+            _guidToLiveAgent[snap.EntityGuid] = created;
+            ApplyPromotionSnapshotToAgent(created, in snap, worldChunks, sharedVoxelMat);
+        }
+
+        private void ApplyPromotionSnapshotToAgent(
+            LiveCreatureAgent a,
+            in OffScreenPromotionSnapshot snap,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Material? sharedVoxelMat)
+        {
+            bool canFly = (snap.EntityFlags & OffScreenWorldSimulationService.FlagIsFlying) != 0 &&
+                          (snap.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
+            float finalY = canFly
+                ? snap.WorldY
+                : SampleVoxelOrTerrainHeight(snap.WorldX, snap.WorldZ, snap.WorldY, worldChunks);
+
+            Vector3 newPos = new Vector3(snap.WorldX, finalY, snap.WorldZ);
+            a.Root.position = newPos;
+            a.AnchorPos = newPos;
+            a.TargetPos = new Vector3(snap.TargetX, finalY, snap.TargetZ);
+
+            Vector3 moveVec = a.TargetPos - newPos;
+            moveVec.y = 0f;
+            if (moveVec.sqrMagnitude > 0.001f)
+            {
+                float yaw = Mathf.Atan2(moveVec.x, moveVec.z) * Mathf.Rad2Deg;
+                a.Root.rotation = Quaternion.Euler(0f, yaw, 0f);
+            }
+
+            float hpMult = Mathf.Max(0.25f, Stage1GameSettings.CreatureHealthMultiplier);
+            a.OriginalMaxHp = snap.OriginalMaxHp > 0f ? snap.OriginalMaxHp : a.OriginalMaxHp;
+            a.MaxHp = Mathf.Max(1f, snap.MaxHp > 0f ? snap.MaxHp : a.OriginalMaxHp * hpMult);
+            a.CurrentHp = Mathf.Clamp(snap.CurrentHp, 1f, a.MaxHp);
+            a.Capabilities = snap.Capabilities;
+            a.Hunger01 = snap.Hunger01;
+            a.CompletedGrazingOrWorkCycles = snap.CompletedWorkCycles;
+            a.MacroClanId = snap.ClanId;
+            a.OffScreenSlotId = snap.SlotId;
+            UnpackSeveredLimbBits(a, snap.SeveredLimbBits);
+
+            a.IsOffScreenAnalytical = false;
+            a.OutsideViewConeSeconds = 0f;
+            a.CurrentLodTier = AiSimulationTier.Tier0_Full3DEntity;
+            if (a.State == CreatureAiState.Dead) a.State = CreatureAiState.Patrol;
+            EnsureCreatureArticulatedLimbs(a, sharedVoxelMat);
+            if (!a.Root.gameObject.activeSelf) a.Root.gameObject.SetActive(true);
+        }
+
+        private static byte PackSeveredLimbBits(LiveCreatureAgent a)
+        {
+            byte bits = 0;
+            if (a.LeftLegSevered) bits |= 1 << 0;
+            if (a.RightLegSevered) bits |= 1 << 1;
+            if (a.LeftArmSevered) bits |= 1 << 2;
+            if (a.RightArmSevered) bits |= 1 << 3;
+            if (a.LeftWingSevered) bits |= 1 << 4;
+            if (a.RightWingSevered) bits |= 1 << 5;
+            if (a.HeadSevered) bits |= 1 << 6;
+            return bits;
+        }
+
+        private static void UnpackSeveredLimbBits(LiveCreatureAgent a, byte bits)
+        {
+            a.LeftLegSevered = (bits & (1 << 0)) != 0;
+            a.RightLegSevered = (bits & (1 << 1)) != 0;
+            a.LeftArmSevered = (bits & (1 << 2)) != 0;
+            a.RightArmSevered = (bits & (1 << 3)) != 0;
+            a.LeftWingSevered = (bits & (1 << 4)) != 0;
+            a.RightWingSevered = (bits & (1 << 5)) != 0;
+            a.HeadSevered = (bits & (1 << 6)) != 0;
         }
 
         /// <summary>

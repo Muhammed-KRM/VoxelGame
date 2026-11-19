@@ -17,11 +17,14 @@ namespace Stratocraft.Physics.Data
     {
         public const int VoxelsPerChunk = 65536;
         public const int WordsPerChunk = VoxelsPerChunk / 64; // 1024 adet 64-bit ulong = 8 KB / tuzlu chunk
+        public const int MaxPooledBitsets = 128; // 1 MB ust sinir
 
         private readonly Dictionary<(int cx, int cz), ulong[]> _chunkBits = new(16);
+        private readonly Stack<ulong[]> _freeWordPool = new(32);
 
         /// <summary>Su an bellekte ayrilmis (en az bir kez tuzlu su yazilmis) chunk sayisi.</summary>
         public int AllocatedChunkCount => _chunkBits.Count;
+        public int PooledBitsetCount => _freeWordPool.Count;
 
         /// <summary>Salt-okunur seyrek chunk bit dizileri tablosu.</summary>
         public IReadOnlyDictionary<(int cx, int cz), ulong[]> ChunkBitsMap => _chunkBits;
@@ -92,7 +95,15 @@ namespace Stratocraft.Physics.Data
         {
             if (!_chunkBits.TryGetValue((cx, cz), out ulong[]? bits) || bits == null || bits.Length < WordsPerChunk)
             {
-                bits = new ulong[WordsPerChunk];
+                if (_freeWordPool.Count > 0)
+                {
+                    bits = _freeWordPool.Pop();
+                    Array.Clear(bits, 0, bits.Length);
+                }
+                else
+                {
+                    bits = new ulong[WordsPerChunk];
+                }
                 _chunkBits[(cx, cz)] = bits;
             }
 
@@ -206,19 +217,76 @@ namespace Stratocraft.Physics.Data
                 }
             }
 
-            _chunkBits.Remove((cx, cz));
+            if (_chunkBits.Remove((cx, cz), out ulong[]? removed) && removed != null)
+            {
+                RecycleWordArray(removed);
+            }
             return true;
         }
 
-        /// <summary>Chunk yeniden uretildiginde veya bosaltildiginda tuzluluk kaydini kaldirir (tahsis yapmaz).</summary>
+        /// <summary>Chunk yeniden uretildiginde veya bosaltildiginda tuzluluk kaydini havuza iade eder (0 GC).</summary>
         public void ClearChunk(int cx, int cz)
         {
-            _chunkBits.Remove((cx, cz));
+            if (_chunkBits.Remove((cx, cz), out ulong[]? removed) && removed != null)
+            {
+                RecycleWordArray(removed);
+            }
         }
 
         public void ClearAll()
         {
+            foreach (var kv in _chunkBits)
+            {
+                if (kv.Value != null) RecycleWordArray(kv.Value);
+            }
             _chunkBits.Clear();
+        }
+
+        public ulong[]? ExportChunkBitsCopyOrNull(int cx, int cz)
+        {
+            if (!_chunkBits.TryGetValue((cx, cz), out ulong[]? bits) || bits == null || bits.Length < WordsPerChunk)
+            {
+                return null;
+            }
+            bool any = false;
+            for (int i = 0; i < WordsPerChunk; i++)
+            {
+                if (bits[i] != 0UL) { any = true; break; }
+            }
+            if (!any) return null;
+            var copy = new ulong[WordsPerChunk];
+            Array.Copy(bits, copy, WordsPerChunk);
+            return copy;
+        }
+
+        public void ImportChunkBits(int cx, int cz, ReadOnlySpan<ulong> bits)
+        {
+            if (bits.Length < WordsPerChunk)
+            {
+                ClearChunk(cx, cz);
+                return;
+            }
+            bool any = false;
+            for (int i = 0; i < WordsPerChunk; i++)
+            {
+                if (bits[i] != 0UL) { any = true; break; }
+            }
+            if (!any)
+            {
+                ClearChunk(cx, cz);
+                return;
+            }
+            ulong[] dst = GetOrCreateChunkBits(cx, cz);
+            bits.Slice(0, WordsPerChunk).CopyTo(dst);
+        }
+
+        private void RecycleWordArray(ulong[] arr)
+        {
+            if (arr.Length == WordsPerChunk && _freeWordPool.Count < MaxPooledBitsets)
+            {
+                Array.Clear(arr, 0, arr.Length);
+                _freeWordPool.Push(arr);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -52,6 +52,7 @@ namespace Stratocraft.Character
         private float _smoothedRightFootIkLift;
         private Quaternion _smoothedProneSlopeRot = Quaternion.identity;
         private float _smoothedProneCrestLiftY;
+        private Vector3 _smoothedCamWallPushOffset;
         private bool _shadowModeInitialized;
         private bool _lastFirstPersonShadowState;
         private bool _lastProneShadowState;
@@ -207,7 +208,7 @@ namespace Stratocraft.Character
                     leftFistPunch01);
             }
 
-            UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg);
+            UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg, deltaTime, worldChunks);
             if (isFirstPersonMode && playerBodyRoot != null && playerCamera != null)
             {
                 EnforceFirstPersonCameraProximityGuard(playerBodyRoot.transform, playerCamera.transform.position, isProne);
@@ -862,7 +863,9 @@ namespace Stratocraft.Character
             in CharacterMovementState movementState,
             bool isFirstPersonMode,
             float horizontalSpeed,
-            float cameraPitchDeg)
+            float cameraPitchDeg,
+            float deltaTime,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks)
         {
             if (cam == null) return;
 
@@ -879,33 +882,66 @@ namespace Stratocraft.Character
 
             if (isFirstPersonMode)
             {
-                if (Mathf.Abs(cam.nearClipPlane - 0.05f) > 0.005f)
+                if (Mathf.Abs(cam.nearClipPlane - 0.03f) > 0.004f)
                 {
-                    cam.nearClipPlane = 0.05f;
+                    cam.nearClipPlane = 0.03f;
                 }
 
-                // Omurga ileri egildiginde (Comelme: 18°, Surunme: 78°) FPS kamerasi geride (sirt cantasinin/gogsun icinde)
-                // kalmamali; omurga ileri uzanimi ile uyumlu olarak basin gercek ileri dunya konumuna tasinmalidir!
                 float spinePitchRad = Mathf.Max(0f, _smoothedBodyPitchDeg) * Mathf.Deg2Rad;
-                float dynamicForwardOffset = 0.14f + Mathf.Sin(spinePitchRad) * (isProne ? 0.40f : 0.24f);
-                Vector3 targetCamPos = eyeWorld + playerRoot.forward * dynamicForwardOffset;
-                // Egimli Surface Nets zemini uzerinde surunurken veya egilirken kameranin ve kilicin yerin altina girmesini %100 engelle
-                if (UnityEngine.Physics.Raycast(new Vector3(targetCamPos.x, targetCamPos.y + 1.4f, targetCamPos.z), Vector3.down,
-                    out RaycastHit groundHit, 3.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                float dynamicForwardOffset = 0.12f + Mathf.Sin(spinePitchRad) * (isProne ? 0.36f : 0.20f);
+                Vector3 rawTargetCamPos = eyeWorld + playerRoot.forward * dynamicForwardOffset;
+                Vector3 targetCamPos = rawTargetCamPos;
+
+                if (worldChunks != null && worldChunks.Count > 0)
                 {
-                    float minCamY = groundHit.point.y + (isProne ? 0.52f : 0.68f);
-                    if (targetCamPos.y < minCamY) targetCamPos.y = minCamY;
+                    Vector3 resolvedCamPos = rawTargetCamPos;
+                    ResolveFirstPersonCameraWallClearance(playerRoot.position, eyeWorld, ref resolvedCamPos, isProne, worldChunks);
+                    Vector3 desiredOffset = resolvedCamPos - rawTargetCamPos;
+                    // Duvara yaklasirken X-Ray olusmamasi icin aninda koru; duvardan ayrilirken yumusakca sifira don!
+                    if (desiredOffset.sqrMagnitude >= _smoothedCamWallPushOffset.sqrMagnitude - 1e-5f)
+                    {
+                        _smoothedCamWallPushOffset = desiredOffset;
+                    }
+                    else
+                    {
+                        _smoothedCamWallPushOffset = Vector3.Lerp(
+                            _smoothedCamWallPushOffset,
+                            desiredOffset,
+                            Mathf.Clamp01(deltaTime * 18.0f));
+                    }
+                    targetCamPos = rawTargetCamPos + _smoothedCamWallPushOffset;
                 }
+                else
+                {
+                    _smoothedCamWallPushOffset = Vector3.zero;
+                    if (UnityEngine.Physics.Raycast(new Vector3(targetCamPos.x, targetCamPos.y + 1.4f, targetCamPos.z), Vector3.down,
+                        out RaycastHit groundHit, 3.0f, UnityEngine.Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                    {
+                        float minCamY = groundHit.point.y + (isProne ? 0.52f : 0.68f);
+                        if (targetCamPos.y < minCamY) targetCamPos.y = minCamY;
+                    }
+                }
+
                 cam.transform.position = targetCamPos;
                 cam.transform.rotation = lookRot;
             }
             else
             {
+                if (Mathf.Abs(cam.nearClipPlane - 0.05f) > 0.005f)
+                {
+                    cam.nearClipPlane = 0.05f;
+                }
+
                 // Gercek Omuz Ustu (Over-the-Shoulder) TPS Kamerasi:
-                // Orbit merkezi oyuncunun sag omuz/ust gogus hizasindadir; boylece yukari (+gokyuzune) veya asagi (-yere)
-                // bakildiginda karakterin basi, omuzlari, zirhli govdesi ve sag kilic kolu ekranin sol-alt kadraninda daima net gorunur!
                 float shoulderHeight = Mathf.Max(0.50f, eyeHeight * 0.86f) + viewBob * 0.4f;
                 Vector3 shoulderPivot = playerRoot.position + Vector3.up * shoulderHeight + playerRoot.right * 0.44f;
+                if (worldChunks != null && worldChunks.Count > 0)
+                {
+                    Vector3 coreAnchor = playerRoot.position + Vector3.up * shoulderHeight;
+                    MarchSegmentOutsideVoxelWalls(coreAnchor, ref shoulderPivot, playerRoot.position.y, 0.16f, worldChunks);
+                    PushCameraSphereOutOfVoxelWalls(ref shoulderPivot, coreAnchor, playerRoot.position.y, 0.16f, worldChunks);
+                }
+
                 float tpsPitch = Mathf.Clamp(cameraPitchDeg, -62f, 70f);
                 Quaternion tpsRot = Quaternion.Euler(tpsPitch, playerRoot.eulerAngles.y, 0f);
 
@@ -927,9 +963,15 @@ namespace Stratocraft.Character
                     {
                         if (!obstacleHit.transform.IsChildOf(playerRoot) && obstacleHit.transform != playerRoot)
                         {
-                            float safeDist = Mathf.Max(0.55f, obstacleHit.distance - 0.12f);
+                            float safeDist = Mathf.Max(0.45f, obstacleHit.distance - 0.12f);
                             finalCamPos = shoulderPivot + castDir * safeDist;
                         }
+                    }
+
+                    if (worldChunks != null && worldChunks.Count > 0)
+                    {
+                        MarchSegmentOutsideVoxelWalls(shoulderPivot, ref finalCamPos, playerRoot.position.y, 0.20f, worldChunks);
+                        PushCameraSphereOutOfVoxelWalls(ref finalCamPos, shoulderPivot, playerRoot.position.y, 0.18f, worldChunks);
                     }
                 }
 
@@ -954,6 +996,262 @@ namespace Stratocraft.Character
                     cam.transform.rotation = tpsRot;
                 }
             }
+        }
+
+        private static uint ReadCameraVoxelRaw(IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
+        {
+            if (wy < 0 || wy >= 256) return 0u;
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? v) || v == null) return 0u;
+            int idx = (wy << 8) | ((wz - cz * 16) << 4) | (wx - cx * 16);
+            return (uint)idx < (uint)v.Length ? v[idx] : 0u;
+        }
+
+        private static bool IsCameraWallVoxel(uint raw)
+        {
+            if (!Stratocraft.Voxel.Data.VoxelBitUtility.IsPhysicallySolid(raw)) return false;
+            byte mat = Stratocraft.Voxel.Data.VoxelBitUtility.GetMaterialId(raw);
+            return mat != Stratocraft.Core.Constants.MaterialIdCatalog.Air &&
+                   mat != Stratocraft.Core.Constants.MaterialIdCatalog.GlowingMoss;
+        }
+
+        private static void ResolveFirstPersonCameraWallClearance(
+            Vector3 playerFeetPos,
+            Vector3 eyeAnchor,
+            ref Vector3 targetCamPos,
+            bool isProne,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            // 1) Ileri bas uzanimini (eyeAnchor -> targetCamPos) gercek 3B izo-yuzey onunde durdur
+            MarchSegmentOutsideVoxelWalls(eyeAnchor, ref targetCamPos, playerFeetPos.y, 0.16f, worldChunks);
+
+            // 2) Surekli Trilinear SDF gradyan itmesi (ShapeId == 0) + kubik blok itmesi (ShapeId != 0) — 3 iterasyon:
+            //    Yokuslarda 0.000m yatay salinim, her yondeki (-X/+X/-Z/+Z/capraz) duvarda %100 X-Ray engeli!
+            for (int iter = 0; iter < 3; iter++)
+            {
+                PushCameraSphereOutOfVoxelWalls(ref targetCamPos, eyeAnchor, playerFeetPos.y, 0.16f, worldChunks);
+            }
+
+            // 3) Surunurken/comelirken egimli yokusta kameranin zemin altina dalmasini YALNIZCA yerel (+/-0.55m) kotta engelle
+            if (worldChunks is Dictionary<(int cx, int cz), uint[]> dictChunks)
+            {
+                float localGroundY = Stage1PlayerMovementBridge.SampleBilinearVoxelGroundHeight(
+                    dictChunks, targetCamPos.x, targetCamPos.z, playerFeetPos.y);
+                float minEyeAboveGround = isProne ? 0.34f : 0.56f;
+                float reqMinY = localGroundY + minEyeAboveGround;
+                if (localGroundY > -20f && targetCamPos.y < reqMinY && (reqMinY - targetCamPos.y) <= 0.55f)
+                {
+                    SampleTrilinearSdfField(targetCamPos.x, reqMinY + 0.14f, targetCamPos.z, worldChunks, out float ceilRho, out _);
+                    if (ceilRho < 40.0f &&
+                        !IsCubicWallVoxelAt(worldChunks, Mathf.FloorToInt(targetCamPos.x), Mathf.FloorToInt(reqMinY + 0.14f), Mathf.FloorToInt(targetCamPos.z)))
+                    {
+                        targetCamPos.y = reqMinY;
+                    }
+                }
+            }
+        }
+
+        private static bool IsCubicWallVoxelAt(IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks, int wx, int wy, int wz)
+        {
+            uint raw = ReadCameraVoxelRaw(worldChunks, wx, wy, wz);
+            return IsCameraWallVoxel(raw) && Stratocraft.Voxel.Data.VoxelBitUtility.GetShapeId(raw) != 0;
+        }
+
+        /// <summary>
+        /// HybridSurfaceNetsAndShapeMesher (IsoLevel = 64, kose-merkezli [wx, wy, wz] izgarasi) ile %100 ayni
+        /// surekli 3B trilinear SDF skaler alanini ve analitik gradyanini hesaplar (8 okuma, 0 B GC, 0 izgara sicramasi!).
+        /// </summary>
+        private static void SampleTrilinearSdfField(
+            float x,
+            float y,
+            float z,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks,
+            out float rho,
+            out Vector3 grad)
+        {
+            int x0 = Mathf.FloorToInt(x);
+            int y0 = Mathf.FloorToInt(y);
+            int z0 = Mathf.FloorToInt(z);
+            float fx = x - x0;
+            float fy = y - y0;
+            float fz = z - z0;
+
+            static float ReadSmoothDensity(IReadOnlyDictionary<(int cx, int cz), uint[]> map, int wx, int wy, int wz)
+            {
+                uint raw = ReadCameraVoxelRaw(map, wx, wy, wz);
+                if (!IsCameraWallVoxel(raw)) return 0f;
+                return Stratocraft.Voxel.Data.VoxelBitUtility.GetShapeId(raw) == 0
+                    ? Stratocraft.Voxel.Data.VoxelBitUtility.GetDensityOrLiquid(raw)
+                    : 0f;
+            }
+
+            float d000 = ReadSmoothDensity(worldChunks, x0, y0, z0);
+            float d100 = ReadSmoothDensity(worldChunks, x0 + 1, y0, z0);
+            float d001 = ReadSmoothDensity(worldChunks, x0, y0, z0 + 1);
+            float d101 = ReadSmoothDensity(worldChunks, x0 + 1, y0, z0 + 1);
+            float d010 = ReadSmoothDensity(worldChunks, x0, y0 + 1, z0);
+            float d110 = ReadSmoothDensity(worldChunks, x0 + 1, y0 + 1, z0);
+            float d011 = ReadSmoothDensity(worldChunks, x0, y0 + 1, z0 + 1);
+            float d111 = ReadSmoothDensity(worldChunks, x0 + 1, y0 + 1, z0 + 1);
+
+            float c00 = d000 + (d100 - d000) * fx;
+            float c01 = d001 + (d101 - d001) * fx;
+            float c10 = d010 + (d110 - d010) * fx;
+            float c11 = d011 + (d111 - d011) * fx;
+
+            float c0 = c00 + (c01 - c00) * fz;
+            float c1 = c10 + (c11 - c10) * fz;
+            rho = c0 + (c1 - c0) * fy;
+
+            float gx0 = ((d100 - d000) * (1f - fz)) + ((d101 - d001) * fz);
+            float gx1 = ((d110 - d010) * (1f - fz)) + ((d111 - d011) * fz);
+            float gz0 = c01 - c00;
+            float gz1 = c11 - c10;
+
+            grad = new Vector3(
+                gx0 + (gx1 - gx0) * fy,
+                c1 - c0,
+                gz0 + (gz1 - gz0) * fy);
+        }
+
+        private static void MarchSegmentOutsideVoxelWalls(
+            Vector3 safeStart,
+            ref Vector3 targetEnd,
+            float playerFeetY,
+            float sphereRadius,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            Vector3 delta = targetEnd - safeStart;
+            float dist = delta.magnitude;
+            if (dist < 0.005f) return;
+
+            int steps = Mathf.Clamp(Mathf.CeilToInt(dist / 0.08f), 2, 24);
+            Vector3 lastSafe = safeStart;
+            for (int s = 1; s <= steps; s++)
+            {
+                float t = s / (float)steps;
+                Vector3 probe = safeStart + delta * t;
+                Vector3 testProbe = probe;
+                if (PushCameraSphereOutOfVoxelWalls(ref testProbe, safeStart, playerFeetY, sphereRadius, worldChunks))
+                {
+                    targetEnd = lastSafe;
+                    return;
+                }
+                lastSafe = probe;
+            }
+        }
+
+        private static bool PushCameraSphereOutOfVoxelWalls(
+            ref Vector3 camPos,
+            Vector3 fallbackAnchor,
+            float playerFeetY,
+            float radius,
+            IReadOnlyDictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            bool anyPushed = false;
+
+            // A) Dogal SurfaceNets (ShapeId == 0) arazi/falez/magara duvarlari:
+            //    Gorsel ucgen tam rho == 64.0 izo-yuzeyindedir. Kamerayi rho <= 38.0 (~0.20m disarida) tutmak
+            //    yokuslarda 0.000m yatay sicrama ve tum duvarlarda %100 sifir X-Ray saglar!
+            const float maxAllowedSmoothRho = 38.0f;
+            SampleTrilinearSdfField(camPos.x, camPos.y, camPos.z, worldChunks, out float rho, out Vector3 grad);
+            if (rho > maxAllowedSmoothRho)
+            {
+                anyPushed = true;
+                float gradMagSq = grad.sqrMagnitude;
+                if (gradMagSq > 1.0f)
+                {
+                    float gradMag = Mathf.Sqrt(gradMagSq);
+                    float pushMeters = Mathf.Clamp((rho - maxAllowedSmoothRho) / gradMag, 0.005f, 0.42f);
+                    Vector3 outNormal = -grad / gradMag;
+                    // Yokus/zemin kaynakli yukari normalde (outNormal.y > 0.72) X/Z eksenini ASLA saga-sola savurma!
+                    if (outNormal.y > 0.72f)
+                    {
+                        camPos.y += pushMeters * outNormal.y;
+                    }
+                    else
+                    {
+                        camPos += outNormal * pushMeters;
+                    }
+                }
+                else
+                {
+                    Vector3 toSafe = fallbackAnchor - camPos;
+                    if (toSafe.sqrMagnitude > 1e-5f)
+                    {
+                        camPos += toSafe.normalized * 0.16f;
+                    }
+                }
+            }
+
+            // B) Oyuncu yapisi kubik/sekilli bloklar (ShapeId != 0 -> tam [wx .. wx+1] kutusu):
+            int cWx = Mathf.FloorToInt(camPos.x);
+            int cWy = Mathf.FloorToInt(camPos.y);
+            int cWz = Mathf.FloorToInt(camPos.z);
+            float rSq = radius * radius;
+
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                int wy = cWy + dy;
+                if (wy < 1 || wy >= 255) continue;
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    int wz = cWz + dz;
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int wx = cWx + dx;
+                        uint raw = ReadCameraVoxelRaw(worldChunks, wx, wy, wz);
+                        if (!IsCameraWallVoxel(raw) || Stratocraft.Voxel.Data.VoxelBitUtility.GetShapeId(raw) == 0)
+                        {
+                            continue;
+                        }
+
+                        bool hasSolidAbove = IsCameraWallVoxel(ReadCameraVoxelRaw(worldChunks, wx, wy + 1, wz));
+                        if (!hasSolidAbove && ((wy + 1.0f) - playerFeetY) <= Stage1PlayerMovementBridge.MaxKneeStepUpMeters + 0.15f)
+                        {
+                            continue;
+                        }
+
+                        float minX = wx, maxX = wx + 1f;
+                        float minY = wy, maxY = wy + 1f;
+                        float minZ = wz, maxZ = wz + 1f;
+
+                        float cx = Mathf.Clamp(camPos.x, minX, maxX);
+                        float cy = Mathf.Clamp(camPos.y, minY, maxY);
+                        float cz = Mathf.Clamp(camPos.z, minZ, maxZ);
+
+                        float ox = camPos.x - cx;
+                        float oy = camPos.y - cy;
+                        float oz = camPos.z - cz;
+                        float dSq = ox * ox + oy * oy + oz * oz;
+                        if (dSq >= rSq) continue;
+
+                        anyPushed = true;
+                        if (dSq > 1e-6f)
+                        {
+                            float invD = 1.0f / Mathf.Sqrt(dSq);
+                            camPos.x = cx + ox * invD * radius;
+                            camPos.y = cy + oy * invD * radius;
+                            camPos.z = cz + oz * invD * radius;
+                        }
+                        else
+                        {
+                            Vector3 toSafe = fallbackAnchor - camPos;
+                            if (Mathf.Abs(toSafe.x) >= Mathf.Abs(toSafe.z))
+                            {
+                                camPos.x = toSafe.x >= 0f ? (maxX + radius) : (minX - radius);
+                            }
+                            else
+                            {
+                                camPos.z = toSafe.z >= 0f ? (maxZ + radius) : (minZ - radius);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return anyPushed;
         }
 
         private void UpdateLeftWristCrystalPose(

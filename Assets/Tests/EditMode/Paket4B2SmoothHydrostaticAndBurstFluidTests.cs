@@ -2000,10 +2000,10 @@ namespace Stratocraft.Tests.EditMode
         }
 
         // =====================================================================
-        // T27: Havada Dusen Yuksek Selale Suyunun 1m Beyaz Kutu Yerine Silindirik Sutun Uretmesi (706fc114.jpg Tamiri)
+        // T27: Paket 4B.3 Minecraft Tarzi 3B Hacimli Akiskan Selale (09524c95.jpg Tamiri)
         // =====================================================================
         [Test]
-        public void T27_MidAirHighDropWaterfallStream_EmitsTaperedCylindricalColumn_ZeroOneMeterWhiteBoxPillars()
+        public void T27_MidAirHighDropWaterfallStream_EmitsVolumetricMinecraftStyleColumns_FusesNeighbors_AndHasZeroFloorPlusOneGap()
         {
             const int maxY = 16;
             const int vol = 16 * maxY * 16;
@@ -2019,42 +2019,87 @@ namespace Stratocraft.Tests.EditMode
                 }
             }
 
-            // (8, 8) sutununda y = 7, 8, 9, 10 boyunca havada serbest dusen su sutunu (Mass = 70)
-            for (int y = 7; y <= 10; y++)
-            {
-                fluids[(y << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 70, isSettled: false).RawValue;
-            }
-
             var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
             var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
             var tris = new List<FluidRichTriangle>(256);
+
+            // 1) Az su (Mass=16) fark edilir 3B hacme (~0.45m..0.60m), yogun su (Mass=240) tam ~0.95m..1.00m hacme esnemeli!
+            for (int y = 6; y <= 10; y++) fluids[(y << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 16, isSettled: false).RawValue;
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+            Assert.That(tris.Count, Is.GreaterThan(16));
+            float lightSpanX = MeasureSpanX(tris);
+            Assert.That(lightSpanX, Is.InRange(0.44f, 0.62f), $"Light trickle waterfall (Mass=16) must stay noticeably volumetric [0.44..0.62m] (actual={lightSpanX:F3}m)!");
+
+            tris.Clear();
+            for (int y = 6; y <= 10; y++) fluids[(y << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 240, isSettled: false).RawValue;
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+            float heavySpanX = MeasureSpanX(tris);
+            Assert.That(heavySpanX, Is.InRange(0.94f, 1.005f), $"Heavy torrent waterfall (Mass=240) must expand to ~1.00m volumetric column (actual={heavySpanX:F3}m)!");
+
+            // 2) Yan yana 2 selale sutunu (x=8 ve x=9, y=5..10) + altinda y=4 karsilama havuzu:
+            //    - x = 9.0 ic duvarinda 0 ucgen (tek blok kaynasma!)
+            //    - y = 5 (floor + 1) katmaninda > 0 ucgen (0 gorunmez bosluk!)
+            //    - 0 tebesir-beyaz (>= 0.65 foam) cubuk ve gercek yatay dis normaller (|N.y| < 0.05)
+            Array.Clear(fluids, 0, vol);
+            for (int x = 7; x <= 10; x++)
+            {
+                fluids[(4 << 8) | (8 << 4) | x] = FluidCell16.Pack(FluidType.Water, 200, isSettled: false).RawValue;
+            }
+            for (int y = 5; y <= 10; y++)
+            {
+                fluids[(y << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 90, isSettled: false).RawValue;
+                fluids[(y << 8) | (8 << 4) | 9] = FluidCell16.Pack(FluidType.Water, 90, isSettled: false).RawValue;
+            }
+
+            tris.Clear();
             FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
 
-            Assert.That(tris.Count, Is.GreaterThan(16));
-            float maxRadialOffsetFromCenter = 0f;
-            int chalkWhiteCurtainTris = 0;
+            int internalSeamWallTris = 0;
+            int floorPlusOneVertTris = 0;
+            int chalkWhiteBars = 0;
+            int horizontalSideFaces = 0;
+
             for (int i = 0; i < tris.Count; i++)
             {
                 FluidRichTriangle t = tris[i];
-                maxRadialOffsetFromCenter = MathF.Max(maxRadialOffsetFromCenter, RadialDist(in t.C0.PositionCurr));
-                maxRadialOffsetFromCenter = MathF.Max(maxRadialOffsetFromCenter, RadialDist(in t.C1.PositionCurr));
-                maxRadialOffsetFromCenter = MathF.Max(maxRadialOffsetFromCenter, RadialDist(in t.C2.PositionCurr));
                 if (t.C0.WaterfallFoam01 >= 0.65f || t.C1.WaterfallFoam01 >= 0.65f || t.C2.WaterfallFoam01 >= 0.65f)
                 {
-                    chalkWhiteCurtainTris++;
+                    chalkWhiteBars++;
+                }
+
+                float midY = (t.C0.PositionCurr.Y + t.C1.PositionCurr.Y + t.C2.PositionCurr.Y) / 3.0f;
+                float midX = (t.C0.PositionCurr.X + t.C1.PositionCurr.X + t.C2.PositionCurr.X) / 3.0f;
+                bool isVerticalSide = MathF.Abs(t.C0.Normal.Y) < 0.05f && MathF.Abs(t.C1.Normal.Y) < 0.05f;
+                if (isVerticalSide && midY >= 5.0f && midY <= 10.5f)
+                {
+                    horizontalSideFaces++;
+                    if (MathF.Abs(midX - 9.0f) < 0.02f && MathF.Abs(t.C0.Normal.X) > 0.9f)
+                    {
+                        internalSeamWallTris++;
+                    }
+                }
+
+                if (isVerticalSide && midY >= 4.5f && midY <= 6.0f && midX >= 8.0f && midX <= 10.0f)
+                {
+                    floorPlusOneVertTris++;
                 }
             }
 
-            Assert.That(maxRadialOffsetFromCenter, Is.LessThanOrEqualTo(0.32f),
-                $"Mid-air falling stream must taper to a <=0.32m radius cylindrical jet instead of a 1.0m x 1.0m square box (maxR={maxRadialOffsetFromCenter:F3}m)!");
-            Assert.That(chalkWhiteCurtainTris, Is.EqualTo(0),
-                "Mid-air falling stream must emit ZERO chalk-white (>=0.65 foam) vertical laser bars!");
+            Assert.That(horizontalSideFaces, Is.GreaterThanOrEqualTo(12), "Volumetric waterfall must emit true horizontal outward side faces!");
+            Assert.That(internalSeamWallTris, Is.EqualTo(0), "Adjacent falling waterfall columns (x=8 & x=9) must fuse seamlessly with 0 internal walls at x=9.0!");
+            Assert.That(floorPlusOneVertTris, Is.GreaterThanOrEqualTo(4), "y = floor + 1 (y=5) directly above splash pool must emit continuous volumetric faces (0 invisible gap)!");
+            Assert.That(chalkWhiteBars, Is.EqualTo(0), "Volumetric waterfall must emit ZERO chalk-white (>=0.65 foam) laser bars!");
 
-            static float RadialDist(in System.Numerics.Vector3 p)
+            static float MeasureSpanX(List<FluidRichTriangle> list)
             {
-                float dx = p.X - 8.5f;
-                float dz = p.Z - 8.5f;
-                return MathF.Sqrt(dx * dx + dz * dz);
+                float minX = float.MaxValue, maxX = float.MinValue;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    FluidRichTriangle t = list[i];
+                    minX = MathF.Min(minX, MathF.Min(t.C0.PositionCurr.X, MathF.Min(t.C1.PositionCurr.X, t.C2.PositionCurr.X)));
+                    maxX = MathF.Max(maxX, MathF.Max(t.C0.PositionCurr.X, MathF.Max(t.C1.PositionCurr.X, t.C2.PositionCurr.X)));
+                }
+                return maxX - minX;
             }
         }
 
@@ -2112,6 +2157,773 @@ namespace Stratocraft.Tests.EditMode
             Assert.That(midAirGhost, Is.EqualTo(0), "Steep 2-block mountain rain must NOT step into mid-air (x=6, y=11) and vanish/pop!");
             Assert.That(remUpperSlope, Is.GreaterThanOrEqualTo(1), "Upper slope cell must retain >=1 unit so stream stays connected!");
             Assert.That(groundedLowerSlope, Is.GreaterThanOrEqualTo(1), "Lower grounded slope cell (x=6, y=9) must directly receive the stream!");
+        }
+
+        // =====================================================================
+        // T29: Havada Dusen Suyun Yana Sicramamasi (09524c95.jpg Fizigi) + Dolu Havuz Ustune Tasma + y->y-2 Donmamasi
+        // =====================================================================
+        [Test]
+        public void T29_MidAirFallingWaterfall_NeverSplashesSidewaysInOpenAir_AndSpilloverOverFullPoolDoesNotFreeze()
+        {
+            const int maxY = 16;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint stone = PackSolid(MaterialIdCatalog.Stone);
+
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 2; y++) solids[(y << 8) | (z << 4) | x] = stone;
+                }
+            }
+
+            // 1) 255'lik paketi y=11 ve y=12'den bos havaya birak: havadayken (y=6..12) komsu x=7/x=9 kolonlarina HIC sicramamali!
+            fluids[(12 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false).RawValue;
+            fluids[(11 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false).RawValue;
+            long initMass1 = 510;
+
+            for (int tick = 0; tick < 6; tick++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, stepParity: tick & 1);
+            }
+
+            long finalMass1 = 0;
+            int midAirSideSplash = 0;
+            for (int i = 0; i < vol; i++) finalMass1 += new FluidCell16(fluids[i]).Mass;
+            for (int y = 5; y <= 12; y++)
+            {
+                midAirSideSplash += new FluidCell16(fluids[(y << 8) | (8 << 4) | 7]).Mass;
+                midAirSideSplash += new FluidCell16(fluids[(y << 8) | (8 << 4) | 9]).Mass;
+                midAirSideSplash += new FluidCell16(fluids[(y << 8) | (7 << 4) | 8]).Mass;
+                midAirSideSplash += new FluidCell16(fluids[(y << 8) | (9 << 4) | 8]).Mass;
+            }
+
+            Assert.That(finalMass1, Is.EqualTo(initMass1), "Mid-air vertical waterfall drop must conserve exact mass (dM == 0)!");
+            Assert.That(midAirSideSplash, Is.EqualTo(0),
+                $"Mid-air falling water (even with 255 packets!) must NEVER splash sideways in open air (actual splash={midAirSideSplash})!");
+
+            // 2) Dolu (255) havuz yanindan yatay tasma (spacePool == 0 kilidi tamiri):
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 4; y++) solids[(y << 8) | (z << 4) | x] = stone;
+                    if (x < 4 || x > 8 || z < 7 || z > 9)
+                    {
+                        for (int y = 5; y <= 8; y++) solids[(y << 8) | (z << 4) | x] = stone;
+                    }
+                    else if (x <= 5)
+                    {
+                        solids[(5 << 8) | (z << 4) | x] = stone; // Yuksek sahil basamagi y=5
+                    }
+                }
+            }
+            // x=5 y=6'da 180 su; x=6..8 y=5'te 255 TAM DOLU havuz (y=6 bos!) -> su (6,6,8)'e tasabilmeli!
+            long initMass2 = 0;
+            for (int z = 7; z <= 9; z++)
+            {
+                fluids[(6 << 8) | (z << 4) | 5] = FluidCell16.Pack(FluidType.Water, 180, isSettled: false).RawValue;
+                initMass2 += 180;
+                for (int x = 6; x <= 8; x++)
+                {
+                    fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false).RawValue;
+                    initMass2 += 255;
+                }
+            }
+
+            for (int tick = 0; tick < 8; tick++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, stepParity: tick & 1);
+            }
+
+            long finalMass2 = 0;
+            for (int i = 0; i < vol; i++) finalMass2 += new FluidCell16(fluids[i]).Mass;
+            byte spilledOntoFullPool = new FluidCell16(fluids[(6 << 8) | (8 << 4) | 6]).Mass;
+            Assert.That(finalMass2, Is.EqualTo(initMass2), "Spillover onto full 255 pool must conserve exact mass (dM == 0)!");
+            Assert.That(spilledOntoFullPool, Is.GreaterThan((byte)20),
+                $"Water on shore ledge (5,6,8) must spill horizontally onto full 255 pool top (6,6,8) instead of locking when spacePool==0 (actual={spilledOntoFullPool})!");
+        }
+
+        // =====================================================================
+        // T30: Acik Yamac/Cukur Uzerindeki Kalin Suyun Gercek SurfaceNets Cimenine Kapanmasi (c973801a.jpg)
+        //      VE Kapali Havuzun 0.002m Ayna Duzlugunu Korumasi
+        // =====================================================================
+        [Test]
+        public void T30_OverflowingThickWaterOverSurfaceNetsHollow_ClosesDownToTrueSurfaceNetsGround_WhileCalmPoolStaysFlat()
+        {
+            const int maxY = 14;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint fullGrass = PackSolid(MaterialIdCatalog.Grass, VoxelBitUtility.FullDensity);
+            uint fullStone = PackSolid(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity);
+
+            // 1) d=127 dogal SurfaceNets yamac: x<=8 katman y=7 (gercek SurfaceNets cimen = 7.496m),
+            //    x>=9 katman y=6 cukur (gercek SurfaceNets cimen = 6.496m)!
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    int topSolid = x <= 8 ? 7 : 6;
+                    for (int y = 0; y < topSolid; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    solids[(topSolid << 8) | (z << 4) | x] = fullGrass;
+                }
+            }
+
+            // Kazandan x=6..8, z=6..8, y=8 bolgesine kalin su (Mass=180) dokuldu (x=9'da 1m cukur acik hava!)
+            for (int z = 6; z <= 8; z++)
+            {
+                for (int x = 6; x <= 8; x++)
+                {
+                    fluids[(8 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 180, isSettled: false).RawValue;
+                }
+            }
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(256);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            float minSkirtBottomAtX9 = float.MaxValue;
+            int whiteBoxFoamCount = 0;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (MathF.Abs(t.C0.WaterfallFoam01 - 0.75f) < 0.02f) whiteBoxFoamCount++;
+                CheckX9Edge(in t.C0, ref minSkirtBottomAtX9);
+                CheckX9Edge(in t.C1, ref minSkirtBottomAtX9);
+                CheckX9Edge(in t.C2, ref minSkirtBottomAtX9);
+            }
+
+            Assert.That(whiteBoxFoamCount, Is.EqualTo(0), "Ground-sealing volumetric skirt must NEVER use chalk-white 0.75 box foam!");
+            Assert.That(minSkirtBottomAtX9, Is.LessThanOrEqualTo(6.40f),
+                $"Thick overflowing rim at x=9.0 overlooking a SurfaceNets hollow (true grass=6.496m) must seal all the way down into <=6.40m so 0 dark cave gap appears (actual minY={minSkirtBottomAtX9:F3}m)!");
+
+            // 2) Kapali havuzun ust yuzeyi yamultulmadan <= 0.002m ayna duzlugunde kalmali!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 4; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    if (x < 3 || x > 12 || z < 3 || z > 12)
+                    {
+                        for (int y = 5; y <= 8; y++) solids[(y << 8) | (z << 4) | x] = fullGrass;
+                    }
+                    else
+                    {
+                        fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true).RawValue;
+                        fluids[(6 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 200, isSettled: true).RawValue;
+                    }
+                }
+            }
+
+            tris.Clear();
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+            float minPoolY = float.MaxValue, maxPoolY = float.MinValue;
+            int poolVerts = 0;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (t.C0.Normal.Y < 0.8f) continue;
+                SampleCalmTop(in t.C0, ref minPoolY, ref maxPoolY, ref poolVerts);
+                SampleCalmTop(in t.C1, ref minPoolY, ref maxPoolY, ref poolVerts);
+                SampleCalmTop(in t.C2, ref minPoolY, ref maxPoolY, ref poolVerts);
+            }
+            Assert.That(poolVerts, Is.GreaterThan(12));
+            Assert.That(maxPoolY - minPoolY, Is.LessThanOrEqualTo(0.002f),
+                $"Enclosed calm pool top surface must stay mirror-flat (<=0.002m spread, actual={maxPoolY - minPoolY:F5}m)!");
+
+            static void CheckX9Edge(in FluidCornerSample s, ref float minY)
+            {
+                if (MathF.Abs(s.PositionCurr.X - 9.0f) <= 0.08f && s.PositionCurr.Z >= 6.0f && s.PositionCurr.Z <= 9.0f)
+                {
+                    if (s.PositionCurr.Y < minY) minY = s.PositionCurr.Y;
+                }
+            }
+
+            static void SampleCalmTop(in FluidCornerSample s, ref float minY, ref float maxY, ref int count)
+            {
+                if (s.PositionCurr.X >= 4.0f && s.PositionCurr.X <= 12.0f && s.PositionCurr.Z >= 4.0f && s.PositionCurr.Z <= 12.0f)
+                {
+                    if (s.PositionCurr.Y < minY) minY = s.PositionCurr.Y;
+                    if (s.PositionCurr.Y > maxY) maxY = s.PositionCurr.Y;
+                    count++;
+                }
+            }
+        }
+
+        // =====================================================================
+        // T31: -X Yamaci & Icbukey V-Vadi Olugunda SurfaceNets Acikligi (4511a295.jpg) + Golet Tasma Dudagi (3ed66b74.jpg)
+        // =====================================================================
+        [Test]
+        public void T31_NegXSlopeAndConcaveVValleyStream_ClearsSurfaceNetsTerrain_AndSpillwayPoolHasNoVerticalCliffFold()
+        {
+            const int maxY = 16;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint fullStone = PackSolid(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity);
+            uint iceSlope = PackSolid(MaterialIdCatalog.PackedIce, 96);
+
+            // 1) Icbukey V-vadi kaya olugu + -X egimli yamac: z=8 oluk (yFloor = 5 + x/2 -> -X yonunde alcalir!),
+            //    z<=7 ve z>=9 yan duvarlar 1 blok daha yuksek (+1.0m V-vadi!)
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    int baseFloor = 4 + (x >= 8 ? 2 : (x >= 6 ? 1 : 0)); // -X yonunde basamakli inis
+                    int bankLift = (z == 8) ? 0 : 1;
+                    int topSolid = baseFloor + bankLift;
+                    for (int y = 0; y < topSolid; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    solids[(topSolid << 8) | (z << 4) | x] = iceSlope; // d=96 -> SurfaceNets base = topSolid + 0.333, V-vadi dual = +0.667!
+
+                    if (z == 8 && x >= 5 && x <= 10)
+                    {
+                        fluids[((topSolid + 1) << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 20, isSettled: false).RawValue;
+                    }
+                }
+            }
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(256);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+            Assert.That(tris.Count, Is.GreaterThan(8));
+
+            // x=8, z=8 bolgesinde topSolid=6, d=96 -> V-vadi SurfaceNets yuzeyi = 6.333 + 0.333 = 6.667m (+0.12m jitter = 6.787m).
+            // Su tepe noktasi bu zarfin USTUNDE (> 6.78m) olmalidir!
+            float maxWaterYAtTalwegX8 = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (t.C0.Normal.Y < 0.5f) continue;
+                CheckTalweg(in t.C0, ref maxWaterYAtTalwegX8);
+                CheckTalweg(in t.C1, ref maxWaterYAtTalwegX8);
+                CheckTalweg(in t.C2, ref maxWaterYAtTalwegX8);
+            }
+            Assert.That(maxWaterYAtTalwegX8, Is.GreaterThanOrEqualTo(6.78f),
+                $"V-valley -X stream (Mass=20) must clear the SurfaceNets V-trough + jitter envelope (>=6.78m) instead of vanishing underground (actual={maxWaterYAtTalwegX8:F3}m)!");
+
+            // 2) 3 tarafi kaya duvarli, on tarafi (x=9) acik tasma dudakli selale goleti (3ed66b74.jpg):
+            //    Ic gol yuzeyi (~6.78m) ile x=9.0 tasma kenari arasinda -1.33m origami cokmesi OLMAMALI!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 4; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    bool inPool = x >= 5 && x <= 8 && z >= 6 && z <= 9;
+                    bool inOpenSpillway = x >= 9 && z >= 6 && z <= 9;
+                    if (!inPool && !inOpenSpillway)
+                    {
+                        for (int y = 5; y <= 8; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    }
+                    else if (inOpenSpillway)
+                    {
+                        solids[(5 << 8) | (z << 4) | x] = fullStone; // Tasma esigi y=5, ustu y=6 acik kuru hava!
+                    }
+                    else
+                    {
+                        fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false).RawValue;
+                        fluids[(6 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 200, isSettled: false).RawValue;
+                    }
+                }
+            }
+
+            tris.Clear();
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            float interiorY = 0f;
+            float spillwayRimTopY = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (t.C0.Normal.Y < 0.75f && t.C1.Normal.Y < 0.75f && t.C2.Normal.Y < 0.75f) continue;
+                SamplePoolAndRim(in t.C0, ref interiorY, ref spillwayRimTopY);
+                SamplePoolAndRim(in t.C1, ref interiorY, ref spillwayRimTopY);
+                SamplePoolAndRim(in t.C2, ref interiorY, ref spillwayRimTopY);
+            }
+
+            Assert.That(interiorY, Is.GreaterThan(6.70f));
+            Assert.That(spillwayRimTopY, Is.GreaterThanOrEqualTo(interiorY - 0.35f),
+                $"Plunge pool spillway top rim ({spillwayRimTopY:F3}m) must stay within 0.35m of flat interior pool ({interiorY:F3}m) instead of plunging -1.33m into the rock!");
+
+            static void CheckTalweg(in FluidCornerSample s, ref float maxY)
+            {
+                if (s.PositionCurr.X >= 7.8f && s.PositionCurr.X <= 9.2f && s.PositionCurr.Z >= 7.8f && s.PositionCurr.Z <= 9.2f)
+                {
+                    if (s.PositionCurr.Y > maxY) maxY = s.PositionCurr.Y;
+                }
+            }
+
+            static void SamplePoolAndRim(in FluidCornerSample s, ref float innerY, ref float rimY)
+            {
+                if (s.Normal.Y < 0.75f) return;
+                if (MathF.Abs(s.PositionCurr.X - 7.0f) < 0.1f && MathF.Abs(s.PositionCurr.Z - 8.0f) < 0.1f)
+                {
+                    innerY = MathF.Max(innerY, s.PositionCurr.Y);
+                }
+                if (MathF.Abs(s.PositionCurr.X - 9.0f) < 0.1f && s.PositionCurr.Z >= 7.0f && s.PositionCurr.Z <= 9.0f)
+                {
+                    rimY = MathF.Max(rimY, s.PositionCurr.Y);
+                }
+            }
+        }
+
+        // =====================================================================
+        // T32: Yagmurda/Gunessiz Havada 0 Toprak Kurumasi + Chunk Sinirinda y->y-2 Akis & Hiz Aktarimi
+        // =====================================================================
+        [Test]
+        public void T32_SoilDoesNotDryDuringRainOrColdNight_AndSteepSlopeVelocityBuildsAcrossChunkSeams()
+        {
+            const int maxY = 14;
+            const int vol = 16 * maxY * 16;
+            var voxelsA = new uint[vol];
+            var fluidsA = new ushort[vol];
+            uint stone = PackSolid(MaterialIdCatalog.Stone);
+            uint dirt = PackSolid(MaterialIdCatalog.Dirt);
+
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 3; y++) voxelsA[(y << 8) | (z << 4) | x] = stone;
+                    voxelsA[(4 << 8) | (z << 4) | x] = dirt; // Alt toprak katmani
+                    voxelsA[(5 << 8) | (z << 4) | x] = dirt; // Yuzey topragi
+                }
+            }
+
+            var soilSys = new SoilMoistureAndMudSystem();
+            byte[] moistArr = soilSys.GetOrCreateChunkMoisture(0, 0);
+            moistArr[(5 << 8) | (8 << 4) | 8] = 200;
+            moistArr[(4 << 8) | (8 << 4) | 8] = 200;
+            soilSys.ActiveMoistChunks.Add((0, 0));
+
+            var worldMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = voxelsA };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluidsA };
+
+            // 1A) Yagmur yagarken (precip = 10 mm/hr) toprak 0 nem kaybetmeli!
+            soilSys.StepSolarDryingAllMoistChunks(worldMap, fluidMap, maxY, isSunnyDaytime: true, ambientTempCelsius: 26f, null, precipMmPerHour: 10.0f);
+            Assert.That(soilSys.ReadWorldMoisture(8, 5, 8), Is.EqualTo((byte)200), "Soil must NEVER dry during active rain!");
+
+            // 1B) Gunessiz serin gece/kapali havada (isSunny = false, 14 C) toprak 0 nem kaybetmeli!
+            soilSys.StepSolarDryingAllMoistChunks(worldMap, fluidMap, maxY, isSunnyDaytime: false, ambientTempCelsius: 14f, null, precipMmPerHour: 0.0f);
+            Assert.That(soilSys.ReadWorldMoisture(8, 5, 8), Is.EqualTo((byte)200), "Wet soil must NOT dry without sun or high heat!");
+
+            // 1C) Ustunde gol suyu varken (y=6 Water) gunesli sicak gunde bile yuzey + alt toprak (y=4) 0 nem kaybetmeli!
+            fluidsA[(6 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 150, isSettled: true).RawValue;
+            soilSys.StepSolarDryingAllMoistChunks(worldMap, fluidMap, maxY, isSunnyDaytime: true, ambientTempCelsius: 30f, null, precipMmPerHour: 0.0f);
+            Assert.That(soilSys.ReadWorldMoisture(8, 5, 8), Is.EqualTo((byte)200), "Water-covered surface soil must NOT dry!");
+            Assert.That(soilSys.ReadWorldMoisture(8, 4, 8), Is.EqualTo((byte)200), "Subsurface dirt directly beneath a standing pond must NOT dry!");
+
+            // 1D) Su cekilip gunes acinca normal kurumali!
+            fluidsA[(6 << 8) | (8 << 4) | 8] = 0;
+            soilSys.StepSolarDryingAllMoistChunks(worldMap, fluidMap, maxY, isSunnyDaytime: true, ambientTempCelsius: 30f, null, precipMmPerHour: 0.0f);
+            Assert.That(soilSys.ReadWorldMoisture(8, 5, 8), Is.LessThan((byte)200), "Exposed wet soil must dry normally under sun!");
+
+            // 2) Chunk sinirinda (0,0) x=15, y=10 -> (1,0) x=0, y=8 (dik 2:1 dag yamaci) y->y-2 gecisi + VelX_Q7 > 0!
+            Array.Clear(voxelsA, 0, vol);
+            Array.Clear(fluidsA, 0, vol);
+            var voxelsB = new uint[vol];
+            var fluidsB = new ushort[vol];
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 9; y++) voxelsA[(y << 8) | (z << 4) | x] = stone;
+                    for (int y = 0; y <= 7; y++) voxelsB[(y << 8) | (z << 4) | x] = stone;
+                }
+            }
+
+            fluidsA[(10 << 8) | (8 << 4) | 15] = FluidCell16.Pack(FluidType.Water, 60, isSettled: false).RawValue;
+            worldMap[(1, 0)] = voxelsB;
+            fluidMap[(1, 0)] = fluidsB;
+
+            var dirtyFluids = new HashSet<(int cx, int cz)>();
+            var dirtyChunks = new HashSet<(int cx, int cz)>();
+            var activeList = new List<(int cx, int cz)> { (0, 0), (1, 0) };
+            var activeSet = new HashSet<(int cx, int cz)> { (0, 0), (1, 0) };
+            var kinPool = new ActiveChunkFluidKinematicsPool(prewarmSlices: 4, sliceVolume: vol);
+
+            int transferred = FluidCellularAutomataJob.ExchangeChunkBorderFluids(
+                worldMap, fluidMap, maxY, dirtyFluids, dirtyChunks, activeList, activeSet,
+                salinityBitset: null, kinematicsPool: kinPool);
+
+            byte remA = new FluidCell16(fluidsA[(10 << 8) | (8 << 4) | 15]).Mass;
+            byte midAirB = new FluidCell16(fluidsB[(10 << 8) | (8 << 4) | 0]).Mass;
+            byte landedB = new FluidCell16(fluidsB[(8 << 8) | (8 << 4) | 0]).Mass;
+
+            Assert.That(transferred, Is.GreaterThan(0));
+            Assert.That(remA + landedB, Is.EqualTo(60), "Steep 2:1 chunk-seam y->y-2 transfer must conserve exact mass (dM == 0)!");
+            Assert.That(midAirB, Is.EqualTo(0), "Water must bridge directly to grounded (0, y=8, 8) instead of stepping into mid-air!");
+            Assert.That(landedB, Is.GreaterThan((byte)0));
+            Assert.That(kinPool.TryGetLeased(1, 0, out ActiveChunkFluidKinematicsSlice? sliceB) && sliceB != null, Is.True);
+            Assert.That(sliceB!.VelX_Q7[(8 << 8) | (8 << 4) | 0], Is.GreaterThan((sbyte)0),
+                "ExecuteSeamCrossLayerTransfer must write positive +X velocity into receiving chunk's kinematics slice!");
+            kinPool.ReleaseChunk(0, 0);
+            kinPool.ReleaseChunk(1, 0);
+        }
+
+        // =====================================================================
+        // T33: Egimde Su Kupu / Hayali Ucurum Kilidi (0e08a74a/bac92275) + Mass<32 Etek (8368bcc1) + Yumusak Yagmur (15df271a)
+        // =====================================================================
+        [Test]
+        public void T33_SingleStepSlopeNeverEmitsWaterfallCube_PhantomCliffUnlocks_AndThinOverhangSealsTo4ColumnSurfaceNets()
+        {
+            const int maxY = 16;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint fullIce = PackSolid(MaterialIdCatalog.PackedIce, VoxelBitUtility.FullDensity);
+
+            // 1) 1-blokluk yamac basamagi (y=5 kati, y=6 bos hava, y=7 tek su hucresi Mass=40, y=8 bos!):
+            //    IsMidAirFreeFallStreamCell 1-blokluk basamakta tetiklenip 1x1 dikey selale kupu (WaterfallFoam >= 0.18) URETMEMELI!
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 5; y++) solids[(y << 8) | (z << 4) | x] = fullIce;
+                }
+            }
+            fluids[(7 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 40, isSettled: false).RawValue;
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(128);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            int falseWaterfallCubeTris = 0;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (t.C0.WaterfallFoam01 >= 0.15f && MathF.Abs(t.C0.Normal.Y) < 0.1f)
+                {
+                    falseWaterfallCubeTris++;
+                }
+            }
+            Assert.That(falseWaterfallCubeTris, Is.EqualTo(0),
+                "A single 1-voxel step cell without an overhead waterfall column must NEVER emit a vertical 1x1 waterfall cube!");
+
+            // 2) Mass=18 (< 32) ince/orta su -X yonune inen buz yamacinda (x<=8 y=6, x>=9 y=7) havada kaldiginda
+            //    4-kolonlu SampleMinTrueSurfaceNetsFloorYAtCorner ile gercek alt buza (<= 6.35m) muhurlenmeli!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    int topY = x >= 8 ? 7 : 6; // -X yonune inen basamak!
+                    for (int y = 0; y <= topY; y++) solids[(y << 8) | (z << 4) | x] = fullIce;
+                }
+            }
+            for (int z = 7; z <= 9; z++)
+            {
+                fluids[(8 << 8) | (z << 4) | 8] = FluidCell16.Pack(FluidType.Water, 18, isSettled: false).RawValue;
+            }
+            tris.Clear();
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            float minNegXSkirtY = float.MaxValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                CheckNegXEdge(in t.C0, ref minNegXSkirtY);
+                CheckNegXEdge(in t.C1, ref minNegXSkirtY);
+                CheckNegXEdge(in t.C2, ref minNegXSkirtY);
+            }
+            Assert.That(minNegXSkirtY, Is.LessThanOrEqualTo(6.35f),
+                $"Hovering Mass=18 slope rim overlooking -X ice step (true SN=6.496m) must seal down to <=6.35m (actual={minNegXSkirtY:F3}m)!");
+
+            // 3) EvaluateDonorSlopeRouting hayali ucurum kilidi tamiri:
+            //    A=(8,7,8) Mass=50, yanindaki B=(9,7,8) bos ama (9,6,8) Mass=250 (esit hidrostatik kot!),
+            //    C=(7,7,8) ayni katmanda kuru -> A, B'yi sahte 1m ucurum sanip C'ye akisi kilitlememeli!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 5; y++) solids[(y << 8) | (z << 4) | x] = fullIce;
+                    if (x <= 8) solids[(6 << 8) | (z << 4) | x] = fullIce;
+                }
+            }
+            // (8,7,8) Mass=50 (head ~ 7*255+50? d=127 -> bed=7*255, head=7*255+50); (9,6,8) Mass=255 -> head=7*255;
+            // (9,6,8) Mass=230 ve (8,6,8) d=96 (~6.53m) + Mass=40 (~6.69m vs (9,6,8) 6.90m!) -> headBelowPool >= headSrc!
+            solids[(6 << 8) | (8 << 4) | 8] = PackSolid(MaterialIdCatalog.PackedIce, 96);
+            solids[(6 << 8) | (8 << 4) | 7] = PackSolid(MaterialIdCatalog.PackedIce, 96);
+            fluids[(7 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 40, isSettled: false).RawValue;
+            fluids[(6 << 8) | (8 << 4) | 9] = FluidCell16.Pack(FluidType.Water, 230, isSettled: false).RawValue;
+            // Yan z duvarlari kapali ki tek acik yatay komsu C=(7,7,8) olsun
+            solids[(7 << 8) | (7 << 4) | 8] = fullIce;
+            solids[(7 << 8) | (9 << 4) | 8] = fullIce;
+            solids[(6 << 8) | (7 << 4) | 9] = fullIce;
+            solids[(6 << 8) | (9 << 4) | 9] = fullIce;
+            solids[(6 << 8) | (8 << 4) | 10] = fullIce;
+
+            for (int tick = 0; tick < 4; tick++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, stepParity: tick & 1);
+            }
+
+            byte spreadToC = new FluidCell16(fluids[(7 << 8) | (8 << 4) | 7]).Mass;
+            Assert.That(spreadToC, Is.GreaterThan((byte)0),
+                "Cell next to a nearly-full equilibrated lower pool (Mass=230 < 255) must NOT deadlock from a phantom 1m cliff and must flow into C=(7,7,8)!");
+
+            static void CheckNegXEdge(in FluidCornerSample s, ref float minY)
+            {
+                if (MathF.Abs(s.PositionCurr.X - 8.0f) <= 0.12f && s.PositionCurr.Z >= 7.0f && s.PositionCurr.Z <= 10.0f)
+                {
+                    if (s.PositionCurr.Y < minY) minY = s.PositionCurr.Y;
+                }
+            }
+        }
+
+        // =====================================================================
+        // T34: Selale Dusus Havuzunda 0 Baklava Deligi & 0 Sivri Uc (ea997276) + 1x1 Katman Catlagi Tamiri (21e8ab19)
+        // =====================================================================
+        [Test]
+        public void T34_WaterfallPlungePoolHasZeroDiamondHoles_NoPinchedTip_AndLayerTransitionHasZeroCrack()
+        {
+            const int maxY = 16;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint fullStone = PackSolid(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity);
+
+            // 1) 5x5 dusus havuzu (y=5..6) icine yukaridan (y=7..11) inen 3B selale sutunu (ea997276.jpg):
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 4; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    if (x < 5 || x > 11 || z < 5 || z > 11)
+                    {
+                        for (int y = 5; y <= 7; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    }
+                    else
+                    {
+                        fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true).RawValue;
+                        fluids[(6 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 220, isSettled: false).RawValue;
+                    }
+                }
+            }
+            // Ustten inen daralan selale (y=7'de dusuk kutle Mass=20, y=8..11'de Mass=180): alt ucu asla igne gibi incelmemeli!
+            fluids[(7 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 20, isSettled: false).RawValue;
+            for (int y = 8; y <= 11; y++)
+            {
+                fluids[(y << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 180, isSettled: false).RawValue;
+            }
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(512);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            int poolUnderWaterfallTopTris = 0;
+            float waterfallTopWidth = 0f;
+            float waterfallBotWidth = 0f;
+            float topMinX = float.MaxValue, topMaxX = float.MinValue;
+            float botMinX = float.MaxValue, botMaxX = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                float avgX = (t.C0.PositionCurr.X + t.C1.PositionCurr.X + t.C2.PositionCurr.X) / 3f;
+                float avgY = (t.C0.PositionCurr.Y + t.C1.PositionCurr.Y + t.C2.PositionCurr.Y) / 3f;
+                float avgZ = (t.C0.PositionCurr.Z + t.C1.PositionCurr.Z + t.C2.PositionCurr.Z) / 3f;
+                if (t.C0.Normal.Y > 0.7f && avgX >= 8.0f && avgX <= 9.0f && avgZ >= 8.0f && avgZ <= 9.0f && avgY >= 6.4f && avgY <= 7.1f)
+                {
+                    poolUnderWaterfallTopTris++;
+                }
+                if (MathF.Abs(t.C0.Normal.Y) < 0.2f && avgX >= 8.0f && avgX <= 9.0f && avgZ >= 8.0f && avgZ <= 9.0f)
+                {
+                    CheckWfSpan(in t.C0, ref topMinX, ref topMaxX, ref botMinX, ref botMaxX);
+                    CheckWfSpan(in t.C1, ref topMinX, ref topMaxX, ref botMinX, ref botMaxX);
+                    CheckWfSpan(in t.C2, ref topMinX, ref topMaxX, ref botMinX, ref botMaxX);
+                }
+            }
+            waterfallTopWidth = topMaxX - topMinX;
+            waterfallBotWidth = botMaxX - botMinX;
+            Assert.That(poolUnderWaterfallTopTris, Is.GreaterThanOrEqualTo(2),
+                "Plunge pool cell (8,6,8) directly under waterfall column must emit sealed top surface triangles (0 hole around column)!");
+            Assert.That(waterfallBotWidth, Is.GreaterThanOrEqualTo(waterfallTopWidth - 0.05f),
+                $"Waterfall column hitting plunge pool must NOT pinch to a sharp spike (topW={waterfallTopWidth:F3}, botW={waterfallBotWidth:F3})!");
+
+            // 2) 1x1 Katman Gecisi Catlagi (21e8ab19.jpg):
+            //    (8,6,8) Mass=255 (ustu bos), etrafindaki tum komsular y=7'de Mass=80 -> (8,6,8) koseleri y=7.0'a kirpilip 1x1 yarik ACMAMALI!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 4; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    if (x >= 5 && x <= 11 && z >= 5 && z <= 11)
+                    {
+                        fluids[(5 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: true).RawValue;
+                        fluids[(6 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 255, isSettled: false).RawValue;
+                        if (!(x == 8 && z == 8))
+                        {
+                            fluids[(7 << 8) | (z << 4) | x] = FluidCell16.Pack(FluidType.Water, 80, isSettled: false).RawValue;
+                        }
+                    }
+                    else
+                    {
+                        for (int y = 5; y <= 8; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                    }
+                }
+            }
+            tris.Clear();
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            float minYAtCorner88 = float.MaxValue;
+            float maxYAtCorner88 = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                if (t.C0.Normal.Y < 0.7f && t.C1.Normal.Y < 0.7f && t.C2.Normal.Y < 0.7f) continue;
+                CheckCorner88(in t.C0, ref minYAtCorner88, ref maxYAtCorner88);
+                CheckCorner88(in t.C1, ref minYAtCorner88, ref maxYAtCorner88);
+                CheckCorner88(in t.C2, ref minYAtCorner88, ref maxYAtCorner88);
+            }
+            Assert.That(maxYAtCorner88 - minYAtCorner88, Is.LessThanOrEqualTo(0.03f),
+                $"Shared corner (8,8) between y=6 cell and surrounding y=7 cells must have ZERO vertical crack (min={minYAtCorner88:F3}, max={maxYAtCorner88:F3})!");
+
+            static void CheckWfSpan(in FluidCornerSample s, ref float tMin, ref float tMax, ref float bMin, ref float bMax)
+            {
+                if (s.PositionCurr.Y >= 8.5f && s.PositionCurr.Y <= 9.5f)
+                {
+                    if (s.PositionCurr.X < tMin) tMin = s.PositionCurr.X;
+                    if (s.PositionCurr.X > tMax) tMax = s.PositionCurr.X;
+                }
+                if (s.PositionCurr.Y >= 6.5f && s.PositionCurr.Y <= 7.2f)
+                {
+                    if (s.PositionCurr.X < bMin) bMin = s.PositionCurr.X;
+                    if (s.PositionCurr.X > bMax) bMax = s.PositionCurr.X;
+                }
+            }
+
+            static void CheckCorner88(in FluidCornerSample s, ref float minY, ref float maxY)
+            {
+                if (MathF.Abs(s.PositionCurr.X - 8.0f) <= 0.02f && MathF.Abs(s.PositionCurr.Z - 8.0f) <= 0.02f && s.PositionCurr.Y >= 6.5f)
+                {
+                    if (s.PositionCurr.Y < minY) minY = s.PositionCurr.Y;
+                    if (s.PositionCurr.Y > maxY) maxY = s.PositionCurr.Y;
+                }
+            }
+        }
+
+        // =====================================================================
+        // T35: Izole Piramit/Sirt Kupu Engeli (89bb3ba8/ef3129b3) + 45° Capraz Yamac Kacisi (Duvar Sizdirmaz)
+        // =====================================================================
+        [Test]
+        public void T35_DiagonalSteepSlopeEscapesWithoutWallLeak_AndIsolatedSlopePuddleNeverFormsTentOrRidgeCube()
+        {
+            const int maxY = 16;
+            const int vol = 16 * maxY * 16;
+            var solids = new uint[vol];
+            var fluids = new ushort[vol];
+            uint fullStone = PackSolid(MaterialIdCatalog.Stone, VoxelBitUtility.FullDensity);
+            uint lowDensStone = PackSolid(MaterialIdCatalog.Stone, 72);
+
+            // 1) 45° Capraz dik kaya yamaci cebi: (8,8,8) altinda d=72 kaya (y=7), +X/+Z kardinallerde d=127 (daha yuksek sanal yatak),
+            //    -X/-Z kardinallerde kati duvar, ama capraz (+X,+Z)=(9,6,9) cok daha alcak! Pass 2.5 suyu asagi akitmali (dM == 0)!
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 5; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                }
+            }
+            solids[(6 << 8) | (8 << 4) | 8] = fullStone;
+            solids[(7 << 8) | (8 << 4) | 8] = lowDensStone;
+            // -X ve -Z duvar
+            solids[(8 << 8) | (8 << 4) | 7] = fullStone;
+            solids[(8 << 8) | (7 << 4) | 8] = fullStone;
+            // +X ve +Z kardinal komsular y=7 fullStone (y=8 acik ama sanal yatak y=8.0 > kaynak bed=7.13!)
+            solids[(6 << 8) | (8 << 4) | 9] = fullStone;
+            solids[(7 << 8) | (8 << 4) | 9] = fullStone;
+            solids[(6 << 8) | (9 << 4) | 8] = fullStone;
+            solids[(7 << 8) | (9 << 4) | 8] = fullStone;
+            // Capraz (+X,+Z)=(9,9) y=5 taban (y=6 bos -> 2m asagi!)
+
+            fluids[(8 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 40, isSettled: false).RawValue;
+
+            for (int tick = 0; tick < 6; tick++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, stepParity: tick & 3);
+            }
+
+            int totalMassAfter = 0;
+            for (int i = 0; i < vol; i++) totalMassAfter += fluids[i] & 0xFF;
+            byte remAtPocket = new FluidCell16(fluids[(8 << 8) | (8 << 4) | 8]).Mass;
+            Assert.That(totalMassAfter, Is.EqualTo(40), "Pass 2.5 diagonal escape must preserve exact fluid mass (dM == 0)!");
+            Assert.That(remAtPocket, Is.LessThan((byte)40), "Water trapped in a 45-deg diagonal rocky SDF pocket must escape downhill!");
+
+            // 2) Kapali 2-duvarli tas kose (flankCapA == 0 && flankCapB == 0): caprazda ucurum olsa bile 0 DAMLA SIZMAMALI!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    for (int y = 0; y <= 5; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                }
+            }
+            solids[(6 << 8) | (8 << 4) | 8] = fullStone;
+            solids[(7 << 8) | (8 << 4) | 8] = fullStone;
+            // 4 kardinal duvar tamamen kapali! Capraz (9,6,9) bos!
+            solids[(8 << 8) | (8 << 4) | 7] = fullStone;
+            solids[(8 << 8) | (8 << 4) | 9] = fullStone;
+            solids[(8 << 8) | (7 << 4) | 8] = fullStone;
+            solids[(8 << 8) | (9 << 4) | 8] = fullStone;
+            fluids[(8 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 50, isSettled: false).RawValue;
+
+            for (int tick = 0; tick < 4; tick++)
+            {
+                FluidCellularAutomataJob.StepFluidGridVolumeConservative(
+                    solids, fluids, 16, maxY, 16, out _, out _, stepParity: tick & 3);
+            }
+            Assert.That(new FluidCell16(fluids[(8 << 8) | (8 << 4) | 8]).Mass, Is.EqualTo((byte)50),
+                "Sealed 4-wall stone basin must leak ZERO water diagonally through corners!");
+
+            // 3) Kuru +X kaya duvari olan yamacta akan dere: EvaluateSurfaceNetsTerrainYAtCorner kuru +X duvarini (y=8)
+            //    dere tabani sanip su kosesini +1m yukari (y >= 8.85m) firlatmamali (ef3129b3.jpg & d5e24a60.jpg)!
+            Array.Clear(solids, 0, vol);
+            Array.Clear(fluids, 0, vol);
+            for (int z = 0; z < 16; z++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    int topY = x >= 9 ? 8 : 6; // x=9 kuru +X kiyi duvari (y=8'e kadar!)
+                    for (int y = 0; y <= topY; y++) solids[(y << 8) | (z << 4) | x] = fullStone;
+                }
+            }
+            fluids[(7 << 8) | (8 << 4) | 8] = FluidCell16.Pack(FluidType.Water, 30, isSettled: false).RawValue;
+
+            var solidMap = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = solids };
+            var fluidMap = new Dictionary<(int cx, int cz), ushort[]> { [(0, 0)] = fluids };
+            var tris = new List<FluidRichTriangle>(128);
+            FluidSurfaceSkirtMesher.GenerateChunkFluidRichSurfaceMesh(0, 0, maxY, solidMap, fluidMap, tris);
+
+            float maxWaterY = float.MinValue;
+            for (int i = 0; i < tris.Count; i++)
+            {
+                FluidRichTriangle t = tris[i];
+                maxWaterY = MathF.Max(maxWaterY, MathF.Max(t.C0.PositionCurr.Y, MathF.Max(t.C1.PositionCurr.Y, t.C2.PositionCurr.Y)));
+            }
+            Assert.That(maxWaterY, Is.LessThan(7.85f),
+                $"Water (Mass=30 at y=7) next to a dry +X rock bank at y=8 must NOT spike up onto the bank wall (maxY={maxWaterY:F3}m)!");
         }
     }
 }
