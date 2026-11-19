@@ -936,6 +936,12 @@ namespace Stratocraft.Character
         public bool IsMantling => _isMantling;
         /// <summary>Fiziksel yan-adim / Dodge kacisi aktif mi?</summary>
         public bool IsDodging => _dodgeRemainingSec > 0f;
+        /// <summary>[F4] Yaratici Modda cift Space ile acilan Minecraft tarzi ucus modu aktif mi?</summary>
+        public bool IsCreativeFlying { get; set; }
+
+        private float _creativeFlightClockSec;
+        private float _lastCreativeSpaceTapTime = -10f;
+        private float _creativeFlyTakeoffGraceSec;
         /// <summary>Bosluga dusme durumunda geri isinlanilacak guvenli ada koordinatini ayarlar.</summary>
         public void SetSafeSpawnPosition(Vector3 safeWorldPosition) => _safeSpawnPosition = safeWorldPosition;
         /// <summary>Unity Vector3 tabanli kapsul-blok kesisim kontrolu.</summary>
@@ -970,14 +976,73 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), ushort[]>? fluidChunks = null,
             SoilMoistureAndMudSystem? soilMoistureSystem = null,
             HashSet<(int cx, int cz)>? dirtyFluidChunks = null,
-            HashSet<(int cx, int cz)>? activeFluidChunks = null)
+            HashSet<(int cx, int cz)>? activeFluidChunks = null,
+            bool isCreativeMode = false,
+            bool ascendFlyHeld = false,
+            bool descendFlyHeld = false)
         {
             statusFeedback = string.Empty;
             _movementState.EquippedMassKg = equippedMassKg;
             _movementState.IsBackpackOverlayOpen = isBackpackOpen ? (byte)1 : (byte)0;
+            _creativeFlightClockSec += deltaTime;
+            if (_creativeFlyTakeoffGraceSec > 0f)
+            {
+                _creativeFlyTakeoffGraceSec = Mathf.Max(0f, _creativeFlyTakeoffGraceSec - deltaTime);
+            }
+
+            if (!isCreativeMode)
+            {
+                if (IsCreativeFlying)
+                {
+                    IsCreativeFlying = false;
+                    _verticalVelocity = 0f;
+                }
+            }
+            else
+            {
+                // [F4] Yaratici Mod: Sinirsiz Can + Sinirsiz Stamina + Sinirsiz Nefes!
+                _vitals.CurrentHp = _vitals.MaxHp;
+                _vitals.Stamina = _vitals.MaxStamina;
+                _vitals.LungOxygenPercent = 100f;
+                _movementState.IsExhaustedStaminaLock = 0;
+
+                if (jumpOrMantlePressed && !isBackpackOpen)
+                {
+                    if ((_creativeFlightClockSec - _lastCreativeSpaceTapTime) <= 0.36f)
+                    {
+                        IsCreativeFlying = !IsCreativeFlying;
+                        _lastCreativeSpaceTapTime = -10f;
+                        _isMantling = false;
+                        _verticalVelocity = 0f;
+                        _jumpLaunchTimer = 0f;
+                        jumpOrMantlePressed = false;
+
+                        if (IsCreativeFlying)
+                        {
+                            _creativeFlyTakeoffGraceSec = 0.25f;
+                            Vector3 pLift = playerTransform.position;
+                            if (_movementState.IsGrounded != 0)
+                            {
+                                pLift.y += 0.14f;
+                                playerTransform.position = pLift;
+                            }
+                            _movementState.IsGrounded = 0;
+                            statusFeedback = "🕊️ [YARATICI UÇUŞ AÇIK]: [Space] Yüksel | [Sol Ctrl] Alçal | [Shift] Hızlı Uç | Çift [Space] Kapat";
+                        }
+                        else
+                        {
+                            statusFeedback = "🦶 [YARATICI UÇUŞ KAPANDI]: Normal yürüyüşe dönüldü.";
+                        }
+                    }
+                    else
+                    {
+                        _lastCreativeSpaceTapTime = _creativeFlightClockSec;
+                    }
+                }
+            }
 
             // Usume, sicaklama veya aclik/susuzluk nedeniyle karakterin 0 HP'ye inip yere dusmesi (BleedOutCrawl) ve kalkamamasi engellenir!
-            _vitals.CurrentHp = Mathf.Max(1.0f, _vitals.CurrentHp);
+            _vitals.CurrentHp = isCreativeMode ? _vitals.MaxHp : Mathf.Max(1.0f, _vitals.CurrentHp);
             _vitals.HungerKcal = 2000f;
             _vitals.ThirstHydration = 100f;
             if (_movementState.Stance == CharacterStance.BleedOutCrawl)
@@ -994,6 +1059,25 @@ namespace Stratocraft.Character
             }
             if (_jumpLaunchTimer > 0f) _jumpLaunchTimer = Mathf.Max(0f, _jumpLaunchTimer - deltaTime);
             if (_dodgeCooldownSec > 0f) _dodgeCooldownSec = Mathf.Max(0f, _dodgeCooldownSec - deltaTime);
+
+            if (isCreativeMode && IsCreativeFlying)
+            {
+                StepCreativeFlightPhysics(
+                    playerTransform,
+                    worldChunks,
+                    isBackpackOpen ? Vector2.zero : moveInput,
+                    wantSprint,
+                    !isBackpackOpen && ascendFlyHeld,
+                    !isBackpackOpen && descendFlyHeld,
+                    deltaTime,
+                    ref statusFeedback);
+                EvaluatePlayerHeadSuffocationInSolidBlock(playerTransform, worldChunks, deltaTime, ref statusFeedback, isCreativeMode: true);
+                _vitals.CurrentHp = _vitals.MaxHp;
+                _vitals.Stamina = _vitals.MaxStamina;
+                _vitals.LungOxygenPercent = 100f;
+                _movementState.IsExhaustedStaminaLock = 0;
+                return;
+            }
 
             // Aktif 0.55sn Kubik Bezier Mantle tirmanisi devam ediyorsa yorunge boyunca puruzsuz ilerlet
             if (_isMantling)
@@ -1167,14 +1251,126 @@ namespace Stratocraft.Character
 
             IntegrateHorizontalAndVerticalMotion(playerTransform, worldChunks, _dodgeRemainingSec > 0f ? _dodgeDirectionWorld : wishDir, deltaTime);
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
-            EvaluatePlayerHeadSuffocationInSolidBlock(playerTransform, worldChunks, deltaTime, ref statusFeedback);
+            EvaluatePlayerHeadSuffocationInSolidBlock(playerTransform, worldChunks, deltaTime, ref statusFeedback, isCreativeMode);
+            if (isCreativeMode)
+            {
+                _vitals.CurrentHp = _vitals.MaxHp;
+                _vitals.Stamina = _vitals.MaxStamina;
+                _vitals.LungOxygenPercent = 100f;
+                _movementState.IsExhaustedStaminaLock = 0;
+            }
+        }
+
+        private void StepCreativeFlightPhysics(
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector2 moveInput,
+            bool wantSprint,
+            bool ascendHeld,
+            bool descendHeld,
+            float deltaTime,
+            ref string statusFeedback)
+        {
+            _movementState.Stance = wantSprint ? CharacterStance.Sprinting : CharacterStance.Standing;
+            _movementState.CapsuleHeightMeters = PhysicalCharacterControllerSystem.GetStanceCapsuleHeight(CharacterStance.Standing);
+            _movementState.CapsuleRadiusMeters = PhysicalCharacterControllerSystem.GetStanceCapsuleRadius(CharacterStance.Standing);
+            _movementState.IsGrounded = 0;
+            _movementState.IsSubmergedInFluid = 0;
+
+            Vector3 forwardFlat = Vector3.ProjectOnPlane(playerTransform.forward, Vector3.up).normalized;
+            Vector3 rightFlat = Vector3.ProjectOnPlane(playerTransform.right, Vector3.up).normalized;
+            Vector3 wishDir = forwardFlat * moveInput.y + rightFlat * moveInput.x;
+            if (wishDir.sqrMagnitude > 1f) wishDir.Normalize();
+
+            float flyHorizSpeed = (wantSprint ? 18.5f : 9.8f) * Stage1GameSettings.PlayerMoveSpeedMultiplier;
+            Vector3 targetHorizVel = wishDir * flyHorizSpeed;
+            Vector3 curHorizVel = new Vector3(_movementState.VelocityX, 0f, _movementState.VelocityZ);
+            curHorizVel = Vector3.MoveTowards(curHorizVel, targetHorizVel, deltaTime * 85f);
+
+            _movementState.VelocityX = curHorizVel.x;
+            _movementState.VelocityZ = curHorizVel.z;
+            _movementState.CurrentSpeedMetersPerSec = curHorizVel.magnitude;
+
+            float targetVertVel = 0f;
+            if (ascendHeld && !descendHeld)
+            {
+                targetVertVel = wantSprint ? 13.5f : 8.2f;
+            }
+            else if (descendHeld && !ascendHeld)
+            {
+                targetVertVel = wantSprint ? -11.5f : -7.8f;
+            }
+            _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, targetVertVel, deltaTime * 75f);
+
+            Vector3 pos = playerTransform.position;
+            float prevFeetY = pos.y;
+            float capHeight = _movementState.CapsuleHeightMeters;
+            float capRadius = _movementState.CapsuleRadiusMeters;
+
+            Vector3 stepDelta = curHorizVel * deltaTime;
+            Vector3 candidatePos = new Vector3(pos.x + stepDelta.x, pos.y, pos.z + stepDelta.z);
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capHeight, capRadius))
+            {
+                pos.x = candidatePos.x;
+                pos.z = candidatePos.z;
+            }
+            else
+            {
+                Vector3 candidateX = new Vector3(pos.x + stepDelta.x, pos.y, pos.z);
+                if (Mathf.Abs(stepDelta.x) > 0.0001f && !IsHorizontalStepBlocked(worldChunks, pos, candidateX, capHeight, capRadius))
+                {
+                    pos.x = candidateX.x;
+                }
+                Vector3 candidateZ = new Vector3(pos.x, pos.y, pos.z + stepDelta.z);
+                if (Mathf.Abs(stepDelta.z) > 0.0001f && !IsHorizontalStepBlocked(worldChunks, pos, candidateZ, capHeight, capRadius))
+                {
+                    pos.z = candidateZ.z;
+                }
+            }
+
+            float hx = pos.x, hz = pos.z;
+            if (ResolveHorizontalSolidCapsuleDepenetrationPure(worldChunks, ref hx, pos.y, ref hz, capHeight, capRadius))
+            {
+                pos.x = hx;
+                pos.z = hz;
+            }
+
+            pos.y = Mathf.Clamp(pos.y + _verticalVelocity * deltaTime, 1.5f, Stage1InteractivePlayController.MaxEditableVoxelY - 3.0f);
+            if (_verticalVelocity > 0f && TryResolveCeilingHeadBonk(worldChunks, ref pos, capHeight, capRadius))
+            {
+                _verticalVelocity = 0f;
+            }
+
+            if (_verticalVelocity <= 0f)
+            {
+                float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
+                float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
+                float floorY = nextGroundY > -20f ? Mathf.Max(nextGroundY, unbreakableFloorY) : unbreakableFloorY;
+
+                if (pos.y <= floorY + 0.03f)
+                {
+                    pos.y = floorY;
+                    _verticalVelocity = 0f;
+                    // Minecraft gibi alcalirken zemine dokunuldugunda ucusu otomatik kapatip yere bas!
+                    if (_creativeFlyTakeoffGraceSec <= 0f && descendHeld)
+                    {
+                        IsCreativeFlying = false;
+                        _movementState.IsGrounded = 1;
+                        _coyoteGroundedTimer = 0.16f;
+                        statusFeedback = "🦶 Zemine inildi — Yaratıcı uçuş kapandı (Çift [Space] ile tekrar uçabilirsiniz).";
+                    }
+                }
+            }
+
+            playerTransform.position = pos;
         }
 
         private void EvaluatePlayerHeadSuffocationInSolidBlock(
             Transform playerTransform,
             Dictionary<(int cx, int cz), uint[]> worldChunks,
             float deltaTime,
-            ref string statusFeedback)
+            ref string statusFeedback,
+            bool isCreativeMode = false)
         {
             float eyeOffset = Mathf.Clamp(_movementState.CapsuleHeightMeters * 0.84f, 0.38f, 1.52f);
             Vector3 headPos = playerTransform.position + Vector3.up * eyeOffset;
@@ -1183,18 +1379,18 @@ namespace Stratocraft.Character
                 headPos.x,
                 headPos.y,
                 headPos.z,
-                deltaTime,
+                isCreativeMode ? 0f : deltaTime,
                 ref _vitals,
                 out byte blockMat,
                 out float alpha01,
                 out float dmgHp);
 
-            IsHeadSuffocatingInSolidBlock = suffocating;
+            IsHeadSuffocatingInSolidBlock = suffocating && !isCreativeMode;
             SuffocatingBlockMaterialId = blockMat;
             SuffocationOverlayAlpha01 = suffocating ? Mathf.Max(0.96f, alpha01) : alpha01;
             LastSuffocationDamageHp = dmgHp;
 
-            if (suffocating)
+            if (suffocating && !isCreativeMode)
             {
                 statusFeedback = $"⚠ BLOK İÇİNDE SIKIŞMA / BOĞULMA! (-{SolidBlockSuffocationDamagePerSecond:0} CAN/sn) Kazarak veya hareket ederek çıkın!";
             }

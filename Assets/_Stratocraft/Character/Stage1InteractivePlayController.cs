@@ -963,11 +963,10 @@ namespace Stratocraft.Character
             HandleCameraModeAndPersistenceHotkeys();
             if (_holsterCtrl.IsCreativeMode)
             {
-                if (_movementBridge.Vitals.CurrentHp < 35f)
-                {
-                    _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
-                }
+                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                _movementBridge.Vitals.Stamina = _movementBridge.Vitals.MaxStamina;
                 _movementBridge.Vitals.LungOxygenPercent = 100f;
+                _movementBridge.MovementState.IsExhaustedStaminaLock = 0;
                 _miningCtrl.CurrentToolDurability = _miningCtrl.MaxToolDurability;
             }
             StepAtmosphereSolarCloudsAndHydrology(dt);
@@ -2524,10 +2523,16 @@ namespace Stratocraft.Character
             _movementBridge.Vitals.ThirstHydration = 100f;
 
             float hpBefore = _movementBridge.Vitals.CurrentHp;
+            bool flyAscendHeld = !menuOpen && Input.GetKey(KeyCode.Space);
+            bool flyDescendHeld = !menuOpen && wantCrouch;
             _movementBridge.StepCharacterPhysics(
                 transform, _worldChunks, moveInput, wantSprint, wantCrouch, wantProne,
-                !menuOpen && Input.GetKeyDown(KeyCode.Space), _holsterCtrl.IsBackpackOpen || menuOpen, equippedMass, dt, out string moveFeedback,
-                _fluidChunks, _soilMoistureSystem, _dirtyFluidChunks, _activeFluidChunks);
+                !menuOpen && Input.GetKeyDown(KeyCode.Space),
+                _holsterCtrl.IsBackpackOpen || menuOpen, equippedMass, dt, out string moveFeedback,
+                _fluidChunks, _soilMoistureSystem, _dirtyFluidChunks, _activeFluidChunks,
+                isCreativeMode: _holsterCtrl.IsCreativeMode,
+                ascendFlyHeld: flyAscendHeld,
+                descendFlyHeld: flyDescendHeld);
             if (_movementBridge.WaterSplashPulse01 >= 0.98f)
             {
                 WakeChunkAndNeighborsFluid((Mathf.FloorToInt(transform.position.x / 16f), Mathf.FloorToInt(transform.position.z / 16f)));
@@ -2573,8 +2578,18 @@ namespace Stratocraft.Character
             _collapseBridge.StepFallingClusters(
                 dt, MaxEditableVoxelY, _worldChunks, _dirtyChunks, transform, ref _movementBridge.Vitals, out string? collapseNote);
             if (!string.IsNullOrEmpty(collapseNote)) _miningCtrl.LastFeedbackText = collapseNote!;
-            _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
-            if (_movementBridge.Vitals.CurrentHp < hpBefore - 0.1f) _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
+            if (_holsterCtrl.IsCreativeMode)
+            {
+                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                _movementBridge.Vitals.Stamina = _movementBridge.Vitals.MaxStamina;
+                _movementBridge.Vitals.LungOxygenPercent = 100f;
+                _movementBridge.MovementState.IsExhaustedStaminaLock = 0;
+            }
+            else
+            {
+                _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
+                if (_movementBridge.Vitals.CurrentHp < hpBefore - 0.1f) _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
+            }
             UpdateOxygenAndFloatingOrigin(dt);
         }
 
@@ -3014,10 +3029,20 @@ namespace Stratocraft.Character
             _feedbackArenaBridge.StepFeedbackAndArena(
                 dt, transform, _combatBridge, ref _movementBridge.Vitals,
                 SharedVoxelMaterial, _worldChunks, _rigAnimator.PlayerLeftArmSevered);
-            _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
-            if (_movementBridge.Vitals.CurrentHp < hpBeforeAi - 0.1f)
+            if (_holsterCtrl.IsCreativeMode)
             {
-                _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
+                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                _movementBridge.Vitals.Stamina = _movementBridge.Vitals.MaxStamina;
+                _movementBridge.Vitals.LungOxygenPercent = 100f;
+                _movementBridge.MovementState.IsExhaustedStaminaLock = 0;
+            }
+            else
+            {
+                _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
+                if (_movementBridge.Vitals.CurrentHp < hpBeforeAi - 0.1f)
+                {
+                    _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
+                }
             }
 
             UnityEngine.Camera? rigCam = (_stoneKnappingCtrl.IsBusy && _stoneKnappingCtrl.Phase != Stage1StoneKnappingController.KnappingSessionPhase.RadialTemplateMenu)
@@ -5964,11 +5989,13 @@ namespace Stratocraft.Character
                 lungOxygenPercent: _movementBridge.Vitals.LungOxygenPercent,
                 isSubmerged: _movementBridge.Vitals.SubmergedDepthMeters > 0.1f,
                 coreBodyTemp: _movementBridge.Vitals.CoreBodyTempCelsius,
-                showDebugHints: _showDebugHudText);
+                showDebugHints: _showDebugHudText,
+                isCreativeMode: _holsterCtrl.IsCreativeMode);
 
             if (_holsterCtrl.IsCreativeMode)
             {
-                GUI.Box(new Rect(cx - 210f, 8f, 420f, 24f), "★ [YARATICI TEST MODU - F4: AKTIF] ([Tab] Esya Menusu) ★", _tooltipStyle);
+                string flyTag = _movementBridge.IsCreativeFlying ? " | 🕊️ UÇUŞ AKTİF ([Space]/[Ctrl])" : " | Çift [Space]: Uç";
+                GUI.Box(new Rect(cx - 275f, 8f, 550f, 24f), $"★ [F4 YARATICI MOD: ∞ CAN/EP{flyTag} | [C] Kristal | [Tab] Katalog] ★", _tooltipStyle);
             }
             if (_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
             {

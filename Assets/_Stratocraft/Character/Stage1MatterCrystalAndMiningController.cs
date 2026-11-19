@@ -28,9 +28,10 @@ namespace Stratocraft.Character
         private static readonly string[] BrushAreaLabels = { "1x1x1 Tek Blok", "2x2x2 Orta Alan", "3x3x3 Genis Alan", "5x5x5 Dev Kazi", "7x7x7 Efsanevi Alan" };
         private static readonly byte[] BuildableMaterials =
         {
-            MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Sand, MaterialIdCatalog.Basalt,
-            MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.Cobblestone, MaterialIdCatalog.OakWood, MaterialIdCatalog.LooseRubble,
-            MaterialIdCatalog.Marble, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.Ironwood, MaterialIdCatalog.WoodPlank
+            MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Grass, MaterialIdCatalog.Sand,
+            MaterialIdCatalog.Clay, MaterialIdCatalog.Gravel, MaterialIdCatalog.PackedIce, MaterialIdCatalog.Cobblestone,
+            MaterialIdCatalog.Basalt, MaterialIdCatalog.Marble, MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.OakWood,
+            MaterialIdCatalog.Ironwood, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.WoodPlank, MaterialIdCatalog.LooseRubble
         };
         private static readonly byte[] ShapeWheelCycle = { 0, 1, 2, 3, 4, 5, 6, 7, 63 };
         private static readonly float[] RayMarchOffsets = { 0.15f, 0.38f, 0.62f, 0.88f, 1.15f };
@@ -167,24 +168,36 @@ namespace Stratocraft.Character
             return CrystalStorage.GetCount(matId);
         }
 
-        public void CycleCrystalMaterial(int delta)
+        public void CycleCrystalMaterial(int delta, bool isCreativeMode = false)
         {
             _customSelectedMaterialId = 0;
             int step = delta >= 0 ? 1 : -1;
             int len = BuildableMaterials.Length;
-            // Önce kristalde stoğu bulunan malzemeler arasında geçiş yap; hiçbiri yoksa tüm listede dön
-            for (int attempt = 0; attempt < len; attempt++)
+            int firstNextIdx = (_materialIdx + step + len) % len;
+
+            if (isCreativeMode)
             {
-                _materialIdx = (_materialIdx + step + len) % len;
-                byte candidate = BuildableMaterials[_materialIdx];
-                if (GetMaterialCountInCrystal(candidate) > 0)
-                {
-                    break;
-                }
+                // Yaratici modda tum malzemeler sinirsizdir; asla sarmalayip 0 (Ham Tas) uzerinde takili kalma!
+                _materialIdx = firstNextIdx;
             }
+            else
+            {
+                int foundWithStockIdx = -1;
+                for (int attempt = 1; attempt <= len; attempt++)
+                {
+                    int candIdx = (_materialIdx + step * attempt + len * 16) % len;
+                    if (GetMaterialCountInCrystal(BuildableMaterials[candIdx]) > 0)
+                    {
+                        foundWithStockIdx = candIdx;
+                        break;
+                    }
+                }
+                _materialIdx = foundWithStockIdx >= 0 ? foundWithStockIdx : firstNextIdx;
+            }
+
             byte mat = SelectedMaterialId;
-            int cnt = GetMaterialCountInCrystal(mat);
-            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/Shift+B]: {GetMaterialDisplayName(mat)} (Stok: x{cnt}) -> [C + Sağ Tık] Dünyaya Koy | [B] Tarif & Malzeme Kitabı";
+            string stockLabel = isCreativeMode ? "∞" : $"x{GetMaterialCountInCrystal(mat)}";
+            LastFeedbackText = $"Kristal İnşa Malzemesi [Tekerlek/Shift+B]: {GetMaterialDisplayName(mat)} (Stok: {stockLabel}) -> [C + Sağ Tık] Dünyaya Koy";
         }
 
         public byte ToggleNaturalScatterAndArchitecturalShape()
@@ -364,12 +377,17 @@ namespace Stratocraft.Character
         {
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
             if (AwakeningPulseTimer > 0f) AwakeningPulseTimer = Mathf.Max(0f, AwakeningPulseTimer - dt);
+            bool isCreativeModeNow = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+            if (isCreativeModeNow && CurrentCrystalTier < 5)
+            {
+                AwakenOrUpgradeCrystalToTier(5);
+            }
             CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
             if (CurrentCrystalTier >= 1)
             {
                 VacuumSystem.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 1, 5);
             }
-            if (CurrentCrystalTier <= 0 && IsCrystalActive)
+            if (!isCreativeModeNow && CurrentCrystalTier <= 0 && IsCrystalActive)
             {
                 IsCrystalActive = false;
             }
@@ -379,33 +397,24 @@ namespace Stratocraft.Character
                 if (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C))
                 {
                     bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                    bool isCreative = holsterCtrl != null && holsterCtrl.IsCreativeMode;
-                    if (CurrentCrystalTier <= 0)
+                    bool isCreative = isCreativeModeNow;
+                    if (isCreative)
                     {
-                        if (isCreative && shift)
-                        {
-                            AwakeningQuartzFedCount = 3;
-                            AwakenOrUpgradeCrystalToTier(3);
-                            IsCrystalActive = true;
-                            LastFeedbackText = "★ [YARATICI SHIFT+C]: Madde Kristali doğrudan Kademe T3 olarak aktifleştirildi!";
-                        }
-                        else if (!TryFeedQuartzToAwakenCrystal(holsterCtrl))
+                        if (CurrentCrystalTier < 5) AwakenOrUpgradeCrystalToTier(5);
+                        IsCrystalActive = !IsCrystalActive;
+                        LastFeedbackText = IsCrystalActive
+                            ? $"💎 [YARATICI KRİSTAL AKTİF — T5]: Her Şeyi Kırar ([Sol Tık]) | ∞ İnşa ([Sağ Tık]) | Seçili: {GetMaterialDisplayName(SelectedMaterialId)} | [Tekerlek/Shift+B] Malzeme | [V] Doğal/Mimari"
+                            : "💎 Madde Kristali kapatıldı ([C] ile tekrar açabilirsiniz).";
+                    }
+                    else if (CurrentCrystalTier <= 0)
+                    {
+                        if (!TryFeedQuartzToAwakenCrystal(holsterCtrl))
                         {
                             IsCrystalActive = false;
                             int haveQuartz = holsterCtrl != null ? holsterCtrl.InventoryUi.CountResonanceQuartzInInventory() : 0;
-                            string creativeTip = isCreative ? " ([F4] Hızlı T3 Kristal için [Shift+C] basabilirsiniz)" : string.Empty;
                             LastFeedbackText =
-                                $"⚠️ UYUYAN MADDE KRİSTALİ (T0 | Yüklü: {AwakeningQuartzFedCount}/3): Elinize Kuvars alıp [C] veya [Sağ Tık] ile 3 kez yedirin! (Çantada: {haveQuartz}){creativeTip}";
+                                $"⚠️ UYUYAN MADDE KRİSTALİ (T0 | Yüklü: {AwakeningQuartzFedCount}/3): Elinize Kuvars alıp [C] veya [Sağ Tık] ile 3 kez yedirin! (Çantada: {haveQuartz})";
                         }
-                    }
-                    else if (isCreative && shift)
-                    {
-                        int nextCreativeTier = CurrentCrystalTier < 5 ? CurrentCrystalTier + 1 : 1;
-                        AwakenOrUpgradeCrystalToTier(nextCreativeTier);
-                        IsCrystalActive = true;
-                        holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
-                        LastFeedbackText =
-                            $"★ [YARATICI SHIFT+C]: Madde Kristali Kademe T{CurrentCrystalTier} ({CrystalStorage.MaxTotalBlocksCapacity} Blok) seviyesine ayarlandı!";
                     }
                     else if (IsCrystalActive)
                     {
@@ -445,6 +454,17 @@ namespace Stratocraft.Character
                         else
                         {
                             IsCrystalActive = true;
+                            if (GetMaterialCountInCrystal(SelectedMaterialId) <= 0)
+                            {
+                                for (int m = 0; m < BuildableMaterials.Length; m++)
+                                {
+                                    if (GetMaterialCountInCrystal(BuildableMaterials[m]) > 0)
+                                    {
+                                        SelectMaterial(BuildableMaterials[m]);
+                                        break;
+                                    }
+                                }
+                            }
                             int nextTier = CurrentCrystalTier + 1;
                             bool hasUpgradeReady = CurrentCrystalTier < 5 && holsterCtrl != null &&
                                 holsterCtrl.InventoryUi.CountResonanceCrystalForTier(nextTier) > 0;
@@ -480,7 +500,7 @@ namespace Stratocraft.Character
                 }
                 if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetKeyDown(KeyCode.B))
                 {
-                    CycleCrystalMaterial(1);
+                    CycleCrystalMaterial(1, isCreativeModeNow);
                 }
                 float scroll = Input.GetAxis("Mouse ScrollWheel");
                 bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
@@ -497,7 +517,7 @@ namespace Stratocraft.Character
                 }
                 else if (IsCrystalActive && (Input.GetKeyDown(KeyCode.T) || (shiftHeld && Mathf.Abs(scroll) > 0.001f)))
                 {
-                    int maxAllowedIdx = GetMaxBrushIndexForCrystalTier(Mathf.Max(1, CurrentCrystalTier));
+                    int maxAllowedIdx = isCreativeModeNow ? (BrushRadiusSteps.Length - 1) : GetMaxBrushIndexForCrystalTier(Mathf.Max(1, CurrentCrystalTier));
                     int allowedCount = maxAllowedIdx + 1;
                     int delta = (shiftHeld && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
                     _brushRadiusIdx = (_brushRadiusIdx + delta + allowedCount) % allowedCount;
@@ -505,7 +525,7 @@ namespace Stratocraft.Character
                 }
                 else if (IsCrystalActive && Mathf.Abs(scroll) > 0.001f)
                 {
-                    CycleCrystalMaterial(scroll > 0f ? -1 : 1);
+                    CycleCrystalMaterial(scroll > 0f ? -1 : 1, isCreativeModeNow);
                 }
             }
             UpdateTargetAimProbe(cam, worldChunks);
@@ -1906,7 +1926,17 @@ namespace Stratocraft.Character
 
                 // Yalnızca aktif Madde Kristali Vakum Işını ([C] + Sol Tık <= T1..T5 vakum yarıçapı) eşyaları uzaktan çeker;
                 // normal [E] tuşu ise baktığın eşyayı 0.0s gecikmesiz anında alır!
-                if (item.SpawnAge >= 0.20f && vacuumActive && distToPlayer <= vacuumRadius)
+                bool canCrystalAbsorbItem = item.ExplicitKind == InventoryItemKind.Empty ||
+                                            item.ExplicitKind == InventoryItemKind.RoughStoneChunk ||
+                                            item.ExplicitKind == InventoryItemKind.LooseDirtClod ||
+                                            item.ExplicitKind == InventoryItemKind.SandPile ||
+                                            item.ExplicitKind == InventoryItemKind.VoxelBlock;
+                bool isCreativeVac = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+                if (item.SpawnAge >= 0.20f &&
+                    vacuumActive &&
+                    canCrystalAbsorbItem &&
+                    (isCreativeVac || !MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(item.MaterialId)) &&
+                    distToPlayer <= vacuumRadius)
                 {
                     item.IsSettled = false;
                     Vector3 toPlayer = (magnetTarget - item.Position).normalized;
@@ -2142,9 +2172,12 @@ namespace Stratocraft.Character
             int minWx = Mathf.FloorToInt(center.x - r - 0.5f), maxWx = Mathf.CeilToInt(center.x + r + 0.5f);
             int minWy = Mathf.Max(1, Mathf.FloorToInt(center.y - r - 0.5f)), maxWy = Mathf.Min(maxY - 2, Mathf.CeilToInt(center.y + r + 0.5f));
             int minWz = Mathf.FloorToInt(center.z - r - 0.5f), maxWz = Mathf.CeilToInt(center.z + r + 0.5f);
-            bool forceBreak = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool isCreative = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+            bool forceBreak = isCreative || Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
             bool hitImmuneOre = false, hitCraftedBlock = false, hitHigherTierBlock = false;
             byte neededTier = 0;
+            byte lastVacuumedMat = MaterialIdCatalog.Air;
+            bool hadZeroSelectedBefore = !isCreative && GetMaterialCountInCrystal(SelectedMaterialId) <= 0;
             uint vacuumedQ24_8 = 0u;
             (int cx, int cz) touched = (FloorDiv16(targetVc.x), FloorDiv16(targetVc.z));
 
@@ -2159,19 +2192,24 @@ namespace Stratocraft.Character
                 int idx = (wy << 8) | (lz << 4) | lx;
                 uint curRaw = voxels[idx];
                 byte curMat = VoxelBitUtility.GetMaterialId(curRaw);
-                if (curMat == MaterialIdCatalog.Air || curMat == MaterialIdCatalog.Bedrock) continue;
-                if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(curMat)) { hitImmuneOre = true; continue; }
-                // Oyuncunun kristalle veya eliyle koyduğu bloklar da kristalle (Sol Tık) doğrudan kırılıp geri çekilebilir!
-                if (!CanCrystalVacuumMaterial(curMat, out byte reqTier))
+                if (curMat == MaterialIdCatalog.Air) continue;
+                if (curMat == MaterialIdCatalog.Bedrock && (!isCreative || wy <= 1)) continue;
+
+                if (!isCreative)
                 {
-                    if (reqTier > CurrentCrystalTier) { hitHigherTierBlock = true; neededTier = reqTier; }
-                    continue;
+                    if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(curMat)) { hitImmuneOre = true; continue; }
+                    if (!CanCrystalVacuumMaterial(curMat, out byte reqTier))
+                    {
+                        if (reqTier > CurrentCrystalTier) { hitHigherTierBlock = true; neededTier = reqTier; }
+                        continue;
+                    }
                 }
 
-                byte depositMat = curMat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : curMat;
+                byte depositMat = curMat;
+                lastVacuumedMat = depositMat;
                 byte dmg4 = VoxelBitUtility.GetDamageState(curRaw);
                 byte curShape = VoxelBitUtility.GetShapeId(curRaw);
-                if (curShape != 0 || forceBreak || r <= 1.25f || (wx == targetVc.x && wy == targetVc.y && wz == targetVc.z))
+                if (isCreative || curShape != 0 || forceBreak || r <= 1.25f || (wx == targetVc.x && wy == targetVc.y && wz == targetVc.z))
                 {
                     voxels[idx] = 0u;
                     if (curShape == 0)
@@ -2197,9 +2235,14 @@ namespace Stratocraft.Character
             }
             if (vacuumedQ24_8 > 0u && worldChunks.TryGetValue(touched, out uint[]? tv))
             {
-                holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
+                if (hadZeroSelectedBefore && lastVacuumedMat != MaterialIdCatalog.Air)
+                {
+                    SelectMaterial(lastVacuumedMat);
+                }
                 collapseBridge.EvaluateChunkStability(touched.cx, touched.cz, tv, maxY, center, sharedMat, dirty, out string msg);
-                LastFeedbackText = !string.IsNullOrEmpty(msg) ? msg : $"Vakumlandi: +{vacuumedQ24_8 / 256f:0.00} Blok ({BrushAreaLabel} | Kademe: T{CurrentCrystalTier} | Depo: {CrystalStorage.CurrentTotalBlocks})";
+                LastFeedbackText = !string.IsNullOrEmpty(msg)
+                    ? msg
+                    : $"💎 Kristale Vakumlandı: +{vacuumedQ24_8 / 256f:0.00} {GetMaterialDisplayName(lastVacuumedMat)} ({BrushAreaLabel} | Kristal Deposu: {CrystalStorage.CurrentTotalBlocks} Blok)";
             }
             else if (hitHigherTierBlock)
                 LastFeedbackText = $"ERR_CRYSTAL_TIER_TOO_LOW: Bu kaya icin Kristal Kademe T{neededTier} gerekli (Ors yaninda [E] ile yukseltebilirsiniz)!";
@@ -2499,7 +2542,29 @@ namespace Stratocraft.Character
 
                 byte curDens = curMat == MaterialIdCatalog.Air ? (byte)0 : VoxelBitUtility.GetDensityOrLiquid(curRaw);
                 byte smoothedDens = MatterCrystalVacuumSystem.ComputeNaturalScatterSmoothedDensity(curDens, targetDens);
-                if (curDens >= smoothedDens) continue;
+                if (curDens >= smoothedDens)
+                {
+                    // Eger mevcut acik yuzey kabugu farkli bir malzemeyse (orn. alttaki Ham Tas / Cimen),
+                    // SurfaceNets 2x2x2 dual koselerinin eski tas rengini sizdirmamasi icin yuzey malzemesini secili mat ile kapla!
+                    if (curMat != MaterialIdCatalog.Air &&
+                        curMat != mat &&
+                        targetDens >= 78 &&
+                        IsCellExposedToNonSolidNeighbor(wx, wy, wz, maxY, worldChunks))
+                    {
+                        byte coatDmg = 0;
+                        if (!isCreative && !CrystalStorage.TryWithdrawMassQ24_8(mat, 32u, out coatDmg))
+                        {
+                            goto ScatterDone;
+                        }
+                        voxels[idx] = VoxelBitUtility.PackStandard(
+                            mat, curDens, 0, 0, BlokKokenDurumu.DogalKutle, coatDmg);
+                        spentMassQ24_8 += 32u;
+                        modifiedCells++;
+                        lastTouchedChunk = (cx, cz);
+                        MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+                    }
+                    continue;
+                }
 
                 uint oldMass = CrystalMassStorage.MassQ24_8FromDensity7(curDens);
                 uint newMass = CrystalMassStorage.MassQ24_8FromDensity7(smoothedDens);
@@ -2512,9 +2577,9 @@ namespace Stratocraft.Character
                     goto ScatterDone;
                 }
 
-                byte writeMat = curMat == MaterialIdCatalog.Air ? mat : curMat;
+                // KRITIK DUZELTME: Eski curMat (Ham Tas) degil, daima oyuncunun sectigi mat yazilir!
                 voxels[idx] = VoxelBitUtility.PackStandard(
-                    writeMat, smoothedDens, 0, 0, BlokKokenDurumu.DogalKutle, preservedDmg);
+                    mat, smoothedDens, 0, 0, BlokKokenDurumu.DogalKutle, preservedDmg);
 
                 spentMassQ24_8 += neededQ24_8;
                 modifiedCells++;
@@ -2618,11 +2683,36 @@ namespace Stratocraft.Character
                     byte curDens = VoxelBitUtility.GetDensityOrLiquid(nRaw);
                     if (curDens < 96)
                     {
-                        nChunk[nIdx] = VoxelBitUtility.WithDensityOrLiquid(nRaw, (byte)Mathf.Min(127, curDens + 32));
+                        nChunk[nIdx] = VoxelBitUtility.PackStandard(
+                            mat,
+                            (byte)Mathf.Min(127, curDens + 32),
+                            0,
+                            0,
+                            BlokKokenDurumu.DogalKutle,
+                            VoxelBitUtility.GetDamageState(nRaw));
                         MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
                     }
                 }
             }
+        }
+
+        private static bool IsCellExposedToNonSolidNeighbor(
+            int wx, int wy, int wz, int maxY, Dictionary<(int cx, int cz), uint[]> worldChunks)
+        {
+            ReadOnlySpan<int> dx = stackalloc int[6] { 0, 0, 1, -1, 0, 0 };
+            ReadOnlySpan<int> dy = stackalloc int[6] { 1, -1, 0, 0, 0, 0 };
+            ReadOnlySpan<int> dz = stackalloc int[6] { 0, 0, 0, 0, 1, -1 };
+            for (int d = 0; d < 6; d++)
+            {
+                int ny = wy + dy[d];
+                if (ny <= 0 || ny >= maxY) return true;
+                int nx = wx + dx[d], nz = wz + dz[d];
+                int ncx = FloorDiv16(nx), ncz = FloorDiv16(nz);
+                if (!worldChunks.TryGetValue((ncx, ncz), out uint[]? nVox) || nVox == null) continue;
+                uint nRaw = nVox[(ny << 8) | ((nz - ncz * 16) << 4) | (nx - ncx * 16)];
+                if (!VoxelBitUtility.IsPhysicallySolid(nRaw)) return true;
+            }
+            return false;
         }
 
         private static void WakeChunkFluidsOnEdit(
@@ -3161,6 +3251,11 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Dirt => "Toprak",
             MaterialIdCatalog.Grass => "Cimenli Toprak",
             MaterialIdCatalog.Sand => "Kum",
+            MaterialIdCatalog.Clay => "Dogal Kil",
+            MaterialIdCatalog.Gravel => "Cakil",
+            MaterialIdCatalog.PackedIce => "Paketlenmis Buz",
+            MaterialIdCatalog.Stalagnate => "Magara Dikiti",
+            MaterialIdCatalog.Floatstone => "Ucan Ada Tasi",
             MaterialIdCatalog.Basalt => "Bazalt",
             MaterialIdCatalog.NaturalObsidian => "Dogal Obsidyen",
             MaterialIdCatalog.Cobblestone => "Kiriktas",

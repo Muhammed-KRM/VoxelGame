@@ -1187,62 +1187,21 @@ namespace Stratocraft.Character
             SelectedHotbarIndex = 0;
         }
 
-        /// <summary>Madde Kristali (CrystalStorage) ve Moloz sayaclari ile gorsel Hotbar/Canta slotlarini cift yonlu senkronize eder.</summary>
+        /// <summary>
+        /// Madde Kristali deposu (CrystalStorage) oyuncunun fiziksel kemer/canta envanterinden %100 bagimsizdir:
+        /// Kristalle kirilan/vakumlanan bloklar ASLA Hotbar veya [I] Canta yuvalarina gonderilmez; yalnizca [C] acikken gorunur!
+        /// </summary>
         public void SyncWithCrystalStorage(Stage1MatterCrystalAndMiningController miningCtrl)
         {
-            bool crystalAwakened = miningCtrl.CrystalStorage.MaxTotalBlocksCapacity > 0;
-            for (int m = 0; m < TrackedCrystalMaterials.Length; m++)
-            {
-                byte matId = TrackedCrystalMaterials[m];
-                if (matId != MaterialIdCatalog.LooseRubble && !crystalAwakened)
-                {
-                    continue;
-                }
-                bool isOre = MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(matId);
-                InventoryItemKind targetKind = isOre ? InventoryItemKind.OreChunk : InventoryItemKind.VoxelBlock;
-
-                int storageCount = matId == MaterialIdCatalog.LooseRubble
-                    ? miningCtrl.LooseRubbleShardCount
-                    : miningCtrl.CrystalStorage.GetCount(matId);
-
-                int currentUiCount = CountMaterialInPlayerInventory(matId);
-                if (storageCount != currentUiCount)
-                {
-                    SetMaterialTotalInPlayerInventory(matId, targetKind, storageCount);
-                }
-            }
+            _ = miningCtrl;
         }
 
-        /// <summary>3B Canta Ortusu uzerinde surukle-birak veya sandik transferi yapildiginda CrystalStorage miktarlarini gunceller.</summary>
+        /// <summary>
+        /// Fiziksel canta/kemer islemleri Madde Kristalinin ic kutle deposuna (CrystalStorage) dokunmaz.
+        /// </summary>
         public void PushUiCountsToCrystalStorage(Stage1MatterCrystalAndMiningController miningCtrl)
         {
-            bool crystalAwakened = miningCtrl.CrystalStorage.MaxTotalBlocksCapacity > 0;
-            for (int m = 0; m < TrackedCrystalMaterials.Length; m++)
-            {
-                byte matId = TrackedCrystalMaterials[m];
-                int uiCount = CountMaterialInPlayerInventory(matId);
-                if (matId == MaterialIdCatalog.LooseRubble)
-                {
-                    miningCtrl.LooseRubbleShardCount = uiCount;
-                }
-                else if (crystalAwakened)
-                {
-                    int storageCount = miningCtrl.CrystalStorage.GetCount(matId);
-                    int diff = uiCount - storageCount;
-                    if (diff > 0)
-                    {
-                        miningCtrl.CrystalStorage.TryDepositMassQ24_8(matId, (uint)diff * CrystalMassStorageData.OneBlockQ24_8);
-                    }
-                    else if (diff < 0)
-                    {
-                        int toRemove = -diff;
-                        for (int r = 0; r < toRemove; r++)
-                        {
-                            miningCtrl.CrystalStorage.TryWithdrawNaturalBlock(matId, out _);
-                        }
-                    }
-                }
-            }
+            _ = miningCtrl;
         }
 
         /// <summary>Oyuncunun Hotbar + Sirt Cantasi yuvalarinda belirtilen turden toplam kac adet esya oldugunu sayar.</summary>
@@ -2137,14 +2096,11 @@ namespace Stratocraft.Character
             float lungOxygenPercent = 100f,
             bool isSubmerged = false,
             float coreBodyTemp = 37.0f,
-            bool showDebugHints = false)
+            bool showDebugHints = false,
+            bool isCreativeMode = false)
         {
             EnsureTexturesAndStyles();
             Event ev = Event.current;
-            if (ev.type == EventType.Layout)
-            {
-                SyncWithCrystalStorage(miningCtrl);
-            }
             HoveredSlotTooltip = string.Empty;
 
             if (!isBackpackOpen && IsChestWindowOpen) IsChestWindowOpen = false;
@@ -2216,10 +2172,10 @@ namespace Stratocraft.Character
             float bannerY = showOxygen ? barY - 50f : barY - 34f;
             GUI.Box(new Rect(screenW * 0.5f - 285f, bannerY, 570f, 20f), activeTitle, _slotTitleBannerStyle!);
 
-            // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (Tekerlek / [B] / Tıklama ile malzeme seçimi)
+            // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (SADECE [C] basılıp açıldığında görünür!)
             if (miningCtrl.IsCrystalActive)
             {
-                DrawCrystalContentsAndMaterialPickerPanel(screenW, barY, miningCtrl, combatBridge, ev, mousePos);
+                DrawCrystalContentsAndMaterialPickerPanel(screenW, barY, miningCtrl, combatBridge, ev, mousePos, isCreativeMode);
             }
 
             if (isBackpackOpen)
@@ -2405,30 +2361,36 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge combatBridge,
             Event ev,
-            Vector2 mousePos)
+            Vector2 mousePos,
+            bool isCreativeMode = false)
         {
             ReadOnlySpan<byte> mats = Stage1MatterCrystalAndMiningController.GetCrystalBuildableMaterials();
+            const int cols = 8;
+            int rows = Mathf.CeilToInt(mats.Length / (float)cols);
             const float cellW = 58f;
-            const float cellH = 50f;
+            const float cellH = 48f;
             const float gap = 4f;
-            float panelW = mats.Length * cellW + (mats.Length - 1) * gap + 16f;
-            float panelH = cellH + 30f;
+            float panelW = cols * cellW + (cols - 1) * gap + 16f;
+            float panelH = rows * cellH + (rows - 1) * gap + 30f;
             float px = (screenW - panelW) * 0.5f;
             float py = barY - panelH - 36f;
 
             Rect bgRect = new Rect(px, py, panelW, panelH);
             GUI.DrawTexture(bgRect, _windowBgTex!);
+            byte selectedMat = miningCtrl.SelectedMaterialId;
+            string stockSummary = isCreativeMode ? "∞ Sınırsız" : $"{miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok";
             string header =
-                $"◆ MADDE KRİSTALİ İÇERİĞİ (Toplam: {miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok) — [Tekerlek / Shift+B]: Malzeme Seç | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [Shift+V]: Mimari Şekil | [T]: {miningCtrl.BrushAreaLabel} | [B]: Tarif & Malzeme Kitabı";
+                $"◆ MADDE KRİSTALİ DEPOSU ({stockSummary} | Seçili: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(selectedMat)}) — [Tekerlek/Shift+B] Malzeme | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [T]: {miningCtrl.BrushAreaLabel}";
             GUI.Label(new Rect(px + 6f, py + 3f, panelW - 12f, 20f), header, _slotTitleBannerStyle!);
 
-            byte selectedMat = miningCtrl.SelectedMaterialId;
             for (int i = 0; i < mats.Length; i++)
             {
                 byte matId = mats[i];
                 int count = miningCtrl.GetMaterialCountInCrystal(matId);
-                float cx = px + 8f + i * (cellW + gap);
-                float cy = py + 24f;
+                int col = i % cols;
+                int row = i / cols;
+                float cx = px + 8f + col * (cellW + gap);
+                float cy = py + 24f + row * (cellH + gap);
                 Rect cellRect = new Rect(cx, cy, cellW, cellH);
 
                 bool isSelected = matId == selectedMat;
@@ -2450,24 +2412,26 @@ namespace Stratocraft.Character
                 {
                     Kind = InventoryItemKind.VoxelBlock,
                     SubId = matId,
-                    Count = count,
+                    Count = Mathf.Max(1, count),
                     Durability01 = 1f
                 };
                 Texture2D icon = GetOrBuildIconForSlot(in previewSlot, combatBridge.ActiveWeaponArchetype);
                 Color prevIconCol = GUI.color;
-                if (count <= 0) GUI.color = new Color(0.55f, 0.55f, 0.55f, 0.55f);
-                GUI.DrawTexture(new Rect(cellRect.x + 13f, cellRect.y + 3f, 32f, 30f), icon);
+                if (!isCreativeMode && count <= 0) GUI.color = new Color(0.55f, 0.55f, 0.55f, 0.55f);
+                GUI.DrawTexture(new Rect(cellRect.x + 13f, cellRect.y + 3f, 32f, 28f), icon);
                 GUI.color = prevIconCol;
 
                 string shortName = GetShortMaterialBadgeName(matId);
+                string countText = isCreativeMode ? "∞" : GetCachedStackCountString(count);
                 GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + 1f, cellRect.width - 4f, 14f), shortName, _keyBadgeStyle!);
-                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 18f, cellRect.width - 5f, 16f), GetCachedStackCountString(count), _countLabelStyle!);
+                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 17f, cellRect.width - 5f, 16f), countText, _countLabelStyle!);
 
                 if (ev.type == EventType.MouseDown && cellRect.Contains(mousePos))
                 {
                     miningCtrl.SelectMaterial(matId);
+                    string selStock = isCreativeMode ? "∞" : $"x{count}";
                     miningCtrl.LastFeedbackText =
-                        $"Kristal İnşa Malzemesi Seçildi: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} (Stok: x{count}) -> [Sağ Tık] Dünyaya Koy";
+                        $"💎 Kristal Malzemesi Seçildi: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} (Stok: {selStock}) -> [Sağ Tık] Dünyaya Koy";
                     ev.Use();
                 }
             }
@@ -2633,6 +2597,9 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Dirt => "Toprak",
             MaterialIdCatalog.Grass => "Çim",
             MaterialIdCatalog.Sand => "Kum",
+            MaterialIdCatalog.Clay => "Kil",
+            MaterialIdCatalog.Gravel => "Çakıl",
+            MaterialIdCatalog.PackedIce => "Buz",
             MaterialIdCatalog.Basalt => "Bazalt",
             MaterialIdCatalog.NaturalObsidian => "Obsid",
             MaterialIdCatalog.Cobblestone => "Kırıktaş",
@@ -4554,7 +4521,19 @@ namespace Stratocraft.Character
 
                 if (GUI.Button(cellRect, GUIContent.none, GUIStyle.none))
                 {
-                    if (TryAddOrMergeItem(entry.kind, entry.subId, grantCount, miningCtrl))
+                    // Blok sekmesindeki (CreativeCategoryIndex == 0) bloklar kemer envanterine DEGIL, dogrudan [C] Madde Kristali deposuna yuklenir ve secilir!
+                    if (CreativeCategoryIndex == 0 && entry.kind == InventoryItemKind.VoxelBlock)
+                    {
+                        if (miningCtrl.CurrentCrystalTier < 5) miningCtrl.AwakenOrUpgradeCrystalToTier(5);
+                        miningCtrl.CrystalStorage.TryDepositMassQ24_8(
+                            entry.subId,
+                            (uint)Mathf.Max(1, grantCount) * Stratocraft.Inventory.Data.CrystalMassStorageData.OneBlockQ24_8);
+                        miningCtrl.SelectMaterial(entry.subId);
+                        miningCtrl.IsCrystalActive = true;
+                        miningCtrl.LastFeedbackText =
+                            $"💎 KRİSTAL MALZEMESİ SEÇİLDİ: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(entry.subId)} (∞) -> [C] Kristal Aktif, [Sağ Tık] ile Doğal/Mimari Koy!";
+                    }
+                    else if (TryAddOrMergeItem(entry.kind, entry.subId, grantCount, miningCtrl))
                     {
                         miningCtrl.LastFeedbackText = $"KREATİF KATALOG: +{grantCount}x {GetSlotDisplayName(in testSlot)} elinize/çantanıza eklendi!";
                     }

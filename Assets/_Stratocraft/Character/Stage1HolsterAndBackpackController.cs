@@ -155,8 +155,9 @@ namespace Stratocraft.Character
             if (IsCreativeMode)
             {
                 _survivalEarnedCrystalTier = miningCtrl.CurrentCrystalTier;
+                miningCtrl.AwakenOrUpgradeCrystalToTier(5);
                 miningCtrl.LastFeedbackText =
-                    "★ [F4] YARATICI MOD AKTİF: [Tab] Eşya Kataloğu açıldı! (Kuvars ile [C] kristal uyandırmayı test edebilir veya anında T3 Kristal için [Shift+C] basabilirsiniz)";
+                    "★ [F4] YARATICI MOD AKTİF: ∞ Can & Stamina | Çift [Space] Uçuş | [C] Kristal Her Şeyi Kırar | [Tab] Katalog!";
             }
             else
             {
