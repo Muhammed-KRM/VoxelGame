@@ -1008,17 +1008,17 @@ namespace Stratocraft.Character
 
                 if (jumpOrMantlePressed && !isBackpackOpen)
                 {
-                    if ((_creativeFlightClockSec - _lastCreativeSpaceTapTime) <= 0.36f)
+                    if ((_creativeFlightClockSec - _lastCreativeSpaceTapTime) <= 0.48f)
                     {
                         IsCreativeFlying = !IsCreativeFlying;
                         _lastCreativeSpaceTapTime = -10f;
                         _isMantling = false;
-                        _verticalVelocity = 0f;
                         _jumpLaunchTimer = 0f;
                         jumpOrMantlePressed = false;
 
                         if (IsCreativeFlying)
                         {
+                            _verticalVelocity = 0f;
                             _creativeFlyTakeoffGraceSec = 0.25f;
                             Vector3 pLift = playerTransform.position;
                             if (_movementState.IsGrounded != 0)
@@ -1027,11 +1027,15 @@ namespace Stratocraft.Character
                                 playerTransform.position = pLift;
                             }
                             _movementState.IsGrounded = 0;
-                            statusFeedback = "🕊️ [YARATICI UÇUŞ AÇIK]: [Space] Yüksel | [Sol Ctrl] Alçal | [Shift] Hızlı Uç | Çift [Space] Kapat";
+                            statusFeedback = "🕊️ [YARATICI UÇUŞ AÇIK]: [Space] Yüksel | [Ctrl] Alçal | [Shift] Hızlı Uç | Çift [Space] Bırak & Düş";
                         }
                         else
                         {
-                            statusFeedback = "🦶 [YARATICI UÇUŞ KAPANDI]: Normal yürüyüşe dönüldü.";
+                            // Cift Space ile ucusu kapatinca yercekimiyle hemen dusmeye basla (Minecraft gibi)
+                            _verticalVelocity = -0.5f;
+                            _movementState.IsGrounded = 0;
+                            _coyoteGroundedTimer = 0f;
+                            statusFeedback = "🦶 [YARATICI UÇUŞ KAPANDI]: Serbest düşüş / normal yürüyüş aktif.";
                         }
                     }
                     else
@@ -1298,9 +1302,9 @@ namespace Stratocraft.Character
             }
             else if (descendHeld && !ascendHeld)
             {
-                targetVertVel = wantSprint ? -11.5f : -7.8f;
+                targetVertVel = wantSprint ? -15.0f : -9.5f;
             }
-            _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, targetVertVel, deltaTime * 75f);
+            _verticalVelocity = Mathf.MoveTowards(_verticalVelocity, targetVertVel, deltaTime * 85f);
 
             Vector3 pos = playerTransform.position;
             float prevFeetY = pos.y;
@@ -1345,10 +1349,14 @@ namespace Stratocraft.Character
             {
                 float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
                 float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
-                float floorY = nextGroundY > -20f ? Mathf.Max(nextGroundY, unbreakableFloorY) : unbreakableFloorY;
+                bool hitUnbreakableFloor = unbreakableFloorY > pos.y + 0.0001f;
+                bool hitSurfaceGround = nextGroundY > -20f && pos.y <= nextGroundY + 0.05f;
 
-                if (pos.y <= floorY + 0.03f)
+                if (hitUnbreakableFloor || hitSurfaceGround)
                 {
+                    float floorY = hitUnbreakableFloor && hitSurfaceGround
+                        ? Mathf.Max(nextGroundY, unbreakableFloorY)
+                        : (hitUnbreakableFloor ? unbreakableFloorY : nextGroundY);
                     pos.y = floorY;
                     _verticalVelocity = 0f;
                     // Minecraft gibi alcalirken zemine dokunuldugunda ucusu otomatik kapatip yere bas!

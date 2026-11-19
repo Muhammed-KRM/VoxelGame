@@ -2524,7 +2524,7 @@ namespace Stratocraft.Character
 
             float hpBefore = _movementBridge.Vitals.CurrentHp;
             bool flyAscendHeld = !menuOpen && Input.GetKey(KeyCode.Space);
-            bool flyDescendHeld = !menuOpen && wantCrouch;
+            bool flyDescendHeld = !menuOpen && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl));
             _movementBridge.StepCharacterPhysics(
                 transform, _worldChunks, moveInput, wantSprint, wantCrouch, wantProne,
                 !menuOpen && Input.GetKeyDown(KeyCode.Space),
