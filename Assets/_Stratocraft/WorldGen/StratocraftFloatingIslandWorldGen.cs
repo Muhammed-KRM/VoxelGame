@@ -3656,14 +3656,14 @@ namespace Stratocraft.WorldGen.Generators
             ReadOnlySpan<byte> cachedBiomes)
         {
             int h = Math.Abs((chunkX * 83492791) ^ (chunkZ * 297121507) ^ (ActiveWorldSeed * 19349663));
-            // 1) Tas Yontma (Knapping) icin dogal yuzey kaya blogu (sertlik >= 2.0f)
-            int rockLx = 2 + ((h >> 2) % 12);
-            int rockLz = 2 + ((h >> 6) % 12);
-            TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, rockLx, rockLz, MaterialIdCatalog.Stone, shapeId: 1, cachedTopH, cachedBiomes);
 
-            // 2) Derin Damar Izdusumlu Yuzey Cevher / Kuvars Cikintisi (Outcrops):
-            // Aday sutunlarda once uretilmis voksel sutununda >= 2 aday cevher olup olmadigini O(1) L1-cache taramasiyla suz,
-            // ardindan TrySampleUnderlyingRichOreForOutcrop ile altindaki y = topH-58..topH-18 damarini dogrula!
+            // Her chunk'a rastgele 1m x 1m keskin tas/cevher kupu damgalamak yerine yalnizca nadir (6 chunk'ta 1)
+            // derin damar izdusumlu kucuk dogal kirik mikro-kaya izi (PackChiseled, ShapeId=63) uret!
+            if ((h % 6) != 0)
+            {
+                return;
+            }
+
             bool hasTopCache = cachedTopH.Length == 256;
             int startProbe = (h >> 10) % 144;
             for (int i = 0; i < 144; i++)
@@ -3671,10 +3671,6 @@ namespace Stratocraft.WorldGen.Generators
                 int cell = (startProbe + i * 37) % 144;
                 int qLx = 2 + (cell % 12);
                 int qLz = 2 + (cell / 12);
-                if (Math.Abs(qLx - rockLx) + Math.Abs(qLz - rockLz) < 3)
-                {
-                    continue;
-                }
 
                 int wx = chunkX * 16 + qLx;
                 int wz = chunkZ * 16 + qLz;
@@ -3709,8 +3705,7 @@ namespace Stratocraft.WorldGen.Generators
                     continue;
                 }
 
-                byte shapeId = richOre == MaterialIdCatalog.QuartzGem ? (byte)6 : (byte)1;
-                if (TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, qLx, qLz, richOre, shapeId, cachedTopH, cachedBiomes))
+                if (TryStampSingleSurfaceOutcrop(voxels, chunkX, chunkZ, qLx, qLz, richOre, VoxelBitUtility.ChiseledMicroVoxelShapeId, cachedTopH, cachedBiomes))
                 {
                     break;
                 }
@@ -3760,7 +3755,15 @@ namespace Stratocraft.WorldGen.Generators
             if (VoxelBitUtility.GetMaterialId(voxels[curIdx]) != MaterialIdCatalog.Air) return false;
 
             EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
-            SetNaturalTreeVoxel(voxels, lx, baseY + 1, lz, matId, shapeId: shapeId, rot: 0);
+            if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            {
+                byte shardSeed = (byte)(32 + (((wx * 19) ^ (wz * 37) ^ (baseY * 11)) & 63));
+                voxels[curIdx] = VoxelBitUtility.PackChiseled(matId, shardSeed, BlokKokenDurumu.DogalKutle, 0);
+            }
+            else
+            {
+                SetNaturalTreeVoxel(voxels, lx, baseY + 1, lz, matId, shapeId: shapeId, rot: 0);
+            }
             return true;
         }
 
