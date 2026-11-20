@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using Stratocraft.Core.Logging;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
 
@@ -113,6 +114,19 @@ namespace Stratocraft.Physics.Systems
             }
 
             SubTickAlpha01 = Math.Clamp(SubTickAccumulatorSeconds / FixedTickIntervalSeconds, 0f, 1f);
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                FluidDeepDiagnosticProbe.RecordAccumulator(new FluidAccumulatorRecord
+                {
+                    RawDt = deltaTimeSeconds,
+                    ClampedDt = clampedDt,
+                    TicksToRun = ticksToRun,
+                    SubTickAlpha01 = SubTickAlpha01,
+                    MaxChunksPerTick = MaxChunksPerTick,
+                    CurrentTickStride = CurrentTickStride,
+                    LastBatchMicroseconds = LastBatchMicroseconds
+                });
+            }
             return ticksToRun;
         }
 
@@ -315,6 +329,99 @@ namespace Stratocraft.Physics.Systems
                         fluids[idx] = FluidCell16.WakeRaw(fluids[idx]);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Paket 4B.4-A: 3-Kademeli Acliksiz (Starvation-Free, 0-GC) Aktif Akiskan Chunk Secici:
+        /// - Kademe 0 (chebDist &lt;= 1, oyuncunun 3x3 = 9 chunk'i): HER TIKTE %100 kosulsuz secilir (0 bekleme / 0 starvation!).
+        /// - Kademe 1 (chebDist 2..4, yakin halka): Kalan butce icinden dairesel (round-robin) adil secilir (HashSet sonu donmaz!).
+        /// - Kademe 2 (chebDist &gt; 4, uzak halka): Hala bos slot kalirsa dairesel secilir.
+        /// </summary>
+        public static void SelectActiveChunksStarvationFree(
+            HashSet<(int cx, int cz)> activeFluidChunks,
+            int playerCx,
+            int playerCz,
+            int budgetChunks,
+            List<(int cx, int cz)> outSelected,
+            List<(int cx, int cz)> nearRing2To4Scratch,
+            List<(int cx, int cz)> farScratch,
+            ref int nearRoundRobinCursor,
+            ref int farRoundRobinCursor,
+            out int nearActiveCount,
+            out int nearSelectedCount)
+        {
+            outSelected.Clear();
+            nearRing2To4Scratch.Clear();
+            farScratch.Clear();
+            nearActiveCount = 0;
+            nearSelectedCount = 0;
+
+            if (activeFluidChunks.Count == 0)
+            {
+                return;
+            }
+
+            // 1) Kademe 0 (dist <= 1): Oyuncu ve hemen komsu 8 chunk'i her zaman oncelikle ve kosulsuz ekle!
+            foreach (var key in activeFluidChunks)
+            {
+                int dist = Math.Max(Math.Abs(key.cx - playerCx), Math.Abs(key.cz - playerCz));
+                if (dist <= 1)
+                {
+                    nearActiveCount++;
+                    outSelected.Add(key);
+                    nearSelectedCount++;
+                }
+                else if (dist <= 4)
+                {
+                    nearActiveCount++;
+                    nearRing2To4Scratch.Add(key);
+                }
+                else
+                {
+                    farScratch.Add(key);
+                }
+            }
+
+            // 2) Kademe 1 (dist == 2..4): Kalan butceyi dairesel (round-robin) adil paylastir
+            int nearRingCount = nearRing2To4Scratch.Count;
+            int remSlots = Math.Max(0, budgetChunks - outSelected.Count);
+            if (nearRingCount > 0 && remSlots > 0)
+            {
+                if (nearRingCount <= remSlots)
+                {
+                    for (int i = 0; i < nearRingCount; i++)
+                    {
+                        outSelected.Add(nearRing2To4Scratch[i]);
+                    }
+                    nearSelectedCount += nearRingCount;
+                }
+                else
+                {
+                    nearRoundRobinCursor %= nearRingCount;
+                    for (int i = 0; i < remSlots; i++)
+                    {
+                        int idx = (nearRoundRobinCursor + i) % nearRingCount;
+                        outSelected.Add(nearRing2To4Scratch[idx]);
+                    }
+                    nearSelectedCount += remSlots;
+                    nearRoundRobinCursor = (nearRoundRobinCursor + remSlots) % nearRingCount;
+                }
+            }
+
+            // 3) Kademe 2 (dist > 4): Hala bos slot kaldiysa uzak aktif chunk'lardan dairesel sec
+            int farCount = farScratch.Count;
+            remSlots = Math.Max(0, budgetChunks - outSelected.Count);
+            if (farCount > 0 && remSlots > 0)
+            {
+                farRoundRobinCursor %= farCount;
+                int countToPick = Math.Min(remSlots, farCount);
+                for (int i = 0; i < countToPick; i++)
+                {
+                    int idx = (farRoundRobinCursor + i) % farCount;
+                    outSelected.Add(farScratch[idx]);
+                }
+                farRoundRobinCursor = (farRoundRobinCursor + countToPick) % farCount;
             }
         }
     }

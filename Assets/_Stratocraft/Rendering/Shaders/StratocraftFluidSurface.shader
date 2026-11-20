@@ -69,9 +69,10 @@ Shader "Stratocraft/FluidSurface"
                 float4 _AcidColorDeep;
             CBUFFER_END
 
-            // Paket 4B: GPU Alt-Tik Enterpolasyonu ([0.0 .. 1.0]) ve Beaufort Ruzgar Derecesi (0 B GC)
+            // Paket 4B: GPU Alt-Tik Enterpolasyonu ([0.0 .. 1.0]), Beaufort Ruzgar ve Teshis Gorunum Modu (0=Normal, 1..6=Debug)
             float _FluidSubTickAlpha;
             float _GlobalWindBeaufort;
+            float _FluidDebugView;
 
             // Global Oyuncu-Su Etkilesimi (SRP Batcher uyumlu, 0 B doku VRAM):
             float4 _StratocraftSwimmerPos;
@@ -421,6 +422,21 @@ Shader "Stratocraft/FluidSurface"
                 float NdotV = max(0.0, dot(normalWS, viewDirWS));
                 float NdotL = max(0.0, dot(normalWS, mainLight.direction)) * cloudShadowAtten;
                 float3 lightCol = max(float3(0.45, 0.48, 0.52), mainLight.color * (NdotL * 0.75 + 0.35));
+
+                if (_FluidDebugView > 0.5)
+                {
+                    int dbgMode = (int)(_FluidDebugView + 0.5);
+                    if (dbgMode == 1) return half4(1.0 - activeMotionGate, flowMotion01, dyMotion01, 1.0);
+                    if (dbgMode == 2) return half4(saturate(abs(subTickDyFrag) * 4.0), saturate(geomNormalWS.y), waterfallAttrFoam, 1.0);
+                    if (dbgMode == 3)
+                    {
+                        float nrmDisc = saturate((1.0 - dot(geomNormalWS, faceNormalWS)) * 4.0);
+                        return half4(nrmDisc, saturate(geomNormalWS.y), saturate(length(geomNormalWS.xz)), 1.0);
+                    }
+                    if (dbgMode == 4) return half4(opticalDepth < 0.05 ? 1.0 : 0.0, saturate(opticalDepth * 0.5), saturate(depthMeters * 0.5), 1.0);
+                    if (dbgMode == 5) return half4(sideWallMask, waterfallAttrFoam, saturate(length(flowVel) * 0.5), 1.0);
+                    return half4(input.fluidType == 2u ? 1.0 : 0.0, input.fluidType == 3u ? 1.0 : (input.fluidType == 1u ? 0.8 : 0.0), input.fluidType == 1u ? 1.0 : 0.0, 1.0);
+                }
 
                 // ==================== 1. SU (FluidType == 1: Tatli Su vs Tuzlu Deniz Suyu) ====================
                 if (input.fluidType == 1u)

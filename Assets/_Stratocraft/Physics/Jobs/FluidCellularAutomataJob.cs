@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
@@ -35,6 +36,42 @@ namespace Stratocraft.Physics.Jobs
         [ThreadStatic] private static HashSet<(int cx, int cz)>? _tlsActiveSeamSnapshot;
         [ThreadStatic] private static int _lastStepSiphonTransfers;
         private static int _globalStampCounter = 1;
+
+        // Sifir-GC Derin Teshis Probu TLS alanlari (FluidDeepDiagnosticProbe.Enabled == false iken 0 maliyet!)
+        [ThreadStatic] private static int _tlsDiagChunkX;
+        [ThreadStatic] private static int _tlsDiagChunkZ;
+        [ThreadStatic] private static int _tlsDiagPass1Mass;
+        [ThreadStatic] private static int _tlsDiagPass2SameYMass;
+        [ThreadStatic] private static int _tlsDiagPass2CrossMass;
+        [ThreadStatic] private static int _tlsDiagPass25DiagMass;
+        [ThreadStatic] private static int _tlsDiagPass28CompMass;
+        [ThreadStatic] private static int[]? _tlsDiagRejectHist;
+        [ThreadStatic] private static int _tlsDiagMaxDownhillDrop;
+        [ThreadStatic] private static int _tlsDiagMaxFreeOverfallDrop;
+        [ThreadStatic] private static int _tlsDiagSrcSlope223;
+        [ThreadStatic] private static int _tlsDiagDstSlope223;
+        [ThreadStatic] private static int _tlsDiagMaxEq;
+        [ThreadStatic] private static int _tlsDiagPreShareDesired;
+        [ThreadStatic] private static FluidTransferRejectReason _tlsDiagTransferReject;
+        [ThreadStatic] private static bool _tlsDiagCrestAttempted;
+        [ThreadStatic] private static bool _tlsDiagCrestWritten;
+        [ThreadStatic] private static string? _tlsDiagCrestBlockReason;
+        [ThreadStatic] private static uint _tlsDiagCrestAboveVox;
+        [ThreadStatic] private static ushort _tlsDiagCrestAboveFld;
+
+        public static void SetDiagnosticChunkContext(int cx, int cz)
+        {
+            _tlsDiagChunkX = cx;
+            _tlsDiagChunkZ = cz;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void BumpReject(FluidTransferRejectReason reason)
+        {
+            if (!FluidDeepDiagnosticProbe.Enabled) return;
+            var h = _tlsDiagRejectHist;
+            if (h != null && (int)reason < h.Length) h[(int)reason]++;
+        }
 
         public static int LastStepSiphonTransfers => _lastStepSiphonTransfers;
 
@@ -176,6 +213,29 @@ namespace Stratocraft.Physics.Jobs
             steamSlagFizzleCount = 0;
             _lastStepSiphonTransfers = 0;
 
+            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+            int diagQuiescentBefore = kinematicsSlice != null
+                ? Math.Max(kinematicsSlice.QuiescentTicks, activityMask.QuiescentTicks)
+                : activityMask.QuiescentTicks;
+            int diagMaskMinWetY = activityMask.MinWetY;
+            int diagMaskMaxWetY = activityMask.MaxWetY;
+            if (probeOn)
+            {
+                _tlsDiagPass1Mass = 0;
+                _tlsDiagPass2SameYMass = 0;
+                _tlsDiagPass2CrossMass = 0;
+                _tlsDiagPass25DiagMass = 0;
+                _tlsDiagPass28CompMass = 0;
+                if (_tlsDiagRejectHist == null || _tlsDiagRejectHist.Length < FluidDeepDiagnosticProbe.RejectReasonCount)
+                {
+                    _tlsDiagRejectHist = new int[FluidDeepDiagnosticProbe.RejectReasonCount];
+                }
+                else
+                {
+                    Array.Clear(_tlsDiagRejectHist, 0, _tlsDiagRejectHist.Length);
+                }
+            }
+
             int totalCells = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalCells || fluids.Length < totalCells)
             {
@@ -205,6 +265,20 @@ namespace Stratocraft.Physics.Jobs
                 {
                     activityMask.TotalWetCellCount = 0;
                     activityMask.HasAnyLava = 0;
+                    if (probeOn)
+                    {
+                        BumpReject(FluidTransferRejectReason.MaskEarlyExitNoWet);
+                        int[] histCopy = new int[FluidDeepDiagnosticProbe.RejectReasonCount];
+                        Array.Copy(_tlsDiagRejectHist!, histCopy, histCopy.Length);
+                        FluidDeepDiagnosticProbe.RecordPhysicsChunkTick(new FluidPhysicsChunkTickRecord
+                        {
+                            ChunkX = _tlsDiagChunkX, ChunkZ = _tlsDiagChunkZ, StepParity = stepParity,
+                            FastMassSum = 0, AnyActiveOnEntry = false, CanUseFastMask = true,
+                            MaskMinWetY = diagMaskMinWetY, MaskMaxWetY = diagMaskMaxWetY,
+                            QuiescentBefore = diagQuiescentBefore, QuiescentAfter = 0,
+                            RejectHistogram = histCopy
+                        });
+                    }
                     return 0L;
                 }
 
@@ -286,6 +360,21 @@ namespace Stratocraft.Physics.Jobs
                 activityMask.ActiveY1 = 0UL;
                 activityMask.ActiveY2 = 0UL;
                 activityMask.QuiescentTicks = 0;
+                if (probeOn)
+                {
+                    BumpReject(FluidTransferRejectReason.MaskEarlyExitAllSettled);
+                    int[] histCopy = new int[FluidDeepDiagnosticProbe.RejectReasonCount];
+                    Array.Copy(_tlsDiagRejectHist!, histCopy, histCopy.Length);
+                    FluidDeepDiagnosticProbe.RecordPhysicsChunkTick(new FluidPhysicsChunkTickRecord
+                    {
+                        ChunkX = _tlsDiagChunkX, ChunkZ = _tlsDiagChunkZ, StepParity = stepParity,
+                        FastMassSum = (int)Math.Min(int.MaxValue, fastMassSum), AnyActiveOnEntry = false, CanUseFastMask = canUseFastMask,
+                        WindowMinY = windowMinY, WindowMaxY = windowMaxY, MaskMinWetY = diagMaskMinWetY, MaskMaxWetY = diagMaskMaxWetY,
+                        TotalRemainingMass = (int)Math.Min(int.MaxValue, fastMassSum),
+                        QuiescentBefore = diagQuiescentBefore, QuiescentAfter = 0,
+                        RejectHistogram = histCopy
+                    });
+                }
                 return fastMassSum;
             }
 
@@ -356,6 +445,7 @@ namespace Stratocraft.Physics.Jobs
                                 if (transfer > 0)
                                 {
                                     anyDownhillDrain = true;
+                                    if (probeOn) _tlsDiagPass1Mass += transfer;
                                     fluids[belowIdx] = FluidCell16.Pack(cell.Type, (byte)(belowCell.Mass + transfer), isSettled: false).RawValue;
                                     byte rem = (byte)(cell.Mass - transfer);
                                     fluids[idx] = FluidCell16.Pack(cell.Type, rem, isSettled: false).RawValue;
@@ -453,6 +543,9 @@ namespace Stratocraft.Physics.Jobs
             bool anyMassOrVelChanged = false;
             int maxAbsCellDelta = 0;
             bool anyWetDryFlip = false;
+            int diagActiveCellCount = 0;
+            int diagNewlySettledCount = 0;
+            bool diagForcedQuiescent = false;
 
             for (int y = settleMinY; y <= settleMaxY; y++)
             {
@@ -519,12 +612,14 @@ namespace Stratocraft.Physics.Jobs
                     bool isChanged = (y >= windowMinY && y <= windowMaxY) && (changedMask[i] != 0);
                     if (!isChanged)
                     {
+                        if (probeOn && (raw & FluidCell16.SettledBitMask) == 0) diagNewlySettledCount++;
                         fluids[i] = FluidCell16.SettleRaw(raw);
                     }
                     else
                     {
                         anyMassOrVelChanged = true;
                         layerActive = true;
+                        if (probeOn) diagActiveCellCount++;
                         fluids[i] = FluidCell16.WakeRaw(raw);
                     }
                 }
@@ -573,6 +668,8 @@ namespace Stratocraft.Physics.Jobs
                 byte nextQ = isMicroPingPong ? (byte)Math.Min(255, prevQ + 1) : (byte)0;
                 if (nextQ >= QuiescentSettleThresholdTicks)
                 {
+                    diagForcedQuiescent = true;
+                    BumpReject(FluidTransferRejectReason.ForcedQuiescentSettle);
                     int forceStart = settleMinY * strideY;
                     int forceEnd = (settleMaxY + 1) * strideY;
                     for (int i = forceStart; i < forceEnd; i++)
@@ -617,6 +714,42 @@ namespace Stratocraft.Physics.Jobs
                 activityMask.DirtyVisualFlag = 1;
             }
             activityMask.IsInitialized = 1;
+
+            if (probeOn)
+            {
+                int[] histCopy = new int[FluidDeepDiagnosticProbe.RejectReasonCount];
+                Array.Copy(_tlsDiagRejectHist!, histCopy, histCopy.Length);
+                FluidDeepDiagnosticProbe.RecordPhysicsChunkTick(new FluidPhysicsChunkTickRecord
+                {
+                    ChunkX = _tlsDiagChunkX,
+                    ChunkZ = _tlsDiagChunkZ,
+                    StepParity = stepParity,
+                    FastMassSum = (int)Math.Min(int.MaxValue, fastMassSum),
+                    AnyActiveOnEntry = anyActive,
+                    CanUseFastMask = canUseFastMask,
+                    WindowMinY = windowMinY,
+                    WindowMaxY = windowMaxY,
+                    MaskMinWetY = diagMaskMinWetY,
+                    MaskMaxWetY = diagMaskMaxWetY,
+                    Pass1GravMass = _tlsDiagPass1Mass,
+                    Pass2SameYMass = _tlsDiagPass2SameYMass,
+                    Pass2CrossLayerMass = _tlsDiagPass2CrossMass,
+                    Pass25DiagMass = _tlsDiagPass25DiagMass,
+                    Pass28CompactMass = _tlsDiagPass28CompMass,
+                    Pass3SiphonMass = _lastStepSiphonTransfers,
+                    TotalRemainingMass = (int)Math.Min(int.MaxValue, totalRemainingMass),
+                    WetCellCount = wetCellCount,
+                    ActiveCellCount = diagActiveCellCount,
+                    NewlySettledCount = diagNewlySettledCount,
+                    MaxAbsCellDelta = maxAbsCellDelta,
+                    AnyWetDryFlip = anyWetDryFlip,
+                    AnyDownhillDrain = anyDownhillDrain,
+                    QuiescentBefore = diagQuiescentBefore,
+                    QuiescentAfter = activityMask.QuiescentTicks,
+                    ForcedQuiescentTriggered = diagForcedQuiescent,
+                    RejectHistogram = histCopy
+                });
+            }
 
             return totalRemainingMass;
         }
@@ -1422,8 +1555,8 @@ namespace Stratocraft.Physics.Jobs
             int diff = headShore - headPool;
             if (Math.Abs(diff) <= 1) return 0;
 
-            int shoreSlope223 = (bedShore > (shoreY - 1) * 255 && bedShore < shoreY * 255) ? Math.Max(223, (shoreY + 1) * 255 - (bedShore + 32)) : 223;
-            int poolSlope223 = (bedPool > (poolY - 1) * 255 && bedPool < poolY * 255) ? Math.Max(223, (poolY + 1) * 255 - (bedPool + 32)) : 223;
+            int shoreSlope223 = (shoreTopCell.Mass > 32 && bedShore > (shoreY - 1) * 255 && bedShore < shoreY * 255) ? Math.Max(223, (shoreY + 1) * 255 - (bedShore + 32)) : 223;
+            int poolSlope223 = (poolBotCell.Mass >= 32 && bedPool > (poolY - 1) * 255 && bedPool < poolY * 255) ? Math.Max(223, (poolY + 1) * 255 - (bedPool + 32)) : 223;
             int slopeSum = shoreSlope223 + poolSlope223;
 
             if (diff > 1 && shoreTopCell.Mass > 0)
@@ -1643,9 +1776,31 @@ namespace Stratocraft.Physics.Jobs
 
                         if (aCell.Mass > 0 && headA > headB)
                         {
-                            if ((changedMask[aIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0 ||
-                                !IsFluidColumnGrounded(voxels, fluids, aIdx, y, strideY, activeType))
+                            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+                            bool newlyWetBlockedA = (changedMask[aIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0;
+                            bool groundedA = !newlyWetBlockedA && IsFluidColumnGrounded(voxels, fluids, aIdx, y, strideY, activeType);
+                            if (newlyWetBlockedA || !groundedA)
                             {
+                                if (probeOn)
+                                {
+                                    FluidTransferRejectReason rj = newlyWetBlockedA
+                                        ? ((changedMask[aIdx] & gravityNewlyWetMask) != 0 ? FluidTransferRejectReason.GravityNewlyWetLock : FluidTransferRejectReason.AxisNewlyWetLock)
+                                        : FluidTransferRejectReason.NotGrounded;
+                                    BumpReject(rj);
+                                    int wAx = _tlsDiagChunkX * 16 + ax, wAz = _tlsDiagChunkZ * 16 + az;
+                                    if (FluidDeepDiagnosticProbe.IsInWatchWindow(wAx, y, wAz))
+                                    {
+                                        FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                        {
+                                            SiteTag = "Pass2_SameY_AB", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                            Ax = wAx, Ay = y, Az = wAz, Bx = _tlsDiagChunkX * 16 + bx, By = y, Bz = _tlsDiagChunkZ * 16 + bz,
+                                            AMass = aCell.Mass, BMass = bCell.Mass, ACap = aCap, BCap = bCap,
+                                            BedA = bedA, BedB = bedB, HeadA = headA, HeadB = headB, DiffH = headA - headB,
+                                            GroundedA = groundedA, ChangedMaskA = changedMask[aIdx], SlopeShare256 = -1,
+                                            FinalTransfer = 0, RejectReason = rj
+                                        });
+                                    }
+                                }
                                 continue;
                             }
 
@@ -1654,8 +1809,28 @@ namespace Stratocraft.Physics.Jobs
                                 bx, bz, bedB, out bool hasSteeperAlternativeA, out int slopeShare256A);
                             if (slopeShare256A <= 0)
                             {
+                                if (probeOn)
+                                {
+                                    BumpReject(FluidTransferRejectReason.SlopeRoutingZeroShare);
+                                    int wAx = _tlsDiagChunkX * 16 + ax, wAz = _tlsDiagChunkZ * 16 + az;
+                                    if (FluidDeepDiagnosticProbe.IsInWatchWindow(wAx, y, wAz))
+                                    {
+                                        FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                        {
+                                            SiteTag = "Pass2_SameY_AB", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                            Ax = wAx, Ay = y, Az = wAz, Bx = _tlsDiagChunkX * 16 + bx, By = y, Bz = _tlsDiagChunkZ * 16 + bz,
+                                            AMass = aCell.Mass, BMass = bCell.Mass, ACap = aCap, BCap = bCap,
+                                            BedA = bedA, BedB = bedB, HeadA = headA, HeadB = headB, DiffH = headA - headB,
+                                            GroundedA = true, ChangedMaskA = changedMask[aIdx], SlopeShare256 = 0,
+                                            MaxDownhillDrop = _tlsDiagMaxDownhillDrop, MaxFreeOverfallDrop = _tlsDiagMaxFreeOverfallDrop,
+                                            FinalTransfer = 0, RejectReason = FluidTransferRejectReason.SlopeRoutingZeroShare
+                                        });
+                                    }
+                                }
                                 continue;
                             }
+
+                            if (probeOn && slopeShare256A <= 32) BumpReject(FluidTransferRejectReason.SlopeRoutingStarved);
 
                             float forwardVelA = 0f;
                             if (kinematicsSlice != null)
@@ -1667,13 +1842,16 @@ namespace Stratocraft.Physics.Jobs
                             int transfer = ComputeStableLateralTransfer(
                                 activeType, aCell.Mass, aCap, bCell.Mass, bCap, bedA, bedB, y, headA, headB,
                                 hasSteeperAlternativeA, slopeShare256A, forwardVelA);
+                            FluidTransferRejectReason rjA = transfer > 0 ? FluidTransferRejectReason.None : _tlsDiagTransferReject;
 
-                            // Duz gol/deniz tesviyesi: diffH == 1 ve mass farki >= 2 iken pariteli 1 birim esitleme (0 merdiven!)
+                            // Duz gol/deniz tesviyesi & aktif havuz bosaltma: diffH == 1 iken duz tabanda (bedA == bedB) yapiskan kilitlenmeyi onle!
                             if (transfer == 0 && activeType == FluidType.Water && (headA - headB) == 1 &&
-                                bCell.Mass > 0 && (aCell.Mass - bCell.Mass) >= 2 && bCap > bCell.Mass &&
-                                ((stepParity + ax + az) & 1) == 0)
+                                bCell.Mass > 0 && bCap > bCell.Mass &&
+                                (((aCell.Mass - bCell.Mass) >= 2 && ((stepParity + ax + az) & 1) == 0) ||
+                                 (bedA == bedB && changedMask[bIdx] != 0 && aCell.Mass > bCell.Mass)))
                             {
                                 transfer = 1;
+                                rjA = FluidTransferRejectReason.None;
                             }
 
                             // Paket 4B.3 Lyapunov Asim Korumasi: Alt-voksel SurfaceNets yatakta 1 birim kutle 2-3 birim head degistirebilir;
@@ -1685,12 +1863,35 @@ namespace Stratocraft.Physics.Jobs
                                 if (Math.Abs(nextHeadA - nextHeadB) >= (headA - headB))
                                 {
                                     transfer = 0;
+                                    rjA = FluidTransferRejectReason.LyapunovOvershootGuard;
+                                }
+                            }
+
+                            if (probeOn)
+                            {
+                                if (transfer == 0 && rjA != FluidTransferRejectReason.None) BumpReject(rjA);
+                                else if (transfer > 0) _tlsDiagPass2SameYMass += transfer;
+                                int wAx = _tlsDiagChunkX * 16 + ax, wAz = _tlsDiagChunkZ * 16 + az;
+                                if (FluidDeepDiagnosticProbe.IsInWatchWindow(wAx, y, wAz))
+                                {
+                                    FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                    {
+                                        SiteTag = "Pass2_SameY_AB", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                        Ax = wAx, Ay = y, Az = wAz, Bx = _tlsDiagChunkX * 16 + bx, By = y, Bz = _tlsDiagChunkZ * 16 + bz,
+                                        AMass = aCell.Mass, BMass = bCell.Mass, ACap = aCap, BCap = bCap,
+                                        BedA = bedA, BedB = bedB, HeadA = headA, HeadB = headB, DiffH = headA - headB,
+                                        GroundedA = true, ChangedMaskA = changedMask[aIdx], SlopeShare256 = slopeShare256A,
+                                        MaxDownhillDrop = _tlsDiagMaxDownhillDrop, MaxFreeOverfallDrop = _tlsDiagMaxFreeOverfallDrop,
+                                        SrcSlope223 = _tlsDiagSrcSlope223, DstSlope223 = _tlsDiagDstSlope223,
+                                        MaxEq = _tlsDiagMaxEq, PreShareDesired = _tlsDiagPreShareDesired,
+                                        FinalTransfer = transfer, RejectReason = rjA
+                                    });
                                 }
                             }
 
                             if (transfer > 0)
                             {
-                                if (bedA > bedB + 8 || (headA - headB) > 4 || transfer >= 3) anyDownhillDrain = true;
+                                if (bedA > bedB + 2 || (headA - headB) > 4 || transfer >= 3) anyDownhillDrain = true;
                                 bool bWasDry = bCell.Mass == 0;
                                 byte remA = (byte)(aCell.Mass - transfer);
                                 fluids[aIdx] = FluidCell16.Pack(activeType, remA, isSettled: false).RawValue;
@@ -1719,9 +1920,31 @@ namespace Stratocraft.Physics.Jobs
                         }
                         else if (bCell.Mass > 0 && headB > headA)
                         {
-                            if ((changedMask[bIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0 ||
-                                !IsFluidColumnGrounded(voxels, fluids, bIdx, y, strideY, activeType))
+                            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+                            bool newlyWetBlockedB = (changedMask[bIdx] & (axisNewlyWetFlag | gravityNewlyWetMask)) != 0;
+                            bool groundedB = !newlyWetBlockedB && IsFluidColumnGrounded(voxels, fluids, bIdx, y, strideY, activeType);
+                            if (newlyWetBlockedB || !groundedB)
                             {
+                                if (probeOn)
+                                {
+                                    FluidTransferRejectReason rj = newlyWetBlockedB
+                                        ? ((changedMask[bIdx] & gravityNewlyWetMask) != 0 ? FluidTransferRejectReason.GravityNewlyWetLock : FluidTransferRejectReason.AxisNewlyWetLock)
+                                        : FluidTransferRejectReason.NotGrounded;
+                                    BumpReject(rj);
+                                    int wBx = _tlsDiagChunkX * 16 + bx, wBz = _tlsDiagChunkZ * 16 + bz;
+                                    if (FluidDeepDiagnosticProbe.IsInWatchWindow(wBx, y, wBz))
+                                    {
+                                        FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                        {
+                                            SiteTag = "Pass2_SameY_BA", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                            Ax = wBx, Ay = y, Az = wBz, Bx = _tlsDiagChunkX * 16 + ax, By = y, Bz = _tlsDiagChunkZ * 16 + az,
+                                            AMass = bCell.Mass, BMass = aCell.Mass, ACap = bCap, BCap = aCap,
+                                            BedA = bedB, BedB = bedA, HeadA = headB, HeadB = headA, DiffH = headB - headA,
+                                            GroundedA = groundedB, ChangedMaskA = changedMask[bIdx], SlopeShare256 = -1,
+                                            FinalTransfer = 0, RejectReason = rj
+                                        });
+                                    }
+                                }
                                 continue;
                             }
 
@@ -1730,8 +1953,28 @@ namespace Stratocraft.Physics.Jobs
                                 ax, az, bedA, out bool hasSteeperAlternativeB, out int slopeShare256B);
                             if (slopeShare256B <= 0)
                             {
+                                if (probeOn)
+                                {
+                                    BumpReject(FluidTransferRejectReason.SlopeRoutingZeroShare);
+                                    int wBx = _tlsDiagChunkX * 16 + bx, wBz = _tlsDiagChunkZ * 16 + bz;
+                                    if (FluidDeepDiagnosticProbe.IsInWatchWindow(wBx, y, wBz))
+                                    {
+                                        FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                        {
+                                            SiteTag = "Pass2_SameY_BA", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                            Ax = wBx, Ay = y, Az = wBz, Bx = _tlsDiagChunkX * 16 + ax, By = y, Bz = _tlsDiagChunkZ * 16 + az,
+                                            AMass = bCell.Mass, BMass = aCell.Mass, ACap = bCap, BCap = aCap,
+                                            BedA = bedB, BedB = bedA, HeadA = headB, HeadB = headA, DiffH = headB - headA,
+                                            GroundedA = true, ChangedMaskA = changedMask[bIdx], SlopeShare256 = 0,
+                                            MaxDownhillDrop = _tlsDiagMaxDownhillDrop, MaxFreeOverfallDrop = _tlsDiagMaxFreeOverfallDrop,
+                                            FinalTransfer = 0, RejectReason = FluidTransferRejectReason.SlopeRoutingZeroShare
+                                        });
+                                    }
+                                }
                                 continue;
                             }
+
+                            if (probeOn && slopeShare256B <= 32) BumpReject(FluidTransferRejectReason.SlopeRoutingStarved);
 
                             float forwardVelB = 0f;
                             if (kinematicsSlice != null)
@@ -1743,12 +1986,15 @@ namespace Stratocraft.Physics.Jobs
                             int transfer = ComputeStableLateralTransfer(
                                 activeType, bCell.Mass, bCap, aCell.Mass, aCap, bedB, bedA, y, headB, headA,
                                 hasSteeperAlternativeB, slopeShare256B, forwardVelB);
+                            FluidTransferRejectReason rjB = transfer > 0 ? FluidTransferRejectReason.None : _tlsDiagTransferReject;
 
                             if (transfer == 0 && activeType == FluidType.Water && (headB - headA) == 1 &&
-                                aCell.Mass > 0 && (bCell.Mass - aCell.Mass) >= 2 && aCap > aCell.Mass &&
-                                ((stepParity + bx + bz) & 1) == 0)
+                                aCell.Mass > 0 && aCap > aCell.Mass &&
+                                (((bCell.Mass - aCell.Mass) >= 2 && ((stepParity + bx + bz) & 1) == 0) ||
+                                 (bedA == bedB && changedMask[aIdx] != 0 && bCell.Mass > aCell.Mass)))
                             {
                                 transfer = 1;
+                                rjB = FluidTransferRejectReason.None;
                             }
 
                             if (transfer == 1 && aCell.Mass > 0 && (headB - headA) <= 4)
@@ -1758,12 +2004,35 @@ namespace Stratocraft.Physics.Jobs
                                 if (Math.Abs(nextHeadB - nextHeadA) >= (headB - headA))
                                 {
                                     transfer = 0;
+                                    rjB = FluidTransferRejectReason.LyapunovOvershootGuard;
+                                }
+                            }
+
+                            if (probeOn)
+                            {
+                                if (transfer == 0 && rjB != FluidTransferRejectReason.None) BumpReject(rjB);
+                                else if (transfer > 0) _tlsDiagPass2SameYMass += transfer;
+                                int wBx = _tlsDiagChunkX * 16 + bx, wBz = _tlsDiagChunkZ * 16 + bz;
+                                if (FluidDeepDiagnosticProbe.IsInWatchWindow(wBx, y, wBz))
+                                {
+                                    FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                                    {
+                                        SiteTag = "Pass2_SameY_BA", PassMode = (alongX ? 0 : 2) + oddOffset,
+                                        Ax = wBx, Ay = y, Az = wBz, Bx = _tlsDiagChunkX * 16 + ax, By = y, Bz = _tlsDiagChunkZ * 16 + az,
+                                        AMass = bCell.Mass, BMass = aCell.Mass, ACap = bCap, BCap = aCap,
+                                        BedA = bedB, BedB = bedA, HeadA = headB, HeadB = headA, DiffH = headB - headA,
+                                        GroundedA = true, ChangedMaskA = changedMask[bIdx], SlopeShare256 = slopeShare256B,
+                                        MaxDownhillDrop = _tlsDiagMaxDownhillDrop, MaxFreeOverfallDrop = _tlsDiagMaxFreeOverfallDrop,
+                                        SrcSlope223 = _tlsDiagSrcSlope223, DstSlope223 = _tlsDiagDstSlope223,
+                                        MaxEq = _tlsDiagMaxEq, PreShareDesired = _tlsDiagPreShareDesired,
+                                        FinalTransfer = transfer, RejectReason = rjB
+                                    });
                                 }
                             }
 
                             if (transfer > 0)
                             {
-                                if (bedB > bedA + 8 || (headB - headA) > 4 || transfer >= 3) anyDownhillDrain = true;
+                                if (bedB > bedA + 2 || (headB - headA) > 4 || transfer >= 3) anyDownhillDrain = true;
                                 bool aWasDry = aCell.Mass == 0;
                                 byte remB = (byte)(bCell.Mass - transfer);
                                 fluids[bIdx] = FluidCell16.Pack(activeType, remB, isSettled: false).RawValue;
@@ -1941,8 +2210,8 @@ namespace Stratocraft.Physics.Jobs
             int diff = headShore - headPool;
             if (Math.Abs(diff) <= 1) return true;
 
-            int shoreSlope223 = (bedShore > (shoreY - 1) * 255 && bedShore < shoreY * 255) ? Math.Max(223, (shoreY + 1) * 255 - (bedShore + 32)) : 223;
-            int poolSlope223 = (bedPool > (poolY - 1) * 255 && bedPool < poolY * 255) ? Math.Max(223, (poolY + 1) * 255 - (bedPool + 32)) : 223;
+            int shoreSlope223 = (shoreTopCell.Mass > 32 && bedShore > (shoreY - 1) * 255 && bedShore < shoreY * 255) ? Math.Max(223, (shoreY + 1) * 255 - (bedShore + 32)) : 223;
+            int poolSlope223 = (poolBotCell.Mass >= 32 && bedPool > (poolY - 1) * 255 && bedPool < poolY * 255) ? Math.Max(223, (poolY + 1) * 255 - (bedPool + 32)) : 223;
             int slopeSum = shoreSlope223 + poolSlope223;
 
             if (diff > 1 && shoreTopCell.Mass > 0)
@@ -1974,6 +2243,32 @@ namespace Stratocraft.Physics.Jobs
                 }
 
                 if (diff > 4 || transfer >= 3 || bedShore > bedPool + 8) anyDownhillDrain = true;
+
+                if (FluidDeepDiagnosticProbe.Enabled)
+                {
+                    _tlsDiagPass2CrossMass += transfer;
+                    if (spacePool < maxStepCap && spacePool < eqMass && poolBotCell.Mass > 0)
+                    {
+                        BumpReject(FluidTransferRejectReason.CoastalSpacePoolThrottle);
+                    }
+                    int wSx = _tlsDiagChunkX * 16 + sx, wSz = _tlsDiagChunkZ * 16 + sz;
+                    if (FluidDeepDiagnosticProbe.IsInWatchWindow(wSx, shoreY, wSz))
+                    {
+                        FluidDeepDiagnosticProbe.RecordCellPairDecision(new FluidCellPairDecisionRecord
+                        {
+                            SiteTag = "Pass2_CrossDown", PassMode = alongX ? 0 : 2,
+                            Ax = wSx, Ay = shoreY, Az = wSz, Bx = _tlsDiagChunkX * 16 + px, By = poolY, Bz = _tlsDiagChunkZ * 16 + pz,
+                            AMass = shoreTopCell.Mass, BMass = poolBotCell.Mass, ACap = shoreTopCap, BCap = poolBotCap,
+                            BedA = bedShore, BedB = bedPool, HeadA = headShore, HeadB = headPool, DiffH = diff,
+                            GroundedA = true, ChangedMaskA = changedMask[shoreTopIdx], SlopeShare256 = 256,
+                            SrcSlope223 = shoreSlope223, DstSlope223 = poolSlope223, MaxEq = eqMass, PreShareDesired = maxStepCap,
+                            FinalTransfer = transfer,
+                            RejectReason = (spacePool < maxStepCap && spacePool < eqMass && poolBotCell.Mass > 0)
+                                ? FluidTransferRejectReason.CoastalSpacePoolThrottle
+                                : FluidTransferRejectReason.None
+                        });
+                    }
+                }
 
                 bool poolWasDry = poolBotCell.Mass == 0;
                 byte remShore = (byte)(shoreTopCell.Mass - transfer);
@@ -2082,7 +2377,7 @@ namespace Stratocraft.Physics.Jobs
                 int nIdx = yBase + nz * sizeX + nx;
                 byte nCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[nIdx]);
                 byte nMass = (byte)(fluids[nIdx] & 0xFF);
-                if (nCap <= nMass)
+                if (nCap <= nMass || (nCap - nMass < 4 && !(nx == targetX && nz == targetZ)))
                 {
                     continue;
                 }
@@ -2116,11 +2411,12 @@ namespace Stratocraft.Physics.Jobs
                     continue;
                 }
 
-                // Havuz-Kiyi Yatak Terslenmesi & Sahte Denge Kilidi Tamiri (Devir #069):
-                // 1) Lyapunov sinirindaki neredeyse esit komsular (dh <= 3) veya yuzeyi kaynak tabanini yakalamis dolu kiyi hucreleri
-                //    (nMass > 0 && headN >= bedSrc - 4) diger yonlerdeki havuz/vadi birlesmesini ASLA 0'a kilitlememelidir!
-                // 2) Derin havuz (bedSrc == y*255) komsusu sig kiyiyi (bedN < y*255, nMass > 0) dik ucurum sanmamalidir!
-                bool isRealDrainableDrop = (nMass == 0 && dh >= 2) || (dh >= 4 && headN < bedSrc - 4);
+                // Havuz-Kiyi Yatak Terslenmesi & Sahte Denge Kilidi Tamiri (Devir #069 + Paket 4B.4-A):
+                // Derin havuz (bedSrc == y*255) yanindaki kati tabanli kuru kiyi (nMass == 0 && IsPhysicallySolid(belowN))
+                // gercek ucurum degildir -> diger yonleri bogmamalidir!
+                bool isShallowDryShoreOnSolid = nMass == 0 && bedSrc >= y * 255 && bedN < y * 255 && VoxelBitUtility.IsPhysicallySolid(belowN);
+                bool isRealDrainableDrop = !isShallowDryShoreOnSolid &&
+                    ((nMass == 0 && dh >= 2) || (dh >= 4 && headN < bedSrc - 4));
                 if (!isRealDrainableDrop)
                 {
                     continue;
@@ -2140,16 +2436,27 @@ namespace Stratocraft.Physics.Jobs
 
             if (maxDownhillDrop <= 6)
             {
+                if (FluidDeepDiagnosticProbe.Enabled)
+                {
+                    _tlsDiagMaxDownhillDrop = maxDownhillDrop;
+                    _tlsDiagMaxFreeOverfallDrop = maxFreeOverfallDrop;
+                }
                 return;
+            }
+
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                _tlsDiagMaxDownhillDrop = maxDownhillDrop;
+                _tlsDiagMaxFreeOverfallDrop = maxFreeOverfallDrop;
             }
 
             int targetDrop = bedSrc - bedTarget;
             if (targetDrop + 6 < maxDownhillDrop)
             {
                 hasSteeperAlternative = true;
-                // Kuru yan hucrelere (targetMass == 0) ince yamac suyunun gereksiz dagilmasini kes;
-                // ANCAK zaten islak komsu suyla birlesme/seviyeleme (targetMass > 0) yalnizca gercek serbest ucurumda (maxFreeOverfallDrop > 64) kesilir!
-                if (targetDrop <= 3 && srcMass < 135 && (targetMass == 0 || maxFreeOverfallDrop > 64))
+                // Paket 4B.4-A: Yalnizca cok ince yagmur filmi (srcMass < 48) ve dik ucurum (maxFreeOverfallDrop > 140)
+                // yanindaki kuru hucrelere gereksiz dagilmayi kes; gercek dokum/yamaç suyunu (srcMass >= 48) ASLA 0'a kilitleme!
+                if (targetDrop <= 3 && srcMass < 48 && targetMass == 0 && maxFreeOverfallDrop > 140)
                 {
                     slopeShare256 = 0;
                     return;
@@ -2168,7 +2475,7 @@ namespace Stratocraft.Physics.Jobs
                 int nIdx = yBase + nz * sizeX + nx;
                 byte nCap = FluidPorosityUtility.ComputeCellFluidCapacity(voxels[nIdx]);
                 byte nMass = (byte)(fluids[nIdx] & 0xFF);
-                if (nCap <= nMass)
+                if (nCap <= nMass || (nCap - nMass < 4 && !(nx == targetX && nz == targetZ)))
                 {
                     continue;
                 }
@@ -2201,8 +2508,8 @@ namespace Stratocraft.Physics.Jobs
 
                 int drop = Math.Max(0, bedSrc - bedN);
                 int w = drop > 3
-                    ? (dh + drop * 3)
-                    : ((srcMass >= 135 || (nMass > 0 && maxFreeOverfallDrop <= 64)) ? Math.Max(1, dh / 3) : 0);
+                    ? (dh + drop * 2)
+                    : ((srcMass >= 48 || nMass > 0 || maxFreeOverfallDrop <= 140) ? Math.Max(1, dh / 2) : 0);
 
                 sumWeights += w;
                 if (nx == targetX && nz == targetZ)
@@ -2217,7 +2524,7 @@ namespace Stratocraft.Physics.Jobs
                 return;
             }
 
-            slopeShare256 = Math.Clamp((targetWeight * 256) / sumWeights, 20, 256);
+            slopeShare256 = Math.Clamp((targetWeight * 256) / sumWeights, 64, 256);
         }
 
         /// <summary>
@@ -2255,8 +2562,15 @@ namespace Stratocraft.Physics.Jobs
                     for (int x = 0; x < sizeX; x++)
                     {
                         int idx = rowBase + x;
-                        if (changedMask[idx] != 0)
+                        // Paket 4B.4-A: Pass 2.5 kendini susturma tamiri! Yalnizca bu tikte yeni islanan (0x02/0x04/0x08)
+                        // veya zaten diyagonal tasinmis (0x10) hucreleri atla; normal Pass 2 hareketli hucrelerin capraz oluklara suzulmesine izin ver!
+                        const byte diagSkipMask = 0x02 | 0x04 | 0x08 | 0x10;
+                        if ((changedMask[idx] & diagSkipMask) != 0)
                         {
+                            if (FluidDeepDiagnosticProbe.Enabled && (fluids[idx] & 0xFF) > 0 && (fluids[idx] & 0x0400u) == 0u)
+                            {
+                                BumpReject(FluidTransferRejectReason.DiagChangedMaskSkip);
+                            }
                             continue;
                         }
 
@@ -2266,6 +2580,12 @@ namespace Stratocraft.Physics.Jobs
                         {
                             continue;
                         }
+                        // T25/T28 isinlanma korumasi: Pass 2'de zaten akmis mass <= 2 ince derecigin son 1 birimini ayni tikte bosaltma!
+                        if (mass <= 2 && changedMask[idx] != 0)
+                        {
+                            continue;
+                        }
+                        bool hadPass2Activity = changedMask[idx] != 0;
 
                         FluidType fType = (FluidType)((raw >> 8) & 0x03u);
                         if (fType != FluidType.Water)
@@ -2412,9 +2732,9 @@ namespace Stratocraft.Physics.Jobs
                                 int bedDrop = bedSrc - bedDst;
                                 int headDiff = headSrc - headDst;
 
-                                // 1) Capraz vadi havuzu kaynasmasi: Hedef zaten islaksa (tMass > 0) ve headDiff >= 2 ise hacim/seviye esitle!
+                                // 1) Capraz vadi havuzu kaynasmasi: Pass 2'de durulmusse headDiff >= 2; Pass 2'de aktifse yalnizca belirgin egim/farkta (headDiff >= 8 || bedDrop >= 16)!
                                 // 2) Kuru capraz dogal vadi olugu (tMass == 0): 10°-65° yamac/vadi ceplerinde (bedDrop >= 28 ~0.11m) suzul!
-                                bool validWetCoalesce = tMass > 0 && headDiff >= 2;
+                                bool validWetCoalesce = tMass > 0 && (hadPass2Activity ? (headDiff >= 8 || bedDrop >= 16) : headDiff >= 2);
                                 bool validDryTalweg = tMass == 0 && belowSrcNaturalSolid && bedDrop >= 28 && headDiff >= 8;
                                 if (validWetCoalesce || validDryTalweg)
                                 {
@@ -2463,14 +2783,16 @@ namespace Stratocraft.Physics.Jobs
 
                             if (transfer > 0)
                             {
-                                if (bedSrc > bestBedDst + 8 || diffH > 4 || transfer >= 3) anyDownhillDrain = true;
+                                if (bedSrc > bestBedDst + 2 || diffH > 4 || transfer >= 3) anyDownhillDrain = true;
+                                if (FluidDeepDiagnosticProbe.Enabled) _tlsDiagPass25DiagMass += transfer;
                                 bool targetWasDry = bestTargetMass == 0;
                                 byte rem = (byte)(mass - transfer);
                                 fluids[idx] = rem > 0 ? FluidCell16.Pack(fType, rem, isSettled: false).RawValue : (ushort)0;
                                 fluids[bestTargetIdx] = FluidCell16.Pack(fType, (byte)(bestTargetMass + transfer), isSettled: false).RawValue;
                                 PropagateGridSalinityOnTransfer(salinityBits, fType, idx, rem, bestTargetIdx, targetWasDry);
-                                MarkChanged3x3Horizontal(changedMask, fluids, x, y, z, sizeX, sizeY, sizeZ);
-                                MarkChanged3x3Horizontal(changedMask, fluids, x + bestDx, bestTargetY, z + bestDz, sizeX, sizeY, sizeZ);
+                                MarkChangedWithNeighbors(changedMask, x, y, z, sizeX, sizeY, sizeZ);
+                                MarkChangedWithNeighbors(changedMask, x + bestDx, bestTargetY, z + bestDz, sizeX, sizeY, sizeZ);
+                                changedMask[bestTargetIdx] |= 0x10;
                                 if (bestTargetY <= y - 2)
                                 {
                                     changedMask[bestTargetIdx] |= 0x06;
@@ -2509,30 +2831,56 @@ namespace Stratocraft.Physics.Jobs
             int slopeShare256 = 256,
             float forwardVelocityMps = 0f)
         {
+            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+            if (probeOn)
+            {
+                _tlsDiagTransferReject = FluidTransferRejectReason.None;
+                _tlsDiagSrcSlope223 = 223;
+                _tlsDiagDstSlope223 = 223;
+                _tlsDiagMaxEq = 0;
+                _tlsDiagPreShareDesired = 0;
+            }
+
             if (srcMass == 0 || dstCap <= dstMass || slopeShare256 <= 0)
             {
+                if (probeOn)
+                {
+                    _tlsDiagTransferReject = dstCap <= dstMass
+                        ? FluidTransferRejectReason.DstFullSpaceZero
+                        : (slopeShare256 <= 0 ? FluidTransferRejectReason.SlopeRoutingZeroShare : FluidTransferRejectReason.BothDry);
+                }
                 return 0;
             }
 
             int diffH = headSrc - headDst;
             if (diffH <= 0)
             {
+                if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.ZeroHeadDiff;
                 return 0;
             }
 
             if (activeType == FluidType.Lava && diffH < LavaBinghamYieldThreshold)
             {
+                if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.LavaBinghamYield;
                 return 0;
             }
 
-            int srcSlope223 = (srcCap == 255 && bedSrc > (y - 1) * 255 && bedSrc < y * 255)
+            // Paket 4B.4-A: Bolge-dogru hidrostatik egim (dH/dM)! FluidHydrostaticsShared'da mass <= 32 dogrusal (egim = 223/223);
+            // kuru hedefte (dstMass < 32) veya sig kaynakta (srcMass <= 32) ust bolge egimini kullanip %50 yapay fren uretme!
+            int srcSlope223 = (srcCap == 255 && srcMass > 32 && bedSrc > (y - 1) * 255 && bedSrc < y * 255)
                 ? Math.Max(223, (y + 1) * 255 - (bedSrc + 32))
                 : 223;
-            int dstSlope223 = (dstCap == 255 && bedDst > (y - 1) * 255 && bedDst < y * 255)
+            int dstSlope223 = (dstCap == 255 && dstMass >= 32 && bedDst > (y - 1) * 255 && bedDst < y * 255)
                 ? Math.Max(223, (y + 1) * 255 - (bedDst + 32))
                 : 223;
             int slopeSum = srcSlope223 + dstSlope223;
             int maxEquilibriumTransfer = Math.Max(1, (diffH * 223 + (slopeSum >> 1)) / slopeSum);
+            if (probeOn)
+            {
+                _tlsDiagSrcSlope223 = srcSlope223;
+                _tlsDiagDstSlope223 = dstSlope223;
+                _tlsDiagMaxEq = maxEquilibriumTransfer;
+            }
 
             int viscosityDiv = activeType == FluidType.Lava ? 4 : 2;
             bool isDownhill = bedSrc > bedDst;
@@ -2567,6 +2915,7 @@ namespace Stratocraft.Physics.Jobs
                 {
                     if (diffH < 2 && !(activeType == FluidType.Water && forwardVelocityMps >= 0.25f))
                     {
+                        if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.DiffTooSmall;
                         return 0;
                     }
 
@@ -2578,31 +2927,34 @@ namespace Stratocraft.Physics.Jobs
                         : diffH / viscosityDiv;
                     if (rawPipe <= 0)
                     {
+                        if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.DiffTooSmall;
                         return 0;
                     }
 
                     int slopeCap = activeType == FluidType.Water
-                        ? Math.Max(2, (srcMass * (safeDrain >= 16 ? 18 : 15)) / 24)
+                        ? Math.Max(2, (srcMass * (safeDrain >= 16 ? 19 : 16)) / 24)
                         : Math.Max(24, (srcMass * 65) / 100);
                     int effEq = (activeType == FluidType.Water && safeDrain >= 16)
                         ? Math.Max(maxEquilibriumTransfer, safeDrain)
                         : maxEquilibriumTransfer;
-                    desired = Math.Min(rawPipe, Math.Min(slopeCap, effEq));
-                    if (slopeShare256 < 256)
-                    {
-                        desired = Math.Max(1, (desired * slopeShare256 + 128) >> 8);
-                    }
+                    int routedPipe = slopeShare256 < 256
+                        ? Math.Max(1, (rawPipe * slopeShare256 + 128) >> 8)
+                        : rawPipe;
+                    desired = Math.Min(routedPipe, Math.Min(slopeCap, effEq));
+                    if (probeOn) _tlsDiagPreShareDesired = Math.Min(rawPipe, Math.Min(slopeCap, effEq));
                 }
             }
             else
             {
                 if (diffH < 2 && !(activeType == FluidType.Water && forwardVelocityMps >= 0.35f && dstMass > 0))
                 {
+                    if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.DiffTooSmall;
                     return 0;
                 }
 
                 if (activeType == FluidType.Water && dstMass == 0 && bedSrc == bedDst && srcMass < 6)
                 {
+                    if (probeOn) _tlsDiagTransferReject = FluidTransferRejectReason.FlatCohesionMinMass;
                     return 0;
                 }
 
@@ -2890,10 +3242,14 @@ namespace Stratocraft.Physics.Jobs
             byte threshold = StratocraftConstants.StoichiometricFluidThreshold;
             int needW = Math.Max(0, threshold - water.Mass);
             int needL = Math.Max(0, threshold - lava.Mass);
+            int probeAvailW = 0, probeAvailL = 0;
+            byte origPreW = water.Mass, origPreL = lava.Mass;
             if ((needW > 0 || needL > 0) && water.Mass > 0 && lava.Mass > 0)
             {
                 int availW = needW > 0 ? SumImmediateGridNeighborMass(fluids, wx, wy, wz, sizeX, sizeY, sizeZ, FluidType.Water, lIdx) : 0;
                 int availL = needL > 0 ? SumImmediateGridNeighborMass(fluids, lx, ly, lz, sizeX, sizeY, sizeZ, FluidType.Lava, wIdx) : 0;
+                probeAvailW = availW;
+                probeAvailL = availL;
                 if (availW >= needW && availL >= needL)
                 {
                     if (needW > 0)
@@ -2925,6 +3281,16 @@ namespace Stratocraft.Physics.Jobs
                 SetGridSalinityBit(salinityBits, idxB, false);
             }
 
+            _tlsDiagCrestAttempted = false;
+            _tlsDiagCrestWritten = false;
+            _tlsDiagCrestBlockReason = string.Empty;
+            _tlsDiagCrestAboveVox = 0;
+            _tlsDiagCrestAboveFld = 0;
+
+            int diagTargetX = reactionTargetIsSecond ? bx : ax;
+            int diagTargetY = reactionTargetIsSecond ? by : ay;
+            int diagTargetZ = reactionTargetIsSecond ? bz : az;
+
             if (formedObsidian)
             {
                 int targetIdx = reactionTargetIsSecond ? idxB : idxA;
@@ -2937,6 +3303,29 @@ namespace Stratocraft.Physics.Jobs
             {
                 // < 128 hacim: 0 kati blok, yalnizca buhar ve curuf sonmesi!
                 steamSlagFizzleCount++;
+            }
+
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                FluidDeepDiagnosticProbe.RecordReaction(new FluidReactionRecord
+                {
+                    SiteTag = "InChunkPair",
+                    Wx = _tlsDiagChunkX * 16 + diagTargetX,
+                    Wy = diagTargetY,
+                    Wz = _tlsDiagChunkZ * 16 + diagTargetZ,
+                    PreWater = origPreW,
+                    PreLava = origPreL,
+                    NeedWater = needW,
+                    NeedLava = needL,
+                    AvailWater = probeAvailW,
+                    AvailLava = probeAvailL,
+                    FormedObsidian = formedObsidian,
+                    CrestAttempted = _tlsDiagCrestAttempted,
+                    CrestWritten = _tlsDiagCrestWritten,
+                    CrestBlockReason = _tlsDiagCrestBlockReason ?? string.Empty,
+                    AboveVoxelRaw = _tlsDiagCrestAboveVox,
+                    AboveFluidRaw = _tlsDiagCrestAboveFld
+                });
             }
 
             MarkChanged3x3Horizontal(changedMask, fluids, ax, ay, az, sizeX, sizeY, sizeZ);
@@ -2961,8 +3350,10 @@ namespace Stratocraft.Physics.Jobs
             byte waterMass,
             byte lavaMass)
         {
+            if (FluidDeepDiagnosticProbe.Enabled) _tlsDiagCrestAttempted = true;
             if (targetY <= 0 || targetY + 1 >= sizeY)
             {
+                if (FluidDeepDiagnosticProbe.Enabled) _tlsDiagCrestBlockReason = "OutOfYBounds";
                 return;
             }
 
@@ -2970,11 +3361,24 @@ namespace Stratocraft.Physics.Jobs
             int aboveIdx = targetIdx + strideY;
             if ((uint)aboveIdx >= (uint)voxels.Length || (uint)aboveIdx >= (uint)fluids.Length)
             {
+                if (FluidDeepDiagnosticProbe.Enabled) _tlsDiagCrestBlockReason = "OutOfArrayBounds";
                 return;
+            }
+
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                _tlsDiagCrestAboveVox = voxels[aboveIdx];
+                _tlsDiagCrestAboveFld = fluids[aboveIdx];
             }
 
             if (voxels[aboveIdx] != 0u || (fluids[aboveIdx] & 0xFF) != 0)
             {
+                if (FluidDeepDiagnosticProbe.Enabled)
+                {
+                    _tlsDiagCrestBlockReason = voxels[aboveIdx] != 0u
+                        ? (VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) ? "AboveSolid" : "AboveNonZeroSdfAirVoxel")
+                        : "AboveHasFluid";
+                }
                 return;
             }
 
@@ -2990,6 +3394,12 @@ namespace Stratocraft.Physics.Jobs
 
             if (!hasFluidBelow && !hasObsidianBelow && !hasFullSurfaceOnNaturalBed)
             {
+                if (FluidDeepDiagnosticProbe.Enabled)
+                {
+                    _tlsDiagCrestBlockReason = Math.Max(waterMass, lavaMass) < 200
+                        ? "PreReactMaxMassBelow200_NoDeepSupport"
+                        : "NoDeepOrNaturalBedSupport";
+                }
                 return;
             }
 
@@ -3000,6 +3410,11 @@ namespace Stratocraft.Physics.Jobs
                 0,
                 BlokKokenDurumu.DogalKutle,
                 0);
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                _tlsDiagCrestWritten = true;
+                _tlsDiagCrestBlockReason = "Written";
+            }
         }
 
         private static int SumImmediateGridNeighborMass(
@@ -3242,6 +3657,7 @@ namespace Stratocraft.Physics.Jobs
                         continue;
                     }
 
+                    if (FluidDeepDiagnosticProbe.Enabled) _tlsDiagPass28CompMass += transfer;
                     fluids[belowIdx] = FluidCell16.Pack(cell.Type, (byte)(belowCell.Mass + transfer), isSettled: false, belowCell.PressureHead).RawValue;
                     byte rem = (byte)(cell.Mass - transfer);
                     fluids[idx] = rem > 0 ? FluidCell16.Pack(cell.Type, rem, isSettled: false, cell.PressureHead).RawValue : (ushort)0;

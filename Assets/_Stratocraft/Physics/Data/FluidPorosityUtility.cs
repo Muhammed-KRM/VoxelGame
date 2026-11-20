@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Core.Math;
 using Stratocraft.Voxel.Data;
 
@@ -172,6 +173,36 @@ namespace Stratocraft.Physics.Data
             out int outPourZ)
         {
             int safeMaxY = Math.Max(2, maxY - 2);
+            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+            byte probeAimMat = 0, probeAimDens = 0;
+            int probeAimCap = 0;
+            if (probeOn && TryReadWorldCell(worldChunks, fluidChunks, aimX, Math.Clamp(aimY, 1, safeMaxY), aimZ, out uint dbgAimSolid, out _))
+            {
+                probeAimMat = VoxelBitUtility.GetMaterialId(dbgAimSolid);
+                probeAimDens = VoxelBitUtility.GetDensityOrLiquid(dbgAimSolid);
+                probeAimCap = ComputeCellFluidCapacity(dbgAimSolid);
+            }
+
+            bool RecordAndReturn(bool ok, int rx, int ry, int rz, string stepTag, out int oX, out int oY, out int oZ)
+            {
+                oX = rx; oY = ry; oZ = rz;
+                if (probeOn)
+                {
+                    FluidDeepDiagnosticProbe.RecordPourResolve(new FluidPourResolveRecord
+                    {
+                        HasExactMeshHit = hasMeshSurfaceHit,
+                        AimWx = aimX, AimWy = aimY, AimWz = aimZ,
+                        PlaceWx = placeX, PlaceWy = placeY, PlaceWz = placeZ,
+                        AimSolidMaterialId = probeAimMat,
+                        AimSolidDensity = probeAimDens,
+                        AimCellCapacity = probeAimCap,
+                        Resolved = ok,
+                        ResolvedWx = rx, ResolvedWy = ry, ResolvedWz = rz,
+                        ResolveStepTag = stepTag
+                    });
+                }
+                return ok;
+            }
 
             // 1. Eger gercek SurfaceNets MeshCollider yuzey noktasi varsa, yuzey normali yonunde +0.22m ustteki hucreyi dene
             if (hasMeshSurfaceHit)
@@ -181,13 +212,11 @@ namespace Stratocraft.Physics.Data
                 int mz = FloorToIntPure(meshSurfacePointZ + hitNormalZ * 0.22f);
                 if (IsCellValidForPourOrReaction(worldChunks, fluidChunks, mx, my, mz, pourType))
                 {
-                    outPourX = mx; outPourY = my; outPourZ = mz;
-                    return true;
+                    return RecordAndReturn(true, mx, my, mz, "1_MeshHitDirect", out outPourX, out outPourY, out outPourZ);
                 }
                 if (my + 1 <= safeMaxY && IsCellValidForPourOrReaction(worldChunks, fluidChunks, mx, my + 1, mz, pourType))
                 {
-                    outPourX = mx; outPourY = my + 1; outPourZ = mz;
-                    return true;
+                    return RecordAndReturn(true, mx, my + 1, mz, "1_MeshHitPlusY", out outPourX, out outPourY, out outPourZ);
                 }
             }
 
@@ -198,8 +227,7 @@ namespace Stratocraft.Physics.Data
                 byte aimCap = ComputeCellFluidCapacity(aimSolid);
                 if (aimSolid != 0u && aimCap >= 96 && CanAcceptPourInCell(aimFluid, aimCap, pourType))
                 {
-                    outPourX = aimX; outPourY = clampedAimY; outPourZ = aimZ;
-                    return true;
+                    return RecordAndReturn(true, aimX, clampedAimY, aimZ, "2_SemiPermeableAimCell", out outPourX, out outPourY, out outPourZ);
                 }
 
                 // 3. Vurulan voksel dogal arazi (ShapeId == 0) ise ve sig acidan yanina carpildiysa (hitNormalY < 0.5),
@@ -209,8 +237,7 @@ namespace Stratocraft.Physics.Data
                 {
                     if (IsCellValidForPourOrReaction(worldChunks, fluidChunks, aimX, clampedAimY + 1, aimZ, pourType))
                     {
-                        outPourX = aimX; outPourY = clampedAimY + 1; outPourZ = aimZ;
-                        return true;
+                        return RecordAndReturn(true, aimX, clampedAimY + 1, aimZ, "3_NaturalTerrainAimPlusY", out outPourX, out outPourY, out outPourZ);
                     }
                 }
             }
@@ -219,8 +246,7 @@ namespace Stratocraft.Physics.Data
             int clampedPlaceY = Math.Clamp(placeY, 1, safeMaxY);
             if (IsCellValidForPourOrReaction(worldChunks, fluidChunks, placeX, clampedPlaceY, placeZ, pourType))
             {
-                outPourX = placeX; outPourY = clampedPlaceY; outPourZ = placeZ;
-                return true;
+                return RecordAndReturn(true, placeX, clampedPlaceY, placeZ, "4_DdaPlacementCell", out outPourX, out outPourY, out outPourZ);
             }
 
             // 5. Eger hedef hucre doluysa (veya zaten 255 birim ayni siviyla agzina kadar doluysa):
@@ -228,15 +254,13 @@ namespace Stratocraft.Physics.Data
             if (clampedAimY + 1 <= safeMaxY &&
                 IsCellValidForPourOrReaction(worldChunks, fluidChunks, aimX, clampedAimY + 1, aimZ, pourType))
             {
-                outPourX = aimX; outPourY = clampedAimY + 1; outPourZ = aimZ;
-                return true;
+                return RecordAndReturn(true, aimX, clampedAimY + 1, aimZ, "5_FallbackAimPlusY", out outPourX, out outPourY, out outPourZ);
             }
 
             if (clampedPlaceY + 1 <= safeMaxY &&
                 IsCellValidForPourOrReaction(worldChunks, fluidChunks, placeX, clampedPlaceY + 1, placeZ, pourType))
             {
-                outPourX = placeX; outPourY = clampedPlaceY + 1; outPourZ = placeZ;
-                return true;
+                return RecordAndReturn(true, placeX, clampedPlaceY + 1, placeZ, "5_FallbackPlacePlusY", out outPourX, out outPourY, out outPourZ);
             }
 
             ReadOnlySpan<int> hDx = stackalloc int[4] { 1, -1, 0, 0 };
@@ -247,8 +271,7 @@ namespace Stratocraft.Physics.Data
                 int nz = placeZ + hDz[i];
                 if (IsCellValidForPourOrReaction(worldChunks, fluidChunks, nx, clampedPlaceY, nz, pourType))
                 {
-                    outPourX = nx; outPourY = clampedPlaceY; outPourZ = nz;
-                    return true;
+                    return RecordAndReturn(true, nx, clampedPlaceY, nz, "5_FallbackPlaceHorizontal", out outPourX, out outPourY, out outPourZ);
                 }
             }
 
@@ -259,15 +282,11 @@ namespace Stratocraft.Physics.Data
                 int ny = Math.Min(safeMaxY, clampedAimY + 1);
                 if (IsCellValidForPourOrReaction(worldChunks, fluidChunks, nx, ny, nz, pourType))
                 {
-                    outPourX = nx; outPourY = ny; outPourZ = nz;
-                    return true;
+                    return RecordAndReturn(true, nx, ny, nz, "5_FallbackAimPlusYHorizontal", out outPourX, out outPourY, out outPourZ);
                 }
             }
 
-            outPourX = placeX;
-            outPourY = clampedPlaceY;
-            outPourZ = placeZ;
-            return false;
+            return RecordAndReturn(false, placeX, clampedPlaceY, placeZ, "Failed", out outPourX, out outPourY, out outPourZ);
         }
 
         /// <summary>
@@ -453,7 +472,11 @@ namespace Stratocraft.Physics.Data
             // Yumusak ilk yayilim gecisi (ayni veya daha alcak tabanli acik komsulara hafif kubbe dagilimi)
             int centerBed = SampleWorldBedElevation(worldChunks, wx, wy, wz);
             int softCenterTarget = requestedUnits <= 420 ? 168 : 220;
-            addedTotal += TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, wx, wy, wz, pourType, softCenterTarget, ref remaining);
+            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+            int probeStage1 = 0, probeDy0 = 0, probeDy1 = 0, probeDy2 = 0, probeWetCells = 0, probeUpslopeDy1 = 0;
+            int d0 = TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, wx, wy, wz, pourType, softCenterTarget, ref remaining);
+            addedTotal += d0;
+            if (d0 > 0) { probeStage1 += d0; probeWetCells++; }
 
             ReadOnlySpan<int> ring1Dx = stackalloc int[8] { 1, -1, 0, 0, 1, 1, -1, -1 };
             ReadOnlySpan<int> ring1Dz = stackalloc int[8] { 0, 0, 1, -1, 1, -1, 1, -1 };
@@ -472,7 +495,9 @@ namespace Stratocraft.Physics.Data
                 int softCap = nBed <= centerBed
                     ? (r < 4 ? 140 : 96)
                     : (r < 4 ? 64 : 36);
-                addedTotal += TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, nwx, nwy, nwz, pourType, softCap, ref remaining);
+                int dr = TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, nwx, nwy, nwz, pourType, softCap, ref remaining);
+                addedTotal += dr;
+                if (dr > 0) { probeStage1 += dr; probeWetCells++; }
             }
 
             // 2. Asama: Kalan su butcesini (ozellikle Kova=1275 ve Kazan=3825 veya kapali cukurlarda) katman katman tam doldur
@@ -481,7 +506,15 @@ namespace Stratocraft.Physics.Data
                 int layerY = wy + dy;
                 if (layerY > safeMaxY) break;
 
-                addedTotal += TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, wx, layerY, wz, pourType, 255, ref remaining);
+                int dc = TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, wx, layerY, wz, pourType, 255, ref remaining);
+                addedTotal += dc;
+                if (dc > 0)
+                {
+                    if (dy == 0) probeDy0 += dc;
+                    else if (dy == 1) probeDy1 += dc;
+                    else probeDy2 += dc;
+                    if (dy > 0) probeWetCells++;
+                }
 
                 for (int rad = 1; rad <= maxRadius && remaining > 0; rad++)
                 {
@@ -494,14 +527,52 @@ namespace Stratocraft.Physics.Data
                             int nwz = wz + dz;
                             int targetY = dy == 0 ? ResolvePourNeighborY(worldChunks, nwx, layerY, nwz, safeMaxY) : layerY;
                             if (targetY < 1) continue;
+                            // Paket 4B.4-A: Dokulen su yokus yukari (targetY > layerY veya nBed > centerBed + 64) tirmandirlmaz!
+                            if (dy == 0 && (targetY > layerY || SampleWorldBedElevation(worldChunks, nwx, targetY, nwz) > centerBed + 64))
+                            {
+                                continue;
+                            }
                             if (dy > 0 && !HasPourSupportBelow(worldChunks, fluidChunks, nwx, targetY, nwz))
                             {
                                 continue;
                             }
-                            addedTotal += TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, nwx, targetY, nwz, pourType, 255, ref remaining);
+                            int dn = TryAddFluidToWorldCell(worldChunks, fluidChunks, dirtyFluidChunks, nwx, targetY, nwz, pourType, 255, ref remaining);
+                            addedTotal += dn;
+                            if (dn > 0)
+                            {
+                                if (dy == 0)
+                                {
+                                    probeDy0 += dn;
+                                    if (targetY > layerY) probeUpslopeDy1++;
+                                }
+                                else if (dy == 1) probeDy1 += dn;
+                                else probeDy2 += dn;
+                                probeWetCells++;
+                            }
                         }
                     }
                 }
+            }
+
+            if (probeOn)
+            {
+                FluidDeepDiagnosticProbe.RecordContainerPour(new FluidContainerPourRecord
+                {
+                    MethodTag = "ApplyContainerFluidPour",
+                    FluidType = (byte)pourType,
+                    RequestedUnits = requestedUnits,
+                    CenterWx = wx, CenterWy = wy, CenterWz = wz,
+                    CenterBedUnits = centerBed,
+                    MaxRadius = maxRadius,
+                    MaxVerticalLayers = maxVerticalLayers,
+                    Stage1Added = probeStage1,
+                    Stage2AddedDy0 = probeDy0,
+                    Stage2AddedDy1 = probeDy1,
+                    Stage2AddedDy2 = probeDy2,
+                    WettedCellCount = probeWetCells,
+                    UpslopeDyPlus1Writes = probeUpslopeDy1,
+                    RemainingUnpoured = remaining
+                });
             }
 
             return addedTotal;

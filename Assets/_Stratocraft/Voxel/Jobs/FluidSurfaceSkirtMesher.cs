@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Voxel.Data;
 
 #if UNITY_5_3_OR_NEWER
@@ -515,6 +516,20 @@ namespace Stratocraft.Voxel.Jobs
 
             FluidNeighborhood3x3Cache nb = _tlsNeighborhoodCache ??= new FluidNeighborhood3x3Cache();
             nb.Bind(chunkX, chunkZ, solidChunks, fluidChunks, kinematicsChunks, salinityChunkBitsMap);
+            bool probeOn = FluidDeepDiagnosticProbe.Enabled;
+            int probeTriStart = outRichTriangles.Count;
+            if (probeOn)
+            {
+                _tlsMesherDiag = new FluidMesherChunkRecord
+                {
+                    ChunkX = chunkX,
+                    ChunkZ = chunkZ,
+                    MinCornerSurfMinusTrueSnY = 999f,
+                    MaxCornerSurfMinusTrueSnY = -999f,
+                    MinSubTickDy = 999f,
+                    MaxSubTickDy = -999f
+                };
+            }
 
             try
             {
@@ -1064,11 +1079,86 @@ namespace Stratocraft.Voxel.Jobs
                         }
                     }
                 }
+
+                if (probeOn)
+                {
+                    int triEnd = outRichTriangles.Count;
+                    _tlsMesherDiag.TriTotal = triEnd - probeTriStart;
+                    for (int ti = probeTriStart; ti < triEnd; ti++)
+                    {
+                        var t = outRichTriangles[ti];
+                        bool isLikelyTop = t.C0.Normal.Y > 0.25f && t.C1.Normal.Y > 0.25f && t.C2.Normal.Y > 0.25f;
+                        if (isLikelyTop)
+                        {
+                            Vector3 e1 = t.C1.PositionCurr - t.C0.PositionCurr;
+                            Vector3 e2 = t.C2.PositionCurr - t.C0.PositionCurr;
+                            Vector3 cross = Vector3.Cross(e1, e2);
+                            float len = cross.Length();
+                            if (len > 1e-6f)
+                            {
+                                float ny = cross.Y / len;
+                                if (ny < -0.05f) _tlsMesherDiag.InvertedTopTriCount++;
+                                float slopeDeg = MathF.Acos(Math.Clamp(MathF.Abs(ny), 0f, 1f)) * (180f / MathF.PI);
+                                if (slopeDeg > _tlsMesherDiag.MaxTopTriSlopeDeg) _tlsMesherDiag.MaxTopTriSlopeDeg = slopeDeg;
+                            }
+                        }
+                    }
+                    if (_tlsMesherDiag.MinCornerSurfMinusTrueSnY > 900f) _tlsMesherDiag.MinCornerSurfMinusTrueSnY = 0f;
+                    if (_tlsMesherDiag.MaxCornerSurfMinusTrueSnY < -900f) _tlsMesherDiag.MaxCornerSurfMinusTrueSnY = 0f;
+                    if (_tlsMesherDiag.MinSubTickDy > 900f) _tlsMesherDiag.MinSubTickDy = 0f;
+                    if (_tlsMesherDiag.MaxSubTickDy < -900f) _tlsMesherDiag.MaxSubTickDy = 0f;
+                    FluidDeepDiagnosticProbe.RecordMesherChunk(_tlsMesherDiag);
+                }
             }
             finally
             {
                 nb.ClearReferences();
             }
+        }
+
+        [ThreadStatic] private static FluidMesherChunkRecord _tlsMesherDiag;
+
+        /// <summary>
+        /// Teşhis amacli: 4 komsu kolonda (dCurr dar-bant SDF dahil!) gercek SurfaceNets zemin yuksekligi ortalamasi.
+        /// </summary>
+        private static bool TryComputeTrueSurfaceNetsCornerYForProbe(
+            FluidNeighborhood3x3Cache nb,
+            int cornerX,
+            int cornerZ,
+            int refY,
+            int maxBufferY,
+            out float trueSnY)
+        {
+            float sum = 0f;
+            int cnt = 0;
+            for (int dz = -1; dz <= 0; dz++)
+            {
+                for (int dx = -1; dx <= 0; dx++)
+                {
+                    int sx = cornerX + dx;
+                    int sz = cornerZ + dz;
+                    int scanTop = Math.Min(maxBufferY - 1, refY + 1);
+                    int scanBot = Math.Max(0, refY - 2);
+                    for (int sy = scanTop; sy >= scanBot; sy--)
+                    {
+                        nb.SampleCellFast(sx, sy, sz, out uint sBelow, out _);
+                        if (!VoxelBitUtility.IsPhysicallySolid(sBelow)) continue;
+                        byte dBelow = VoxelBitUtility.GetDensityOrLiquid(sBelow);
+                        byte dCurr = 0;
+                        if (sy + 1 < maxBufferY)
+                        {
+                            nb.SampleCellFast(sx, sy + 1, sz, out uint sAbove, out _);
+                            if (!VoxelBitUtility.IsPhysicallySolid(sAbove)) dCurr = VoxelBitUtility.GetDensityOrLiquid(sAbove);
+                        }
+                        float t = (dBelow > dCurr) ? Math.Clamp((dBelow - 64f) / MathF.Max(1f, dBelow - dCurr), 0.05f, 0.98f) : 0.496f;
+                        sum += sy + t;
+                        cnt++;
+                        break;
+                    }
+                }
+            }
+            trueSnY = cnt > 0 ? (sum / cnt) : refY;
+            return cnt > 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1143,7 +1233,13 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            return (maxWetY - minWetY <= 2) ? minWetY : y;
+            int resY = (maxWetY - minWetY <= 2) ? minWetY : y;
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                if (maxWetY - minWetY > 2) _tlsMesherDiag.CanonicalSpreadGt2FallbackCount++;
+                if (resY != y) _tlsMesherDiag.CanonicalShiftedCount++;
+            }
+            return resY;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1700,8 +1796,10 @@ namespace Stratocraft.Voxel.Jobs
             if (c00.SkirtOffset.LengthSquared() > 0.04f || c10.SkirtOffset.LengthSquared() > 0.04f ||
                 c11.SkirtOffset.LengthSquared() > 0.04f || c01.SkirtOffset.LengthSquared() > 0.04f)
             {
+                if (FluidDeepDiagnosticProbe.Enabled) _tlsMesherDiag.ConcaveBridgeSkirtSkipped++;
                 return;
             }
+            if (FluidDeepDiagnosticProbe.Enabled) _tlsMesherDiag.ConcaveBridgeEmitted++;
 
             RichContourVertex v00 = BuildCornerVertex(lx, lz, in c00, 0, 0);
             RichContourVertex v10 = BuildCornerVertex(lx + 1, lz, in c10, 0, 0);
@@ -2573,6 +2671,7 @@ namespace Stratocraft.Voxel.Jobs
                     {
                         touchesSdfShore = true;
                         virtualBankSamples++;
+                        if (FluidDeepDiagnosticProbe.Enabled) _tlsMesherDiag.PendingDryPromotedVirtualBank++;
                         byte vDens = pendingDryDens[pi];
                         if (vDens > maxVirtualBankDens) maxVirtualBankDens = vDens;
                         if (pendingDryDx[pi] == -1) sdfNegX += vDens; else sdfPosX += vDens;
@@ -2603,6 +2702,7 @@ namespace Stratocraft.Voxel.Jobs
             // cok-katmanli vadi gollerinde (surfSpread <= 0.14f) sanal kiyi bankasini koru ki gol kenari yirtilmasin!
             if (slopeConnectedCount > 0 && virtualBankSamples > 0 && surfSpread > 0.14f)
             {
+                if (FluidDeepDiagnosticProbe.Enabled) _tlsMesherDiag.VirtualBankRevokedSpread++;
                 shoreAirSamples += virtualBankSamples;
                 virtualBankSamples = 0;
                 if (!anyRealSdfBank)
@@ -2721,12 +2821,22 @@ namespace Stratocraft.Voxel.Jobs
                             float maxDirComp = MathF.Max(MathF.Abs(dirXZ.X), MathF.Abs(dirXZ.Z));
                             float safeExtCap = maxDirComp > 1e-4f ? (maxAxisCap / maxDirComp) : maxAxisCap;
                             adaptiveSkirtExt = MathF.Min(adaptiveSkirtExt, safeExtCap);
+                            if (FluidDeepDiagnosticProbe.Enabled)
+                            {
+                                _tlsMesherDiag.ThinBankClampedCount++;
+                                if (hasOppositeFluidBehindBank) _tlsMesherDiag.OppositeFluidBehindBankCount++;
+                            }
                         }
                     }
 
                     if (adaptiveSkirtExt > 0.02f)
                     {
                         skirtOffset = dirXZ * adaptiveSkirtExt;
+                        if (FluidDeepDiagnosticProbe.Enabled)
+                        {
+                            _tlsMesherDiag.SkirtExtendedCorners++;
+                            if (adaptiveSkirtExt > _tlsMesherDiag.MaxSkirtExtMeters) _tlsMesherDiag.MaxSkirtExtMeters = adaptiveSkirtExt;
+                        }
                     }
                 }
             }
@@ -2943,6 +3053,36 @@ namespace Stratocraft.Voxel.Jobs
                 : (y + 1.0f);
             avgCurrSurfY = Math.Min(maxAllowedCornerY, avgCurrSurfY);
             avgPrevSurfY = Math.Min(maxAllowedCornerY, avgPrevSurfY);
+
+            if (FluidDeepDiagnosticProbe.Enabled && wetSamples > 0)
+            {
+                if (isPoolRegime && (overfallSamples == 0 || slopeConnectedCount > 0)) _tlsMesherDiag.CornerPool++;
+                else if (overfallSamples > 0 && slopeConnectedCount == 0) _tlsMesherDiag.CornerOverfall++;
+                else if (shoreAirSamples > 0 && slopeConnectedCount > 0) _tlsMesherDiag.CornerRegime1Slope++;
+                else if (shoreAirSamples > 0 && poolSampleCount > 0 && (hasBelowPoolSupport || touchesSdfShore)) _tlsMesherDiag.CornerRegime2PoolLip++;
+                else if (shoreAirSamples > 0 && wetSamples >= 2 && surfSpread <= 0.12f && (poolSampleCount > 0 || avgCurrThickOut >= 0.18f) && hasSnTerrainInfo && snHigherBanks > 0) _tlsMesherDiag.CornerRegime2ValleyShore++;
+                else if (shoreAirSamples > 0) _tlsMesherDiag.CornerRegime3OpenMound++;
+                else _tlsMesherDiag.CornerDefault++;
+
+                if (hasSnTerrainInfo)
+                {
+                    float bedVsSn = MathF.Abs(avgWetBedY - snTerrainY);
+                    if (bedVsSn > _tlsMesherDiag.MaxBedVsSnTerrainDiff) _tlsMesherDiag.MaxBedVsSnTerrainDiff = bedVsSn;
+                }
+                if (TryComputeTrueSurfaceNetsCornerYForProbe(nb, baseCornerX, baseCornerZ, y, maxBufferY, out float trueSnY))
+                {
+                    float surfMinusTrueSn = avgCurrSurfY - trueSnY;
+                    if (surfMinusTrueSn < _tlsMesherDiag.MinCornerSurfMinusTrueSnY) _tlsMesherDiag.MinCornerSurfMinusTrueSnY = surfMinusTrueSn;
+                    if (surfMinusTrueSn > _tlsMesherDiag.MaxCornerSurfMinusTrueSnY) _tlsMesherDiag.MaxCornerSurfMinusTrueSnY = surfMinusTrueSn;
+                }
+                float dy = avgCurrSurfY - avgPrevSurfY;
+                if (dy < _tlsMesherDiag.MinSubTickDy) _tlsMesherDiag.MinSubTickDy = dy;
+                if (dy > _tlsMesherDiag.MaxSubTickDy) _tlsMesherDiag.MaxSubTickDy = dy;
+                if (slopeConnectedCount > 0 && (avgVelX * avgVelX + avgVelZ * avgVelZ) < 0.0016f)
+                {
+                    _tlsMesherDiag.ZeroVelOnSlopeCount++;
+                }
+            }
 
             return new RichCornerResult
             {
@@ -3376,6 +3516,14 @@ namespace Stratocraft.Voxel.Jobs
                             C1 = MakeSample(v1.TopCurr, topNorm1, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f),
                             C2 = MakeSample(b1, skirtNorm, renderId, 128, v1.EncodedVelX, v1.EncodedVelZ, d1, 0.0f)
                         });
+                        if (FluidDeepDiagnosticProbe.Enabled)
+                        {
+                            _tlsMesherDiag.TriSideOrCurtain += 2;
+                            if ((nFluid & 0xFFu) > 0u && ((nFluid >> 8) & 0x03u) != 0 && ((nFluid >> 8) & 0x03u) != fluidType)
+                            {
+                                _tlsMesherDiag.OppositeFluidSameLayerWallCount++;
+                            }
+                        }
                     }
                 }
                 return;

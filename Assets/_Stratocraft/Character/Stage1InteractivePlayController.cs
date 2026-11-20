@@ -267,7 +267,9 @@ namespace Stratocraft.Character
         private static readonly int ShaderFluidSubTickAlphaId = Shader.PropertyToID("_FluidSubTickAlpha");
         private static readonly int ShaderGlobalWindBeaufortId = Shader.PropertyToID("_GlobalWindBeaufort");
         private readonly List<(int cx, int cz)> _allActiveFluidKeysScratch = new(64);
+        private readonly List<(int cx, int cz)> _nearRing2To4FluidKeysScratch = new(96);
         private int _fluidRoundRobinCursor;
+        private int _fluidNearRoundRobinCursor;
         private int _fluidTickIndex;
         private float _fluidTickAccumulator;
         private float _fluidSubTickAlpha01;
@@ -575,6 +577,10 @@ namespace Stratocraft.Character
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
             int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             MarkChunkDirtyFlag((cx, cz), ChunkDirtyFlags.PlayerFluid);
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                FluidDeepDiagnosticProbe.SetWatchCenter(wx, wy, wz, 4);
+            }
             if (!_fluidTraceRecorder.IsEnabled) return;
             bool hasRenderer = _fluidMeshFilters.TryGetValue((cx, cz), out MeshFilter? fmf) && fmf != null;
             int builtVerts = (fmf != null && fmf.sharedMesh != null) ? fmf.sharedMesh.vertexCount : 0;
@@ -741,12 +747,22 @@ namespace Stratocraft.Character
             int wakeRadius = NearPhysicsColliderRadius < 0 ? 4 : (NearPhysicsColliderRadius + 2);
             foreach (var k in _dirtyFluidChunks)
             {
-                // Yalnizca oyuncunun kazi/insa/yikim yaptigi yakin cevredeki (r <= 4) chunk'larin akiskan simulasyonunu uyandir;
-                // uzakta yeni akisla yuklenen dogal deniz/gol chunk'lari zaten isSettled=true oldugu icin bosuna 65.536 hucre taramasin!
+                // Yalnizca oyuncunun yakin cevresindeki (r <= 4) ve henuz aktif olmayan chunk/komsularini uyandir;
+                // zaten aktif listede olan chunk'larin 65.536 hucrelik maskesini her kare bosuna gecersiz kilma (AIMD korumasi)!
                 if (Mathf.Abs(k.cx - pCx) <= wakeRadius &&
                     Mathf.Abs(k.cz - pCz) <= wakeRadius)
                 {
-                    WakeChunkAndNeighborsFluid(k);
+                    for (int dz = -1; dz <= 1; dz++)
+                    {
+                        for (int dx = -1; dx <= 1; dx++)
+                        {
+                            (int cx, int cz) nk = (k.cx + dx, k.cz + dz);
+                            if (_worldChunks.ContainsKey(nk) && _activeFluidChunks.Add(nk))
+                            {
+                                _fluidSystem.InvalidateChunkActivityMask(nk.cx, nk.cz);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1935,42 +1951,26 @@ namespace Stratocraft.Character
                 int pSimCx = Mathf.FloorToInt(transform.position.x / 16f);
                 int pSimCz = Mathf.FloorToInt(transform.position.z / 16f);
 
-                _allActiveFluidKeysScratch.Clear();
-                _activeFluidScratch.Clear();
-
-                // 1) Kamera cevresindeki (chebDist <= 4 == 144m x 144m) tum aktif su chunk'larini oncelikle sec:
-                //    Boylece gorunur alandaki HICBIR su chunk'i tik atlamaz ve _FluidSubTickAlpha geriye sicramaz!
-                foreach (var key in _activeFluidChunks)
-                {
-                    int dist = Math.Max(Math.Abs(key.cx - pSimCx), Math.Abs(key.cz - pSimCz));
-                    if (dist <= 4 && _activeFluidScratch.Count < budgetChunks)
-                    {
-                        _activeFluidScratch.Add(key);
-                    }
-                    else
-                    {
-                        _allActiveFluidKeysScratch.Add(key);
-                    }
-                }
-
-                // 2) Kalan butceyi uzak aktif chunk'lar arasinda dairesel (round-robin) paylastir
-                int remFarCount = _allActiveFluidKeysScratch.Count;
-                int remSlots = budgetChunks - _activeFluidScratch.Count;
-                if (remFarCount > 0 && remSlots > 0)
-                {
-                    _fluidRoundRobinCursor %= remFarCount;
-                    int countToPick = Mathf.Min(remSlots, remFarCount);
-                    for (int i = 0; i < countToPick; i++)
-                    {
-                        int idx = (_fluidRoundRobinCursor + i) % remFarCount;
-                        _activeFluidScratch.Add(_allActiveFluidKeysScratch[idx]);
-                    }
-                    _fluidRoundRobinCursor = (_fluidRoundRobinCursor + countToPick) % remFarCount;
-                }
+                // Paket 4B.4-A: 3-Kademeli Acliksiz (Starvation-Free) Secim:
+                // dist <= 1 (oyuncunun 3x3 = 9 chunk'i) HER TIKTE %100 kosulsuz calisir; dist 2..4 dairesel adil paylasir!
+                FluidSimulationSystem.SelectActiveChunksStarvationFree(
+                    _activeFluidChunks,
+                    pSimCx,
+                    pSimCz,
+                    budgetChunks,
+                    _activeFluidScratch,
+                    _nearRing2To4FluidKeysScratch,
+                    _allActiveFluidKeysScratch,
+                    ref _fluidNearRoundRobinCursor,
+                    ref _fluidRoundRobinCursor,
+                    out int diagNearActiveCount,
+                    out int diagNearSelectedCount);
 
                 bool anyActiveStepped = false;
                 int tickParity = _fluidSystem.AdvanceTickParity();
                 _fluidTickIndex++;
+                if (FluidDeepDiagnosticProbe.Enabled) FluidDeepDiagnosticProbe.CurrentTickIndex = _fluidTickIndex;
+                bool diagWatchStepped = false;
                 int steppedCount = 0;
                 long totalRemainingAcrossStepped = 0;
                 int totalObsidian = 0;
@@ -2069,6 +2069,12 @@ namespace Stratocraft.Character
                         }
                         _salinityBitset.TryGetChunkBits(key.cx, key.cz, out ulong[]? salBits);
 
+                        if (FluidDeepDiagnosticProbe.Enabled)
+                        {
+                            FluidCellularAutomataJob.SetDiagnosticChunkContext(key.cx, key.cz);
+                            if (key.cx == FluidDeepDiagnosticProbe.WatchChunkX && key.cz == FluidDeepDiagnosticProbe.WatchChunkZ)
+                                diagWatchStepped = true;
+                        }
                         remaining = FluidCellularAutomataJob.StepFluidGridVolumeConservative(
                             voxels.AsSpan(0, sliceVolume),
                             fluids.AsSpan(0, sliceVolume),
@@ -2185,6 +2191,29 @@ namespace Stratocraft.Character
                             }
                         }
                     }
+                }
+
+                if (FluidDeepDiagnosticProbe.Enabled)
+                {
+                    int solidBlocked = 0;
+                    foreach (var df in _dirtyFluidChunks)
+                    {
+                        if (_dirtyChunks.Contains(df)) solidBlocked++;
+                    }
+                    FluidDeepDiagnosticProbe.RecordControllerTick(new FluidControllerTickRecord
+                    {
+                        TickIndex = _fluidTickIndex,
+                        ActiveFluidChunkCount = _activeFluidChunks.Count,
+                        BudgetChunks = budgetChunks,
+                        NearActiveCount = diagNearActiveCount,
+                        NearSelectedCount = diagNearSelectedCount,
+                        NearStarvedCount = Math.Max(0, diagNearActiveCount - diagNearSelectedCount),
+                        WatchChunkStepped = diagWatchStepped,
+                        SeamTransfers = seamTransfers,
+                        DirtyFluidCount = _dirtyFluidChunks.Count,
+                        DirtySolidBlockedFluidCount = solidBlocked,
+                        WakeAllDirtyCalls = 0
+                    });
                 }
 
                 if (_fluidTraceRecorder.IsEnabled && steppedCount > 0 && (_fluidTickIndex & 15) == 0)
@@ -3288,9 +3317,24 @@ namespace Stratocraft.Character
                 bool nextTraceState = !_combatBridge.TraceRecorder.ShowVisualGizmos;
                 _combatBridge.TraceRecorder.ShowVisualGizmos = nextTraceState;
                 _fluidTraceRecorder.IsEnabled = nextTraceState;
+                if (nextTraceState)
+                {
+                    string probePath = Path.Combine(
+                        Directory.GetCurrentDirectory(),
+                        "Logs",
+                        $"fluid_deep_probe_{DateTime.Now:yyyyMMdd_HHmmss}.jsonl");
+                    int px = Mathf.FloorToInt(transform.position.x);
+                    int py = Mathf.FloorToInt(transform.position.y);
+                    int pz = Mathf.FloorToInt(transform.position.z);
+                    FluidDeepDiagnosticProbe.BeginSession("PlayMode", probePath, enableWatch: true, px, py, pz, watchRadius: 5);
+                }
+                else
+                {
+                    FluidDeepDiagnosticProbe.EndSession(flushToDisk: true);
+                }
                 _miningCtrl.LastFeedbackText = nextTraceState
-                    ? "[INSERT] 3B SAVURMA IZLERI & TELEMETRI KAYDI ACIK — Son 8 savurma vektorleri ve su izleri kaydediliyor!"
-                    : "[INSERT] 3B SAVURMA IZLERI & TELEMETRI KAYDI KAPALI";
+                    ? "[INSERT] DERIN SIVI TESHIS PROBU + TELEMETRI KAYDI ACIK (Logs/fluid_deep_probe_*.jsonl)!"
+                    : "[INSERT] DERIN SIVI TESHIS PROBU KAYDEDILDI & KAPATILDI";
             }
         }
 
@@ -5110,7 +5154,9 @@ namespace Stratocraft.Character
                             continue;
                         }
 
-                        if (_dirtyChunks.Contains(key) || _inFlightDistantMeshKeys.Contains(key))
+                        // Paket 4B.4-A: Toprak nemi/solid-dirty kuyrugu sivi mesh guncellemesini ASLA ertelememelidir;
+                        // yalnizca arka plan uzak mesh gorevi ucus halindeyse bekle!
+                        if (_inFlightDistantMeshKeys.Contains(key))
                         {
                             continue;
                         }

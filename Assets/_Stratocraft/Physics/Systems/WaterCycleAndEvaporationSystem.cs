@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
@@ -1054,6 +1055,21 @@ namespace Stratocraft.Physics.Systems
                         }
                     }
                 }
+            }
+
+            if (FluidDeepDiagnosticProbe.Enabled && totalSpawnedWaterUnits > 0)
+            {
+                FluidDeepDiagnosticProbe.RecordHydrologyIntervention(new FluidHydrologyInterventionRecord
+                {
+                    SystemName = "WaterCycleAndEvaporationSystem.Rain",
+                    ChunkX = cx,
+                    ChunkZ = cz,
+                    DeltaMass = totalSpawnedWaterUnits,
+                    CellsModified = totalSpawnedWaterUnits,
+                    WokeChunks = spawnSettledPondingOnly ? 0 : 9,
+                    MarkedSolidDirty = false,
+                    Detail = spawnSettledPondingOnly ? "SettledPonding" : "ActiveRainPonding"
+                });
             }
 
             return totalSpawnedWaterUnits;

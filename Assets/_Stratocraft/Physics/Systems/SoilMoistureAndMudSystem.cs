@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
@@ -429,6 +430,21 @@ namespace Stratocraft.Physics.Systems
                      HasAnyMoisture(existing, limitY))
             {
                 ActiveMoistChunks.Add((cx, cz));
+            }
+
+            if (FluidDeepDiagnosticProbe.Enabled && totalAbsorbedMass > 0)
+            {
+                FluidDeepDiagnosticProbe.RecordHydrologyIntervention(new FluidHydrologyInterventionRecord
+                {
+                    SystemName = "SoilMoistureAndMudSystem",
+                    ChunkX = cx,
+                    ChunkZ = cz,
+                    DeltaMass = -totalAbsorbedMass,
+                    CellsModified = totalAbsorbedMass,
+                    WokeChunks = 4,
+                    MarkedSolidDirty = visualDirtySubChunkMask != 0,
+                    Detail = $"Infiltration visualMask=0x{visualDirtySubChunkMask:X4}"
+                });
             }
 
             return totalAbsorbedMass;

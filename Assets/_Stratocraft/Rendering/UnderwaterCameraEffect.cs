@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using Stratocraft.Core.Logging;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -101,6 +102,16 @@ namespace Stratocraft.Rendering
             float startDens = _baseFogEnabled ? _baseFogDensity : 0.002f;
             RenderSettings.fogColor = Color.Lerp(startCol, targetFogCol, _blend01);
             RenderSettings.fogDensity = Mathf.Lerp(startDens, targetFogDens, _blend01);
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                FluidDeepDiagnosticProbe.RecordUnderwater(new FluidUnderwaterRecord
+                {
+                    TargetSubmersion01 = targetSubmersion01,
+                    Blend01 = _blend01,
+                    FluidType = fluidType,
+                    FogEnabled = RenderSettings.fog
+                });
+            }
 
             // 2. URP Post-Processing (Mavi Filtre + Hafif Su Alti Kirilma Bulanikligi)
             if (_underwaterVolume != null && _colorAdjustments != null && _depthOfField != null)
