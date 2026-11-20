@@ -211,7 +211,7 @@ namespace Stratocraft.Voxel.Data
                 Ramp22Low or 31 or 32 or 33 or 34 => FaceNegY,
                 InnerRoofCorner45 or 35 or 36 or 37 or 38 => (byte)(FaceNegY | FacePosZ | FacePosX),
                 OuterRoofCorner45 or 39 or 40 or 41 or 42 => FaceNegY,
-                ButtressSupport or ArrowSlitWall or 43 or 44 or 45 or 46 => (byte)(FaceNegY | FacePosZ),
+                ButtressSupport or ArrowSlitWall or 43 or 44 or 45 or 46 => 0,
                 TrapezoidalKeystone or ArchVoussoir or GothicArchHalf => FacePosY,
                 TrophyPlinth => FaceNegY,
                 _ => 0

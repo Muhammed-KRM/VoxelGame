@@ -1052,7 +1052,7 @@ namespace Stratocraft.Voxel.Jobs
         {
             byte baseAo = PackAoAndWear((byte)Math.Clamp(245 - damageState * 8, 145, 250), damageState);
             Vector3 center = cellOrigin + new Vector3(0.5f, 0.5f, 0.5f);
-            float skirtDrop = extendFoundationSkirt ? 0.24f : 0.0f;
+            float skirtDrop = (extendFoundationSkirt && (rotationState & 0x1F) < 4) ? 0.24f : 0.0f;
 
             switch (shapeId)
             {
@@ -1064,14 +1064,184 @@ namespace Stratocraft.Voxel.Jobs
                 case ArchitecturalShapeCatalog.ArchVoussoir or ArchitecturalShapeCatalog.GothicArchHalf or 55 or 56 or 57 or 58: EmitArchVoussoir(center, rotationState, matId, baseAo, outTriangles); break;
                 case ArchitecturalShapeCatalog.TrapezoidalKeystone or 51 or 52: EmitTrapezoidalKeystone(center, rotationState, matId, baseAo, outTriangles); break;
                 case ArchitecturalShapeCatalog.BattlementMerlon or ArchitecturalShapeCatalog.ArrowSlitWall or ArchitecturalShapeCatalog.ButtressSupport or 43 or 44 or 45 or 46 or 53 or 54: EmitBeveledBattlementWall(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.FacetedCrystalSpire: EmitFacetedCrystalCluster(center, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.HalfSlab or ArchitecturalShapeCatalog.TrophyPlinth or 21 or 22 or 23 or 24 or 25 or 26: EmitTaperedBoxRotated(center, rotationState, 0.495f, 0.495f, 0.49f, 0.49f, -0.50f - skirtDrop, 0.0f, matId, baseAo, 0, outTriangles); break;
-                case ArchitecturalShapeCatalog.QuarterBeam or ArchitecturalShapeCatalog.CorniceMolding or ArchitecturalShapeCatalog.GratingFrame or 59 or 60 or 61 or 62: EmitTaperedBoxRotated(center, rotationState, 0.22f, 0.495f, 0.22f, 0.495f, -0.22f, 0.22f, matId, baseAo, 0, outTriangles); break;
+                case ArchitecturalShapeCatalog.FacetedCrystalSpire: EmitFacetedCrystalCluster(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.HalfSlab or ArchitecturalShapeCatalog.TrophyPlinth or 21 or 22 or 23 or 24 or 25 or 26: EmitTaperedBoxRotated(center, rotationState, 0.50f, 0.50f, 0.50f, 0.50f, -0.50f - skirtDrop, 0.0f, matId, baseAo, 0, outTriangles); break;
+                case ArchitecturalShapeCatalog.QuarterBeam or ArchitecturalShapeCatalog.CorniceMolding or ArchitecturalShapeCatalog.GratingFrame or 59 or 60 or 61 or 62: EmitTaperedBoxRotated(center, rotationState, 0.22f, 0.50f, 0.22f, 0.50f, -0.22f, 0.22f, matId, baseAo, 0, outTriangles); break;
                 case ArchitecturalShapeCatalog.InnerRoofCorner45 or 35 or 36 or 37 or 38: EmitRoofCorner(center, rotationState, true, matId, baseAo, skirtDrop, outTriangles); break;
                 case ArchitecturalShapeCatalog.OuterRoofCorner45 or 39 or 40 or 41 or 42: EmitRoofCorner(center, rotationState, false, matId, baseAo, skirtDrop, outTriangles); break;
                 case ArchitecturalShapeCatalog.StairStep: EmitStairSteps(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
                 case VoxelBitUtility.ChiseledMicroVoxelShapeId: EmitMicroVoxel4x4x4FromMask(cellOrigin, matId, BuildProceduralButtressMask64(rotationState), baseAo, occludedFaceMask, outTriangles); break;
                 default: EmitChamferedMasonryBlock(center, matId, baseAo, skirtDrop, occludedFaceMask, outTriangles); break;
+            }
+        }
+
+        [ThreadStatic] private static List<FacetedVoxelTriangle>? _tlsProbeShapeTris;
+
+        public static string GetCanonicalCatalogShapeName(byte shapeId) => shapeId switch
+        {
+            0 => "NaturalSdf",
+            ArchitecturalShapeCatalog.FullMasonryCube => "FullMasonryCube",
+            ArchitecturalShapeCatalog.OctagonalColumn => "OctagonalColumn",
+            ArchitecturalShapeCatalog.Ramp45 => "Ramp45",
+            ArchitecturalShapeCatalog.ArchVoussoir => "ArchVoussoir",
+            ArchitecturalShapeCatalog.TrapezoidalKeystone => "TrapezoidalKeystone",
+            ArchitecturalShapeCatalog.BattlementMerlon => "BattlementMerlon",
+            ArchitecturalShapeCatalog.FacetedCrystalSpire => "FacetedCrystalSpire",
+            ArchitecturalShapeCatalog.HalfSlab => "HalfSlab",
+            ArchitecturalShapeCatalog.QuarterBeam => "QuarterBeam",
+            ArchitecturalShapeCatalog.Ramp22Low => "Ramp22Low",
+            ArchitecturalShapeCatalog.Ramp22High => "Ramp22High",
+            ArchitecturalShapeCatalog.InnerRoofCorner45 => "InnerRoofCorner45",
+            ArchitecturalShapeCatalog.OuterRoofCorner45 => "OuterRoofCorner45",
+            ArchitecturalShapeCatalog.StairStep => "StairStep",
+            ArchitecturalShapeCatalog.ArrowSlitWall => "ArrowSlitWall",
+            ArchitecturalShapeCatalog.ButtressSupport => "ButtressSupport",
+            ArchitecturalShapeCatalog.CorniceMolding => "CorniceMolding",
+            ArchitecturalShapeCatalog.GothicArchHalf => "GothicArchHalf",
+            ArchitecturalShapeCatalog.GratingFrame => "GratingFrame",
+            ArchitecturalShapeCatalog.TrophyPlinth => "TrophyPlinth",
+            VoxelBitUtility.ChiseledMicroVoxelShapeId => "ChiseledMicroVoxel63",
+            _ => $"Shape_{shapeId}"
+        };
+
+        /// <summary>
+        /// Dalga A derin teshis yardimcisi (yalnizca WaveADeepDiagnosticProbe.Enabled iken cagrilir):
+        /// Tek bir mimari seklin ters normallerini, acik sinir kenarlarini, FullFaceMask yariklarini ve etek tasmasi riskini olcer.
+        /// </summary>
+        public static void AuditArchitecturalShapeForProbe(
+            byte matId,
+            byte shapeId,
+            byte rotState,
+            bool extendFoundationSkirt,
+            byte occludedFaceMask,
+            out int emittedTriCount,
+            out int invertedNormalCount,
+            out int openBoundaryEdgeCount,
+            out int degenerateTriCount,
+            out byte claimedFullFaceGapMask,
+            out bool skirtOutOfBoundsLeak)
+        {
+            emittedTriCount = 0;
+            invertedNormalCount = 0;
+            openBoundaryEdgeCount = 0;
+            degenerateTriCount = 0;
+            claimedFullFaceGapMask = 0;
+            skirtOutOfBoundsLeak = false;
+            if (shapeId == 0) return;
+
+            var tris = _tlsProbeShapeTris ??= new List<FacetedVoxelTriangle>(128);
+            tris.Clear();
+            EmitArchitecturalShape(Vector3.Zero, matId, shapeId, rotState, 0, tris, extendFoundationSkirt, occludedFaceMask);
+            emittedTriCount = tris.Count;
+            if (emittedTriCount == 0) return;
+
+            Vector3 shapeCentroid = Vector3.Zero;
+            for (int i = 0; i < emittedTriCount; i++)
+            {
+                shapeCentroid += (tris[i].V0 + tris[i].V1 + tris[i].V2) * (1f / 3f);
+            }
+            shapeCentroid /= emittedTriCount;
+
+            Span<float> faceArea = stackalloc float[6];
+            var edgeCounts = new Dictionary<(long, long), int>(emittedTriCount * 3);
+            var directedEdgeCounts = new Dictionary<(long, long), int>(emittedTriCount * 3);
+            double signedVolume6 = 0.0;
+
+            for (int i = 0; i < emittedTriCount; i++)
+            {
+                var t = tris[i];
+                Vector3 e1 = t.V1 - t.V0;
+                Vector3 e2 = t.V2 - t.V0;
+                Vector3 cr = Vector3.Cross(e1, e2);
+                float crLen = cr.Length();
+                if (crLen < 1e-4f)
+                {
+                    degenerateTriCount++;
+                    continue;
+                }
+
+                Vector3 n = cr / crLen;
+                // Sol-elli (Unity LH) koordinat sisteminde Cross(v1-v0, v2-v0) dis normaldir ->
+                // Dot(v0 - c, Cross(v1 - c, v2 - c)) > 0 pozitif kapali hacim demektir.
+                Vector3 a0 = t.V0 - shapeCentroid;
+                Vector3 a1 = t.V1 - shapeCentroid;
+                Vector3 a2 = t.V2 - shapeCentroid;
+                signedVolume6 += Vector3.Dot(a0, Vector3.Cross(a1, a2));
+
+                if (extendFoundationSkirt && rotState >= 4 && rotState < 24)
+                {
+                    if (t.V0.Y > 1.005f || t.V1.Y > 1.005f || t.V2.Y > 1.005f ||
+                        t.V0.X < -0.005f || t.V0.X > 1.005f || t.V0.Z < -0.005f || t.V0.Z > 1.005f)
+                    {
+                        skirtOutOfBoundsLeak = true;
+                    }
+                }
+
+                float area = 0.5f * crLen;
+                const float tol = 0.002f;
+                if (MathF.Abs(t.V0.X - 1f) < tol && MathF.Abs(t.V1.X - 1f) < tol && MathF.Abs(t.V2.X - 1f) < tol && n.X > 0.9f) faceArea[0] += area;
+                if (MathF.Abs(t.V0.X) < tol && MathF.Abs(t.V1.X) < tol && MathF.Abs(t.V2.X) < tol && n.X < -0.9f) faceArea[1] += area;
+                if (MathF.Abs(t.V0.Y - 1f) < tol && MathF.Abs(t.V1.Y - 1f) < tol && MathF.Abs(t.V2.Y - 1f) < tol && n.Y > 0.9f) faceArea[2] += area;
+                if (MathF.Abs(t.V0.Y) < tol && MathF.Abs(t.V1.Y) < tol && MathF.Abs(t.V2.Y) < tol && n.Y < -0.9f) faceArea[3] += area;
+                if (MathF.Abs(t.V0.Z - 1f) < tol && MathF.Abs(t.V1.Z - 1f) < tol && MathF.Abs(t.V2.Z - 1f) < tol && n.Z > 0.9f) faceArea[4] += area;
+                if (MathF.Abs(t.V0.Z) < tol && MathF.Abs(t.V1.Z) < tol && MathF.Abs(t.V2.Z) < tol && n.Z < -0.9f) faceArea[5] += area;
+
+                long q0 = QuantV(t.V0), q1 = QuantV(t.V1), q2 = QuantV(t.V2);
+                AddUndirectedEdge(edgeCounts, q0, q1);
+                AddUndirectedEdge(edgeCounts, q1, q2);
+                AddUndirectedEdge(edgeCounts, q2, q0);
+                AddDirectedEdge(directedEdgeCounts, q0, q1);
+                AddDirectedEdge(directedEdgeCounts, q1, q2);
+                AddDirectedEdge(directedEdgeCounts, q2, q0);
+            }
+
+            foreach (var kv in edgeCounts)
+            {
+                if (kv.Value == 1) openBoundaryEdgeCount++;
+            }
+
+            // Tutarsiz yonlenmis komsu kenarlar (ayni yonde 2 kez gecen kenar = ters winding ucgeni!)
+            int inconsistentHalfEdges = 0;
+            foreach (var kv in directedEdgeCounts)
+            {
+                if (kv.Value > 1) inconsistentHalfEdges += (kv.Value - 1);
+            }
+            if (signedVolume6 <= 0.0)
+            {
+                invertedNormalCount = emittedTriCount;
+            }
+            else if (inconsistentHalfEdges > 0)
+            {
+                invertedNormalCount = inconsistentHalfEdges;
+            }
+
+            byte ownFullMask = ArchitecturalShapeCatalog.GetFullFaceMask(shapeId, rotState);
+            for (int f = 0; f < 6; f++)
+            {
+                if (((ownFullMask >> f) & 1) != 0 && ((occludedFaceMask >> f) & 1) == 0 && faceArea[f] < 0.995f)
+                {
+                    claimedFullFaceGapMask |= (byte)(1 << f);
+                }
+            }
+
+            static long QuantV(Vector3 v)
+            {
+                long qx = (long)MathF.Round(v.X * 1024f) + 4096L;
+                long qy = (long)MathF.Round(v.Y * 1024f) + 4096L;
+                long qz = (long)MathF.Round(v.Z * 1024f) + 4096L;
+                return (qx << 32) | (qy << 16) | (qz & 0xFFFFL);
+            }
+
+            static void AddUndirectedEdge(Dictionary<(long, long), int> map, long a, long b)
+            {
+                var key = a < b ? (a, b) : (b, a);
+                map[key] = map.TryGetValue(key, out int c) ? (c + 1) : 1;
+            }
+
+            static void AddDirectedEdge(Dictionary<(long, long), int> map, long a, long b)
+            {
+                var key = (a, b);
+                map[key] = map.TryGetValue(key, out int c) ? (c + 1) : 1;
             }
         }
 
@@ -1204,32 +1374,36 @@ namespace Stratocraft.Voxel.Jobs
             const float y3 = 0.50f, rShaft = 0.38f;
             Vector3 topCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y3, 0f), center, rot);
             Vector3 botCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, y0, 0f), center, rot);
+            Span<Vector3> bRing = stackalloc Vector3[sides];
+            Span<Vector3> uRing = stackalloc Vector3[sides];
             for (int i = 0; i < sides; i++)
             {
-                float a0 = (i / (float)sides) * MathF.PI * 2f + (MathF.PI / 8f), a1 = ((i + 1) / (float)sides) * MathF.PI * 2f + (MathF.PI / 8f);
-                float c0 = MathF.Cos(a0), s0 = MathF.Sin(a0), c1 = MathF.Cos(a1), s1 = MathF.Sin(a1);
+                float a = (i / (float)sides) * MathF.PI * 2f + (MathF.PI / 8f);
+                float c = MathF.Cos(a) * rShaft, s = MathF.Sin(a) * rShaft;
+                bRing[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c, y0, s), center, rot);
+                uRing[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c, y3, s), center, rot);
+            }
+            for (int i = 0; i < sides; i++)
+            {
+                int j = (i + 1) % sides;
                 byte shade1 = (byte)(155 + (i % 3) * 14), shade2 = (byte)(148 + (i % 3) * 14);
-                Vector3 b0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y0, s0 * rShaft), center, rot);
-                Vector3 b1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y0, s1 * rShaft), center, rot);
-                Vector3 u0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c0 * rShaft, y3, s0 * rShaft), center, rot);
-                Vector3 u1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(c1 * rShaft, y3, s1 * rShaft), center, rot);
-                AddFacetedQuad(b0, u0, u1, b1, matId, shade1, shade2, ao, outTriangles);
-                AddFacetedTriangle(topCenter, u1, u0, matId, 210, ao, outTriangles);
-                AddFacetedTriangle(botCenter, b0, b1, matId, 130, ao, outTriangles);
+                AddFacetedQuad(bRing[i], uRing[i], uRing[j], bRing[j], matId, shade1, shade2, ao, outTriangles);
+                AddFacetedTriangle(topCenter, uRing[j], uRing[i], matId, 210, ao, outTriangles);
+                AddFacetedTriangle(botCenter, bRing[i], bRing[j], matId, 130, ao, outTriangles);
             }
         }
 
         private static void EmitSlopedRamp(Vector3 center, byte rot, float slopeMinY, float slopeMaxY, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
         {
             float baseMinY = -0.50f - skirtDrop;
-            Vector3 bFL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, baseMinY, -0.49f), center, rot);
-            Vector3 bFR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, baseMinY, -0.49f), center, rot);
-            Vector3 bBL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, baseMinY, 0.49f), center, rot);
-            Vector3 bBR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, baseMinY, 0.49f), center, rot);
-            Vector3 fLowL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, slopeMinY, -0.49f), center, rot);
-            Vector3 fLowR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, slopeMinY, -0.49f), center, rot);
-            Vector3 tBackL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, slopeMaxY, 0.49f), center, rot);
-            Vector3 tBackR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, slopeMaxY, 0.49f), center, rot);
+            Vector3 bFL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, baseMinY, -0.50f), center, rot);
+            Vector3 bFR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, baseMinY, -0.50f), center, rot);
+            Vector3 bBL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, baseMinY, 0.50f), center, rot);
+            Vector3 bBR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, baseMinY, 0.50f), center, rot);
+            Vector3 fLowL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, slopeMinY, -0.50f), center, rot);
+            Vector3 fLowR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, slopeMinY, -0.50f), center, rot);
+            Vector3 tBackL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, slopeMaxY, 0.50f), center, rot);
+            Vector3 tBackR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, slopeMaxY, 0.50f), center, rot);
             AddFacetedQuad(fLowL, tBackL, tBackR, fLowR, matId, 212, 198, ao, outTriangles);
             AddFacetedQuad(bBR, tBackR, tBackL, bBL, matId, 150, 140, ao, outTriangles);
             AddFacetedQuad(bBL, bFL, bFR, bBR, matId, 120, 120, ao, outTriangles);
@@ -1249,23 +1423,23 @@ namespace Stratocraft.Voxel.Jobs
         private static void EmitRoofCorner(Vector3 center, byte rot, bool isInnerCorner, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
         {
             float minY = -0.50f - skirtDrop;
-            Vector3 b00 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, minY, -0.49f), center, rot);
-            Vector3 b10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, minY, -0.49f), center, rot);
-            Vector3 b11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, minY, 0.49f), center, rot);
-            Vector3 b01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, minY, 0.49f), center, rot);
-            Vector3 apex11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, 0.50f, 0.49f), center, rot);
+            Vector3 b00 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, minY, -0.50f), center, rot);
+            Vector3 b10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, minY, -0.50f), center, rot);
+            Vector3 b11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, minY, 0.50f), center, rot);
+            Vector3 b01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, minY, 0.50f), center, rot);
+            Vector3 apex11 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, 0.50f, 0.50f), center, rot);
             AddFacetedQuad(b01, b00, b10, b11, matId, 120, 120, ao, outTriangles);
             if (!isInnerCorner)
             {
                 AddFacetedTriangle(b00, b01, apex11, matId, 205, ao, outTriangles);
                 AddFacetedTriangle(b00, apex11, b10, matId, 195, ao, outTriangles);
-                AddFacetedTriangle(b01, apex11, b11, matId, 165, ao, outTriangles);
+                AddFacetedTriangle(b01, b11, apex11, matId, 165, ao, outTriangles);
                 AddFacetedTriangle(b10, apex11, b11, matId, 160, ao, outTriangles);
             }
             else
             {
-                Vector3 apex01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.49f, 0.50f, 0.49f), center, rot);
-                Vector3 apex10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.49f, 0.50f, -0.49f), center, rot);
+                Vector3 apex01 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, 0.50f, 0.50f), center, rot);
+                Vector3 apex10 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.50f, 0.50f, -0.50f), center, rot);
                 AddFacetedTriangle(b00, apex01, apex11, matId, 210, ao, outTriangles);
                 AddFacetedTriangle(b00, apex11, apex10, matId, 198, ao, outTriangles);
                 AddFacetedQuad(b11, apex11, apex01, b01, matId, 155, 145, ao, outTriangles);
@@ -1277,60 +1451,128 @@ namespace Stratocraft.Voxel.Jobs
 
         private static void EmitStairSteps(Vector3 center, byte rot, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
         {
-            EmitTaperedBoxRotated(center, rot, 0.495f, 0.495f, 0.495f, 0.495f, -0.50f - skirtDrop, 0.0f, matId, ao, 0, outTriangles);
-            Vector3 upperCenter = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0f, 0.25f, 0.2475f), center, rot);
-            EmitTaperedBoxRotated(upperCenter, rot, 0.495f, 0.2475f, 0.495f, 0.2475f, -0.25f, 0.25f, matId, ao, 0, outTriangles);
+            // Tek parca su-gecirmez 6-koseli L-prizma (X in [-0.50, +0.50]):
+            // Profil (Z, Y): P0(-0.50, minY), P1(-0.50, 0), P2(0, 0), P3(0, 0.50), P4(0.50, 0.50), P5(0.50, minY)
+            float minY = -0.50f - skirtDrop;
+            Span<Vector2> prof = stackalloc Vector2[6]
+            {
+                new Vector2(-0.50f, minY),
+                new Vector2(-0.50f, 0.00f),
+                new Vector2( 0.00f, 0.00f),
+                new Vector2( 0.00f, 0.50f),
+                new Vector2( 0.50f, 0.50f),
+                new Vector2( 0.50f, minY)
+            };
+
+            Span<Vector3> lPts = stackalloc Vector3[6];
+            Span<Vector3> rPts = stackalloc Vector3[6];
+            for (int i = 0; i < 6; i++)
+            {
+                lPts[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.50f, prof[i].Y, prof[i].X), center, rot);
+                rPts[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3( 0.50f, prof[i].Y, prof[i].X), center, rot);
+            }
+
+            // Cevre yuzleri (disa donuk normal): (lPts[i], lPts[j], rPts[j], rPts[i])
+            // Kontrol: i=0->1 (-Z on yuz): e1=l1-l0=(0,+0.5,0), e2=r1-l0=(+1,+0.5,0) -> Cross=(0,0,-0.5) => -Z DISA!
+            for (int i = 0; i < 6; i++)
+            {
+                int j = (i + 1) % 6;
+                byte s1 = i switch { 1 or 3 => 222, 5 => 125, _ => 175 };
+                byte s2 = (byte)(s1 - 12);
+                AddFacetedQuad(lPts[i], lPts[j], rPts[j], rPts[i], matId, s1, s2, ao, outTriangles);
+            }
+
+            // -X sol yan yuz (normal = -X)
+            AddFacetedQuad(lPts[5], lPts[2], lPts[1], lPts[0], matId, 182, 172, ao, outTriangles);
+            AddFacetedQuad(lPts[5], lPts[4], lPts[3], lPts[2], matId, 182, 172, ao, outTriangles);
+            // +X sag yan yuz (normal = +X)
+            AddFacetedQuad(rPts[0], rPts[1], rPts[2], rPts[5], matId, 178, 168, ao, outTriangles);
+            AddFacetedQuad(rPts[2], rPts[3], rPts[4], rPts[5], matId, 178, 168, ao, outTriangles);
         }
 
         private static void EmitArchVoussoir(Vector3 center, byte rot, byte matId, byte ao, List<FacetedVoxelTriangle> outTriangles)
         {
-            Vector3 outerBL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, -0.15f, -0.44f), center, rot);
-            Vector3 outerBR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, -0.15f, 0.44f), center, rot);
-            Vector3 archMidL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.05f, 0.18f, -0.42f), center, rot);
-            Vector3 archMidR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.05f, 0.18f, 0.42f), center, rot);
-            Vector3 innerTL = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.36f, -0.42f), center, rot);
-            Vector3 innerTR = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.36f, 0.42f), center, rot);
-            Vector3 topL0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, 0.50f, -0.44f), center, rot);
-            Vector3 topR0 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(-0.48f, 0.50f, 0.44f), center, rot);
-            Vector3 topL1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.50f, -0.44f), center, rot);
-            Vector3 topR1 = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(0.48f, 0.50f, 0.44f), center, rot);
-            AddFacetedQuad(outerBL, outerBR, archMidR, archMidL, matId, 155, 145, ao, outTriangles);
-            AddFacetedQuad(archMidL, archMidR, innerTR, innerTL, matId, 165, 150, ao, outTriangles);
-            AddFacetedQuad(topL0, topL1, topR1, topR0, matId, 220, 205, ao, outTriangles);
-            AddFacetedQuad(outerBL, topL0, topR0, outerBR, matId, 180, 170, ao, outTriangles);
-            AddFacetedQuad(innerTR, topR1, topL1, innerTL, matId, 180, 170, ao, outTriangles);
-            AddFacetedQuad(outerBL, archMidL, topL1, topL0, matId, 195, 185, ao, outTriangles);
-            AddFacetedTriangle(archMidL, innerTL, topL1, matId, 200, ao, outTriangles);
-            AddFacetedQuad(outerBR, topR0, topR1, archMidR, matId, 195, 185, ao, outTriangles);
-            AddFacetedTriangle(archMidR, topR1, innerTR, matId, 200, ao, outTriangles);
+            // Su-gecirmez 6-koseli kemer profili (Z in [-0.50, +0.50]), tum yuzler kesin disa donuk:
+            // P0=(-0.50,-0.50), P1=(-0.50,+0.50), P2=(+0.50,+0.50), P3=(+0.50,+0.34), P4=(+0.02,+0.20), P5=(-0.30,-0.10)
+            Span<Vector2> prof = stackalloc Vector2[6]
+            {
+                new Vector2(-0.50f, -0.50f),
+                new Vector2(-0.50f,  0.50f),
+                new Vector2( 0.50f,  0.50f),
+                new Vector2( 0.50f,  0.34f),
+                new Vector2( 0.02f,  0.20f),
+                new Vector2(-0.30f, -0.10f)
+            };
+
+            Span<Vector3> nPts = stackalloc Vector3[6]; // z = -0.50
+            Span<Vector3> pPts = stackalloc Vector3[6]; // z = +0.50
+            for (int i = 0; i < 6; i++)
+            {
+                nPts[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(prof[i].X, prof[i].Y, -0.50f), center, rot);
+                pPts[i] = ArchitecturalShapeCatalog.TransformLocalPoint(new Vector3(prof[i].X, prof[i].Y,  0.50f), center, rot);
+            }
+
+            // Cevre yuzleri (P1->P2 ust FacePosY = tam 1.0x1.0, P0->P1 dis -X = tam 1.0x1.0, P3->P4->P5->P0 ic kemer yayi)
+            for (int i = 0; i < 6; i++)
+            {
+                int j = (i + 1) % 6;
+                byte s1 = i == 1 ? (byte)222 : (i >= 3 ? (byte)158 : (byte)182);
+                byte s2 = (byte)(s1 - 12);
+                AddFacetedQuad(nPts[i], pPts[i], pPts[j], nPts[j], matId, s1, s2, ao, outTriangles);
+            }
+
+            // -Z on yuz (P1 kosesinden kesin konveks yelpaze, normal = -Z)
+            AddFacetedTriangle(nPts[1], nPts[2], nPts[3], matId, 196, ao, outTriangles);
+            AddFacetedTriangle(nPts[1], nPts[3], nPts[4], matId, 192, ao, outTriangles);
+            AddFacetedTriangle(nPts[1], nPts[4], nPts[5], matId, 188, ao, outTriangles);
+            AddFacetedTriangle(nPts[1], nPts[5], nPts[0], matId, 184, ao, outTriangles);
+
+            // +Z arka yuz (normal = +Z)
+            AddFacetedTriangle(pPts[1], pPts[3], pPts[2], matId, 190, ao, outTriangles);
+            AddFacetedTriangle(pPts[1], pPts[4], pPts[3], matId, 186, ao, outTriangles);
+            AddFacetedTriangle(pPts[1], pPts[5], pPts[4], matId, 182, ao, outTriangles);
+            AddFacetedTriangle(pPts[1], pPts[0], pPts[5], matId, 178, ao, outTriangles);
         }
 
         private static void EmitTrapezoidalKeystone(Vector3 center, byte rot, byte matId, byte ao, List<FacetedVoxelTriangle> outTriangles)
-            => EmitTaperedBoxRotated(center, rot, 0.30f, 0.46f, 0.50f, 0.48f, -0.42f, 0.50f, matId, ao, 0, outTriangles);
+            => EmitTaperedBoxRotated(center, rot, 0.34f, 0.50f, 0.50f, 0.50f, -0.34f, 0.50f, matId, ao, 0, outTriangles);
 
         private static void EmitBeveledBattlementWall(Vector3 center, byte rot, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
-            => EmitTaperedBoxRotated(center, rot, 0.49f, 0.28f, 0.46f, 0.20f, -0.50f - skirtDrop, 0.50f, matId, ao, 0, outTriangles);
+            => EmitTaperedBoxRotated(center, rot, 0.50f, 0.28f, 0.46f, 0.20f, -0.50f - skirtDrop, 0.50f, matId, ao, 0, outTriangles);
 
-        private static void EmitFacetedCrystalCluster(Vector3 center, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
+        private static void EmitFacetedCrystalCluster(Vector3 center, byte rot, byte matId, byte ao, float skirtDrop, List<FacetedVoxelTriangle> outTriangles)
         {
             float baseY = -0.45f - skirtDrop;
-            EmitSingleCrystalSpire(center + new Vector3(0f, baseY, 0f), new Vector3(0.05f, 0.95f + skirtDrop, -0.04f), 0.22f, matId, ao, outTriangles);
-            EmitSingleCrystalSpire(center + new Vector3(-0.18f, baseY, 0.12f), new Vector3(-0.22f, 0.68f + skirtDrop, 0.16f), 0.15f, matId, ao, outTriangles);
-            EmitSingleCrystalSpire(center + new Vector3(0.18f, baseY, -0.10f), new Vector3(0.24f, 0.62f + skirtDrop, -0.14f), 0.14f, matId, ao, outTriangles);
+            EmitSingleCrystalSpire(center, rot, new Vector3(0f, baseY, 0f), new Vector3(0.05f, 0.90f + skirtDrop, -0.04f), 0.22f, matId, ao, outTriangles);
+            EmitSingleCrystalSpire(center, rot, new Vector3(-0.18f, baseY, 0.12f), new Vector3(-0.20f, 0.66f + skirtDrop, 0.14f), 0.15f, matId, ao, outTriangles);
+            EmitSingleCrystalSpire(center, rot, new Vector3(0.18f, baseY, -0.10f), new Vector3(0.20f, 0.60f + skirtDrop, -0.12f), 0.14f, matId, ao, outTriangles);
         }
 
-        private static void EmitSingleCrystalSpire(Vector3 basePos, Vector3 axisVec, float radius, byte matId, byte ao, List<FacetedVoxelTriangle> outTriangles)
+        private static void EmitSingleCrystalSpire(Vector3 center, byte rot, Vector3 localBasePos, Vector3 localAxisVec, float radius, byte matId, byte ao, List<FacetedVoxelTriangle> outTriangles)
         {
             const int sides = 6;
-            Vector3 midPos = basePos + axisVec * 0.72f, tipPos = basePos + axisVec * 1.12f;
+            Vector3 localMidPos = localBasePos + localAxisVec * 0.72f;
+            Vector3 localTipPos = localBasePos + localAxisVec * 1.05f;
+            Vector3 wBaseCenter = ArchitecturalShapeCatalog.TransformLocalPoint(localBasePos, center, rot);
+            Vector3 wTipPos = ArchitecturalShapeCatalog.TransformLocalPoint(localTipPos, center, rot);
+
+            Span<Vector3> wb = stackalloc Vector3[sides];
+            Span<Vector3> wm = stackalloc Vector3[sides];
             for (int i = 0; i < sides; i++)
             {
-                float a0 = (i / (float)sides) * MathF.PI * 2f, a1 = ((i + 1) / (float)sides) * MathF.PI * 2f;
-                Vector3 r0 = new Vector3(MathF.Cos(a0) * radius, 0f, MathF.Sin(a0) * radius);
-                Vector3 r1 = new Vector3(MathF.Cos(a1) * radius, 0f, MathF.Sin(a1) * radius);
+                float a = (i / (float)sides) * MathF.PI * 2f;
+                Vector3 r = new Vector3(MathF.Cos(a) * radius, 0f, MathF.Sin(a) * radius);
+                wb[i] = ArchitecturalShapeCatalog.TransformLocalPoint(localBasePos + r, center, rot);
+                wm[i] = ArchitecturalShapeCatalog.TransformLocalPoint(localMidPos + r * 0.82f, center, rot);
+            }
+
+            for (int i = 0; i < sides; i++)
+            {
+                int j = (i + 1) % sides;
                 byte shade = (byte)(170 + (i % 3) * 30);
-                AddFacetedQuad(basePos + r0, midPos + r0 * 0.82f, midPos + r1 * 0.82f, basePos + r1, matId, shade, (byte)(shade - 15), ao, outTriangles);
-                AddFacetedTriangle(midPos + r0 * 0.82f, tipPos, midPos + r1 * 0.82f, matId, (byte)Math.Min(255, shade + 25), ao, outTriangles);
+                AddFacetedQuad(wb[i], wm[i], wm[j], wb[j], matId, shade, (byte)(shade - 15), ao, outTriangles);
+                AddFacetedTriangle(wm[i], wTipPos, wm[j], matId, (byte)Math.Min(255, shade + 25), ao, outTriangles);
+                AddFacetedTriangle(wBaseCenter, wb[i], wb[j], matId, 130, ao, outTriangles);
             }
         }
 

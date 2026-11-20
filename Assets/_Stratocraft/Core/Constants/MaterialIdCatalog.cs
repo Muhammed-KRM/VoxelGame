@@ -222,6 +222,9 @@ namespace Stratocraft.Core.Constants
         /// <summary>Ilkel Tas Firin / Ocak Blogu (167 - Bakir cevheri izabesi ve kil pisirme + cevre isitma).</summary>
         public const byte PrimitiveStoneKilnBlock = 167;
 
+        /// <summary>Kurulabilir Yatak / Yeniden Dogma Noktasi Blogu (168 - [E] ile SpawnPoint kaydeder).</summary>
+        public const byte BedBlock = 168;
+
         /// <summary>Boss Trofe Yapi Bloklari Baslangici (180..195).</summary>
         public const byte BossTrophyBlockStart = 180;
 

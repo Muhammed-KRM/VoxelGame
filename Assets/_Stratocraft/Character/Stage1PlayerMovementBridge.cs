@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
@@ -499,7 +500,7 @@ namespace Stratocraft.Character
                 vitals.LungOxygenPercent = MathF.Max(0f, vitals.LungOxygenPercent - SolidBlockSuffocationOxygenDrainPerSecond * dt);
                 float prevHp = vitals.CurrentHp;
                 float loss = SolidBlockSuffocationDamagePerSecond * dt;
-                vitals.CurrentHp = MathF.Max(1.0f, prevHp - loss);
+                vitals.CurrentHp = MathF.Max(0.0f, prevHp - loss);
                 appliedDamageHp = MathF.Max(0f, prevHp - vitals.CurrentHp);
             }
 
@@ -809,7 +810,7 @@ namespace Stratocraft.Character
                 float prevHp = vitals.CurrentHp;
                 float prevTemp = vitals.CoreBodyTempCelsius;
 
-                vitals.CurrentHp = MathF.Max(1.0f, prevHp - hpLoss);
+                vitals.CurrentHp = MathF.Max(0.0f, prevHp - hpLoss);
                 vitals.CoreBodyTempCelsius = MathF.Min(43.5f, prevTemp + heatGain);
                 vitals.Wetness01 = MathF.Max(0f, vitals.Wetness01 - 0.35f * dt);
 
@@ -1046,11 +1047,26 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Usume, sicaklama veya aclik/susuzluk nedeniyle karakterin 0 HP'ye inip yere dusmesi (BleedOutCrawl) ve kalkamamasi engellenir!
-            _vitals.CurrentHp = isCreativeMode ? _vitals.MaxHp : Mathf.Max(1.0f, _vitals.CurrentHp);
-            _vitals.HungerKcal = 2000f;
-            _vitals.ThirstHydration = 100f;
-            if (_movementState.Stance == CharacterStance.BleedOutCrawl)
+            // Faz A.4 & A.5: Hayatta Kalma modunda gercek 0 HP -> BleedOutCrawl ve aktif aclik/susuzluk!
+            // Yalnizca [F4] Yaratici Modda tum vitaller %100 kilitli kalir.
+            if (isCreativeMode)
+            {
+                _vitals.CurrentHp = _vitals.MaxHp;
+                _vitals.Stamina = _vitals.MaxStamina;
+                _vitals.HungerKcal = 2500f;
+                _vitals.ThirstHydration = 100f;
+                _vitals.BleedOutTimerSeconds = 30.0f;
+                if (_movementState.Stance == CharacterStance.BleedOutCrawl)
+                {
+                    _movementState.Stance = CharacterStance.Standing;
+                }
+            }
+            else if (_vitals.CurrentHp <= 0.0f)
+            {
+                _vitals.CurrentHp = 0.0f;
+                _movementState.Stance = CharacterStance.BleedOutCrawl;
+            }
+            else if (_movementState.Stance == CharacterStance.BleedOutCrawl && _vitals.CurrentHp > 0.0f)
             {
                 _movementState.Stance = CharacterStance.Standing;
             }
@@ -1605,7 +1621,7 @@ namespace Stratocraft.Character
                 _movementState.CurrentSpeedMetersPerSec *= 0.42f;
                 if (Stage1GameSettings.EnableEnvironmentalEffects)
                 {
-                    _vitals.CurrentHp = Mathf.Max(20f, _vitals.CurrentHp - 18.0f * dt);
+                    _vitals.CurrentHp = Mathf.Max(0f, _vitals.CurrentHp - 18.0f * dt);
                     _vitals.CoreBodyTempCelsius = Mathf.Min(43.0f, _vitals.CoreBodyTempCelsius + 4.0f * dt);
                     statusFeedback = "VOLKANIK LAV YANIGI! (-18 HP/s) Hemen lav kalderasindan cikin!";
                 }
@@ -1615,7 +1631,7 @@ namespace Stratocraft.Character
                 _movementState.CurrentSpeedMetersPerSec *= 0.52f;
                 if (Stage1GameSettings.EnableEnvironmentalEffects)
                 {
-                    _vitals.CurrentHp = Mathf.Max(20f, _vitals.CurrentHp - 12.0f * dt);
+                    _vitals.CurrentHp = Mathf.Max(0f, _vitals.CurrentHp - 12.0f * dt);
                     statusFeedback = "KORROZYON ASIDI YANIGI! (-12 HP/s) Kimyasal asit havuzundan hemen cikin!";
                 }
             }

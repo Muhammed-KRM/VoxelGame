@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
@@ -31,9 +32,9 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Grass, MaterialIdCatalog.Sand,
             MaterialIdCatalog.Clay, MaterialIdCatalog.Gravel, MaterialIdCatalog.PackedIce, MaterialIdCatalog.Cobblestone,
             MaterialIdCatalog.Basalt, MaterialIdCatalog.Marble, MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.OakWood,
-            MaterialIdCatalog.Ironwood, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.WoodPlank, MaterialIdCatalog.LooseRubble
+            MaterialIdCatalog.Ironwood, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.WoodPlank, MaterialIdCatalog.BedBlock, MaterialIdCatalog.LooseRubble
         };
-        private static readonly byte[] ShapeWheelCycle = { 0, 1, 2, 3, 4, 5, 6, 7, 63 };
+        private static readonly byte[] ShapeWheelCycle = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 63 };
         private static readonly float[] RayMarchOffsets = { 0.15f, 0.38f, 0.62f, 0.88f, 1.15f };
 
         public readonly CrystalMassStorage CrystalStorage = new(maxTotalBlocksCapacity: 16384, crystalTier: 0);
@@ -214,7 +215,11 @@ namespace Stratocraft.Character
             {
                 _shapeIdx = Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1);
                 LastFeedbackText =
-                    $"🧱 MİMARİ BLOK MODU [V]: {GetShapeDisplayName(SelectedShapeId)} | [V] Doğal Arazi Fırçası (0) | [Shift+V] Mimari Şekiller (1..7, 63) | [R] 24-Yön | [B] Tarif & Malzeme Kitabı";
+                    $"🧱 MİMARİ BLOK MODU [V]: {GetShapeDisplayName(SelectedShapeId)} | [V] Doğal Arazi Fırçası (0) | [Shift+V] Mimari Şekiller (1..14, 63) | [R] 90° | [Shift+R] 24-Yön | [B] Kitap";
+            }
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                RecordArchShapeProbeEvent("ToggleMode", 0, 0, 0, SelectedShapeId, SelectedShapeId == 0 ? (byte)0 : _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
             }
             return SelectedShapeId;
         }
@@ -228,7 +233,11 @@ namespace Stratocraft.Character
             _shapeIdx = 1 + nextArchOffset;
             _lastArchitecturalShapeIdx = _shapeIdx;
             LastFeedbackText =
-                $"📐 MİMARİ ŞEKİL SEÇİLDİ [Shift+V]: {GetShapeDisplayName(SelectedShapeId)} (1..7, 63) | [V] Doğal Arazi Saçılım Fırçası (0) Hızlı Geçiş | [R] 24-Yön | [B] Tarif & Malzeme Kitabı";
+                $"📐 MİMARİ ŞEKİL SEÇİLDİ [Shift+V]: {GetShapeDisplayName(SelectedShapeId)} (1..14, 63) | [V] Doğal (0) | [R] 90° | [Shift+R] 24-Yön";
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                RecordArchShapeProbeEvent("CycleShape", 0, 0, 0, SelectedShapeId, _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
+            }
             return SelectedShapeId;
         }
 
@@ -492,11 +501,15 @@ namespace Stratocraft.Character
                 {
                     bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                     _selectedRotation24 = shift
-                        ? (byte)((_selectedRotation24 + 1) & 3)
-                        : (byte)((_selectedRotation24 + 1) % 24);
+                        ? (byte)((_selectedRotation24 + 1) % 24)
+                        : (byte)((_selectedRotation24 + 1) & 3);
                     LastFeedbackText = shift
-                        ? $"Yatay Yaw Rotasyonu [Shift+R]: {_selectedRotation24}/3 (90° Yatay Donus)"
-                        : $"3B Tam Oryantasyon [R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)";
+                        ? $"3B Tam Oryantasyon [Shift+R]: {_selectedRotation24}/23 (24-Yonlu Mimari Donus)"
+                        : $"Yatay Yaw Rotasyonu [R]: {_selectedRotation24}/3 (90° Yatay Donus)";
+                    if (WaveADeepDiagnosticProbe.Enabled)
+                    {
+                        RecordArchShapeProbeEvent(shift ? "RotateSO3_24" : "RotateYaw90", 0, 0, 0, SelectedShapeId, _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
+                    }
                 }
                 if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetKeyDown(KeyCode.B))
                 {
@@ -514,6 +527,10 @@ namespace Stratocraft.Character
                         _lastArchitecturalShapeIdx = _shapeIdx;
                     }
                     LastFeedbackText = $"İnşa Şekli [Alt+Tekerlek]: {GetShapeDisplayName(SelectedShapeId)} ([V] Doğal/Mimari Geçiş | [Shift+V] Mimari Şekiller)";
+                    if (WaveADeepDiagnosticProbe.Enabled)
+                    {
+                        RecordArchShapeProbeEvent("WheelCycleShape", 0, 0, 0, SelectedShapeId, SelectedShapeId == 0 ? (byte)0 : _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
+                    }
                 }
                 else if (IsCrystalActive && (Input.GetKeyDown(KeyCode.T) || (shiftHeld && Mathf.Abs(scroll) > 0.001f)))
                 {
@@ -2425,8 +2442,20 @@ namespace Stratocraft.Character
                 BlokKokenDurumu origin = placingFromHandSlot
                     ? BlokKokenDurumu.OyuncuItemBlogu
                     : (placeShape == 0 ? BlokKokenDurumu.DogalKutle : BlokKokenDurumu.OyuncuItemBlogu);
-                voxels[(wy << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
-                    mat, VoxelBitUtility.FullDensity, placeShape, placeShape == 0 ? (byte)0 : _selectedRotation24, origin, preservedDmg);
+                if (placeShape == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+                {
+                    bool isRawShard = consumedFromHandKind == InventoryItemKind.RoughStoneChunk ||
+                                      consumedFromHandKind == InventoryItemKind.LooseDirtClod;
+                    ushort microSlot = isRawShard
+                        ? (ushort)(64 + ((wx * 17 + wy * 31 + wz * 13) & 0x7F))
+                        : (ushort)(_selectedRotation24 & 0x1F);
+                    voxels[(wy << 8) | (lz << 4) | lx] = VoxelBitUtility.PackChiseled(mat, microSlot, origin, preservedDmg);
+                }
+                else
+                {
+                    voxels[(wy << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
+                        mat, VoxelBitUtility.FullDensity, placeShape, placeShape == 0 ? (byte)0 : _selectedRotation24, origin, preservedDmg);
+                }
                 if (isNatural)
                 {
                     ReinforceSmoothSdfPlacementNeighbors(wx, wy, wz, maxY, mat, worldChunks, dirty);
@@ -2451,9 +2480,63 @@ namespace Stratocraft.Character
             }
             MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
             collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out string msg);
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                RecordArchShapeProbeEvent("Place", wx, wy, wz, placeShape, placeShape == 0 ? (byte)0 : _selectedRotation24, mat, placeShape, placeShape);
+            }
             LastFeedbackText = !string.IsNullOrEmpty(msg)
                 ? msg
                 : $"{GetMaterialDisplayName(mat)} ({GetShapeDisplayName(placeShape)} | Yon:{_selectedRotation24} | Hasar:{preservedDmg}/15) Konuldu! (Stres: {CurrentGhostPreviewColor})";
+        }
+
+        private void RecordArchShapeProbeEvent(
+            string actionTag, int wx, int wy, int wz, byte shapeId, byte rotState, byte matId, byte ghostShapeId, byte placedShapeId)
+        {
+            if (!WaveADeepDiagnosticProbe.Enabled) return;
+            string uiName = GetShapeDisplayName(shapeId);
+            string catName = HybridSurfaceNetsAndShapeMesher.GetCanonicalCatalogShapeName(shapeId);
+            bool labelOk = shapeId switch
+            {
+                0 or 1 or 63 => true,
+                2 => uiName.IndexOf("Sutun", StringComparison.OrdinalIgnoreCase) >= 0,
+                3 => uiName.IndexOf("Rampa", StringComparison.OrdinalIgnoreCase) >= 0,
+                4 => uiName.IndexOf("Kemer", StringComparison.OrdinalIgnoreCase) >= 0,
+                5 => uiName.IndexOf("Kilit", StringComparison.OrdinalIgnoreCase) >= 0,
+                6 => uiName.IndexOf("Siper", StringComparison.OrdinalIgnoreCase) >= 0 || uiName.IndexOf("Mazgal", StringComparison.OrdinalIgnoreCase) >= 0,
+                7 => uiName.IndexOf("Kristal", StringComparison.OrdinalIgnoreCase) >= 0,
+                _ => uiName.IndexOf("Sekil #", StringComparison.OrdinalIgnoreCase) < 0
+            };
+
+            HybridSurfaceNetsAndShapeMesher.AuditArchitecturalShapeForProbe(
+                matId, shapeId, rotState, extendFoundationSkirt: false, occludedFaceMask: 0,
+                out int triCnt, out int invCnt, out int openEdges, out int degenCnt, out byte gapMask, out bool skirtLeak);
+
+            WaveADeepDiagnosticProbe.RecordArchShape(new WaveAArchShapeRecord
+            {
+                FrameIndex = Time.frameCount,
+                TimeSec = Time.time,
+                ActionTag = actionTag,
+                WorldX = wx,
+                WorldY = wy,
+                WorldZ = wz,
+                ShapeId = shapeId,
+                RotState = rotState,
+                MaterialId = matId,
+                UiDisplayName = uiName,
+                CatalogCanonicalName = catName,
+                LabelMatchesCatalog = labelOk,
+                OwnFullFaceMask = ArchitecturalShapeCatalog.GetFullFaceMask(shapeId, rotState),
+                NeighborOccludedMask = 0,
+                ExtendFoundationSkirt = false,
+                EmittedTriCount = triCnt,
+                InvertedNormalCount = invCnt,
+                OpenBoundaryEdgeCount = openEdges,
+                DegenerateTriCount = degenCnt,
+                ClaimedFullFaceGapMask = gapMask,
+                SkirtOutOfBoundsLeak = skirtLeak,
+                GhostShapeId = ghostShapeId,
+                PlacedShapeId = placedShapeId
+            });
         }
 
         private void ExecuteNaturalTerrainScatterPlacement(
@@ -3124,7 +3207,7 @@ namespace Stratocraft.Character
             }
 
             bool isCrystalScatterMode = IsCrystalActive && SelectedShapeId == 0;
-            bool showBuild = canShow && (isHoldingBuildableBlock || isCrystalScatterMode || (IsCrystalActive && Input.GetMouseButton(1)));
+            bool showBuild = canShow && (isHoldingBuildableBlock || IsCrystalActive);
             bool showFluidPreview = canShow && !showBuild && !IsCrystalActive && activeSlot == 6;
             bool showMineFrame = canShow && !showBuild && (activeSlot == 2 || activeSlot == 3 || activeSlot == 5 || showFluidPreview || IsCrystalActive);
             if (!showBuild && !showMineFrame) { if (_placementGhostGo != null) _placementGhostGo.SetActive(false); return; }
@@ -3229,7 +3312,26 @@ namespace Stratocraft.Character
         }
 
         public string FormatCrystalStockHudLine() => $"[Kristal:T{CurrentCrystalTier}({CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity}) | Alet:T{CurrentToolTier}(%{ToolDurability01 * 100f:0})] Tas:{CrystalStorage.GetCount(MaterialIdCatalog.Stone)} | Toprak:{CrystalStorage.GetCount(MaterialIdCatalog.Dirt)} | Bazalt:{CrystalStorage.GetCount(MaterialIdCatalog.Basalt)} | Kiriktas:{CrystalStorage.GetCount(MaterialIdCatalog.Cobblestone)} | Odun:{CrystalStorage.GetCount(MaterialIdCatalog.OakWood)} | Moloz:{LooseRubbleShardCount}";
-        public static string GetShapeDisplayName(byte s) => s switch { 0 => "0: Dogal Hal (Dairesel Arazi Sacilimi)", 1 => "1: Tam Kup Blok", 2 => "2: 45° Rampa", 3 => "3: Ic Kose", 4 => "4: Dis Kose", 5 => "5: Kemer", 6 => "6: Kilit Tasi", 7 => "7: Sekizgen Sutun", 63 => "63: Mikro-Blok", _ => $"Sekil #{s}" };
+        public static string GetShapeDisplayName(byte s) => s switch
+        {
+            0 => "0: Dogal Hal (Dairesel Arazi Sacilimi)",
+            ArchitecturalShapeCatalog.FullMasonryCube => "1: Tam Kup Blok",
+            ArchitecturalShapeCatalog.OctagonalColumn => "2: Sekizgen Sutun",
+            ArchitecturalShapeCatalog.Ramp45 => "3: 45° Rampa",
+            ArchitecturalShapeCatalog.ArchVoussoir => "4: Kemer Tasi (Arch)",
+            ArchitecturalShapeCatalog.TrapezoidalKeystone => "5: Kilit Tasi (Keystone)",
+            ArchitecturalShapeCatalog.BattlementMerlon => "6: Siper Mazgal",
+            ArchitecturalShapeCatalog.FacetedCrystalSpire => "7: Kristal Sivri",
+            ArchitecturalShapeCatalog.HalfSlab => "8: Yarim Doseme (Slab)",
+            ArchitecturalShapeCatalog.QuarterBeam => "9: Ceyrek Kiris (Beam)",
+            ArchitecturalShapeCatalog.Ramp22Low => "10: 22.5° Alt Rampa",
+            ArchitecturalShapeCatalog.Ramp22High => "11: 22.5° Ust Rampa",
+            ArchitecturalShapeCatalog.InnerRoofCorner45 => "12: 45° Ic Cati Kosesi",
+            ArchitecturalShapeCatalog.OuterRoofCorner45 => "13: 45° Dis Cati Kosesi",
+            ArchitecturalShapeCatalog.StairStep => "14: Merdiven Basamagi",
+            VoxelBitUtility.ChiseledMicroVoxelShapeId => "63: Mikro-Blok (4x4x4)",
+            _ => $"Sekil #{s}"
+        };
         public static float GetMaterialHardness(byte m) => m switch
         {
             MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass or MaterialIdCatalog.Sand or MaterialIdCatalog.LooseRubble or MaterialIdCatalog.GlowingMoss => 0.8f,
@@ -3281,6 +3383,7 @@ namespace Stratocraft.Character
             MaterialIdCatalog.StarCore => "Yildiz Cekirdegi",
             MaterialIdCatalog.CampfireBlock => "Kamp Atesi",
             MaterialIdCatalog.PrimitiveStoneKilnBlock => "Ilkel Tas Izabe Firini",
+            MaterialIdCatalog.BedBlock => "Yatak (Dogma Noktasi [E])",
             MaterialIdCatalog.PhoenixFeatherGold => "Anka Altin-Kor Tuyu",
             MaterialIdCatalog.CreatureFurAsh => "Yaratik Postu",
             MaterialIdCatalog.BoneIvory => "Canli Kemigi/Disi",

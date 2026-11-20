@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Character.Camera;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Voxel.Data;
 #if UNITY_5_3_OR_NEWER
 using UnityEngine;
@@ -564,8 +565,8 @@ namespace Stratocraft.Character
                     {
                         float t01 = (s + 0.5f) / segs;
                         AddBox(verts, colors, tris,
-                            new(0f, 0.04f + (s + 0.5f) * segLen, t01 * t01 * 0.075f),
-                            new(Mathf.Lerp(0.014f, 0.008f, t01), segLen * 0.52f, Mathf.Lerp(0.024f, 0.015f, t01)),
+                            new(t01 * t01 * 0.068f, 0.04f + (s + 0.5f) * segLen, 0f),
+                            new(Mathf.Lerp(0.024f, 0.015f, t01), segLen * 0.52f, Mathf.Lerp(0.011f, 0.007f, t01)),
                             muneDark, hamonBright);
                     }
                     break;
@@ -692,8 +693,10 @@ namespace Stratocraft.Character
                 return false;
             }
             _slashPhase = BallisticSlashPhase.IdleInGuard;
+            _thrustPhase = DiscreteThrustPhase.Extending;
+            _thrustPhaseTimerSec = 0f;
             _isThrustMode = true;
-            _thrustExtensionMeters = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.68f : 0.44f;
+            _thrustExtensionMeters = 0.06f;
             CurrentSwingId++;
             PendingStaminaCost += 10.0f;
             IsMorphTriggeredLastFrame = true;
@@ -1479,6 +1482,28 @@ namespace Stratocraft.Character
 
         public void NotifyBladeHitRegistered() => NotifyBladeCleaveThroughFlesh();
 
+        // Faz A.2: Sabit 240 Hz PD, sert acili kamera cekmesi ve ayrik tek-vurus saplama (Thrust) durumu
+        private DiscreteThrustPhase _thrustPhase;
+        private float _thrustPhaseTimerSec;
+        private bool _wasHoldingThrustCombo;
+        private float _pdSubstepAccumulator;
+        private float _cumulativeSwingPullDeg;
+
+        // Dalga A Derin Teshis Gecici Degiskenleri (0-GC, yalnizca WaveADeepDiagnosticProbe.Enabled iken doldurulur)
+        public int ProbePlayerStance;
+        public float ProbePlayerSpeedMps;
+        public bool LastFrameGroundSkimTriggered { get; private set; }
+        public bool LastFrameWallPushTriggered { get; private set; }
+        private float _probePiecewiseDriftDeg;
+        private float _probeSwingPullYawDeg;
+        private float _probeSwingPullPitchDeg;
+        private float _probeLiveRetargetDeg;
+        private Vector2 _probeBladeAfterPd;
+        private float _probePdOverwriteDeltaRad;
+        private float _probeEdgeRollDelta;
+        private int _probeSubstepCount;
+        private float _probeSubstepDt;
+
         public void StepCombatAndCameraInput(
             float rawMouseX,
             float rawMouseY,
@@ -1504,6 +1529,20 @@ namespace Stratocraft.Character
             float unscaledGestureMouseY = float.NaN)
         {
             float dt = Mathf.Clamp(deltaTime, 0.0005f, 0.05f);
+            float probeCamYawBefore = cameraYawDeg;
+            float probeCamPitchBefore = cameraPitchDeg;
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                _probePiecewiseDriftDeg = 0f;
+                _probeSwingPullYawDeg = 0f;
+                _probeSwingPullPitchDeg = 0f;
+                _probeLiveRetargetDeg = 0f;
+                _probeBladeAfterPd = _currentBladeAnglesRad;
+                _probePdOverwriteDeltaRad = 0f;
+                _probeEdgeRollDelta = 0f;
+                _probeSubstepCount = 0;
+                _probeSubstepDt = 0f;
+            }
             _lastStepDt = dt;
             _timeSinceLastSwingEnd += dt;
             _lastRawMouseX = rawMouseX;
@@ -1619,16 +1658,29 @@ namespace Stratocraft.Character
                               _guardBreakTimer <= 0f;
             if (IsWeaponLodged || isToolEquipped)
             {
+                _thrustPhase = DiscreteThrustPhase.Inactive;
+                _thrustPhaseTimerSec = 0f;
                 _isThrustMode = false;
                 _isParryStance = false;
+                _wasHoldingThrustCombo = false;
             }
             else
             {
-                if (!IsMorphTriggeredLastFrame)
+                bool thrustComboHeld = canEngageCombat && holdingLmb && holdingRmb && _guardBreakTimer <= 0f;
+                if (thrustComboHeld && !_wasHoldingThrustCombo && _thrustPhase == DiscreteThrustPhase.Inactive && _overswingStaggerTimer <= 0f)
                 {
-                    _isThrustMode = canEngageCombat && holdingLmb && holdingRmb && _guardBreakTimer <= 0f;
+                    _slashPhase = BallisticSlashPhase.IdleInGuard;
+                    _slashProgress01 = 0f;
+                    HasPendingToolVoxelHit = false;
+                    _thrustPhase = DiscreteThrustPhase.Extending;
+                    _thrustPhaseTimerSec = 0f;
+                    _isThrustMode = true;
+                    CurrentSwingId++;
+                    PendingStaminaCost += 9.0f;
                 }
-                _isParryStance = canEngageCombat && holdingRmb && !holdingLmb && _guardBreakTimer <= 0f;
+                _wasHoldingThrustCombo = thrustComboHeld;
+                _isThrustMode = _thrustPhase != DiscreteThrustPhase.Inactive;
+                _isParryStance = canEngageCombat && holdingRmb && !holdingLmb && !_isThrustMode && _guardBreakTimer <= 0f;
             }
 
             // CameraClutchController (0.35 rad ölü bölge, 0.85 rad yumuşak takip, 1-Euro Filter 3B titreşim süzgeci)
@@ -1669,8 +1721,9 @@ namespace Stratocraft.Character
             }
             else
             {
-                float piecewiseBonusYaw = CameraClutchController.EvaluatePiecewiseClutchDelta(_clutch.WristYawRadians) * dt * 0.35f;
-                cameraYawDeg += (clutchCamDeltaYawRad + piecewiseBonusYaw) * Mathf.Rad2Deg;
+                // Faz A.2: Hayalet yaw kaymasi (piecewiseBonusYaw) kaldirildi — fare=0 iken kamera 0.000 deg/f sabit kalir!
+                if (WaveADeepDiagnosticProbe.Enabled) _probePiecewiseDriftDeg = 0f;
+                cameraYawDeg += clutchCamDeltaYawRad * Mathf.Rad2Deg;
                 cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + clutchCamDeltaPitchRad * Mathf.Rad2Deg, -84f, 84f);
             }
 
@@ -1766,21 +1819,28 @@ namespace Stratocraft.Character
                 _slashPhase = BallisticSlashPhase.IdleInGuard;
                 _slashProgress01 = 0f;
                 HasPendingToolVoxelHit = false;
-                float thrustSpeed = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.20f : 0.11f;
-                float thrustInput = Mathf.Max(0.025f, rawMouseY * thrustSpeed);
-                float maxReach = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.82f : 0.48f;
-                _thrustExtensionMeters = Mathf.Clamp(_thrustExtensionMeters + thrustInput, 0f, maxReach);
-                CurrentSwingId++;
+                float maxReach = ActiveMartialStance == CombatMartialStance.Fencing_Punta ? 0.82f : 0.52f;
+                bool stillThrusting = MeleeBiomechanicsSolver.StepDiscreteThrust(
+                    ref _thrustPhase,
+                    ref _thrustPhaseTimerSec,
+                    ref _thrustExtensionMeters,
+                    maxReach,
+                    dt,
+                    out _);
+                _isThrustMode = stillThrusting;
             }
             else if (canEngageCombat && (holdingLmb || releasedLmb) && _slashPhase == BallisticSlashPhase.IdleInGuard && _overswingStaggerTimer <= 0f)
             {
                 if (holdingLmb &&
                     ActiveMartialStance == CombatMartialStance.Fencing_Punta &&
                     ActiveWeaponArchetype == CombatWeaponArchetype.Rapier &&
-                    rawMouseY > 0.45f && Mathf.Abs(rawMouseX) < 0.22f && _preChamberWindowTimer <= 0f)
+                    effGestureY > 0.45f && Mathf.Abs(effGestureX) < 0.22f && _preChamberWindowTimer <= 0f &&
+                    _thrustPhase == DiscreteThrustPhase.Inactive)
                 {
+                    _thrustPhase = DiscreteThrustPhase.Extending;
+                    _thrustPhaseTimerSec = 0f;
                     _isThrustMode = true;
-                    _thrustExtensionMeters = Mathf.Clamp(_thrustExtensionMeters + rawMouseY * 0.26f, 0.28f, 0.82f);
+                    _thrustExtensionMeters = 0.08f;
                     PendingStaminaCost += 8.0f;
                     CurrentSwingId++;
                     _gestureAccumulator.Reset();
@@ -1867,7 +1927,7 @@ namespace Stratocraft.Character
 
             isBladeSwingingFast = canEngageCombat && _wallRecoilCooldown <= 0f && _guardBreakTimer <= 0f &&
                                   (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing ||
-                                   (_isThrustMode && _thrustExtensionMeters >= 0.12f));
+                                   (_thrustPhase == DiscreteThrustPhase.Extending && _thrustExtensionMeters >= 0.12f));
             IsActiveAttackSwing = isBladeSwingingFast;
             IsAerialJumpStrike = isBladeSwingingFast && _isPlayerAirborne;
 
@@ -1875,6 +1935,66 @@ namespace Stratocraft.Character
                 !IsFeintTriggeredLastFrame && !IsMorphTriggeredLastFrame && !IsKickOrBashActive)
             {
                 UpdateLiveStatusText(swingDirectionAngleRad * Mathf.Rad2Deg, omegaMag, isMismatched);
+            }
+
+            if (WaveADeepDiagnosticProbe.Enabled && canEngageCombat &&
+                (holdingLmb || holdingRmb || releasedLmb || _slashPhase != BallisticSlashPhase.IdleInGuard ||
+                 _isThrustMode || _isParryStance || _thrustExtensionMeters > 0.01f || _bodyMomentumLocalVel.sqrMagnitude > 0.001f))
+            {
+                WaveADeepDiagnosticProbe.RecordCombatFrame(new WaveACombatFrameRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    RawDt = deltaTime,
+                    EffectiveDt = _hitStopTimer > 0f ? (dt * 0.14f) : dt,
+                    SubstepCount = _probeSubstepCount,
+                    SubstepDt = _probeSubstepDt,
+                    UnscaledMouseX = effGestureX,
+                    UnscaledMouseY = effGestureY,
+                    ScaledMouseX = rawMouseX,
+                    ScaledMouseY = rawMouseY,
+                    MouseSens = Stage1GameSettings.MouseSensitivity,
+                    HoldingLmb = holdingLmb,
+                    HoldingRmb = holdingRmb,
+                    WeaponArchetype = (int)ActiveWeaponArchetype,
+                    MartialStance = (int)ActiveMartialStance,
+                    SlashPhase = (int)_slashPhase,
+                    CurrentSwingId = CurrentSwingId,
+                    SlashProgress01 = _slashProgress01,
+                    IsClutchEngaged = IsClutchEngaged,
+                    ClutchWristYawRad = _clutch.WristYawRadians,
+                    ClutchWristPitchRad = _clutch.WristPitchRadians,
+                    CamYawBefore = probeCamYawBefore,
+                    CamYawAfter = cameraYawDeg,
+                    CamPitchBefore = probeCamPitchBefore,
+                    CamPitchAfter = cameraPitchDeg,
+                    DeltaYawPiecewiseDrift = _probePiecewiseDriftDeg,
+                    DeltaYawSwingPull = _probeSwingPullYawDeg,
+                    DeltaPitchSwingPull = _probeSwingPullPitchDeg,
+                    BodyMomentumX = _bodyMomentumLocalVel.x,
+                    BodyMomentumZ = _bodyMomentumLocalVel.z,
+                    SlashDirX = _slashDirUnit.x,
+                    SlashDirY = _slashDirUnit.y,
+                    LiveMouseRetargetDeltaDeg = _probeLiveRetargetDeg,
+                    BladeAfterPdX = _probeBladeAfterPd.x,
+                    BladeAfterPdY = _probeBladeAfterPd.y,
+                    BladeAfterLerpX = _currentBladeAnglesRad.x,
+                    BladeAfterLerpY = _currentBladeAnglesRad.y,
+                    PdOverwriteDeltaRad = _probePdOverwriteDeltaRad,
+                    AngularVelX = _angularVelocityRadPerSec.x,
+                    AngularVelY = _angularVelocityRadPerSec.y,
+                    EdgeRollRad = _edgeRollRad,
+                    EdgeRollDelta = _probeEdgeRollDelta,
+                    EdgeAlignment01 = _edgeAlignment01,
+                    IsFlatBladeSlap = IsFlatBladeSlap,
+                    IsThrustMode = _isThrustMode,
+                    ThrustExtMeters = _thrustExtensionMeters,
+                    IsParryStance = _isParryStance,
+                    DeflectFlickTimer = _deflectFlickTimer,
+                    IsActiveAttackSwing = IsActiveAttackSwing,
+                    PlayerStance = ProbePlayerStance,
+                    PlayerSpeedMps = ProbePlayerSpeedMps
+                });
             }
         }
 
@@ -1997,6 +2117,7 @@ namespace Stratocraft.Character
             float combinedMassFactor = (Mathf.Clamp(weaponMassScale, 0.7f, 1.8f) * archetypeMassFactor) / effectiveSpeedMult;
             _activeSlashDuration = Mathf.Clamp(0.30f * combinedMassFactor, 0.18f, 0.78f);
             _slashProgress01 = 0f;
+            _cumulativeSwingPullDeg = 0f;
             CurrentSwingId++;
 
             // Başlangıç ağız hizalaması: temiz kurulumda namlu ağzı kesim düzlemiyle hizalanır;
@@ -2032,10 +2153,32 @@ namespace Stratocraft.Character
             {
                 _slashStartAnglesRad = idealStartCorner;
                 _slashEndAnglesRad = targetEndCorner;
-                float baseRechamber = isMismatched ? 0.42f : Mathf.Clamp(0.20f * combinedMassFactor, 0.14f, 0.36f);
-                _rechamberDuration = isReversalTaxApplied ? Mathf.Max(0.20f, baseRechamber + 0.06f) : baseRechamber;
+                float baseRechamber = isMismatched ? 0.28f : Mathf.Clamp(0.14f * combinedMassFactor, 0.09f, 0.24f);
+                _rechamberDuration = isReversalTaxApplied ? Mathf.Max(0.16f, baseRechamber + 0.05f) : baseRechamber;
                 _rechamberTimer = _rechamberDuration;
                 _slashPhase = BallisticSlashPhase.ReChamberingToStart;
+            }
+
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                WaveADeepDiagnosticProbe.RecordCombatHitEvent(new WaveACombatHitEventRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    EventTag = "SwingTrigger",
+                    TargetType = ActiveWeaponArchetype.ToString(),
+                    TargetId = (int)ActiveMartialStance,
+                    SwingId = CurrentSwingId,
+                    IsThrustMode = _isThrustMode,
+                    ThrustExtMeters = _thrustExtensionMeters,
+                    HitSpeedMps = _activeSwingPower01,
+                    EdgeAlignment01 = _edgeAlignment01,
+                    IsMicroCut = IsMicroCut,
+                    FinalDamage = 0f,
+                    StaminaBefore = PendingStaminaCost,
+                    StaminaAfter = _activeSlashDuration,
+                    NoteTag = _slashPhase == BallisticSlashPhase.ActiveFullArcSwing ? "DirectFullArc" : "ReChamber"
+                });
             }
         }
 
@@ -2095,62 +2238,82 @@ namespace Stratocraft.Character
                 float stepProgress = (effectiveDt / Mathf.Max(0.12f, _activeSlashDuration)) * dragMult;
                 _slashProgress01 += stepProgress;
 
-                // FAZ C2: Balta/Kazma (isToolEquipped) savurma sırasında canlı fare yön saptırması yapmaz; sabit düzlemde iner!
-                if (!isToolEquipped && liveMouseDelta.sqrMagnitude > 0.04f)
-                {
-                    float arcScale = Mathf.Lerp(0.48f, 1.0f, _activeSwingPower01);
-                    Vector2 steeredDir = (_slashDirUnit + liveMouseDelta.normalized * 0.14f).normalized;
-                    _slashDirUnit = steeredDir;
-                    _slashEndAnglesRad = steeredDir * (1.22f * arcScale);
-                    if (_slashDirUnit.y < -0.25f)
-                    {
-                        float minOverheadEndPitchRad = (ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || isMismatched)
-                            ? -0.96f
-                            : -0.78f;
-                        _slashEndAnglesRad.y = Mathf.Max(_slashEndAnglesRad.y, minOverheadEndPitchRad);
-                    }
-                }
+                // Faz A.2: Canli fare yon saptirmasi kaldirildi (savurma yonu kilitlenir -> yorungeye girme biter!).
+                if (WaveADeepDiagnosticProbe.Enabled) _probeLiveRetargetDeg = 0f;
 
                 float s = Mathf.Clamp01(_slashProgress01);
-                GetWeaponStats(ActiveWeaponArchetype, out _, out float wMass, out _, out _);
+                GetWeaponStats(ActiveWeaponArchetype, out _, out float wMass, out float wLen, out _);
+                bool isTwoHanded = ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut ||
+                                   ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ||
+                                   ActiveWeaponArchetype == CombatWeaponArchetype.Longsword;
+                MeleeBiomechanicsResult bio = MeleeBiomechanicsSolver.ComputeEffectiveBiomechanics(
+                    wMass * Mathf.Clamp(weaponMassScale, 0.7f, 1.8f),
+                    wLen,
+                    isTwoHanded,
+                    isMismatched,
+                    ProbePlayerStance,
+                    ProbePlayerSpeedMps,
+                    _isPlayerAirborne,
+                    isActiveSwing: true,
+                    isParryStance: false);
+
                 float massRatio = Mathf.Clamp(wMass / 1.85f, 0.5f, 2.8f);
                 float smoothS = s * s * (3f - 2f * s);
                 Vector2 baseArcPos = Vector2.Lerp(_slashStartAnglesRad, _slashEndAnglesRad, smoothS);
                 Vector2 perpArc = new Vector2(-_slashDirUnit.y, _slashDirUnit.x);
-                float circularBelly = isToolEquipped ? 0.04f * Mathf.Sin(s * Mathf.PI) : Mathf.Sin(s * Mathf.PI) * 0.16f * _activeSwingPower01;
+                float circularBelly = isToolEquipped ? 0.04f * Mathf.Sin(s * Mathf.PI) : Mathf.Sin(s * Mathf.PI) * 0.14f * _activeSwingPower01;
                 float followThroughOvershoot = s > 0.78f
-                    ? Mathf.Sin(((s - 0.78f) / 0.22f) * Mathf.PI) * (0.06f * massRatio * _activeSwingPower01)
+                    ? Mathf.Sin(((s - 0.78f) / 0.22f) * Mathf.PI) * (0.05f * massRatio * _activeSwingPower01)
                     : 0f;
 
                 _targetWristAnglesRad = baseArcPos + perpArc * circularBelly + _slashDirUnit * followThroughOvershoot;
 
-                float swingSubDt = effectiveDt * 0.25f;
-                float swingMass = Mathf.Max(0.55f, weaponMassScale) / Mathf.Max(0.35f, stanceSpeedMult);
-                for (int step = 0; step < 4; step++)
+                var numAngle = new System.Numerics.Vector2(_currentBladeAnglesRad.x, _currentBladeAnglesRad.y);
+                var numOmega = new System.Numerics.Vector2(_angularVelocityRadPerSec.x, _angularVelocityRadPerSec.y);
+                var numTarget = new System.Numerics.Vector2(_targetWristAnglesRad.x, _targetWristAnglesRad.y);
+                int subSteps = MeleeBiomechanicsSolver.StepFixed240HzPd(
+                    ref numAngle,
+                    ref numOmega,
+                    numTarget,
+                    bio.EffectiveInertia,
+                    bio.KpMuscle * (isToolEquipped ? 1.35f : 1.0f),
+                    bio.KdDamping,
+                    effectiveDt,
+                    ref _pdSubstepAccumulator);
+                _currentBladeAnglesRad = new Vector2(numAngle.X, numAngle.Y);
+                _angularVelocityRadPerSec = new Vector2(numOmega.X, numOmega.Y);
+
+                if (WaveADeepDiagnosticProbe.Enabled)
                 {
-                    StepSecondOrderRotationalInertia(swingSubDt, swingMass);
+                    _probeSubstepCount = subSteps;
+                    _probeSubstepDt = MeleeBiomechanicsSolver.FixedSubstepDt;
+                    _probeBladeAfterPd = _currentBladeAnglesRad;
+                    _probePdOverwriteDeltaRad = 0f;
                 }
-                _currentBladeAnglesRad = Vector2.Lerp(_currentBladeAnglesRad, _targetWristAnglesRad, isToolEquipped ? 0.82f : 0.65f);
 
                 if (!isToolEquipped)
                 {
-                    float massPullFactor = Mathf.Pow(Mathf.Max(0.8f, wMass) / 1.85f, 1.38f) * (isMismatched ? 1.65f : 1.0f) * _activeSwingPower01;
-                    float bellWeight = Mathf.Sin(s * Mathf.PI);
-                    float clampedTotalPullDeg = Mathf.Min(isMismatched ? 32.0f : 24.5f, 7.4f * massPullFactor);
-                    float instantArcRate = stepProgress * (Mathf.PI * 0.5f) * bellWeight;
-                    float yawFollowDeg = _slashDirUnit.x * clampedTotalPullDeg * instantArcRate;
-                    float pitchFollowDeg = -_slashDirUnit.y * (clampedTotalPullDeg * 0.58f) * instantArcRate;
-                    cameraYawDeg += Mathf.Clamp(yawFollowDeg, -2.4f, 2.4f);
-                    cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + Mathf.Clamp(pitchFollowDeg, -1.5f, 1.5f), -84f, 84f);
+                    MeleeBiomechanicsSolver.EvaluateCappedBodyAndCameraPull(
+                        new System.Numerics.Vector2(_slashDirUnit.x, _slashDirUnit.y),
+                        stepProgress,
+                        s,
+                        _activeSwingPower01,
+                        bio.MaxCumulativeCameraPullDeg,
+                        bio.FootMomentumScale,
+                        ref _cumulativeSwingPullDeg,
+                        out float clampedPullYaw,
+                        out float clampedPullPitch,
+                        out System.Numerics.Vector2 footMomXZ);
+                    if (WaveADeepDiagnosticProbe.Enabled)
+                    {
+                        _probeSwingPullYawDeg = clampedPullYaw;
+                        _probeSwingPullPitchDeg = clampedPullPitch;
+                    }
+                    cameraYawDeg += clampedPullYaw;
+                    cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + clampedPullPitch, -84f, 84f);
 
-                    float inertiaSurge = Mathf.Sin(Mathf.Pow(s, 0.85f) * Mathf.PI);
-                    float lateralThrowSpeed = _slashDirUnit.x * (0.66f * massPullFactor) * inertiaSurge;
-                    float forwardThrowSpeed = (0.38f + Mathf.Abs(_slashDirUnit.y) * 0.34f) * (0.55f * massPullFactor) * inertiaSurge;
-                    Vector3 targetThrowLocalVel = new Vector3(
-                        Mathf.Clamp(lateralThrowSpeed, -3.2f, 3.2f),
-                        0f,
-                        Mathf.Clamp(forwardThrowSpeed, -1.2f, 2.8f));
-                    _bodyMomentumLocalVel = Vector3.Lerp(_bodyMomentumLocalVel, targetThrowLocalVel, Mathf.Clamp01(effectiveDt * 18f));
+                    Vector3 targetThrowLocalVel = new Vector3(footMomXZ.X, 0f, footMomXZ.Y);
+                    _bodyMomentumLocalVel = Vector3.Lerp(_bodyMomentumLocalVel, targetThrowLocalVel, Mathf.Clamp01(effectiveDt * 14f));
                 }
 
                 if (_slashProgress01 >= 1.0f)
@@ -2164,7 +2327,7 @@ namespace Stratocraft.Character
                         ? new Vector2(0.18f, 0.72f)
                         : (ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw
                             ? GetDefaultStanceGuardAngles(CombatMartialStance.Iaido_QuickDraw)
-                            : Vector2.ClampMagnitude(_currentBladeAnglesRad, 1.15f));
+                            : Vector2.ClampMagnitude(_currentBladeAnglesRad, 1.32f));
                     // Kesik bittiğinde kılıç 1 saniye boyunca bitiş açısında kalır (hızlı kombo zinciri için), sonra dik konuma döner
                     _postSlashHoldBeforeVerticalTimer = 1.05f;
                     _angularVelocityRadPerSec *= 0.25f;
@@ -2199,14 +2362,36 @@ namespace Stratocraft.Character
                 _targetWristAnglesRad = _guardAnglesRad + new Vector2(0f, tipDroopRad);
             }
 
-            float subDt = effectiveDt * 0.25f;
-            float clampedMass = Mathf.Max(0.6f, weaponMassScale) / Mathf.Max(0.35f, stanceSpeedMult);
-            for (int step = 0; step < 4; step++)
-            {
-                StepSecondOrderRotationalInertia(subDt, clampedMass);
-            }
+            GetWeaponStats(ActiveWeaponArchetype, out _, out float idleWMass, out float idleWLen, out _);
+            bool idleTwoHand = ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut ||
+                               ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ||
+                               ActiveWeaponArchetype == CombatWeaponArchetype.Longsword;
+            bool isRechambering = _slashPhase == BallisticSlashPhase.ReChamberingToStart;
+            MeleeBiomechanicsResult idleBio = MeleeBiomechanicsSolver.ComputeEffectiveBiomechanics(
+                idleWMass * Mathf.Clamp(weaponMassScale, 0.7f, 1.8f),
+                idleWLen,
+                idleTwoHand,
+                isMismatched,
+                ProbePlayerStance,
+                ProbePlayerSpeedMps,
+                _isPlayerAirborne,
+                isActiveSwing: isRechambering,
+                isParryStance: _isParryStance);
+            var idleNumAng = new System.Numerics.Vector2(_currentBladeAnglesRad.x, _currentBladeAnglesRad.y);
+            var idleNumOmega = new System.Numerics.Vector2(_angularVelocityRadPerSec.x, _angularVelocityRadPerSec.y);
+            var idleNumTarget = new System.Numerics.Vector2(_targetWristAnglesRad.x, _targetWristAnglesRad.y);
+            MeleeBiomechanicsSolver.StepFixed240HzPd(
+                ref idleNumAng,
+                ref idleNumOmega,
+                idleNumTarget,
+                idleBio.EffectiveInertia,
+                idleBio.KpMuscle,
+                idleBio.KdDamping,
+                effectiveDt,
+                ref _pdSubstepAccumulator);
+            _currentBladeAnglesRad = new Vector2(idleNumAng.X, idleNumAng.Y);
+            _angularVelocityRadPerSec = new Vector2(idleNumOmega.X, idleNumOmega.Y);
 
-            GetWeaponStats(ActiveWeaponArchetype, out _, out float idleWMass, out _, out _);
             if (_isParryStance)
             {
                 if (!isMismatched)
@@ -2268,30 +2453,17 @@ namespace Stratocraft.Character
         /// </summary>
         private void UpdateDynamicEdgeAlignment(float dt, Vector2 liveMouseFlickVec)
         {
+            float prevEdgeRoll = _edgeRollRad;
             if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing)
             {
                 Vector2 trajectoryDir = _slashDirUnit.sqrMagnitude > 0.01f ? _slashDirUnit.normalized : new Vector2(1f, 0f);
-                if (liveMouseFlickVec.sqrMagnitude > 0.35f && Vector2.Dot(liveMouseFlickVec.normalized, trajectoryDir) < -0.35f)
-                {
-                    // Kesim ortasında ani ters fare kırması -> bilek kesim düzlemini kaybeder (Flat-Blade Slap)!
-                    _edgeRollRad += 1.25f;
-                }
-
-                float desiredCutRoll = Mathf.Atan2(trajectoryDir.y, trajectoryDir.x);
-                float maxWristRollRate = 14.0f;
-                float diffDeg = Mathf.DeltaAngle(_edgeRollRad * Mathf.Rad2Deg, desiredCutRoll * Mathf.Rad2Deg);
-                float betaRad = Mathf.Abs(diffDeg) * Mathf.Deg2Rad;
-                _edgeRollRad += Mathf.Clamp(diffDeg * Mathf.Deg2Rad, -maxWristRollRate * dt, maxWristRollRate * dt);
-
-                if (betaRad > 55.0f * Mathf.Deg2Rad)
-                {
-                    _edgeAlignment01 = 0.35f;
-                }
-                else
-                {
-                    float cosBeta = Mathf.Clamp01(Mathf.Cos(betaRad));
-                    _edgeAlignment01 = Mathf.Clamp(Mathf.Lerp(0.35f, 1.0f, cosBeta), 0.85f, 1.0f);
-                }
+                _edgeRollRad = MeleeBiomechanicsSolver.StepDtIndependentEdgeRoll(
+                    _edgeRollRad,
+                    new System.Numerics.Vector2(trajectoryDir.x, trajectoryDir.y),
+                    new System.Numerics.Vector2(liveMouseFlickVec.x, liveMouseFlickVec.y),
+                    dt,
+                    out _edgeAlignment01);
+                if (WaveADeepDiagnosticProbe.Enabled) _probeEdgeRollDelta = _edgeRollRad - prevEdgeRoll;
                 return;
             }
 
@@ -2542,7 +2714,14 @@ namespace Stratocraft.Character
 
             if (isFirstPersonMode && playerCamera != null)
             {
-                Vector3 fpsShoulderPos = new Vector3(0.28f + armArcX, -0.24f + armArcY, 0.58f + _smoothedArmReachZ) + _wristRecoilOffset + organicGripSway;
+                // Faz A.2 Kalibrasyon: Govde rotasyonu dahil gogus ekseni (0.06, -0.18, 0.04) -> sol-ust dahil 360° tam erisim!
+                Vector3 rawFpsHilt = new Vector3(0.20f + armArcX * 0.92f, -0.20f + armArcY * 0.92f, 0.52f + _smoothedArmReachZ) + _wristRecoilOffset + organicGripSway;
+                var clampedNum = MeleeBiomechanicsSolver.ClampHiltToAnatomicalArmEnvelope(
+                    new System.Numerics.Vector3(0.06f, -0.18f, 0.04f),
+                    new System.Numerics.Vector3(rawFpsHilt.x, rawFpsHilt.y, rawFpsHilt.z),
+                    upperArmLen: 0.50f,
+                    forearmLen: 0.48f + (_isThrustMode ? 0.34f : 0f));
+                Vector3 fpsShoulderPos = new Vector3(clampedNum.X, clampedNum.Y, clampedNum.Z);
                 weaponPivot.position = playerCamera.transform.TransformPoint(fpsShoulderPos);
                 weaponPivot.rotation = playerCamera.transform.rotation * swingRot;
             }
@@ -2813,6 +2992,8 @@ namespace Stratocraft.Character
             // Katman 3: Yokuş Çıkarken ve IdleInGuard Durumunda Sessiz Teğetsel Sıyırma (Silent Slope Skimming)
             bool anyWallPenetrating = false;
             bool anyFloorSkimming = false;
+            LastFrameGroundSkimTriggered = false;
+            LastFrameWallPushTriggered = false;
             float maxFloorLiftNeeded = 0f;
             Vector3 wallBlockCenterWorld = Vector3.zero;
             byte penetratingMatId = 0;
@@ -2847,6 +3028,7 @@ namespace Stratocraft.Character
 
             if (anyFloorSkimming && !anyWallPenetrating)
             {
+                LastFrameGroundSkimTriggered = true;
                 // Sessiz Teğetsel Yokuş/Zemin Sıyırma: ASLA _hasPendingWallRicochet (kıvılcım/sekme) üretmez!
                 // Kılıç ucunu yokuş eğimi boyunca yumuşakça yukarı kaldırır.
                 float gentleLiftRad = Mathf.Clamp(maxFloorLiftNeeded * 0.55f, 0.04f, 0.32f);
@@ -2889,6 +3071,7 @@ namespace Stratocraft.Character
             }
             else if (anyWallPenetrating && localRef != null)
             {
+                LastFrameWallPushTriggered = true;
                 Vector3 localWallPos = localRef.InverseTransformPoint(wallBlockCenterWorld);
                 Vector2 pushAwayAngles = new Vector2(
                     localWallPos.x > 0.05f ? -1f : (localWallPos.x < -0.05f ? 1f : -Mathf.Sign(_currentBladeAnglesRad.x)),

@@ -144,11 +144,13 @@ namespace Stratocraft.Character.Data
 
         /// <summary>
         /// Karakterin belirli bir anatomik bolgesine hasar uygular ve canini eksiltir.
+        /// allowLethal = true iken 0 HP'ye inebilir (BleedOutCrawl akisi); egitim NPC'si icin false verilir (1 HP taban).
         /// </summary>
-        public float TakeDamageRegional(HitZone hitZone, float rawDamage, out float absorbedDamage, out bool isCriticalHeadshot)
+        public float TakeDamageRegional(HitZone hitZone, float rawDamage, out float absorbedDamage, out bool isCriticalHeadshot, bool allowLethal = true)
         {
             float finalDamage = CalculateRegionalDamage(hitZone, rawDamage, out absorbedDamage, out isCriticalHeadshot);
-            CurrentHp = Math.Max(1.0f, CurrentHp - finalDamage);
+            float floorHp = allowLethal ? 0.0f : 1.0f;
+            CurrentHp = Math.Max(floorHp, CurrentHp - finalDamage);
             return finalDamage;
         }
     }

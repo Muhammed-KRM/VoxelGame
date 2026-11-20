@@ -286,6 +286,13 @@ namespace Stratocraft.Character
                 n.IndexOf("Pauldron", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Shoulder", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("UpperArm", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Elbow", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Forearm", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Wrist", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Vambrace", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Gauntlet", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (_rightArmShoulderPivot != null && rt.IsChildOf(_rightArmShoulderPivot)) ||
+                (_leftArmShoulderPivot != null && rt.IsChildOf(_leftArmShoulderPivot)) ||
                 n.IndexOf("HipPivot_Vis", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Holster_", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("GoreCap", System.StringComparison.OrdinalIgnoreCase) >= 0)

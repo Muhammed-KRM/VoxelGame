@@ -348,6 +348,15 @@ namespace Stratocraft.Character
         private GUIStyle? _weatherInstrumentBannerSubStyle;
         private string _cachedCalendarHudLine = string.Empty;
         private string _cachedTimeScaleBadgeText = string.Empty;
+        private string _cachedWaveABadgeText = string.Empty;
+        private float _waveAVitalsProbeNextSampleTime;
+        // Faz A.4 & A.5: Yatak SpawnPoint, 0 HP Olum Ekrani ve Tatli Su Icme durumu
+        private readonly BedSpawnPointService _bedSpawnService = new();
+        private bool _isPlayerDeathScreenOpen;
+        private string _lastDeathReasonText = "Ağır Yaralanma / Kanama";
+        private float _freshwaterDrinkCooldownSec;
+        private Vector3 _initialWorldSpawnPos;
+        private bool _hasCapturedInitialSpawnPos;
         private float _lastCachedTimeScaleVal = -1.0f;
 
         public RegionalAtmosphereSimulationSystem RegionalAtmosphereSystem => _regionalAtmosphereSystem;
@@ -954,6 +963,14 @@ namespace Stratocraft.Character
             if (_fluidTraceRecorder.IsEnabled)
             {
                 _fluidTraceRecorder.Flush(Path.Combine(Directory.GetCurrentDirectory(), "Logs"));
+            }
+            if (FluidDeepDiagnosticProbe.Enabled)
+            {
+                FluidDeepDiagnosticProbe.EndSession(flushToDisk: true);
+            }
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                WaveADeepDiagnosticProbe.EndSession(flushToDisk: true);
             }
             _persistencePipeline?.Dispose();
             _telemetryLogger?.Dispose();
@@ -2579,9 +2596,18 @@ namespace Stratocraft.Character
             float wetMult = 1.0f + _movementBridge.Vitals.Wetness01 * 0.10f;
             float equippedMass = (activeHandheldMass + holsteredMass * 0.55f + backpackMass * 0.65f + _holsterCtrl.ShoulderLogMassKg) * wetMult;
 
-            // Henuz oyuncu icin aktif aclik/susuzluk tuketim mekanigi olmadigindan sabit tut; can/hiz dusurmesin
-            _movementBridge.Vitals.HungerKcal = 2000f;
-            _movementBridge.Vitals.ThirstHydration = 100f;
+            if (!_hasCapturedInitialSpawnPos && transform.position.y > 5f)
+            {
+                _initialWorldSpawnPos = transform.position;
+                _hasCapturedInitialSpawnPos = true;
+            }
+            if (_freshwaterDrinkCooldownSec > 0f) _freshwaterDrinkCooldownSec = Mathf.Max(0f, _freshwaterDrinkCooldownSec - dt);
+            if (_isPlayerDeathScreenOpen)
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+                return;
+            }
 
             float hpBefore = _movementBridge.Vitals.CurrentHp;
             bool flyAscendHeld = !menuOpen && Input.GetKey(KeyCode.Space);
@@ -2648,21 +2674,123 @@ namespace Stratocraft.Character
             }
             else
             {
-                _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
+                _movementBridge.Vitals.CurrentHp = Mathf.Max(0.0f, _movementBridge.Vitals.CurrentHp);
                 if (_movementBridge.Vitals.CurrentHp < hpBefore - 0.1f) _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
+                if (_movementBridge.Vitals.CurrentHp <= 0.0f)
+                {
+                    _movementBridge.MovementState.Stance = CharacterStance.BleedOutCrawl;
+                    if (!menuOpen && Input.GetKeyDown(KeyCode.R) && !_miningCtrl.IsCrystalActive)
+                    {
+                        _movementBridge.Vitals.BleedOutTimerSeconds = 0.0f;
+                        _lastDeathReasonText = "Pes Edildi (Kan Kaybı)";
+                    }
+                    if (_movementBridge.Vitals.IsDead)
+                    {
+                        _isPlayerDeathScreenOpen = true;
+                        Cursor.lockState = CursorLockMode.None;
+                        Cursor.visible = true;
+                    }
+                }
             }
             UpdateOxygenAndFloatingOrigin(dt);
+        }
+
+        private void RespawnPlayerFromDeathScreen()
+        {
+            Vector3 fallbackOrigin = _hasCapturedInitialSpawnPos
+                ? _initialWorldSpawnPos
+                : new Vector3(0.5f, StratocraftFloatingIslandWorldGen.DefaultSurfaceBaseY + 2.0f, 0.5f);
+            var resolvedNum = _bedSpawnService.ResolveRespawnPosition(
+                (wx, wy, wz) => Stage1PlayerMovementBridge.ReadWorldVoxelRaw(_worldChunks, wx, wy, wz),
+                new System.Numerics.Vector3(fallbackOrigin.x, fallbackOrigin.y, fallbackOrigin.z),
+                out _,
+                out string spawnMsg);
+            transform.position = new Vector3(resolvedNum.X, resolvedNum.Y, resolvedNum.Z);
+            _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+            _movementBridge.Vitals.Stamina = _movementBridge.Vitals.MaxStamina;
+            _movementBridge.Vitals.HungerKcal = 2000f;
+            _movementBridge.Vitals.ThirstHydration = 85f;
+            _movementBridge.Vitals.BleedOutTimerSeconds = 30.0f;
+            _movementBridge.Vitals.CoreBodyTempCelsius = 37.0f;
+            _movementBridge.Vitals.LungOxygenPercent = 100f;
+            ThermalAndBiologySystem.ClearHeavyBleeding(ref _movementBridge.Vitals, _thermalSystem);
+            _movementBridge.Vitals.ActiveDiseaseFlags = 0;
+            _movementBridge.MovementState.Stance = CharacterStance.Standing;
+            _isPlayerDeathScreenOpen = false;
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+            _miningCtrl.LastFeedbackText = spawnMsg;
         }
 
         private void StepConsumablesAndArmor(float dt)
         {
             if (_holsterCtrl.IsBackpackOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen) return;
 
-            if (_holsterCtrl.ActiveHolsterSlot == 8)
+            if (_isPlayerDeathScreenOpen) return;
+
+            // Faz A.4 & A.5: [E] ile Yatak (SpawnPoint) kaydetme, Tatli Su vokselinden dogrudan icme ve su dolu Mataradan icme
+            if (Input.GetKeyDown(KeyCode.E))
+            {
+                if (_miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 3.8f && _miningCtrl.AimMaterialId == MaterialIdCatalog.BedBlock)
+                {
+                    _bedSpawnService.SetBedSpawnPoint(_miningCtrl.AimVoxelCoord.x, _miningCtrl.AimVoxelCoord.y, _miningCtrl.AimVoxelCoord.z);
+                    _miningCtrl.LastFeedbackText =
+                        $"🛏️ YENİDEN DOĞMA NOKTASI KAYDEDİLDİ! ({_miningCtrl.AimVoxelCoord.x}, {_miningCtrl.AimVoxelCoord.y}, {_miningCtrl.AimVoxelCoord.z}) — Yatak kırılmazsa burada doğacaksınız.";
+                    return;
+                }
+
+                VisualInventorySlot eSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                if (eSlot.Kind == InventoryItemKind.ToolFluidFlask && eSlot.SubId == 1 && _freshwaterDrinkCooldownSec <= 0f)
+                {
+                    _movementBridge.Vitals.ThirstHydration = Mathf.Min(100f, _movementBridge.Vitals.ThirstHydration + 30f);
+                    _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 15f);
+                    _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Max(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius - 0.4f);
+                    if (!_holsterCtrl.IsCreativeMode)
+                    {
+                        int hIdx = _holsterCtrl.InventoryUi.SelectedHotbarIndex;
+                        var updatedFlask = _holsterCtrl.InventoryUi.HotbarSlots[hIdx];
+                        float remain = (updatedFlask.Durability01 <= 0.01f ? 1.0f : updatedFlask.Durability01) - 0.25f;
+                        if (remain <= 0.02f)
+                        {
+                            updatedFlask.SubId = 0;
+                            updatedFlask.Durability01 = 1.0f;
+                        }
+                        else
+                        {
+                            updatedFlask.Durability01 = remain;
+                        }
+                        _holsterCtrl.InventoryUi.HotbarSlots[hIdx] = updatedFlask;
+                    }
+                    _freshwaterDrinkCooldownSec = 1.2f;
+                    _miningCtrl.LastFeedbackText = $"💧 Mataradan Temiz Su İçildi (+%30 Hidrasyon | Su: %{_movementBridge.Vitals.ThirstHydration:0})";
+                    return;
+                }
+
+                if (_freshwaterDrinkCooldownSec <= 0f && eSlot.Kind != InventoryItemKind.ToolFluidFlask && TryDetectNearbyFreshwaterForDrinking())
+                {
+                    _movementBridge.Vitals.ThirstHydration = Mathf.Min(100f, _movementBridge.Vitals.ThirstHydration + 25f);
+                    _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Max(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius - 0.3f);
+                    _freshwaterDrinkCooldownSec = 1.5f;
+                    _miningCtrl.LastFeedbackText = $"💧 Doğal Tatlı Sudan Avuçla İçildi (+%25 Hidrasyon | Su: %{_movementBridge.Vitals.ThirstHydration:0})";
+                    return;
+                }
+            }
+
+            // Faz A.5 (SS #13 Onarimi): ActiveHolsterSlot == 8 kilidi kaldirildi!
+            // Oyuncu hotbar 0..9 hangi slotta olursa olsun elinde tuketilebilir esya varsa sol/sag tikla tuketebilir!
+            VisualInventorySlot activeConsumableSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            bool isConsumableInHand = !activeConsumableSlot.IsEmpty &&
+                                      (activeConsumableSlot.Kind == InventoryItemKind.PotionHealth ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.PotionStamina ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.MedicalBandage ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.FoodCookedMeat ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.FoodWildBerries ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.FoodCleanWater);
+            if (isConsumableInHand && !_miningCtrl.IsCrystalActive)
             {
                 if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0))
                 {
-                    VisualInventorySlot slot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                    VisualInventorySlot slot = activeConsumableSlot;
                     if (slot.Kind == InventoryItemKind.FoodCleanWater &&
                         Input.GetMouseButtonDown(1) &&
                         (_campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
@@ -2678,7 +2806,12 @@ namespace Stratocraft.Character
                             if (_movementBridge.Vitals.CurrentHp < _movementBridge.Vitals.MaxHp || _holsterCtrl.IsCreativeMode)
                             {
                                 _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 45f);
-                                feedback = "Şifalı Can İksiri İçildi (+45 Can!)";
+                                if (_movementBridge.MovementState.Stance == CharacterStance.BleedOutCrawl)
+                                {
+                                    _movementBridge.MovementState.Stance = CharacterStance.Standing;
+                                    _movementBridge.Vitals.BleedOutTimerSeconds = 30f;
+                                }
+                                feedback = "🧪 Şifalı Can İksiri İçildi (+45 Can!)";
                                 consumed = true;
                             }
                             else
@@ -2692,7 +2825,7 @@ namespace Stratocraft.Character
                             {
                                 _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 60f);
                                 _movementBridge.MovementState.IsExhaustedStaminaLock = 0;
-                                feedback = "Dayanıklılık İksiri İçildi (+60 Enerji, Yorgunluk Silindi!)";
+                                feedback = "⚡ Dayanıklılık İksiri İçildi (+60 Enerji, Yorgunluk Silindi!)";
                                 consumed = true;
                             }
                             else
@@ -2702,39 +2835,85 @@ namespace Stratocraft.Character
                             break;
 
                         case InventoryItemKind.MedicalBandage:
-                            if (_movementBridge.Vitals.CurrentHp < _movementBridge.Vitals.MaxHp || _holsterCtrl.IsCreativeMode)
+                        {
+                            bool isBleeding = (_movementBridge.Vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0;
+                            bool isDowned = _movementBridge.MovementState.Stance == CharacterStance.BleedOutCrawl || _movementBridge.Vitals.CurrentHp <= 0f;
+                            if (_movementBridge.Vitals.CurrentHp < _movementBridge.Vitals.MaxHp || isBleeding || isDowned || _holsterCtrl.IsCreativeMode)
                             {
                                 _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 25f);
-                                feedback = "Tıbbi Bandaj Sarıldı (+25 Can, Yaralar Sarıldı)";
+                                ThermalAndBiologySystem.ClearHeavyBleeding(ref _movementBridge.Vitals, _thermalSystem);
+                                if (isDowned)
+                                {
+                                    _movementBridge.MovementState.Stance = CharacterStance.Standing;
+                                    _movementBridge.Vitals.BleedOutTimerSeconds = 30.0f;
+                                    feedback = "🩹 ACİL BANDAJ! Kanama durduruldu ve ayağa kalktınız (+25 Can)!";
+                                }
+                                else
+                                {
+                                    feedback = "🩹 Tıbbi Bandaj Sarıldı (+25 Can, Ağır Kanama Temizlendi!)";
+                                }
                                 consumed = true;
                             }
+                            else
+                            {
+                                _miningCtrl.LastFeedbackText = "Can dolu ve aktif kanama yok!";
+                            }
                             break;
+                        }
 
                         case InventoryItemKind.FoodCookedMeat:
                             _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 35f);
                             _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 40f);
+                            _movementBridge.Vitals.HungerKcal = Mathf.Min(2500f, _movementBridge.Vitals.HungerKcal + 650f);
                             _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Min(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius + 0.8f);
-                            feedback = "🍖 Pişmiş Et Yendi (+35 Can, +40 Enerji, +0.8°C Vücut Isındı)";
+                            feedback = $"🍖 Pişmiş Et Yendi (+35 Can, +40 EP, +650 kcal | Tokluk: %{_movementBridge.Vitals.HungerKcal / 25f:0})";
                             consumed = true;
                             break;
 
                         case InventoryItemKind.FoodWildBerries:
                             _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 12f);
                             _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 20f);
-                            feedback = "Yabani Meyve Yendi (+12 Can, +20 Enerji)";
+                            _movementBridge.Vitals.HungerKcal = Mathf.Min(2500f, _movementBridge.Vitals.HungerKcal + 180f);
+                            _movementBridge.Vitals.ThirstHydration = Mathf.Min(100f, _movementBridge.Vitals.ThirstHydration + 8f);
+                            feedback = $"🫐 Yabani Meyve Yendi (+12 Can, +180 kcal, +%8 Su)";
                             consumed = true;
                             break;
 
                         case InventoryItemKind.FoodCleanWater:
-                            _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 35f);
+                            _movementBridge.Vitals.ThirstHydration = Mathf.Min(100f, _movementBridge.Vitals.ThirstHydration + 35f);
+                            _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 20f);
                             _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Max(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius - 0.5f);
-                            feedback = "Temiz Kaynak Suyu İçildi (+35 Enerji, Ferahlatıcı)";
+                            feedback = $"💧 Temiz Kaynak Suyu İçildi (+%35 Hidrasyon, +20 EP | Su: %{_movementBridge.Vitals.ThirstHydration:0})";
                             consumed = true;
                             break;
                     }
 
                     if (consumed)
                     {
+                        if (WaveADeepDiagnosticProbe.Enabled)
+                        {
+                            WaveADeepDiagnosticProbe.RecordPlayerVitals(new WaveAPlayerVitalsRecord
+                            {
+                                FrameIndex = Time.frameCount,
+                                TimeSec = Time.time,
+                                CurrentHp = _movementBridge.Vitals.CurrentHp,
+                                MaxHp = _movementBridge.Vitals.MaxHp,
+                                Stamina = _movementBridge.Vitals.Stamina,
+                                HungerKcal = _movementBridge.Vitals.HungerKcal,
+                                ThirstHydration = _movementBridge.Vitals.ThirstHydration,
+                                HungerForcedReset = false,
+                                ThirstForcedReset = false,
+                                CoreTempC = _movementBridge.Vitals.CoreBodyTempCelsius,
+                                AmbientTempC = _ambientTempCelsius,
+                                Wetness01 = _movementBridge.Vitals.Wetness01,
+                                LungOxygenPct = _movementBridge.Vitals.LungOxygenPercent,
+                                BleedRateHpPerSec = (_movementBridge.Vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 ? 1.5f : 0f,
+                                Stance = (int)_movementBridge.MovementState.Stance,
+                                BleedOutTimerSec = _movementBridge.Vitals.BleedOutTimerSeconds,
+                                IsCreativeMode = _holsterCtrl.IsCreativeMode,
+                                ConsumableEventTag = slot.Kind.ToString()
+                            });
+                        }
                         if (!_holsterCtrl.IsCreativeMode)
                         {
                             _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
@@ -3025,6 +3204,11 @@ namespace Stratocraft.Character
             float rawMouseY = lockCamForUi ? 0f : Input.GetAxis("Mouse Y") * ySign;
             float mouseX = rawMouseX * sens;
             float mouseY = rawMouseY * sens;
+            // Faz A.2: Biyomekanik cozucu durus ve hareket hizini her kare kullanir (0-GC)
+            _combatBridge.ProbePlayerStance = (int)_movementBridge.MovementState.Stance;
+            float pvx = _movementBridge.MovementState.VelocityX;
+            float pvz = _movementBridge.MovementState.VelocityZ;
+            _combatBridge.ProbePlayerSpeedMps = Mathf.Sqrt(pvx * pvx + pvz * pvz);
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
                 !lockCamForUi && Input.GetMouseButton(0), !lockCamForUi && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
@@ -3038,10 +3222,27 @@ namespace Stratocraft.Character
                                        Stage1GameSettings.StaminaDrainMultiplier;
             if (combatStaminaDrain > 0f)
             {
+                float stamBefore = _movementBridge.Vitals.Stamina;
                 PhysicalCharacterControllerSystem.ConsumeStamina(
                     ref _movementBridge.Vitals,
                     ref _movementBridge.MovementState,
                     combatStaminaDrain);
+                if (WaveADeepDiagnosticProbe.Enabled)
+                {
+                    WaveADeepDiagnosticProbe.RecordCombatHitEvent(new WaveACombatHitEventRecord
+                    {
+                        FrameIndex = Time.frameCount,
+                        TimeSec = Time.time,
+                        EventTag = "StaminaDrain_PlayController",
+                        TargetType = "Player",
+                        TargetId = slot,
+                        SwingId = _combatBridge.CurrentSwingId,
+                        FinalDamage = combatStaminaDrain,
+                        StaminaBefore = stamBefore,
+                        StaminaAfter = _movementBridge.Vitals.Stamina,
+                        NoteTag = "PlayController"
+                    });
+                }
             }
             if (_combatBridge.IsFeintTriggeredLastFrame || _combatBridge.IsMorphTriggeredLastFrame || _combatBridge.IsKickOrBashActive)
             {
@@ -3054,6 +3255,17 @@ namespace Stratocraft.Character
                 _movementBridge.ApplyWeaponMomentumHorizontalStep(transform, _worldChunks, weaponMomentumDelta, dt);
             }
 
+            // Faz A.2: 1 kare bayat FPS kamerasi giderildi — StepRigAnimation (UpdateCameraPose) silah transformundan ONCE calisir!
+            UnityEngine.Camera? rigCam = (_stoneKnappingCtrl.IsBusy && _stoneKnappingCtrl.Phase != Stage1StoneKnappingController.KnappingSessionPhase.RadialTemplateMenu)
+                ? null
+                : PlayerCamera;
+            _rigAnimator.StepRigAnimation(
+                transform, PlayerBodyRoot, rigCam, LeftWristCrystalTransform,
+                in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
+                _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
+                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
+                _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01);
+
             Transform? activeTool = slot == 2 && PickaxeVisualRoot != null
                 ? PickaxeVisualRoot.transform
                 : (slot == 3 && AxeVisualRoot != null
@@ -3063,6 +3275,34 @@ namespace Stratocraft.Character
                         : (slot == 1 ? WeaponPivot : null)));
             _combatBridge.ApplyInertialWeaponTransform(
                 activeTool, PlayerCamera, _weaponBaseLocalPos, _weaponBaseLocalRot, _isFirstPersonMode, _worldChunks, slot);
+            if (WaveADeepDiagnosticProbe.Enabled && PlayerCamera != null &&
+                (_combatBridge.IsActiveAttackSwing || _combatBridge.IsChamberingOrSwinging || _combatBridge.IsParryStance))
+            {
+                Vector3 camPosBeforeRig = PlayerCamera.transform.position;
+                Vector3 camEulerBeforeRig = PlayerCamera.transform.eulerAngles;
+                Vector3 hiltW = activeTool != null ? activeTool.position : Vector3.zero;
+                Vector3 tipW = _combatBridge.AreBladePointsValid ? _combatBridge.CurrBladeWorldPoints[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1] : hiltW;
+                WaveADeepDiagnosticProbe.BeginTransformLagSample(new WaveACombatTransformLagRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    IsFirstPerson = _isFirstPersonMode,
+                    CamYawAtWeapon = camEulerBeforeRig.y,
+                    CamPitchAtWeapon = camEulerBeforeRig.x > 180f ? camEulerBeforeRig.x - 360f : camEulerBeforeRig.x,
+                    CamPosAtWeaponX = camPosBeforeRig.x,
+                    CamPosAtWeaponY = camPosBeforeRig.y,
+                    CamPosAtWeaponZ = camPosBeforeRig.z,
+                    BladeSpeedMps = _combatBridge.BladeLocalSwingSpeedMetersPerSec,
+                    TipWorldX = tipW.x,
+                    TipWorldY = tipW.y,
+                    TipWorldZ = tipW.z,
+                    HiltWorldX = hiltW.x,
+                    HiltWorldY = hiltW.y,
+                    HiltWorldZ = hiltW.z,
+                    GroundSkimTriggered = _combatBridge.LastFrameGroundSkimTriggered,
+                    WallPushTriggered = _combatBridge.LastFrameWallPushTriggered
+                });
+            }
             _combatBridge.StepFirstPersonBareFistVisuals(
                 PlayerCamera, SharedVoxelMaterial, _isFirstPersonMode, slot, _miningCtrl.IsCrystalActive);
             _creatureBridge.EvaluateBareFistPunch(
@@ -3099,22 +3339,25 @@ namespace Stratocraft.Character
             }
             else
             {
-                _movementBridge.Vitals.CurrentHp = Mathf.Max(1.0f, _movementBridge.Vitals.CurrentHp);
+                _movementBridge.Vitals.CurrentHp = Mathf.Max(0.0f, _movementBridge.Vitals.CurrentHp);
                 if (_movementBridge.Vitals.CurrentHp < hpBeforeAi - 0.1f)
                 {
                     _holsterCtrl.NotifyPlayerDamaged(_miningCtrl);
                 }
             }
 
-            UnityEngine.Camera? rigCam = (_stoneKnappingCtrl.IsBusy && _stoneKnappingCtrl.Phase != Stage1StoneKnappingController.KnappingSessionPhase.RadialTemplateMenu)
-                ? null
-                : PlayerCamera;
-            _rigAnimator.StepRigAnimation(
-                transform, PlayerBodyRoot, rigCam, LeftWristCrystalTransform,
-                in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
-                _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
-                _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
-                _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01);
+            if (WaveADeepDiagnosticProbe.Enabled && PlayerCamera != null)
+            {
+                Vector3 camPosAfterRig = PlayerCamera.transform.position;
+                Vector3 camEulerAfterRig = PlayerCamera.transform.eulerAngles;
+                WaveADeepDiagnosticProbe.CompleteTransformLagSample(
+                    Time.frameCount,
+                    camEulerAfterRig.y,
+                    camEulerAfterRig.x > 180f ? camEulerAfterRig.x - 360f : camEulerAfterRig.x,
+                    camPosAfterRig.x,
+                    camPosAfterRig.y,
+                    camPosAfterRig.z);
+            }
 
             if (!_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_recipeBookUi.IsOpen)
             {
@@ -3338,6 +3581,25 @@ namespace Stratocraft.Character
                 _miningCtrl.LastFeedbackText = nextTraceState
                     ? "[INSERT] DERIN SIVI TESHIS PROBU + TELEMETRI KAYDI ACIK (Logs/fluid_deep_probe_*.jsonl)!"
                     : "[INSERT] DERIN SIVI TESHIS PROBU KAYDEDILDI & KAPATILDI";
+            }
+            if (Input.GetKeyDown(KeyCode.Home))
+            {
+                if (!WaveADeepDiagnosticProbe.Enabled)
+                {
+                    string waveAPath = Path.Combine(
+                        Directory.GetCurrentDirectory(),
+                        "Logs",
+                        $"waveA_deep_probe_{DateTime.Now:yyyyMMdd_HHmmss}.jsonl");
+                    WaveADeepDiagnosticProbe.BeginSession("PlayMode_WaveA", waveAPath);
+                    _miningCtrl.LastFeedbackText =
+                        "[HOME] DALGA-A DERIN TESHIS PROBU ACIK! (Kilic/Canli/Biyoloji/Mimari -> Logs/waveA_deep_probe_*.jsonl)";
+                }
+                else
+                {
+                    WaveADeepDiagnosticProbe.EndSession(flushToDisk: true);
+                    _miningCtrl.LastFeedbackText =
+                        "[HOME] DALGA-A DERIN TESHIS PROBU KAYDEDILDI & KAPATILDI (Logs/waveA_deep_probe_*_summary.txt)";
+                }
             }
         }
 
@@ -3681,8 +3943,30 @@ namespace Stratocraft.Character
                 _movementBridge.Vitals.CoreBodyTempCelsius = 37.0f;
                 _movementBridge.Vitals.Wetness01 = 0f;
                 _movementBridge.Vitals.LungOxygenPercent = 100f;
-                _movementBridge.Vitals.ActiveDiseaseFlags = 0;
-                _ambientTempCelsius = 21.0f;
+                _ambientTempCelsius = StratocraftFloatingIslandWorldGen.SampleSurfaceBiomeBaseTemperatureCelsius(
+                    transform.position.x, transform.position.z);
+                _thermalSystem.SyncWindChillFallbackCelsius(_ambientTempCelsius);
+                // Faz A.4 & A.5: Cevresel sicaklik efektleri kapali olsa da Hayatta Kalma aclik/susuzluk & 30sn BleedOut calisir!
+                bool activeEffort = _movementBridge.MovementState.CurrentSpeedMetersPerSec > 4.2f || _combatBridge.IsActiveAttackSwing;
+                ThermalAndBiologySystem.StepSurvivalMetabolismAndBleedOut(
+                    ref _movementBridge.Vitals, dt, _holsterCtrl.IsCreativeMode, activeEffort);
+                if (WaveADeepDiagnosticProbe.Enabled && Time.time >= _waveAVitalsProbeNextSampleTime)
+                {
+                    _waveAVitalsProbeNextSampleTime = Time.time + 0.5f;
+                    WaveADeepDiagnosticProbe.RecordPlayerVitals(new WaveAPlayerVitalsRecord
+                    {
+                        FrameIndex = Time.frameCount, TimeSec = Time.time,
+                        CurrentHp = _movementBridge.Vitals.CurrentHp, MaxHp = _movementBridge.Vitals.MaxHp,
+                        Stamina = _movementBridge.Vitals.Stamina, HungerKcal = _movementBridge.Vitals.HungerKcal,
+                        ThirstHydration = _movementBridge.Vitals.ThirstHydration,
+                        HungerForcedReset = false, ThirstForcedReset = false,
+                        CoreTempC = _movementBridge.Vitals.CoreBodyTempCelsius, AmbientTempC = _ambientTempCelsius,
+                        Wetness01 = _movementBridge.Vitals.Wetness01, LungOxygenPct = _movementBridge.Vitals.LungOxygenPercent,
+                        BleedRateHpPerSec = (_movementBridge.Vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 ? 1.5f : 0f,
+                        Stance = (int)_movementBridge.MovementState.Stance, BleedOutTimerSec = _movementBridge.Vitals.BleedOutTimerSeconds,
+                        IsCreativeMode = _holsterCtrl.IsCreativeMode, ConsumableEventTag = string.Empty
+                    });
+                }
                 return;
             }
 
@@ -3831,21 +4115,82 @@ namespace Stratocraft.Character
                 _holsterCtrl.InventoryUi.LastThermalGearSummary = gearSummary;
             }
 
-            _movementBridge.Vitals.HungerKcal = 2000f;
-            _movementBridge.Vitals.ThirstHydration = 100f;
+            // Faz A.4 & A.5: Zorla 2000/100 sifirlama ve 20 HP taban kilidi kaldirildi!
             _holsterCtrl.InventoryUi.SyncEquippedArmorToVitals(ref _movementBridge.Vitals);
-            _thermalSystem.StepBiologyWithThermalGear(
-                ref _movementBridge.Vitals,
-                airTempCelsius: _ambientTempCelsius,
-                localWindSpeedMps: localWindForThermal,
-                in gearSummary,
-                deltaTime: dt,
-                isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f ||
-                                     (hasOpenSkyAbovePlayer && openSkyLiquidEquivalentMmHr > 0.25f));
+            if (_holsterCtrl.IsCreativeMode)
+            {
+                _movementBridge.Vitals.HungerKcal = 2500f;
+                _movementBridge.Vitals.ThirstHydration = 100f;
+                _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
+                _movementBridge.Vitals.BleedOutTimerSeconds = 30.0f;
+            }
+            else
+            {
+                _thermalSystem.StepBiologyWithThermalGear(
+                    ref _movementBridge.Vitals,
+                    airTempCelsius: _ambientTempCelsius,
+                    localWindSpeedMps: localWindForThermal,
+                    in gearSummary,
+                    deltaTime: dt,
+                    isSubmergedOrInRain: _movementBridge.Vitals.SubmergedDepthMeters > 0.05f ||
+                                         (hasOpenSkyAbovePlayer && openSkyLiquidEquivalentMmHr > 0.25f));
+                if (_movementBridge.Vitals.CurrentHp > 0.0f)
+                {
+                    _movementBridge.Vitals.BleedOutTimerSeconds = 30.0f;
+                }
+            }
             _holsterCtrl.InventoryUi.LastEffectiveWindChillCelsius = _thermalSystem.EffectiveWindChillCelsius;
 
-            // Usume veya sicaklama yuzunden karakterin HP'si 0'a inip yere dusmesi (BleedOutCrawl) ve bir daha kalkamamasi engellenir!
-            _movementBridge.Vitals.CurrentHp = Mathf.Max(20.0f, _movementBridge.Vitals.CurrentHp);
+            if (WaveADeepDiagnosticProbe.Enabled && Time.time >= _waveAVitalsProbeNextSampleTime)
+            {
+                _waveAVitalsProbeNextSampleTime = Time.time + 0.5f;
+                WaveADeepDiagnosticProbe.RecordPlayerVitals(new WaveAPlayerVitalsRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    CurrentHp = _movementBridge.Vitals.CurrentHp,
+                    MaxHp = _movementBridge.Vitals.MaxHp,
+                    Stamina = _movementBridge.Vitals.Stamina,
+                    HungerKcal = _movementBridge.Vitals.HungerKcal,
+                    ThirstHydration = _movementBridge.Vitals.ThirstHydration,
+                    HungerForcedReset = false,
+                    ThirstForcedReset = false,
+                    CoreTempC = _movementBridge.Vitals.CoreBodyTempCelsius,
+                    AmbientTempC = _ambientTempCelsius,
+                    Wetness01 = _movementBridge.Vitals.Wetness01,
+                    LungOxygenPct = _movementBridge.Vitals.LungOxygenPercent,
+                    BleedRateHpPerSec = (_movementBridge.Vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 ? 1.5f : 0f,
+                    Stance = (int)_movementBridge.MovementState.Stance,
+                    BleedOutTimerSec = _movementBridge.Vitals.BleedOutTimerSeconds,
+                    IsCreativeMode = _holsterCtrl.IsCreativeMode,
+                    ConsumableEventTag = string.Empty
+                });
+            }
+        }
+
+        private bool TryDetectNearbyFreshwaterForDrinking()
+        {
+            if (_movementBridge.Vitals.SubmergedDepthMeters > 0.05f) return true;
+            if (PlayerCamera == null) return false;
+            Vector3 origin = PlayerCamera.transform.position;
+            Vector3 dir = PlayerCamera.transform.forward;
+            for (float d = 0.5f; d <= 3.6f; d += 0.35f)
+            {
+                Vector3 p = origin + dir * d;
+                int wx = Mathf.FloorToInt(p.x), wy = Mathf.FloorToInt(p.y), wz = Mathf.FloorToInt(p.z);
+                if (wy < 1 || wy >= MaxEditableVoxelY) continue;
+                int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+                int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
+                if (_fluidChunks.TryGetValue((cx, cz), out ushort[]? f) && f != null)
+                {
+                    var fc = new FluidCell16(f[(wy << 8) | ((wz - cz * 16) << 4) | (wx - cx * 16)]);
+                    if (fc.Type == FluidType.Water && fc.Mass >= 8)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private void ClearAllWorldBushes()
@@ -6089,7 +6434,43 @@ namespace Stratocraft.Character
                 isSubmerged: _movementBridge.Vitals.SubmergedDepthMeters > 0.1f,
                 coreBodyTemp: _movementBridge.Vitals.CoreBodyTempCelsius,
                 showDebugHints: _showDebugHudText,
-                isCreativeMode: _holsterCtrl.IsCreativeMode);
+                isCreativeMode: _holsterCtrl.IsCreativeMode,
+                hungerKcal: _movementBridge.Vitals.HungerKcal,
+                thirstHydration: _movementBridge.Vitals.ThirstHydration);
+
+            // Faz A.4: 30 sn BleedOutCrawl uyari bandi ve Tam Olum & Yeniden Dogma Ekrani
+            if (!_holsterCtrl.IsCreativeMode && _movementBridge.Vitals.IsDownedBleedOut && !_isPlayerDeathScreenOpen)
+            {
+                Color prevC = GUI.color;
+                GUI.color = new Color(0.95f, 0.14f, 0.14f, 0.96f);
+                GUI.Box(
+                    new Rect(cx - 280f, Screen.height * 0.28f, 560f, 54f),
+                    $"🩸 AĞIR YARALISINIZ (KAN KAYBI: {_movementBridge.Vitals.BleedOutTimerSeconds:0.0} sn)\n" +
+                    "Tıbbi Bandaj kullanarak ayağa kalkın veya [R] tuşu ile pes edin!",
+                    _tooltipStyle);
+                GUI.color = prevC;
+            }
+            if (_isPlayerDeathScreenOpen)
+            {
+                Color prevC = GUI.color;
+                GUI.color = new Color(0.06f, 0.02f, 0.02f, 0.86f);
+                GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), string.Empty);
+                GUI.color = new Color(1.0f, 0.25f, 0.25f, 1.0f);
+                GUI.Box(
+                    new Rect(cx - 240f, Screen.height * 0.34f, 480f, 150f),
+                    $"☠️ ÖLDÜNÜZ ☠️\n\nSebep: {_lastDeathReasonText}\n" +
+                    (_bedSpawnService.HasBedSpawn
+                        ? $"Kayıtlı Yatak: ({_bedSpawnService.BedX}, {_bedSpawnService.BedY}, {_bedSpawnService.BedZ})"
+                        : "Kayıtlı Yatak Yok (Başlangıç Noktasında Doğulacak)"),
+                    _tooltipStyle);
+                GUI.color = new Color(0.25f, 0.85f, 0.42f, 1.0f);
+                if (GUI.Button(new Rect(cx - 140f, Screen.height * 0.34f + 104f, 280f, 34f),
+                    _bedSpawnService.HasBedSpawn ? "🛏️ YATAKTA YENİDEN DOĞ" : "🏠 BAŞLANGIÇTA YENİDEN DOĞ"))
+                {
+                    RespawnPlayerFromDeathScreen();
+                }
+                GUI.color = prevC;
+            }
 
             if (_holsterCtrl.IsCreativeMode)
             {
@@ -6175,7 +6556,7 @@ namespace Stratocraft.Character
                     GUI.color = new Color(0.65f, 0.92f, 1.0f, 1.0f);
                     _thermalAlertStyle.normal.textColor = new Color(0.75f, 0.96f, 1.0f, 1.0f);
                     string freezeMsg =
-                        $"❄ USUME / HIPOTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.1}°C | Ortam: {_ambientTempCelsius:0.1}°C\n" +
+                        $"❄ USUME / HIPOTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C\n" +
                         $"[ESC] Menuden Cevre Etkilerini kapatabilir veya [F11] ile Iklim degistirebilirsiniz.";
                     GUI.Box(new Rect(cx - 380f, 14f, 760f, 42f), freezeMsg, _thermalAlertStyle);
                 }
@@ -6189,7 +6570,7 @@ namespace Stratocraft.Character
                     GUI.color = new Color(1.0f, 0.78f, 0.35f, 1.0f);
                     _thermalAlertStyle.normal.textColor = new Color(1.0f, 0.85f, 0.45f, 1.0f);
                     string heatMsg =
-                        $"🔥 ASIRI ISINMA / HIPERTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.1}°C | Ortam: {_ambientTempCelsius:0.1}°C\n" +
+                        $"🔥 ASIRI ISINMA / HIPERTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C\n" +
                         $"Suya girin veya [ESC] Menuden Cevre Etkilerini kapatin.";
                     GUI.Box(new Rect(cx - 380f, 14f, 760f, 42f), heatMsg, _thermalAlertStyle);
                 }
@@ -6228,20 +6609,23 @@ namespace Stratocraft.Character
                     string windmillSummary = _windmillCtrl.ActiveWindmillCount > 0
                         ? $"{_windmillCtrl.ActiveWindmillCount} aktif ({_windmillCtrl.GetWindmillState(0).LastMechanicalPowerWatts:0}W)"
                         : "0 aktif ([T]->[5])";
+                    PrecipitationKind hudPrecipKind = (_currentPlayerAtmosphereCell.ActiveKind == PrecipitationKind.Snow && _ambientTempCelsius > 3.0f)
+                        ? (_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour > 0.1f ? PrecipitationKind.Rain : PrecipitationKind.None)
+                        : _currentPlayerAtmosphereCell.ActiveKind;
                     _cachedMainHudString =
                         $"Stratocraft (Paket 4B) | {fps} FPS | Seed: {StratocraftFloatingIslandWorldGen.ActiveWorldSeed}\n" +
                         $"XYZ: {pos.x:0.0} / {pos.y:0.0} / {pos.z:0.0}  [Chunk: {pCx}, {pCz}]\n" +
                         $"Yon: {compass} ({normYaw:0}°) | Kamera: {(_isFirstPersonMode ? "FPS" : "TPS")} [F5]\n" +
-                        $"{biomeLabel} | Hava: {_ambientTempCelsius:0.1}°C | WindChill: {_thermalSystem.EffectiveWindChillCelsius:0.1}°C (Vucut: {vt.CoreBodyTempCelsius:0.1}°C)\n" +
-                        $"Giysi: {_thermalSystem.TotalEffectiveClo:0.00} clo | Kopru: -{_thermalSystem.ThermalBridgePenaltyWatts:0}W | Islak: %{gear.AverageWetness01 * 100f:0} | DonmaCezasi: %{gear.MovementStiffnessPenalty01 * 100f:0}\n" +
-                        $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.1} hPa | Faz: {_currentPlayerAtmosphereCell.ActiveKind} ({_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.1} mm/s)\n" +
-                        $"Ruzgar 3B: {_currentPlayerLocalWind3D.SpeedMps:0.1} m/s (Bft {_currentWindBeaufortScale}, Siper: %{(1f - _currentPlayerLocalWind3D.UpwindExposure01) * 100f:0}, Bora: +{_currentPlayerLocalWind3D.InstantGustBonusMps:0.1})\n" +
+                        $"{biomeLabel} | Hava: {_ambientTempCelsius:0.0}°C | WindChill: {_thermalSystem.EffectiveWindChillCelsius:0.0}°C (Vucut: {vt.CoreBodyTempCelsius:0.0}°C)\n" +
+                        $"Giysi: {_thermalSystem.TotalEffectiveClo:0.00} clo | Kopru: -{_thermalSystem.ThermalBridgePenaltyWatts:0}W | Islak: %{gear.AverageWetness01 * 100f:0} | Tok: %{vt.HungerKcal / 25f:0} | Su: %{vt.ThirstHydration:0}\n" +
+                        $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.0} hPa | Faz: {hudPrecipKind} ({_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.0} mm/s)\n" +
+                        $"Ruzgar 3B: {_currentPlayerLocalWind3D.SpeedMps:0.0} m/s (Bft {_currentWindBeaufortScale}, Siper: %{(1f - _currentPlayerLocalWind3D.UpwindExposure01) * 100f:0}, Bora: +{_currentPlayerLocalWind3D.InstantGustBonusMps:0.0})\n" +
                         $"Kar SWE: {_lastPlayerSnowColumnSweMm:0} mm ({_snowSystem.ActiveSnowChunkCount} chunk) | Degirmen: {windmillSummary} | Su a={_fluidSubTickAlpha01:0.00} ({_fluidKinematicsPool.LeasedCount}/{ActiveChunkFluidKinematicsPool.HardMaxSlices})\n" +
                         $"Chunk: {VisibleChunkCount}/{_worldChunks.Count} (Menzil: {ActiveChunkRadius}) | Hareket: {st.Stance} ({st.CurrentSpeedMetersPerSec:0.0} m/s)";
 
                     // SAG-UST KUTU (Minecraft F3 Sag Sutun: Hedef Blok + Yogunluk/Hasar/Mesafe, Silah/Stil, Kristal, Kisa Tuslar)
                     string targetLine = _miningCtrl.HasAimHit
-                        ? $"Hedef: {_miningCtrl.AimVoxelCoord.x},{_miningCtrl.AimVoxelCoord.y},{_miningCtrl.AimVoxelCoord.z} {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.AimMaterialId)} (Y:{_miningCtrl.AimDensity} H:{_miningCtrl.AimDamageState}/15) [{_miningCtrl.AimHit.distance:0.1}m]"
+                        ? $"Hedef: {_miningCtrl.AimVoxelCoord.x},{_miningCtrl.AimVoxelCoord.y},{_miningCtrl.AimVoxelCoord.z} {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.AimMaterialId)} (Y:{_miningCtrl.AimDensity} H:{_miningCtrl.AimDamageState}/15) [{_miningCtrl.AimHit.distance:0.0}m]"
                         : "Hedef Blok: Yok";
                     string crystalLine = $"Kristal [C]: {(_miningCtrl.IsCrystalActive ? "ACIK" : "KAPALI")} | Secili [Shift+B]: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(_miningCtrl.SelectedMaterialId)} | [B] Rehber";
                     string combatLine = $"Silah [F8]: {_combatBridge.GetWeaponDisplayName()} | Stil [G]: {_combatBridge.GetStanceDisplayName()}";
@@ -6255,11 +6639,12 @@ namespace Stratocraft.Character
                         $"{crystalLine}\n" +
                         $"{_creatureBridge.NearestCreatureHudSummary}\n" +
                         $"{paket4CLine}\n" +
-                        $"[F3] Gizle | [Shift+F11] Hava/Kar/Tipi | [ESC] Ayarlar";
+                        $"[F3] Gizle | [Shift+F11] Hava/Kar/Tipi | [HOME] Dalga-A Log | [ESC] Ayarlar";
                 }
 
-                GUI.Box(new Rect(10f, 10f, 520f, 168f), _cachedMainHudString, _hudBoxStyle);
-                GUI.Box(new Rect(Screen.width - 410f, 10f, 400f, 114f), _cachedRightHudString, _hudRightBoxStyle);
+                float f3TopY = _holsterCtrl.IsCreativeMode ? 62f : 34f;
+                GUI.Box(new Rect(10f, f3TopY, 500f, 168f), _cachedMainHudString, _hudBoxStyle);
+                GUI.Box(new Rect(Screen.width - 410f, f3TopY, 400f, 114f), _cachedRightHudString, _hudRightBoxStyle);
             }
 
             _recipeBookUi.DrawOnGui(Screen.width, Screen.height);
@@ -7076,7 +7461,7 @@ namespace Stratocraft.Character
                             strikeResult.TargetWorldX,
                             strikeResult.TargetWorldZ);
                         _miningCtrl.LastFeedbackText =
-                            $"⚡ METAL PARATONER YILDIRIMI YAKALADI!{tsTag} (24m Koruma Konisi | Gök Gürültüsü Gecikmesi: {strikeResult.ThunderAudioDelaySeconds:0.1} sn)";
+                            $"⚡ METAL PARATONER YILDIRIMI YAKALADI!{tsTag} (24m Koruma Konisi | Gök Gürültüsü Gecikmesi: {strikeResult.ThunderAudioDelaySeconds:0.0} sn)";
                     }
                     else if ((struckMetalPlayerDirectly || _pendingThunderDistanceMeters <= 3.5f) && Stage1GameSettings.EnableEnvironmentalEffects)
                     {
@@ -7512,7 +7897,7 @@ namespace Stratocraft.Character
                     {
                         StepWeatherInstrument3DVisuals();
                         _miningCtrl.LastFeedbackText =
-                            $"🌧️ Yağmur Ölçer su haznesi boşaltıldı ve sıfırlandı (Önceki Fırtına Birikimi: {clearedMm:0.1} mm -> 0.0 mm).";
+                            $"🌧️ Yağmur Ölçer su haznesi boşaltıldı ve sıfırlandı (Önceki Fırtına Birikimi: {clearedMm:0.0} mm -> 0.0 mm).";
                         return true;
                     }
                 }
@@ -7644,7 +8029,7 @@ namespace Stratocraft.Character
                     string zambrettiTr = !string.IsNullOrEmpty(rec.LastZambrettiForecastLabel)
                         ? rec.LastZambrettiForecastLabel
                         : "B - Güzel ve Açık Hava";
-                    line1 = $"🧭 BAROMETRE: {rec.SeaLevelPressureHpa:0.1} hPa (İstasyon: {rec.StationPressureHpa:0.1} hPa)  |  3s ΔP/Δt: {rec.ThreeHourDeltaHpa:+0.0;-0.0;0.0} hPa";
+                    line1 = $"🧭 BAROMETRE: {rec.SeaLevelPressureHpa:0.0} hPa (İstasyon: {rec.StationPressureHpa:0.0} hPa)  |  3s ΔP/Δt: {rec.ThreeHourDeltaHpa:+0.0;-0.0;0.0} hPa";
                     line2 = $"Zambretti Tahmini [{rec.LastZambrettiLetter}]: {zambrettiTr}  |  [E] Oku  |  [Shift+E] Sök";
                     break;
                 }
@@ -7653,13 +8038,13 @@ namespace Stratocraft.Character
                     string frostTag = rec.CurrentTempCelsius <= 0.0f
                         ? " ❄️ [DON UYARISI ≤ 0°C]"
                         : (rec.CurrentTempCelsius >= 35.0f ? " 🔥 [AŞIRI SICAK ≥ 35°C]" : string.Empty);
-                    line1 = $"🌡️ TERMOMETRE: {rec.CurrentTempCelsius:0.1} °C{frostTag}";
-                    line2 = $"Günlük Min: {rec.DailyMinTempCelsius:0.1} °C  |  Günlük Maks: {rec.DailyMaxTempCelsius:0.1} °C  |  [E] Oku  |  [Shift+E] Sök";
+                    line1 = $"🌡️ TERMOMETRE: {rec.CurrentTempCelsius:0.0} °C{frostTag}";
+                    line2 = $"Günlük Min: {rec.DailyMinTempCelsius:0.0} °C  |  Günlük Maks: {rec.DailyMaxTempCelsius:0.0} °C  |  [E] Oku  |  [Shift+E] Sök";
                     break;
                 }
                 case PrimitiveCraftOutputId.WeatherHygrometer:
                 {
-                    line1 = $"💧 HİGROMETRE: Bağıl Nem %{rec.RelativeHumidity01 * 100f:0} RH  |  Çiğ Noktası (Td): {rec.DewPointCelsius:0.1} °C";
+                    line1 = $"💧 HİGROMETRE: Bağıl Nem %{rec.RelativeHumidity01 * 100f:0} RH  |  Çiğ Noktası (Td): {rec.DewPointCelsius:0.0} °C";
                     line2 = $"Tahmini Bulut Tabanı (LCL): Y={rec.EstimatedCloudBaseWorldY:0}m  |  Sis Riski: %{rec.FogRisk01 * 100f:0}  |  [E] Oku  |  [Shift+E] Sök";
                     break;
                 }
@@ -7671,14 +8056,14 @@ namespace Stratocraft.Character
                     string compass = !string.IsNullOrEmpty(rec.LastWindCompassFullName)
                         ? rec.LastWindCompassFullName
                         : "Batı (Günbatısı)";
-                    line1 = $"🌬️ RÜZGÂR GÜLÜ & ANEMOMETRE: {rec.WindSpeedMps:0.1} m/s ({rec.WindFromDegrees:0}° {compass})";
+                    line1 = $"🌬️ RÜZGÂR GÜLÜ & ANEMOMETRE: {rec.WindSpeedMps:0.0} m/s ({rec.WindFromDegrees:0}° {compass})";
                     line2 = $"Beaufort {rec.BeaufortScale}/12: {beaufortTr}  |  [E] Oku  |  [Shift+E] Sök";
                     break;
                 }
                 case PrimitiveCraftOutputId.WeatherRainGauge:
                 {
                     string skyState = rec.HasOpenSkyAbove ? "Üstü Açık Gökyüzü" : "⚠️ Çatı Altında (Yağmur Alamaz)";
-                    line1 = $"🌧️ YAĞMUR ÖLÇER: Fırtına Birikimi {rec.CurrentStormAccumulatedMm:0.1} mm  |  Son 24s: {rec.Rolling24hAccumulatedMm:0.1} mm";
+                    line1 = $"🌧️ YAĞMUR ÖLÇER: Fırtına Birikimi {rec.CurrentStormAccumulatedMm:0.0} mm  |  Son 24s: {rec.Rolling24hAccumulatedMm:0.0} mm";
                     line2 = $"{skyState}  |  [E] Oku  |  [Shift+E] Su Haznesini Boşalt/Sıfırla  |  [Ctrl+E] Sök";
                     break;
                 }
@@ -7792,6 +8177,19 @@ namespace Stratocraft.Character
                 Color prev = GUI.color;
                 GUI.color = new Color(1.0f, 0.82f, 0.28f, 0.96f);
                 GUI.Box(new Rect(cx - 210f, topY + 24f, 420f, 24f), _cachedTimeScaleBadgeText, _timeScaleBadgeStyle);
+                GUI.color = prev;
+            }
+
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                if (refreshPeriodicStrings || string.IsNullOrEmpty(_cachedWaveABadgeText))
+                {
+                    _cachedWaveABadgeText = WaveADeepDiagnosticProbe.GetLiveBadgeText();
+                }
+                float badgeY = Stage1GameSettings.TimeScaleMultiplier > 1.01f ? (topY + 50f) : (topY + 26f);
+                Color prev = GUI.color;
+                GUI.color = new Color(1.0f, 0.36f, 0.30f, 0.96f);
+                GUI.Box(new Rect(cx - 260f, badgeY, 520f, 22f), _cachedWaveABadgeText, _timeScaleBadgeStyle);
                 GUI.color = prev;
             }
         }

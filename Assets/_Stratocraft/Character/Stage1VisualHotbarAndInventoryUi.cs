@@ -287,6 +287,10 @@ namespace Stratocraft.Character
         private bool _lastStamExhausted;
         private string _cachedStamLabel = string.Empty;
         private int _lastOxyPctInt = -1;
+        private int _lastHungerPctInt = -1;
+        private int _lastThirstPctInt = -1;
+        private string _cachedHungerLabel = string.Empty;
+        private string _cachedThirstLabel = string.Empty;
         private string _cachedOxyLabel = string.Empty;
 
         private static string[] BuildCachedStackCountStrings()
@@ -2097,7 +2101,9 @@ namespace Stratocraft.Character
             bool isSubmerged = false,
             float coreBodyTemp = 37.0f,
             bool showDebugHints = false,
-            bool isCreativeMode = false)
+            bool isCreativeMode = false,
+            float hungerKcal = 2000f,
+            float thirstHydration = 100f)
         {
             EnsureTexturesAndStyles();
             Event ev = Event.current;
@@ -2166,10 +2172,10 @@ namespace Stratocraft.Character
             }
 
             bool showOxygen = isSubmerged || lungOxygenPercent < 98f;
-            DrawVitalsHudBars(screenW, barY, currentHp, maxHp, stamina, maxStamina, isExhaustedLock, lungOxygenPercent, isSubmerged, coreBodyTemp);
+            DrawVitalsHudBars(screenW, barY, currentHp, maxHp, stamina, maxStamina, isExhaustedLock, lungOxygenPercent, isSubmerged, coreBodyTemp, hungerKcal, thirstHydration);
 
             string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge);
-            float bannerY = showOxygen ? barY - 50f : barY - 34f;
+            float bannerY = showOxygen ? barY - 65f : barY - 49f;
             GUI.Box(new Rect(screenW * 0.5f - 285f, bannerY, 570f, 20f), activeTitle, _slotTitleBannerStyle!);
 
             // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (SADECE [C] basılıp açıldığında görünür!)
@@ -3250,17 +3256,19 @@ namespace Stratocraft.Character
             float stamina, float maxStamina,
             bool isExhaustedLock,
             float lungOxygenPercent, bool isSubmerged,
-            float coreBodyTemp)
+            float coreBodyTemp,
+            float hungerKcal = 2000f,
+            float thirstHydration = 100f)
         {
             const float totalBarWidth = 580f;
             float startX = (screenW - totalBarWidth) * 0.5f;
             float currentY = barY - 17f;
+            float halfWidth = (totalBarWidth - 8f) * 0.5f;
 
-            // 1. Oksijen Barı (Suya batınca veya oksijen <%98 olunca görünür)
+            // 1. Oksijen Barı (Suya batınca veya oksijen <%98 olunca görünür — Açlık/Susuzluk barının üstünde)
             if (isSubmerged || lungOxygenPercent < 98f)
             {
-                currentY -= 15f;
-                Rect oxyRect = new Rect(startX, currentY, totalBarWidth, 12f);
+                Rect oxyRect = new Rect(startX, currentY - 30f, totalBarWidth, 12f);
                 float oxy01 = Mathf.Clamp01(lungOxygenPercent / 100f);
                 Color oxyFill = oxy01 < 0.25f ? new Color(0.95f, 0.22f, 0.22f, 1.0f) : new Color(0.18f, 0.78f, 0.95f, 1.0f);
                 int oxyInt = Mathf.RoundToInt(lungOxygenPercent);
@@ -3271,11 +3279,47 @@ namespace Stratocraft.Character
                 }
                 DrawHorizontalBar(oxyRect, oxy01, oxyFill, new Color(0.04f, 0.12f, 0.20f, 0.88f), new Color(0.25f, 0.50f, 0.70f, 0.95f),
                     _cachedOxyLabel);
-                currentY += 15f;
             }
 
+            // 1.5. Faz A.5: Kompakt Amber Açlık (TOK) ve Mavi Susuzluk (SU) Barları (Can/Enerji'nin hemen üstünde)
+            float vitalsRow2Y = currentY - 15f;
+            float hunger01 = Mathf.Clamp01(hungerKcal / 2500f);
+            int hungerPctInt = Mathf.RoundToInt(hunger01 * 100f);
+            if (hungerPctInt != _lastHungerPctInt)
+            {
+                _lastHungerPctInt = hungerPctInt;
+                _cachedHungerLabel = hungerPctInt <= 20
+                    ? $"🍗 AÇLIK KRİTİK %{hungerPctInt}"
+                    : $"🍗 TOKLUK %{hungerPctInt}";
+            }
+            Color hungerFill = hunger01 < 0.20f ? new Color(0.96f, 0.28f, 0.14f, 1.0f) : new Color(0.92f, 0.62f, 0.14f, 1.0f);
+            DrawHorizontalBar(
+                new Rect(startX, vitalsRow2Y, halfWidth, 12f),
+                hunger01,
+                hungerFill,
+                new Color(0.18f, 0.11f, 0.04f, 0.88f),
+                new Color(0.58f, 0.38f, 0.12f, 0.95f),
+                _cachedHungerLabel);
+
+            float thirst01 = Mathf.Clamp01(thirstHydration / 100f);
+            int thirstPctInt = Mathf.RoundToInt(thirst01 * 100f);
+            if (thirstPctInt != _lastThirstPctInt)
+            {
+                _lastThirstPctInt = thirstPctInt;
+                _cachedThirstLabel = thirstPctInt <= 20
+                    ? $"💧 SUSUZLUK KRİTİK %{thirstPctInt}"
+                    : $"💧 SU (HİDRASYON) %{thirstPctInt}";
+            }
+            Color thirstFill = thirst01 < 0.20f ? new Color(0.95f, 0.32f, 0.26f, 1.0f) : new Color(0.18f, 0.64f, 0.96f, 1.0f);
+            DrawHorizontalBar(
+                new Rect(startX + halfWidth + 8f, vitalsRow2Y, halfWidth, 12f),
+                thirst01,
+                thirstFill,
+                new Color(0.04f, 0.12f, 0.20f, 0.88f),
+                new Color(0.16f, 0.44f, 0.72f, 0.95f),
+                _cachedThirstLabel);
+
             // 2. Can (HP) ve Dayanıklılık / Yorgunluk (EP) Barları Yan Yana
-            float halfWidth = (totalBarWidth - 8f) * 0.5f;
 
             // Sol Bar: Can (HP)
             Rect hpRect = new Rect(startX, currentY, halfWidth, 13f);

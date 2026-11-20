@@ -28,6 +28,12 @@ namespace Stratocraft.Character.Systems
         /// </summary>
         public float EffectiveWindChillCelsius { get; private set; } = 21.0f;
 
+        /// <summary>Cevresel sicaklik efektleri kapaliyken HUD tutarliligi icin WindChill'i ortam sicakligiyla esler.</summary>
+        public void SyncWindChillFallbackCelsius(float ambientCelsius)
+        {
+            if (float.IsFinite(ambientCelsius)) EffectiveWindChillCelsius = ambientCelsius;
+        }
+
         /// <summary>
         /// Paket 4B (İP-8): Son hesaplanan toplam etkin giysi yalıtımı (clo).
         /// </summary>
@@ -166,6 +172,55 @@ namespace Stratocraft.Character.Systems
             if (addBleedRateHpPerSec <= 0f) return;
             GlobalPlayerBleedRateHpPerSec = Math.Min(12.0f, GlobalPlayerBleedRateHpPerSec + addBleedRateHpPerSec);
             vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.HeavyBleeding;
+        }
+
+        /// <summary>Dalga A (Faz A.5): Tibbi Bandaj ile agir kanamayi (HeavyBleeding) kesin olarak temizler.</summary>
+        public static void ClearHeavyBleeding(ref CharacterVitalsComponent vitals, ThermalAndBiologySystem? instance = null)
+        {
+            GlobalPlayerBleedRateHpPerSec = 0f;
+            if (instance != null) instance.BleedRateHpPerSec = 0f;
+            vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.HeavyBleeding;
+        }
+
+        /// <summary>
+        /// Dalga A (Faz A.4 &amp; A.5): Cevresel sicaklik efektleri kapali olsa dahi Hayatta Kalma modunda
+        /// dengeli aclik (~35 dk), susuzluk (~23 dk), agir kanama ve 30 sn BleedOutCrawl sayacini ilerletir.
+        /// </summary>
+        public static void StepSurvivalMetabolismAndBleedOut(
+            ref CharacterVitalsComponent vitals,
+            float deltaTime,
+            bool isCreativeMode,
+            bool isSprintingOrCombat = false)
+        {
+            if (deltaTime <= 0f || !float.IsFinite(deltaTime)) return;
+            if (isCreativeMode)
+            {
+                vitals.CurrentHp = vitals.MaxHp;
+                vitals.Stamina = vitals.MaxStamina;
+                vitals.HungerKcal = 2500.0f;
+                vitals.ThirstHydration = 100.0f;
+                vitals.BleedOutTimerSeconds = 30.0f;
+                return;
+            }
+
+            float activityMult = isSprintingOrCombat ? 1.45f : 1.0f;
+            // ~35 dk aclik (2500 kcal / 1.15 kcal/s), ~23 dk susuzluk (100% / 0.072 %/s)
+            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 1.15f * activityMult * deltaTime);
+            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.072f * activityMult * deltaTime);
+
+            if (vitals.HungerKcal <= 0.01f || vitals.ThirstHydration <= 0.01f)
+            {
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 1.5f * deltaTime);
+            }
+
+            if (vitals.CurrentHp > 0.0f)
+            {
+                vitals.BleedOutTimerSeconds = 30.0f;
+            }
+            else if (vitals.BleedOutTimerSeconds > 0.0f)
+            {
+                vitals.BleedOutTimerSeconds = MathF.Max(0.0f, vitals.BleedOutTimerSeconds - deltaTime);
+            }
         }
 
         /// <summary>
@@ -376,8 +431,9 @@ namespace Stratocraft.Character.Systems
                 ? 2.0f
                 : (vitals.CoreBodyTempCelsius < 36.0f ? 1.6f : 1.0f);
             float heatThirstMultiplier = isHyperthermic ? 2.0f : 1.0f;
-            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 0.35f * coldShiverMultiplier * deltaTime);
-            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.05f * heatThirstMultiplier * deltaTime);
+            // Faz A.5: Dengeli hayatta kalma hizi (~35 dk aclik, ~23 dk susuzluk)
+            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 1.15f * coldShiverMultiplier * deltaTime);
+            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.072f * heatThirstMultiplier * deltaTime);
 
             // 5. Aclik / Susuzluk Cezasi vs. Tokluk (Well-Fed) Yenilenme Bonusu
             if (vitals.HungerKcal <= 0.01f || vitals.ThirstHydration <= 0.01f)
@@ -574,8 +630,9 @@ namespace Stratocraft.Character.Systems
                 ? 2.0f
                 : (vitals.CoreBodyTempCelsius < 36.0f ? 1.6f : 1.0f);
             float heatThirstMultiplier = isHyperthermic ? 2.0f : 1.0f;
-            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 0.35f * coldShiverMultiplier * deltaTime);
-            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.05f * heatThirstMultiplier * deltaTime);
+            // Faz A.5: Dengeli hayatta kalma hizi (~35 dk aclik, ~23 dk susuzluk)
+            vitals.HungerKcal = MathF.Max(0.0f, vitals.HungerKcal - 1.15f * coldShiverMultiplier * deltaTime);
+            vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.072f * heatThirstMultiplier * deltaTime);
 
             if (vitals.HungerKcal <= 0.01f || vitals.ThirstHydration <= 0.01f)
             {

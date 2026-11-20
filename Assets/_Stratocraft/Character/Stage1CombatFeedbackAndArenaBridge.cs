@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.Voxel.Data;
 using UnityEngine;
 
@@ -175,12 +176,7 @@ namespace Stratocraft.Character
             }
 
             combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects && playerVitals.CoreBodyTempCelsius < 35.0f;
-            float pendingStamina = combatBridge.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
-            if (pendingStamina > 0f)
-            {
-                playerVitals.Stamina = Mathf.Max(0f, playerVitals.Stamina - pendingStamina);
-                if (playerVitals.Stamina <= 0.05f && Stage1GameSettings.StaminaDrainMultiplier > 0.01f) combatBridge.IsPlayerExhaustedLock = true;
-            }
+            // Faz A.2: PendingStaminaDrain tek noktadan (Stage1InteractivePlayController) tuketilir -> cift tuketim yok!
             if (combatBridge.IsPlayerExhaustedLock && (playerVitals.Stamina >= playerVitals.MaxStamina * 0.15f || Stage1GameSettings.StaminaDrainMultiplier <= 0.01f))
                 combatBridge.IsPlayerExhaustedLock = false;
             else if (playerVitals.Stamina <= 0.05f && Stage1GameSettings.StaminaDrainMultiplier > 0.01f)
@@ -630,8 +626,35 @@ namespace Stratocraft.Character
                             CombatDirectionQuadrant.Right or CombatDirectionQuadrant.Left => Stratocraft.Character.Data.HitZone.Torso,
                             _ => Stratocraft.Character.Data.HitZone.Arms
                         };
+                        float probeHpBefore = playerVitals.CurrentHp;
+                        // Faz A.3: TakeDamageRegional HP'yi ZATEN dusurur (2x cift dusus giderildi); egitim NPC'si 1 HP'de durur.
                         float actualDmg = playerVitals.TakeDamageRegional(hitZone, npcDmg, out float absorbedDmg, out bool isCritHead);
-                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - actualDmg);
+                        if (playerVitals.CurrentHp < 1f) playerVitals.CurrentHp = 1f;
+                        if (WaveADeepDiagnosticProbe.Enabled)
+                        {
+                            WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                            {
+                                FrameIndex = Time.frameCount,
+                                TimeSec = Time.time,
+                                EntityGuid = -1,
+                                ArchetypeId = 255,
+                                PrevState = _duelistPhase,
+                                NextState = _duelistPhase,
+                                HorizDistMeters = distToPlayer,
+                                StandOffDistMeters = 2.85f,
+                                PlayerWasParrying = combatBridge.IsParryStance,
+                                HitZone = (int)hitZone,
+                                RawDamage = npcDmg,
+                                ReportedActualDamage = actualDmg,
+                                PlayerHpBefore = probeHpBefore,
+                                PlayerHpAfter = playerVitals.CurrentHp,
+                                ActualHpDrop = probeHpBefore - playerVitals.CurrentHp,
+                                WorldPosX = _duelistRoot.position.x,
+                                WorldPosY = _duelistRoot.position.y,
+                                WorldPosZ = _duelistRoot.position.z,
+                                EventTag = "DuelistMeleeHit"
+                            });
+                        }
                         ThermalAndBiologySystem.ApplyRegionalBleeding(ref playerVitals, 1.5f);
                         PlayFleshCleaveHit(false);
                         string blockHint = combatBridge.IsParryStance
@@ -717,6 +740,27 @@ namespace Stratocraft.Character
             _duelistPhase = 3;
             _duelistStateTimer = 0.85f;
             combatBridge.NotifyBladeCleaveThroughFlesh();
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                WaveADeepDiagnosticProbe.RecordCombatHitEvent(new WaveACombatHitEventRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    EventTag = "BladeHitDuelist",
+                    TargetType = "MasterDuelistNPC",
+                    TargetId = -1,
+                    SwingId = combatBridge.CurrentSwingId,
+                    IsThrustMode = combatBridge.CurrentThrustExtensionMeters >= 0.12f,
+                    ThrustExtMeters = combatBridge.CurrentThrustExtensionMeters,
+                    HitSpeedMps = hitSpeed,
+                    EdgeAlignment01 = combatBridge.EdgeAlignment01,
+                    IsMicroCut = combatBridge.IsMicroCut,
+                    FinalDamage = rawDamage,
+                    StaminaBefore = 0f,
+                    StaminaAfter = _duelistHp,
+                    NoteTag = zoneName
+                });
+            }
 
             if (wasGuardCrushed)
             {
@@ -830,18 +874,32 @@ namespace Stratocraft.Character
             Color32 baseColor = new Color32((byte)(tipColor.r / 2), (byte)(tipColor.g / 2), (byte)(tipColor.b / 2), 180);
 
             _trailVerts.Clear(); _trailColors.Clear(); _trailTris.Clear();
-            for (int i = 0; i < _trailPointCount; i++)
+            // Faz A.2: On ve arka yuzler AYRIK vertex gruplariyla orulur -> RecalculateNormals() +N ve -N korur, siyah ucgen biter!
+            for (int side = 0; side < 2; side++)
             {
-                float fade = 1.0f - (float)i / _trailPointCount;
-                _trailVerts.Add(Vector3.Lerp(_trailTipHistory[i], _trailBaseHistory[i], fade * 0.85f));
-                _trailVerts.Add(_trailTipHistory[i]);
-                _trailColors.Add(baseColor); _trailColors.Add(tipColor);
-            }
-            for (int i = 0; i < _trailPointCount - 1; i++)
-            {
-                int v0 = i * 2, v1 = v0 + 1, v2 = v0 + 2, v3 = v0 + 3;
-                _trailTris.Add(v0); _trailTris.Add(v1); _trailTris.Add(v3); _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v2);
-                _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v1); _trailTris.Add(v0); _trailTris.Add(v2); _trailTris.Add(v3);
+                int baseOffset = _trailVerts.Count;
+                for (int i = 0; i < _trailPointCount; i++)
+                {
+                    float fade = 1.0f - (float)i / _trailPointCount;
+                    _trailVerts.Add(Vector3.Lerp(_trailTipHistory[i], _trailBaseHistory[i], fade * 0.85f));
+                    _trailVerts.Add(_trailTipHistory[i]);
+                    _trailColors.Add(baseColor);
+                    _trailColors.Add(tipColor);
+                }
+                for (int i = 0; i < _trailPointCount - 1; i++)
+                {
+                    int v0 = baseOffset + i * 2, v1 = v0 + 1, v2 = v0 + 2, v3 = v0 + 3;
+                    if (side == 0)
+                    {
+                        _trailTris.Add(v0); _trailTris.Add(v1); _trailTris.Add(v3);
+                        _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v2);
+                    }
+                    else
+                    {
+                        _trailTris.Add(v0); _trailTris.Add(v3); _trailTris.Add(v1);
+                        _trailTris.Add(v0); _trailTris.Add(v2); _trailTris.Add(v3);
+                    }
+                }
             }
             _trailMesh.Clear();
             _trailMesh.SetVertices(_trailVerts); _trailMesh.SetColors(_trailColors); _trailMesh.SetTriangles(_trailTris, 0);

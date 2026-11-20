@@ -5,11 +5,13 @@ using System.Collections.Generic;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Logging;
 using Stratocraft.CreaturesAI.CreaturesAndBosses;
 using Stratocraft.CreaturesAI.Data;
 using Stratocraft.CreaturesAI.HybridLod;
 using Stratocraft.CreaturesAI.OffScreen;
 using Stratocraft.CreaturesAI.Pathfinding;
+using Stratocraft.CreaturesAI.Systems;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
@@ -39,7 +41,12 @@ namespace Stratocraft.Character
             EmberEgg = 5,
             Dead = 6,
             CeilingSleep = 7,
-            CaveAmbushTelegraph = 8
+            CaveAmbushTelegraph = 8,
+            AttackWindup = 9,
+            AttackActive = 10,
+            AttackRecovery = 11,
+            DirectionalBlock = 12,
+            EvadeDodge = 13
         }
 
         private enum AnatomicalHitRegion : byte { None = 0, Legs = 1, ArmsOrWings = 2, HeadOrTorso = 3 }
@@ -74,6 +81,19 @@ namespace Stratocraft.Character
             public float NextAStarAllowedTime;
             public float Hunger01 = 0.25f;
             public int CompletedGrazingOrWorkCycles;
+            // Faz A.3: 3 asamali saldiri, yonlu blok/kacinma, ogrenme tamponu ve mizac durumu
+            public CreaturePatternMemory PatternMemory;
+            public bool HasBeenProvoked;
+            public int ActiveMoveIndex;
+            public float AttackStageTimer;
+            public float AttackStageDuration;
+            public bool AttackHitResolved;
+            public Vector3 LockedAttackForwardXZ = Vector3.forward;
+            public CreatureAttackDirection GuardDirection = CreatureAttackDirection.Overhead;
+            public float GuardTimer;
+            public float DodgeTimer;
+            public float DodgeCooldownTimer;
+            public Vector3 DodgeDirXZ;
             public Transform? BodyTorsoPivot;
             public Transform? FrontLeftLeg, FrontRightLeg, HindLeftLeg, HindRightLeg;
             public Transform? FrontLeftLower, FrontRightLower, HindLeftLower, HindRightLower;
@@ -684,8 +704,19 @@ namespace Stratocraft.Character
                 Vector3 toPlayer = playerPos - a.Root.position;
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
 
-                // 2) Paket 4C-3 View-Cone / InnerCore / Yuklu-Olmayan-Chunk Tenzili:
-                if (_offScreenSim != null && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
+                // 2) Faz A.3 Işınlanma/Kaybolma Korumasi: Oyuncuya < 48m yakin veya aktif savas/takip/kacis halindeki canlilar
+                // ASLA DES Off-Screen'e indirilip gizlenmez!
+                bool isEngagedInCombatOrNear = horizDist < 48.0f ||
+                                               a.State == CreatureAiState.AggroChase ||
+                                               a.State == CreatureAiState.MeleeAttack ||
+                                               a.State == CreatureAiState.AttackWindup ||
+                                               a.State == CreatureAiState.AttackActive ||
+                                               a.State == CreatureAiState.AttackRecovery ||
+                                               a.State == CreatureAiState.DirectionalBlock ||
+                                               a.State == CreatureAiState.EvadeDodge ||
+                                               a.State == CreatureAiState.Flee ||
+                                               a.State == CreatureAiState.SupportPillarSiege;
+                if (_offScreenSim != null && !a.IsTamed && a.State != CreatureAiState.EmberEgg && !isEngagedInCombatOrNear)
                 {
                     Vector3 pos = a.Root.position;
                     int acx = Mathf.FloorToInt(pos.x / 16f);
@@ -756,10 +787,33 @@ namespace Stratocraft.Character
                     continue;
                 }
 
+                Vector3 probePosBefore = a.Root.position;
+                int probeStateBefore = (int)a.State;
+                CreatureSpeciesAiProfile aiProfile = CreatureCombatAiCatalog.ResolveProfile(
+                    a.ArchetypeId, a.IsFlyingBoss, a.IsBiped, a.CaveVariant != CaveCreatureVariantKind.None);
                 float aggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
-                float baseAggro = a.CaveVariant != CaveCreatureVariantKind.None ? 12.5f : (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 7.0f));
+                float baseAggro = a.CaveVariant != CaveCreatureVariantKind.None ? 12.5f : (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 8.5f));
                 float aggroRange = baseAggro * aggroMult;
-                if (aggroMult > 0.02f && horizDist <= aggroRange)
+                bool shouldEngageHostile = aggroMult > 0.02f && horizDist <= aggroRange &&
+                    (aiProfile.Temperament == CreatureTemperament.Aggressive ||
+                     (aiProfile.Temperament == CreatureTemperament.Neutral && (a.HasBeenProvoked || a.CurrentHp < a.MaxHp * 0.99f)) ||
+                     (aiProfile.Temperament == CreatureTemperament.Passive && a.HasBeenProvoked && a.CurrentHp < a.MaxHp * 0.65f));
+                bool passiveFleeTrigger = aiProfile.Temperament == CreatureTemperament.Passive && horizDist <= 7.5f && !shouldEngageHostile;
+
+                if (passiveFleeTrigger)
+                {
+                    a.State = CreatureAiState.Flee;
+                    Vector3 away = a.Root.position - playerPos;
+                    away.y = 0f;
+                    if (away.sqrMagnitude > 0.001f) away.Normalize();
+                    else away = Vector3.forward;
+                    Vector3 fleePos = a.Root.position + away * (a.BaseSpeed * a.SpeedMultiplier * 0.95f * deltaTime);
+                    float fleeY = SampleStandableHeight(a, fleePos.x, fleePos.z, a.Root.position.y, worldChunks, out _);
+                    fleePos.y = Mathf.Abs(fleeY - a.Root.position.y) <= 1.75f ? Mathf.MoveTowards(a.Root.position.y, fleeY, deltaTime * 11f) : a.Root.position.y;
+                    a.Root.position = fleePos;
+                    a.Root.rotation = ComputeSlopeAlignedCreatureRotation(fleePos, Mathf.Atan2(away.x, away.z) * Mathf.Rad2Deg, 0f, 0f, worldChunks);
+                }
+                else if (shouldEngageHostile)
                 {
                     if (a.CaveVariant != CaveCreatureVariantKind.None && !a.HasTriggeredCaveTelegraph)
                     {
@@ -776,6 +830,42 @@ namespace Stratocraft.Character
                 else
                 {
                     StepPatrolAgent(a, time, worldChunks);
+                }
+
+                if (WaveADeepDiagnosticProbe.Enabled)
+                {
+                    float tpJump = Vector3.Distance(probePosBefore, a.Root.position);
+                    if (tpJump > 1.75f)
+                    {
+                        WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                        {
+                            FrameIndex = frameCount,
+                            TimeSec = time,
+                            EntityGuid = unchecked((int)a.EntityGuid),
+                            ArchetypeId = a.ArchetypeId,
+                            PrevState = probeStateBefore,
+                            NextState = (int)a.State,
+                            HorizDistMeters = horizDist,
+                            VertDeltaMeters = toPlayer.y,
+                            StandOffDistMeters = a.IsFlyingBoss ? 3.15f : (a.IsBiped ? 2.65f : 2.80f),
+                            AttackCooldownBefore = a.AttackCooldown,
+                            AttackCooldownAfter = a.AttackCooldown,
+                            AnimAttackSwing01 = 0f,
+                            IsLungeFrame = false,
+                            PlayerWasParrying = isPlayerParrying,
+                            HitZone = 0,
+                            RawDamage = 0f,
+                            ReportedActualDamage = 0f,
+                            PlayerHpBefore = playerVitals.CurrentHp,
+                            PlayerHpAfter = playerVitals.CurrentHp,
+                            ActualHpDrop = 0f,
+                            WorldPosX = a.Root.position.x,
+                            WorldPosY = a.Root.position.y,
+                            WorldPosZ = a.Root.position.z,
+                            TeleportJumpMeters = tpJump,
+                            EventTag = "TeleportJump"
+                        });
+                    }
                 }
 
                 // Mesafe Bazli Animasyon Seyreltme (Animation LOD Throttling):
@@ -897,6 +987,23 @@ namespace Stratocraft.Character
             {
                 a.Root.gameObject.SetActive(false);
             }
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    EntityGuid = unchecked((int)a.EntityGuid),
+                    ArchetypeId = a.ArchetypeId,
+                    PrevState = (int)a.State,
+                    NextState = (int)a.State,
+                    WorldPosX = pos.x,
+                    WorldPosY = pos.y,
+                    WorldPosZ = pos.z,
+                    TeleportJumpMeters = 0f,
+                    EventTag = "DemoteToDes"
+                });
+            }
             if (a.IsDynamicBiomeSpawn && _recycledDynamicPool.Count < 16)
             {
                 _recycledDynamicPool.Enqueue(a);
@@ -965,8 +1072,26 @@ namespace Stratocraft.Character
                 ? snap.WorldY
                 : SampleVoxelOrTerrainHeight(snap.WorldX, snap.WorldZ, snap.WorldY, worldChunks);
 
+            Vector3 prevPosBeforePromote = a.Root.position;
             Vector3 newPos = new Vector3(snap.WorldX, finalY, snap.WorldZ);
             a.Root.position = newPos;
+            if (WaveADeepDiagnosticProbe.Enabled)
+            {
+                WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                {
+                    FrameIndex = Time.frameCount,
+                    TimeSec = Time.time,
+                    EntityGuid = unchecked((int)snap.EntityGuid),
+                    ArchetypeId = a.ArchetypeId,
+                    PrevState = (int)a.State,
+                    NextState = (int)a.State,
+                    WorldPosX = newPos.x,
+                    WorldPosY = newPos.y,
+                    WorldPosZ = newPos.z,
+                    TeleportJumpMeters = Vector3.Distance(prevPosBeforePromote, newPos),
+                    EventTag = "PromoteFromDes"
+                });
+            }
             a.AnchorPos = newPos;
             a.TargetPos = new Vector3(snap.TargetX, finalY, snap.TargetZ);
 
@@ -1566,23 +1691,195 @@ namespace Stratocraft.Character
             }
             else
             {
-                a.State = CreatureAiState.MeleeAttack;
-                Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
-                Vector3 meleePos = pos + (tangent * Mathf.Sin(time * 2.6f + a.PhaseOffset) * 0.38f + (boidsSep - flatDir) * 0.85f) * deltaTime;
+                CreatureSpeciesAiProfile aiProfile = CreatureCombatAiCatalog.ResolveProfile(
+                    a.ArchetypeId, a.IsFlyingBoss, a.IsBiped, a.CaveVariant != CaveCreatureVariantKind.None);
+                CreatureCombatAiCatalog.ComputeDistanceDifficultyMultipliers(
+                    pos.x, pos.z, out float ringPowerMult, out _);
 
-                // Oyuncuya fazla yaklasmissa (< minPersonalSpaceDist) geri cekilerek mesafeyi koru, asla oyuncuya carpma!
-                if (horizDist < minPersonalSpaceDist)
+                if (a.DodgeCooldownTimer > 0f) a.DodgeCooldownTimer = Mathf.Max(0f, a.DodgeCooldownTimer - deltaTime);
+
+                // 1) Kacinma (Dodge) hareketi
+                if (a.DodgeTimer > 0f)
                 {
-                    meleePos -= flatDir * (2.6f * deltaTime);
+                    a.DodgeTimer = Mathf.Max(0f, a.DodgeTimer - deltaTime);
+                    a.State = CreatureAiState.EvadeDodge;
+                    Vector3 dodgePos = pos + a.DodgeDirXZ * (5.2f * deltaTime);
+                    float dY = SampleStandableHeight(a, dodgePos.x, dodgePos.z, pos.y, worldChunks, out _);
+                    dodgePos.y = Mathf.Abs(dY - pos.y) <= 1.72f ? Mathf.MoveTowards(pos.y, dY, deltaTime * 12f) : pos.y;
+                    a.Root.position = dodgePos;
+                    float dYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
+                    a.Root.rotation = ComputeSlopeAlignedCreatureRotation(dodgePos, dYaw, 0f, 12f, worldChunks);
+                    return;
                 }
-                else if (a.AttackCooldown > 0.92f && horizDist > minPersonalSpaceDist + 0.15f)
+
+                // 2) Yonlu Blok (DirectionalBlock) durusu
+                if (a.GuardTimer > 0f)
                 {
-                    // Yalnizca vurus aninda kisa bir pence/gaga/boynuz hamlesi (Lunge) yap, sonra hemen geri cekil
-                    meleePos += flatDir * (1.35f * deltaTime);
+                    a.GuardTimer = Mathf.Max(0f, a.GuardTimer - deltaTime);
+                    a.State = CreatureAiState.DirectionalBlock;
+                    float gYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
+                    a.Root.rotation = ComputeSlopeAlignedCreatureRotation(pos, gYaw, -6f, 0f, worldChunks);
+                    if (a.GuardTimer <= 0f) a.State = CreatureAiState.MeleeAttack;
+                    return;
                 }
-                else if (a.AttackCooldown > 0.55f && a.AttackCooldown <= 0.92f && horizDist < combatStandOffDist)
+
+                CreatureAttackMoveSpec[] moves = aiProfile.Moves;
+                if (a.ActiveMoveIndex < 0 || a.ActiveMoveIndex >= moves.Length) a.ActiveMoveIndex = 0;
+                CreatureAttackMoveSpec activeMove = moves[a.ActiveMoveIndex];
+
+                // 3) 3 Asamali Gercek Fiziksel Saldiri FSM: AttackWindup -> AttackActive (Koni Hitbox) -> AttackRecovery
+                Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
+                Vector3 meleePos = pos;
+
+                if (a.State == CreatureAiState.AttackWindup)
                 {
-                    meleePos -= flatDir * (1.45f * deltaTime);
+                    a.AttackStageTimer += deltaTime;
+                    // Son 0.18sn kalana kadar oyuncuya donus takibi yap, sonra saldiri yonunu kilitle (kacis gercekten ise yarasin!)
+                    if (activeMove.WindupSeconds - a.AttackStageTimer > 0.18f)
+                    {
+                        a.LockedAttackForwardXZ = flatDir.sqrMagnitude > 0.001f ? flatDir : a.Root.forward;
+                    }
+                    // Geriye hafif yaylanma
+                    if (horizDist < minPersonalSpaceDist) meleePos -= flatDir * (1.8f * deltaTime);
+
+                    if (a.AttackStageTimer >= activeMove.WindupSeconds)
+                    {
+                        a.State = CreatureAiState.AttackActive;
+                        a.AttackStageTimer = 0f;
+                        a.AttackStageDuration = activeMove.ActiveSeconds;
+                        a.AttackHitResolved = false;
+                    }
+                }
+                else if (a.State == CreatureAiState.AttackActive)
+                {
+                    a.AttackStageTimer += deltaTime;
+                    // Ileri vurus hamlesi (Lunge)
+                    if (horizDist > minPersonalSpaceDist + 0.10f)
+                    {
+                        meleePos += a.LockedAttackForwardXZ * (2.6f * deltaTime);
+                    }
+
+                    if (!a.AttackHitResolved && a.AttackStageTimer >= activeMove.ActiveSeconds * 0.25f)
+                    {
+                        a.AttackHitResolved = true;
+                        float probeCdBefore = a.AttackCooldown;
+                        float probeHpBefore = playerVitals.CurrentHp;
+
+                        bool inConeHit = CreaturePatternMemory.EvaluateForwardConeMeleeHit(
+                            new System.Numerics.Vector3(meleePos.x, meleePos.y, meleePos.z),
+                            new System.Numerics.Vector3(a.LockedAttackForwardXZ.x, 0f, a.LockedAttackForwardXZ.z),
+                            new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z),
+                            activeMove.ReachMeters,
+                            activeMove.HalfConeDegrees);
+
+                        if (!inConeHit)
+                        {
+                            LastCreatureEventText = $"💨 {a.DisplayName} [{activeMove.Label}] ISKALADI (Koni/Menzil Disi)!";
+                            if (WaveADeepDiagnosticProbe.Enabled)
+                            {
+                                WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                                {
+                                    FrameIndex = Time.frameCount, TimeSec = time, EntityGuid = unchecked((int)a.EntityGuid),
+                                    ArchetypeId = a.ArchetypeId, PrevState = (int)CreatureAiState.AttackActive, NextState = (int)CreatureAiState.AttackActive,
+                                    HorizDistMeters = horizDist, VertDeltaMeters = vertDelta, StandOffDistMeters = activeMove.ReachMeters,
+                                    AttackCooldownBefore = probeCdBefore, AttackCooldownAfter = a.AttackCooldown, AnimAttackSwing01 = 1.0f,
+                                    IsLungeFrame = true, PlayerWasParrying = isPlayerParrying, HitZone = 0, RawDamage = 0f,
+                                    ReportedActualDamage = 0f, PlayerHpBefore = probeHpBefore, PlayerHpAfter = playerVitals.CurrentHp,
+                                    ActualHpDrop = 0f, WorldPosX = meleePos.x, WorldPosY = meleePos.y, WorldPosZ = meleePos.z, EventTag = "CreatureMeleeWhiff"
+                                });
+                            }
+                        }
+                        else
+                        {
+                            float armPenalty = (a.LeftArmSevered && a.RightArmSevered) ? 0.25f : (a.ArmSevered ? 0.45f : 1.0f);
+                            float jawPenalty = a.HeadSevered ? 0.65f : 1.0f;
+                            float rawDmg = (a.IsFlyingBoss ? 18f : 11f) * activeMove.DamageMultiplier * ringPowerMult *
+                                           a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier * armPenalty * jawPenalty;
+
+                            if (isPlayerParrying && activeMove.CanBeParried && combatBridge != null)
+                            {
+                                if (combatBridge.NotifyParryImpactAndCheckGuardBreak(rawDmg, out float selfHitRecoilDamage))
+                                {
+                                    float totalBreakDmg = selfHitRecoilDamage + rawDmg * 0.40f;
+                                    playerVitals.CurrentHp = Mathf.Max(0f, playerVitals.CurrentHp - totalBreakDmg);
+                                    LastCreatureEventText = combatBridge.LastCombatActionText;
+                                }
+                                else
+                                {
+                                    // Zamanlanmis RMB blogu %100 hasari engeller ve Riposte penceresi acar!
+                                    combatBridge.NotifySuccessfulParryOrClash(new Vector2(-0.30f, 0.35f), openRiposteWindow: true);
+                                    LastCreatureEventText = $"🛡️ %100 BLOK & RIPOSTE! {a.DisplayName} [{activeMove.Label}] engellendi -> KONTRA VUR!";
+                                }
+                            }
+                            else
+                            {
+                                Stratocraft.Character.Data.HitZone zone = activeMove.Direction switch
+                                {
+                                    CreatureAttackDirection.Overhead => Stratocraft.Character.Data.HitZone.Head,
+                                    CreatureAttackDirection.Underhand => Stratocraft.Character.Data.HitZone.Legs,
+                                    _ => Stratocraft.Character.Data.HitZone.Torso
+                                };
+                                // Faz A.3: TakeDamageRegional HP'yi ZATEN dusurur -> 2. kez dusme (2x bug) TAMAMEN KALDIRILDI!
+                                float actualDmg = playerVitals.TakeDamageRegional(zone, rawDmg, out float absorbedDmg, out bool isCritHead);
+                                string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {zone} Soğurdu: -{absorbedDmg:F0}]" : "");
+                                LastCreatureEventText =
+                                    $"{a.DisplayName} [{activeMove.Label}] ile vurdu! (-{actualDmg:F1} HP{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
+
+                                if (WaveADeepDiagnosticProbe.Enabled)
+                                {
+                                    WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                                    {
+                                        FrameIndex = Time.frameCount, TimeSec = time, EntityGuid = unchecked((int)a.EntityGuid),
+                                        ArchetypeId = a.ArchetypeId, PrevState = (int)CreatureAiState.AttackActive, NextState = (int)CreatureAiState.AttackActive,
+                                        HorizDistMeters = horizDist, VertDeltaMeters = vertDelta, StandOffDistMeters = activeMove.ReachMeters,
+                                        AttackCooldownBefore = probeCdBefore, AttackCooldownAfter = a.AttackCooldown, AnimAttackSwing01 = 1.0f,
+                                        IsLungeFrame = true, PlayerWasParrying = isPlayerParrying, HitZone = (int)zone, RawDamage = rawDmg,
+                                        ReportedActualDamage = actualDmg, PlayerHpBefore = probeHpBefore, PlayerHpAfter = playerVitals.CurrentHp,
+                                        ActualHpDrop = probeHpBefore - playerVitals.CurrentHp, WorldPosX = meleePos.x, WorldPosY = meleePos.y, WorldPosZ = meleePos.z,
+                                        EventTag = "CreatureMeleeHit"
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    if (a.AttackStageTimer >= activeMove.ActiveSeconds)
+                    {
+                        a.State = CreatureAiState.AttackRecovery;
+                        a.AttackStageTimer = 0f;
+                        a.AttackStageDuration = activeMove.RecoverySeconds;
+                    }
+                }
+                else if (a.State == CreatureAiState.AttackRecovery)
+                {
+                    a.AttackStageTimer += deltaTime;
+                    if (horizDist < combatStandOffDist) meleePos -= flatDir * (1.15f * deltaTime);
+                    if (a.AttackStageTimer >= activeMove.RecoverySeconds)
+                    {
+                        a.State = CreatureAiState.MeleeAttack;
+                        a.AttackStageTimer = 0f;
+                        float aggroRate = Mathf.Clamp(Stage1GameSettings.CreatureAggressionMultiplier, 0.5f, 2.5f);
+                        a.AttackCooldown = 0.55f / Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01((aggroRate - 0.5f) / 2.0f));
+                    }
+                }
+                else
+                {
+                    a.State = CreatureAiState.MeleeAttack;
+                    meleePos = pos + (tangent * Mathf.Sin(time * 2.6f + a.PhaseOffset) * 0.42f + (boidsSep - flatDir) * 0.75f) * deltaTime;
+                    if (horizDist < minPersonalSpaceDist) meleePos -= flatDir * (2.4f * deltaTime);
+
+                    if (a.AttackCooldown <= 0f)
+                    {
+                        // Yeni tur-ozel cok yonlu saldiri sec ve Windup/Telegraph asamasini baslat!
+                        a.ActiveMoveIndex = (a.ActiveMoveIndex + 1 + (Time.frameCount & 1)) % moves.Length;
+                        activeMove = moves[a.ActiveMoveIndex];
+                        a.State = CreatureAiState.AttackWindup;
+                        a.AttackStageTimer = 0f;
+                        a.AttackStageDuration = activeMove.WindupSeconds;
+                        a.AttackHitResolved = false;
+                        a.LockedAttackForwardXZ = flatDir.sqrMagnitude > 0.001f ? flatDir : a.Root.forward;
+                        LastCreatureEventText = $"⚠️ {a.DisplayName} HAZIRLANIYOR: [{activeMove.Label}] ({activeMove.WindupSeconds:0.00}sn — Kaç veya [RMB] Blokla!)";
+                    }
                 }
 
                 if (a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0)
@@ -1592,47 +1889,16 @@ namespace Stratocraft.Character
                 else
                 {
                     float meleeTargetY = SampleStandableHeight(a, meleePos.x, meleePos.z, pos.y, worldChunks, out _);
-                    meleePos.y = meleeTargetY - pos.y <= 1.72f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 12.5f) : pos.y;
+                    meleePos.y = Mathf.Abs(meleeTargetY - pos.y) <= 1.72f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 12.5f) : pos.y;
                 }
                 a.Root.position = meleePos;
 
-                if (a.AttackCooldown <= 0f)
-                {
-                    float aggroRate = Mathf.Clamp(Stage1GameSettings.CreatureAggressionMultiplier, 0.5f, 2.5f);
-                    a.AttackCooldown = 1.30f / Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01((aggroRate - 0.5f) / 2.0f));
-                    string attackMoveLabel = GetSpeciesAttackDescription(a);
-                    float armPenalty = (a.LeftArmSevered && a.RightArmSevered) ? 0.25f : (a.ArmSevered ? 0.45f : 1.0f);
-                    float jawPenalty = a.HeadSevered ? 0.65f : 1.0f;
-                    float rawDmg = (a.IsFlyingBoss ? 18f : 11f) * a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier * armPenalty * jawPenalty;
-                    if (isPlayerParrying && combatBridge != null &&
-                        combatBridge.NotifyParryImpactAndCheckGuardBreak(rawDmg, out float selfHitRecoilDamage))
-                    {
-                        float totalBreakDmg = selfHitRecoilDamage + rawDmg * 0.40f;
-                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - totalBreakDmg);
-                        LastCreatureEventText = combatBridge.LastCombatActionText;
-                    }
-                    else
-                    {
-                        if (isPlayerParrying && a.CaveVariant == CaveCreatureVariantKind.AbyssalSkeletonKnight && combatBridge != null)
-                        {
-                            combatBridge.NotifySuccessfulParryOrClash(new Vector2(-0.28f, 0.32f), openRiposteWindow: true);
-                        }
-
-                        float finalDmg = isPlayerParrying ? rawDmg * 0.15f : rawDmg;
-                        Stratocraft.Character.Data.HitZone zone = (a.IsFlyingBoss || a.IsPhoenixBoss)
-                            ? Stratocraft.Character.Data.HitZone.Head
-                            : (UnityEngine.Random.value < 0.25f ? Stratocraft.Character.Data.HitZone.Head : (UnityEngine.Random.value < 0.35f ? Stratocraft.Character.Data.HitZone.Legs : Stratocraft.Character.Data.HitZone.Torso));
-                        float actualDmg = playerVitals.TakeDamageRegional(zone, finalDmg, out float absorbedDmg, out bool isCritHead);
-                        playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - actualDmg);
-                        string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {zone} Soğurdu: -{absorbedDmg:F0}]" : "");
-                        LastCreatureEventText = isPlayerParrying
-                            ? $"GARD SIPERI BASARILI! {a.DisplayName} [{attackMoveLabel}] saptirildi (-{actualDmg:F1} HP{critNote})."
-                            : $"{a.DisplayName} [{attackMoveLabel}] ile vurdu! (-{actualDmg:F1} HP{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
-                    }
-                }
-
-                float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
-                float combatPitch = a.AttackCooldown > 0.88f ? -12f : (a.LegSevered ? 32f : Mathf.Sin(time * 6f) * 6f);
+                Vector3 faceDir = (a.State == CreatureAiState.AttackActive || a.State == CreatureAiState.AttackWindup) && a.LockedAttackForwardXZ.sqrMagnitude > 0.01f
+                    ? a.LockedAttackForwardXZ
+                    : flatDir;
+                float targetYaw = Mathf.Atan2(faceDir.x, faceDir.z) * Mathf.Rad2Deg;
+                float combatPitch = a.State == CreatureAiState.AttackWindup ? -14f
+                    : (a.State == CreatureAiState.AttackActive ? 16f : (a.LegSevered ? 32f : Mathf.Sin(time * 6f) * 5f));
                 bool flyingMelee = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
                 a.Root.rotation = flyingMelee
                     ? Quaternion.Euler(combatPitch, targetYaw, 0f)
@@ -1799,7 +2065,7 @@ namespace Stratocraft.Character
                 if (!blockedByCover)
                 {
                     float flareDmg = 16f * a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier;
-                    playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - flareDmg);
+                    playerVitals.CurrentHp = Mathf.Max(0f, playerVitals.CurrentHp - flareDmg);
                     LastCreatureEventText = $"ANKA GUNES PATLAMASI! Acikta yakalandiniz (-{flareDmg:F0} HP | {scorchedBlocks} dogal blok kavruldu)!";
                 }
                 else
@@ -1929,6 +2195,75 @@ namespace Stratocraft.Character
                 }
 
                 a.LastHitSwingId = combatBridge.CurrentSwingId;
+                a.HasBeenProvoked = true;
+
+                // Faz A.3: Suru (Pack) uyarisi — ayni turden yakin suru uyeleri oyuncuya reaksiyon verir
+                CreatureSpeciesAiProfile hitProfile = CreatureCombatAiCatalog.ResolveProfile(
+                    a.ArchetypeId, a.IsFlyingBoss, a.IsBiped, a.CaveVariant != CaveCreatureVariantKind.None);
+                if (hitProfile.SocialBehavior == CreatureSocialBehavior.Pack)
+                {
+                    for (int p = 0; p < _agents.Count; p++)
+                    {
+                        LiveCreatureAgent mate = _agents[p];
+                        if (mate != a && mate.Root != null && mate.State != CreatureAiState.Dead &&
+                            mate.ArchetypeId == a.ArchetypeId &&
+                            Vector3.Distance(mate.Root.position, a.Root.position) <= 16.0f)
+                        {
+                            mate.HasBeenProvoked = true;
+                        }
+                    }
+                }
+
+                // Faz A.3: Canli yonlu blok, kacinma ve oyuncu aliskanligi ogrenme (Pattern Memory)
+                CreatureAttackDirection playerDir = CreaturePatternMemory.ClassifyPlayerSlashDirection(
+                    combatBridge.CurrentSlashDirUnit.x, combatBridge.CurrentSlashDirUnit.y, combatBridge.CurrentThrustExtensionMeters >= 0.12f);
+                CreatureCombatAiCatalog.ComputeDistanceDifficultyMultipliers(
+                    a.Root.position.x, a.Root.position.z, out _, out float intelBonus01);
+
+                bool creatureCanReact = a.State != CreatureAiState.AttackActive &&
+                                        a.State != CreatureAiState.EmberEgg &&
+                                        !combatBridge.WasLastSlashRiposte &&
+                                        !combatBridge.WasLastSlashIaidoCharged;
+                if (creatureCanReact)
+                {
+                    bool alreadyGuardingSameDir = a.GuardTimer > 0f &&
+                                                  CreaturePatternMemory.DoesCreatureGuardBlockAttack(a.GuardDirection, playerDir);
+                    CreatureDefenseAction defAction = alreadyGuardingSameDir
+                        ? CreatureDefenseAction.DirectionalBlock
+                        : a.PatternMemory.EvaluateDefenseReaction(in hitProfile, playerDir, intelBonus01, UnityEngine.Random.value, out a.GuardDirection);
+
+                    if (defAction == CreatureDefenseAction.DirectionalBlock &&
+                        CreaturePatternMemory.DoesCreatureGuardBlockAttack(a.GuardDirection, playerDir))
+                    {
+                        a.PatternMemory.RecordPlayerAttackDirection(playerDir);
+                        a.GuardTimer = 0.65f;
+                        a.State = CreatureAiState.DirectionalBlock;
+                        combatBridge.AbortSwingOnObstacle(0.42f);
+                        combatBridge.LastCombatActionText =
+                            $"🛡️ {a.DisplayName} [{playerDir}] YÖNÜNÜ FİZİKSEL BLOKLADI! (Karşı yönden vur veya Aldatma/Saplama kullan!)";
+                        LastCreatureEventText = combatBridge.LastCombatActionText;
+                        feedbackBridge?.NotifyCreatureStruckFeedback(
+                            currPts[bestPtIdx], 0f, hitSpeedMps, "EnemyBlock", " [BLOKLANDI]", string.Empty, isClawClash: true);
+                        return true;
+                    }
+                    if ((defAction == CreatureDefenseAction.SideDodge || defAction == CreatureDefenseAction.BackstepDodge) &&
+                        a.DodgeCooldownTimer <= 0f)
+                    {
+                        a.PatternMemory.RecordPlayerAttackDirection(playerDir);
+                        a.DodgeTimer = 0.26f;
+                        a.DodgeCooldownTimer = 2.4f;
+                        a.State = CreatureAiState.EvadeDodge;
+                        a.DodgeDirXZ = defAction == CreatureDefenseAction.BackstepDodge
+                            ? -a.Root.forward
+                            : ((Time.frameCount & 1) == 0 ? a.Root.right : -a.Root.right);
+                        a.DodgeDirXZ.y = 0f;
+                        if (a.DodgeDirXZ.sqrMagnitude > 0.001f) a.DodgeDirXZ.Normalize();
+                        LastCreatureEventText = $"💨 {a.DisplayName} saldırını okuyup KAÇINDI ({defAction})!";
+                        return true;
+                    }
+                }
+                a.PatternMemory.RecordPlayerAttackDirection(playerDir);
+
                 string bladeZone = uHit <= 0.35f ? "Forte" : (uHit <= 0.65f ? "Mesne" : "Foible");
                 float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
                 float edgeMult = combatBridge.EdgeAlignment01;
@@ -1950,6 +2285,27 @@ namespace Stratocraft.Character
                     * gestureDamageMult * zoneMult * edgeMult * stanceDamageMult * preChamberMult * jumpStrikeMult * riposteMult * iaidoMult * weakPointMult
                     * Stage1GameSettings.PlayerCombatDamageMultiplier;
                 a.CurrentHp = Mathf.Max(0f, a.CurrentHp - damage);
+                if (WaveADeepDiagnosticProbe.Enabled)
+                {
+                    WaveADeepDiagnosticProbe.RecordCombatHitEvent(new WaveACombatHitEventRecord
+                    {
+                        FrameIndex = Time.frameCount,
+                        TimeSec = Time.time,
+                        EventTag = "BladeHitCreature",
+                        TargetType = a.DisplayName,
+                        TargetId = a.ArchetypeId,
+                        SwingId = combatBridge.CurrentSwingId,
+                        IsThrustMode = combatBridge.CurrentThrustExtensionMeters >= 0.12f,
+                        ThrustExtMeters = combatBridge.CurrentThrustExtensionMeters,
+                        HitSpeedMps = hitSpeedMps,
+                        EdgeAlignment01 = edgeMult,
+                        IsMicroCut = isMicroCut,
+                        FinalDamage = damage,
+                        StaminaBefore = 0f,
+                        StaminaAfter = a.CurrentHp,
+                        NoteTag = bladeZone
+                    });
+                }
                 if (!isMicroCut)
                 {
                     a.HitFlinchTimer = 0.25f;
@@ -2094,7 +2450,7 @@ namespace Stratocraft.Character
         {
             float epCost = 4.5f * Mathf.Max(0.25f, Stage1GameSettings.StaminaDrainMultiplier);
             PhysicalCharacterControllerSystem.ConsumeStamina(ref playerVitals, ref moveState, epCost);
-            playerVitals.CurrentHp = Mathf.Max(1.0f, playerVitals.CurrentHp - 1.5f);
+            playerVitals.CurrentHp = Mathf.Max(0.0f, playerVitals.CurrentHp - 1.5f);
 
             string handLabel = isRightHand ? "Sağ Direkt" : "Sol Kroşe";
             miningCtrl.LastFeedbackText =
@@ -2782,8 +3138,14 @@ namespace Stratocraft.Character
         {
             float cycleSpeed = a.State == CreatureAiState.Patrol ? 4.4f : (a.State == CreatureAiState.Flee ? 5.6f : 8.8f);
             float phase = time * cycleSpeed + a.PhaseOffset;
-            bool isAttacking = (a.State == CreatureAiState.MeleeAttack || a.State == CreatureAiState.SupportPillarSiege) && a.AttackCooldown > 0.65f;
-            float attackSwing01 = isAttacking ? Mathf.Clamp01((a.AttackCooldown - 0.65f) / 0.65f) : 0f;
+            bool isWindup = a.State == CreatureAiState.AttackWindup;
+            bool isActiveStrike = a.State == CreatureAiState.AttackActive || a.State == CreatureAiState.SupportPillarSiege;
+            bool isBlocking = a.State == CreatureAiState.DirectionalBlock;
+            bool isAttacking = isWindup || isActiveStrike;
+            float windup01 = isWindup && a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 0f;
+            float active01 = a.State == CreatureAiState.AttackActive && a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 0f;
+            // Faz A.3 Kalibrasyon: Windup'ta kol geriye/yukari kalkar (0 -> 1.0 telgraf), Active'de sertce iner (1.0 -> 0.0 darbe)!
+            float attackSwing01 = isWindup ? windup01 : (isActiveStrike ? (1.0f - active01) : 0f);
             float flinchPitch = a.HitFlinchTimer > 0f ? Mathf.Sin(a.HitFlinchTimer * 45f) * 22f - 16f : 0f;
 
             bool isHornCharger = a.ArchetypeId == 5 || a.ArchetypeId == 8 || a.ArchetypeId == 10 || a.ArchetypeId == 13 || a.ArchetypeId == 19;
@@ -2849,15 +3211,28 @@ namespace Stratocraft.Character
                 float leftForearmPitch = -kneeFlexL * 0.7f;
                 float rightForearmPitch = -kneeFlexR * 0.7f;
 
-                if (isAttacking)
+                if (isBlocking)
+                {
+                    // Yonlu blok: iki kol gogus onunde capraz siper alir
+                    float guardSideYaw = a.GuardDirection == CreatureAttackDirection.Left ? -34f
+                        : (a.GuardDirection == CreatureAttackDirection.Right ? 34f : 0f);
+                    rightArmPitch = -76f;
+                    rightForearmPitch = -62f;
+                    rightArmYaw = -26f + guardSideYaw;
+                    leftArmPitch = -72f;
+                    leftForearmPitch = -58f;
+                    leftArmYaw = 26f + guardSideYaw;
+                }
+                else if (isAttacking)
                 {
                     if (a.IsBiped)
                     {
-                        // 2) Silahli Biped / Golem: Sag silah kolu bas ustunden (-110° -> -25°) sertce indirilir!
-                        rightArmPitch = Mathf.Lerp(-25f, -110f, attackSwing01);
-                        rightForearmPitch = -48f;
-                        leftArmPitch = -42f;
-                        leftForearmPitch = -35f;
+                        // 2) Silahli Biped / Golem: Windup'ta -125° yukari/yana gerilir, Active'de -18° sertce iner!
+                        rightArmPitch = Mathf.Lerp(-18f, -125f, attackSwing01);
+                        rightForearmPitch = Mathf.Lerp(-32f, -64f, attackSwing01);
+                        rightArmYaw = Mathf.Lerp(-28f, 38f, attackSwing01);
+                        leftArmPitch = -48f;
+                        leftForearmPitch = -40f;
                     }
                     else if (isArachnidStinger)
                     {

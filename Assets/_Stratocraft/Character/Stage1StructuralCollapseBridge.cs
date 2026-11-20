@@ -1108,7 +1108,7 @@ namespace Stratocraft.Character
 
             if (Vector3.Distance(playerPos, baseGroundPos) <= 2.6f)
             {
-                playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - 12f);
+                playerVitals.CurrentHp = Mathf.Max(0f, playerVitals.CurrentHp - 12f);
             }
 
             string woodName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(woodMat);
@@ -1672,7 +1672,7 @@ namespace Stratocraft.Character
             if (Vector3.Distance(playerPos, impactWorld) <= 3.2f)
             {
                 crushDamage = PrebakedFracturePatternLut.ComputeKineticImpactDamage(slot.Cluster.TotalMassKg, vHit);
-                playerVitals.CurrentHp = Mathf.Max(1f, playerVitals.CurrentHp - crushDamage);
+                playerVitals.CurrentHp = Mathf.Max(0f, playerVitals.CurrentHp - crushDamage);
             }
 
             string lowerCrushNote = crushedLowerBlocks > 0
