@@ -3371,12 +3371,12 @@ namespace Stratocraft.Physics.Jobs
                 _tlsDiagCrestAboveFld = fluids[aboveIdx];
             }
 
-            if (voxels[aboveIdx] != 0u || (fluids[aboveIdx] & 0xFF) != 0)
+            if (VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) || (fluids[aboveIdx] & 0xFF) != 0)
             {
                 if (FluidDeepDiagnosticProbe.Enabled)
                 {
-                    _tlsDiagCrestBlockReason = voxels[aboveIdx] != 0u
-                        ? (VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) ? "AboveSolid" : "AboveNonZeroSdfAirVoxel")
+                    _tlsDiagCrestBlockReason = VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx])
+                        ? "AboveSolid"
                         : "AboveHasFluid";
                 }
                 return;
@@ -3388,7 +3388,7 @@ namespace Stratocraft.Physics.Jobs
             bool hasFluidBelow = (belowFluid & 0xFF) >= 128;
             bool hasObsidianBelow = VoxelBitUtility.IsPhysicallySolid(belowVoxel) &&
                                     VoxelBitUtility.GetMaterialId(belowVoxel) == MaterialIdCatalog.NaturalObsidian;
-            bool hasFullSurfaceOnNaturalBed = Math.Max(waterMass, lavaMass) >= 200 &&
+            bool hasFullSurfaceOnNaturalBed = Math.Max(waterMass, lavaMass) >= 128 &&
                                               VoxelBitUtility.IsPhysicallySolid(belowVoxel) &&
                                               VoxelBitUtility.GetShapeId(belowVoxel) == 0;
 
@@ -3396,8 +3396,8 @@ namespace Stratocraft.Physics.Jobs
             {
                 if (FluidDeepDiagnosticProbe.Enabled)
                 {
-                    _tlsDiagCrestBlockReason = Math.Max(waterMass, lavaMass) < 200
-                        ? "PreReactMaxMassBelow200_NoDeepSupport"
+                    _tlsDiagCrestBlockReason = Math.Max(waterMass, lavaMass) < 128
+                        ? "PreReactMaxMassBelow128_NoDeepSupport"
                         : "NoDeepOrNaturalBedSupport";
                 }
                 return;
@@ -3405,7 +3405,7 @@ namespace Stratocraft.Physics.Jobs
 
             voxels[aboveIdx] = VoxelBitUtility.PackStandard(
                 MaterialIdCatalog.NaturalObsidian,
-                84,
+                116,
                 0,
                 0,
                 BlokKokenDurumu.DogalKutle,

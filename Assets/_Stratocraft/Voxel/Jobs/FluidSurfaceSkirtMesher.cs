@@ -1022,6 +1022,7 @@ namespace Stratocraft.Voxel.Jobs
                                         nb, lx, y, lz, va.EdgeDirX, va.EdgeDirZ, fType, renderId,
                                         level, pressureHead, selfVelX, selfVelZ, centerCurrY,
                                         hasFreeTopSurface, isArchFloor, maxBufferY,
+                                        cornerGrid, cornerBuiltType,
                                         in vb, in va, outRichTriangles);
                                 }
                             }
@@ -1072,6 +1073,7 @@ namespace Stratocraft.Voxel.Jobs
                                             nb, lx, y, lz, va.EdgeDirX, va.EdgeDirZ, fType, renderId,
                                             level, pressureHead, selfVelX, selfVelZ, centerCurrY,
                                             hasFreeTopSurface, isArchFloor, maxBufferY,
+                                            cornerGrid, cornerBuiltType,
                                             in vb, in va, outRichTriangles);
                                     }
                                 }
@@ -1182,7 +1184,9 @@ namespace Stratocraft.Voxel.Jobs
                     nb.SampleCellFast(sx, y, sz, out uint s0, out ushort f0);
                     bool s0Solid = VoxelBitUtility.IsPhysicallySolid(s0);
                     byte m0 = (byte)(f0 & 0xFFu);
-                    bool has0 = !s0Solid && m0 > 0 && ((f0 >> 8) & 0x03u) == fType;
+                    bool isMidAir0 = !s0Solid && m0 > 0 && ((f0 >> 8) & 0x03u) == fType && y >= 2 &&
+                                     IsMidAirFreeFallStreamCell(nb, sx, y, sz, fType, maxBufferY);
+                    bool has0 = !s0Solid && !isMidAir0 && m0 > 0 && ((f0 >> 8) & 0x03u) == fType;
                     if (has0)
                     {
                         if (y < minWetY) minWetY = y;
@@ -1233,7 +1237,7 @@ namespace Stratocraft.Voxel.Jobs
                 }
             }
 
-            int resY = (maxWetY - minWetY <= 2) ? minWetY : y;
+            int resY = (maxWetY - minWetY <= 3) ? minWetY : y;
             if (FluidDeepDiagnosticProbe.Enabled)
             {
                 if (maxWetY - minWetY > 2) _tlsMesherDiag.CanonicalSpreadGt2FallbackCount++;
@@ -1288,11 +1292,12 @@ namespace Stratocraft.Voxel.Jobs
             }
 
             RichCornerResult cSelf = GetOrComputeFreeSurfaceCorner(nb, cx, cz, y, fType, maxBufferY, cornerGrid, cornerBuiltType);
+            int canonicalSelfY = ResolveCanonicalFreeSurfaceCornerY(nb, cx, cz, y, fType, maxBufferY);
             float yC = cSelf.TopCurrY;
-            bool hasL = TrySampleWetCornerTopY(nb, cx - 1, cz, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yL);
-            bool hasR = TrySampleWetCornerTopY(nb, cx + 1, cz, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yR);
-            bool hasD = TrySampleWetCornerTopY(nb, cx, cz - 1, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yD);
-            bool hasU = TrySampleWetCornerTopY(nb, cx, cz + 1, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yU);
+            bool hasL = TrySampleWetCornerTopY(nb, cx - 1, cz, canonicalSelfY, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yL);
+            bool hasR = TrySampleWetCornerTopY(nb, cx + 1, cz, canonicalSelfY, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yR);
+            bool hasD = TrySampleWetCornerTopY(nb, cx, cz - 1, canonicalSelfY, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yD);
+            bool hasU = TrySampleWetCornerTopY(nb, cx, cz + 1, canonicalSelfY, y, fType, maxBufferY, cornerGrid, cornerBuiltType, out float yU);
 
             float dYdX = (hasL && hasR) ? (0.5f * (yR - yL)) : (hasR ? (yR - yC) : (hasL ? (yC - yL) : 0f));
             float dYdZ = (hasD && hasU) ? (0.5f * (yU - yD)) : (hasU ? (yU - yC) : (hasD ? (yC - yD) : 0f));
@@ -1309,7 +1314,8 @@ namespace Stratocraft.Voxel.Jobs
             FluidNeighborhood3x3Cache nb,
             int qx,
             int qz,
-            int y,
+            int queryY,
+            int cacheSliceY,
             byte fType,
             int maxBufferY,
             Span<RichCornerResult> cornerGrid,
@@ -1317,31 +1323,18 @@ namespace Stratocraft.Voxel.Jobs
             out float topY)
         {
             bool anyWet = false;
+            int minScanY = Math.Max(0, queryY - 2);
+            int maxScanY = Math.Min(maxBufferY - 1, queryY + 2);
             for (int dz = -1; dz <= 0 && !anyWet; dz++)
             {
-                for (int dx = -1; dx <= 0; dx++)
+                for (int dx = -1; dx <= 0 && !anyWet; dx++)
                 {
                     int sx = qx + dx;
                     int sz = qz + dz;
-                    nb.SampleCellFast(sx, y, sz, out uint s0, out ushort f0);
-                    if (!VoxelBitUtility.IsPhysicallySolid(s0) && (f0 & 0xFFu) > 0u && ((f0 >> 8) & 0x03u) == fType)
+                    for (int sy = minScanY; sy <= maxScanY; sy++)
                     {
-                        anyWet = true;
-                        break;
-                    }
-                    if (y > 0)
-                    {
-                        nb.SampleCellFast(sx, y - 1, sz, out uint sDown, out ushort fDown);
-                        if (!VoxelBitUtility.IsPhysicallySolid(sDown) && (fDown & 0xFFu) > 0u && ((fDown >> 8) & 0x03u) == fType)
-                        {
-                            anyWet = true;
-                            break;
-                        }
-                    }
-                    if (y + 1 < maxBufferY)
-                    {
-                        nb.SampleCellFast(sx, y + 1, sz, out uint sUp, out ushort fUp);
-                        if (!VoxelBitUtility.IsPhysicallySolid(sUp) && (fUp & 0xFFu) > 0u && ((fUp >> 8) & 0x03u) == fType)
+                        nb.SampleCellFast(sx, sy, sz, out uint sCell, out ushort fCell);
+                        if (!VoxelBitUtility.IsPhysicallySolid(sCell) && (fCell & 0xFFu) > 0u && ((fCell >> 8) & 0x03u) == fType)
                         {
                             anyWet = true;
                             break;
@@ -1356,13 +1349,13 @@ namespace Stratocraft.Voxel.Jobs
                 return false;
             }
 
-            if ((uint)qx <= 16u && (uint)qz <= 16u)
+            if (queryY == cacheSliceY && (uint)qx <= 16u && (uint)qz <= 16u)
             {
-                topY = GetOrComputeFreeSurfaceCorner(nb, qx, qz, y, fType, maxBufferY, cornerGrid, cornerBuiltType).TopCurrY;
+                topY = GetOrComputeFreeSurfaceCorner(nb, qx, qz, cacheSliceY, fType, maxBufferY, cornerGrid, cornerBuiltType).TopCurrY;
             }
             else
             {
-                int canonicalY = ResolveCanonicalFreeSurfaceCornerY(nb, qx, qz, y, fType, maxBufferY);
+                int canonicalY = ResolveCanonicalFreeSurfaceCornerY(nb, qx, qz, queryY, fType, maxBufferY);
                 topY = EvaluateRichCornerFast(nb, qx, qz, canonicalY, fType, selfHasFreeTopSurface: true, embedFoundationIntoGround: true, maxBufferY).TopCurrY;
             }
             return true;
@@ -2043,7 +2036,17 @@ namespace Stratocraft.Voxel.Jobs
                 bool belowSolid = VoxelBitUtility.IsPhysicallySolid(belowSRaw);
                 belowCap = FluidHydrostaticsShared.ComputeCellFluidCapacity(belowSRaw);
                 byte belowFMass = (byte)(belowFRaw & 0xFFu);
-                supportedByPool = !belowSolid && belowFMass >= 128 && ((belowFRaw >> 8) & 0x03u) == fluidType;
+                bool belowHasSame = !belowSolid && belowFMass > 0 && ((belowFRaw >> 8) & 0x03u) == fluidType;
+                // Faz 4B.4-B Dag Tasma Birlesmesi: Alt hucre (y-1) henuz 1..127 arasinda dolarken dahi (y-2 kati/dolu
+                // tabana oturuyorsa) bu sutun kopuk ucurum degil aktif dolan bir havuz/yamac baglantisidir!
+                bool belowGroundedOnTwoBelow = false;
+                if (belowHasSame && belowFMass < 128 && sy >= 2)
+                {
+                    nb.SampleCellFast(sx, sy - 2, sz, out uint twoBelowS, out ushort twoBelowF);
+                    belowGroundedOnTwoBelow = VoxelBitUtility.IsPhysicallySolid(twoBelowS) ||
+                                              ((twoBelowF & 0xFFu) >= 128u && ((twoBelowF >> 8) & 0x03u) == fluidType);
+                }
+                supportedByPool = belowHasSame && (belowFMass >= 128 || belowGroundedOnTwoBelow);
                 if (!belowSolid && !supportedByPool)
                 {
                     return false;
@@ -2751,16 +2754,7 @@ namespace Stratocraft.Voxel.Jobs
                             int zEnd = stepZ == 0 ? baseCornerZ : bankZ;
                             for (int bz = zStart; bz <= zEnd; bz++)
                             {
-                                nb.SampleCellFast(bankX + stepX, y, bz, out uint backSX, out ushort backFX);
-                                if (!VoxelBitUtility.IsPhysicallySolid(backSX))
-                                {
-                                    isThinOrOppositeFluidBank = true;
-                                    byte otherT = (byte)((backFX >> 8) & 0x03u);
-                                    if ((backFX & 0xFFu) > 0u && otherT != 0 && otherT != fluidType)
-                                    {
-                                        hasOppositeFluidBehindBank = true;
-                                    }
-                                }
+                                ProbeThinAndOppositeFluidBackCell(nb, bankX + stepX, y, bz, fluidType, maxBufferY, ref isThinOrOppositeFluidBank, ref hasOppositeFluidBehindBank);
                             }
                         }
                         if (stepZ != 0)
@@ -2769,30 +2763,12 @@ namespace Stratocraft.Voxel.Jobs
                             int xEnd = stepX == 0 ? baseCornerX : bankX;
                             for (int bx = xStart; bx <= xEnd; bx++)
                             {
-                                nb.SampleCellFast(bx, y, bankZ + stepZ, out uint backSZ, out ushort backFZ);
-                                if (!VoxelBitUtility.IsPhysicallySolid(backSZ))
-                                {
-                                    isThinOrOppositeFluidBank = true;
-                                    byte otherT = (byte)((backFZ >> 8) & 0x03u);
-                                    if ((backFZ & 0xFFu) > 0u && otherT != 0 && otherT != fluidType)
-                                    {
-                                        hasOppositeFluidBehindBank = true;
-                                    }
-                                }
+                                ProbeThinAndOppositeFluidBackCell(nb, bx, y, bankZ + stepZ, fluidType, maxBufferY, ref isThinOrOppositeFluidBank, ref hasOppositeFluidBehindBank);
                             }
                         }
                         if (stepX != 0 && stepZ != 0)
                         {
-                            nb.SampleCellFast(bankX + stepX, y, bankZ + stepZ, out uint backSD, out ushort backFD);
-                            if (!VoxelBitUtility.IsPhysicallySolid(backSD))
-                            {
-                                isThinOrOppositeFluidBank = true;
-                                byte otherT = (byte)((backFD >> 8) & 0x03u);
-                                if ((backFD & 0xFFu) > 0u && otherT != 0 && otherT != fluidType)
-                                {
-                                    hasOppositeFluidBehindBank = true;
-                                }
-                            }
+                            ProbeThinAndOppositeFluidBackCell(nb, bankX + stepX, y, bankZ + stepZ, fluidType, maxBufferY, ref isThinOrOppositeFluidBank, ref hasOppositeFluidBehindBank);
                         }
                     }
 
@@ -2816,8 +2792,9 @@ namespace Stratocraft.Voxel.Jobs
 
                         if (isThinOrOppositeFluidBank)
                         {
-                            // Eksen basina <= 0.42m (karsi sivili ve y+1 desteksizse <= 0.34m) -> 0 bowtie deligi + 0 su/lav ust uste binmesi!
-                            float maxAxisCap = (hasOppositeFluidBehindBank && !anyBankAtYPlus1) ? 0.34f : 0.42f;
+                            // Faz 4B.4-C: Karsi sivili 1-voksel duvarda (orn. Su <-> Obsidyen <-> Lav) etegi <= 0.28m
+                            // (obsidyen yarim kalinliginin ici!) sinirla -> 0 su/lav ust uste binmesi!
+                            float maxAxisCap = hasOppositeFluidBehindBank ? 0.28f : 0.42f;
                             float maxDirComp = MathF.Max(MathF.Abs(dirXZ.X), MathF.Abs(dirXZ.Z));
                             float safeExtCap = maxDirComp > 1e-4f ? (maxAxisCap / maxDirComp) : maxAxisCap;
                             adaptiveSkirtExt = MathF.Min(adaptiveSkirtExt, safeExtCap);
@@ -2995,18 +2972,17 @@ namespace Stratocraft.Voxel.Jobs
                 avgPrevSurfY = avgCurrSurfY;
             }
 
-            // Paket 4B.3 SurfaceNets Arazi Aciklik Kilidi (4511a295.jpg & 08d658f5.jpg Tamiri):
-            // -X/-Z egimli dag yamaclarinda (-0.5m XZ kaymasi) ve icbukey V-vadi oluklarinda (+0.33..0.50m dual kalkma)
-            // akan derenin gercek SurfaceNets kaya/kar ucgenlerinin (+0.12m jitter) altinda kalip kaybolmasini onler!
-            // NOT (8368bcc1.jpg): V-vadi duvarina yasli olmayan acik dis kenarlarda (shoreAirSamples > 0 && snHigherBanks == 0)
-            // kenari +0.24m havaya kaldirma; yalnizca +0.04m ile gercek buza yasla!
-            if (hasSnTerrainInfo && !isPoolRegime && !hasBelowPoolSupport && selfHasFreeTopSurface && overfallSamples == 0)
+            // Faz 4B.4-B Gercek 8-Kose / 12-Kenar SurfaceNets Dual-Cell Aciklik Kilidi:
+            // snTerrainY artik HybridSurfaceNetsAndShapeMesher'in kendi 12-kenar dual-cell izo-yuzey yuksekligidir!
+            // Duz zeminde T07 mikro damlasi <= 0.012m kalir; basamakli buz yamacinda/V-vadide (+0.12m jitter zarfi) 0 gomulme!
+            bool isCalmSettledHorizontalCorner = wetSamples >= 2 && settledWetSamples == wetSamples && slopeConnectedCount == 0 && surfSpread <= 0.06f;
+            if (hasSnTerrainInfo && !isPoolRegime && !isCalmSettledHorizontalCorner && !hasBelowPoolSupport && selfHasFreeTopSurface && overfallSamples == 0)
             {
                 bool isOpenExposedRim = shoreAirSamples > 0 && snHigherBanks == 0 && slopeConnectedCount == 0;
-                bool needsJitterEnvelope = !isOpenExposedRim && (snMaxStepDelta >= 1 || snHigherBanks > 0);
+                bool needsJitterEnvelope = !isOpenExposedRim && (snMaxStepDelta >= 1 || snHigherBanks > 0 || slopeConnectedCount > 0);
                 float terrainClearance = needsJitterEnvelope
-                    ? (0.09f + MathF.Min(0.07f, avgCurrThickOut * 0.45f))
-                    : 0.03f;
+                    ? (0.115f + MathF.Min(0.055f, avgCurrThickOut * 0.35f))
+                    : 0.012f;
                 float minVisibleSurfY = snTerrainY + terrainClearance;
                 if (avgCurrSurfY < minVisibleSurfY)
                 {
@@ -3017,9 +2993,6 @@ namespace Stratocraft.Voxel.Jobs
                     }
                 }
 
-                // Yeni islanan cephede (avgPrevThickOut == 0) alt-tik enterpolasyonunun %65 boyunca arazinin altinda
-                // gizli kalip son 2 karede "takila takila" firlamasini onlemek icin baslangic kotunu gorunur yuzeyin
-                // hemen altina (-1.5cm) hizala!
                 if (avgPrevThickOut <= 0f && avgCurrSurfY > snTerrainY && avgPrevSurfY < snTerrainY - 0.015f)
                 {
                     avgPrevSurfY = snTerrainY - 0.015f;
@@ -3099,6 +3072,54 @@ namespace Stratocraft.Voxel.Jobs
                 IsPoolRegime = isPoolRegime,
                 HasSharpArchitecturalFloor = hasSharpArchFloor
             };
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void ProbeThinAndOppositeFluidBackCell(
+            FluidNeighborhood3x3Cache nb,
+            int bx,
+            int y,
+            int bz,
+            byte fluidType,
+            int maxBufferY,
+            ref bool isThinOrOppositeFluidBank,
+            ref bool hasOppositeFluidBehindBank)
+        {
+            nb.SampleCellFast(bx, y, bz, out uint backS, out ushort backF);
+            if (!VoxelBitUtility.IsPhysicallySolid(backS))
+            {
+                isThinOrOppositeFluidBank = true;
+                byte otherT = (byte)((backF >> 8) & 0x03u);
+                if ((backF & 0xFFu) > 0u && otherT != 0 && otherT != fluidType)
+                {
+                    hasOppositeFluidBehindBank = true;
+                    return;
+                }
+            }
+
+            // y-1 ve y+1 katmanlarinda karsi sivi varsa (orn. obsidyen crest ustu/alti) yine karsi-sivili ince duvar say!
+            if (y > 0)
+            {
+                nb.SampleCellFast(bx, y - 1, bz, out uint dnS, out ushort dnF);
+                byte dnT = (byte)((dnF >> 8) & 0x03u);
+                if (!VoxelBitUtility.IsPhysicallySolid(dnS) && (dnF & 0xFFu) > 0u && dnT != 0 && dnT != fluidType)
+                {
+                    isThinOrOppositeFluidBank = true;
+                    hasOppositeFluidBehindBank = true;
+                    return;
+                }
+            }
+
+            if (y + 1 < maxBufferY)
+            {
+                nb.SampleCellFast(bx, y + 1, bz, out uint upS, out ushort upF);
+                byte upT = (byte)((upF >> 8) & 0x03u);
+                if (!VoxelBitUtility.IsPhysicallySolid(upS) && (upF & 0xFFu) > 0u && upT != 0 && upT != fluidType)
+                {
+                    isThinOrOppositeFluidBank = true;
+                    hasOppositeFluidBehindBank = true;
+                }
+            }
         }
 
         private static void EmitRichBevelSkirtQuad(
@@ -3198,6 +3219,8 @@ namespace Stratocraft.Voxel.Jobs
             bool selfHasFreeTopSurface,
             bool allowSharpSkirtWall,
             int maxBufferY,
+            Span<RichCornerResult> cornerGrid,
+            Span<byte> cornerBuiltType,
             in RichContourVertex v0,
             in RichContourVertex v1,
             List<FluidRichTriangle> outRichTriangles)
@@ -3446,6 +3469,22 @@ namespace Stratocraft.Voxel.Jobs
 
                 if (neighborIsOpenAir && nb.IsColumnLoaded(nx, nz) && !flowsAlongSideSlopeSkirt && (selfMass >= 6 || !selfHasFreeTopSurface))
                 {
+                    // Faz 4B.4-C Sifir Coplanar Su-Lav Duvari (OppCoplanar == 0):
+                    // Karsi sivi (orn. Su <-> Lav) ayni y katmaninda dogrudan komsuysa iki taraf birden ayni duzleme
+                    // ZWrite On duvar orup Z-fighting yapmaz; yalnizca kucuk fluidType (veya belirgin yuksek taraf) duvar orer!
+                    byte oppMass = (byte)(nFluid & 0xFFu);
+                    byte oppType = (byte)((nFluid >> 8) & 0x03u);
+                    if (oppMass > 0 && oppType != 0 && oppType != fluidType)
+                    {
+                        if (oppMass >= selfMass && fluidType > oppType)
+                        {
+                            return;
+                        }
+                        if (oppMass >= (int)selfMass - 16 && selfMass >= (int)oppMass - 16)
+                        {
+                            return;
+                        }
+                    }
                     // Devir #069: Kuru komsu (nx, y, nz) dogal zemin uzerinde su yuzeyinden yuksek bir kiyi bankasiysa
                     // (nBedY >= selfSurfaceY - 0.04m) acik hava ucurumu degildir -> buz/toprak icine bakan gereksiz dikey duvar orme!
                     if (selfHasFreeTopSurface && y > 0 &&
@@ -3459,8 +3498,9 @@ namespace Stratocraft.Voxel.Jobs
                         }
                     }
 
-                    // Devir #069 P0-5: Kuru komsu (nx, y, nz) bu kenarda zaten Marching Squares 45° diyagonal kopru ucgeni
-                    // oruyorsa, suyun icini kesen dahili dikey cam duvar orme!
+                    // Faz 4B.4-B Ortak Konkav Kopru Kontrati (ConcaveHoles == 0):
+                    // Kuru komsu (nx, y, nz) gercekten Marching Squares 45° diyagonal kopru ucgeni OREBILECEKSE
+                    // (SkirtOffset <= 0.2m dahil — EmitSingleConcaveBridgeTriangle ile %100 ayni karar!), dahili dikey duvar orme!
                     if (selfHasFreeTopSurface && selfMass >= 16)
                     {
                         int perpX = dirZ != 0 ? 1 : 0;
@@ -3470,7 +3510,8 @@ namespace Stratocraft.Voxel.Jobs
                              ProbeNeighborFluidTypeForConcave(nb, lx + perpX, y, lz + perpZ, maxBufferY) == fluidType) ||
                             (ProbeNeighborFluidTypeForConcave(nb, nx - perpX, y, nz - perpZ, maxBufferY) == fluidType &&
                              ProbeNeighborFluidTypeForConcave(nb, lx - perpX, y, lz - perpZ, maxBufferY) == fluidType);
-                        if (hasConcaveBridge)
+                        if (hasConcaveBridge &&
+                            CanDryCellEmitConcaveBridgeWithoutSkirtConflict(nb, nx, y, nz, fluidType, maxBufferY, cornerGrid, cornerBuiltType))
                         {
                             return;
                         }
@@ -3551,6 +3592,68 @@ namespace Stratocraft.Voxel.Jobs
                 C1 = MakeSample(v1.TopCurr, topWallNorm1, renderId, v1.EncodedSubTickDy, v1.EncodedVelX, v1.EncodedVelZ, v1.DepthMeters, wallFoam),
                 C2 = MakeSample(v1.Bottom, wallNorm, renderId, 128, v1.EncodedVelX, v1.EncodedVelZ, v1.DepthMeters, wallFoam)
             });
+        }
+
+        private static bool CanDryCellEmitConcaveBridgeWithoutSkirtConflict(
+            FluidNeighborhood3x3Cache nb,
+            int dxCell,
+            int y,
+            int dzCell,
+            byte fType,
+            int maxBufferY,
+            Span<RichCornerResult> cornerGrid,
+            Span<byte> cornerBuiltType)
+        {
+            // TryEmitMarchingSquaresConcaveCorners on-kosullariyla birebir esles:
+            if (y > 0)
+            {
+                nb.SampleCellFast(dxCell, y - 1, dzCell, out uint belowS, out ushort belowF);
+                if ((belowF & 0xFFu) != 0u) return false;
+                if (!VoxelBitUtility.IsPhysicallySolid(belowS))
+                {
+                    if (y >= 2)
+                    {
+                        nb.SampleCellFast(dxCell, y - 2, dzCell, out _, out ushort below2F);
+                        if ((below2F & 0xFFu) != 0u) return false;
+                    }
+                    int belowWetCardinals =
+                        (ProbeNeighborFluidTypeForConcave(nb, dxCell - 1, y - 1, dzCell, maxBufferY) != 0 ? 1 : 0) +
+                        (ProbeNeighborFluidTypeForConcave(nb, dxCell + 1, y - 1, dzCell, maxBufferY) != 0 ? 1 : 0) +
+                        (ProbeNeighborFluidTypeForConcave(nb, dxCell, y - 1, dzCell - 1, maxBufferY) != 0 ? 1 : 0) +
+                        (ProbeNeighborFluidTypeForConcave(nb, dxCell, y - 1, dzCell + 1, maxBufferY) != 0 ? 1 : 0);
+                    if (belowWetCardinals >= 2) return false;
+                }
+            }
+            if (y + 1 < maxBufferY)
+            {
+                nb.SampleCellFast(dxCell, y + 1, dzCell, out _, out ushort aboveF);
+                if ((aboveF & 0xFFu) != 0u) return false;
+            }
+
+            // EmitSingleConcaveBridgeTriangle'daki SkirtOffset <= 0.2m kontrolunu 4 kosede dogrula
+            for (int oz = 0; oz <= 1; oz++)
+            {
+                for (int ox = 0; ox <= 1; ox++)
+                {
+                    int cx = dxCell + ox;
+                    int cz = dzCell + oz;
+                    RichCornerResult cr;
+                    if ((uint)cx <= 16u && (uint)cz <= 16u)
+                    {
+                        cr = GetOrComputeFreeSurfaceCorner(nb, cx, cz, y, fType, maxBufferY, cornerGrid, cornerBuiltType);
+                    }
+                    else
+                    {
+                        int canonicalY = ResolveCanonicalFreeSurfaceCornerY(nb, cx, cz, y, fType, maxBufferY);
+                        cr = EvaluateRichCornerFast(nb, cx, cz, canonicalY, fType, selfHasFreeTopSurface: true, embedFoundationIntoGround: true, maxBufferY);
+                    }
+                    if (cr.SkirtOffset.LengthSquared() > 0.04f)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -3690,6 +3793,19 @@ namespace Stratocraft.Voxel.Jobs
                                       (up2Fluid & 0xFFu) > 0u && ((up2Fluid >> 8) & 0x03u) == fluidType;
                 }
 
+                // Faz 4B.4-B Dag Tasmasi Su Birlesmesi Tamiri:
+                // 1-2 blokluk dogal yamac/cukur tasmasinda (!hasTwoAboveSame) hemen 2 altinda (y-2) kati dogal zemin
+                // uzerinde y-1 suyu akiyorsa, bu hucre "havada serbest dusen Minecraft selale diregi" DEGIL,
+                // ustteki cukurla alttaki yamac suyunu birbirine kaynastiran 2-katmanli akis baglantisidir!
+                if (!hasTwoAboveSame && belowSame && y >= 2)
+                {
+                    nb.SampleCellFast(lx, y - 2, lz, out uint twoBelowS, out _);
+                    if (VoxelBitUtility.IsPhysicallySolid(twoBelowS) && VoxelBitUtility.GetShapeId(twoBelowS) == 0)
+                    {
+                        return false;
+                    }
+                }
+
                 // Yalnizca gercek >= 3 blokluk selale sutunu (hasTwoAboveSame) VEYA altinda dolu havuz olmayan (!belowSame || belowMass < 200)
                 // dusus segmentleri selale sutununa girer -> 2-katmanli durgun kenar hucreleri asla kup olmaz!
                 if (hasTwoAboveSame || !belowSame || belowMass < 200)
@@ -3711,6 +3827,17 @@ namespace Stratocraft.Voxel.Jobs
                         }
                         return false;
                     }
+                }
+            }
+
+            // Faz 4B.4-B: y-1'de zeminli doğal yamac suyu varsa (y-2 kati dogal arazi), y katmanindaki dusen su
+            // tek adimlik yamac gecisidir -> dikey mavi sutun yerine ust/alt yuzeyle surekli kaynassin!
+            if (belowSame && y >= 2)
+            {
+                nb.SampleCellFast(lx, y - 2, lz, out uint twoBelowNaturalS, out _);
+                if (VoxelBitUtility.IsPhysicallySolid(twoBelowNaturalS) && VoxelBitUtility.GetShapeId(twoBelowNaturalS) == 0)
+                {
+                    return false;
                 }
             }
 
@@ -3848,7 +3975,7 @@ namespace Stratocraft.Voxel.Jobs
             float baseTopY = y + Math.Clamp(0.55f + 0.45f * (selfMass / 255.0f), 0.55f, 1.00f);
 
             // Eger y katmaninda bitisik kati zemine oturan bir savak/nehir komsusu varsa, selale tepe kotu
-            // nehirden yukari firlamasin; savak yuzeyiyle ayni veya hafif altinda kivrilip aksin!
+            // nehirden yukari firlamasin; savak yuzeyinin GERCEK SurfaceNets + hidrostatik kotuna baglansin!
             float maxGroundedBrinkY = -1.0f;
             ReadOnlySpan<int> dxs = stackalloc int[4] { -1, 1, 0, 0 };
             ReadOnlySpan<int> dzs = stackalloc int[4] { 0, 0, -1, 1 };
@@ -3861,7 +3988,18 @@ namespace Stratocraft.Voxel.Jobs
                 if (!VoxelBitUtility.IsPhysicallySolid(ns) && nm > 0 && ((nf >> 8) & 0x03u) == fluidType &&
                     !IsMidAirFreeFallStreamCell(nb, nx, y, nz, fluidType, maxBufferY))
                 {
-                    float brinkY = y + Math.Clamp(MassToFluidThickness(nm) * 0.78f, 0.25f, 0.96f);
+                    float nBedY = y;
+                    if (y > 0)
+                    {
+                        nb.SampleCellFast(nx, y - 1, nz, out uint nbs, out ushort nbf);
+                        bool nBelowSame = (nbf & 0xFFu) > 0u && ((nbf >> 8) & 0x03u) == fluidType;
+                        if (!nBelowSame && VoxelBitUtility.IsPhysicallySolid(nbs))
+                        {
+                            nBedY = FluidHydrostaticsShared.ComputeColumnSurfaceNetsBedMeters(nbs, ns, y);
+                        }
+                    }
+                    byte nCap = FluidHydrostaticsShared.ComputeCellFluidCapacity(ns);
+                    float brinkY = ComputeContinuousHydrostaticSurfaceY(nBedY, y, nm, nCap, isPoolSample: nm >= 180);
                     if (brinkY > maxGroundedBrinkY) maxGroundedBrinkY = brinkY;
                 }
             }
@@ -4184,9 +4322,9 @@ namespace Stratocraft.Voxel.Jobs
             FluidHydrostaticsShared.ComputeColumnSurfaceNetsBedMeters(belowSolidRaw, currentSolidRaw, y);
 
         /// <summary>
-        /// HybridSurfaceNetsAndShapeMesher'in (dx-1)+localPos.Y dual izo-yuzey yerlesimiyle birebir eslesen
-        /// gercek zemin kotu ornekleyicisi. Dogal SDF toprakta (ShapeId==0, d=127) cimenin gercek kotu
-        /// sy + 0.496m'dir (y+1.0m degil!); y+1..y-4 araligini tarayarak alt cukur/yamac dususlerini de gorur.
+        /// Faz 4B.4-B Tek Gercek SurfaceNets Zemin Ornekleyicisi:
+        /// Hem dBelow hem de ust hucredeki dCurr yogunlugunu okuyarak FluidHydrostaticsShared ile %100 eslenik
+        /// gercek izo-yuzey yuksekligini doner (eski 0.496 kilidi ve dCurr korlugu kaldirildi!).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float SampleTrueSurfaceNetsFloorYAtCorner(
@@ -4208,9 +4346,13 @@ namespace Stratocraft.Voxel.Jobs
                         return sy + 1.0f;
                     }
 
-                    byte d = VoxelBitUtility.GetDensityOrLiquid(sRaw);
-                    float t = Math.Clamp((d - (float)StratocraftConstants.SdfIsoLevel) / MathF.Max(64.0f, d), 0.08f, 0.496f);
-                    return sy + t;
+                    uint sAbove = 0u;
+                    if (sy + 1 < maxBufferY)
+                    {
+                        nb.SampleCellFast(cornerX, sy + 1, cornerZ, out sAbove, out _);
+                    }
+
+                    return sy + FluidHydrostaticsShared.ComputeNaturalSdfSurfaceOffsetMeters(sRaw, sAbove);
                 }
             }
 
@@ -4220,7 +4362,7 @@ namespace Stratocraft.Voxel.Jobs
         /// <summary>
         /// Dual-grid SurfaceNets ucgenlerinin -0.5m XZ kaymasini (-X / -Z yamaclarinda) birebir kapsamak icin
         /// kose (cornerX, cornerZ) cevresindeki 4 komsu kolonun {(0,0), (-1,0), (0,-1), (-1,-1)} en dusuk
-        /// gercek SurfaceNets taban kotunu doner (8368bcc1.jpg kisa kalan etek tamiri!).
+        /// gercek SurfaceNets taban kotunu doner.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static float SampleMinTrueSurfaceNetsFloorYAtCorner(
@@ -4241,10 +4383,92 @@ namespace Stratocraft.Voxel.Jobs
         }
 
         /// <summary>
-        /// Paket 4B.3 Cift-Komsuluklu SurfaceNets Arazi Zarf Ornekleyicisi (4511a295.jpg &amp; 3ed66b74.jpg):
-        /// Tam dunya kosesi (cornerX, cornerZ) noktasindaki gercek SurfaceNets yuzey kotunu, 4 kardinal komsudaki
-        /// yuksek kaya duvarlarinin olusturdugu icbukey V-vadi dual-tepe kalkmasini (higherBanks) ve 1:1 / 2:1
-        /// yamac dikligini (maxStepDelta) 0-GC olarak hesaplar (y, y-1, y-2 katmanlarinda ozdes sonuc verir!).
+        /// Faz 4B.4-B: HybridSurfaceNetsAndShapeMesher'in 8-koseli / 12-kenarli dual-cell izo-yuzey Y ortalamasini
+        /// dogrudan (cornerX, sy, cornerZ) cevresinde 0-GC hesaplar (hem dikey hem ust/alt yatay kenar kesimlerini icerir!).
+        /// </summary>
+        private static bool TryComputeExactSurfaceNetsDualCellY(
+            FluidNeighborhood3x3Cache nb,
+            int cornerX,
+            int sy,
+            int cornerZ,
+            int maxBufferY,
+            out float dualY)
+        {
+            dualY = sy + 0.5f;
+            if (sy < 0 || sy + 1 >= maxBufferY) return false;
+
+            Span<float> dBot = stackalloc float[4];
+            Span<float> dTop = stackalloc float[4];
+            int insideMask = 0;
+            // k: 0=(-1,-1), 1=(0,-1), 2=(-1,0), 3=(0,0)
+            for (int k = 0; k < 4; k++)
+            {
+                int cx = cornerX + ((k & 1) == 0 ? -1 : 0);
+                int cz = cornerZ + ((k & 2) == 0 ? -1 : 0);
+
+                nb.SampleCellFast(cx, sy, cz, out uint s0, out _);
+                byte m0 = VoxelBitUtility.GetMaterialId(s0);
+                float v0 = (m0 != 0 && VoxelBitUtility.GetShapeId(s0) == 0) ? VoxelBitUtility.GetDensityOrLiquid(s0) : (VoxelBitUtility.IsPhysicallySolid(s0) ? 127f : 0f);
+                dBot[k] = v0;
+                if (v0 >= StratocraftConstants.SdfIsoLevel) insideMask |= (1 << k);
+
+                nb.SampleCellFast(cx, sy + 1, cz, out uint s1, out _);
+                byte m1 = VoxelBitUtility.GetMaterialId(s1);
+                float v1 = (m1 != 0 && VoxelBitUtility.GetShapeId(s1) == 0) ? VoxelBitUtility.GetDensityOrLiquid(s1) : (VoxelBitUtility.IsPhysicallySolid(s1) ? 127f : 0f);
+                dTop[k] = v1;
+                if (v1 >= StratocraftConstants.SdfIsoLevel) insideMask |= (1 << (k + 4));
+            }
+
+            if (insideMask == 0 || insideMask == 0xFF) return false;
+
+            float yAccum = 0f;
+            int crossings = 0;
+            const float iso = StratocraftConstants.SdfIsoLevel;
+
+            // 4 dikey kenar (oy: 0 -> 1)
+            for (int k = 0; k < 4; k++)
+            {
+                bool in0 = (insideMask & (1 << k)) != 0;
+                bool in1 = (insideMask & (1 << (k + 4))) != 0;
+                if (in0 != in1)
+                {
+                    float denom = dTop[k] - dBot[k];
+                    float t = Math.Clamp(MathF.Abs(denom) > 0.001f ? (iso - dBot[k]) / denom : 0.5f, 0.08f, 0.92f);
+                    yAccum += t;
+                    crossings++;
+                }
+            }
+
+            // 4 alt yatay kenar (oy = 0 -> y katkisi 0.0f) ve 4 ust yatay kenar (oy = 1 -> y katkisi 1.0f)
+            // Ciftler: (0,1), (2,3), (0,2), (1,3)
+            ReadOnlySpan<int> eA = stackalloc int[4] { 0, 2, 0, 1 };
+            ReadOnlySpan<int> eB = stackalloc int[4] { 1, 3, 2, 3 };
+            for (int e = 0; e < 4; e++)
+            {
+                int a = eA[e], b = eB[e];
+                if (((insideMask >> a) & 1) != ((insideMask >> b) & 1))
+                {
+                    // Alt yatay kenar -> localPos.Y = 0.0f
+                    crossings++;
+                }
+                if (((insideMask >> (a + 4)) & 1) != ((insideMask >> (b + 4)) & 1))
+                {
+                    // Ust yatay kenar -> localPos.Y = 1.0f (V-vadi ve 2:1 buz yamaci gercek SurfaceNets kalkmasi!)
+                    yAccum += 1.0f;
+                    crossings++;
+                }
+            }
+
+            if (crossings <= 0) return false;
+            dualY = sy + (yAccum / crossings);
+            return true;
+        }
+
+        /// <summary>
+        /// Faz 4B.4-B 4-Sutun Simetrik ve Gercek 12-Kenar SurfaceNets Dual-Cell Arazi Ornekleyicisi:
+        /// HybridSurfaceNetsAndShapeMesher'in gercek 8-kose / 12-kenar dual-cell izo-yuzey yuksekligini
+        /// 0-GC hesaplar; duz platoda tam sy+0.496m, dar-bant SDF'de tam sy+t, V-vadi ve 2:1 buz yamacinda
+        /// oy=1 yatay kenar kalkmasini birebir yakalar (0 gomulme, 0 asimetri!).
         /// </summary>
         private static float EvaluateSurfaceNetsTerrainYAtCorner(
             FluidNeighborhood3x3Cache nb,
@@ -4262,163 +4486,183 @@ namespace Stratocraft.Voxel.Jobs
             higherBanks = 0;
             maxStepDelta = 0;
 
-            // +X/+Z Kuru Kiyi Duvari Koruma Kurali (ef3129b3.jpg & d5e24a60.jpg Tamiri):
-            // Dere/golun kosesindeki (cornerX, y, cornerZ) hucresi kati dogal yamac duvariysa, onu suyun tabani sayip
-            // su kosesini +1.0..+2.0m havaya firlatma! Yalnizca y-1 ve altindaki gercek dere tabanini (veya 4 kose
-            // komsusu icindeki islak/acik taban sutununu) ornekle!
             int topScan = Math.Max(0, y - 1);
             int botScan = Math.Max(0, y - 4);
-            int sampleColX = cornerX;
-            int sampleColZ = cornerZ;
-            nb.SampleCellFast(cornerX, y, cornerZ, out uint atYCornerSolid, out _);
-            if (VoxelBitUtility.IsPhysicallySolid(atYCornerSolid))
+            float floorSum = 0f;
+            int floorCount = 0;
+            int minFoundFloorY = int.MaxValue;
+            int maxFoundFloorY = int.MinValue;
+            int dryHigherWallCount = 0;
+            int wetHigherStepCount = 0;
+            int maxOpenFloorY = int.MinValue;
+
+            for (int odz = -1; odz <= 0; odz++)
             {
-                if (highestWetFloorY >= y - 1)
+                for (int odx = -1; odx <= 0; odx++)
                 {
-                    sampleColX = highestWetColX;
-                    sampleColZ = highestWetColZ;
-                }
-                else
-                {
-                    // Bu sutun y katmaninda kati yamac duvari; koseye dokunan 4 sutundan y katmani acik olan en alcak tabani sec
-                    int bestColY = int.MaxValue;
-                    ReadOnlySpan<int> odx = stackalloc int[4] { -1, 0, -1, 0 };
-                    ReadOnlySpan<int> odz = stackalloc int[4] { -1, -1, 0, 0 };
-                    for (int ok = 0; ok < 4; ok++)
+                    int cx = cornerX + odx;
+                    int cz = cornerZ + odz;
+                    nb.SampleCellFast(cx, y, cz, out uint atY, out _);
+
+                    if (VoxelBitUtility.IsPhysicallySolid(atY))
                     {
-                        int cx = cornerX + odx[ok];
-                        int cz = cornerZ + odz[ok];
-                        nb.SampleCellFast(cx, y, cz, out uint oAtY, out _);
-                        if (VoxelBitUtility.IsPhysicallySolid(oAtY)) continue;
-                        for (int sy = topScan; sy >= botScan; sy--)
+                        byte atYShape = VoxelBitUtility.GetShapeId(atY);
+                        bool hasFluidOnTopStep = false;
+                        int stepTopSolidY = y;
+                        uint stepTopSolidRaw = atY;
+                        uint stepAboveRaw = 0u;
+
+                        if (atYShape == 0 && y + 1 < maxBufferY)
                         {
-                            nb.SampleCellFast(cx, sy, cz, out uint oBelow, out _);
-                            if (VoxelBitUtility.IsPhysicallySolid(oBelow))
+                            nb.SampleCellFast(cx, y + 1, cz, out uint s1, out ushort f1);
+                            if (!VoxelBitUtility.IsPhysicallySolid(s1))
                             {
-                                if (sy < bestColY)
+                                stepAboveRaw = s1;
+                                if ((f1 & 0xFFu) > 0u && ((f1 >> 8) & 0x03u) == fluidType)
                                 {
-                                    bestColY = sy;
-                                    sampleColX = cx;
-                                    sampleColZ = cz;
+                                    hasFluidOnTopStep = true;
                                 }
-                                break;
                             }
+                            else if (VoxelBitUtility.GetShapeId(s1) == 0 && y + 2 < maxBufferY)
+                            {
+                                nb.SampleCellFast(cx, y + 2, cz, out uint s2, out ushort f2);
+                                if (!VoxelBitUtility.IsPhysicallySolid(s2))
+                                {
+                                    stepTopSolidY = y + 1;
+                                    stepTopSolidRaw = s1;
+                                    stepAboveRaw = s2;
+                                    if ((f2 & 0xFFu) > 0u && ((f2 >> 8) & 0x03u) == fluidType)
+                                    {
+                                        hasFluidOnTopStep = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (hasFluidOnTopStep)
+                        {
+                            wetHigherStepCount++;
+                            float stepY = stepTopSolidY + FluidHydrostaticsShared.ComputeNaturalSdfSurfaceOffsetMeters(stepTopSolidRaw, stepAboveRaw);
+                            floorSum += stepY;
+                            floorCount++;
+                            if (stepTopSolidY < minFoundFloorY) minFoundFloorY = stepTopSolidY;
+                            if (stepTopSolidY > maxFoundFloorY) maxFoundFloorY = stepTopSolidY;
+                        }
+                        else if (atYShape == 0)
+                        {
+                            dryHigherWallCount++;
+                            higherBanks++;
+                            if (y > maxFoundFloorY) maxFoundFloorY = y;
+                        }
+                        continue;
+                    }
+
+                    for (int sy = topScan; sy >= botScan; sy--)
+                    {
+                        nb.SampleCellFast(cx, sy, cz, out uint sRaw, out _);
+                        if (VoxelBitUtility.IsPhysicallySolid(sRaw))
+                        {
+                            uint sAbove = 0u;
+                            if (sy + 1 < maxBufferY)
+                            {
+                                nb.SampleCellFast(cx, sy + 1, cz, out sAbove, out _);
+                            }
+
+                            float colY = VoxelBitUtility.GetShapeId(sRaw) != 0
+                                ? (sy + 1.0f)
+                                : (sy + FluidHydrostaticsShared.ComputeNaturalSdfSurfaceOffsetMeters(sRaw, sAbove));
+                            floorSum += colY;
+                            floorCount++;
+                            if (sy < minFoundFloorY) minFoundFloorY = sy;
+                            if (sy > maxFoundFloorY) maxFoundFloorY = sy;
+                            if (sy > maxOpenFloorY) maxOpenFloorY = sy;
+                            break;
                         }
                     }
                 }
             }
 
-            int sy0 = -1;
-            uint sRaw0 = 0u;
-            for (int sy = topScan; sy >= botScan; sy--)
+            if (floorCount == 0)
             {
-                nb.SampleCellFast(sampleColX, sy, sampleColZ, out uint sRaw, out _);
-                if (VoxelBitUtility.IsPhysicallySolid(sRaw))
+                if (highestWetFloorY >= 0)
                 {
-                    sy0 = sy;
-                    sRaw0 = sRaw;
-                    break;
+                    nb.SampleCellFast(highestWetColX, highestWetFloorY, highestWetColZ, out uint hS, out _);
+                    uint hAbove = (highestWetFloorY + 1 < maxBufferY) ? ReadSolidSafe(nb, highestWetColX, highestWetFloorY + 1, highestWetColZ) : 0u;
+                    return highestWetFloorY + FluidHydrostaticsShared.ComputeNaturalSdfSurfaceOffsetMeters(hS, hAbove);
                 }
-            }
-
-            if (sy0 < 0)
-            {
                 return Math.Max(0f, y - 4.0f);
             }
 
-            if (VoxelBitUtility.GetShapeId(sRaw0) != 0)
+            if (maxFoundFloorY >= minFoundFloorY)
             {
-                return sy0 + 1.0f;
+                maxStepDelta = maxFoundFloorY - minFoundFloorY;
             }
 
-            byte d0 = VoxelBitUtility.GetDensityOrLiquid(sRaw0);
-            float t0 = Math.Clamp((d0 - (float)StratocraftConstants.SdfIsoLevel) / MathF.Max(64.0f, d0), 0.08f, 0.496f);
-            float baseY = sy0 + t0;
+            float baseY = floorSum / floorCount;
 
-            bool highNegX = false, highPosX = false, highNegZ = false, highPosZ = false;
-            int wetHigherBanks = 0;
-            int nScanTop = Math.Min(maxBufferY - 1, sy0 + 2);
-            int nScanBot = Math.Max(0, sy0 - 2);
-            ReadOnlySpan<int> dxs = stackalloc int[4] { -1, 1, 0, 0 };
-            ReadOnlySpan<int> dzs = stackalloc int[4] { 0, 0, -1, 1 };
-
-            for (int k = 0; k < 4; k++)
+            // Gercek HybridSurfaceNets 4-simetrik dual-vertex ortalamasi:
+            // Tam (cornerX, cornerZ) su kosesini cevreleyen 4 dual kose (cornerX+-0.5, cornerZ+-0.5)
+            // orneklenerek 0.000m XZ faz hatasiyla (+X/-X/+Z/-Z %100 simetrik!) gercek SurfaceNets kotu bulunur!
+            int probeDualSy = maxOpenFloorY >= 0 ? maxOpenFloorY : Math.Max(0, y - 1);
+            bool hasStepOrWall = wetHigherStepCount > 0 || dryHigherWallCount > 0 || maxStepDelta >= 1;
+            float dualSum = 0f;
+            int dualCount = 0;
+            float maxDual = float.MinValue;
+            for (int doz = 0; doz <= 1; doz++)
             {
-                int nx = sampleColX + dxs[k];
-                int nz = sampleColZ + dzs[k];
-                int nTopY = nScanBot - 1;
-                byte nShape = 0;
-                for (int sy = nScanTop; sy >= nScanBot; sy--)
+                for (int dox = 0; dox <= 1; dox++)
                 {
-                    nb.SampleCellFast(nx, sy, nz, out uint ns, out _);
-                    if (VoxelBitUtility.IsPhysicallySolid(ns))
+                    int dcx = cornerX + dox;
+                    int dcz = cornerZ + doz;
+                    float hiY = 0f;
+                    bool allowHighProbe = hasStepOrWall && (wetHigherStepCount > 0 || (dox == 0 && doz == 0));
+                    bool foundHigh = allowHighProbe && TryComputeExactSurfaceNetsDualCellY(nb, dcx, probeDualSy + 1, dcz, maxBufferY, out hiY);
+                    bool foundMid = TryComputeExactSurfaceNetsDualCellY(nb, dcx, probeDualSy, dcz, maxBufferY, out float midY);
+                    if (foundHigh && foundMid)
                     {
-                        nTopY = sy;
-                        nShape = VoxelBitUtility.GetShapeId(ns);
-                        break;
+                        float dY = wetHigherStepCount > 0
+                            ? MathF.Max(midY, hiY)
+                            : (midY + (hiY - midY) * (dryHigherWallCount >= 2 ? 0.55f : 0.45f));
+                        dualSum += dY;
+                        if (dY > maxDual) maxDual = dY;
+                        dualCount++;
                     }
-                }
-
-                if (nTopY >= nScanBot)
-                {
-                    int delta = Math.Abs(nTopY - sy0);
-                    if (delta > maxStepDelta) maxStepDelta = delta;
-                    if (nTopY > sy0 && nShape == 0)
+                    else if (foundHigh)
                     {
-                        higherBanks++;
-                        if (k == 0) highNegX = true;
-                        else if (k == 1) highPosX = true;
-                        else if (k == 2) highNegZ = true;
-                        else highPosZ = true;
-
-                        if (nTopY + 1 < maxBufferY)
-                        {
-                            nb.SampleCellFast(nx, nTopY + 1, nz, out uint upStepS, out ushort upStepF);
-                            if (!VoxelBitUtility.IsPhysicallySolid(upStepS) &&
-                                (upStepF & 0xFFu) > 0u &&
-                                ((upStepF >> 8) & 0x03u) == fluidType)
-                            {
-                                wetHigherBanks++;
-                            }
-                        }
+                        dualSum += hiY;
+                        if (hiY > maxDual) maxDual = hiY;
+                        dualCount++;
+                    }
+                    else if (foundMid)
+                    {
+                        dualSum += midY;
+                        if (midY > maxDual) maxDual = midY;
+                        dualCount++;
+                    }
+                    else if (probeDualSy > 0 && TryComputeExactSurfaceNetsDualCellY(nb, dcx, probeDualSy - 1, dcz, maxBufferY, out float loY))
+                    {
+                        dualSum += loY;
+                        if (loY > maxDual) maxDual = loY;
+                        dualCount++;
                     }
                 }
             }
 
-            // Ustunden gercekten su akan yokus basamaklarinda (wetHigherBanks > 0; T35-3 kuru duvarlari %100 muaf!),
-            // HybridSurfaceNets dual tepesi (d0 - 64)/64 + yokus egimine ciktigi icin gercek rampa zarfini kullan!
-            // Devir #069: +0.42*(1-t0) asiri kaldirma (+0.66m havada asili cam duvarlar!) yerine siki gercek rampa zarfi!
-            if (wetHigherBanks > 0)
+            if (dualCount > 0)
             {
-                float tTrueRamp = Math.Clamp((d0 - (float)StratocraftConstants.SdfIsoLevel) / 64.0f, 0.08f, 0.92f);
-                baseY = sy0 + MathF.Max(t0, tTrueRamp);
-                return baseY + MathF.Max(0.12f, 0.24f * (1.0f - t0));
+                float symDualY = dualSum / dualCount;
+                if (wetHigherStepCount > 0)
+                {
+                    return MathF.Max(baseY, MathF.Max(symDualY, 0.5f * (symDualY + maxDual)));
+                }
+                if (dryHigherWallCount > 0 || maxStepDelta >= 1)
+                {
+                    return MathF.Max(baseY, symDualY);
+                }
+                return symDualY;
             }
 
-            bool isOppositeVTrough = (highNegX && highPosX) || (highNegZ && highPosZ);
-            float concaveLift;
-            if (isOppositeVTrough)
-            {
-                concaveLift = 0.50f * (1.0f - t0);
-            }
-            else if (higherBanks >= 3)
-            {
-                concaveLift = 0.60f * (1.0f - t0);
-            }
-            else if (higherBanks == 2)
-            {
-                concaveLift = 0.45f * (1.0f - t0);
-            }
-            else if (higherBanks == 1)
-            {
-                concaveLift = 0.25f * (1.0f - t0);
-            }
-            else
-            {
-                concaveLift = 0.0f;
-            }
-
-            return baseY + concaveLift;
+            return baseY;
         }
 
         // ==================== GERIYE DONUK UYUMLU LEGACY MESHER (FacetedVoxelTriangle) ====================

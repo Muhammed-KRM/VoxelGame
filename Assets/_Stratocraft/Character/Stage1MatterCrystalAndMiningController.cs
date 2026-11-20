@@ -940,7 +940,7 @@ namespace Stratocraft.Character
                         int consumedMass = existing.Mass;
                         fluids[idx] = 0;
                         voxels[idx] = VoxelBitUtility.PackStandard(
-                            MaterialIdCatalog.NaturalObsidian, VoxelBitUtility.FullDensity, 1, 0, BlokKokenDurumu.DogalKutle, 0);
+                            MaterialIdCatalog.NaturalObsidian, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
                         MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks);
                         WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
 

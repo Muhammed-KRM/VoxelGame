@@ -276,7 +276,8 @@ namespace Stratocraft.Physics.Systems
         {
             visualDirtySubChunkMask = 0;
             fluidChanged = false;
-            _infiltrationParity ^= 1;
+            int phase = _infiltrationParity;
+            _infiltrationParity = (_infiltrationParity + 1) & 3;
 
             int limitY = Math.Clamp(maxY, 2, 255);
             int startY = Math.Clamp(minY, 1, limitY - 1);
@@ -349,29 +350,25 @@ namespace Stratocraft.Physics.Systems
                         }
                     }
 
-                    // Green-Ampt emilim hizi: Kuru toprak daha hizli, doygunluga yaklasan toprak daha yavas su emer
-                    int absorbMass;
-                    int moistureGainPerUnit;
-                    if (curMoisture < 96)
+                    // Faz 4B.4-E Green-Ampt Kalibrasyonu:
+                    // Ince akan yuzey filminde (Mass <= 12) her 4 hidroloji adiminda 1, normal su sutununda her 2 adimda 1
+                    // 1 br su cekerek topragi gercekci hizda doyurur (2 sn icinde kovanin %99'u buharlasir gibi yutulmaz!).
+                    if (cell.Mass <= 12)
                     {
-                        absorbMass = Math.Min((int)cell.Mass, 2);
-                        moistureGainPerUnit = 10;
-                    }
-                    else if (curMoisture < 192)
-                    {
-                        absorbMass = 1;
-                        moistureGainPerUnit = 9;
-                    }
-                    else
-                    {
-                        if ((_infiltrationParity & 1) == 0 && cell.Mass > 6)
+                        if (phase != 0)
                         {
                             anyMoistInChunk = true;
                             continue;
                         }
-                        absorbMass = 1;
-                        moistureGainPerUnit = 8;
                     }
+                    else if ((phase & 1) != 0)
+                    {
+                        anyMoistInChunk = true;
+                        continue;
+                    }
+
+                    int absorbMass = 1;
+                    int moistureGainPerUnit = curMoisture < 96 ? 22 : (curMoisture < 192 ? 20 : 18);
 
                     // Doygunluk tavanini asacak kadar fazla su cekme!
                     int remainingMoistureRoom = MaxMoistureSaturation - curMoisture;

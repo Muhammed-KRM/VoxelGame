@@ -170,6 +170,8 @@ namespace Stratocraft.Character
         private readonly List<FluidRichTriangle>[] _bgDistantMeshFluidRichTris = new List<FluidRichTriangle>[MaxBgDistantMeshBatch];
         private readonly Dictionary<(int cx, int cz), uint[]> _bgDistantMeshSolidMap = new(64);
         private readonly Dictionary<(int cx, int cz), ushort[]> _bgDistantMeshFluidMap = new(64);
+        private readonly List<ushort[]> _bgDistantFluidSnapshotPool = new(64);
+        private int _bgDistantFluidSnapshotUsedCount;
         private readonly Dictionary<(int cx, int cz), byte[]> _bgDistantMeshSoilMap = new(64);
         private readonly Dictionary<(int cx, int cz), ulong[]> _bgDistantMeshSalinityMap = new(32);
         private readonly Dictionary<(int cx, int cz), byte[]> _bgDistantMeshSnowMap = new(64);
@@ -1474,6 +1476,7 @@ namespace Stratocraft.Character
             _inFlightDistantMeshKeys.Clear();
             _bgDistantMeshSolidMap.Clear();
             _bgDistantMeshFluidMap.Clear();
+            _bgDistantFluidSnapshotUsedCount = 0;
             _bgDistantMeshSoilMap.Clear();
             _bgDistantMeshSalinityMap.Clear();
             _bgDistantMeshSnowMap.Clear();
@@ -4763,6 +4766,7 @@ namespace Stratocraft.Character
 
             _bgDistantMeshSolidMap.Clear();
             _bgDistantMeshFluidMap.Clear();
+            _bgDistantFluidSnapshotUsedCount = 0;
             _bgDistantMeshSoilMap.Clear();
             _bgDistantMeshSalinityMap.Clear();
             _bgDistantMeshSnowMap.Clear();
@@ -4792,7 +4796,25 @@ namespace Stratocraft.Character
                         if (!_bgDistantMeshFluidMap.ContainsKey(nKey) &&
                             _fluidChunks.TryGetValue(nKey, out ushort[]? fArr) && fArr != null)
                         {
-                            _bgDistantMeshFluidMap[nKey] = fArr;
+                            // Faz 4B.4-E: Canli _fluidChunks referansi yerine 0-GC havuzlu snapshot kopyasi ver (0 veri yarisi!)
+                            ushort[] snap;
+                            if (_bgDistantFluidSnapshotUsedCount < _bgDistantFluidSnapshotPool.Count)
+                            {
+                                snap = _bgDistantFluidSnapshotPool[_bgDistantFluidSnapshotUsedCount];
+                                if (snap.Length != fArr.Length)
+                                {
+                                    snap = new ushort[fArr.Length];
+                                    _bgDistantFluidSnapshotPool[_bgDistantFluidSnapshotUsedCount] = snap;
+                                }
+                            }
+                            else
+                            {
+                                snap = new ushort[fArr.Length];
+                                _bgDistantFluidSnapshotPool.Add(snap);
+                            }
+                            _bgDistantFluidSnapshotUsedCount++;
+                            Buffer.BlockCopy(fArr, 0, snap, 0, fArr.Length * sizeof(ushort));
+                            _bgDistantMeshFluidMap[nKey] = snap;
                         }
                         if (soilMap != null && soilMap.Count > 0 &&
                             !_bgDistantMeshSoilMap.ContainsKey(nKey) &&

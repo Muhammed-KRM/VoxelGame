@@ -130,11 +130,21 @@ namespace Stratocraft.Physics.Jobs
 
                     int lx = c & 15;
                     int lz = c >> 4;
-                    if (!hasAboveSame || lx == 0 || lx == 15 || lz == 0 || lz == 15)
+                    bool isOpenInteriorColumn = m < 255;
+                    if (!isOpenInteriorColumn && hasAboveSame)
+                    {
+                        isOpenInteriorColumn =
+                            (lx > 0 && (pFluids[idx - 1] & 0xFF) == 0) ||
+                            (lx < 15 && (pFluids[idx + 1] & 0xFF) == 0) ||
+                            (lz > 0 && (pFluids[idx - 16] & 0xFF) == 0) ||
+                            (lz < 15 && (pFluids[idx + 16] & 0xFF) == 0);
+                    }
+
+                    if (!hasAboveSame || isOpenInteriorColumn || lx == 0 || lx == 15 || lz == 0 || lz == 15)
                     {
                         int prevM = m;
-                        int qVx = 32;
-                        int qVz = 32;
+                        int qVx = 0;
+                        int qVz = 0;
                         if (hasKin != 0)
                         {
                             prevM = pPrev[idx];

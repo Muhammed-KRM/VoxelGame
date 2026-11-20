@@ -44,7 +44,7 @@ Shader "Stratocraft/FluidSurface"
             #pragma vertex FluidVert
             #pragma fragment FluidFrag
             #pragma multi_compile_fog
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile _ _SHADOWS_SOFT
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -370,8 +370,9 @@ Shader "Stratocraft/FluidSurface"
                 float rawDiff = sceneDepthWS - surfaceDepthWS;
                 float opticalDepth = (validDepth && rawDiff >= -0.06 && rawDiff < 24.0) ? max(0.0, rawDiff) : max(0.35, depthMeters);
 
-                // Bulut Golgesi Zayiflatmasi
-                Light mainLight = GetMainLight();
+                // Gercek Arazi/Dag Golge Haritasi + Bulut Golgesi Zayiflatmasi (Faz 4B.4-D)
+                float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
+                Light mainLight = GetMainLight(shadowCoord);
                 float cloudShadowAtten = 1.0;
                 if (_GlobalCloudGridParams.w > 0.001 && _GlobalCloudGridParams.x > 0.005 && mainLight.direction.y > -0.05)
                 {
@@ -382,15 +383,16 @@ Shader "Stratocraft/FluidSurface"
                     float rawCloudAtten = clamp(exp(-_GlobalCloudGridParams.x * (0.48 + 0.32 * cn)), 0.32, 1.0);
                     cloudShadowAtten = lerp(1.0, rawCloudAtten, saturate(_GlobalCloudGridParams.w));
                 }
+                float totalShadowAtten = lerp(0.45, 1.0, mainLight.shadowAttenuation) * cloudShadowAtten;
 
-                // Paket 4B.3 F4 + Devir #069: Yumusak Durgun Su Kapisi (1-2 LSB kuantalama gurultusunde yamali gorunum 0!)
+                // Faz 4B.4-D: Yumusak Hareket Kapisi (hiz + alt-tik + yamac egimi -> egimli derede donuk/yamali alan 0!)
                 float subTickDyFrag = input.salinityAndDy.y;
                 float flowMotion01 = smoothstep(0.04, 0.28, flowSpeed);
                 float dyMotion01 = smoothstep(0.025, 0.14, abs(subTickDyFrag));
-                float activeMotionGate = saturate(max(flowMotion01, dyMotion01));
-                float stillness01 = 1.0 - activeMotionGate;
-
                 float slopeSin = saturate(length(geomNormalWS.xz));
+                float slopeMotion01 = smoothstep(0.16, 0.36, slopeSin) * (1.0 - sideWallMask);
+                float activeMotionGate = saturate(max(max(flowMotion01, dyMotion01), slopeMotion01 * 0.85));
+
                 float slopeFlowMask = smoothstep(0.12, 0.38, slopeSin) * (1.0 - sideWallMask) * activeMotionGate;
                 float2 downhillDirXZ = (slopeSin > 0.05) ? (geomNormalWS.xz / slopeSin) : float2(0.0, 0.0);
                 float2 gravitySlopeVel = downhillDirXZ * (slopeFlowMask * lerp(0.95, 2.60, slopeSin));
@@ -412,7 +414,8 @@ Shader "Stratocraft/FluidSurface"
                 float2 wallFlowUV = float2(wallU * 2.4, input.positionWS.y * 0.90 + _Time.y * 4.6);
                 float3 wallRipple = ProceduralRippleHeightAndGrad(wallFlowUV, _Time.y * 2.2);
 
-                float upwardMask = saturate(abs(faceNormalWS.y) * 1.25);
+                // Faz 4B.4-D: faceNormalWS yerine yumusak paylasilan geomNormalWS -> ucgen faset kiriklari 0!
+                float upwardMask = saturate(abs(geomNormalWS.y) * 1.25);
                 float calmBaseBump = lerp(0.06, 0.16, windFetchGate);
                 float bumpStrength = lerp(calmBaseBump, 0.46, saturate(activeFlowSpeed * 0.42 + slopeFlowMask * 0.55 + windSpeed * 0.025 * windFetchGate)) * upwardMask;
                 float3 horizontalPerturb = float3(-analyticalGrad.x * bumpStrength, 0.0, -analyticalGrad.y * bumpStrength);
@@ -420,7 +423,7 @@ Shader "Stratocraft/FluidSurface"
                 float3 normalWS = normalize(geomNormalWS + horizontalPerturb + wallPerturb);
 
                 float NdotV = max(0.0, dot(normalWS, viewDirWS));
-                float NdotL = max(0.0, dot(normalWS, mainLight.direction)) * cloudShadowAtten;
+                float NdotL = max(0.0, dot(normalWS, mainLight.direction)) * totalShadowAtten;
                 float3 lightCol = max(float3(0.45, 0.48, 0.52), mainLight.color * (NdotL * 0.75 + 0.35));
 
                 if (_FluidDebugView > 0.5)
@@ -476,7 +479,7 @@ Shader "Stratocraft/FluidSurface"
                     float3 halfDir = normalize(mainLight.direction + viewDirWS);
                     float sunSpecPower = lerp(150.0, 60.0, slopeFlowMask);
                     float sunSpec = pow(saturate(dot(normalWS, halfDir)), sunSpecPower) *
-                                    (0.65 + 0.50 * slopeFlowMask) * cloudShadowAtten * (1.0 - sideWallMask * 0.65);
+                                    (0.65 + 0.50 * slopeFlowMask) * totalShadowAtten * (1.0 - sideWallMask * 0.65);
                     finalColor += mainLight.color * sunSpec;
 
                     // --- Birlesik Fiziksel Beyaz Kopuk (0.0 MB VRAM) ---
@@ -574,7 +577,7 @@ Shader "Stratocraft/FluidSurface"
                     float thinRimFeather = lerp(smoothstep(0.004, 0.040, depthMeters), 1.0, max(activeWallMask, slopeFlowMask * 0.70));
                     float baseAlpha = saturate(columnThicknessAlpha + deepVolumeBonus + fresnel * lerp(0.16, 0.0, sideWallMask));
                     float foamTargetAlpha = activeWallMask > 0.5 ? 0.84 : (waterfallAttrFoam > 0.05 ? 0.78 : 0.90);
-                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * lerp(0.16, 1.0, thinRimFeather * edgeContactFeather);
+                    float alpha = lerp(baseAlpha, foamTargetAlpha, foam) * saturate(thinRimFeather * edgeContactFeather);
                     return float4(MixFog(finalColor, input.fogFactor), alpha);
                 }
 
@@ -582,8 +585,9 @@ Shader "Stratocraft/FluidSurface"
                 if (input.fluidType == 2u)
                 {
                     float lavaPeriod = 3.20;
-                    float lavaP0 = frac(_Time.y / lavaPeriod);
-                    float lavaP1 = frac((_Time.y / lavaPeriod) + 0.50);
+                    float lavaSpatialJitter = (sin(input.positionWS.x * 0.29 + input.positionWS.z * 0.31) * 0.5 + 0.5) * 0.22;
+                    float lavaP0 = frac((_Time.y / lavaPeriod) + lavaSpatialJitter);
+                    float lavaP1 = frac((_Time.y / lavaPeriod) + 0.50 + lavaSpatialJitter);
                     float lavaBlend = abs(1.0 - 2.0 * lavaP0);
 
                     float2 baseLavaUV = (input.positionWS.xz + float2(input.positionWS.y * 0.55, -input.positionWS.y * 0.45)) * 0.35;

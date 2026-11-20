@@ -159,6 +159,37 @@ namespace Stratocraft.Voxel.Data
             return y * 255;
         }
 
+        /// <summary>
+        /// Faz 4B.4-B: Dogal SDF (ShapeId==0) kati bir (belowSolidRaw) hucresi ile hemen ustundeki
+        /// kati-olmayan (aboveSolidRaw) hucre arasindaki gercek HybridSurfaceNets izo-yuzey ofsetini [0.016..0.984m] doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float ComputeNaturalSdfSurfaceOffsetMeters(uint belowSolidRaw, uint aboveSolidRaw)
+        {
+            if (VoxelBitUtility.GetShapeId(belowSolidRaw) != 0)
+            {
+                return 1.0f;
+            }
+
+            int dBelow = VoxelBitUtility.GetDensityOrLiquid(belowSolidRaw);
+            if (dBelow < StratocraftConstants.SdfIsoLevel)
+            {
+                return 0.0f;
+            }
+
+            int dAbove = 0;
+            if (!VoxelBitUtility.IsPhysicallySolid(aboveSolidRaw) &&
+                VoxelBitUtility.GetMaterialId(aboveSolidRaw) != MaterialIdCatalog.Air &&
+                VoxelBitUtility.GetShapeId(aboveSolidRaw) == 0)
+            {
+                dAbove = VoxelBitUtility.GetDensityOrLiquid(aboveSolidRaw);
+            }
+
+            int denom = Math.Max(1, dBelow - dAbove);
+            int isoOffset255 = Math.Clamp(((dBelow - StratocraftConstants.SdfIsoLevel) * 255) / denom, 4, 251);
+            return isoOffset255 * (1.0f / 255.0f);
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int ComputeCellHydrostaticHeadUnits255(int bedUnits, int y, byte mass, byte capacity = 255)
         {
