@@ -83,6 +83,141 @@ namespace Stratocraft.Rendering
             public readonly List<(string Name, Vector3 LocalPos, Quaternion LocalRot, Vector3 LocalScale)> Sockets = new();
         }
 
+        private static readonly Dictionary<string, (long LastWriteTicks, Dictionary<string, Mesh> Parts)> _articulatedPartsCache =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Cok-dugumlu eklemli bir .glb dosyasindaki her parca mesh'ini (orn. Human_Head, Human_Torso, Human_Hand_R)
+        /// kendi yerel eklem pivotunda, sol-el Unity koordinatlarina (-X, Y, Z) ve dogrudan RGB Color32 renklerine
+        /// cevrilmis ayri bir Mesh olarak yukler ve bellek icinde onbellege alir.
+        /// </summary>
+        public static Dictionary<string, Mesh>? LoadArticulatedPartsFromDisk(string glbDiskPath)
+        {
+            if (string.IsNullOrEmpty(glbDiskPath) || !File.Exists(glbDiskPath)) return null;
+            long diskTicks = File.GetLastWriteTimeUtc(glbDiskPath).Ticks;
+            if (_articulatedPartsCache.TryGetValue(glbDiskPath, out var cachedEntry) &&
+                cachedEntry.LastWriteTicks == diskTicks &&
+                cachedEntry.Parts != null)
+            {
+                bool allValid = cachedEntry.Parts.Count > 0;
+                foreach (var kv in cachedEntry.Parts)
+                {
+                    if (kv.Value == null) { allValid = false; break; }
+                }
+                if (allValid) return cachedEntry.Parts;
+            }
+
+            byte[] bytes = File.ReadAllBytes(glbDiskPath);
+            if (bytes.Length < 28 || BitConverter.ToUInt32(bytes, 0) != 0x46546C67u) return null;
+
+            int offset = 12;
+            string? jsonText = null;
+            int binStart = -1;
+            int binLength = 0;
+            while (offset + 8 <= bytes.Length)
+            {
+                int chunkLen = BitConverter.ToInt32(bytes, offset);
+                uint chunkType = BitConverter.ToUInt32(bytes, offset + 4);
+                int dataStart = offset + 8;
+                if (chunkLen < 0 || dataStart + chunkLen > bytes.Length) break;
+                if (chunkType == 0x4E4F534Au) jsonText = Encoding.UTF8.GetString(bytes, dataStart, chunkLen);
+                else if (chunkType == 0x004E4942u) { binStart = dataStart; binLength = chunkLen; }
+                offset = dataStart + chunkLen;
+            }
+            if (string.IsNullOrEmpty(jsonText) || binStart < 0 || binLength <= 0) return null;
+
+            GltfRoot? root = JsonUtility.FromJson<GltfRoot>(jsonText);
+            if (root?.meshes == null || root.meshes.Length == 0 || root.accessors == null || root.bufferViews == null) return null;
+
+            // Node -> mesh eslesmesinden parca adlarini cozumle
+            var meshIndexToName = new Dictionary<int, string>();
+            if (root.nodes != null)
+            {
+                for (int n = 0; n < root.nodes.Length; n++)
+                {
+                    GltfNode node = root.nodes[n];
+                    if (node.mesh >= 0 && !string.IsNullOrEmpty(node.name) && !meshIndexToName.ContainsKey(node.mesh))
+                    {
+                        meshIndexToName[node.mesh] = node.name!;
+                    }
+                }
+            }
+
+            var result = new Dictionary<string, Mesh>(StringComparer.OrdinalIgnoreCase);
+            for (int m = 0; m < root.meshes.Length; m++)
+            {
+                GltfMesh gMesh = root.meshes[m];
+                if (gMesh.primitives == null || gMesh.primitives.Length == 0) continue;
+
+                string partName = meshIndexToName.TryGetValue(m, out string? nName)
+                    ? nName
+                    : (!string.IsNullOrEmpty(gMesh.name) ? gMesh.name! : $"Part_{m}");
+
+                var verts = new List<Vector3>(256);
+                var norms = new List<Vector3>(256);
+                var cols = new List<Color32>(256);
+                var tris = new List<int>(512);
+
+                for (int p = 0; p < gMesh.primitives.Length; p++)
+                {
+                    GltfPrimitive prim = gMesh.primitives[p];
+                    if (prim.attributes == null || prim.attributes.POSITION < 0) continue;
+
+                    Vector3[] posArr = ReadVec3Accessor(bytes, binStart, root, prim.attributes.POSITION);
+                    int vCount = posArr.Length;
+                    if (vCount == 0) continue;
+
+                    Vector3[] nrmArr = prim.attributes.NORMAL >= 0
+                        ? ReadVec3Accessor(bytes, binStart, root, prim.attributes.NORMAL)
+                        : new Vector3[vCount];
+                    if (nrmArr.Length != vCount) Array.Resize(ref nrmArr, vCount);
+
+                    Color32[] colArr = prim.attributes.COLOR_0 >= 0
+                        ? ReadColor32Accessor(bytes, binStart, root, prim.attributes.COLOR_0, vCount, preserveZeroRed: true)
+                        : CreateDefaultColorArray(vCount, defaultMatId: 200);
+
+                    int[] idxArr = prim.indices >= 0
+                        ? ReadIndicesAccessor(bytes, binStart, root, prim.indices)
+                        : CreateSequentialIndices(vCount);
+
+                    int baseVertex = verts.Count;
+                    for (int i = 0; i < vCount; i++)
+                    {
+                        // glTF (+Y up, +Z front, right-handed) -> Unity (+Y up, +Z front, left-handed): X eksenini yansit + ucgen sarimini cevir
+                        verts.Add(new Vector3(-posArr[i].x, posArr[i].y, posArr[i].z));
+                        norms.Add(new Vector3(-nrmArr[i].x, nrmArr[i].y, nrmArr[i].z));
+                        cols.Add(colArr[i]);
+                    }
+                    for (int i = 0; i + 2 < idxArr.Length; i += 3)
+                    {
+                        tris.Add(baseVertex + idxArr[i]);
+                        tris.Add(baseVertex + idxArr[i + 2]);
+                        tris.Add(baseVertex + idxArr[i + 1]);
+                    }
+                }
+
+                if (verts.Count == 0 || tris.Count == 0) continue;
+                Mesh mesh = new Mesh
+                {
+                    name = $"Articulated_{partName}",
+                    indexFormat = verts.Count > 65532 ? IndexFormat.UInt32 : IndexFormat.UInt16
+                };
+                mesh.SetVertices(verts);
+                mesh.SetNormals(norms);
+                mesh.SetColors(cols);
+                mesh.SetTriangles(tris, 0, calculateBounds: true);
+                if (norms[0].sqrMagnitude < 1e-4f) mesh.RecalculateNormals();
+                result[partName] = mesh;
+            }
+
+            if (result.Count > 0)
+            {
+                _articulatedPartsCache[glbDiskPath] = (diskTicks, result);
+                return result;
+            }
+            return null;
+        }
+
         public static LoadedGlbData? LoadGlbFromDisk(string glbDiskPath, string meshName)
         {
             if (!File.Exists(glbDiskPath))
@@ -286,7 +421,8 @@ namespace Stratocraft.Rendering
             int binStart,
             GltfRoot root,
             int accessorIdx,
-            int expectedCount)
+            int expectedCount,
+            bool preserveZeroRed = false)
         {
             GltfAccessor acc = root.accessors![accessorIdx];
             GltfBufferView bv = root.bufferViews![acc.bufferView];
@@ -318,22 +454,41 @@ namespace Stratocraft.Rendering
                 }
                 else if (acc.componentType == 5123)
                 {
-                    r = (byte)(BitConverter.ToUInt16(bytes, p) >> 8);
-                    g = (byte)(BitConverter.ToUInt16(bytes, p + 2) >> 8);
-                    b = (byte)(BitConverter.ToUInt16(bytes, p + 4) >> 8);
+                    // glTF COLOR_0 linear uint16 -> sRGB byte (preserveZeroRed = gercek RGB insan dokusu)
+                    float rf = BitConverter.ToUInt16(bytes, p) / 65535f;
+                    float gf = BitConverter.ToUInt16(bytes, p + 2) / 65535f;
+                    float bf = BitConverter.ToUInt16(bytes, p + 4) / 65535f;
+                    if (preserveZeroRed)
+                    {
+                        rf = Mathf.LinearToGammaSpace(rf);
+                        gf = Mathf.LinearToGammaSpace(gf);
+                        bf = Mathf.LinearToGammaSpace(bf);
+                    }
+                    r = (byte)Mathf.Clamp(Mathf.RoundToInt(rf * 255f), 0, 255);
+                    g = (byte)Mathf.Clamp(Mathf.RoundToInt(gf * 255f), 0, 255);
+                    b = (byte)Mathf.Clamp(Mathf.RoundToInt(bf * 255f), 0, 255);
                     a = isVec4 ? (byte)(BitConverter.ToUInt16(bytes, p + 6) >> 8) : (byte)245;
                 }
                 else
                 {
-                    r = (byte)Mathf.Clamp(Mathf.RoundToInt(BitConverter.ToSingle(bytes, p) * 255f), 0, 255);
-                    g = (byte)Mathf.Clamp(Mathf.RoundToInt(BitConverter.ToSingle(bytes, p + 4) * 255f), 0, 255);
-                    b = (byte)Mathf.Clamp(Mathf.RoundToInt(BitConverter.ToSingle(bytes, p + 8) * 255f), 0, 255);
+                    float rf = BitConverter.ToSingle(bytes, p);
+                    float gf = BitConverter.ToSingle(bytes, p + 4);
+                    float bf = BitConverter.ToSingle(bytes, p + 8);
+                    if (preserveZeroRed)
+                    {
+                        rf = Mathf.LinearToGammaSpace(rf);
+                        gf = Mathf.LinearToGammaSpace(gf);
+                        bf = Mathf.LinearToGammaSpace(bf);
+                    }
+                    r = (byte)Mathf.Clamp(Mathf.RoundToInt(rf * 255f), 0, 255);
+                    g = (byte)Mathf.Clamp(Mathf.RoundToInt(gf * 255f), 0, 255);
+                    b = (byte)Mathf.Clamp(Mathf.RoundToInt(bf * 255f), 0, 255);
                     a = isVec4
                         ? (byte)Mathf.Clamp(Mathf.RoundToInt(BitConverter.ToSingle(bytes, p + 12) * 255f), 0, 255)
                         : (byte)245;
                 }
 
-                cols[i] = new Color32(r == 0 ? (byte)51 : r, g, b, a);
+                cols[i] = new Color32((!preserveZeroRed && r == 0) ? (byte)51 : r, g, b, a);
             }
 
             return cols;

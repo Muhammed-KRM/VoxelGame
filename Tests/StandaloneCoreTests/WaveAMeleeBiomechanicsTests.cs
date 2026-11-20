@@ -132,5 +132,60 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(topLeftClamped.X, Is.LessThan(-0.35f), "Top-left hilt X was blocked by right-shoulder clamp!");
             Assert.That(topLeftClamped.Y, Is.GreaterThan(0.20f), "Top-left hilt Y was blocked by clamp!");
         }
+
+        [Test]
+        public void WallProximityClassifier_LocksSwingWhenTooClose_AndNeverInvertsRetractedBlade()
+        {
+            Assert.That(
+                MeleeBiomechanicsSolver.ClassifyFrontWallClearance(0.38f, 1.10f),
+                Is.EqualTo(WallProximityZone.CrampedNoSwing));
+            Assert.That(
+                MeleeBiomechanicsSolver.ClassifyFrontWallClearance(0.95f, 1.10f),
+                Is.EqualTo(WallProximityZone.MediumWallContact));
+            Assert.That(
+                MeleeBiomechanicsSolver.ClassifyFrontWallClearance(1.85f, 1.10f),
+                Is.EqualTo(WallProximityZone.OpenSpace));
+
+            // Geri cekilmis kilic ucu Y bileseni her kosulda pozitif (dik) kalmalidir — asla bas asagi donmez!
+            Assert.That(MeleeBiomechanicsSolver.ComputeSafeRetractedBladeTipY(-0.95f), Is.GreaterThanOrEqualTo(0.42f));
+            Assert.That(MeleeBiomechanicsSolver.ComputeSafeRetractedBladeTipY(0.10f), Is.GreaterThanOrEqualTo(0.42f));
+            Assert.That(MeleeBiomechanicsSolver.ComputeSafeRetractedBladeTipY(0.88f), Is.EqualTo(0.88f).Within(0.001f));
+        }
+
+        [Test]
+        public void TwoBoneArmIk_PreservesExactBoneLengths_AndReachesTargetCleanly()
+        {
+            const float l1 = 0.295f;
+            const float l2 = 0.265f;
+            Vector3 shoulder = new Vector3(0.215f, 1.395f, 0f);
+            Vector3 pole = Vector3.Normalize(new Vector3(0.65f, -0.72f, -0.35f));
+
+            Vector3[] reachableTargets =
+            {
+                new Vector3(0.18f, 1.25f, 0.40f),
+                new Vector3(-0.10f, 1.48f, 0.34f),
+                new Vector3(0.35f, 1.15f, 0.36f),
+                new Vector3(0.08f, 1.32f, 0.46f)
+            };
+
+            foreach (Vector3 tgt in reachableTargets)
+            {
+                MeleeBiomechanicsSolver.SolveTwoBoneArmIk(shoulder, tgt, pole, l1, l2, out Vector3 elbow, out Vector3 hand);
+                float upperDist = Vector3.Distance(shoulder, elbow);
+                float foreDist = Vector3.Distance(elbow, hand);
+                float handErr = Vector3.Distance(hand, tgt);
+
+                Assert.That(upperDist, Is.EqualTo(l1).Within(0.002f), "Upper arm length drifted!");
+                Assert.That(foreDist, Is.EqualTo(l2).Within(0.002f), "Forearm length drifted!");
+                Assert.That(handErr, Is.LessThan(0.005f), $"Reachable target {tgt} missed by {handErr:F4}m!");
+            }
+
+            // Asiri uzak hedefte kol asla uzamaz/kopmaz, omuz erisim zarfina guvenle kisitlanir
+            Vector3 farTarget = shoulder + new Vector3(0f, 0f, 1.80f);
+            MeleeBiomechanicsSolver.SolveTwoBoneArmIk(shoulder, farTarget, pole, l1, l2, out Vector3 farElbow, out Vector3 farHand);
+            Assert.That(Vector3.Distance(shoulder, farElbow), Is.EqualTo(l1).Within(0.002f));
+            Assert.That(Vector3.Distance(farElbow, farHand), Is.EqualTo(l2).Within(0.002f));
+            Assert.That(Vector3.Distance(shoulder, farHand), Is.LessThanOrEqualTo(l1 + l2));
+        }
     }
 }

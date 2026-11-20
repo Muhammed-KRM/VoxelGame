@@ -11,6 +11,13 @@ namespace Stratocraft.Character
         Retracting = 2
     }
 
+    public enum WallProximityZone : byte
+    {
+        OpenSpace = 0,
+        MediumWallContact = 1,
+        CrampedNoSwing = 2
+    }
+
     public struct MeleeBiomechanicsResult
     {
         public float EffectiveInertia;
@@ -35,6 +42,85 @@ namespace Stratocraft.Character
         public const int MaxSubstepsPerFrame = 16;
         public const float ThrustExtendDurationSec = 0.12f;
         public const float ThrustRetractDurationSec = 0.23f;
+        public const float CrampedCloseQuartersThresholdMeters = 0.62f;
+
+        /// <summary>
+        /// Duvar/engel on acikligina gore kilic yakinlik kusagini siniflandirir:
+        /// - &lt; 0.62m (CrampedNoSwing): Genis balistik savurma kilitlenir, kilic gogus hizasinda dik toplanir.
+        /// - 0.62m .. bladeLen + 0.25m (MediumWallContact): Savurma baslayabilir; temas aninda temiz duvar sekmesi olusur.
+        /// - &gt;= bladeLen + 0.25m (OpenSpace): Tam serbest hareket.
+        /// </summary>
+        public static WallProximityZone ClassifyFrontWallClearance(
+            float frontWallClearanceMeters,
+            float effectiveBladeLengthMeters)
+        {
+            if (frontWallClearanceMeters < CrampedCloseQuartersThresholdMeters)
+            {
+                return WallProximityZone.CrampedNoSwing;
+            }
+            float mediumMax = MathF.Max(CrampedCloseQuartersThresholdMeters + 0.20f, effectiveBladeLengthMeters + 0.25f);
+            if (frontWallClearanceMeters < mediumMax)
+            {
+                return WallProximityZone.MediumWallContact;
+            }
+            return WallProximityZone.OpenSpace;
+        }
+
+        /// <summary>
+        /// Duvar geri cekmesinde kilic ucunun asla bas asagi (-Y) donmemesi icin guvenli dikey bilesen alt siniri.
+        /// </summary>
+        public static float ComputeSafeRetractedBladeTipY(float rawTipY)
+        {
+            return Math.Clamp(rawTipY, 0.42f, 0.96f);
+        }
+
+        /// <summary>
+        /// Faz K.1 — 2-Kemik Analitik Kol IK Cozucusu (Kosinus Teoremi, 0-GC):
+        /// Gercek karakter omuzundan (shoulderPos) hedef el/kabza soketine (targetHandPos) dirsek konumunu
+        /// (elbowPos) ve kemik boylarini koruyarak kisitlanmis el konumunu (clampedHandPos) hesaplar.
+        /// </summary>
+        public static void SolveTwoBoneArmIk(
+            Vector3 shoulderPos,
+            Vector3 targetHandPos,
+            Vector3 elbowPoleHintDir,
+            float upperArmLen,
+            float forearmLen,
+            out Vector3 elbowPos,
+            out Vector3 clampedHandPos)
+        {
+            float l1 = MathF.Max(0.10f, upperArmLen);
+            float l2 = MathF.Max(0.10f, forearmLen);
+            float minReach = MathF.Abs(l1 - l2) + 0.04f;
+            float maxReach = (l1 + l2) * 0.992f;
+
+            Vector3 toTarget = targetHandPos - shoulderPos;
+            float dist = toTarget.Length();
+            Vector3 dir;
+            if (dist < 1e-4f)
+            {
+                dir = new Vector3(0f, -0.5f, 0.866f);
+                dist = minReach;
+            }
+            else
+            {
+                dir = toTarget / dist;
+            }
+
+            float clampedDist = Math.Clamp(dist, minReach, maxReach);
+            clampedHandPos = shoulderPos + dir * clampedDist;
+
+            Vector3 poleProj = elbowPoleHintDir - dir * Vector3.Dot(elbowPoleHintDir, dir);
+            if (poleProj.LengthSquared() < 1e-5f)
+            {
+                Vector3 fallback = MathF.Abs(dir.Y) < 0.9f ? new Vector3(0f, -1f, 0f) : new Vector3(1f, 0f, 0f);
+                poleProj = fallback - dir * Vector3.Dot(fallback, dir);
+            }
+            Vector3 bendDir = Vector3.Normalize(poleProj);
+
+            float cosShoulder = Math.Clamp((l1 * l1 + clampedDist * clampedDist - l2 * l2) / (2.0f * l1 * clampedDist), -1.0f, 1.0f);
+            float sinShoulder = MathF.Sqrt(MathF.Max(0.0f, 1.0f - cosShoulder * cosShoulder));
+            elbowPos = shoulderPos + dir * (l1 * cosShoulder) + bendDir * (l1 * sinShoulder);
+        }
 
         /// <summary>
         /// Silah kutlesi, uzunlugu, 1H/2H tutusu ve oyuncunun hareket/durus haline gore

@@ -2,10 +2,12 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
+using Stratocraft.Rendering;
 using Stratocraft.Voxel.Data;
 using UnityEngine;
 
@@ -53,7 +55,9 @@ namespace Stratocraft.Character
         private int _automatonLastHitSwingId = -1, _automatonLastKickId = -1;
         private string _automatonLastZone = "-", _automatonLastNote = "Vuruş Bekleniyor (LMB Kesik, F Tekme veya Dönen Kola RMB Blok Dene!)";
 
-        private Transform? _duelistRoot, _duelistSwordPivot;
+        private Transform? _duelistRoot, _duelistSwordPivot, _duelistTorsoPivot;
+        private Transform? _duelistRightShoulder, _duelistRightElbow, _duelistRightWrist;
+        private Transform? _duelistLeftShoulder, _duelistLeftElbow, _duelistLeftWrist;
         private readonly Vector3[] _npcPrevBladePts = new Vector3[Stage1DirectionalCombatBridge.BladeSamplePointCount];
         private readonly Vector3[] _npcCurrBladePts = new Vector3[Stage1DirectionalCombatBridge.BladeSamplePointCount];
         private bool _npcBladePtsInit, _duelistStrikeResolvedThisSwing, _duelistCurrentStrikeIsHeavySmash;
@@ -503,6 +507,26 @@ namespace Stratocraft.Character
             }
             else npcTipDir = new Vector3(-_duelistCurrentBladeRad.x * 0.75f, _duelistCurrentBladeRad.y * 0.85f, 0.65f).normalized;
             _duelistSwordPivot.localRotation = Quaternion.LookRotation(Vector3.forward, npcTipDir);
+
+            // Faz K.1: Duellocu NPC'nin gercek insan govdesi ve 2-Kemik IK kollari kilic kabzasini canli tutar!
+            if (_duelistTorsoPivot != null)
+            {
+                float torsoTwistYaw = -_duelistCurrentBladeRad.x * 26f;
+                float torsoPitch = _duelistPhase == 2 ? 14f : (_duelistPhase == 3 ? -16f : 4f);
+                _duelistTorsoPivot.localRotation = Quaternion.Euler(torsoPitch, torsoTwistYaw, 0f);
+            }
+            if (_duelistRightShoulder != null && _duelistRightElbow != null && _duelistRightWrist != null)
+            {
+                Vector3 rGrip = _duelistSwordPivot.TransformPoint(new Vector3(0f, -0.045f, 0f));
+                Vector3 lGrip = _duelistSwordPivot.TransformPoint(new Vector3(0f, -0.130f, 0f));
+                Vector3 npcFwd = _duelistRoot.forward;
+                Vector3 npcRight = _duelistRoot.right;
+                SolveDuelistArmIk(_duelistRightShoulder, _duelistRightElbow, _duelistRightWrist, rGrip, (npcRight * 0.7f - Vector3.up * 0.7f - npcFwd * 0.3f).normalized, _duelistSwordPivot.up, isRightHand: true);
+                if (_duelistLeftShoulder != null && _duelistLeftElbow != null && _duelistLeftWrist != null)
+                {
+                    SolveDuelistArmIk(_duelistLeftShoulder, _duelistLeftElbow, _duelistLeftWrist, lGrip, (-npcRight * 0.7f - Vector3.up * 0.7f - npcFwd * 0.3f).normalized, _duelistSwordPivot.up, isRightHand: false);
+                }
+            }
 
             Vector3 npcHiltWorld = _duelistSwordPivot.position, npcBladeUp = _duelistSwordPivot.up.normalized;
             for (int i = 0; i < Stage1DirectionalCombatBridge.BladeSamplePointCount; i++)
@@ -1035,24 +1059,77 @@ namespace Stratocraft.Character
             GameObject root = new GameObject("Arena_MasterSwordDuelistNPC");
             root.transform.position = worldPos;
             _duelistRoot = root.transform;
-            Color32 darkArmor = new Color32(62, 70, 86, 255), brightSteel = new Color32(175, 188, 210, 255);
-            Color32 royalTabard = new Color32(158, 34, 46, 255), goldCrest = new Color32(228, 185, 68, 255);
-            CreateColoredBoxPart(root.transform, "LeftLeg", new Vector3(-0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, sharedMat);
-            CreateColoredBoxPart(root.transform, "RightLeg", new Vector3(0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, sharedMat);
-            CreateColoredBoxPart(root.transform, "ArmoredTorso", new Vector3(0f, 1.12f, 0f), new Vector3(0.26f, 0.34f, 0.18f), royalTabard, brightSteel, sharedMat);
-            CreateColoredBoxPart(root.transform, "ShoulderLeft", new Vector3(-0.34f, 1.36f, 0f), new Vector3(0.11f, 0.10f, 0.14f), darkArmor, goldCrest, sharedMat);
-            CreateColoredBoxPart(root.transform, "ShoulderRight", new Vector3(0.34f, 1.36f, 0f), new Vector3(0.11f, 0.10f, 0.14f), darkArmor, goldCrest, sharedMat);
-            CreateColoredBoxPart(root.transform, "KnightHelm", new Vector3(0f, 1.64f, 0f), new Vector3(0.16f, 0.17f, 0.17f), darkArmor, brightSteel, sharedMat);
-            CreateColoredBoxPart(root.transform, "HelmPlume", new Vector3(0f, 1.86f, -0.04f), new Vector3(0.04f, 0.08f, 0.16f), royalTabard, goldCrest, sharedMat);
+
+            Material? rgbMat = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(sharedMat);
+            string humanGlbPath = Path.Combine(Application.dataPath, "Art", "Generated", "Character", "player_human_articulated.glb");
+            Dictionary<string, Mesh>? parts = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(humanGlbPath);
+
+            if (parts != null && parts.Count >= 12)
+            {
+                Transform pelvis = CreateDuelistJoint(root.transform, "Duelist_Pelvis", new Vector3(0f, 0.92f, 0f), parts, "Human_Pelvis", rgbMat);
+                _duelistTorsoPivot = CreateDuelistJoint(pelvis, "Duelist_Torso", new Vector3(0f, 0.06f, 0f), parts, "Human_Torso", rgbMat);
+                Transform neck = CreateDuelistJoint(_duelistTorsoPivot, "Duelist_Neck", new Vector3(0f, 0.475f, 0.004f), parts, "Human_Neck", rgbMat);
+                CreateDuelistJoint(neck, "Duelist_Head", new Vector3(0f, 0.080f, 0f), parts, "Human_Head", rgbMat);
+
+                _duelistRightShoulder = CreateDuelistJoint(_duelistTorsoPivot, "Duelist_ShoulderR", new Vector3(0.215f, 0.415f, 0f), parts, "Human_UpperArm_R", rgbMat);
+                _duelistRightElbow = CreateDuelistJoint(_duelistRightShoulder, "Duelist_ElbowR", new Vector3(0f, -0.295f, 0f), parts, "Human_Forearm_R", rgbMat);
+                _duelistRightWrist = CreateDuelistJoint(_duelistRightElbow, "Duelist_WristR", new Vector3(0f, -0.265f, 0f), parts, "Human_Hand_R", rgbMat);
+
+                _duelistLeftShoulder = CreateDuelistJoint(_duelistTorsoPivot, "Duelist_ShoulderL", new Vector3(-0.215f, 0.415f, 0f), parts, "Human_UpperArm_L", rgbMat);
+                _duelistLeftElbow = CreateDuelistJoint(_duelistLeftShoulder, "Duelist_ElbowL", new Vector3(0f, -0.295f, 0f), parts, "Human_Forearm_L", rgbMat);
+                _duelistLeftWrist = CreateDuelistJoint(_duelistLeftElbow, "Duelist_WristL", new Vector3(0f, -0.265f, 0f), parts, "Human_Hand_L", rgbMat);
+
+                Transform hipL = CreateDuelistJoint(pelvis, "Duelist_HipL", new Vector3(-0.105f, -0.025f, 0f), parts, "Human_Thigh_L", rgbMat);
+                Transform kneeL = CreateDuelistJoint(hipL, "Duelist_KneeL", new Vector3(0f, -0.430f, 0f), parts, "Human_Shin_L", rgbMat);
+                CreateDuelistJoint(kneeL, "Duelist_FootL", new Vector3(0f, -0.410f, 0f), parts, "Human_Foot_L", rgbMat);
+
+                Transform hipR = CreateDuelistJoint(pelvis, "Duelist_HipR", new Vector3(0.105f, -0.025f, 0f), parts, "Human_Thigh_R", rgbMat);
+                Transform kneeR = CreateDuelistJoint(hipR, "Duelist_KneeR", new Vector3(0f, -0.430f, 0f), parts, "Human_Shin_R", rgbMat);
+                CreateDuelistJoint(kneeR, "Duelist_FootR", new Vector3(0f, -0.410f, 0f), parts, "Human_Foot_R", rgbMat);
+            }
+            else
+            {
+                Color32 darkArmor = new Color32(62, 70, 86, 255), brightSteel = new Color32(175, 188, 210, 255);
+                Color32 royalTabard = new Color32(158, 34, 46, 255), goldCrest = new Color32(228, 185, 68, 255);
+                CreateColoredBoxPart(root.transform, "LeftLeg", new Vector3(-0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, rgbMat);
+                CreateColoredBoxPart(root.transform, "RightLeg", new Vector3(0.14f, 0.42f, 0f), new Vector3(0.09f, 0.42f, 0.10f), darkArmor, brightSteel, rgbMat);
+                CreateColoredBoxPart(root.transform, "ArmoredTorso", new Vector3(0f, 1.12f, 0f), new Vector3(0.26f, 0.34f, 0.18f), royalTabard, brightSteel, rgbMat);
+                CreateColoredBoxPart(root.transform, "KnightHelm", new Vector3(0f, 1.64f, 0f), new Vector3(0.16f, 0.17f, 0.17f), darkArmor, brightSteel, rgbMat);
+            }
+
             GameObject swordPivot = new GameObject("DuelistSwordPivot");
             swordPivot.transform.SetParent(root.transform, false);
-            swordPivot.transform.localPosition = new Vector3(0.36f, 1.25f, 0.45f);
+            swordPivot.transform.localPosition = new Vector3(0.26f, 1.24f, 0.40f);
             swordPivot.AddComponent<MeshFilter>();
             var mr = swordPivot.AddComponent<MeshRenderer>();
-            if (sharedMat != null) mr.sharedMaterial = sharedMat;
+            if (rgbMat != null) mr.sharedMaterial = rgbMat;
             Stage1DirectionalCombatBridge.RebuildWeaponArchetypeVisualMesh(swordPivot.transform, CombatWeaponArchetype.Longsword);
-            swordPivot.transform.localScale = new Vector3(1.15f, 1.18f, 1.15f);
+            swordPivot.transform.localScale = new Vector3(1.10f, 1.12f, 1.10f);
             _duelistSwordPivot = swordPivot.transform;
+        }
+
+        private static Transform CreateDuelistJoint(
+            Transform parent, string name, Vector3 localPos, Dictionary<string, Mesh> parts, string partKey, Material? mat)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPos;
+            if (parts.TryGetValue(partKey, out Mesh? m) && m != null)
+            {
+                MeshFilter mf = go.AddComponent<MeshFilter>();
+                mf.sharedMesh = m;
+                MeshRenderer mr = go.AddComponent<MeshRenderer>();
+                if (mat != null) mr.sharedMaterial = mat;
+            }
+            return go.transform;
+        }
+
+        private static void SolveDuelistArmIk(
+            Transform shoulder, Transform elbow, Transform wrist,
+            Vector3 targetHandWorld, Vector3 poleWorld, Vector3 gripUpWorld, bool isRightHand)
+        {
+            Stage1ArticulatedRigAnimator.ApplyTwoBoneArmChain(
+                shoulder, elbow, wrist, targetHandWorld, poleWorld, gripUpWorld, isRightHand);
         }
 
         private static GameObject CreateColoredBoxPart(Transform parent, string name, Vector3 localPos, Vector3 halfExtents, Color32 bottomColor, Color32 topColor, Material? sharedMat)

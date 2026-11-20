@@ -85,6 +85,7 @@ namespace Stratocraft.Character
             public CreaturePatternMemory PatternMemory;
             public bool HasBeenProvoked;
             public int ActiveMoveIndex;
+            public CreatureAttackDirection ActiveAttackDirection = CreatureAttackDirection.Overhead;
             public float AttackStageTimer;
             public float AttackStageDuration;
             public bool AttackHitResolved;
@@ -1726,6 +1727,7 @@ namespace Stratocraft.Character
                 CreatureAttackMoveSpec[] moves = aiProfile.Moves;
                 if (a.ActiveMoveIndex < 0 || a.ActiveMoveIndex >= moves.Length) a.ActiveMoveIndex = 0;
                 CreatureAttackMoveSpec activeMove = moves[a.ActiveMoveIndex];
+                a.ActiveAttackDirection = activeMove.Direction;
 
                 // 3) 3 Asamali Gercek Fiziksel Saldiri FSM: AttackWindup -> AttackActive (Koni Hitbox) -> AttackRecovery
                 Vector3 tangent = new Vector3(-flatDir.z, 0f, flatDir.x);
@@ -1821,6 +1823,12 @@ namespace Stratocraft.Character
                                 };
                                 // Faz A.3: TakeDamageRegional HP'yi ZATEN dusurur -> 2. kez dusme (2x bug) TAMAMEN KALDIRILDI!
                                 float actualDmg = playerVitals.TakeDamageRegional(zone, rawDmg, out float absorbedDmg, out bool isCritHead);
+                                // Yere dusmus (0 HP / BleedOutCrawl) oyuncuya gelen ek darbe kanama sayacini hizla bitirir (coup-de-grace)!
+                                if (probeHpBefore <= 0.01f && playerVitals.CurrentHp <= 0.0f)
+                                {
+                                    float bleedCut = Mathf.Max(14.0f, actualDmg * 0.90f);
+                                    playerVitals.BleedOutTimerSeconds = Mathf.Max(0.0f, playerVitals.BleedOutTimerSeconds - bleedCut);
+                                }
                                 string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {zone} Soğurdu: -{absorbedDmg:F0}]" : "");
                                 LastCreatureEventText =
                                     $"{a.DisplayName} [{activeMove.Label}] ile vurdu! (-{actualDmg:F1} HP{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
@@ -1870,9 +1878,18 @@ namespace Stratocraft.Character
 
                     if (a.AttackCooldown <= 0f)
                     {
-                        // Yeni tur-ozel cok yonlu saldiri sec ve Windup/Telegraph asamasini baslat!
-                        a.ActiveMoveIndex = (a.ActiveMoveIndex + 1 + (Time.frameCount & 1)) % moves.Length;
+                        // Yeni tur-ozel cok yonlu saldiri sec (ayni hamleyi art arda tekrarlama!) ve Windup/Telegraph asamasini baslat!
+                        if (moves.Length > 1)
+                        {
+                            int step = 1 + ((Time.frameCount + (int)(a.EntityGuid & 3)) % (moves.Length - 1));
+                            a.ActiveMoveIndex = (a.ActiveMoveIndex + step) % moves.Length;
+                        }
+                        else
+                        {
+                            a.ActiveMoveIndex = 0;
+                        }
                         activeMove = moves[a.ActiveMoveIndex];
+                        a.ActiveAttackDirection = activeMove.Direction;
                         a.State = CreatureAiState.AttackWindup;
                         a.AttackStageTimer = 0f;
                         a.AttackStageDuration = activeMove.WindupSeconds;
@@ -3140,63 +3157,177 @@ namespace Stratocraft.Character
             float phase = time * cycleSpeed + a.PhaseOffset;
             bool isWindup = a.State == CreatureAiState.AttackWindup;
             bool isActiveStrike = a.State == CreatureAiState.AttackActive || a.State == CreatureAiState.SupportPillarSiege;
+            bool isRecovery = a.State == CreatureAiState.AttackRecovery;
             bool isBlocking = a.State == CreatureAiState.DirectionalBlock;
-            bool isAttacking = isWindup || isActiveStrike;
-            float windup01 = isWindup && a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 0f;
-            float active01 = a.State == CreatureAiState.AttackActive && a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 0f;
-            // Faz A.3 Kalibrasyon: Windup'ta kol geriye/yukari kalkar (0 -> 1.0 telgraf), Active'de sertce iner (1.0 -> 0.0 darbe)!
-            float attackSwing01 = isWindup ? windup01 : (isActiveStrike ? (1.0f - active01) : 0f);
-            float flinchPitch = a.HitFlinchTimer > 0f ? Mathf.Sin(a.HitFlinchTimer * 45f) * 22f - 16f : 0f;
+            bool isInAttackCycle = isWindup || isActiveStrike || isRecovery;
 
+            // 3 Fazli Kesintisiz & Akici Saldiri Zarfi (sifir tek-kare ziplama!):
+            //   Windup   (0..1): Idle -> Telgraf Pozu (wWindup: 0 -> 1, wStrike: 0)
+            //   Active   (0..1): Telgraf Pozu -> Patlayici Vurus Bitisi (wWindup: 1 -> 0, wStrike: 0 -> 1)
+            //   Recovery (0..1): Vurus Bitisi -> Yumusak Idle Donusu (wWindup: 0, wStrike: 1 -> 0)
+            float wWindup = 0f;
+            float wStrike = 0f;
+            if (isWindup)
+            {
+                float t = a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 1f;
+                wWindup = t * t * (3f - 2f * t);
+            }
+            else if (isActiveStrike)
+            {
+                float t = a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 1f;
+                float whip = 1f - (1f - t) * (1f - t);
+                wWindup = 1f - whip;
+                wStrike = whip;
+            }
+            else if (isRecovery)
+            {
+                float t = a.AttackStageDuration > 0.01f ? Mathf.Clamp01(a.AttackStageTimer / a.AttackStageDuration) : 1f;
+                float unwind = t * t * (3f - 2f * t);
+                wStrike = 1f - unwind;
+            }
+
+            static float Blend3(float idleVal, float windupVal, float strikeVal, float wW, float wS)
+            {
+                float wIdle = Mathf.Clamp01(1f - wW - wS);
+                return idleVal * wIdle + windupVal * wW + strikeVal * wS;
+            }
+
+            float flinchPitch = a.HitFlinchTimer > 0f ? Mathf.Sin(a.HitFlinchTimer * 45f) * 24f - 18f : 0f;
             bool isHornCharger = a.ArchetypeId == 5 || a.ArchetypeId == 8 || a.ArchetypeId == 10 || a.ArchetypeId == 13 || a.ArchetypeId == 19;
             bool isArachnidStinger = a.ArchetypeId == 9 || a.ArchetypeId == 15;
 
             if (a.BodyTorsoPivot != null)
             {
                 float breathBob = Mathf.Sin(phase * 2f) * 0.025f;
-                float attackTorsoPitch = 0f;
-                float attackTorsoYaw = 0f;
-                if (isAttacking)
+                float idlePitch = Mathf.Sin(phase) * 3.5f;
+                float idleRoll = Mathf.Cos(phase) * 3.0f;
+                float torsoPitch = idlePitch;
+                float torsoYaw = 0f;
+                float torsoRoll = idleRoll;
+                float lungeZ = 0f;
+                float rearUpY = 0f;
+
+                if (isInAttackCycle)
                 {
-                    if (a.IsFlyingBoss) attackTorsoPitch = 18f * Mathf.Sin(attackSwing01 * Mathf.PI);
-                    else if (isHornCharger) attackTorsoPitch = Mathf.Lerp(-22f, 24f, attackSwing01);
-                    else if (a.IsBiped) { attackTorsoPitch = 16f; attackTorsoYaw = Mathf.Lerp(-22f, 24f, 1f - attackSwing01); }
-                    else attackTorsoPitch = -18f * Mathf.Sin(attackSwing01 * Mathf.PI);
+                    if (a.IsFlyingBoss)
+                    {
+                        torsoPitch = Blend3(idlePitch, -24f, 34f, wWindup, wStrike);
+                        lungeZ = Blend3(0f, -0.18f, 0.44f, wWindup, wStrike);
+                    }
+                    else if (isHornCharger)
+                    {
+                        if (a.ActiveAttackDirection == CreatureAttackDirection.Left || a.ActiveAttackDirection == CreatureAttackDirection.Right)
+                        {
+                            float s = a.ActiveAttackDirection == CreatureAttackDirection.Right ? 1f : -1f;
+                            torsoPitch = Blend3(idlePitch, 18f, -14f, wWindup, wStrike);
+                            torsoYaw = Blend3(0f, s * 36f, -s * 38f, wWindup, wStrike);
+                            lungeZ = Blend3(0f, -0.14f, 0.36f, wWindup, wStrike);
+                        }
+                        else
+                        {
+                            torsoPitch = Blend3(idlePitch, 26f, -24f, wWindup, wStrike);
+                            lungeZ = Blend3(0f, -0.22f, 0.56f, wWindup, wStrike);
+                        }
+                    }
+                    else if (a.IsBiped)
+                    {
+                        switch (a.ActiveAttackDirection)
+                        {
+                            case CreatureAttackDirection.Overhead:
+                                torsoPitch = Blend3(idlePitch, -22f, 34f, wWindup, wStrike);
+                                torsoYaw = Blend3(0f, 16f, -14f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.14f, 0.34f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Right:
+                                torsoPitch = Blend3(idlePitch, 8f, 20f, wWindup, wStrike);
+                                torsoYaw = Blend3(0f, 46f, -48f, wWindup, wStrike);
+                                torsoRoll = Blend3(idleRoll, -12f, 14f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.10f, 0.30f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Left:
+                                torsoPitch = Blend3(idlePitch, 8f, 20f, wWindup, wStrike);
+                                torsoYaw = Blend3(0f, -46f, 48f, wWindup, wStrike);
+                                torsoRoll = Blend3(idleRoll, 12f, -14f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.10f, 0.30f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Underhand:
+                                torsoPitch = Blend3(idlePitch, 36f, -24f, wWindup, wStrike);
+                                torsoYaw = Blend3(0f, -24f, 26f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.12f, 0.36f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.DualSide:
+                                torsoPitch = Blend3(idlePitch, -20f, 30f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.16f, 0.36f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Lunge:
+                                torsoPitch = Blend3(idlePitch, 14f, 32f, wWindup, wStrike);
+                                torsoYaw = Blend3(0f, 26f, -22f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.22f, 0.54f, wWindup, wStrike);
+                                break;
+                            default:
+                                torsoPitch = Blend3(idlePitch, -18f, 28f, wWindup, wStrike);
+                                lungeZ = Blend3(0f, -0.12f, 0.32f, wWindup, wStrike);
+                                break;
+                        }
+                    }
+                    else
+                    {
+                        // Dort ayakli yirtici / orumcek / ayi: Sahlanma (Rear-up), yan pence burulmasi veya atilma!
+                        if (a.ActiveAttackDirection == CreatureAttackDirection.Left || a.ActiveAttackDirection == CreatureAttackDirection.Right)
+                        {
+                            float s = a.ActiveAttackDirection == CreatureAttackDirection.Right ? 1f : -1f;
+                            torsoPitch = Blend3(idlePitch, -20f, 16f, wWindup, wStrike);
+                            torsoYaw = Blend3(0f, s * 32f, -s * 34f, wWindup, wStrike);
+                            torsoRoll = Blend3(idleRoll, -s * 18f, s * 18f, wWindup, wStrike);
+                            lungeZ = Blend3(0f, -0.12f, 0.38f, wWindup, wStrike);
+                        }
+                        else if (a.ActiveAttackDirection == CreatureAttackDirection.Overhead || a.ActiveAttackDirection == CreatureAttackDirection.DualSide)
+                        {
+                            torsoPitch = Blend3(idlePitch, -40f, 24f, wWindup, wStrike);
+                            rearUpY = Blend3(0f, 0.24f, -0.06f, wWindup, wStrike);
+                            lungeZ = Blend3(0f, -0.16f, 0.42f, wWindup, wStrike);
+                        }
+                        else
+                        {
+                            torsoPitch = Blend3(idlePitch, 16f, -12f, wWindup, wStrike);
+                            lungeZ = Blend3(0f, -0.22f, 0.58f, wWindup, wStrike);
+                        }
+                    }
                 }
-                float torsoPitch = (isAttacking ? attackTorsoPitch : Mathf.Sin(phase) * 3.5f) + flinchPitch * 0.4f;
-                float torsoRoll = Mathf.Cos(phase) * 3.0f;
+
                 float baseTorsoY = a.IsFlyingBoss ? 0.88f : (a.IsBiped ? 0.92f : 0.68f);
-                Vector3 lungeLocalOffset = isAttacking ? new Vector3(0f, 0f, Mathf.Sin(attackSwing01 * Mathf.PI) * 0.24f) : Vector3.zero;
-                a.BodyTorsoPivot.localPosition = new Vector3(0f, baseTorsoY + breathBob, 0f) + lungeLocalOffset;
-                a.BodyTorsoPivot.localRotation = Quaternion.Euler(torsoPitch, attackTorsoYaw, torsoRoll);
+                a.BodyTorsoPivot.localPosition = new Vector3(0f, baseTorsoY + breathBob + rearUpY, lungeZ);
+                a.BodyTorsoPivot.localRotation = Quaternion.Euler(torsoPitch + flinchPitch * 0.45f, torsoYaw, torsoRoll);
             }
 
             if (a.IsFlyingBoss)
             {
-                // 1) Kus / Ucan Yirtici (Phoenix, Griffin, Wyvern): Kanat Germe + Keskin Gaga Dalisi + Cift Hava Pencesi Savurmasi
                 bool canFly = (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0 && !a.WingSevered;
-                float wingFlapDeg = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset) * 38f : -42f;
+                float baseFlap = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset) * 38f : -42f;
                 float outerLagDeg = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset - 0.75f) * 30f : -25f;
+                float wingPitch = isInAttackCycle ? Blend3(6f, -42f, 54f, wWindup, wStrike) : 6f;
+                float wingFlapDeg = isInAttackCycle ? Blend3(baseFlap, 66f, -52f, wWindup, wStrike) : baseFlap;
 
                 if (a.WingLeftInner != null)
                 {
                     if (a.WingLeftInner.gameObject.activeSelf == a.LeftWingSevered)
                         a.WingLeftInner.gameObject.SetActive(!a.LeftWingSevered);
-                    a.WingLeftInner.localRotation = Quaternion.Euler(isAttacking ? 30f : 6f, 0f, wingFlapDeg);
+                    a.WingLeftInner.localRotation = Quaternion.Euler(wingPitch, 0f, wingFlapDeg);
                 }
                 if (a.WingLeftOuter != null) a.WingLeftOuter.localRotation = Quaternion.Euler(0f, 0f, outerLagDeg);
                 if (a.WingRightInner != null)
                 {
                     if (a.WingRightInner.gameObject.activeSelf == a.RightWingSevered)
                         a.WingRightInner.gameObject.SetActive(!a.RightWingSevered);
-                    a.WingRightInner.localRotation = Quaternion.Euler(isAttacking ? 30f : 6f, 0f, -wingFlapDeg);
+                    a.WingRightInner.localRotation = Quaternion.Euler(wingPitch, 0f, -wingFlapDeg);
                 }
                 if (a.WingRightOuter != null) a.WingRightOuter.localRotation = Quaternion.Euler(0f, 0f, -outerLagDeg);
 
-                if (a.HindLeftLeg != null) a.HindLeftLeg.localRotation = Quaternion.Euler(isAttacking ? -68f : 22f + Mathf.Sin(phase) * 14f, 0f, 0f);
-                if (a.HindLeftLower != null) a.HindLeftLower.localRotation = Quaternion.Euler(isAttacking ? 46f : 18f, 0f, 0f);
-                if (a.HindRightLeg != null) a.HindRightLeg.localRotation = Quaternion.Euler(isAttacking ? -68f : 22f - Mathf.Sin(phase) * 14f, 0f, 0f);
-                if (a.HindRightLower != null) a.HindRightLower.localRotation = Quaternion.Euler(isAttacking ? 46f : 18f, 0f, 0f);
+                float talonPitch = isInAttackCycle ? Blend3(22f, -88f, 18f, wWindup, wStrike) : (22f + Mathf.Sin(phase) * 14f);
+                if (a.HindLeftLeg != null) a.HindLeftLeg.localRotation = Quaternion.Euler(talonPitch, 0f, 0f);
+                if (a.HindLeftLower != null) a.HindLeftLower.localRotation = Quaternion.Euler(isInAttackCycle ? Blend3(18f, 58f, -12f, wWindup, wStrike) : 18f, 0f, 0f);
+                if (a.HindRightLeg != null) a.HindRightLeg.localRotation = Quaternion.Euler(talonPitch, 0f, 0f);
+                if (a.HindRightLower != null) a.HindRightLower.localRotation = Quaternion.Euler(isInAttackCycle ? Blend3(18f, 58f, -12f, wWindup, wStrike) : 18f, 0f, 0f);
             }
             else
             {
@@ -3204,59 +3335,130 @@ namespace Stratocraft.Character
                 float kneeFlexL = Mathf.Max(0f, -Mathf.Sin(phase)) * 36f + 12f;
                 float kneeFlexR = Mathf.Max(0f, Mathf.Sin(phase)) * 36f + 12f;
 
-                // Cinsine gore on uzuv / kol / kiskac saldiri animasyonu:
-                float leftArmPitch = legSwing;
-                float rightArmPitch = -legSwing;
+                float idleLeftArmP = legSwing;
+                float idleRightArmP = -legSwing;
+                float idleLeftForeP = -kneeFlexL * 0.7f;
+                float idleRightForeP = -kneeFlexR * 0.7f;
+
+                float leftArmPitch = idleLeftArmP;
+                float rightArmPitch = idleRightArmP;
                 float leftArmYaw = 0f, rightArmYaw = 0f;
-                float leftForearmPitch = -kneeFlexL * 0.7f;
-                float rightForearmPitch = -kneeFlexR * 0.7f;
+                float leftForearmPitch = idleLeftForeP;
+                float rightForearmPitch = idleRightForeP;
 
                 if (isBlocking)
                 {
-                    // Yonlu blok: iki kol gogus onunde capraz siper alir
                     float guardSideYaw = a.GuardDirection == CreatureAttackDirection.Left ? -34f
                         : (a.GuardDirection == CreatureAttackDirection.Right ? 34f : 0f);
-                    rightArmPitch = -76f;
-                    rightForearmPitch = -62f;
-                    rightArmYaw = -26f + guardSideYaw;
-                    leftArmPitch = -72f;
-                    leftForearmPitch = -58f;
-                    leftArmYaw = 26f + guardSideYaw;
+                    rightArmPitch = -82f;
+                    rightForearmPitch = -66f;
+                    rightArmYaw = -28f + guardSideYaw;
+                    leftArmPitch = -78f;
+                    leftForearmPitch = -62f;
+                    leftArmYaw = 28f + guardSideYaw;
                 }
-                else if (isAttacking)
+                else if (isInAttackCycle)
                 {
                     if (a.IsBiped)
                     {
-                        // 2) Silahli Biped / Golem: Windup'ta -125° yukari/yana gerilir, Active'de -18° sertce iner!
-                        rightArmPitch = Mathf.Lerp(-18f, -125f, attackSwing01);
-                        rightForearmPitch = Mathf.Lerp(-32f, -64f, attackSwing01);
-                        rightArmYaw = Mathf.Lerp(-28f, 38f, attackSwing01);
-                        leftArmPitch = -48f;
-                        leftForearmPitch = -40f;
+                        // 2) TUM BIPED YARATIKLAR (Golem, Ork, Minotaur, Goblin, Iskelet, Sovalye): 6 cok belirgin saldiri!
+                        switch (a.ActiveAttackDirection)
+                        {
+                            case CreatureAttackDirection.Overhead:
+                                rightArmPitch = Blend3(idleRightArmP, -165f, 34f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -68f, -12f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, 18f, -16f, wWindup, wStrike);
+                                leftArmPitch = Blend3(idleLeftArmP, -148f, 24f, wWindup, wStrike);
+                                leftForearmPitch = Blend3(idleLeftForeP, -62f, -18f, wWindup, wStrike);
+                                leftArmYaw = Blend3(0f, -18f, 16f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Right:
+                                rightArmPitch = Blend3(idleRightArmP, -86f, -72f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -56f, -12f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, 84f, -78f, wWindup, wStrike);
+                                leftArmPitch = Blend3(idleLeftArmP, -44f, -24f, wWindup, wStrike);
+                                leftArmYaw = Blend3(0f, 22f, -28f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Left:
+                                leftArmPitch = Blend3(idleLeftArmP, -88f, -72f, wWindup, wStrike);
+                                leftForearmPitch = Blend3(idleLeftForeP, -58f, -12f, wWindup, wStrike);
+                                leftArmYaw = Blend3(0f, -84f, 78f, wWindup, wStrike);
+                                rightArmPitch = Blend3(idleRightArmP, -68f, -54f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, -56f, 64f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Underhand:
+                                rightArmPitch = Blend3(idleRightArmP, 38f, -152f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -18f, -48f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, 28f, -22f, wWindup, wStrike);
+                                leftArmPitch = Blend3(idleLeftArmP, 28f, -126f, wWindup, wStrike);
+                                leftForearmPitch = Blend3(idleLeftForeP, -18f, -42f, wWindup, wStrike);
+                                leftArmYaw = Blend3(0f, -24f, 20f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.DualSide:
+                                rightArmPitch = Blend3(idleRightArmP, -90f, -78f, wWindup, wStrike);
+                                leftArmPitch = Blend3(idleLeftArmP, -90f, -78f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -18f, -52f, wWindup, wStrike);
+                                leftForearmPitch = Blend3(idleLeftForeP, -18f, -52f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, 82f, -46f, wWindup, wStrike);
+                                leftArmYaw = Blend3(0f, -82f, 46f, wWindup, wStrike);
+                                break;
+                            case CreatureAttackDirection.Lunge:
+                                rightArmPitch = Blend3(idleRightArmP, -30f, -96f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -88f, -4f, wWindup, wStrike);
+                                rightArmYaw = Blend3(0f, 14f, -6f, wWindup, wStrike);
+                                leftArmPitch = Blend3(idleLeftArmP, -56f, 36f, wWindup, wStrike);
+                                leftForearmPitch = Blend3(idleLeftForeP, -54f, -28f, wWindup, wStrike);
+                                break;
+                            default:
+                                rightArmPitch = Blend3(idleRightArmP, -145f, 24f, wWindup, wStrike);
+                                rightForearmPitch = Blend3(idleRightForeP, -64f, -16f, wWindup, wStrike);
+                                break;
+                        }
                     }
                     else if (isArachnidStinger)
                     {
-                        // 3) Orumcek / Akrep: Cift on kiskac ice dogru kapanarak yakalar!
-                        leftArmPitch = -76f;
-                        rightArmPitch = -76f;
-                        leftArmYaw = Mathf.Lerp(26f, -18f, 1f - attackSwing01);
-                        rightArmYaw = Mathf.Lerp(-26f, 18f, 1f - attackSwing01);
-                        leftForearmPitch = -45f;
-                        rightForearmPitch = -45f;
+                        // 3) Orumcek / Akrep: Genis kiskac acip kapatma + yuksek kuyruk igne vurusuna uyumlu bacak hareketi
+                        leftArmPitch = Blend3(idleLeftArmP, -96f, -52f, wWindup, wStrike);
+                        rightArmPitch = Blend3(idleRightArmP, -96f, -52f, wWindup, wStrike);
+                        leftArmYaw = Blend3(0f, -58f, 34f, wWindup, wStrike);
+                        rightArmYaw = Blend3(0f, 58f, -34f, wWindup, wStrike);
+                        leftForearmPitch = Blend3(idleLeftForeP, -22f, -64f, wWindup, wStrike);
+                        rightForearmPitch = Blend3(idleRightForeP, -22f, -64f, wWindup, wStrike);
                     }
                     else if (isHornCharger)
                     {
-                        // 4) Boynuzlu Toslayici (Geyik, Domuz, Gergedan, Behemoth): On toynaklar yeri eseler, boynuz yukari savrulur!
-                        leftArmPitch = -35f;
-                        rightArmPitch = 28f;
+                        // 4) Boynuzlu Toslayici (Domuz, Geyik, Gergedan, Behemoth): Eselenme -> Patlayici ileri toslama!
+                        leftArmPitch = Blend3(idleLeftArmP, -58f, 32f, wWindup, wStrike);
+                        rightArmPitch = Blend3(idleRightArmP, 26f, -48f, wWindup, wStrike);
+                        leftForearmPitch = Blend3(idleLeftForeP, -52f, -12f, wWindup, wStrike);
+                        rightForearmPitch = Blend3(idleRightForeP, -18f, -54f, wWindup, wStrike);
                     }
                     else
                     {
-                        // 5) Yirtici Dort Ayakli (Direwolf, Gulyabani, Ayi): Cift on pence ileri yirtma hamlesi!
-                        leftArmPitch = -82f;
-                        rightArmPitch = -88f;
-                        leftForearmPitch = -42f;
-                        rightForearmPitch = -46f;
+                        // 5) Yirtici Dort Ayakli (Kurt, Ayi, Gulyabani): Sol pence / Sag pence / Cift sahlanma / Atilma!
+                        if (a.ActiveAttackDirection == CreatureAttackDirection.Left)
+                        {
+                            leftArmPitch = Blend3(idleLeftArmP, -138f, 22f, wWindup, wStrike);
+                            leftArmYaw = Blend3(0f, -46f, 48f, wWindup, wStrike);
+                            leftForearmPitch = Blend3(idleLeftForeP, -62f, -14f, wWindup, wStrike);
+                            rightArmPitch = Blend3(idleRightArmP, -36f, -14f, wWindup, wStrike);
+                        }
+                        else if (a.ActiveAttackDirection == CreatureAttackDirection.Right)
+                        {
+                            rightArmPitch = Blend3(idleRightArmP, -138f, 22f, wWindup, wStrike);
+                            rightArmYaw = Blend3(0f, 46f, -48f, wWindup, wStrike);
+                            rightForearmPitch = Blend3(idleRightForeP, -62f, -14f, wWindup, wStrike);
+                            leftArmPitch = Blend3(idleLeftArmP, -36f, -14f, wWindup, wStrike);
+                        }
+                        else
+                        {
+                            leftArmPitch = Blend3(idleLeftArmP, -134f, 24f, wWindup, wStrike);
+                            rightArmPitch = Blend3(idleRightArmP, -136f, 24f, wWindup, wStrike);
+                            leftArmYaw = Blend3(0f, -34f, 18f, wWindup, wStrike);
+                            rightArmYaw = Blend3(0f, 34f, -18f, wWindup, wStrike);
+                            leftForearmPitch = Blend3(idleLeftForeP, -56f, -16f, wWindup, wStrike);
+                            rightForearmPitch = Blend3(idleRightForeP, -56f, -16f, wWindup, wStrike);
+                        }
                     }
                 }
 
@@ -3299,24 +3501,47 @@ namespace Stratocraft.Character
 
             if (a.HeadPivot != null)
             {
-                float attackHeadPitch = a.IsFlyingBoss
-                    ? 40f // Gaga dalisi: bas ileri-asagi saplanir
-                    : (isHornCharger ? Mathf.Lerp(36f, -32f, 1f - attackSwing01) : 26f); // Boynuz toslamasi: asagidan yukari boynuz savurmasi
-                float headPitch = (isAttacking ? attackHeadPitch : Mathf.Sin(phase * 0.5f) * 8f) + flinchPitch;
-                float headYaw = Mathf.Cos(phase * 0.5f) * 10f;
-                a.HeadPivot.localRotation = Quaternion.Euler(headPitch, headYaw, 0f);
+                float idleHeadP = Mathf.Sin(phase * 0.5f) * 8f;
+                float idleHeadY = Mathf.Cos(phase * 0.5f) * 10f;
+                float headPitch = idleHeadP;
+                float headYaw = idleHeadY;
+                if (isInAttackCycle)
+                {
+                    if (a.IsFlyingBoss)
+                    {
+                        headPitch = Blend3(idleHeadP, -22f, 56f, wWindup, wStrike);
+                    }
+                    else if (isHornCharger)
+                    {
+                        headPitch = Blend3(idleHeadP, 44f, -54f, wWindup, wStrike);
+                        if (a.ActiveAttackDirection == CreatureAttackDirection.Left || a.ActiveAttackDirection == CreatureAttackDirection.Right)
+                        {
+                            float s = a.ActiveAttackDirection == CreatureAttackDirection.Right ? 1f : -1f;
+                            headYaw = Blend3(idleHeadY, s * 62f, -s * 66f, wWindup, wStrike);
+                        }
+                    }
+                    else
+                    {
+                        headPitch = Blend3(idleHeadP, -18f, 32f, wWindup, wStrike);
+                    }
+                }
+                a.HeadPivot.localRotation = Quaternion.Euler(headPitch + flinchPitch, headYaw, 0f);
             }
             if (a.JawPivot != null)
             {
                 if (a.JawPivot.gameObject.activeSelf == a.HeadSevered)
                     a.JawPivot.gameObject.SetActive(!a.HeadSevered);
-                float jawOpenDeg = isAttacking ? 45f : (10f + Mathf.Abs(Mathf.Sin(phase * 0.5f)) * 8f);
+                float idleJaw = 10f + Mathf.Abs(Mathf.Sin(phase * 0.5f)) * 8f;
+                float jawOpenDeg = isInAttackCycle ? Blend3(idleJaw, 58f, 18f, wWindup, wStrike) : idleJaw;
                 a.JawPivot.localRotation = Quaternion.Euler(jawOpenDeg, 0f, 0f);
             }
             if (a.TailPivot != null)
             {
                 float tailWagYaw = Mathf.Sin(phase * 0.85f) * 26f;
-                float tailPitch = isAttacking ? (isArachnidStinger ? 54f : 22f) : -8f + Mathf.Cos(phase * 0.85f) * 8f;
+                float idleTailP = -8f + Mathf.Cos(phase * 0.85f) * 8f;
+                float tailPitch = isInAttackCycle
+                    ? (isArachnidStinger ? Blend3(idleTailP, 96f, 14f, wWindup, wStrike) : Blend3(idleTailP, 36f, -10f, wWindup, wStrike))
+                    : idleTailP;
                 a.TailPivot.localRotation = Quaternion.Euler(tailPitch, tailWagYaw, 0f);
             }
         }

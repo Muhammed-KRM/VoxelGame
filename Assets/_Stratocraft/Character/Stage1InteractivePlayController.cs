@@ -353,6 +353,9 @@ namespace Stratocraft.Character
         // Faz A.4 & A.5: Yatak SpawnPoint, 0 HP Olum Ekrani ve Tatli Su Icme durumu
         private readonly BedSpawnPointService _bedSpawnService = new();
         private bool _isPlayerDeathScreenOpen;
+        private bool _isBodyInspectMode;
+        private float _bodyInspectOrbitYawOffset = 158f;
+        private int _hoveredBodyArmorSlot = -1;
         private string _lastDeathReasonText = "Ağır Yaralanma / Kanama";
         private float _freshwaterDrinkCooldownSec;
         private Vector3 _initialWorldSpawnPos;
@@ -400,6 +403,8 @@ namespace Stratocraft.Character
         private Vector3 _weaponBaseLocalPos = new Vector3(0.32f, -0.24f, 0.52f);
         private Quaternion _weaponBaseLocalRot = Quaternion.Euler(18f, -14f, -10f);
         private GUIStyle? _hudBoxStyle, _hudRightBoxStyle, _crosshairStyle, _tooltipStyle, _hotbarStyle, _thermalAlertStyle, _interactionPromptStyle;
+        private GUIStyle? _deathTitleStyle, _deathBodyStyle, _bleedCardStyle;
+        private Texture2D? _hudBackdropTex, _bleedCardTex, _deathCardTex;
         private readonly List<(int cx, int cz)> _chunksToUnloadScratch = new(32);
         private readonly HashSet<(int cx, int cz)> _spawnedForageChunks = new();
         private readonly HashSet<(int cx, int cz)> _spawnedBushChunks = new();
@@ -2606,6 +2611,10 @@ namespace Stratocraft.Character
             {
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
+                if (!menuOpen && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.Space)))
+                {
+                    RespawnPlayerFromDeathScreen();
+                }
                 return;
             }
 
@@ -2679,7 +2688,7 @@ namespace Stratocraft.Character
                 if (_movementBridge.Vitals.CurrentHp <= 0.0f)
                 {
                     _movementBridge.MovementState.Stance = CharacterStance.BleedOutCrawl;
-                    if (!menuOpen && Input.GetKeyDown(KeyCode.R) && !_miningCtrl.IsCrystalActive)
+                    if (!menuOpen && Input.GetKeyDown(KeyCode.R))
                     {
                         _movementBridge.Vitals.BleedOutTimerSeconds = 0.0f;
                         _lastDeathReasonText = "Pes Edildi (Kan Kaybı)";
@@ -2693,6 +2702,12 @@ namespace Stratocraft.Character
                 }
             }
             UpdateOxygenAndFloatingOrigin(dt);
+            if (!_holsterCtrl.IsCreativeMode && _movementBridge.Vitals.IsDead && !_isPlayerDeathScreenOpen)
+            {
+                _isPlayerDeathScreenOpen = true;
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
         }
 
         private void RespawnPlayerFromDeathScreen()
@@ -3176,13 +3191,14 @@ namespace Stratocraft.Character
             int slot = _holsterCtrl.ActiveHolsterSlot;
             bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
                              !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_holsterCtrl.IsCarryingShoulderLog &&
+                             !_isBodyInspectMode &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
             float massScale = slot == 2 ? 1.45f : (slot == 3 ? 1.25f : 1.0f);
             bool isPlayerAirborne = _movementBridge.MovementState.IsGrounded == 0 || Mathf.Abs(_movementBridge.VerticalVelocity) > 1.2f;
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen;
+            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen || _isBodyInspectMode;
             if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsCarryingShoulderLog &&
                 _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
             {
@@ -3248,7 +3264,18 @@ namespace Stratocraft.Character
             {
                 _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
             }
-            transform.rotation = Quaternion.Euler(0f, _cameraYaw, 0f);
+            // Head-First Turn-in-Place: Dururken once kafa/boyun ve omuzlar doner; +-52° asilinca veya yuruyunce/savurunca govde doner!
+            bool intendingWalk = !_isBodyInspectMode && !lockCamForUi &&
+                (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D));
+            float effSpeedForTurn = intendingWalk ? Mathf.Max(1.0f, _movementBridge.MovementState.CurrentSpeedMetersPerSec) : _movementBridge.MovementState.CurrentSpeedMetersPerSec;
+            float bodyYawDeg = _rigAnimator.ResolveHeadFirstBodyYaw(
+                _cameraYaw,
+                effSpeedForTurn,
+                _combatBridge.IsChamberingOrSwinging || _combatBridge.IsParryStance,
+                _isBodyInspectMode,
+                dt,
+                _isFirstPersonMode);
+            transform.rotation = Quaternion.Euler(0f, bodyYawDeg, 0f);
             Vector3 weaponMomentumDelta = _combatBridge.ConsumePendingBodyMomentumWorldDelta(transform, dt);
             if (weaponMomentumDelta.sqrMagnitude > 0.000001f)
             {
@@ -3264,23 +3291,56 @@ namespace Stratocraft.Character
                 in _movementBridge.MovementState, _isFirstPersonMode, _miningCtrl.IsCrystalActive, _cameraPitch,
                 _combatBridge.CurrentSwingYawRad, _combatBridge.CurrentSwingPitchRad,
                 _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
-                _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01);
+                _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01,
+                cameraYawDeg: _cameraYaw,
+                isBodyInspectMode: _isBodyInspectMode);
+            _rigAnimator.SyncEquipped3DArmorVisuals(
+                in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+            if (_isBodyInspectMode && PlayerCamera != null)
+            {
+                StepBodyInspectionCameraAndInput(dt);
+            }
 
-            Transform? activeTool = slot == 2 && PickaxeVisualRoot != null
+            Transform? combatTool = slot == 2 && PickaxeVisualRoot != null
                 ? PickaxeVisualRoot.transform
                 : (slot == 3 && AxeVisualRoot != null
                     ? AxeVisualRoot.transform
-                    : (((slot >= 4 && slot <= 7) || slot == 10 || slot == 11) && _holsterCtrl.HeldMaterialBlockTransform != null
-                        ? _holsterCtrl.HeldMaterialBlockTransform
-                        : (slot == 1 ? WeaponPivot : null)));
+                    : (slot == 1 ? WeaponPivot : null));
             _combatBridge.ApplyInertialWeaponTransform(
-                activeTool, PlayerCamera, _weaponBaseLocalPos, _weaponBaseLocalRot, _isFirstPersonMode, _worldChunks, slot);
+                combatTool, PlayerCamera, _weaponBaseLocalPos, _weaponBaseLocalRot, _isFirstPersonMode, _worldChunks, slot);
+
+            Transform? activeHeldForRig = combatTool != null
+                ? combatTool
+                : (slot >= 4 && _holsterCtrl.HeldMaterialBlockTransform != null
+                    ? _holsterCtrl.HeldMaterialBlockTransform
+                    : null);
+
+            // Faz K.1: Gercek insan karakterinin kendi omuz->dirsek->bilek->el 2-Kemik IK kollarini aktif kilic/alet/esyaya kilitle!
+            bool isPlayerProne = _movementBridge.MovementState.Stance == CharacterStance.ProneCrawling ||
+                                 _movementBridge.MovementState.Stance == CharacterStance.BleedOutCrawl;
+            VisualInventorySlot activeHotbarItem = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            _rigAnimator.SolveRealArmsToActiveItem(
+                transform,
+                PlayerCamera,
+                _isFirstPersonMode,
+                slot,
+                activeHeldForRig,
+                _combatBridge,
+                in activeHotbarItem,
+                _miningCtrl.IsCrystalActive,
+                SharedVoxelMaterial,
+                _combatBridge.CurrentRightFistExtend01,
+                _combatBridge.CurrentLeftFistExtend01,
+                isPlayerProne);
+            // Eski sahte ucan yumruk kutularini her zaman kapali tut (gercek insan kollari yumruk atiyor)
+            _combatBridge.StepFirstPersonBareFistVisuals(
+                PlayerCamera, SharedVoxelMaterial, isFirstPersonMode: false, activeHolsterSlot: 1, isCrystalActive: false);
             if (WaveADeepDiagnosticProbe.Enabled && PlayerCamera != null &&
                 (_combatBridge.IsActiveAttackSwing || _combatBridge.IsChamberingOrSwinging || _combatBridge.IsParryStance))
             {
                 Vector3 camPosBeforeRig = PlayerCamera.transform.position;
                 Vector3 camEulerBeforeRig = PlayerCamera.transform.eulerAngles;
-                Vector3 hiltW = activeTool != null ? activeTool.position : Vector3.zero;
+                Vector3 hiltW = combatTool != null ? combatTool.position : Vector3.zero;
                 Vector3 tipW = _combatBridge.AreBladePointsValid ? _combatBridge.CurrBladeWorldPoints[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1] : hiltW;
                 WaveADeepDiagnosticProbe.BeginTransformLagSample(new WaveACombatTransformLagRecord
                 {
@@ -3303,8 +3363,6 @@ namespace Stratocraft.Character
                     WallPushTriggered = _combatBridge.LastFrameWallPushTriggered
                 });
             }
-            _combatBridge.StepFirstPersonBareFistVisuals(
-                PlayerCamera, SharedVoxelMaterial, _isFirstPersonMode, slot, _miningCtrl.IsCrystalActive);
             _creatureBridge.EvaluateBareFistPunch(
                 _combatBridge, PlayerCamera, transform,
                 ref _movementBridge.Vitals, ref _movementBridge.MovementState,
@@ -3470,6 +3528,32 @@ namespace Stratocraft.Character
                         SharedVoxelMaterial, ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl);
                 }
             }
+            if (Input.GetKeyDown(KeyCode.Escape) && _isBodyInspectMode)
+            {
+                _isBodyInspectMode = false;
+                _hoveredBodyArmorSlot = -1;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.U) && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.IsBackpackOpen &&
+                !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_isPlayerDeathScreenOpen)
+            {
+                _isBodyInspectMode = !_isBodyInspectMode;
+                _hoveredBodyArmorSlot = -1;
+                if (_isBodyInspectMode)
+                {
+                    _bodyInspectOrbitYawOffset = 160f;
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
+                    _miningCtrl.LastFeedbackText = "🧍 CANLI 3B BEDEN İNCELEME [U]: Üzerindeki zırha tıkla çıkar/tak | [Sağ Tık Sürükle] Etrafında dön | [U/ESC] Çık";
+                }
+                else
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+            }
             if (Input.GetKeyDown(KeyCode.Escape) && _holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
             {
                 _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = false;
@@ -3482,7 +3566,7 @@ namespace Stratocraft.Character
                 _isFirstPersonMode = !_isFirstPersonMode;
                 ApplyFirstPersonVisibility();
             }
-            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && Cursor.lockState != CursorLockMode.Locked)
+            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_isBodyInspectMode && Cursor.lockState != CursorLockMode.Locked)
             {
                 Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             }
@@ -6316,10 +6400,91 @@ namespace Stratocraft.Character
             GUI.color = prevColor;
         }
 
+        private void EnsureHudSolidBackdropTextures()
+        {
+            if (_hudBackdropTex == null)
+            {
+                _hudBackdropTex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "HudDarkBackdrop1x1" };
+                _hudBackdropTex.SetPixel(0, 0, new Color(0.04f, 0.06f, 0.10f, 0.80f));
+                _hudBackdropTex.Apply(false, true);
+            }
+            if (_bleedCardTex == null)
+            {
+                _bleedCardTex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "BleedCardBackdrop1x1" };
+                _bleedCardTex.SetPixel(0, 0, new Color(0.28f, 0.03f, 0.04f, 0.94f));
+                _bleedCardTex.Apply(false, true);
+            }
+            if (_deathCardTex == null)
+            {
+                _deathCardTex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { name = "DeathCardBackdrop1x1" };
+                _deathCardTex.SetPixel(0, 0, new Color(0.10f, 0.03f, 0.04f, 0.96f));
+                _deathCardTex.Apply(false, true);
+            }
+        }
+
         private void OnGUI()
         {
+            EnsureHudSolidBackdropTextures();
             DrawSolidBlockSuffocationOverlayOnGui();
             _underwaterCameraEffect.DrawUnderwaterScreenOverlayGui();
+
+            // Faz A.4: Tam Olum & Yeniden Dogma Ekrani (F1/HUD gizli olsa dahi her zaman ustte gorunur!)
+            if (_isPlayerDeathScreenOpen)
+            {
+                float dcx = Screen.width * 0.5f;
+                float dcy = Screen.height * 0.5f;
+                Color prevC = GUI.color;
+
+                GUI.color = new Color(0.07f, 0.01f, 0.01f, 0.84f);
+                GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+
+                _deathTitleStyle ??= new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 26,
+                    alignment = TextAnchor.MiddleCenter,
+                    fontStyle = FontStyle.Bold,
+                    normal = { textColor = new Color(1.0f, 0.28f, 0.26f, 1.0f) }
+                };
+                _deathBodyStyle ??= new GUIStyle(GUI.skin.box)
+                {
+                    fontSize = 14,
+                    alignment = TextAnchor.UpperCenter,
+                    wordWrap = true,
+                    padding = new RectOffset(18, 18, 56, 16),
+                    normal = { textColor = new Color(0.96f, 0.94f, 0.92f, 1.0f), background = _deathCardTex }
+                };
+
+                float cardW = Mathf.Clamp(Screen.width * 0.52f, 380f, 520f);
+                float cardH = 228f;
+                Rect cardRect = new Rect(dcx - cardW * 0.5f, dcy - cardH * 0.5f, cardW, cardH);
+
+                GUI.color = new Color(0.85f, 0.16f, 0.16f, 0.95f);
+                GUI.DrawTexture(new Rect(cardRect.x - 2f, cardRect.y - 2f, cardRect.width + 4f, cardRect.height + 4f), Texture2D.whiteTexture);
+
+                GUI.color = Color.white;
+                string spawnInfo = _bedSpawnService.HasBedSpawn
+                    ? $"Kayıtlı Yatak Noktası: ({_bedSpawnService.BedX}, {_bedSpawnService.BedY}, {_bedSpawnService.BedZ})"
+                    : "Kayıtlı Yatak Yok (Dünya Başlangıç Noktasında Doğulacak)";
+                GUI.Box(cardRect, $"Ölüm Sebebi: {_lastDeathReasonText}\n{spawnInfo}\n\n[Enter] veya [Space] ile hemen yeniden doğabilirsiniz.", _deathBodyStyle);
+                GUI.Label(new Rect(cardRect.x, cardRect.y + 10f, cardRect.width, 38f), "☠️  ÖLDÜNÜZ  ☠️", _deathTitleStyle);
+
+                GUI.color = new Color(0.28f, 0.90f, 0.45f, 1.0f);
+                if (GUI.Button(new Rect(dcx - 165f, cardRect.yMax - 82f, 330f, 36f),
+                    _bedSpawnService.HasBedSpawn ? "🛏️ YATAKTA YENİDEN DOĞ ([Enter])" : "🏠 BAŞLANGIÇTA YENİDEN DOĞ ([Enter])"))
+                {
+                    RespawnPlayerFromDeathScreen();
+                }
+
+                GUI.color = new Color(0.82f, 0.86f, 0.95f, 1.0f);
+                if (GUI.Button(new Rect(dcx - 110f, cardRect.yMax - 40f, 220f, 28f), "⚙️ AYARLAR MENÜSÜ ([ESC])"))
+                {
+                    _escapeMenuCtrl.ToggleMenu();
+                }
+
+                GUI.color = prevC;
+                _escapeMenuCtrl.DrawEscapeMenuOnGui(_creatureBridge, _miningCtrl, SaveAllChunksToRegionStore, LoadAllChunksFromRegionStore);
+                return;
+            }
 
             if (!_showAllHud)
             {
@@ -6327,7 +6492,14 @@ namespace Stratocraft.Character
                 return;
             }
 
-            _hudBoxStyle ??= new GUIStyle(GUI.skin.box) { fontSize = 12, alignment = TextAnchor.UpperLeft, normal = { textColor = Color.white } };
+            _hudBoxStyle ??= new GUIStyle(GUI.skin.box)
+            {
+                fontSize = 12,
+                alignment = TextAnchor.UpperLeft,
+                wordWrap = true,
+                padding = new RectOffset(8, 8, 6, 6),
+                normal = { textColor = new Color(0.96f, 0.98f, 1.0f, 1.0f), background = _hudBackdropTex }
+            };
             _crosshairStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 18, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.9f, 0.95f, 1f, 0.9f) } };
             _tooltipStyle ??= new GUIStyle(GUI.skin.box) { fontSize = 12, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = new Color(1f, 0.92f, 0.45f, 1f) } };
             _hotbarStyle ??= new GUIStyle(GUI.skin.box) { fontSize = 13, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.75f, 1f, 0.85f, 1f) } };
@@ -6438,38 +6610,55 @@ namespace Stratocraft.Character
                 hungerKcal: _movementBridge.Vitals.HungerKcal,
                 thirstHydration: _movementBridge.Vitals.ThirstHydration);
 
-            // Faz A.4: 30 sn BleedOutCrawl uyari bandi ve Tam Olum & Yeniden Dogma Ekrani
+            // Faz A.4: BleedOutCrawl kenar kirmizi vinyeti ve F3'ten tamamen ayri alt-orta uyari karti
             if (!_holsterCtrl.IsCreativeMode && _movementBridge.Vitals.IsDownedBleedOut && !_isPlayerDeathScreenOpen)
             {
                 Color prevC = GUI.color;
-                GUI.color = new Color(0.95f, 0.14f, 0.14f, 0.96f);
-                GUI.Box(
-                    new Rect(cx - 280f, Screen.height * 0.28f, 560f, 54f),
-                    $"🩸 AĞIR YARALISINIZ (KAN KAYBI: {_movementBridge.Vitals.BleedOutTimerSeconds:0.0} sn)\n" +
-                    "Tıbbi Bandaj kullanarak ayağa kalkın veya [R] tuşu ile pes edin!",
-                    _tooltipStyle);
-                GUI.color = prevC;
-            }
-            if (_isPlayerDeathScreenOpen)
-            {
-                Color prevC = GUI.color;
-                GUI.color = new Color(0.06f, 0.02f, 0.02f, 0.86f);
-                GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), string.Empty);
-                GUI.color = new Color(1.0f, 0.25f, 0.25f, 1.0f);
-                GUI.Box(
-                    new Rect(cx - 240f, Screen.height * 0.34f, 480f, 150f),
-                    $"☠️ ÖLDÜNÜZ ☠️\n\nSebep: {_lastDeathReasonText}\n" +
-                    (_bedSpawnService.HasBedSpawn
-                        ? $"Kayıtlı Yatak: ({_bedSpawnService.BedX}, {_bedSpawnService.BedY}, {_bedSpawnService.BedZ})"
-                        : "Kayıtlı Yatak Yok (Başlangıç Noktasında Doğulacak)"),
-                    _tooltipStyle);
-                GUI.color = new Color(0.25f, 0.85f, 0.42f, 1.0f);
-                if (GUI.Button(new Rect(cx - 140f, Screen.height * 0.34f + 104f, 280f, 34f),
-                    _bedSpawnService.HasBedSpawn ? "🛏️ YATAKTA YENİDEN DOĞ" : "🏠 BAŞLANGIÇTA YENİDEN DOĞ"))
+                float pulse = 0.22f + 0.14f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 3.8f));
+                GUI.color = new Color(0.85f, 0.04f, 0.04f, pulse);
+                GUI.DrawTexture(new Rect(0f, 0f, Screen.width, 16f), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(0f, Screen.height - 16f, Screen.width, 16f), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(0f, 0f, 16f, Screen.height), Texture2D.whiteTexture);
+                GUI.DrawTexture(new Rect(Screen.width - 16f, 0f, 16f, Screen.height), Texture2D.whiteTexture);
+
+                _bleedCardStyle ??= new GUIStyle(GUI.skin.box)
                 {
-                    RespawnPlayerFromDeathScreen();
+                    fontSize = 13,
+                    alignment = TextAnchor.UpperCenter,
+                    fontStyle = FontStyle.Bold,
+                    wordWrap = true,
+                    padding = new RectOffset(12, 12, 8, 8),
+                    normal = { textColor = new Color(1.0f, 0.92f, 0.88f, 1.0f), background = _bleedCardTex }
+                };
+
+                float bw = Mathf.Clamp(Screen.width * 0.56f, 380f, 540f);
+                float bh = 74f;
+                float by = Mathf.Max(220f, Screen.height - 216f);
+                Rect bleedRect = new Rect(cx - bw * 0.5f, by, bw, bh);
+
+                GUI.color = new Color(1.0f, 0.20f, 0.20f, 0.95f);
+                GUI.DrawTexture(new Rect(bleedRect.x - 2f, bleedRect.y - 2f, bleedRect.width + 4f, bleedRect.height + 4f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+                GUI.Box(
+                    bleedRect,
+                    $"🩸 AĞIR YARALISINIZ — KAN KAYBI: {_movementBridge.Vitals.BleedOutTimerSeconds:0.0} sn\n" +
+                    "Bandaj kullanarak ayağa kalkın veya [R] tuşu ile hemen pes edin!",
+                    _bleedCardStyle);
+                GUI.color = new Color(1.0f, 0.36f, 0.32f, 1.0f);
+                if (GUI.Button(new Rect(cx - 115f, bleedRect.yMax - 26f, 230f, 22f), "☠️ [R] PES ET (ÖLÜM EKRANI)"))
+                {
+                    _movementBridge.Vitals.BleedOutTimerSeconds = 0.0f;
+                    _lastDeathReasonText = "Pes Edildi (Kan Kaybı)";
+                    _isPlayerDeathScreenOpen = true;
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
                 }
                 GUI.color = prevC;
+            }
+
+            if (_isBodyInspectMode && PlayerCamera != null)
+            {
+                DrawDiegeticBodyInspectionOverlayGui(cx);
             }
 
             if (_holsterCtrl.IsCreativeMode)
@@ -6512,7 +6701,10 @@ namespace Stratocraft.Character
                 _feedbackArenaBridge.DrawCombatFeedbackAndArenaHud(PlayerCamera);
             }
 
-            if (_combatBridge.StatusBannerHighlightTimer > 0f && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen)
+            if (_combatBridge.StatusBannerHighlightTimer > 0f &&
+                _holsterCtrl.ActiveHolsterSlot == 1 &&
+                !_holsterCtrl.IsBackpackOpen &&
+                !_escapeMenuCtrl.IsMenuOpen)
             {
                 if (refreshPeriodicStrings || string.IsNullOrEmpty(_cachedSwordBannerString))
                 {
@@ -6528,7 +6720,7 @@ namespace Stratocraft.Character
                         $"[1/F8] KILIC ({wIdx}/4): {_combatBridge.GetWeaponDisplayName()} | [G] STIL ({sIdx}/4): {_combatBridge.GetStanceDisplayName()} ({compatStr})\n" +
                         $"Ozel Yetenek: {specialSummary}";
                 }
-                GUI.Box(new Rect(cx - 420f, Screen.height - 142f, 840f, 44f), _cachedSwordBannerString, _tooltipStyle);
+                GUI.Box(new Rect(cx - 420f, Screen.height - 174f, 840f, 44f), _cachedSwordBannerString, _tooltipStyle);
             }
 
             ref var st = ref _movementBridge.MovementState;
@@ -6556,9 +6748,9 @@ namespace Stratocraft.Character
                     GUI.color = new Color(0.65f, 0.92f, 1.0f, 1.0f);
                     _thermalAlertStyle.normal.textColor = new Color(0.75f, 0.96f, 1.0f, 1.0f);
                     string freezeMsg =
-                        $"❄ USUME / HIPOTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C\n" +
-                        $"[ESC] Menuden Cevre Etkilerini kapatabilir veya [F11] ile Iklim degistirebilirsiniz.";
-                    GUI.Box(new Rect(cx - 380f, 14f, 760f, 42f), freezeMsg, _thermalAlertStyle);
+                        $"❄ USUME / HIPOTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C  ([ESC] Ayarlar | [F11] Iklim)";
+                    float alertW = Mathf.Min(Screen.width - 24f, 680f);
+                    GUI.Box(new Rect(cx - alertW * 0.5f, Screen.height - 178f, alertW, 26f), freezeMsg, _thermalAlertStyle);
                 }
                 else
                 {
@@ -6570,22 +6762,28 @@ namespace Stratocraft.Character
                     GUI.color = new Color(1.0f, 0.78f, 0.35f, 1.0f);
                     _thermalAlertStyle.normal.textColor = new Color(1.0f, 0.85f, 0.45f, 1.0f);
                     string heatMsg =
-                        $"🔥 ASIRI ISINMA / HIPERTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C\n" +
-                        $"Suya girin veya [ESC] Menuden Cevre Etkilerini kapatin.";
-                    GUI.Box(new Rect(cx - 380f, 14f, 760f, 42f), heatMsg, _thermalAlertStyle);
+                        $"🔥 ASIRI ISINMA / HIPERTERMI UYARISI! Vucut Isisi: {vt.CoreBodyTempCelsius:0.0}°C | Ortam: {_ambientTempCelsius:0.0}°C  (Suya girin | [ESC])";
+                    float alertW = Mathf.Min(Screen.width - 24f, 680f);
+                    GUI.Box(new Rect(cx - alertW * 0.5f, Screen.height - 178f, alertW, 26f), heatMsg, _thermalAlertStyle);
                 }
                 GUI.color = prevColor;
             }
 
             if (_showDebugHudText)
             {
+                int hudFontSz = Screen.width < 1080 ? 11 : 12;
                 _hudRightBoxStyle ??= new GUIStyle(GUI.skin.box)
                 {
-                    fontSize = 12,
+                    fontSize = hudFontSz,
                     alignment = TextAnchor.UpperRight,
-                    normal = { textColor = new Color(0.92f, 0.96f, 1.0f, 0.95f) },
+                    wordWrap = true,
+                    normal = { textColor = new Color(0.95f, 0.98f, 1.0f, 1.0f), background = _hudBackdropTex },
                     padding = new RectOffset(8, 8, 6, 6)
                 };
+                _hudBoxStyle.fontSize = hudFontSz;
+                _hudBoxStyle.normal.background = _hudBackdropTex;
+                _hudRightBoxStyle.fontSize = hudFontSz;
+                _hudRightBoxStyle.normal.background = _hudBackdropTex;
                 _hudBoxStyle.padding = new RectOffset(8, 8, 6, 6);
 
                 if (refreshPeriodicStrings || string.IsNullOrEmpty(_cachedMainHudString))
@@ -6642,13 +6840,144 @@ namespace Stratocraft.Character
                         $"[F3] Gizle | [Shift+F11] Hava/Kar/Tipi | [HOME] Dalga-A Log | [ESC] Ayarlar";
                 }
 
-                float f3TopY = _holsterCtrl.IsCreativeMode ? 62f : 34f;
-                GUI.Box(new Rect(10f, f3TopY, 500f, 168f), _cachedMainHudString, _hudBoxStyle);
-                GUI.Box(new Rect(Screen.width - 410f, f3TopY, 400f, 114f), _cachedRightHudString, _hudRightBoxStyle);
+                float f3TopY = _holsterCtrl.IsCreativeMode ? 38f : 34f;
+                float availW = Mathf.Max(500f, Screen.width - 36f);
+                float leftW = Mathf.Clamp(availW * 0.54f, 260f, 510f);
+                float rightW = Mathf.Clamp(availW * 0.44f, 220f, 420f);
+                if (leftW + rightW + 16f > availW)
+                {
+                    float scale = (availW - 16f) / (leftW + rightW);
+                    leftW *= scale;
+                    rightW *= scale;
+                }
+                float leftH = Mathf.Max(148f, _hudBoxStyle.CalcHeight(new GUIContent(_cachedMainHudString), leftW) + 6f);
+                float rightH = Mathf.Max(104f, _hudRightBoxStyle.CalcHeight(new GUIContent(_cachedRightHudString), rightW) + 6f);
+                GUI.Box(new Rect(10f, f3TopY, leftW, leftH), _cachedMainHudString, _hudBoxStyle);
+                GUI.Box(new Rect(Screen.width - rightW - 10f, f3TopY, rightW, rightH), _cachedRightHudString, _hudRightBoxStyle);
             }
 
             _recipeBookUi.DrawOnGui(Screen.width, Screen.height);
             _escapeMenuCtrl.DrawEscapeMenuOnGui(_creatureBridge, _miningCtrl, SaveAllChunksToRegionStore, LoadAllChunksFromRegionStore);
+        }
+
+        private void StepBodyInspectionCameraAndInput(float dt)
+        {
+            if (PlayerCamera == null) return;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+
+            // Sag tik surukleyerek kendi 3B bedeninin etrafinda serbestce don!
+            if (Input.GetMouseButton(1))
+            {
+                _bodyInspectOrbitYawOffset += Input.GetAxis("Mouse X") * 4.5f;
+            }
+
+            float orbitWorldYaw = transform.eulerAngles.y + _bodyInspectOrbitYawOffset;
+            Quaternion orbitQ = Quaternion.Euler(10f, orbitWorldYaw, 0f);
+            Vector3 lookTarget = transform.position + Vector3.up * 1.08f;
+            Vector3 desiredCamPos = lookTarget - (orbitQ * Vector3.forward) * 1.92f + Vector3.up * 0.16f;
+            PlayerCamera.transform.position = Vector3.Lerp(PlayerCamera.transform.position, desiredCamPos, Mathf.Clamp01(dt * 12f));
+            PlayerCamera.transform.rotation = Quaternion.Slerp(
+                PlayerCamera.transform.rotation,
+                Quaternion.LookRotation((lookTarget - PlayerCamera.transform.position).normalized, Vector3.up),
+                Mathf.Clamp01(dt * 14f));
+
+            // Fare altindaki en yakin 3B vucut bolgesini (0:Baslik, 1:Gogusluk, 2:Kolcak, 3:Dizlik) belirle
+            Vector2 mouseGui = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+            int bestSlot = -1;
+            float bestDistPx = 76f;
+            for (int s = 0; s < Stage1VisualHotbarAndInventoryUi.ArmorSlotCount; s++)
+            {
+                Vector3 wp = _rigAnimator.GetBodyArmorZoneWorldPosition(transform, s);
+                Vector3 sp = PlayerCamera.WorldToScreenPoint(wp);
+                if (sp.z <= 0.1f) continue;
+                Vector2 guiPt = new Vector2(sp.x, Screen.height - sp.y);
+                float d = Vector2.Distance(mouseGui, guiPt);
+                if (d < bestDistPx)
+                {
+                    bestDistPx = d;
+                    bestSlot = s;
+                }
+            }
+            _hoveredBodyArmorSlot = bestSlot;
+
+            // Dogrudan 3B vucut parcasina Sol Tik: Giyili zirhi cikar veya eldeki uygun zirhi tak!
+            if (_hoveredBodyArmorSlot >= 0 && Input.GetMouseButtonDown(0))
+            {
+                ref VisualInventorySlot equipped = ref _holsterCtrl.InventoryUi.EquippedArmorSlots[_hoveredBodyArmorSlot];
+                if (!equipped.IsEmpty)
+                {
+                    if (_holsterCtrl.InventoryUi.TryUnequipArmor(_hoveredBodyArmorSlot, out VisualInventorySlot removed))
+                    {
+                        _holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(
+                            removed.Kind, removed.SubId, 1, _miningCtrl, removed.ShapeDna, autoEquipIfHandEmpty: false);
+                        _holsterCtrl.InventoryUi.SyncEquippedArmorToVitals(ref _movementBridge.Vitals);
+                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+                        _miningCtrl.LastFeedbackText =
+                            $"🧥 ÇIKARILDI: {Stage1VisualHotbarAndInventoryUi.GetArmorSlotName(_hoveredBodyArmorSlot)} çantaya/kemere alındı!";
+                    }
+                }
+                else
+                {
+                    VisualInventorySlot held = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                    if (!held.IsEmpty &&
+                        Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(held.Kind) == _hoveredBodyArmorSlot &&
+                        _holsterCtrl.InventoryUi.TryEquipActiveHotbarArmor(ref _movementBridge.Vitals, out string equipMsg))
+                    {
+                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+                        _miningCtrl.LastFeedbackText = equipMsg;
+                    }
+                    else
+                    {
+                        _miningCtrl.LastFeedbackText =
+                            $"ℹ️ {Stage1VisualHotbarAndInventoryUi.GetArmorSlotName(_hoveredBodyArmorSlot)} bölgesi boş — giymek için bu bölgenin zırhını eline alıp [Sağ Tık] yap veya burada tıkla.";
+                    }
+                }
+            }
+        }
+
+        private void DrawDiegeticBodyInspectionOverlayGui(float cx)
+        {
+            if (PlayerCamera == null) return;
+            VisualInventorySlot held = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            int heldArmorTarget = !held.IsEmpty ? Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(held.Kind) : -1;
+
+            Color prevC = GUI.color;
+            for (int s = 0; s < Stage1VisualHotbarAndInventoryUi.ArmorSlotCount; s++)
+            {
+                Vector3 wp = _rigAnimator.GetBodyArmorZoneWorldPosition(transform, s);
+                Vector3 sp = PlayerCamera.WorldToScreenPoint(wp);
+                if (sp.z <= 0.1f) continue;
+
+                float gx = sp.x;
+                float gy = Screen.height - sp.y;
+                VisualInventorySlot eq = _holsterCtrl.InventoryUi.EquippedArmorSlots[s];
+                bool isHovered = _hoveredBodyArmorSlot == s;
+                bool canEquipHere = eq.IsEmpty && heldArmorTarget == s;
+
+                // Dogrudan 3B zırh/beden parcasinin yanina kucuk dokunsal nokta + etiket (sifir kutu menu!)
+                GUI.color = !eq.IsEmpty
+                    ? (isHovered ? new Color(1.0f, 0.45f, 0.35f, 0.98f) : new Color(0.45f, 0.88f, 1.0f, 0.92f))
+                    : (canEquipHere ? new Color(0.35f, 0.96f, 0.48f, 0.98f) : new Color(0.75f, 0.78f, 0.84f, 0.72f));
+                GUI.DrawTexture(new Rect(gx - 5f, gy - 5f, 10f, 10f), Texture2D.whiteTexture);
+
+                string slotName = Stage1VisualHotbarAndInventoryUi.GetArmorSlotName(s);
+                string tag = !eq.IsEmpty
+                    ? (isHovered ? $"🛡️ {slotName}: T{eq.SubId}  [Sol Tık: ÇIKAR]" : $"🛡️ {slotName}: T{eq.SubId}")
+                    : (canEquipHere ? $"+ {slotName}: Boş  [Sol Tık: TAK]" : $"{slotName}: Boş");
+
+                float offsetX = (s == 0 || s == 2) ? 14f : -198f;
+                GUI.color = Color.white;
+                GUI.Box(new Rect(Mathf.Clamp(gx + offsetX, 8f, Screen.width - 196f), Mathf.Clamp(gy - 12f, 38f, Screen.height - 150f), 188f, 24f), tag, _hudBoxStyle);
+            }
+
+            GUI.color = new Color(0.95f, 0.92f, 0.70f, 0.96f);
+            float hintW = Mathf.Min(Screen.width - 24f, 680f);
+            GUI.Box(
+                new Rect(cx - hintW * 0.5f, 38f, hintW, 26f),
+                "🧍 CANLI 3B BEDEN İNCELEME [U] (Menüsüz) — Zırhın üstüne [Sol Tık]: Çıkar/Tak | [Sağ Tık Sürükle]: Etrafında Dön | [U / ESC]: Çık",
+                _hudBoxStyle);
+            GUI.color = prevC;
         }
 
         // ============================================================================================================

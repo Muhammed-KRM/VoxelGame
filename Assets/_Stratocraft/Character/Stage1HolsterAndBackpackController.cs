@@ -536,7 +536,7 @@ namespace Stratocraft.Character
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 9;
                     string armLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
-                    miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {armLabel} Elde — [I] Canta arayuzunde zirh yuvasina takin.";
+                    miningCtrl.LastFeedbackText = $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {armLabel} Elde — [Sağ Tık] Üzerine Giy | [U] Canlı 3B Beden İnceleme ile Gör / Çıkar.";
                     break;
 
                 case InventoryItemKind.PlaceableCampfire:
@@ -2915,19 +2915,30 @@ namespace Stratocraft.Character
                     _heldMaterialBlockGo.transform.localPosition = new Vector3(0.31f, -0.21f + drawDropY, 0.54f);
                     _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 28f, -6f);
                 }
-                _heldMaterialBlockGo.transform.localScale = naturalScale;
-                if (_heldBlockHandGloveGo != null)
+
+                // Elde tutulan kutuk/tas/cevher parcalari gercek insan avucunun icine (~20cm) dogal oturmali (dev kutuk gobege girmemeli!)
+                Vector3 handScale = naturalScale;
+                if (physMesh != null)
                 {
-                    _heldBlockHandGloveGo.transform.localPosition = new Vector3(0.03f, -0.11f, -0.06f);
-                    _heldBlockHandGloveGo.transform.localScale = new Vector3(0.11f, 0.14f, 0.12f);
+                    Vector3 worldSz = Vector3.Scale(physMesh.bounds.size, handScale);
+                    float maxDim = Mathf.Max(0.01f, Mathf.Max(worldSz.x, Mathf.Max(worldSz.y, worldSz.z)));
+                    float maxHandMeters = isStickOrHammer ? 0.34f : 0.21f;
+                    if (maxDim > maxHandMeters)
+                    {
+                        handScale *= (maxHandMeters / maxDim);
+                    }
+                }
+                _heldMaterialBlockGo.transform.localScale = handScale;
+                if (_heldBlockHandGloveGo != null && _heldBlockHandGloveGo.activeSelf)
+                {
+                    _heldBlockHandGloveGo.SetActive(false);
                 }
                 return;
             }
 
-            if (_heldBlockHandGloveGo != null)
+            if (_heldBlockHandGloveGo != null && _heldBlockHandGloveGo.activeSelf)
             {
-                _heldBlockHandGloveGo.transform.localPosition = new Vector3(0.08f, -0.35f, -0.22f);
-                _heldBlockHandGloveGo.transform.localScale = new Vector3(0.14f, 0.22f, 0.16f);
+                _heldBlockHandGloveGo.SetActive(false);
             }
 
             byte emptyContMat = activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron
@@ -2947,7 +2958,7 @@ namespace Stratocraft.Character
                 // 4x4x4 Mimari Mikro-Keski tutusu
                 _heldMaterialBlockGo.transform.localPosition = new Vector3(0.28f, -0.20f + drawDropY, 0.56f);
                 _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(55f + drawPitchAdd, -12f, 8f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.09f, 0.36f, 0.09f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.05f, 0.24f, 0.05f);
             }
             else if (shownSlot == 6)
             {
@@ -2956,27 +2967,27 @@ namespace Stratocraft.Character
                 {
                     _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.26f + drawDropY, 0.58f);
                     _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(8f + drawPitchAdd, 18f, -4f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.38f, 0.32f, 0.38f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.24f, 0.20f, 0.24f);
                 }
                 else if (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket)
                 {
                     _heldMaterialBlockGo.transform.localPosition = new Vector3(0.31f, -0.24f + drawDropY, 0.56f);
                     _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(10f + drawPitchAdd, 22f, -5f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.29f, 0.30f, 0.29f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.20f, 0.20f, 0.20f);
                 }
                 else
                 {
                     _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
                     _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(12f + drawPitchAdd, 24f, -6f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.20f, 0.28f, 0.20f);
+                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.13f, 0.18f, 0.13f);
                 }
             }
             else
             {
-                // 3B Insa Blogu tutusu
+                // 3B Insa Blogu tutusu (avuc icine oturan kompakt 18cm blok!)
                 _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.22f + drawDropY, 0.54f);
                 _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 32f, -8f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.26f, 0.26f, 0.26f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.18f, 0.18f, 0.18f);
             }
 
             int heldVisualKey = (shownSlot << 8) | (int)activeUiSlot.Kind;
@@ -2996,19 +3007,11 @@ namespace Stratocraft.Character
 
         private void EnsureToolHandGauntlet(Transform toolParent, ref GameObject? gloveGo, Material? sharedMat, Vector3 localOffset)
         {
-            if (gloveGo != null) return;
-            gloveGo = new GameObject("ToolRightHandGauntlet");
-            gloveGo.transform.SetParent(toolParent, false);
-            gloveGo.transform.localPosition = localOffset;
-            gloveGo.transform.localRotation = Quaternion.Euler(15f, 0f, 0f);
-            gloveGo.transform.localScale = new Vector3(0.14f, 0.22f, 0.16f);
-
-            _heldBlockTris.Clear();
-            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.Ironwood, 7, 0, 0, _heldBlockTris);
-            gloveGo.AddComponent<MeshFilter>().sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_heldBlockTris, "Mesh_ToolHandGauntlet");
-            var mr = gloveGo.AddComponent<MeshRenderer>();
-            if (sharedMat != null) mr.sharedMaterial = sharedMat;
+            // Eski sahte kutu eldivenler devre disi: tum alet/esyalar artik karakterin GERCEK insan elleriyle kavranir!
+            if (gloveGo != null && gloveGo.activeSelf)
+            {
+                gloveGo.SetActive(false);
+            }
         }
 
         private void EnsureShoulderTimberLogProxyInitialized(GameObject? playerBodyRoot, Material? sharedMat, byte woodMat)

@@ -414,22 +414,27 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float3 viewDirWS = GetWorldSpaceNormalizeViewDir(input.positionWS);
     float2 normalizedScreenUV = GetNormalizedScreenSpaceUV(input.positionCS);
 
-    float rawHeatNorm = input.tempSharpAo.x;
+    bool useLutMode = _UsePaletteLUT > 0.5;
+    float rawHeatNorm = useLutMode ? input.tempSharpAo.x : 0.0;
     float rawTempByte = round(rawHeatNorm * 255.0);
     float heatNorm = rawHeatNorm;
-    float sharpnessOrTone = input.tempSharpAo.y;
-    float cavityAo = lerp(0.42, 1.0, input.tempSharpAo.z);
+    float sharpnessOrTone = useLutMode ? input.tempSharpAo.y : 0.25;
+    float cavityAo = useLutMode
+        ? lerp(0.42, 1.0, input.tempSharpAo.z)
+        : lerp(0.72, 1.0, input.tempSharpAo.z);
 
     // Akkor isima ureten malzemeler: Magma=11, Lava=13, StarCore=46, Campfire=166, Kiln=167
-    bool isIntrinsicHotMat = (input.matId == 11u || input.matId == 13u || input.matId == 46u ||
+    bool isIntrinsicHotMat = useLutMode &&
+                             (input.matId == 11u || input.matId == 13u || input.matId == 46u ||
                               input.matId == 166u || input.matId == 167u);
     // Dogal emici zemin malzemeleri (Dirt=2, Grass=3, Sand=4, Gravel=9, LooseRubble=15, Clay=16)
-    bool isWettableSoilMat = (input.matId == 2u || input.matId == 3u || input.matId == 4u ||
+    bool isWettableSoilMat = useLutMode &&
+                             (input.matId == 2u || input.matId == 3u || input.matId == 4u ||
                               input.matId == 9u || input.matId == 15u || input.matId == 16u);
     float soilWetness01 = 0.0;
     float snowCover01 = 0.0;
 
-    if (!isIntrinsicHotMat && rawTempByte < 169.5)
+    if (useLutMode && !isIntrinsicHotMat && rawTempByte < 169.5)
     {
         if (rawTempByte >= 1.0 && rawTempByte <= 120.4 && isWettableSoilMat)
         {
@@ -500,8 +505,10 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     }
     else
     {
-        albedo = input.directColorAndFog.rgb;
-        roughness = saturate(0.75 - sharpnessOrTone * 0.35);
+        // Dogrudan RGB Vertex Color modu (_UsePaletteLUT == 0, orn. Gercek Insan Karakteri & Zirh):
+        // UNorm8 sRGB (0..1) kanallarini aktif Linear renk uzayina dogru cevirir; kar/camur/lav maskesi tetiklenmez!
+        albedo = ConvertLutSrgbToActiveColorSpace(saturate(input.directColorAndFog.rgb));
+        roughness = 0.68;
     }
 
     // Toprak islakligi ve camurlasma kararmasi: nem arttikca gozenekli renk koyulasir, doygunlukta koyu kahve camur ve islak parlama olusur

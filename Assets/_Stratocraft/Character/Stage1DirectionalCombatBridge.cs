@@ -157,6 +157,11 @@ namespace Stratocraft.Character
         private GameObject? _fpsRightFistGo, _fpsLeftFistGo;
         private Mesh? _cachedBareFistMesh;
 
+        // Dalga A.2+ — On Duvar Yakinlik Kusagi (gercek karakter IK kollari Stage1ArticulatedRigAnimator tarafindan surulur)
+        public float FrontWallClearanceMeters { get; private set; } = 3.0f;
+        public WallProximityZone ActiveWallProximityZone { get; private set; } = WallProximityZone.OpenSpace;
+        public bool IsCrampedCloseQuarters => ActiveWallProximityZone == WallProximityZone.CrampedNoSwing;
+
         public bool IsBareFistPunchActive => _fistPunchTimer > 0f;
         public bool IsCurrentPunchRightHand { get; private set; } = true;
         public int CurrentFistPunchId { get; private set; }
@@ -583,22 +588,6 @@ namespace Stratocraft.Character
                 }
             }
 
-            Color32 leatherGlove = new(74, 46, 28, 255), leatherDark = new(48, 30, 18, 255), gauntletSteel = new(138, 148, 164, 255), gauntletGold = new(196, 158, 68, 255);
-            AddBox(verts, colors, tris, new(0.022f, -0.042f, -0.006f), new(0.036f, 0.038f, 0.034f), leatherDark, gauntletSteel);
-            AddBox(verts, colors, tris, new(-0.015f, -0.040f, 0.018f), new(0.024f, 0.032f, 0.018f), leatherGlove, leatherDark);
-            AddBox(verts, colors, tris, new(0.008f, -0.008f, 0.024f), new(0.018f, 0.016f, 0.016f), gauntletGold, gauntletSteel);
-            AddBox(verts, colors, tris, new(0.040f, -0.076f, -0.036f), new(0.042f, 0.016f, 0.040f), gauntletGold, gauntletGold);
-            AddBox(verts, colors, tris, new(0.058f, -0.118f, -0.098f), new(0.040f, 0.048f, 0.095f), gauntletSteel, leatherDark);
-            AddBox(verts, colors, tris, new(0.092f, -0.175f, -0.215f), new(0.044f, 0.052f, 0.095f), leatherDark, gauntletSteel);
-
-            if (archetype != CombatWeaponArchetype.Rapier)
-            {
-                float leftHandY = archetype == CombatWeaponArchetype.Greatsword ? -0.155f : -0.125f;
-                AddBox(verts, colors, tris, new(-0.022f, leftHandY, -0.006f), new(0.035f, 0.036f, 0.033f), leatherDark, gauntletSteel);
-                AddBox(verts, colors, tris, new(0.015f, leftHandY, 0.016f), new(0.022f, 0.030f, 0.016f), leatherGlove, leatherDark);
-                AddBox(verts, colors, tris, new(-0.066f, leftHandY - 0.062f, -0.108f), new(0.038f, 0.046f, 0.092f), gauntletSteel, leatherDark);
-            }
-
             Mesh mesh = new Mesh { name = $"ProceduralSword_{archetype}" };
             mesh.SetVertices(verts);
             mesh.SetColors(colors);
@@ -606,6 +595,104 @@ namespace Stratocraft.Character
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             mf.sharedMesh = mesh;
+        }
+
+        /// <summary>
+        /// Aktif kilicin gercek dunya kabza kavrama soketlerini (Sag El = balcak alti, Sol El = pommel ustu) dondurur.
+        /// Gercek karakterin omuz->dirsek->bilek->el 2-Kemik IK zinciri bu soketlere kilitlenir (sahte/kopuk kol yok!).
+        /// </summary>
+        public bool TryGetWeaponGripWorldSockets(
+            Transform? weaponPivot,
+            bool playerLeftArmSevered,
+            out Vector3 rightGripWorld,
+            out Vector3 leftGripWorld,
+            out bool useTwoHands)
+        {
+            rightGripWorld = Vector3.zero;
+            leftGripWorld = Vector3.zero;
+            useTwoHands = false;
+            if (weaponPivot == null || !weaponPivot.gameObject.activeInHierarchy) return false;
+
+            // GLB kilic kabzasinda (weapon_hilt_ironwood_longsword.glb) pommel y=0.00, deri kabza y=0.04..0.22, balcak y=0.24!
+            // Yontulmus tas bicak / prosedurel kilicta ise min.y < -0.04'tur -> dogrudan sharedMesh.bounds ile milimetrik coz!
+            MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
+            bool isOriginAtPommel = mf == null || mf.sharedMesh == null || mf.sharedMesh.bounds.min.y >= -0.035f;
+            float rightY;
+            float leftY;
+            if (isOriginAtPommel)
+            {
+                rightY = 0.172f;
+                leftY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? 0.052f : 0.064f;
+            }
+            else
+            {
+                Bounds b = mf!.sharedMesh!.bounds;
+                rightY = Mathf.Lerp(b.min.y, b.max.y, 0.34f);
+                leftY = Mathf.Lerp(b.min.y, b.max.y, 0.12f);
+            }
+
+            rightGripWorld = weaponPivot.TransformPoint(new Vector3(0f, rightY, 0f));
+            leftGripWorld = weaponPivot.TransformPoint(new Vector3(0f, leftY, 0f));
+            useTwoHands = !playerLeftArmSevered &&
+                          ActiveWeaponArchetype != CombatWeaponArchetype.Rapier &&
+                          ActiveMartialStance != CombatMartialStance.Fencing_Punta;
+            return true;
+        }
+
+        /// <summary>
+        /// Eski sahte/kopuk FPS_WeaponHandsRig cocuk objesi varsa sahneden temizler.
+        /// </summary>
+        private static void CleanupLegacyFakeWeaponHandsRig(Transform weaponPivot)
+        {
+            Transform? legacy = weaponPivot.Find("FPS_WeaponHandsRig");
+            if (legacy != null)
+            {
+                legacy.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(legacy.gameObject);
+            }
+        }
+
+        /// <summary>
+        /// Kamera onundeki dik duvar/sutun acikligini (0-GC) olcer. Zemin/yokuslari (wy+1 bos) dik duvar saymaz.
+        /// </summary>
+        private static float SampleFrontWallClearanceMeters(
+            UnityEngine.Camera? playerCamera,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            float maxCheckDist)
+        {
+            if (playerCamera == null || worldChunks == null || worldChunks.Count == 0) return maxCheckDist;
+
+            Transform ct = playerCamera.transform;
+            Vector3 origin = ct.position - Vector3.up * 0.14f;
+            Vector3 fwd = ct.forward;
+            Vector3 flatFwd = new Vector3(fwd.x, 0f, fwd.z);
+            if (flatFwd.sqrMagnitude < 0.01f) flatFwd = Vector3.forward;
+            else flatFwd.Normalize();
+
+            // Merkez + ±18° omuz hizasi 3 isinla en yakin dik duvar mesafesini olc
+            float bestClearance = maxCheckDist;
+            Quaternion leftQ = Quaternion.Euler(0f, -18f, 0f);
+            Quaternion rightQ = Quaternion.Euler(0f, 18f, 0f);
+
+            for (int r = 0; r < 3; r++)
+            {
+                Vector3 rayDir = r == 0 ? flatFwd : (r == 1 ? (leftQ * flatFwd) : (rightQ * flatFwd));
+                for (float d = 0.22f; d <= bestClearance; d += 0.10f)
+                {
+                    Vector3 p = origin + rayDir * d;
+                    int wx = Mathf.FloorToInt(p.x), wy = Mathf.FloorToInt(p.y), wz = Mathf.FloorToInt(p.z);
+                    uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                    if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                    // Yalnizca gercek dik duvar/sutun (uzerindeki voksel de kati veya oyuncu bas hizasinda kati)
+                    uint above = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy + 1, wz);
+                    if (!VoxelBitUtility.IsPhysicallySolid(above)) continue;
+
+                    if (d < bestClearance) bestClearance = d;
+                    break;
+                }
+            }
+            return bestClearance;
         }
 
         public bool ConsumePendingToolVoxelHit(out Vector3Int voxelCoord, out float impactPower)
@@ -1867,7 +1954,14 @@ namespace Stratocraft.Character
                             Vector2.Dot(flickUnit, _slashDirUnit) < -0.15f &&
                             !gestureEval.IsMicroCut;
 
-                        if (_postSwingRecoveryTimer <= 0f || _riposteWindowTimer > 0f || _preChamberWindowTimer > 0f || isJuggernautChainReady)
+                        if (activeHolsterSlot == 1 && IsCrampedCloseQuarters)
+                        {
+                            // Duvara/engele cok yakin (< 0.62m): genis balistik savurma fiziksel olarak kilitlenir!
+                            _wristRecoilOffset = new Vector3(0f, -0.02f, -0.06f);
+                            _gestureAccumulator.Reset();
+                            LastCombatActionText = "🧱 DUVARA ÇOK YAKIN (< 0.6m) — Geniş savurma yapılamaz! Geri çekil veya [F] Kabza Darbesi yap.";
+                        }
+                        else if (_postSwingRecoveryTimer <= 0f || _riposteWindowTimer > 0f || _preChamberWindowTimer > 0f || isJuggernautChainReady)
                         {
                             TriggerBallisticSlashFromCurrentGuard(
                                 flickUnit,
@@ -2560,12 +2654,33 @@ namespace Stratocraft.Character
             int activeHolsterSlot = 1)
         {
             if (weaponPivot == null) return;
-            if (activeHolsterSlot == 1) ApplyWeaponArchetypeScale(weaponPivot);
+            if (activeHolsterSlot == 1)
+            {
+                ApplyWeaponArchetypeScale(weaponPivot);
+                CleanupLegacyFakeWeaponHandsRig(weaponPivot);
+            }
+
+            GetWeaponStats(ActiveWeaponArchetype, out _, out _, out float checkBladeLen, out _);
+            FrontWallClearanceMeters = SampleFrontWallClearanceMeters(playerCamera, worldChunks, checkBladeLen + 0.45f);
+            ActiveWallProximityZone = MeleeBiomechanicsSolver.ClassifyFrontWallClearance(FrontWallClearanceMeters, checkBladeLen);
 
             float gx = _currentBladeAnglesRad.x;
             float gy = _currentBladeAnglesRad.y;
             float camPitchDownDeg = ResolveCameraPitchDownDegrees(playerCamera);
             bool isHeavyBlade = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword || _lastStepIsMismatched;
+
+            // Dar alan yakinlik (< 0.62m): Kilic duvara gomulup ters donmek yerine gogse cekilip dikey toplanir!
+            bool crampedFoldActive = activeHolsterSlot == 1 &&
+                                     IsCrampedCloseQuarters &&
+                                     _slashPhase != BallisticSlashPhase.ActiveFullArcSwing &&
+                                     !_isThrustMode;
+            if (crampedFoldActive)
+            {
+                gx = Mathf.Lerp(gx, 0.16f, 0.65f);
+                gy = Mathf.Max(gy, 0.78f);
+                _currentBladeAnglesRad.y = Mathf.MoveTowards(_currentBladeAnglesRad.y, Mathf.Max(_currentBladeAnglesRad.y, 0.78f), _lastStepDt * 6.5f);
+                _guardAnglesRad.y = Mathf.Max(_guardAnglesRad.y, 0.72f);
+            }
 
             // Katman 2: Kamera aşağı eğildiğinde (camPitchDownDeg > 12°) IdleInGuard, Parry ve ReChambering
             // durumlarında bilek açısını otomatik dengele; aşağı bakınca veya yokuş çıkarken kılıç yere gömülmesin.
@@ -2605,9 +2720,11 @@ namespace Stratocraft.Character
             }
             float targetReachZ = _thrustExtensionMeters +
                                  (IsPommelBashActive ? 0.35f : 0f) +
-                                 (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing
-                                     ? swingArcReach
-                                     : (_isParryStance ? 0.12f : 0.04f));
+                                 (crampedFoldActive
+                                     ? -0.22f
+                                     : (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing
+                                         ? swingArcReach
+                                         : (_isParryStance ? 0.12f : 0.04f)));
             _smoothedArmReachZ = Mathf.MoveTowards(_smoothedArmReachZ, targetReachZ, _lastStepDt * 5.2f);
 
             Vector3 bladeTipDirLocal;
@@ -2714,13 +2831,18 @@ namespace Stratocraft.Character
 
             if (isFirstPersonMode && playerCamera != null)
             {
-                // Faz A.2 Kalibrasyon: Govde rotasyonu dahil gogus ekseni (0.06, -0.18, 0.04) -> sol-ust dahil 360° tam erisim!
-                Vector3 rawFpsHilt = new Vector3(0.20f + armArcX * 0.92f, -0.20f + armArcY * 0.92f, 0.52f + _smoothedArmReachZ) + _wristRecoilOffset + organicGripSway;
+                // Faz K.2 Kalibrasyon:
+                // - Kilic (Slot 1): GLB pommel y=0.0, kabza y=0.06..0.18 -> base (0.18, -0.24, 0.42) ile sol-ust dahil 360° tam el gorunurlugu!
+                // - Kazma/Balta (Slot 2 & 3): GLB sap dibi y=0.0, el tutusu y=0.15..0.34 -> base (0.22, -0.44, 0.40) ile sap dibi kameraya ASLA girmez!
+                bool isHarvestTool = activeHolsterSlot == 2 || activeHolsterSlot == 3;
+                Vector3 rawFpsHilt = isHarvestTool
+                    ? new Vector3(0.22f + armArcX * 0.66f, -0.44f + armArcY * 0.66f, 0.40f + _smoothedArmReachZ * 0.58f) + _wristRecoilOffset + organicGripSway
+                    : new Vector3(0.18f + armArcX * 0.68f, -0.24f + armArcY * 0.66f, 0.42f + _smoothedArmReachZ * 0.62f) + _wristRecoilOffset + organicGripSway;
                 var clampedNum = MeleeBiomechanicsSolver.ClampHiltToAnatomicalArmEnvelope(
-                    new System.Numerics.Vector3(0.06f, -0.18f, 0.04f),
+                    new System.Numerics.Vector3(0.06f, isHarvestTool ? -0.34f : -0.18f, 0.04f),
                     new System.Numerics.Vector3(rawFpsHilt.x, rawFpsHilt.y, rawFpsHilt.z),
-                    upperArmLen: 0.50f,
-                    forearmLen: 0.48f + (_isThrustMode ? 0.34f : 0f));
+                    upperArmLen: 0.46f,
+                    forearmLen: 0.44f + (_isThrustMode ? 0.30f : 0f));
                 Vector3 fpsShoulderPos = new Vector3(clampedNum.X, clampedNum.Y, clampedNum.Z);
                 weaponPivot.position = playerCamera.transform.TransformPoint(fpsShoulderPos);
                 weaponPivot.rotation = playerCamera.transform.rotation * swingRot;
@@ -3073,16 +3195,15 @@ namespace Stratocraft.Character
             {
                 LastFrameWallPushTriggered = true;
                 Vector3 localWallPos = localRef.InverseTransformPoint(wallBlockCenterWorld);
-                Vector2 pushAwayAngles = new Vector2(
-                    localWallPos.x > 0.05f ? -1f : (localWallPos.x < -0.05f ? 1f : -Mathf.Sign(_currentBladeAnglesRad.x)),
-                    localWallPos.y > 0.05f ? -1f : (localWallPos.y < -0.05f ? 1f : 0.65f));
-                if (pushAwayAngles.sqrMagnitude > 0.01f) pushAwayAngles.Normalize();
+                float safeSideTargetX = localWallPos.x > 0.05f ? -0.26f : (localWallPos.x < -0.05f ? 0.26f : 0.14f);
 
                 _thrustExtensionMeters = 0f;
-                _smoothedArmReachZ = Mathf.MoveTowards(_smoothedArmReachZ, -0.22f, 0.14f);
-                _currentBladeAnglesRad = Vector2.ClampMagnitude(_currentBladeAnglesRad + pushAwayAngles * 0.28f, 1.15f);
-                _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, _currentBladeAnglesRad, 0.75f);
-                _angularVelocityRadPerSec *= 0.15f;
+                _smoothedArmReachZ = Mathf.MoveTowards(_smoothedArmReachZ, -0.24f, 0.16f);
+                // Kritik Duzeltme: Duvar itmesinde kilic ASLA asagi/ters (-Y) itilmez; yumusakca gogus hizasinda dik toplanir!
+                _currentBladeAnglesRad.x = Mathf.MoveTowards(_currentBladeAnglesRad.x, safeSideTargetX, 0.22f);
+                _currentBladeAnglesRad.y = Mathf.MoveTowards(_currentBladeAnglesRad.y, Mathf.Max(0.76f, _currentBladeAnglesRad.y), 0.28f);
+                _guardAnglesRad = Vector2.Lerp(_guardAnglesRad, _currentBladeAnglesRad, 0.55f);
+                _angularVelocityRadPerSec *= 0.12f;
 
                 // Katman 3: Aktif savurma (ActiveFullArcSwing) dışındaki durumlarda ASLA _hasPendingWallRicochet üretme!
                 if (_slashPhase == BallisticSlashPhase.ActiveFullArcSwing &&
@@ -3096,19 +3217,20 @@ namespace Stratocraft.Character
                 }
 
                 float gx = _currentBladeAnglesRad.x, gy = _currentBladeAnglesRad.y;
-                float armArcX = Mathf.Clamp(gx * 0.45f, -0.62f, 0.62f), armArcY = Mathf.Clamp(gy * 0.40f, -0.52f, 0.52f);
-                Vector3 retractedTipDir = new Vector3(gx * 0.55f, Mathf.Clamp(gy * 0.85f + 0.25f, -0.65f, 0.95f), 0.35f).normalized;
+                float armArcX = Mathf.Clamp(gx * 0.36f, -0.44f, 0.44f), armArcY = Mathf.Clamp(gy * 0.28f, -0.10f, 0.38f);
+                float safeTipY = MeleeBiomechanicsSolver.ComputeSafeRetractedBladeTipY(gy * 0.78f + 0.36f);
+                Vector3 retractedTipDir = new Vector3(gx * 0.38f, safeTipY, 0.24f).normalized;
                 Quaternion safeRot = (activeHolsterSlot == 2 || activeHolsterSlot == 3)
                     ? ToolChopArcProfile.ComputeLockedRollToolRotation(
                         activeHolsterSlot,
-                        new Vector2(gx, gy),
+                        new Vector2(gx, Mathf.Max(gy, 0.20f)),
                         _slashProgress01,
                         _slashPhase == BallisticSlashPhase.ActiveFullArcSwing,
                         _slashDirUnit.x)
                     : Quaternion.LookRotation(Vector3.forward, retractedTipDir);
                 if (isFirstPersonMode && playerCamera != null)
                 {
-                    weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.26f + armArcX, -0.24f + armArcY, 0.42f + _smoothedArmReachZ));
+                    weaponPivot.position = playerCamera.transform.TransformPoint(new Vector3(0.22f + armArcX, -0.22f + armArcY, 0.36f + _smoothedArmReachZ));
                     weaponPivot.rotation = playerCamera.transform.rotation * safeRot;
                 }
                 else
