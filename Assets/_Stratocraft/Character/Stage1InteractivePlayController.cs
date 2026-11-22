@@ -3217,7 +3217,7 @@ namespace Stratocraft.Character
                 Input.GetMouseButtonDown(0))
             {
                 Ray modRay = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-                if (Physics.Raycast(modRay, out RaycastHit modHit, 5.2f) &&
+                if (UnityEngine.Physics.Raycast(modRay, out RaycastHit modHit, 5.2f) &&
                     modHit.collider != null &&
                     modHit.collider.name.StartsWith("ModPiece_", StringComparison.Ordinal))
                 {

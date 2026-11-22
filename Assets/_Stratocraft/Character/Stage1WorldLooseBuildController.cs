@@ -1108,7 +1108,7 @@ namespace Stratocraft.Character
                     bool isStonePiece = ActiveModularPieceKind == ModularBuildPieceKind.StoneFoundation2x2m ||
                                         ActiveModularPieceKind == ModularBuildPieceKind.StoneArchPillar3m;
                     InventoryItemKind costKind = isStonePiece ? InventoryItemKind.RoughStoneChunk : InventoryItemKind.SplitFirewood;
-                    _ = holsterCtrl.InventoryUi.TryConsumeItemsFromAllContainers(costKind, 1);
+                    _ = holsterCtrl.InventoryUi?.TryConsumeItemFromInventory(costKind, 0, 1, miningCtrl, ignoreSubId: true);
                 }
 
                 int placedId = AppendActiveModularNode(new ModularPlacedPieceNode
