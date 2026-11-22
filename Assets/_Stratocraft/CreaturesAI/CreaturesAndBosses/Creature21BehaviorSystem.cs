@@ -127,6 +127,7 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
         public const float BlinkDefaultCooldownSeconds = 6.8f;
         public const float BlinkClosingMinRangeMeters = 5.0f;
         public const float BlinkClosingMaxRangeMeters = 17.5f;
+        public const float BlinkDashSpeedMetersPerSecond = 18.0f;
 
         public const float TrenchBallisticMinRangeMeters = 6.5f;
         public const float TrenchBallisticMaxRangeMeters = 17.0f;
@@ -427,6 +428,26 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
             return Catalog21[creatureId - 1].InitialCapabilities;
         }
 
+        public static bool IsVoidOrAstralBlinkArchetype(byte creatureId)
+        {
+            // Yalnizca gercek Hiclik / Astral hayaletleri (#18 Wraith Assassin, #21 Void Stalker) boyutsal atilma kullanabilir;
+            // hicbir dogal hayvan/canavar (#1..#17, #19 Behemoth, #20 Automaton) isinlanamaz!
+            return creatureId == 18 || creatureId == 21;
+        }
+
+        public static bool CanUseVoidBlinkDash(byte creatureId, AnatomyCapabilityFlags activeCapabilities)
+        {
+            if (!IsVoidOrAstralBlinkArchetype(creatureId))
+            {
+                return false;
+            }
+
+            AnatomyCapabilityFlags resolved = activeCapabilities != AnatomyCapabilityFlags.None
+                ? activeCapabilities
+                : GetCapabilitiesForArchetype(creatureId);
+            return (resolved & AnatomyCapabilityFlags.CapBlinkTeleport) != 0;
+        }
+
         public static AnatomyCapabilityFlags ResolveInitialCapabilities(
             byte creatureId,
             bool isStarterAshStalker = false,
@@ -443,6 +464,11 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
             if (isStarterAshStalker)
             {
                 caps |= AnatomyCapabilityFlags.CapStealthPhasing;
+            }
+
+            if (isStarterAshStalker || isStarterPhoenix || !IsVoidOrAstralBlinkArchetype(creatureId))
+            {
+                caps &= ~AnatomyCapabilityFlags.CapBlinkTeleport;
             }
 
             return caps;
@@ -586,6 +612,32 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
                 targetPos.Z + dirZ * blinkOffsetMeters);
             blinkCooldownTimer = MathF.Max(BlinkMinCooldownSeconds, BlinkDefaultCooldownSeconds);
             return true;
+        }
+
+        /// <summary>
+        /// CapBlinkTeleport gorunur atilma (18 m/s): Anlik 1-kare pozisyon sicramasi (snap) yerine,
+        /// mevcut pozisyonu hedefe dogru her karede en fazla <paramref name="dashSpeedMps"/> * dt kadar akici ilerletir.
+        /// </summary>
+        public static System.Numerics.Vector3 StepBlinkDashPosition(
+            System.Numerics.Vector3 currentPos,
+            System.Numerics.Vector3 dashTargetPos,
+            float deltaTime,
+            out bool dashCompleted,
+            float dashSpeedMps = BlinkDashSpeedMetersPerSecond)
+        {
+            float safeDt = MathF.Max(0f, deltaTime);
+            float maxStep = MathF.Max(0.1f, dashSpeedMps) * safeDt;
+            System.Numerics.Vector3 delta = dashTargetPos - currentPos;
+            float distSq = delta.LengthSquared();
+            if (distSq <= 1e-6f || distSq <= maxStep * maxStep)
+            {
+                dashCompleted = true;
+                return dashTargetPos;
+            }
+
+            float dist = MathF.Sqrt(distSq);
+            dashCompleted = (dist - maxStep) <= 0.04f;
+            return currentPos + (delta / dist) * maxStep;
         }
 
         /// <summary>
