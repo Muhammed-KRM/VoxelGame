@@ -83,8 +83,179 @@ namespace Stratocraft.Rendering
             public readonly List<(string Name, Vector3 LocalPos, Quaternion LocalRot, Vector3 LocalScale)> Sockets = new();
         }
 
+        private struct ArmorSlotCacheEntry
+        {
+            public string ResolvedPath;
+            public long LastWriteTicks;
+            public Mesh? LoadedMesh;
+        }
+
         private static readonly Dictionary<string, (long LastWriteTicks, Dictionary<string, Mesh> Parts)> _articulatedPartsCache =
             new(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly Dictionary<string, ArmorSlotCacheEntry> _armorSlotMeshCache =
+            new(32, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Vucut bolgesi indeksini (0=Head, 1=Torso, 2=Arms, 3=Legs, 4=Hands, 5=Pauldrons) ve zirh kademesini (1..5+)
+        /// Assets/Art/Generated/Armors_15Piece altindaki gercek 15 parca 3 katmanli (layer1/layer2/layer3) .glb dosya adina esler.
+        /// Sifir GC tahsisi (statik sabite donus) ile calisir.
+        /// </summary>
+        public static string ResolveArmorSlotGlbFileName(int hitZoneIndex, byte tier)
+        {
+            if (tier == 0)
+            {
+                return string.Empty;
+            }
+
+            int layer = tier == 1 ? 1 : (tier <= 3 ? 2 : 3);
+            return hitZoneIndex switch
+            {
+                0 => layer switch
+                {
+                    1 => "armor_slot_head_layer1_padded.glb",
+                    2 => "armor_slot_head_layer2_mail.glb",
+                    _ => "armor_slot_head_layer3_plate.glb"
+                },
+                1 => layer switch
+                {
+                    1 => "armor_slot_torso_layer1_gambeson.glb",
+                    2 => "armor_slot_torso_layer2_hauberk.glb",
+                    _ => "armor_slot_torso_layer3_cuirass.glb"
+                },
+                2 => layer switch
+                {
+                    1 => "armor_slot_arms_layer1_sleeve.glb",
+                    2 => "armor_slot_arms_layer2_vambrace_mail.glb",
+                    _ => "armor_slot_arms_layer3_pauldron_plate.glb"
+                },
+                3 => layer switch
+                {
+                    1 => "armor_slot_legs_layer1_chausses_cloth.glb",
+                    2 => "armor_slot_legs_layer2_chausses_mail.glb",
+                    _ => "armor_slot_legs_layer3_greaves_plate.glb"
+                },
+                4 => layer switch
+                {
+                    1 => "armor_slot_hands_layer1_liner.glb",
+                    2 => "armor_slot_hands_layer2_mail_glove.glb",
+                    _ => "armor_slot_hands_layer3_gauntlet.glb"
+                },
+                5 => layer switch
+                {
+                    1 => "armor_slot_arms_layer1_sleeve.glb",
+                    2 => "armor_slot_arms_layer2_vambrace_mail.glb",
+                    _ => "armor_slot_arms_layer3_pauldron_plate.glb"
+                },
+                _ => string.Empty
+            };
+        }
+
+        /// <summary>
+        /// Assets/Art/Generated/Armors_15Piece altindaki 15 parca zirh .glb mesh'ini goreli yol ve dosya degisim zamaniyla
+        /// onbellege alarak yukler. PlayMode kararli durumda 0 B/kare tahsis uretir.
+        /// </summary>
+        public static Mesh? LoadArmorSlotMeshCached(string slotGlbFileName)
+        {
+            if (string.IsNullOrEmpty(slotGlbFileName))
+            {
+                return null;
+            }
+
+            if (_armorSlotMeshCache.TryGetValue(slotGlbFileName, out ArmorSlotCacheEntry cached))
+            {
+                if (Application.isPlaying)
+                {
+                    if (cached.LoadedMesh != null || cached.LastWriteTicks < 0L)
+                    {
+                        return cached.LoadedMesh;
+                    }
+                }
+                else
+                {
+                    long currentTicks = !string.IsNullOrEmpty(cached.ResolvedPath) && File.Exists(cached.ResolvedPath)
+                        ? File.GetLastWriteTimeUtc(cached.ResolvedPath).Ticks
+                        : -1L;
+                    if (currentTicks == cached.LastWriteTicks && (currentTicks < 0L || cached.LoadedMesh != null))
+                    {
+                        return cached.LoadedMesh;
+                    }
+                }
+            }
+
+            string resolvedPath = ResolveArmorSlotGlbRelativeDiskPath(slotGlbFileName, out string cleanFileName);
+            if (string.IsNullOrEmpty(resolvedPath) || !File.Exists(resolvedPath))
+            {
+                _armorSlotMeshCache[slotGlbFileName] = new ArmorSlotCacheEntry
+                {
+                    ResolvedPath = resolvedPath,
+                    LastWriteTicks = -1L,
+                    LoadedMesh = null
+                };
+                return null;
+            }
+
+            long diskTicks = File.GetLastWriteTimeUtc(resolvedPath).Ticks;
+            string meshAssetName = $"ArmorSlot_{Path.GetFileNameWithoutExtension(cleanFileName)}";
+            LoadedGlbData? loaded = LoadGlbFromDisk(resolvedPath, meshAssetName);
+            Mesh? mesh = loaded != null ? loaded.CombinedMesh : null;
+
+            _armorSlotMeshCache[slotGlbFileName] = new ArmorSlotCacheEntry
+            {
+                ResolvedPath = resolvedPath,
+                LastWriteTicks = diskTicks,
+                LoadedMesh = mesh
+            };
+            return mesh;
+        }
+
+        /// <summary>
+        /// Stage1ArticulatedRigAnimator.RuntimeArmorMeshResolver (Func&lt;int, byte, Mesh?&gt;) ile sifir lambda/kapanis tahsisiyle
+        /// dogrudan baglanabilen yardimci: ResolveArmorSlotGlbFileName + LoadArmorSlotMeshCached zincirini calistirir.
+        /// </summary>
+        public static Mesh? LoadArmorSlotMeshForZoneAndTier(int hitZoneIndex, byte tier)
+        {
+            string slotFileName = ResolveArmorSlotGlbFileName(hitZoneIndex, tier);
+            return string.IsNullOrEmpty(slotFileName) ? null : LoadArmorSlotMeshCached(slotFileName);
+        }
+
+        public static void ClearArmorSlotMeshCache()
+        {
+            _armorSlotMeshCache.Clear();
+        }
+
+        private static string ResolveArmorSlotGlbRelativeDiskPath(string slotGlbFileName, out string cleanFileName)
+        {
+            string normalized = slotGlbFileName.EndsWith(".glb", StringComparison.OrdinalIgnoreCase)
+                ? slotGlbFileName
+                : $"{slotGlbFileName}.glb";
+
+            cleanFileName = Path.GetFileName(normalized);
+            if (File.Exists(normalized))
+            {
+                return normalized;
+            }
+
+            string dataPath = Application.dataPath;
+            if (!string.IsNullOrEmpty(dataPath))
+            {
+                string viaDataPath = Path.Combine(dataPath, "Art", "Generated", "Armors_15Piece", cleanFileName);
+                if (File.Exists(viaDataPath))
+                {
+                    return viaDataPath;
+                }
+            }
+
+            string viaRelativeCwd = Path.Combine("Assets", "Art", "Generated", "Armors_15Piece", cleanFileName);
+            if (File.Exists(viaRelativeCwd))
+            {
+                return viaRelativeCwd;
+            }
+
+            return !string.IsNullOrEmpty(dataPath)
+                ? Path.Combine(dataPath, "Art", "Generated", "Armors_15Piece", cleanFileName)
+                : viaRelativeCwd;
+        }
 
         /// <summary>
         /// Cok-dugumlu eklemli bir .glb dosyasindaki her parca mesh'ini (orn. Human_Head, Human_Torso, Human_Hand_R)

@@ -7,6 +7,7 @@ using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
+using Stratocraft.Rendering;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen.Generators;
@@ -104,10 +105,8 @@ namespace Stratocraft.Character
         private GameObject? _lashingFiberAnimGo;
         private float _centerBindingAnimTimer;
         private bool _centerCraftRequestedFromGui;
-        private Mesh? _padNormalMesh;
         private Mesh? _padHoveredMesh;
         private Mesh? _padSelectedHolsterMesh;
-        private Mesh? _padCraftReadyMesh;
         private Mesh? _beltLoopStrapMesh;
         private Mesh? _centerRingMesh;
         private Mesh? _cachedSwordMesh;
@@ -116,6 +115,8 @@ namespace Stratocraft.Character
         private Material? _cachedSwordMat;
         private Material? _cachedPickaxeMat;
         private Material? _cachedAxeMat;
+        private Transform? _cachedForgedBladeChild;
+        private readonly Mesh?[] _cachedArchetypeSwordMeshes = new Mesh?[4];
 
         private int _hoveredMatSlotIndex = -1;
         private MatHitZone _hoveredMatZone = MatHitZone.None;
@@ -130,6 +131,46 @@ namespace Stratocraft.Character
 
         /// <summary>0 = Bos El, 1 = Kilic, 2 = Kazma, 3 = Balta, 4 = Elde 3B Insa Blogu, 5 = 4x4x4 Mikro-Keski, 6 = Sivi Matarasi.</summary>
         public int ActiveHolsterSlot { get; private set; } = 0;
+        public bool IsSlotKeyCycling => false;
+
+        /// <summary>
+        /// Aktif kemer yuvasindaki kilic turunu (WeaponSword=Longsword, WeaponKatana=Katana, WeaponGreatsword=Greatsword, WeaponRapier=Rapier) cozumler.
+        /// </summary>
+        public bool TryResolveEquippedSwordArchetype(out CombatWeaponArchetype weaponArchetype)
+        {
+            weaponArchetype = CombatWeaponArchetype.Longsword;
+            if (IsCarryingShoulderLog) return false;
+            VisualInventorySlot activeSlot = InventoryUi.GetActiveHotbarSlot();
+            if (activeSlot.IsEmpty) return false;
+            return Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(activeSlot.Kind, out weaponArchetype);
+        }
+
+        /// <summary>
+        /// Aktif kemer yuvasindaki kilic turunu (int)CombatWeaponArchetype olarak cozumler (0=Longsword, 1=Greatsword, 2=Rapier, 3=Katana).
+        /// </summary>
+        public bool TryResolveEquippedSwordArchetype(out int weaponArchetypeIndex)
+        {
+            if (TryResolveEquippedSwordArchetype(out CombatWeaponArchetype arch))
+            {
+                weaponArchetypeIndex = (int)arch;
+                return true;
+            }
+            weaponArchetypeIndex = 0;
+            return false;
+        }
+
+        public bool TryConsumeActiveMartialStanceScroll(
+            Stage1MatterCrystalAndMiningController? miningCtrl,
+            out CombatMartialStance unlockedStance)
+        {
+            bool consumed = InventoryUi.TryConsumeHeldMartialStanceScroll(miningCtrl, out unlockedStance);
+            if (consumed && InventoryUi.GetActiveHotbarSlot().IsEmpty)
+            {
+                ActiveHolsterSlot = 0;
+                HolsterMachine.RequestSheatheToEmptyHands();
+            }
+            return consumed;
+        }
         public bool IsBackpackOpen => BackpackSystem.IsBackpackOpen;
         public bool IsChestOpen => ChestCasSystem.IsLidOpen;
         public float HolsterTransitionRemaining => HolsterMachine.RemainingTransitionSeconds;
@@ -141,10 +182,19 @@ namespace Stratocraft.Character
         public int IronIngotCount { get; private set; } = 12;
         public int MithrilIngotCount { get; private set; } = 12;
 
-        public bool IsCarryingShoulderLog { get; private set; }
-        public byte ShoulderLogMaterialId { get; private set; }
+        public bool IsCarryingShoulderLog { get; set; }
+        public byte ShoulderLogMaterialId { get; set; }
         public float ShoulderLogMassKg => IsCarryingShoulderLog ? 32.0f : 0f;
         private GameObject? _shoulderTimberLogProxyGo;
+
+        public void ClearCarriedShoulderLog()
+        {
+            IsCarryingShoulderLog = false;
+            if (_shoulderTimberLogProxyGo != null && _shoulderTimberLogProxyGo.activeSelf)
+            {
+                _shoulderTimberLogProxyGo.SetActive(false);
+            }
+        }
 
         public bool IsCreativeMode { get; set; }
         private int _survivalEarnedCrystalTier;
@@ -302,16 +352,26 @@ namespace Stratocraft.Character
             switch (slot.Kind)
             {
                 case InventoryItemKind.WeaponSword:
+                case InventoryItemKind.WeaponKatana:
+                case InventoryItemKind.WeaponGreatsword:
+                case InventoryItemKind.WeaponRapier:
                 {
-                    if (HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
-                    {
-                        HolsterMachine.AssignHolsterSlot(
-                            HolsterSlotIndex.WaistLeft_Slot1,
-                            new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = slot.SubId == 1 ? 0.55f : 1.85f, SharpnessOrHardness01 = Mathf.Clamp01(slot.Durability01 <= 0f ? 1.0f : slot.Durability01) });
-                    }
+                    bool isPrimitiveKnife = slot.Kind == InventoryItemKind.WeaponSword && slot.SubId == 1;
+                    Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(slot.Kind, out CombatWeaponArchetype swordArch);
+                    Stage1DirectionalCombatBridge.GetWeaponStats(swordArch, out _, out float archMassKg, out _, out _);
+                    float effMassKg = isPrimitiveKnife ? 0.55f : archMassKg;
+                    HolsterMachine.AssignHolsterSlot(
+                        HolsterSlotIndex.WaistLeft_Slot1,
+                        new UniqueEquipmentInstance
+                        {
+                            InstanceGuid = 1001UL + (ulong)swordArch,
+                            ArchetypeItemId = (ushort)(101 + (int)swordArch),
+                            MassKg = effMassKg,
+                            SharpnessOrHardness01 = Mathf.Clamp01(slot.Durability01 <= 0f ? 1.0f : slot.Durability01)
+                        });
                     HolsterMachine.RequestDrawSlot(HolsterSlotIndex.WaistLeft_Slot1);
                     ActiveHolsterSlot = 1;
-                    if (slot.SubId == 1)
+                    if (isPrimitiveKnife)
                     {
                         ClothMatCraftingSystem.ComputeStoneToolStatsFromQuality(
                             slot.GetEffectiveShapeDna().EffectiveQualityPct, out float maxKnifeDur, out float knifePow);
@@ -321,6 +381,10 @@ namespace Stratocraft.Character
                     else
                     {
                         miningCtrl.CurrentToolQualityMultiplier = 1.0f;
+                        if (combatBridge != null && combatBridge.ActiveWeaponArchetype != swordArch)
+                        {
+                            combatBridge.SetWeaponArchetypeAndStance(swordArch, combatBridge.ActiveMartialStance);
+                        }
                     }
                     string wepName = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
                     miningCtrl.LastFeedbackText = $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {wepName} çekildi.";
@@ -527,6 +591,14 @@ namespace Stratocraft.Character
                     ActiveHolsterSlot = 8;
                     string consLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
                     miningCtrl.LastFeedbackText = $"Kilif [{InventoryUi.SelectedHotbarIndex + 1}]: {consLabel} (x{slot.Count}) Elde — [Sol/Sag Tik] Tuket / Kullan.";
+                    break;
+
+                case InventoryItemKind.ScrollMartialStance:
+                    HolsterMachine.RequestSheatheToEmptyHands();
+                    ActiveHolsterSlot = 8;
+                    string scrollLabel = Stage1VisualHotbarAndInventoryUi.GetSlotDisplayName(in slot, combatBridge);
+                    miningCtrl.LastFeedbackText =
+                        $"Kılıf [{InventoryUi.SelectedHotbarIndex + 1}]: {scrollLabel} (x{slot.Count}) Elde — [Sol / Sağ Tık] Parşömeni Oku ve Stili Öğren!";
                     break;
 
                 case InventoryItemKind.ArmorHelmet:
@@ -849,10 +921,14 @@ namespace Stratocraft.Character
         {
             if (swordVisual != null && _cachedSwordMesh == null)
             {
-                MeshFilter? mf = swordVisual.GetComponentInChildren<MeshFilter>(true);
+                MeshFilter? mf = swordVisual.GetComponent<MeshFilter>() ?? swordVisual.GetComponentInChildren<MeshFilter>(true);
                 if (mf != null && mf.sharedMesh != null) _cachedSwordMesh = mf.sharedMesh;
-                MeshRenderer? mr = swordVisual.GetComponentInChildren<MeshRenderer>(true);
+                MeshRenderer? mr = swordVisual.GetComponent<MeshRenderer>() ?? swordVisual.GetComponentInChildren<MeshRenderer>(true);
                 if (mr != null) _cachedSwordMat = mr.sharedMaterial;
+                Transform? socketBlade = swordVisual.transform.Find("Socket_VoxelBlade");
+                _cachedForgedBladeChild = socketBlade != null
+                    ? socketBlade
+                    : swordVisual.transform.Find("Forged16x32x4_DamascusSteelBlade");
             }
             if (pickaxeVisual != null && _cachedPickaxeMesh == null)
             {
@@ -868,6 +944,99 @@ namespace Stratocraft.Character
                 MeshRenderer? mr = axeVisual.GetComponentInChildren<MeshRenderer>(true);
                 if (mr != null) _cachedAxeMat = mr.sharedMaterial;
             }
+        }
+
+        private void ApplyEquippedSwordHandVisual(
+            GameObject swordRoot,
+            in VisualInventorySlot activeHandSlot,
+            Material? sharedVoxelMat)
+        {
+            MeshFilter? mf = swordRoot.GetComponent<MeshFilter>() ?? swordRoot.GetComponentInChildren<MeshFilter>(true);
+            if (mf == null) return;
+            MeshRenderer? mr = mf.GetComponent<MeshRenderer>();
+
+            bool isPrimitiveKnife = activeHandSlot.Kind == InventoryItemKind.WeaponSword && activeHandSlot.SubId == 1;
+            if (isPrimitiveKnife)
+            {
+                if (_cachedForgedBladeChild != null && _cachedForgedBladeChild.gameObject.activeSelf)
+                {
+                    _cachedForgedBladeChild.gameObject.SetActive(false);
+                }
+                if ((swordRoot.transform.localScale - Vector3.one).sqrMagnitude > 1e-5f)
+                {
+                    swordRoot.transform.localScale = Vector3.one;
+                }
+                PhysicalItemShapeDna dna = activeHandSlot.GetEffectiveShapeDna();
+                Mesh knifeMesh = PhysicalItemMeshFactory.GetOrCreateMesh(PhysicalItemArchetype.ToolPrimitiveKnife, 1, in dna, out _);
+                if (mf.sharedMesh != knifeMesh) mf.sharedMesh = knifeMesh;
+                if (mr != null && sharedVoxelMat != null && mr.sharedMaterial != sharedVoxelMat)
+                {
+                    mr.sharedMaterial = sharedVoxelMat;
+                }
+                return;
+            }
+
+            if (!Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(activeHandSlot.Kind, out CombatWeaponArchetype swordArch))
+            {
+                swordArch = CombatWeaponArchetype.Longsword;
+            }
+
+            if (swordArch == CombatWeaponArchetype.Longsword && _cachedSwordMesh != null && _cachedForgedBladeChild != null)
+            {
+                if (!_cachedForgedBladeChild.gameObject.activeSelf)
+                {
+                    _cachedForgedBladeChild.gameObject.SetActive(true);
+                }
+                if (mf.sharedMesh != _cachedSwordMesh) mf.sharedMesh = _cachedSwordMesh;
+                Material? targetMat = _cachedSwordMat != null ? _cachedSwordMat : sharedVoxelMat;
+                if (mr != null && targetMat != null && mr.sharedMaterial != targetMat)
+                {
+                    mr.sharedMaterial = targetMat;
+                }
+                if ((swordRoot.transform.localScale - Vector3.one).sqrMagnitude > 1e-5f)
+                {
+                    swordRoot.transform.localScale = Vector3.one;
+                }
+                return;
+            }
+
+            if (_cachedForgedBladeChild != null && _cachedForgedBladeChild.gameObject.activeSelf)
+            {
+                _cachedForgedBladeChild.gameObject.SetActive(false);
+            }
+
+            Mesh archMesh = GetOrCreateSwordArchetypeMesh(swordArch);
+            if (mf.sharedMesh != archMesh)
+            {
+                mf.sharedMesh = archMesh;
+            }
+            Material? uberMat = sharedVoxelMat != null ? sharedVoxelMat : _cachedSwordMat;
+            if (mr != null && uberMat != null && mr.sharedMaterial != uberMat)
+            {
+                mr.sharedMaterial = uberMat;
+            }
+
+            Stage1DirectionalCombatBridge.GetWeaponStats(swordArch, out _, out _, out _, out Vector3 archScale);
+            if ((swordRoot.transform.localScale - archScale).sqrMagnitude > 1e-5f)
+            {
+                swordRoot.transform.localScale = archScale;
+            }
+        }
+
+        private Mesh GetOrCreateSwordArchetypeMesh(CombatWeaponArchetype archetype)
+        {
+            int idx = Mathf.Clamp((int)archetype, 0, _cachedArchetypeSwordMeshes.Length - 1);
+            Mesh? existing = _cachedArchetypeSwordMeshes[idx];
+            if (existing != null)
+            {
+                return existing;
+            }
+
+            _matMeshTris.Clear();
+            EmitProceduralSwordArchetypeTris(archetype, _matMeshTris);
+            Mesh created = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, $"Mesh_SwordArchetype_{archetype}");
+            _cachedArchetypeSwordMeshes[idx] = created;
+            return created;
         }
 
         private static void ApplyCustomKnappedOrMetalMeshToToolVisual(
@@ -1344,6 +1513,30 @@ namespace Stratocraft.Character
                     localScale = new Vector3(0.14f, 0.14f, 0.14f) * slotScaleFactor;
                     break;
 
+                case InventoryItemKind.WeaponKatana:
+                    localOffset = new Vector3(0f, 0.026f, -0.02f);
+                    localRot = Quaternion.Euler(88f, 34f, 6f);
+                    localScale = new Vector3(0.14f, 0.15f, 0.14f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.WeaponGreatsword:
+                    localOffset = new Vector3(0f, 0.028f, -0.02f);
+                    localRot = Quaternion.Euler(88f, 42f, 0f);
+                    localScale = new Vector3(0.165f, 0.175f, 0.165f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.WeaponRapier:
+                    localOffset = new Vector3(0f, 0.026f, -0.02f);
+                    localRot = Quaternion.Euler(88f, 30f, 0f);
+                    localScale = new Vector3(0.135f, 0.155f, 0.135f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.ScrollMartialStance:
+                    localOffset = new Vector3(0f, 0.036f, 0f);
+                    localRot = Quaternion.Euler(8f, 28f, 84f);
+                    localScale = new Vector3(0.115f, 0.115f, 0.115f) * slotScaleFactor;
+                    break;
+
                 case InventoryItemKind.ToolPickaxe:
                     localOffset = new Vector3(0f, 0.028f, 0f);
                     localRot = Quaternion.Euler(88f, 32f, 0f);
@@ -1391,9 +1584,29 @@ namespace Stratocraft.Character
 
         private Mesh GetOrCreate3DMatMeshForSlot(in VisualInventorySlot slot)
         {
-            if (slot.Kind == InventoryItemKind.WeaponSword && slot.SubId == 0 && _cachedSwordMesh != null) return _cachedSwordMesh;
+            if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(slot.Kind) &&
+                !(slot.Kind == InventoryItemKind.WeaponSword && slot.SubId == 1) &&
+                Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(slot.Kind, out CombatWeaponArchetype matSwordArch))
+            {
+                return GetOrCreateSwordArchetypeMesh(matSwordArch);
+            }
             if (slot.Kind == InventoryItemKind.ToolPickaxe && slot.SubId == 0 && _cachedPickaxeMesh != null) return _cachedPickaxeMesh;
             if (slot.Kind == InventoryItemKind.ToolAxe && slot.SubId == 0 && _cachedAxeMesh != null) return _cachedAxeMesh;
+
+            if (slot.Kind == InventoryItemKind.ArmorHelmet ||
+                slot.Kind == InventoryItemKind.ArmorChestplate ||
+                slot.Kind == InventoryItemKind.ArmorVambrace ||
+                slot.Kind == InventoryItemKind.ArmorGreaves)
+            {
+                int armorZone = Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(slot.Kind);
+                byte armorTier = slot.SubId == 0 ? (byte)4 : slot.SubId;
+                string glbName = GlbHierarchyLoader.ResolveArmorSlotGlbFileName(armorZone, armorTier);
+                Mesh? glbArmorMesh = GlbHierarchyLoader.LoadArmorSlotMeshCached(glbName);
+                if (glbArmorMesh != null)
+                {
+                    return glbArmorMesh;
+                }
+            }
 
             PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
             if (physArch != PhysicalItemArchetype.None && physArch != PhysicalItemArchetype.ArchitecturalBlock)
@@ -1411,10 +1624,17 @@ namespace Stratocraft.Character
             switch (slot.Kind)
             {
                 case InventoryItemKind.WeaponSword:
-                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
-                        slot.SubId == 1 ? MaterialIdCatalog.Basalt : MaterialIdCatalog.DamascusSteel,
-                        7, 0, 0, _matMeshTris);
+                case InventoryItemKind.WeaponKatana:
+                case InventoryItemKind.WeaponGreatsword:
+                case InventoryItemKind.WeaponRapier:
+                {
+                    Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(slot.Kind, out CombatWeaponArchetype arch);
+                    EmitProceduralSwordArchetypeTris(arch, _matMeshTris);
+                    break;
+                }
+
+                case InventoryItemKind.ScrollMartialStance:
+                    EmitProceduralMartialScrollTris(slot.SubId, _matMeshTris);
                     break;
 
                 case InventoryItemKind.ToolPickaxe:
@@ -1567,6 +1787,118 @@ namespace Stratocraft.Character
             Mesh created = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, $"Mesh_3DMatItem_{slot.Kind}_{slot.SubId}");
             _matItemMeshCache[cacheKey] = created;
             return created;
+        }
+
+        private static void AddUberShaderBoxTris(
+            List<FacetedVoxelTriangle> tris,
+            System.Numerics.Vector3 center,
+            System.Numerics.Vector3 halfExtents,
+            byte matId,
+            byte sharpness,
+            byte ao = 242)
+        {
+            var b0 = center + new System.Numerics.Vector3(-halfExtents.X, -halfExtents.Y, -halfExtents.Z);
+            var b1 = center + new System.Numerics.Vector3(halfExtents.X, -halfExtents.Y, -halfExtents.Z);
+            var b2 = center + new System.Numerics.Vector3(halfExtents.X, -halfExtents.Y, halfExtents.Z);
+            var b3 = center + new System.Numerics.Vector3(-halfExtents.X, -halfExtents.Y, halfExtents.Z);
+
+            var t0 = center + new System.Numerics.Vector3(-halfExtents.X, halfExtents.Y, -halfExtents.Z);
+            var t1 = center + new System.Numerics.Vector3(halfExtents.X, halfExtents.Y, -halfExtents.Z);
+            var t2 = center + new System.Numerics.Vector3(halfExtents.X, halfExtents.Y, halfExtents.Z);
+            var t3 = center + new System.Numerics.Vector3(-halfExtents.X, halfExtents.Y, halfExtents.Z);
+
+            byte sideSharp = (byte)Mathf.Max(90, sharpness - 18);
+            // +Y & -Y
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(t0, t3, t2, matId, sharpness, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(t0, t2, t1, matId, sharpness, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b0, b1, b2, matId, sideSharp, (byte)(ao - 12), tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b0, b2, b3, matId, sideSharp, (byte)(ao - 12), tris);
+            // -Z & +Z
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b0, t0, t1, matId, sharpness, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b0, t1, b1, matId, sharpness, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b2, t2, t3, matId, sharpness, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b2, t3, b3, matId, sharpness, ao, tris);
+            // +X & -X
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b1, t1, t2, matId, sideSharp, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b1, t2, b2, matId, sideSharp, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b3, t3, t0, matId, sideSharp, ao, tris);
+            HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b3, t0, b0, matId, sideSharp, ao, tris);
+        }
+
+        private static void EmitProceduralSwordArchetypeTris(CombatWeaponArchetype archetype, List<FacetedVoxelTriangle> tris)
+        {
+            switch (archetype)
+            {
+                case CombatWeaponArchetype.Greatsword:
+                {
+                    AddUberShaderBoxTris(tris, new(0f, -0.22f, 0f), new(0.036f, 0.036f, 0.036f), MaterialIdCatalog.Bronze, 215);
+                    AddUberShaderBoxTris(tris, new(0f, -0.09f, 0f), new(0.022f, 0.11f, 0.022f), MaterialIdCatalog.OakWood, 155);
+                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.22f, 0.018f, 0.026f), MaterialIdCatalog.Bronze, 225);
+                    AddUberShaderBoxTris(tris, new(0f, 0.14f, 0f), new(0.036f, 0.09f, 0.014f), MaterialIdCatalog.LeatherPadding, 165);
+                    AddUberShaderBoxTris(tris, new(0f, 0.24f, 0f), new(0.13f, 0.014f, 0.018f), MaterialIdCatalog.Bronze, 225);
+                    AddUberShaderBoxTris(tris, new(0f, 0.56f, 0f), new(0.044f, 0.31f, 0.012f), MaterialIdCatalog.DamascusSteel, 240);
+                    AddUberShaderBoxTris(tris, new(0f, 0.94f, 0f), new(0.030f, 0.12f, 0.009f), MaterialIdCatalog.Steel, 250);
+                    break;
+                }
+                case CombatWeaponArchetype.Rapier:
+                {
+                    AddUberShaderBoxTris(tris, new(0f, -0.15f, 0f), new(0.026f, 0.026f, 0.026f), MaterialIdCatalog.GoldOre, 230);
+                    AddUberShaderBoxTris(tris, new(0f, -0.05f, 0f), new(0.015f, 0.08f, 0.015f), MaterialIdCatalog.RubyGem, 185);
+                    AddUberShaderBoxTris(tris, new(0.055f, -0.04f, 0f), new(0.010f, 0.08f, 0.012f), MaterialIdCatalog.GoldOre, 235);
+                    AddUberShaderBoxTris(tris, new(0f, 0.05f, 0f), new(0.088f, 0.040f, 0.088f), MaterialIdCatalog.Steel, 235);
+                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.14f, 0.010f, 0.014f), MaterialIdCatalog.GoldOre, 235);
+                    AddUberShaderBoxTris(tris, new(0f, 0.56f, 0f), new(0.013f, 0.48f, 0.011f), MaterialIdCatalog.Steel, 252);
+                    break;
+                }
+                case CombatWeaponArchetype.Katana:
+                {
+                    AddUberShaderBoxTris(tris, new(0f, -0.11f, 0f), new(0.018f, 0.11f, 0.022f), MaterialIdCatalog.Ironwood, 165);
+                    AddUberShaderBoxTris(tris, new(0f, 0.02f, 0f), new(0.068f, 0.008f, 0.068f), MaterialIdCatalog.GoldOre, 228);
+                    const int segs = 5;
+                    float segLen = 0.96f / segs;
+                    for (int s = 0; s < segs; s++)
+                    {
+                        float t01 = (s + 0.5f) / segs;
+                        AddUberShaderBoxTris(
+                            tris,
+                            new(t01 * t01 * 0.068f, 0.04f + (s + 0.5f) * segLen, 0f),
+                            new(Mathf.Lerp(0.024f, 0.015f, t01), segLen * 0.52f, Mathf.Lerp(0.011f, 0.007f, t01)),
+                            MaterialIdCatalog.DamascusSteel,
+                            248);
+                    }
+                    break;
+                }
+                default:
+                {
+                    AddUberShaderBoxTris(tris, new(0f, -0.16f, 0f), new(0.030f, 0.028f, 0.030f), MaterialIdCatalog.GoldOre, 225);
+                    AddUberShaderBoxTris(tris, new(0f, -0.06f, 0f), new(0.019f, 0.08f, 0.019f), MaterialIdCatalog.OakWood, 160);
+                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.15f, 0.015f, 0.022f), MaterialIdCatalog.GoldOre, 228);
+                    AddUberShaderBoxTris(tris, new(0f, 0.44f, 0f), new(0.032f, 0.39f, 0.010f), MaterialIdCatalog.DamascusSteel, 242);
+                    AddUberShaderBoxTris(tris, new(0f, 0.90f, 0f), new(0.020f, 0.09f, 0.008f), MaterialIdCatalog.Steel, 250);
+                    break;
+                }
+            }
+        }
+
+        private static void EmitProceduralMartialScrollTris(byte stanceSubId, List<FacetedVoxelTriangle> tris)
+        {
+            CombatMartialStance stance = Stage1VisualHotbarAndInventoryUi.ResolveScrollMartialStance(stanceSubId);
+            byte sealMat = stance switch
+            {
+                CombatMartialStance.Iaido_QuickDraw => MaterialIdCatalog.RubyGem,
+                CombatMartialStance.Fencing_Punta => MaterialIdCatalog.MithrilOre,
+                CombatMartialStance.TwoHand_Juggernaut => MaterialIdCatalog.CopperOre,
+                _ => MaterialIdCatalog.SapphireGem
+            };
+
+            // Rulo parsomen govdesi + ahsap cubuklar + altin uclar + muhur mumu
+            AddUberShaderBoxTris(tris, new(0f, 0f, 0f), new(0.095f, 0.24f, 0.095f), MaterialIdCatalog.Sand, 145);
+            AddUberShaderBoxTris(tris, new(0f, 0.26f, 0f), new(0.115f, 0.028f, 0.115f), MaterialIdCatalog.OakWood, 165);
+            AddUberShaderBoxTris(tris, new(0f, -0.26f, 0f), new(0.115f, 0.028f, 0.115f), MaterialIdCatalog.OakWood, 165);
+            AddUberShaderBoxTris(tris, new(0f, 0.31f, 0f), new(0.042f, 0.024f, 0.042f), MaterialIdCatalog.GoldOre, 228);
+            AddUberShaderBoxTris(tris, new(0f, -0.31f, 0f), new(0.042f, 0.024f, 0.042f), MaterialIdCatalog.GoldOre, 228);
+            AddUberShaderBoxTris(tris, new(0f, 0f, 0f), new(0.104f, 0.040f, 0.104f), sealMat, 220);
+            AddUberShaderBoxTris(tris, new(0f, 0f, -0.112f), new(0.056f, 0.056f, 0.020f), sealMat, 238);
         }
 
         private static void EmitProceduralIngotPyramidTris(byte matId, List<FacetedVoxelTriangle> tris)
@@ -2124,7 +2456,7 @@ namespace Stratocraft.Character
                     else if (isHotbar && !shift &&
                              (restored.Kind == InventoryItemKind.ToolPickaxe ||
                               restored.Kind == InventoryItemKind.ToolAxe ||
-                              restored.Kind == InventoryItemKind.WeaponSword ||
+                              Stage1VisualHotbarAndInventoryUi.IsSwordKind(restored.Kind) ||
                               restored.Kind == InventoryItemKind.ToolStoneHammer ||
                               restored.Kind == InventoryItemKind.FlintStone))
                     {
@@ -2188,22 +2520,10 @@ namespace Stratocraft.Character
             else if (Input.GetKeyDown(KeyCode.Alpha9)) pressedSlotIdx = 8;
 
             if (pressedSlotIdx < 0) return;
+            _ = swordPivot;
 
-            VisualInventorySlot targetSlot = InventoryUi.HotbarSlots[pressedSlotIdx];
-
-            // Kilic zaten eldeyken tekrar ayni Kilic slotuna basilirsa 4 kilic arketipi arasinda gecis yapar!
-            if (InventoryUi.SelectedHotbarIndex == pressedSlotIdx &&
-                ActiveHolsterSlot == 1 &&
-                targetSlot.Kind == InventoryItemKind.WeaponSword &&
-                combatBridge != null)
-            {
-                combatBridge.CycleWeaponArchetype(swordPivot);
-                miningCtrl.IsCrystalActive = false;
-                miningCtrl.LastFeedbackText = combatBridge.LastCombatActionText;
-                return;
-            }
-
-            // Ayni slota tekrar basilirsa silahi/aleti kilifina geri koyup Bos El'e (Slot 0) gecer!
+            // [1] tusu (ve diger tum 1..9 slot tuslari) artik asla kilic arketipi dondurmez (!IsSlotKeyCycling);
+            // dogrudan ilgili kemer yuvasini secer, zaten eldeyse silahi/aleti kilifina geri koyup Bos El'e (Slot 0) gecer!
             if (InventoryUi.SelectedHotbarIndex == pressedSlotIdx && ActiveHolsterSlot != 0)
             {
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
@@ -2678,9 +2998,73 @@ namespace Stratocraft.Character
 
             ref VisualInventorySlot slot = ref InventoryUi.HotbarSlots[sel];
             if (slot.IsEmpty) return false;
+
+            // Ors yaninda elde Dovme Demir Lama (WroughtIronBar) tutarken [E] ile ozel kilic arketipleri dovme!
+            if (slot.Kind == InventoryItemKind.WroughtIronBar)
+            {
+                int wroughtTotal = InventoryUi.CountItemInInventory(InventoryItemKind.WroughtIronBar, 0, ignoreSubId: true);
+                int charcoalTotal = InventoryUi.CountItemInInventory(InventoryItemKind.CharcoalChunk, 0, ignoreSubId: true);
+                InventoryItemKind forgedSwordKind = InventoryItemKind.Empty;
+                int consumeBars = 0;
+                int consumeCharcoal = 0;
+                string swordDesc = string.Empty;
+
+                if (wroughtTotal >= 5)
+                {
+                    forgedSwordKind = InventoryItemKind.WeaponGreatsword;
+                    consumeBars = 5;
+                    swordDesc = "Ağır Çift El Kılıcı (Zweihänder — 5.60 kg)";
+                }
+                else if (wroughtTotal >= 3 && charcoalTotal >= 1)
+                {
+                    forgedSwordKind = InventoryItemKind.WeaponKatana;
+                    consumeBars = 3;
+                    consumeCharcoal = 1;
+                    swordDesc = "Katana (Katlanmış Çelik Samuray Kılıcı — 1.35 kg)";
+                }
+                else if (wroughtTotal >= 2)
+                {
+                    forgedSwordKind = InventoryItemKind.WeaponRapier;
+                    consumeBars = 2;
+                    swordDesc = "İnce Eskrim Kılıcı (Rapier — 0.95 kg)";
+                }
+
+                if (forgedSwordKind != InventoryItemKind.Empty)
+                {
+                    InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.WroughtIronBar, 0, consumeBars, miningCtrl, ignoreSubId: true);
+                    if (consumeCharcoal > 0)
+                    {
+                        InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.CharcoalChunk, 0, consumeCharcoal, miningCtrl, ignoreSubId: true);
+                    }
+
+                    var forgedSlot = new VisualInventorySlot
+                    {
+                        Kind = forgedSwordKind,
+                        SubId = 0,
+                        Count = 1,
+                        Durability01 = 1.0f,
+                        ShapeDna = PhysicalItemShapeDna.CreateNatural(((uint)forgedSwordKind * 2654435761u) ^ 0x51A7u, 100)
+                    };
+
+                    if (InventoryUi.HotbarSlots[sel].IsEmpty)
+                    {
+                        InventoryUi.HotbarSlots[sel] = forgedSlot;
+                    }
+                    else
+                    {
+                        InventoryUi.TryInsertPickedUpSlot(in forgedSlot, miningCtrl, out _, out _);
+                    }
+
+                    ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                    msg = $"🔨 ÖRSTE USTA KILIÇ DÖVÜLDÜ: {consumeBars}x Dövme Demir{(consumeCharcoal > 0 ? " + 1x Odun Kömürü" : string.Empty)} -> +1 {swordDesc}!";
+                    return true;
+                }
+                return false;
+            }
+
             if (slot.Kind != InventoryItemKind.ToolPickaxe &&
                 slot.Kind != InventoryItemKind.ToolAxe &&
-                slot.Kind != InventoryItemKind.WeaponSword)
+                !Stage1VisualHotbarAndInventoryUi.IsSwordKind(slot.Kind))
             {
                 return false;
             }
@@ -2817,14 +3201,7 @@ namespace Stratocraft.Character
                 swordVisual.SetActive(shownSlot == 1);
                 if (shownSlot == 1)
                 {
-                    ApplyCustomKnappedOrMetalMeshToToolVisual(
-                        swordVisual,
-                        activeHandSlot.Kind == InventoryItemKind.WeaponSword && activeHandSlot.SubId == 1,
-                        PhysicalItemArchetype.ToolPrimitiveKnife,
-                        activeHandSlot.GetEffectiveShapeDna(),
-                        _cachedSwordMesh,
-                        _cachedSwordMat,
-                        sharedVoxelMat);
+                    ApplyEquippedSwordHandVisual(swordVisual, in activeHandSlot, sharedVoxelMat);
                 }
             }
             if (pickaxeVisual != null)
@@ -2889,6 +3266,24 @@ namespace Stratocraft.Character
             EnsureToolHandGauntlet(_heldMaterialBlockGo.transform, ref _heldBlockHandGloveGo, sharedVoxelMat, new Vector3(0.04f, -0.14f, -0.08f));
 
             VisualInventorySlot activeUiSlot = InventoryUi.GetActiveHotbarSlot();
+            if (activeUiSlot.Kind == InventoryItemKind.ScrollMartialStance)
+            {
+                if (_heldBlockHandGloveGo != null && _heldBlockHandGloveGo.activeSelf)
+                {
+                    _heldBlockHandGloveGo.SetActive(false);
+                }
+                Mesh scrollMesh = GetOrCreate3DMatMeshForSlot(in activeUiSlot);
+                if (_heldMaterialBlockMf != null && _heldMaterialBlockMf.sharedMesh != scrollMesh)
+                {
+                    _heldMaterialBlockMf.sharedMesh = scrollMesh;
+                    _lastHeldVisualMode = -1;
+                }
+                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.29f, -0.20f + drawDropY, 0.52f);
+                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(28f + drawPitchAdd, -22f, 68f);
+                _heldMaterialBlockGo.transform.localScale = new Vector3(0.24f, 0.24f, 0.24f);
+                return;
+            }
+
             PhysicalItemArchetype heldPhysArch = activeUiSlot.MapToPhysicalArchetype();
             if (shownSlot != 5 && shownSlot != 6 && heldPhysArch != PhysicalItemArchetype.None && heldPhysArch != PhysicalItemArchetype.ArchitecturalBlock)
             {
@@ -3104,11 +3499,28 @@ namespace Stratocraft.Character
                                             Vector3.Distance(playerCamera.transform.position, bodyTr.position + Vector3.up * 1.45f) < 0.85f;
             ShadowCastingMode targetShadowMode = isFirstPersonCameraClose ? ShadowCastingMode.ShadowsOnly : ShadowCastingMode.On;
 
+            bool showBeltSword = shownSlot != 1 &&
+                                 InventoryUi.HasAnySwordInHotbar() &&
+                                 HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid != 0UL;
+            if (showBeltSword && _holsteredBeltSwordProxy != null)
+            {
+                for (int h = 0; h < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; h++)
+                {
+                    ref readonly VisualInventorySlot hs = ref InventoryUi.HotbarSlots[h];
+                    if (!hs.IsEmpty && Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(hs.Kind, out CombatWeaponArchetype beltArch))
+                    {
+                        Mesh beltMesh = GetOrCreateSwordArchetypeMesh(beltArch);
+                        if (_holsteredBeltSwordProxy.TryGetComponent<MeshFilter>(out MeshFilter beltMf) && beltMf.sharedMesh != beltMesh)
+                        {
+                            beltMf.sharedMesh = beltMesh;
+                        }
+                        break;
+                    }
+                }
+            }
             UpdateHolsterProxyVisibilityAndShadow(
                 _holsteredBeltSwordProxy,
-                shownSlot != 1 &&
-                InventoryUi.HasItemInHotbar(InventoryItemKind.WeaponSword) &&
-                HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid != 0UL,
+                showBeltSword,
                 targetShadowMode);
             UpdateHolsterProxyVisibilityAndShadow(
                 _holsteredBeltPickaxeProxy,
@@ -3216,7 +3628,7 @@ namespace Stratocraft.Character
             }
             if (!slotCompletelyEmptied) return;
 
-            if (droppedSlot.Kind == InventoryItemKind.WeaponSword && !HasAnyItemOfKindInInventory(InventoryItemKind.WeaponSword))
+            if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(droppedSlot.Kind) && !HasAnySwordInInventory())
             {
                 HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistLeft_Slot1, default);
                 if (ActiveHolsterSlot == 1) ActiveHolsterSlot = 0;
@@ -3242,12 +3654,14 @@ namespace Stratocraft.Character
                 else if (pickedSlot.SubId == 2) IronIngotCount += pickedSlot.Count;
                 else if (pickedSlot.SubId == 3) MithrilIngotCount += pickedSlot.Count;
             }
-            else if (pickedSlot.Kind == InventoryItemKind.WeaponSword &&
+            else if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(pickedSlot.Kind) &&
                      HolsterMachine.GetHolsteredWeapon(HolsterSlotIndex.WaistLeft_Slot1).InstanceGuid == 0UL)
             {
+                Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(pickedSlot.Kind, out CombatWeaponArchetype pickedArch);
+                Stage1DirectionalCombatBridge.GetWeaponStats(pickedArch, out _, out float archMassKg, out _, out _);
                 UniqueEquipmentInstance swordEq = eq.InstanceGuid != 0UL
                     ? eq
-                    : new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f };
+                    : new UniqueEquipmentInstance { InstanceGuid = 1001UL + (ulong)pickedArch, ArchetypeItemId = (ushort)(101 + (int)pickedArch), MassKg = archMassKg, SharpnessOrHardness01 = 1.0f };
                 HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.WaistLeft_Slot1, swordEq);
             }
             else if (pickedSlot.Kind == InventoryItemKind.ToolPickaxe &&
@@ -3266,6 +3680,19 @@ namespace Stratocraft.Character
                     : new UniqueEquipmentInstance { InstanceGuid = 1003UL, ArchetypeItemId = 103, MassKg = 2.10f, SharpnessOrHardness01 = 1.0f };
                 HolsterMachine.AssignHolsterSlot(HolsterSlotIndex.BackLeft_Slot3, axeEq);
             }
+        }
+
+        private bool HasAnySwordInInventory()
+        {
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.HotbarSlotCount; i++)
+            {
+                if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(InventoryUi.HotbarSlots[i].Kind) && InventoryUi.HotbarSlots[i].Count > 0) return true;
+            }
+            for (int i = 0; i < Stage1VisualHotbarAndInventoryUi.BackpackSlotCount; i++)
+            {
+                if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(InventoryUi.BackpackSlots[i].Kind) && InventoryUi.BackpackSlots[i].Count > 0) return true;
+            }
+            return false;
         }
 
         private bool HasAnyItemOfKindInInventory(InventoryItemKind kind)
@@ -3337,7 +3764,8 @@ namespace Stratocraft.Character
                 GetSlot3DPoseAndScale(in droppedSlot, isHotbarSlot: false, out _, out Quaternion baseRot, out Vector3 matScale);
                 float worldScaleFactor = droppedSlot.Kind switch
                 {
-                    InventoryItemKind.WeaponSword or InventoryItemKind.ToolPickaxe or InventoryItemKind.ToolAxe => 3.2f,
+                    _ when Stage1VisualHotbarAndInventoryUi.IsSwordKind(droppedSlot.Kind) => 3.2f,
+                    InventoryItemKind.ToolPickaxe or InventoryItemKind.ToolAxe => 3.2f,
                     InventoryItemKind.VoxelBlock => 3.4f,
                     _ => 2.8f
                 };
@@ -3375,10 +3803,12 @@ namespace Stratocraft.Character
 
             UniqueEquipmentInstance eq = default;
             int origSlot = 4;
-            if (droppedSlot.Kind == InventoryItemKind.WeaponSword)
+            if (Stage1VisualHotbarAndInventoryUi.IsSwordKind(droppedSlot.Kind))
             {
                 origSlot = 1;
-                eq = new UniqueEquipmentInstance { InstanceGuid = 1001UL, ArchetypeItemId = 101, MassKg = 1.85f, SharpnessOrHardness01 = 1.0f };
+                Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(droppedSlot.Kind, out CombatWeaponArchetype dropArch);
+                Stage1DirectionalCombatBridge.GetWeaponStats(dropArch, out _, out float dropMassKg, out _, out _);
+                eq = new UniqueEquipmentInstance { InstanceGuid = 1001UL + (ulong)dropArch, ArchetypeItemId = (ushort)(101 + (int)dropArch), MassKg = dropMassKg, SharpnessOrHardness01 = 1.0f };
             }
             else if (droppedSlot.Kind == InventoryItemKind.ToolPickaxe)
             {
