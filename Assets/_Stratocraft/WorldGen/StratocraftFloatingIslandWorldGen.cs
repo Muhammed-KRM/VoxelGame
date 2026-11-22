@@ -143,21 +143,32 @@ namespace Stratocraft.WorldGen.Generators
             if (r > 200.0f && volcanic > 0.30f && temp > 0.05f) return 7;
 
             // 2) Yüksek İrtifa Soğuması (Yüksek yerler daha soğuk olur -> Buzul Sıradağları 4)
-            if (mountainRidge > 0.56f || (temp - mountainRidge * 0.55f) < -0.34f)
+            if (mountainRidge > 0.56f || (temp - mountainRidge * 0.55f) < -0.65f)
             {
                 return 4; // Kuzey Buzul Sıradağları / Karlı Zirveler (-26°C)
             }
 
-            // 3) Deniz Havzası ve Takımadalar (Continentalness düşükse Deniz + Ufak Adalar + Su Altı Mağaraları)
+            // 3) Anti-Gravite Floatstone Anomalisi ve Deniz Havzası Takımadaları -> Gökyüzü Adaları (10)
+            if (r > 350.0f && volcanic < -0.42f && cont < 0.0f)
+            {
+                return 10;
+            }
             if (cont < -0.24f)
             {
                 if (smallIsland > 0.25f) return hum > 0f ? 10 : 2;
                 return hum > 0.15f ? 10 : 5;
             }
 
-            // 4) Sıcaklık x Nem İklim Matrisi (Orta ölçekli organik biyom yamaları)
+            // 4) Soğuk Jeotermal Kristal Fayı -> Kristal Kanyon ve Kuvars Vadisi (5)
+            if (temp < -0.38f && volcanic > 0.34f)
+            {
+                return 5;
+            }
+
+            // 5) Sıcaklık x Nem İklim Matrisi (Orta ölçekli organik biyom yamaları)
             if (temp > 0.22f)
             {
+                if (mountainRidge > 0.42f && hum > -0.25f) return 9; // Yüksek Küllü Çorak Sırtlar
                 if (hum < -0.15f) return 6; // Kızıl Kumtaşı Kanyonu (+44°C)
                 if (hum > 0.22f) return 3;  // Zehirli Turba Bataklığı ve Asit Gölleri
                 return 9;                   // Küllü Çorak Topraklar
@@ -176,6 +187,7 @@ namespace Stratocraft.WorldGen.Generators
 
         private static bool TryResolveFixedBiomeId(float worldX, float worldZ, float r, out int fixedBiomeId)
         {
+            _ = worldX;
             if (r < 92.0f)
             {
                 fixedBiomeId = 0; // Başlangıç Vadisi ve çevresindeki yemyeşil tepeler (Atölye, CAS Sandığı ve 7DTD Kemer alanı)
@@ -187,19 +199,6 @@ namespace Stratocraft.WorldGen.Generators
             {
                 fixedBiomeId = 11; // Hiçlik Uçurumu ve Astral Kıyı (-35°C)
                 return true;
-            }
-
-            // Birim testlerindeki (StructuralDominoCollapseTests) kanonik keşif noktalarıyla %100 geriye dönük uyum:
-            if (ActiveWorldSeed == 1453)
-            {
-                if (MathF.Abs(worldX - (-1200f)) < 25f && MathF.Abs(worldZ - 700f) < 25f) { fixedBiomeId = 10; return true; }
-                if (MathF.Abs(worldX - (-96f)) < 16f && MathF.Abs(worldZ - 96f) < 16f) { fixedBiomeId = 1; return true; }
-                if (MathF.Abs(worldX - 96f) < 16f && MathF.Abs(worldZ - 96f) < 16f) { fixedBiomeId = 2; return true; }
-                if (MathF.Abs(worldX - 96f) < 16f && MathF.Abs(worldZ - (-96f)) < 16f) { fixedBiomeId = 3; return true; }
-                if (MathF.Abs(worldX - 0f) < 16f && MathF.Abs(worldZ - 650f) < 16f) { fixedBiomeId = 4; return true; }
-                if (MathF.Abs(worldX - (-96f)) < 16f && MathF.Abs(worldZ - (-96f)) < 16f) { fixedBiomeId = 5; return true; }
-                if (MathF.Abs(worldX - (-950f)) < 25f && MathF.Abs(worldZ - (-650f)) < 25f) { fixedBiomeId = 9; return true; }
-                if (MathF.Abs(worldX - 1400f) < 25f && MathF.Abs(worldZ - (-150f)) < 25f) { fixedBiomeId = 8; return true; }
             }
 
             fixedBiomeId = 0;
@@ -3188,13 +3187,14 @@ namespace Stratocraft.WorldGen.Generators
 
         public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels)
         {
+            int chunkBiomeId = GetBiomeId(chunkX * 16 + 8, chunkZ * 16 + 8);
             if (chunkX == -1 && chunkZ == -1)
             {
                 int baseY = RoundToInt(SampleIslandTopSurfaceY(-8f, -2f));
                 const int archLz = 14;
                 for (int lx = 4; lx <= 12; lx++)
-                    if (lx <= 6 || lx >= 10) EnsureSolidFoundationUnder(voxels, lx, baseY, archLz);
-                EnsureSolidFoundationUnder(voxels, 13, baseY, 11);
+                    if (lx <= 6 || lx >= 10) EnsureSolidFoundationUnder(voxels, lx, baseY, archLz, chunkBiomeId);
+                EnsureSolidFoundationUnder(voxels, 13, baseY, 11, chunkBiomeId);
 
                 SetArchitecturalVoxel(voxels, 6, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 63, rot: 0);
                 SetArchitecturalVoxel(voxels, 10, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 63, rot: 1);
@@ -3206,7 +3206,7 @@ namespace Stratocraft.WorldGen.Generators
 
                 SetArchitecturalVoxel(voxels, 6, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 0);
                 SetArchitecturalVoxel(voxels, 7, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 3, archLz, MaterialIdCatalog.GoldOre, shapeId: 5, rot: 0);
+                SetArchitecturalVoxel(voxels, 8, baseY + 3, archLz, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
                 SetArchitecturalVoxel(voxels, 9, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 2);
                 SetArchitecturalVoxel(voxels, 10, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 2);
 
@@ -3216,20 +3216,20 @@ namespace Stratocraft.WorldGen.Generators
                 SetArchitecturalVoxel(voxels, 4, baseY + 1, archLz, MaterialIdCatalog.Stone, shapeId: 6, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 1, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, baseY + 1, archLz, MaterialIdCatalog.Stone, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 13, baseY, 11, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+                SetArchitecturalVoxel(voxels, 13, baseY, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
             }
             else if (chunkX == 0 && chunkZ == -1)
             {
                 int bY1 = RoundToInt(SampleIslandTopSurfaceY(5f, -4f));
                 int bY2 = RoundToInt(SampleIslandTopSurfaceY(11f, -5f));
                 int bY3 = RoundToInt(SampleIslandTopSurfaceY(12f, -9f));
-                EnsureSolidFoundationUnder(voxels, 5, bY1, 12);
-                EnsureSolidFoundationUnder(voxels, 11, bY2, 11);
-                EnsureSolidFoundationUnder(voxels, 12, bY3, 7);
+                EnsureSolidFoundationUnder(voxels, 5, bY1, 12, chunkBiomeId);
+                EnsureSolidFoundationUnder(voxels, 11, bY2, 11, chunkBiomeId);
+                EnsureSolidFoundationUnder(voxels, 12, bY3, 7, chunkBiomeId);
 
                 SetArchitecturalVoxel(voxels, 5, bY1, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
                 SetArchitecturalVoxel(voxels, 5, bY1 + 1, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 11, bY2, 11, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+                SetArchitecturalVoxel(voxels, 11, bY2, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, bY3, 7, MaterialIdCatalog.StarCore, shapeId: 7, rot: 1);
             }
             else if (chunkX == 0 && chunkZ == 0)
@@ -3242,7 +3242,7 @@ namespace Stratocraft.WorldGen.Generators
                 for (int c = 0; c < 4; c++)
                 {
                     int cx = cornerX[c], cz = cornerZ[c];
-                    EnsureSolidFoundationUnder(voxels, cx, baseY, cz);
+                    EnsureSolidFoundationUnder(voxels, cx, baseY, cz, chunkBiomeId);
                     SetArchitecturalVoxel(voxels, cx, baseY, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: (byte)(c & 3));
                     SetArchitecturalVoxel(voxels, cx, baseY + 1, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
                     SetArchitecturalVoxel(voxels, cx, baseY + 2, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
@@ -3251,9 +3251,8 @@ namespace Stratocraft.WorldGen.Generators
                 for (int x = 5; x <= 9; x++)
                 {
                     byte shape = (x == 7) ? (byte)5 : (byte)4;
-                    byte mat = (x == 7) ? MaterialIdCatalog.GoldOre : MaterialIdCatalog.StoneBrick;
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 4, mat, shapeId: shape, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, mat, shapeId: shape, rot: 2);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 4, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 2);
                 }
                 for (int z = 5; z <= 7; z++)
                 {
@@ -3273,10 +3272,10 @@ namespace Stratocraft.WorldGen.Generators
                 SetArchitecturalVoxel(voxels, 7, baseY + 4, 6, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
 
                 int p2Y = RoundToInt(SampleIslandTopSurfaceY(11f, 5f));
-                EnsureSolidFoundationUnder(voxels, 11, p2Y, 5);
+                EnsureSolidFoundationUnder(voxels, 11, p2Y, 5, chunkBiomeId);
                 SetArchitecturalVoxel(voxels, 11, p2Y, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 63, rot: 1);
                 SetArchitecturalVoxel(voxels, 11, p2Y + 1, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 11, p2Y + 2, 5, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+                SetArchitecturalVoxel(voxels, 11, p2Y + 2, 5, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
             }
             else if (chunkX == -2 && chunkZ == -1)
             {
@@ -3284,23 +3283,28 @@ namespace Stratocraft.WorldGen.Generators
                 int[] colX = { 10, 14, 10, 14 }, colZ = { 8, 8, 12, 12 };
                 for (int i = 0; i < 4; i++)
                 {
-                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i]);
+                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i], chunkBiomeId);
                     SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
                     SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
                 }
                 for (int x = 10; x <= 14; x++)
                 {
-                    SetArchitecturalVoxel(voxels, x, baseY + 2, 8, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 2, 12, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                    byte archShape = x == 12 ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, x, baseY + 2, 8, MaterialIdCatalog.Marble, shapeId: archShape, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 2, 12, MaterialIdCatalog.Marble, shapeId: archShape, rot: 2);
                 }
                 for (int z = 9; z <= 11; z++)
                 {
-                    SetArchitecturalVoxel(voxels, 10, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
-                    SetArchitecturalVoxel(voxels, 14, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
+                    byte archShape = z == 10 ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, 10, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: 1);
+                    SetArchitecturalVoxel(voxels, 14, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: 3);
                 }
-                EnsureSolidFoundationUnder(voxels, 12, baseY, 10);
-                SetArchitecturalVoxel(voxels, 12, baseY, 10, MaterialIdCatalog.NaturalObsidian, shapeId: 1, rot: 0);
-                SetArchitecturalVoxel(voxels, 12, baseY + 1, 10, MaterialIdCatalog.MithrilOre, shapeId: 7, rot: 0);
+                SetArchitecturalVoxel(voxels, 11, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 3, rot: 1);
+                SetArchitecturalVoxel(voxels, 13, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 3, rot: 3);
+                SetArchitecturalVoxel(voxels, 12, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
+                EnsureSolidFoundationUnder(voxels, 12, baseY, 10, chunkBiomeId);
+                SetArchitecturalVoxel(voxels, 12, baseY, 10, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
+                SetArchitecturalVoxel(voxels, 12, baseY + 1, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
             }
             else if (chunkX == 1 && chunkZ == 1)
             {
@@ -3308,28 +3312,40 @@ namespace Stratocraft.WorldGen.Generators
                 int[] colX = { 6, 10, 6, 10 }, colZ = { 6, 6, 10, 10 };
                 for (int i = 0; i < 4; i++)
                 {
-                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i]);
+                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i], chunkBiomeId);
                     SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
                     SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
                     SetArchitecturalVoxel(voxels, colX[i], baseY + 2, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
                 }
                 for (int x = 6; x <= 10; x++)
-                    for (int z = 6; z <= 10; z++)
-                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: 1, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.GoldOre, shapeId: 7, rot: 0);
+                {
+                    byte archShape = x == 8 ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: archShape, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.StoneBrick, shapeId: archShape, rot: 2);
+                }
+                for (int z = 7; z <= 9; z++)
+                {
+                    for (int x = 7; x <= 9; x++)
+                    {
+                        byte roofShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
+                        byte roofRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
+                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: roofShape, rot: roofRot);
+                    }
+                }
+                SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
             }
             else if (chunkX == -3 && chunkZ == -1)
             {
                 int baseY = RoundToInt(SampleIslandTopSurfaceY(-39f, -8f));
-                EnsureSolidFoundationUnder(voxels, 7, baseY, 8);
-                EnsureSolidFoundationUnder(voxels, 11, baseY, 8);
+                EnsureSolidFoundationUnder(voxels, 7, baseY, 8, chunkBiomeId);
+                EnsureSolidFoundationUnder(voxels, 11, baseY, 8, chunkBiomeId);
                 for (int dy = 0; dy <= 2; dy++)
                 {
                     SetArchitecturalVoxel(voxels, 7, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
                     SetArchitecturalVoxel(voxels, 11, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
                 }
                 for (int x = 7; x <= 11; x++)
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, x == 9 ? MaterialIdCatalog.MithrilOre : MaterialIdCatalog.Marble, shapeId: x == 9 ? (byte)5 : (byte)4, rot: 0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, MaterialIdCatalog.Marble, shapeId: x == 9 ? (byte)5 : (byte)4, rot: 0);
             }
             else if (TryGetProceduralStructureTypeForChunk(chunkX, chunkZ, out int structType, out int structBaseY))
             {
@@ -3399,16 +3415,17 @@ namespace Stratocraft.WorldGen.Generators
         private static void StampProceduralWorldStructureWithChest(
             int chunkX, int chunkZ, int structureType, int baseY, uint[] voxels)
         {
+            int centerBiomeId = GetBiomeId(chunkX * 16 + 8, chunkZ * 16 + 8);
             // 5x5 temel zemin dolgusu (lx=6..10, lz=6..10)
             for (int z = 6; z <= 10; z++)
             {
                 for (int x = 6; x <= 10; x++)
                 {
-                    EnsureSolidFoundationUnder(voxels, x, baseY, z);
+                    EnsureSolidFoundationUnder(voxels, x, baseY, z, centerBiomeId);
                     // Yalnizca duvarlarin icindeki 3x3 odanin (7..9) ic mekanini temizle ki dis yamaclarda kesik olusmasin
                     if (x >= 7 && x <= 9 && z >= 7 && z <= 9)
                     {
-                        for (int clearY = baseY + 1; clearY <= baseY + 3 && clearY < MaxEditableVoxelY - 1; clearY++)
+                        for (int clearY = baseY + 1; clearY <= baseY + 4 && clearY < MaxEditableVoxelY - 1; clearY++)
                         {
                             voxels[(clearY << 8) | (z << 4) | x] = 0u;
                         }
@@ -3418,32 +3435,70 @@ namespace Stratocraft.WorldGen.Generators
 
             if (structureType == 0)
             {
-                // TİP 0: KÖY EVİ VE TAŞ KUYU (Ahşap Kalas + Taş Tuğla Duvarlar, Çatı ve İçeride Hazine Sandığı)
+                // TİP 0: KÖY EVİ VE TAŞ KUYU (Sekizgen Meşe Köşe Direkleri, Kemer Kapı + Kilit Taşı, 45° Eğimli Çatı, Mazgal Baca ve Ahşap Sandık Kaidesi)
                 for (int z = 6; z <= 10; z++)
                 {
                     for (int x = 6; x <= 10; x++)
                     {
-                        SetArchitecturalVoxel(voxels, x, baseY, z, MaterialIdCatalog.Cobblestone, shapeId: 1, rot: 0);
                         bool isCorner = (x == 6 || x == 10) && (z == 6 || z == 10);
                         bool isWall = x == 6 || x == 10 || z == 6 || z == 10;
-                        bool isDoor = z == 6 && x == 8;
-                        if (isWall && !isDoor)
+                        bool isDoorOpening = z == 6 && x == 8;
+                        byte floorMat = isWall ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.WoodPlank;
+                        SetArchitecturalVoxel(voxels, x, baseY, z, floorMat, shapeId: 1, rot: 0);
+
+                        if (isCorner)
                         {
-                            byte wallMat = isCorner ? MaterialIdCatalog.OakWood : MaterialIdCatalog.WoodPlank;
-                            byte wallShape = isCorner ? (byte)2 : (byte)1;
-                            SetArchitecturalVoxel(voxels, x, baseY + 1, z, wallMat, shapeId: wallShape, rot: 0);
-                            SetArchitecturalVoxel(voxels, x, baseY + 2, z, wallMat, shapeId: wallShape, rot: 0);
+                            // OctagonalColumn (shapeId: 2) tasiyici kose direkleri
+                            SetArchitecturalVoxel(voxels, x, baseY + 1, z, MaterialIdCatalog.OakWood, shapeId: 2, rot: 0);
+                            SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.OakWood, shapeId: 2, rot: 0);
                         }
-                        // Eğimli Ahşap Çatı
-                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.OakWood, shapeId: (x == 8 && z == 8) ? (byte)6 : (byte)1, rot: 0);
+                        else if (isWall && !isDoorOpening)
+                        {
+                            SetArchitecturalVoxel(voxels, x, baseY + 1, z, MaterialIdCatalog.StoneBrick, shapeId: 1, rot: 0);
+                            bool isSideWindowArch = (x == 6 || x == 10) && z == 8;
+                            if (isSideWindowArch)
+                            {
+                                SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.OakWood, shapeId: 4, rot: x == 6 ? (byte)1 : (byte)3);
+                            }
+                            else
+                            {
+                                SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.WoodPlank, shapeId: 1, rot: 0);
+                            }
+                        }
                     }
                 }
-                // Köy Hazine Sandığı (lx=8, baseY+1, lz=8)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.GoldOre, shapeId: 1, rot: 0);
+
+                // On Kapi Kemeri: ArchVoussoir (shapeId: 4) + TrapezoidalKeystone (shapeId: 5)
+                SetArchitecturalVoxel(voxels, 7, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 0);
+                SetArchitecturalVoxel(voxels, 8, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
+                SetArchitecturalVoxel(voxels, 9, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 2);
+
+                // Ramp45 (shapeId: 3) egimli ahsap besik cati + BattlementMerlon (shapeId: 6) baca ve kalkan duvar tepesi
+                for (int z = 6; z <= 10; z++)
+                {
+                    SetArchitecturalVoxel(voxels, 6, baseY + 3, z, MaterialIdCatalog.WoodPlank, shapeId: 3, rot: 1);
+                    SetArchitecturalVoxel(voxels, 10, baseY + 3, z, MaterialIdCatalog.WoodPlank, shapeId: 3, rot: 3);
+                }
+                for (int x = 7; x <= 9; x++)
+                {
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: x == 8 ? (byte)5 : (byte)4, rot: x == 9 ? (byte)2 : (byte)0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.StoneBrick, shapeId: x == 8 ? (byte)5 : (byte)4, rot: x == 9 ? (byte)2 : (byte)0);
+                    for (int z = 7; z <= 9; z++)
+                    {
+                        byte upperShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
+                        byte upperRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
+                        SetArchitecturalVoxel(voxels, x, baseY + 4, z, MaterialIdCatalog.OakWood, shapeId: upperShape, rot: upperRot);
+                    }
+                }
+                SetArchitecturalVoxel(voxels, 6, baseY + 4, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
+                SetArchitecturalVoxel(voxels, 10, baseY + 4, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
+
+                // Köy Evi Erzak ve Ekipman Sandığı Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine işlenmiş ahşap sandık işaretçisi)
+                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.WoodPlank, shapeId: 6, rot: 0);
             }
             else if (structureType == 1)
             {
-                // TİP 1: KADİM MERMER TAPINAK VE SUNAK (4 Mermer Sütun, Kemer Çatı, Astral Rezonans Sunağı ve Tapınak Sandığı)
+                // TİP 1: KADİM MERMER TAPINAK VE SUNAK (Sekizgen Mermer Sütunlar, 4 Cepheli Kemer + Kilit Taşı, 45° Alınlık Çatı, Mazgal Akroterler ve Sunak Kaidesi)
                 for (int z = 6; z <= 10; z++)
                 {
                     for (int x = 6; x <= 10; x++)
@@ -3451,51 +3506,83 @@ namespace Stratocraft.WorldGen.Generators
                         SetArchitecturalVoxel(voxels, x, baseY, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
                     }
                 }
-                int[] colX = { 6, 10, 6, 10 }, colZ = { 6, 6, 10, 10 };
-                for (int i = 0; i < 4; i++)
+                int[] colX = { 6, 10, 6, 10, 6, 10 }, colZ = { 6, 6, 10, 10, 8, 8 };
+                for (int i = 0; i < colX.Length; i++)
                 {
                     for (int dy = 1; dy <= 3; dy++)
                     {
                         SetArchitecturalVoxel(voxels, colX[i], baseY + dy, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
                     }
                 }
+                // 4 Cephede ArchVoussoir (4) + TrapezoidalKeystone (5) kemer alinliklari
                 for (int x = 6; x <= 10; x++)
                 {
-                    SetArchitecturalVoxel(voxels, x, baseY + 4, 6, MaterialIdCatalog.Marble, shapeId: 4, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 4, 10, MaterialIdCatalog.Marble, shapeId: 4, rot: 2);
+                    byte archShape = x == 8 ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.Marble, shapeId: archShape, rot: x > 8 ? (byte)2 : (byte)0);
+                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: archShape, rot: x > 8 ? (byte)2 : (byte)0);
                 }
-                for (int z = 6; z <= 10; z++)
+                for (int z = 7; z <= 9; z++)
                 {
-                    SetArchitecturalVoxel(voxels, 6, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 4, rot: 1);
-                    SetArchitecturalVoxel(voxels, 10, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 4, rot: 3);
+                    byte archShape = z == 8 ? (byte)5 : (byte)4;
+                    SetArchitecturalVoxel(voxels, 6, baseY + 3, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: z > 8 ? (byte)3 : (byte)1);
+                    SetArchitecturalVoxel(voxels, 10, baseY + 3, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: z > 8 ? (byte)3 : (byte)1);
+                }
+                // Ust Tapinak Catisi: Kose BattlementMerlon (6) akroterler + Ramp45 (3) egimli mermer alinlik catisi
+                SetArchitecturalVoxel(voxels, 6, baseY + 4, 6, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
+                SetArchitecturalVoxel(voxels, 10, baseY + 4, 6, MaterialIdCatalog.Marble, shapeId: 6, rot: 1);
+                SetArchitecturalVoxel(voxels, 6, baseY + 4, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 2);
+                SetArchitecturalVoxel(voxels, 10, baseY + 4, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 3);
+                for (int z = 7; z <= 9; z++)
+                {
+                    SetArchitecturalVoxel(voxels, 6, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 3, rot: 1);
+                    SetArchitecturalVoxel(voxels, 10, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 3, rot: 3);
+                    for (int x = 7; x <= 9; x++)
+                    {
+                        byte roofShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
+                        byte roofRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
+                        SetArchitecturalVoxel(voxels, x, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: roofShape, rot: roofRot);
+                    }
                 }
                 SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
-                // Tapınak Kutsal Hazine Sandığı (lx=8, baseY+1, lz=8)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.MithrilOre, shapeId: 1, rot: 0);
+                // Tapınak Kutsal Hazine Sandığı Sunak Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine oymalı mermer sunak kaidesi)
+                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
             }
             else
             {
-                // TİP 2: ANTİK HARABE KULE VE KEMERLER (Yıkık Taş Tuğla & Bazalt Sütunlar ve Harabe Ganimet Sandığı)
+                // TİP 2: ANTİK HARABE KULE VE KEMERLER (Sekizgen Taş Tuğla & Bazalt Sütunlar, Kemer + Kilit Taşı, Kırık 45° Çatı, Mazgal Siperler ve Harabe Sandık Kaidesi)
                 for (int z = 6; z <= 10; z++)
                 {
                     for (int x = 6; x <= 10; x++)
                     {
-                        SetArchitecturalVoxel(voxels, x, baseY, z, MaterialIdCatalog.StoneBrick, shapeId: 1, rot: 0);
+                        byte floorMat = ((x + z) & 1) == 0 ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Basalt;
+                        SetArchitecturalVoxel(voxels, x, baseY, z, floorMat, shapeId: 1, rot: 0);
                     }
                 }
-                SetArchitecturalVoxel(voxels, 6, baseY + 1, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 6, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 6, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 1, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                for (int dy = 1; dy <= 2; dy++)
+                {
+                    SetArchitecturalVoxel(voxels, 6, baseY + dy, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, 10, baseY + dy, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, 6, baseY + dy, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
+                    SetArchitecturalVoxel(voxels, 10, baseY + dy, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
+                }
+                // On Giris Kemeri: ArchVoussoir (4) + TrapezoidalKeystone (5)
                 SetArchitecturalVoxel(voxels, 7, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 3, 6, MaterialIdCatalog.GoldOre, shapeId: 5, rot: 0);
+                SetArchitecturalVoxel(voxels, 8, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
                 SetArchitecturalVoxel(voxels, 9, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 2);
-                SetArchitecturalVoxel(voxels, 6, baseY + 1, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 1, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 2, 10, MaterialIdCatalog.Basalt, shapeId: 6, rot: 0);
-                // Harabe Ganimet Sandığı (lx=8, baseY+1, lz=8)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.GoldOre, shapeId: 1, rot: 0);
+                // Bati Yikik Kemer Payandasi
+                SetArchitecturalVoxel(voxels, 6, baseY + 2, 7, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 1);
+                SetArchitecturalVoxel(voxels, 6, baseY + 2, 8, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 1);
+                SetArchitecturalVoxel(voxels, 6, baseY + 2, 9, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 3);
+                // Yikik Ramp45 (3) tas cati kalintilari ve BattlementMerlon (6) burc siperleri
+                SetArchitecturalVoxel(voxels, 7, baseY + 3, 7, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 1);
+                SetArchitecturalVoxel(voxels, 7, baseY + 3, 8, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 1);
+                SetArchitecturalVoxel(voxels, 9, baseY + 3, 7, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 3);
+                SetArchitecturalVoxel(voxels, 6, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
+                SetArchitecturalVoxel(voxels, 10, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
+                SetArchitecturalVoxel(voxels, 6, baseY + 3, 10, MaterialIdCatalog.Basalt, shapeId: 6, rot: 2);
+                SetArchitecturalVoxel(voxels, 10, baseY + 3, 10, MaterialIdCatalog.Basalt, shapeId: 6, rot: 3);
+                // Harabe Ganimet Sandığı Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine oymalı taş sandık kaidesi)
+                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
             }
         }
 
@@ -3778,7 +3865,7 @@ namespace Stratocraft.WorldGen.Generators
             int curIdx = ((baseY + 1) << 8) | colIdx;
             if (VoxelBitUtility.GetMaterialId(voxels[curIdx]) != MaterialIdCatalog.Air) return false;
 
-            EnsureSolidFoundationUnder(voxels, lx, baseY, lz);
+            EnsureSolidFoundationUnder(voxels, lx, baseY, lz, biomeId);
             if (shapeId == VoxelBitUtility.ChiseledMicroVoxelShapeId)
             {
                 byte shardSeed = (byte)(32 + (((wx * 19) ^ (wz * 37) ^ (baseY * 11)) & 63));
@@ -4058,18 +4145,22 @@ namespace Stratocraft.WorldGen.Generators
                 for (int fx = -1; fx <= 1; fx++)
                 {
                     int nTopY;
+                    int nBiomeId;
                     if (fx == 0 && fz == 0)
                     {
                         nTopY = baseY;
+                        nBiomeId = biomeId;
                     }
                     else
                     {
+                        int nColIdx = ((lz + fz) << 4) | (lx + fx);
                         float neighborTop = hasTopCache
-                            ? cachedTopH[((lz + fz) << 4) | (lx + fx)]
+                            ? cachedTopH[nColIdx]
                             : SampleIslandTopSurfaceY(wx + fx, wz + fz);
                         nTopY = Math.Clamp((int)MathF.Floor(neighborTop), 12, baseY);
+                        nBiomeId = cachedBiomes.Length == 256 ? cachedBiomes[nColIdx] : biomeId;
                     }
-                    EnsureSolidFoundationUnder(voxels, lx + fx, nTopY, lz + fz);
+                    EnsureSolidFoundationUnder(voxels, lx + fx, nTopY, lz + fz, nBiomeId);
                 }
             }
 
@@ -4113,21 +4204,95 @@ namespace Stratocraft.WorldGen.Generators
                 matId, VoxelBitUtility.FullDensity, shapeId, rot, BlokKokenDurumu.DogalKutle, 0);
         }
 
-        private static void EnsureSolidFoundationUnder(uint[] voxels, int lx, int baseY, int lz)
+        public static byte ResolveBiomeFoundationMaterial(int biomeId, int baseY = DefaultSurfaceBaseY, bool isTopLayer = true)
+        {
+            if (baseY >= 110 || biomeId == 4)
+            {
+                return MaterialIdCatalog.PackedIce;
+            }
+            if (biomeId == 5 || biomeId == 6)
+            {
+                return MaterialIdCatalog.Sand;
+            }
+            if (biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)
+            {
+                return MaterialIdCatalog.Basalt;
+            }
+            if (biomeId == 2)
+            {
+                return MaterialIdCatalog.Marble;
+            }
+            if (biomeId == 3)
+            {
+                return MaterialIdCatalog.Dirt;
+            }
+            return isTopLayer ? MaterialIdCatalog.Grass : MaterialIdCatalog.Dirt;
+        }
+
+        private static byte SampleExistingColumnFoundationMaterial(uint[] voxels, int lx, int baseY, int lz)
+        {
+            int col = (lz << 4) | lx;
+            int maxScanY = Math.Min(255, baseY + 1);
+            int minScanY = Math.Max(2, baseY - 12);
+            for (int y = maxScanY; y >= minScanY; y--)
+            {
+                uint raw = voxels[(y << 8) | col];
+                if (raw == 0u || VoxelBitUtility.GetShapeId(raw) != 0) continue;
+                byte mat = VoxelBitUtility.GetMaterialId(raw);
+                if (mat == MaterialIdCatalog.Sand ||
+                    mat == MaterialIdCatalog.PackedIce ||
+                    mat == MaterialIdCatalog.Basalt ||
+                    mat == MaterialIdCatalog.Marble ||
+                    mat == MaterialIdCatalog.Dirt ||
+                    mat == MaterialIdCatalog.Grass)
+                {
+                    return mat;
+                }
+                if (mat == MaterialIdCatalog.Cobblestone || mat == MaterialIdCatalog.MagmaBlock || mat == MaterialIdCatalog.NaturalObsidian)
+                {
+                    return MaterialIdCatalog.Basalt;
+                }
+            }
+            return baseY >= 110 ? MaterialIdCatalog.PackedIce : MaterialIdCatalog.Grass;
+        }
+
+        public static void EnsureSolidFoundationUnder(uint[] voxels, int lx, int baseY, int lz, int biomeId = -1)
         {
             if (lx < 0 || lx >= 16 || lz < 0 || lz >= 16) return;
+
+            byte topSurfaceMat = biomeId >= 0
+                ? ResolveBiomeFoundationMaterial(biomeId, baseY, isTopLayer: true)
+                : SampleExistingColumnFoundationMaterial(voxels, lx, baseY, lz);
+            byte subSurfaceMat = biomeId >= 0
+                ? ResolveBiomeFoundationMaterial(biomeId, baseY, isTopLayer: false)
+                : (topSurfaceMat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : topSurfaceMat);
+            byte deepFoundationMat = (topSurfaceMat == MaterialIdCatalog.PackedIce ||
+                                      topSurfaceMat == MaterialIdCatalog.Sand ||
+                                      topSurfaceMat == MaterialIdCatalog.Basalt ||
+                                      topSurfaceMat == MaterialIdCatalog.Marble)
+                ? topSurfaceMat
+                : MaterialIdCatalog.Stone;
+
             for (int y = Math.Max(2, baseY - 8); y <= baseY && y < 256; y++)
             {
                 int idx = (y << 8) | (lz << 4) | lx;
                 uint cur = voxels[idx];
-                if (VoxelBitUtility.GetMaterialId(cur) == MaterialIdCatalog.Air)
+                byte curMat = VoxelBitUtility.GetMaterialId(cur);
+                if (curMat == MaterialIdCatalog.Air)
                 {
-                    byte fillMat = y >= baseY - 1 ? MaterialIdCatalog.Grass : MaterialIdCatalog.Stone;
+                    byte fillMat = y == baseY ? topSurfaceMat : (y == baseY - 1 ? subSurfaceMat : deepFoundationMat);
                     voxels[idx] = VoxelBitUtility.PackStandard(fillMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
                 }
-                else if (VoxelBitUtility.GetShapeId(cur) == 0 && VoxelBitUtility.GetDensityOrLiquid(cur) < VoxelBitUtility.FullDensity)
+                else if (VoxelBitUtility.GetShapeId(cur) == 0)
                 {
-                    voxels[idx] = VoxelBitUtility.WithDensityOrLiquid(cur, VoxelBitUtility.FullDensity);
+                    if (y >= baseY - 1 && curMat == MaterialIdCatalog.Grass && topSurfaceMat != MaterialIdCatalog.Grass)
+                    {
+                        voxels[idx] = VoxelBitUtility.PackStandard(topSurfaceMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                    }
+                    else if (VoxelBitUtility.GetDensityOrLiquid(cur) < VoxelBitUtility.FullDensity)
+                    {
+                        voxels[idx] = VoxelBitUtility.WithDensityOrLiquid(cur, VoxelBitUtility.FullDensity);
+                    }
                 }
             }
         }

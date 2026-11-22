@@ -36,7 +36,12 @@ namespace Stratocraft.Inventory.Systems
         WovenClothTunic = 14,
         OiledLeatherWindbreaker = 15,
         HeavyFurWinterParka = 16,
-        FurLinedWinterBoots = 17
+        FurLinedWinterBoots = 17,
+        ReinforcedSteelBlock = 18,
+        ObsidianBrick = 19,
+        IronGrating = 20,
+        DamascusSteel = 21,
+        Floatstone = 22
     }
 
     /// <summary>
@@ -211,9 +216,45 @@ namespace Stratocraft.Inventory.Systems
                 "Kürk Astarlı Kış Çizmesi (Derin Kar & Donma Direnci)")
         };
 
+        private static readonly ClothMatCraftMatch[] CachedBuildingMaterialRecipes =
+        {
+            new(
+                PrimitiveCraftOutputId.ReinforcedSteelBlock,
+                CraftIngredientToken.WroughtIronBar, 2,
+                CraftIngredientToken.RoughStoneChunk, 2,
+                CraftIngredientToken.CrushedFluxPowder, 1,
+                "Güçlendirilmiş Çelik Kiriş Bloğu (12.000 Basınç Dayanımı)"),
+            new(
+                PrimitiveCraftOutputId.ObsidianBrick,
+                CraftIngredientToken.SlagGlassShard, 2,
+                CraftIngredientToken.RoughStoneChunk, 2,
+                CraftIngredientToken.ClayLump, 1,
+                "İşlenmiş Obsidyen Tuğla (25.000 Basınç Dayanımı)"),
+            new(
+                PrimitiveCraftOutputId.IronGrating,
+                CraftIngredientToken.WroughtIronBar, 2,
+                CraftIngredientToken.Stick, 1,
+                CraftIngredientToken.PlantFiber, 1,
+                "Demir Havalandırma Mazgalı (Oksijen ve Sıvı Geçirgen)"),
+            new(
+                PrimitiveCraftOutputId.DamascusSteel,
+                CraftIngredientToken.WroughtIronBar, 3,
+                CraftIngredientToken.CrushedFluxPowder, 1,
+                CraftIngredientToken.SlagGlassShard, 1,
+                "3B Prosedürel Şam Çeliği Bloğu (Damascus Steel)"),
+            new(
+                PrimitiveCraftOutputId.Floatstone,
+                CraftIngredientToken.QuartzCrystal, 2,
+                CraftIngredientToken.RoughStoneChunk, 2,
+                CraftIngredientToken.CrushedFluxPowder, 1,
+                "Gökyüzü Adası Uçan Taş / Floatstone (Yerçekimi Bağımsız SkyAnchor)")
+        };
+
         public static ReadOnlySpan<ClothMatCraftMatch> WeatherInstrumentAndRodRecipes => CachedWeatherAndRodRecipes;
 
         public static ReadOnlySpan<ClothMatCraftMatch> WinterGarmentAndWindmillRecipes => CachedWinterAndWindmillRecipes;
+
+        public static ReadOnlySpan<ClothMatCraftMatch> BuildingMaterialRecipes => CachedBuildingMaterialRecipes;
 
         public static bool IsWeatherInstrumentOrLightningRod(PrimitiveCraftOutputId outputId) =>
             outputId >= PrimitiveCraftOutputId.WeatherBarometer && outputId <= PrimitiveCraftOutputId.MetalLightningRod;
@@ -223,6 +264,9 @@ namespace Stratocraft.Inventory.Systems
 
         public static bool IsPaket4BCraftOutput(PrimitiveCraftOutputId outputId) =>
             outputId >= PrimitiveCraftOutputId.WindmillSailPanel && outputId <= PrimitiveCraftOutputId.FurLinedWinterBoots;
+
+        public static bool IsBuildingMaterialBlockOutput(PrimitiveCraftOutputId outputId) =>
+            outputId >= PrimitiveCraftOutputId.ReinforcedSteelBlock && outputId <= PrimitiveCraftOutputId.Floatstone;
 
         public static bool TryGetWeatherInstrumentRecipe(PrimitiveCraftOutputId outputId, out ClothMatCraftMatch recipe)
         {
@@ -250,6 +294,59 @@ namespace Stratocraft.Inventory.Systems
             }
             recipe = default;
             return false;
+        }
+
+        public static bool TryGetBuildingMaterialRecipe(PrimitiveCraftOutputId outputId, out ClothMatCraftMatch recipe)
+        {
+            for (int i = 0; i < CachedBuildingMaterialRecipes.Length; i++)
+            {
+                if (CachedBuildingMaterialRecipes[i].OutputId == outputId)
+                {
+                    recipe = CachedBuildingMaterialRecipes[i];
+                    return true;
+                }
+            }
+            recipe = default;
+            return false;
+        }
+
+        public static bool TryResolveBuildingMaterialId(PrimitiveCraftOutputId outputId, out byte materialId)
+        {
+            switch (outputId)
+            {
+                case PrimitiveCraftOutputId.ReinforcedSteelBlock:
+                    materialId = MaterialIdCatalog.ReinforcedSteelBlock;
+                    return true;
+                case PrimitiveCraftOutputId.ObsidianBrick:
+                    materialId = MaterialIdCatalog.ObsidianBrick;
+                    return true;
+                case PrimitiveCraftOutputId.IronGrating:
+                    materialId = MaterialIdCatalog.IronGrating;
+                    return true;
+                case PrimitiveCraftOutputId.DamascusSteel:
+                    materialId = MaterialIdCatalog.DamascusSteel;
+                    return true;
+                case PrimitiveCraftOutputId.Floatstone:
+                    materialId = MaterialIdCatalog.Floatstone;
+                    return true;
+                default:
+                    materialId = MaterialIdCatalog.Air;
+                    return false;
+            }
+        }
+
+        public static bool TryGetBuildingMaterialRecipeByMaterialId(byte materialId, out ClothMatCraftMatch recipe)
+        {
+            PrimitiveCraftOutputId target = materialId switch
+            {
+                MaterialIdCatalog.ReinforcedSteelBlock => PrimitiveCraftOutputId.ReinforcedSteelBlock,
+                MaterialIdCatalog.ObsidianBrick => PrimitiveCraftOutputId.ObsidianBrick,
+                MaterialIdCatalog.IronGrating => PrimitiveCraftOutputId.IronGrating,
+                MaterialIdCatalog.DamascusSteel => PrimitiveCraftOutputId.DamascusSteel,
+                MaterialIdCatalog.Floatstone => PrimitiveCraftOutputId.Floatstone,
+                _ => PrimitiveCraftOutputId.None
+            };
+            return TryGetBuildingMaterialRecipe(target, out recipe);
         }
 
         public static string GetKnappingPatternDisplayName(StoneKnappingPattern pattern) => pattern switch
@@ -484,6 +581,56 @@ namespace Stratocraft.Inventory.Systems
                 totals[(int)CraftIngredientToken.PlantFiber] >= 1)
             {
                 match = CachedWinterAndWindmillRecipes[4];
+                return true;
+            }
+
+            // 18) Guclendirilmis Celik Kiris Blogu (ReinforcedSteelBlock): 2x WroughtIronBar + 2x RoughStoneChunk + 1x CrushedFluxPowder
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.WroughtIronBar] >= 2 &&
+                totals[(int)CraftIngredientToken.RoughStoneChunk] >= 2 &&
+                totals[(int)CraftIngredientToken.CrushedFluxPowder] >= 1)
+            {
+                match = CachedBuildingMaterialRecipes[0];
+                return true;
+            }
+
+            // 19) Islenmis Obsidyen Tugla (ObsidianBrick): 2x SlagGlassShard + 2x RoughStoneChunk + 1x ClayLump
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.SlagGlassShard] >= 2 &&
+                totals[(int)CraftIngredientToken.RoughStoneChunk] >= 2 &&
+                totals[(int)CraftIngredientToken.ClayLump] >= 1)
+            {
+                match = CachedBuildingMaterialRecipes[1];
+                return true;
+            }
+
+            // 20) Demir Havalandirma Mazgali (IronGrating): 2x WroughtIronBar + 1x Stick + 1x PlantFiber
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.WroughtIronBar] >= 2 &&
+                totals[(int)CraftIngredientToken.Stick] >= 1 &&
+                totals[(int)CraftIngredientToken.PlantFiber] >= 1)
+            {
+                match = CachedBuildingMaterialRecipes[2];
+                return true;
+            }
+
+            // 21) 3B Prosedurel Sam Celigi (DamascusSteel): 3x WroughtIronBar + 1x CrushedFluxPowder + 1x SlagGlassShard
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.WroughtIronBar] >= 3 &&
+                totals[(int)CraftIngredientToken.CrushedFluxPowder] >= 1 &&
+                totals[(int)CraftIngredientToken.SlagGlassShard] >= 1)
+            {
+                match = CachedBuildingMaterialRecipes[3];
+                return true;
+            }
+
+            // 22) Gokyuzu Adasi Ucan Tas (Floatstone): 2x QuartzCrystal + 2x RoughStoneChunk + 1x CrushedFluxPowder
+            if (distinctNonZeroTypes == 3 &&
+                totals[(int)CraftIngredientToken.QuartzCrystal] >= 2 &&
+                totals[(int)CraftIngredientToken.RoughStoneChunk] >= 2 &&
+                totals[(int)CraftIngredientToken.CrushedFluxPowder] >= 1)
+            {
+                match = CachedBuildingMaterialRecipes[4];
                 return true;
             }
 
