@@ -71,6 +71,32 @@ namespace Stratocraft.Character
         public const float DefaultHiltRadiusMeters = 0.14f;
         public const int BladeSamplePointCount = 5;
         public const float KickRangeMeters = 1.85f;
+        public const float MinWeaponViewDistanceOffsetMeters = -0.08f;
+        public const float MaxWeaponViewDistanceOffsetMeters = 0.22f;
+
+        private float _weaponViewDistanceOffsetMeters;
+
+        /// <summary>
+        /// Devir 078: ESC Ayarlar menusu icin FPS silah gorus mesafesi ofseti (metre, [-0.08..+0.22] araliginda sinirli).
+        /// Pozitif degerler kilici kameradan ileri uzaklastirir, negatif degerler hafifce yaklastirir.
+        /// </summary>
+        public float WeaponViewDistanceOffsetMeters
+        {
+            get => _weaponViewDistanceOffsetMeters;
+            set => _weaponViewDistanceOffsetMeters = Math.Clamp(value, MinWeaponViewDistanceOffsetMeters, MaxWeaponViewDistanceOffsetMeters);
+        }
+
+        /// <summary>
+        /// Devir 078: Silah arketipine gore kalibre edilmis FPS taban kabza konumu (kamera yerel eksenleri: +X sag, +Y yukari, +Z ileri).
+        /// Tum kiliclar ekran merkezini ve sol-ust gorus alanini kapatmayacak sekilde ileri, hafif asagi ve disa hizalanir.
+        /// </summary>
+        public static System.Numerics.Vector3 GetFpsSwordBaseLocalOffset(CombatWeaponArchetype archetype) => archetype switch
+        {
+            CombatWeaponArchetype.Rapier => new System.Numerics.Vector3(0.21f, -0.27f, 0.49f),
+            CombatWeaponArchetype.Katana => new System.Numerics.Vector3(0.21f, -0.27f, 0.49f),
+            CombatWeaponArchetype.Greatsword => new System.Numerics.Vector3(0.27f, -0.38f, 0.62f),
+            _ => new System.Numerics.Vector3(0.22f, -0.30f, 0.53f)
+        };
 
         public static float ComputeWeaponMomentOfInertia(
             float bladeMassKg = DefaultBladeMassKg,
@@ -104,6 +130,9 @@ namespace Stratocraft.Character
         private float _cleaveDragTimer, _overswingStaggerTimer, _guardBreakTimer;
         private float _edgeRollRad, _edgeAlignment01 = 1.0f;
         private float _thrustExtensionMeters, _smoothedArmReachZ, _wallRecoilCooldown;
+        private bool _parryPoseSmoothingInitialized;
+        private float _smoothedParryArmArcX, _smoothedParryArmArcY;
+        private Quaternion _smoothedParrySwingRot = Quaternion.identity;
         private float _lastStepDt = 0.016f;
         private bool _isParryStance, _isThrustMode;
         private float _prevClutchCamYawRad, _prevClutchCamPitchRad, _postSwingClutchGraceTimer;
@@ -342,7 +371,7 @@ namespace Stratocraft.Character
             {
                 case CombatWeaponArchetype.Greatsword:
                     displayName = "Ağır Kılıç (Zweihänder 5.6kg)";
-                    massKg = 5.60f; bladeLengthM = 1.42f; visualScale = new Vector3(1.38f, 1.44f, 1.32f);
+                    massKg = 5.60f; bladeLengthM = 1.42f; visualScale = new Vector3(1.0f, 1.24f, 1.0f);
                     break;
                 case CombatWeaponArchetype.Rapier:
                     displayName = "İnce Eskrim Kılıcı (Rapier 0.95kg)";
@@ -407,7 +436,7 @@ namespace Stratocraft.Character
             CombatMartialStance.HighGuard_VomTag => new Vector2(0.42f, 0.96f),
             CombatMartialStance.Iaido_QuickDraw => new Vector2(-0.88f, -0.64f),
             CombatMartialStance.Fencing_Punta => new Vector2(0.08f, 0.14f),
-            CombatMartialStance.TwoHand_Juggernaut => new Vector2(-0.48f, 0.96f),
+            CombatMartialStance.TwoHand_Juggernaut => new Vector2(0.56f, 0.72f),
             _ => new Vector2(0.42f, 0.96f)
         };
 
@@ -742,9 +771,9 @@ namespace Stratocraft.Character
             MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
             if (mf == null) return;
 
-            var verts = new List<Vector3>(128);
-            var colors = new List<Color32>(128);
-            var tris = new List<int>(256);
+            var verts = new List<Vector3>(256);
+            var colors = new List<Color32>(256);
+            var tris = new List<int>(512);
 
             static void AddBox(List<Vector3> v, List<Color32> c, List<int> t, Vector3 center, Vector3 he, Color32 bCol, Color32 tCol)
             {
@@ -767,18 +796,143 @@ namespace Stratocraft.Character
                 for (int i = 0; i < idx.Length; i++) t.Add(b + idx[i]);
             }
 
+            static void AddTaperedBox(
+                List<Vector3> v, List<Color32> c, List<int> t,
+                float yBot, float yTop,
+                Vector2 halfBotXZ, Vector2 halfTopXZ,
+                float xOffsetBot, float xOffsetTop,
+                Color32 bCol, Color32 tCol)
+            {
+                int b = v.Count;
+                v.Add(new Vector3(xOffsetBot - halfBotXZ.x, yBot, -halfBotXZ.y));
+                v.Add(new Vector3(xOffsetBot + halfBotXZ.x, yBot, -halfBotXZ.y));
+                v.Add(new Vector3(xOffsetBot + halfBotXZ.x, yBot,  halfBotXZ.y));
+                v.Add(new Vector3(xOffsetBot - halfBotXZ.x, yBot,  halfBotXZ.y));
+                v.Add(new Vector3(xOffsetTop - halfTopXZ.x, yTop, -halfTopXZ.y));
+                v.Add(new Vector3(xOffsetTop + halfTopXZ.x, yTop, -halfTopXZ.y));
+                v.Add(new Vector3(xOffsetTop + halfTopXZ.x, yTop,  halfTopXZ.y));
+                v.Add(new Vector3(xOffsetTop - halfTopXZ.x, yTop,  halfTopXZ.y));
+                for (int i = 0; i < 4; i++) c.Add(bCol);
+                for (int i = 0; i < 4; i++) c.Add(tCol);
+                ReadOnlySpan<int> idx = stackalloc int[36]
+                {
+                    0,4,5, 0,5,1, 1,5,6, 1,6,2, 2,6,7, 2,7,3,
+                    3,7,4, 3,4,0, 4,7,6, 4,6,5, 3,0,1, 3,1,2
+                };
+                for (int i = 0; i < idx.Length; i++) t.Add(b + idx[i]);
+            }
+
+            static void AddHexBladeSegment(
+                List<Vector3> v, List<Color32> c, List<int> t,
+                float yBot, float yTop,
+                float hwBot, float fwBot, float htBot,
+                float hwTop, float fwTop, float htTop,
+                Color32 fullerColBot, Color32 edgeColBot,
+                Color32 fullerColTop, Color32 edgeColTop)
+            {
+                int b = v.Count;
+                // Alt 6-gen kesit (ince-yassi fuller + keskin pahli agiz)
+                v.Add(new Vector3(-hwBot, yBot, 0f));      c.Add(edgeColBot);
+                v.Add(new Vector3(-fwBot, yBot, -htBot));  c.Add(fullerColBot);
+                v.Add(new Vector3( fwBot, yBot, -htBot));  c.Add(fullerColBot);
+                v.Add(new Vector3( hwBot, yBot, 0f));      c.Add(edgeColBot);
+                v.Add(new Vector3( fwBot, yBot,  htBot));  c.Add(fullerColBot);
+                v.Add(new Vector3(-fwBot, yBot,  htBot));  c.Add(fullerColBot);
+                // Ust 6-gen kesit
+                v.Add(new Vector3(-hwTop, yTop, 0f));      c.Add(edgeColTop);
+                v.Add(new Vector3(-fwTop, yTop, -htTop));  c.Add(fullerColTop);
+                v.Add(new Vector3( fwTop, yTop, -htTop));  c.Add(fullerColTop);
+                v.Add(new Vector3( hwTop, yTop, 0f));      c.Add(edgeColTop);
+                v.Add(new Vector3( fwTop, yTop,  htTop));  c.Add(fullerColTop);
+                v.Add(new Vector3(-fwTop, yTop,  htTop));  c.Add(fullerColTop);
+                for (int i = 0; i < 6; i++)
+                {
+                    int j = (i + 1) % 6;
+                    t.Add(b + i);     t.Add(b + 6 + i); t.Add(b + 6 + j);
+                    t.Add(b + i);     t.Add(b + 6 + j); t.Add(b + j);
+                }
+            }
+
+            static void AddHexBladeTip(
+                List<Vector3> v, List<Color32> c, List<int> t,
+                float yBase, float yTip,
+                float hwBase, float fwBase, float htBase,
+                Color32 fullerCol, Color32 edgeCol, Color32 tipCol)
+            {
+                int b = v.Count;
+                v.Add(new Vector3(-hwBase, yBase, 0f));       c.Add(edgeCol);
+                v.Add(new Vector3(-fwBase, yBase, -htBase));  c.Add(fullerCol);
+                v.Add(new Vector3( fwBase, yBase, -htBase));  c.Add(fullerCol);
+                v.Add(new Vector3( hwBase, yBase, 0f));       c.Add(edgeCol);
+                v.Add(new Vector3( fwBase, yBase,  htBase));  c.Add(fullerCol);
+                v.Add(new Vector3(-fwBase, yBase,  htBase));  c.Add(fullerCol);
+                int tipIdx = b + 6;
+                v.Add(new Vector3(0f, yTip, 0f));             c.Add(tipCol);
+                for (int i = 0; i < 6; i++)
+                {
+                    int j = (i + 1) % 6;
+                    t.Add(b + i); t.Add(tipIdx); t.Add(b + j);
+                }
+            }
+
             switch (archetype)
             {
                 case CombatWeaponArchetype.Greatsword:
                 {
-                    Color32 gripCol = new(75, 42, 24, 255), brassCol = new(196, 158, 62, 255), darkSteel = new(118, 126, 142, 255), brightEdge = new(215, 224, 238, 255);
-                    AddBox(verts, colors, tris, new(0f, -0.22f, 0f), new(0.036f, 0.036f, 0.036f), brassCol, brassCol);
-                    AddBox(verts, colors, tris, new(0f, -0.09f, 0f), new(0.022f, 0.11f, 0.022f), gripCol, gripCol);
-                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.22f, 0.018f, 0.026f), brassCol, brassCol);
-                    AddBox(verts, colors, tris, new(0f, 0.14f, 0f), new(0.036f, 0.09f, 0.014f), gripCol, darkSteel);
-                    AddBox(verts, colors, tris, new(0f, 0.24f, 0f), new(0.13f, 0.014f, 0.018f), brassCol, brassCol);
-                    AddBox(verts, colors, tris, new(0f, 0.56f, 0f), new(0.044f, 0.31f, 0.012f), darkSteel, brightEdge);
-                    AddBox(verts, colors, tris, new(0f, 0.94f, 0f), new(0.030f, 0.12f, 0.009f), brightEdge, brightEdge);
+                    // Devir 078: Zarif, ince-yassi tarihsel Zweihander (~0.018m sirt kalinligi, fuller + pahli agiz,
+                    // belirgin balcak + yan koruma halkalari + deri ricasso + parierhaken kancalari + sivri uc)
+                    Color32 gripLeather = new(62, 34, 20, 255);
+                    Color32 gripAccent = new(96, 56, 30, 255);
+                    Color32 antiqueBrass = new(184, 146, 58, 255);
+                    Color32 guardSteel = new(102, 110, 124, 255);
+                    Color32 fullerDark = new(104, 114, 130, 255);
+                    Color32 steelMid = new(168, 178, 194, 255);
+                    Color32 brightEdge = new(228, 236, 248, 255);
+                    Color32 tipGleam = new(244, 248, 255, 255);
+
+                    // 1) Faceted armut (scent-stopper) topuz (pommel)
+                    AddTaperedBox(verts, colors, tris, -0.265f, -0.230f, new(0.011f, 0.011f), new(0.022f, 0.019f), 0f, 0f, antiqueBrass, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, -0.230f, -0.195f, new(0.022f, 0.019f), new(0.012f, 0.013f), 0f, 0f, antiqueBrass, guardSteel);
+
+                    // 2) Ince iki-el bel kivrimli deri kabza + orta pirinc bilezik
+                    AddTaperedBox(verts, colors, tris, -0.195f, -0.095f, new(0.013f, 0.015f), new(0.015f, 0.017f), 0f, 0f, gripLeather, gripAccent);
+                    AddBox(verts, colors, tris, new(0f, -0.092f, 0f), new(0.017f, 0.008f, 0.019f), antiqueBrass, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, -0.084f,  0.020f, new(0.015f, 0.017f), new(0.014f, 0.016f), 0f, 0f, gripAccent, gripLeather);
+
+                    // 3) Belirgin ince balcak (crossguard) + hafif acili quillon uclari + yan koruma halkalari
+                    AddBox(verts, colors, tris, new(0f, 0.030f, 0f), new(0.165f, 0.010f, 0.011f), guardSteel, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, 0.022f, 0.056f, new(0.010f, 0.009f), new(0.006f, 0.007f), -0.165f, -0.192f, guardSteel, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, 0.022f, 0.056f, new(0.010f, 0.009f), new(0.006f, 0.007f),  0.165f,  0.192f, guardSteel, antiqueBrass);
+                    AddBox(verts, colors, tris, new(0f, 0.030f, -0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
+                    AddBox(verts, colors, tris, new(0f, 0.030f,  0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
+
+                    // 4) Deri sargili ince Ricasso (y=0.04..0.20, kalinlik 0.018m!) + Parierhaken (parry lugs)
+                    AddHexBladeSegment(verts, colors, tris,
+                        0.040f, 0.205f,
+                        hwBot: 0.021f, fwBot: 0.010f, htBot: 0.0090f,
+                        hwTop: 0.020f, fwTop: 0.009f, htTop: 0.0086f,
+                        gripLeather, guardSteel, gripAccent, fullerDark);
+                    // Parierhaken (iki yana yukari egimli savunma kancalari)
+                    AddTaperedBox(verts, colors, tris, 0.196f, 0.246f, new(0.012f, 0.0075f), new(0.005f, 0.0045f), -0.024f, -0.086f, guardSteel, brightEdge);
+                    AddTaperedBox(verts, colors, tris, 0.196f, 0.246f, new(0.012f, 0.0075f), new(0.005f, 0.0045f),  0.024f,  0.086f, guardSteel, brightEdge);
+
+                    // 5) Ince-yassi Zweihander namlu (max kalinlik 0.018m -> 0.011m, daralan fuller + keskin pahli agizlar)
+                    AddHexBladeSegment(verts, colors, tris,
+                        0.205f, 0.560f,
+                        hwBot: 0.030f, fwBot: 0.011f, htBot: 0.0090f,
+                        hwTop: 0.024f, fwTop: 0.0085f, htTop: 0.0074f,
+                        fullerDark, steelMid, fullerDark, brightEdge);
+                    AddHexBladeSegment(verts, colors, tris,
+                        0.560f, 0.920f,
+                        hwBot: 0.024f, fwBot: 0.0085f, htBot: 0.0074f,
+                        hwTop: 0.016f, fwTop: 0.0055f, htTop: 0.0055f,
+                        fullerDark, brightEdge, steelMid, tipGleam);
+
+                    // 6) Keskin 6-fasetli daralan mizrak ucu (tapered point)
+                    AddHexBladeTip(verts, colors, tris,
+                        0.920f, 1.110f,
+                        hwBase: 0.016f, fwBase: 0.0055f, htBase: 0.0055f,
+                        steelMid, tipGleam, tipGleam);
                     break;
                 }
                 case CombatWeaponArchetype.Rapier:
@@ -869,6 +1023,11 @@ namespace Stratocraft.Character
             {
                 rightY = 0.172f;
                 leftY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? 0.052f : 0.064f;
+            }
+            else if (mf != null && mf.sharedMesh != null && mf.sharedMesh.name.StartsWith("ProceduralSword_", StringComparison.Ordinal))
+            {
+                rightY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? -0.025f : -0.020f;
+                leftY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? -0.160f : -0.115f;
             }
             else
             {
@@ -3155,6 +3314,7 @@ namespace Stratocraft.Character
             Vector3 bladeTipDirLocal;
             Vector3 edgeNormalLocal;
 
+            bool isContinuousParryPoseActive = false;
             if (_isThrustMode)
             {
                 bladeTipDirLocal = new Vector3(gx * (IsHalfSwordActive ? 0.18f : 0.32f), (gy + aerialPitchBias) * (IsHalfSwordActive ? 0.18f : 0.32f) - 0.02f, 0.98f).normalized;
@@ -3185,30 +3345,32 @@ namespace Stratocraft.Character
             }
             else if (_isParryStance)
             {
-                float sideSign = Mathf.Abs(gx) > 0.08f ? Mathf.Sign(gx) : 1.0f;
-                if (gy > 0.32f && Mathf.Abs(gx) < 0.52f)
+                // Devir 078: C1-surekli (sifir atlama / sifir takla) RMB Yan-Siper Bariyer pozu + zamansal yumusatma
+                isContinuousParryPoseActive = activeHolsterSlot == 1;
+                MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(
+                    gx,
+                    gy,
+                    out System.Numerics.Vector2 parryArcXY,
+                    out System.Numerics.Vector3 parryTipNum,
+                    out System.Numerics.Vector3 parryEdgeNum);
+
+                float smoothRate = _deflectFlickTimer > 0f ? 24.0f : 16.0f;
+                float arcBlend = 1.0f - Mathf.Exp(-Mathf.Clamp(_lastStepDt, 0.001f, 0.05f) * smoothRate);
+                if (!_parryPoseSmoothingInitialized)
                 {
-                    armArcX = Mathf.Clamp(gx * 0.38f + sideSign * 0.22f, -0.52f, 0.52f);
-                    armArcY = Mathf.Clamp(0.22f + gy * 0.22f, 0.20f, 0.46f);
-                    bladeTipDirLocal = new Vector3(-sideSign * 0.95f, 0.28f, 0.08f).normalized;
-                    edgeNormalLocal = new Vector3(0f, 0.86f, 0.51f).normalized;
-                }
-                else if (gy < -0.26f)
-                {
-                    armArcX = Mathf.Clamp(gx * 0.52f, -0.62f, 0.62f);
-                    armArcY = Mathf.Clamp(gy * 0.36f + 0.04f, -0.44f, 0.12f);
-                    bladeTipDirLocal = new Vector3(-sideSign * 0.46f, -0.88f, 0.09f).normalized;
-                    edgeNormalLocal = new Vector3(sideSign * 0.80f, -0.36f, 0.48f).normalized;
+                    _smoothedParryArmArcX = parryArcXY.X;
+                    _smoothedParryArmArcY = parryArcXY.Y;
                 }
                 else
                 {
-                    armArcX = Mathf.Clamp(gx * 0.60f, -0.66f, 0.66f);
-                    armArcY = Mathf.Clamp(gy * 0.40f - 0.04f, -0.38f, 0.40f);
-                    float crossTiltX = -sideSign * Mathf.Lerp(0.34f, 0.52f, Mathf.Clamp01(Mathf.Abs(gx)));
-                    float crossTiltY = Mathf.Lerp(0.92f, 0.84f, Mathf.Clamp01(Mathf.Abs(gx)));
-                    bladeTipDirLocal = new Vector3(crossTiltX, crossTiltY, 0.08f).normalized;
-                    edgeNormalLocal = new Vector3(sideSign * 0.86f, 0.22f, 0.46f).normalized;
+                    _smoothedParryArmArcX = Mathf.Lerp(_smoothedParryArmArcX, parryArcXY.X, arcBlend);
+                    _smoothedParryArmArcY = Mathf.Lerp(_smoothedParryArmArcY, parryArcXY.Y, arcBlend);
                 }
+
+                armArcX = _smoothedParryArmArcX;
+                armArcY = _smoothedParryArmArcY;
+                bladeTipDirLocal = new Vector3(parryTipNum.X, parryTipNum.Y, parryTipNum.Z);
+                edgeNormalLocal = new Vector3(parryEdgeNum.X, parryEdgeNum.Y, parryEdgeNum.Z);
             }
             else if (ActiveMartialStance == CombatMartialStance.Iaido_QuickDraw &&
                      activeHolsterSlot == 1 &&
@@ -3229,15 +3391,15 @@ namespace Stratocraft.Character
             else if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut &&
                      activeHolsterSlot == 1 && _preChamberWindowTimer <= 0f)
             {
-                // Çift El Yarma (TwoHand_Juggernaut) ve Şövalye Duruşunda kılıç dikey (yukarı bakar) tutulur;
-                // kesik sonrası 1.0sn bekleme süresinde kesik bitiş açısını korur ve ardından dikey duruşa döner.
-                armArcX = Mathf.Clamp(gx * 0.42f - 0.14f, -0.68f, 0.64f);
-                armArcY = Mathf.Clamp(gy * 0.34f - 0.04f, -0.52f, 0.56f);
-                float tipX = gx * 0.62f;
-                float tipY = Mathf.Clamp(gy * 0.98f, -0.86f, 0.98f);
-                float tipZ = Mathf.Lerp(0.14f, 0.52f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.82f));
+                // Devir 078: Çift El Yarma (TwoHand_Juggernaut) guard pozunu sag-dis omuz kenarinda (periferal) tut;
+                // Greatsword ekran merkezini ve sol-ust gorus alanini ASLA kapatmaz!
+                armArcX = Mathf.Clamp(gx * 0.36f + 0.16f, -0.44f, 0.58f);
+                armArcY = Mathf.Clamp(gy * 0.22f - 0.12f, -0.46f, 0.22f);
+                float tipX = Mathf.Clamp(gx * 0.54f + 0.22f, -0.45f, 0.78f);
+                float tipY = Mathf.Clamp(gy * 0.88f, -0.82f, 0.92f);
+                float tipZ = Mathf.Lerp(0.24f, 0.56f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.75f));
                 bladeTipDirLocal = new Vector3(tipX, tipY, tipZ).normalized;
-                edgeNormalLocal = new Vector3(0.78f, -0.22f, 0.58f).normalized;
+                edgeNormalLocal = new Vector3(0.76f, -0.18f, 0.62f).normalized;
             }
             else
             {
@@ -3267,24 +3429,68 @@ namespace Stratocraft.Character
                     _slashDirUnit.x)
                 : Quaternion.LookRotation(orthoForward.normalized, bladeTipDirLocal);
 
+            if (isContinuousParryPoseActive)
+            {
+                float rotSmoothRate = _deflectFlickTimer > 0f ? 26.0f : 18.0f;
+                float rotBlend = 1.0f - Mathf.Exp(-Mathf.Clamp(_lastStepDt, 0.001f, 0.05f) * rotSmoothRate);
+                if (!_parryPoseSmoothingInitialized)
+                {
+                    _smoothedParrySwingRot = swingRot;
+                    _parryPoseSmoothingInitialized = true;
+                }
+                else
+                {
+                    _smoothedParrySwingRot = Quaternion.Slerp(_smoothedParrySwingRot, swingRot, rotBlend);
+                }
+                swingRot = _smoothedParrySwingRot;
+            }
+            else
+            {
+                _smoothedParryArmArcX = armArcX;
+                _smoothedParryArmArcY = armArcY;
+                _smoothedParrySwingRot = swingRot;
+                _parryPoseSmoothingInitialized = true;
+            }
+
             GetWeaponStats(ActiveWeaponArchetype, out _, out float gripWMass, out _, out _);
             float breathAmp = Mathf.Lerp(0.0045f, 0.011f, Mathf.Clamp01((gripWMass - 0.95f) / 4.65f));
             Vector3 organicGripSway = new Vector3(Mathf.Cos(_gripBreathPhase * 0.5f) * breathAmp, Mathf.Sin(_gripBreathPhase) * breathAmp, 0f);
 
             if (isFirstPersonMode && playerCamera != null)
             {
-                // Faz K.2 Kalibrasyon:
-                // - Kilic (Slot 1): GLB pommel y=0.0, kabza y=0.06..0.18 -> base (0.18, -0.24, 0.42) ile sol-ust dahil 360° tam el gorunurlugu!
+                // Devir 078 Kalibrasyon:
+                // - Kiliclar (Slot 1): Silah arketipine gore ileri/hafif asagi/disa konumlanir + WeaponViewDistanceOffsetMeters eklenir.
+                //   Merkez ve sol-ust gorus acisi ASLA kapanmaz; Greatsword icin genisletilmis kol erisim butcesi ile kameraya geri cekilmez.
                 // - Kazma/Balta (Slot 2 & 3): GLB sap dibi y=0.0, el tutusu y=0.15..0.34 -> base (0.22, -0.44, 0.40) ile sap dibi kameraya ASLA girmez!
                 bool isHarvestTool = activeHolsterSlot == 2 || activeHolsterSlot == 3;
+                bool isGreatsword = !isHarvestTool && ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword;
+                System.Numerics.Vector3 swordBase = GetFpsSwordBaseLocalOffset(ActiveWeaponArchetype);
+                float viewDistOffset = WeaponViewDistanceOffsetMeters;
                 Vector3 rawFpsHilt = isHarvestTool
                     ? new Vector3(0.22f + armArcX * 0.66f, -0.44f + armArcY * 0.66f, 0.40f + _smoothedArmReachZ * 0.58f) + _wristRecoilOffset + organicGripSway
-                    : new Vector3(0.18f + armArcX * 0.68f, -0.24f + armArcY * 0.66f, 0.42f + _smoothedArmReachZ * 0.62f) + _wristRecoilOffset + organicGripSway;
+                    : new Vector3(
+                        swordBase.X + armArcX * (isGreatsword ? 0.62f : 0.68f),
+                        swordBase.Y + armArcY * (isGreatsword ? 0.58f : 0.64f),
+                        swordBase.Z + viewDistOffset + _smoothedArmReachZ * 0.62f) + _wristRecoilOffset + organicGripSway;
+
+                float extraForwardReach = Mathf.Max(0f, viewDistOffset);
+                float fpsUpperArmBudget = isHarvestTool
+                    ? 0.46f
+                    : (isGreatsword ? (0.64f + extraForwardReach * 0.55f) : (0.52f + extraForwardReach * 0.55f));
+                float fpsForearmBudget = (isHarvestTool
+                    ? 0.44f
+                    : (isGreatsword ? (0.62f + extraForwardReach * 0.55f) : (0.50f + extraForwardReach * 0.55f))) + (_isThrustMode ? 0.30f : 0f);
+                System.Numerics.Vector3 fpsShoulderAnchor = isHarvestTool
+                    ? new System.Numerics.Vector3(0.06f, -0.34f, 0.04f)
+                    : (isGreatsword
+                        ? new System.Numerics.Vector3(0.10f, -0.26f, 0.06f)
+                        : new System.Numerics.Vector3(0.06f, -0.20f, 0.04f));
+
                 var clampedNum = MeleeBiomechanicsSolver.ClampHiltToAnatomicalArmEnvelope(
-                    new System.Numerics.Vector3(0.06f, isHarvestTool ? -0.34f : -0.18f, 0.04f),
+                    fpsShoulderAnchor,
                     new System.Numerics.Vector3(rawFpsHilt.x, rawFpsHilt.y, rawFpsHilt.z),
-                    upperArmLen: 0.46f,
-                    forearmLen: 0.44f + (_isThrustMode ? 0.30f : 0f));
+                    upperArmLen: fpsUpperArmBudget,
+                    forearmLen: fpsForearmBudget);
                 Vector3 fpsShoulderPos = new Vector3(clampedNum.X, clampedNum.Y, clampedNum.Z);
                 weaponPivot.position = playerCamera.transform.TransformPoint(fpsShoulderPos);
                 weaponPivot.rotation = playerCamera.transform.rotation * swingRot;

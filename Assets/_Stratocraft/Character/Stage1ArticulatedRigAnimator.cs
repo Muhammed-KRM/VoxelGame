@@ -57,6 +57,9 @@ namespace Stratocraft.Character
         private Transform? _headCounterPitchPivot;
         private Transform? _rightHandItemSocket;
         private Transform? _leftHandGripSocket;
+        private Vector3 _baseRightShoulderLocalPos;
+        private Vector3 _baseLeftShoulderLocalPos;
+        private bool _shoulderBasePosCaptured;
         private GameObject? _socketHeldItemGo;
         private int _lastSocketItemSignature = int.MinValue;
         private float _characterBodyYawDeg;
@@ -718,6 +721,24 @@ namespace Stratocraft.Character
             bool isProne)
         {
             if (_rightArmShoulderPivot == null || _rightElbowPivot == null || _rightWristPivot == null) return;
+            if (!_shoulderBasePosCaptured)
+            {
+                _baseRightShoulderLocalPos = _rightArmShoulderPivot.localPosition;
+                if (_leftArmShoulderPivot != null)
+                {
+                    _baseLeftShoulderLocalPos = _leftArmShoulderPivot.localPosition;
+                }
+                _shoulderBasePosCaptured = true;
+            }
+            else
+            {
+                _rightArmShoulderPivot.localPosition = _baseRightShoulderLocalPos;
+                if (_leftArmShoulderPivot != null)
+                {
+                    _leftArmShoulderPivot.localPosition = _baseLeftShoulderLocalPos;
+                }
+            }
+
             if (isProne)
             {
                 SetSocketFallbackItemActive(false);
@@ -744,12 +765,36 @@ namespace Stratocraft.Character
                     use2H = true;
                 }
 
+                // Devir 078: FPS modunda govde kameradan -0.10m geride tutuldugu icin (fpsBackOffsetZ),
+                // ileri kalibre edilmis Greatsword (Z=0.62m) ve WeaponViewDistanceOffsetMeters (+0.22m'ye kadar)
+                // kabzalarini kameraya geri cekmemek adina omuz koprucuk uzanmasi (protraction) uygula.
+                float baseArmLen = UpperArmLengthMeters + ForearmLengthMeters;
+                if (isFirstPersonMode && activeHeldTransform != null)
+                {
+                    float distR = (rGrip - _rightArmShoulderPivot.position).magnitude;
+                    float distL = (use2H && _leftArmShoulderPivot != null)
+                        ? (lGrip - _leftArmShoulderPivot.position).magnitude
+                        : 0f;
+                    float maxDist = Mathf.Max(distR, distL);
+                    float protractThreshold = baseArmLen * 0.90f;
+                    if (maxDist > protractThreshold)
+                    {
+                        float protractMeters = Mathf.Clamp((maxDist - protractThreshold) + 0.02f, 0f, 0.48f);
+                        Vector3 protractWorldOffset = viewFwd * protractMeters;
+                        _rightArmShoulderPivot.position += protractWorldOffset;
+                        if (_leftArmShoulderPivot != null)
+                        {
+                            _leftArmShoulderPivot.position += protractWorldOffset;
+                        }
+                    }
+                }
+
                 // Silah kabzasini iki omuzun ortak dogal erisim zarfi icinde tut (sol-ust/tepe savurmada eller ASLA kopmaz!)
                 Vector3 shR = _rightArmShoulderPivot.position;
                 Vector3 anchorRef = (use2H && _leftArmShoulderPivot != null)
                     ? Vector3.Lerp(shR, _leftArmShoulderPivot.position, isHalfSwordGrip ? 0.45f : 0.38f)
                     : shR;
-                float maxArmReach = (UpperArmLengthMeters + ForearmLengthMeters) * 0.89f;
+                float maxArmReach = baseArmLen * (isFirstPersonMode ? 0.96f : 0.89f);
                 Vector3 toGripR = rGrip - anchorRef;
                 if (activeHeldTransform != null && toGripR.magnitude > maxArmReach)
                 {

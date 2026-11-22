@@ -741,6 +741,77 @@ namespace Stratocraft.Character
             }
         }
 
+        /// <summary>
+        /// Devir 078: C1-surekli (sifir atlama / sifir takla) RMB Yan-Siper Blok (Parry Barrier) poz cozucusu.
+        /// MathF.Tanh ve SmoothStep agirliklariyla Ust Cati (Ochs), Alt Asili (Pflug) ve Sag/Sol Dikey-Capraz
+        /// siper gecislerini gx=0, gy=0.32 ve gy=-0.26 sinirlari dahil her noktada kusursuz yumusaklikta uretir.
+        /// Kuresel koordinat parametrizasyonu sayesinde bladeTipDirLocal ve edgeNormalLocal her zaman birim boyda
+        /// ve birbirine tam dik (Dot == 0) kalir; LookRotation taklasi matematiksel olarak imkansizdir.
+        /// </summary>
+        public static void EvaluateContinuousParryBarrierPose(
+            float gx,
+            float gy,
+            out Vector2 armArcXY,
+            out Vector3 bladeTipDirLocal,
+            out Vector3 edgeNormalLocal)
+        {
+            float cx = Math.Clamp(gx, -1.45f, 1.45f);
+            float cy = Math.Clamp(gy, -1.45f, 1.45f);
+
+            // Yumusak yatay yon faktoru (gx = 0 noktasinda sert isaret sicramasi yok!)
+            float sideSmooth = MathF.Tanh(cx * 1.85f);
+            float centerBell = MathF.Exp(-(cx * cx) * 2.2f);
+
+            // C1-surekli dikey bolge agirliklari: Ust Cati (Ochs) ve Alt Asili (Pflug)
+            float upperW = SmoothStep(0.0f, 0.92f, cy);
+            float lowerW = SmoothStep(0.0f, 0.95f, -cy);
+            float midW = Math.Clamp(1.0f - upperW - lowerW, 0.0f, 1.0f);
+
+            // Kol yayi hedefleri (2-Kemik IK kabza pozisyonu icin C1-surekli)
+            float armX = Math.Clamp(
+                cx * (0.56f - 0.14f * upperW - 0.04f * lowerW) + 0.16f * upperW * centerBell,
+                -0.66f,
+                0.66f);
+            float armY = Math.Clamp(
+                cy * 0.36f + 0.14f * upperW + 0.08f * lowerW - 0.04f * midW,
+                -0.44f,
+                0.46f);
+            armArcXY = new Vector2(armX, armY);
+
+            // Kuresel egim (elevRad) ve yatay capraz siper acisi (latAngleRad):
+            // - Orta gard: +65 deg yukari-ileri dikey bariyer
+            // - Ust Ochs cati: +24 deg yukari + alin onunde yatay capraz
+            // - Alt Pflug asili: +Z ileri yay uzerinden -41 deg asagi-ileri (sifir tekillik!)
+            float elevRad = 1.14f - 0.72f * upperW - 1.85f * lowerW;
+            float latWeight = 0.48f + 0.56f * upperW - 0.06f * lowerW;
+            float roofCenterBias = -0.88f * upperW * centerBell;
+            float latAngleRad = Math.Clamp(-latWeight * sideSmooth + roofCenterBias, -1.22f, 1.22f);
+
+            float sinLat = MathF.Sin(latAngleRad);
+            float cosLat = MathF.Cos(latAngleRad);
+            float sinElev = MathF.Sin(elevRad);
+            float cosElev = MathF.Cos(elevRad);
+
+            bladeTipDirLocal = new Vector3(
+                sinLat,
+                cosLat * sinElev,
+                cosLat * cosElev);
+
+            // Namlu ucuna her noktada kesinlikle dik (ortogonal) teget duzlem tabani (tLat, tUp)
+            Vector3 tLat = new Vector3(cosLat, -sinLat * sinElev, -sinLat * cosElev);
+            Vector3 tUp = new Vector3(0.0f, cosElev, -sinElev);
+
+            // Kesici agiz her gardda gelen saldiriya dogru yumusakca hizalanir
+            float psi = -MathF.PI * 0.5f + 1.05f * sideSmooth + 0.65f * upperW * centerBell;
+            edgeNormalLocal = Vector3.Normalize(MathF.Cos(psi) * tLat + MathF.Sin(psi) * tUp);
+        }
+
+        private static float SmoothStep(float edge0, float edge1, float x)
+        {
+            float t = Math.Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+            return t * t * (3.0f - 2.0f * t);
+        }
+
         private static float WrapAngleRad(float rad)
         {
             while (rad > MathF.PI) rad -= 2f * MathF.PI;

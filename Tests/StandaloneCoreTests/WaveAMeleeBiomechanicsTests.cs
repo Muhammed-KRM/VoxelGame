@@ -366,5 +366,107 @@ namespace Stratocraft.StandaloneCoreTests
                 MeleeBiomechanicsSolver.ClassifyFrontWallClearance(0.48f, 1.10f, isHalfSwordActive: true),
                 Is.EqualTo(WallProximityZone.MediumWallContact));
         }
+
+        [Test]
+        public void Devir078_ContinuousParrySweep_HasZeroPositionOrAngleJump_AcrossOriginAndQuadrants()
+        {
+            const int steps = 100; // [-1.00 .. +1.00] adim 0.02
+            const float stepSize = 0.02f;
+            var armGrid = new Vector2[steps + 1, steps + 1];
+            var tipGrid = new Vector3[steps + 1, steps + 1];
+            var edgeGrid = new Vector3[steps + 1, steps + 1];
+
+            for (int ix = 0; ix <= steps; ix++)
+            {
+                float gx = -1.0f + ix * stepSize;
+                for (int iy = 0; iy <= steps; iy++)
+                {
+                    float gy = -1.0f + iy * stepSize;
+                    MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(
+                        gx, gy, out Vector2 armXY, out Vector3 tipDir, out Vector3 edgeNorm);
+
+                    Assert.That(tipDir.Length(), Is.EqualTo(1.0f).Within(0.001f),
+                        $"tipDir not unit at ({gx:F2},{gy:F2})");
+                    Assert.That(edgeNorm.Length(), Is.EqualTo(1.0f).Within(0.001f),
+                        $"edgeNorm not unit at ({gx:F2},{gy:F2})");
+                    Assert.That(MathF.Abs(Vector3.Dot(tipDir, edgeNorm)), Is.LessThan(0.002f),
+                        $"tipDir and edgeNorm lost orthogonality at ({gx:F2},{gy:F2})");
+
+                    armGrid[ix, iy] = armXY;
+                    tipGrid[ix, iy] = tipDir;
+                    edgeGrid[ix, iy] = edgeNorm;
+                }
+            }
+
+            float maxArmDelta = 0f;
+            float maxTipDelta = 0f;
+            float maxEdgeDelta = 0f;
+
+            for (int ix = 0; ix <= steps; ix++)
+            {
+                for (int iy = 0; iy <= steps; iy++)
+                {
+                    if (ix > 0)
+                    {
+                        float dArm = Vector2.Distance(armGrid[ix, iy], armGrid[ix - 1, iy]);
+                        float dTip = Vector3.Distance(tipGrid[ix, iy], tipGrid[ix - 1, iy]);
+                        float dEdge = Vector3.Distance(edgeGrid[ix, iy], edgeGrid[ix - 1, iy]);
+                        if (dArm > maxArmDelta) maxArmDelta = dArm;
+                        if (dTip > maxTipDelta) maxTipDelta = dTip;
+                        if (dEdge > maxEdgeDelta) maxEdgeDelta = dEdge;
+                    }
+                    if (iy > 0)
+                    {
+                        float dArm = Vector2.Distance(armGrid[ix, iy], armGrid[ix, iy - 1]);
+                        float dTip = Vector3.Distance(tipGrid[ix, iy], tipGrid[ix, iy - 1]);
+                        float dEdge = Vector3.Distance(edgeGrid[ix, iy], edgeGrid[ix, iy - 1]);
+                        if (dArm > maxArmDelta) maxArmDelta = dArm;
+                        if (dTip > maxTipDelta) maxTipDelta = dTip;
+                        if (dEdge > maxEdgeDelta) maxEdgeDelta = dEdge;
+                    }
+                }
+            }
+
+            Assert.That(maxArmDelta, Is.LessThan(0.025f), $"Parry armArcXY jumped by {maxArmDelta:F4}!");
+            Assert.That(maxTipDelta, Is.LessThan(0.08f), $"Parry bladeTipDirLocal jumped by {maxTipDelta:F4}!");
+            Assert.That(maxEdgeDelta, Is.LessThan(0.08f), $"Parry edgeNormalLocal jumped by {maxEdgeDelta:F4}!");
+
+            // Semantik bolge kontrolleri: Ust Ochs cati, Alt Pflug asili, Sol/Sag simetrik yan siper
+            MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(0f, 1.0f, out Vector2 upperArm, out Vector3 upperTip, out _);
+            MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(0f, -1.0f, out _, out Vector3 lowerTip, out _);
+            MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(-1.0f, 0f, out Vector2 leftArm, out Vector3 leftTip, out _);
+            MeleeBiomechanicsSolver.EvaluateContinuousParryBarrierPose(1.0f, 0f, out Vector2 rightArm, out Vector3 rightTip, out _);
+
+            Assert.That(upperArm.Y, Is.GreaterThan(0.25f));
+            Assert.That(upperTip.X, Is.LessThan(-0.50f));
+            Assert.That(lowerTip.Y, Is.LessThan(-0.45f));
+            Assert.That(leftArm.X, Is.EqualTo(-rightArm.X).Within(0.001f));
+            Assert.That(leftTip.X, Is.EqualTo(-rightTip.X).Within(0.001f));
+            Assert.That(rightTip.X, Is.LessThan(-0.30f));
+
+            // Devir 078: WeaponViewDistanceOffsetMeters sinirlamasi [-0.08..+0.22] ve arketip FPS taban konumlari
+            var bridge = new Stage1DirectionalCombatBridge();
+            Assert.That(bridge.WeaponViewDistanceOffsetMeters, Is.EqualTo(0.0f).Within(0.0001f));
+            bridge.WeaponViewDistanceOffsetMeters = -0.50f;
+            Assert.That(bridge.WeaponViewDistanceOffsetMeters, Is.EqualTo(-0.08f).Within(0.0001f));
+            bridge.WeaponViewDistanceOffsetMeters = 0.75f;
+            Assert.That(bridge.WeaponViewDistanceOffsetMeters, Is.EqualTo(0.22f).Within(0.0001f));
+
+            Vector3 rapierBase = Stage1DirectionalCombatBridge.GetFpsSwordBaseLocalOffset(CombatWeaponArchetype.Rapier);
+            Vector3 katanaBase = Stage1DirectionalCombatBridge.GetFpsSwordBaseLocalOffset(CombatWeaponArchetype.Katana);
+            Vector3 longswordBase = Stage1DirectionalCombatBridge.GetFpsSwordBaseLocalOffset(CombatWeaponArchetype.Longsword);
+            Vector3 greatswordBase = Stage1DirectionalCombatBridge.GetFpsSwordBaseLocalOffset(CombatWeaponArchetype.Greatsword);
+
+            Assert.That(rapierBase, Is.EqualTo(new Vector3(0.21f, -0.27f, 0.49f)));
+            Assert.That(katanaBase, Is.EqualTo(new Vector3(0.21f, -0.27f, 0.49f)));
+            Assert.That(longswordBase, Is.EqualTo(new Vector3(0.22f, -0.30f, 0.53f)));
+            Assert.That(greatswordBase, Is.EqualTo(new Vector3(0.27f, -0.38f, 0.62f)));
+
+            // Greatsword maksimum gorus mesafesi (+0.22m) ekliyken bile kameraya geri cekilmemeli
+            Vector3 gsMaxView = greatswordBase + new Vector3(0f, 0f, 0.22f);
+            Vector3 gsClamped = MeleeBiomechanicsSolver.ClampHiltToAnatomicalArmEnvelope(
+                new Vector3(0.10f, -0.26f, 0.06f), gsMaxView, upperArmLen: 0.64f + 0.22f * 0.55f, forearmLen: 0.62f + 0.22f * 0.55f);
+            Assert.That(Vector3.Distance(gsClamped, gsMaxView), Is.LessThan(0.001f));
+        }
     }
 }
