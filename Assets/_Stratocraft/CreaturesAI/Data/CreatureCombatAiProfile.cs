@@ -99,6 +99,15 @@ namespace Stratocraft.CreaturesAI.Data
     /// </summary>
     public static class CreatureCombatAiCatalog
     {
+        public const float WildBoarTerritorialAggroRadiusMeters = 4.5f;
+
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesOnSubsystemRegistration()
+        {
+        }
+#endif
+
         private static readonly CreatureAttackMoveSpec[] WolfPackMoves =
         {
             new(CreatureAttackDirection.Lunge, 0.46f, 0.14f, 0.48f, 3.05f, 44f, 1.00f, true, "SURU ATILIMI & ISIRIK"),
@@ -153,32 +162,44 @@ namespace Stratocraft.CreaturesAI.Data
                     moves: isBiped ? HeavyBipedMoves : AgileDualMoves);
             }
 
-            // 21 Canli Arketip Mizac & Sosyal Yapisi (Game Logic Bible uyumlu)
+            // 21 Canli Arketip Mizac & Sosyal Yapisi (Creature21BehaviorSystem.Catalog21 GERCEK ID'leriyle %100 uyumlu!)
             return archetypeId switch
             {
-                // Pasif / Otcul & kacici turler (geyik, koyun, uysal binek/kus vb.)
-                1 or 2 or 8 => new CreatureSpeciesAiProfile(
+                // YALNIZCA #5 (Savas Ati — binek) Pasif: saldirmadikca kacar veya binek olarak evcillestirilir
+                5 => new CreatureSpeciesAiProfile(
                     CreatureTemperament.Passive, CreatureSocialBehavior.Pack,
-                    canBlock: false, canDodge: true, baseIntel01: 0.20f, baseBlock: 0f, baseDodge: 0.25f,
+                    canBlock: false, canDodge: true, baseIntel01: 0.25f, baseBlock: 0f, baseDodge: 0.24f,
                     moves: NeutralGrazerMoves),
 
-                // Notr turler (yaban domuzu, dev geyik, ayi, golem/muhafiz vb. — saldirilmadan dalmaz!)
-                3 or 4 or 9 or 10 or 15 => new CreatureSpeciesAiProfile(
-                    CreatureTemperament.Neutral, archetypeId is 3 or 9 ? CreatureSocialBehavior.Pack : CreatureSocialBehavior.Solo,
-                    canBlock: isBiped, canDodge: !isBiped, baseIntel01: 0.35f, baseBlock: isBiped ? 0.22f : 0f, baseDodge: 0.14f,
-                    moves: isBiped ? HeavyBipedMoves : NeutralGrazerMoves),
+                // #2 (Yaban Domuzu): Bolgeci Notr — sebepsiz ASLA kacmaz; vurulunca veya < 4.5m yaklasilinca saldirir!
+                2 => new CreatureSpeciesAiProfile(
+                    CreatureTemperament.Neutral, CreatureSocialBehavior.Pack,
+                    canBlock: false, canDodge: true, baseIntel01: 0.34f, baseBlock: 0f, baseDodge: 0.16f,
+                    moves: NeutralGrazerMoves),
 
-                // Suru avcilari (Ulu Kurt, Goblin, Ork devriyesi vb.)
-                5 or 6 or 7 or 11 or 12 => new CreatureSpeciesAiProfile(
+                // #3 (Ulu Kurt): Agresif suru avcisi
+                3 => new CreatureSpeciesAiProfile(
                     CreatureTemperament.Aggressive, CreatureSocialBehavior.Pack,
-                    canBlock: isBiped, canDodge: true, baseIntel01: 0.44f, baseBlock: isBiped ? 0.30f : 0f, baseDodge: 0.20f,
-                    moves: isBiped ? HeavyBipedMoves : WolfPackMoves),
+                    canBlock: false, canDodge: true, baseIntel01: 0.46f, baseBlock: 0f, baseDodge: 0.22f,
+                    moves: WolfPackMoves),
 
-                // Elit tekil avcilar & Minotaur / Troll / Savasci Bosslar
+                // #1 (Goblin), #4 (Gece Gulyabanisi), #6 (Ork), #7 (Kararmis Sovalye), #9 (Celik Ag Orumcegi): Agresif suru/akin avcilari
+                1 or 4 or 6 or 7 or 9 => new CreatureSpeciesAiProfile(
+                    CreatureTemperament.Aggressive, CreatureSocialBehavior.Pack,
+                    canBlock: isBiped, canDodge: true, baseIntel01: 0.46f, baseBlock: isBiped ? 0.30f : 0f, baseDodge: 0.20f,
+                    moves: (isBiped && (archetypeId == 6 || archetypeId == 7)) ? HeavyBipedMoves : AgileDualMoves),
+
+                // #14 (Griffin), #16 (Firtina Wyvern'i): Agresif ucan yirticilar
+                14 or 16 => new CreatureSpeciesAiProfile(
+                    CreatureTemperament.Aggressive, CreatureSocialBehavior.Solo,
+                    canBlock: false, canDodge: true, baseIntel01: 0.56f, baseBlock: 0f, baseDodge: 0.24f,
+                    moves: FlyingBossMoves),
+
+                // #8 (Vahsi Yikici), #10 (Savas Ayisi), #11..#21 (Golemler, Basilisk, Minotaur, Akrep, Wraith, Behemoth, Automaton, Void Stalker)
                 _ => new CreatureSpeciesAiProfile(
                     CreatureTemperament.Aggressive, CreatureSocialBehavior.Solo,
                     canBlock: isBiped, canDodge: true, baseIntel01: 0.55f, baseBlock: isBiped ? 0.34f : 0.12f, baseDodge: 0.22f,
-                    moves: isBiped ? HeavyBipedMoves : AgileDualMoves)
+                    moves: (isBiped || archetypeId == 8 || archetypeId == 10 || archetypeId == 19) ? HeavyBipedMoves : AgileDualMoves)
             };
         }
 

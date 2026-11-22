@@ -55,6 +55,12 @@ namespace Stratocraft.Character
             EvadeDodge = 13
         }
 
+        public const float MatteOrganicMatCapBlendWeight = 0.04f;
+        public const float MatteOrganicRimLightStrength = 0.05f;
+        public const float MatteOrganicSmoothFacetBlend = 0.45f;
+        public const float MatteOrganicMicroDetailStrength = 0.35f;
+        public const float DefaultAggressiveAggroRangeMeters = 14.0f;
+
         public enum CreatureGlbRigKind : byte
         {
             DireWolf = 0,
@@ -62,7 +68,9 @@ namespace Stratocraft.Character
             StagSteed = 2,
             ArachnidStalker = 3,
             GriffinRaptor = 4,
-            AncientGolem = 5
+            AncientGolem = 5,
+            WildBoar = 6,
+            NightGhoul = 7
         }
 
         public static readonly string[] CanonicalCreatureGlbFileNames =
@@ -72,8 +80,20 @@ namespace Stratocraft.Character
             "creature_stag_steed.glb",
             "creature_arachnid_stalker.glb",
             "creature_griffin_raptor.glb",
-            "creature_ancient_golem.glb"
+            "creature_ancient_golem.glb",
+            "creature_wild_boar.glb",
+            "creature_night_ghoul.glb"
         };
+
+        public static bool UsesMatteOrganicCreatureMaterial(byte archetypeId, bool isPhoenixBoss = false)
+        {
+            if (isPhoenixBoss)
+            {
+                return false;
+            }
+
+            return !Creature21BehaviorSystem.IsConstructOrGolemArchetype(archetypeId);
+        }
 
         public static string ResolveCreatureGlbFileName(CreatureGlbRigKind rigKind)
         {
@@ -96,7 +116,7 @@ namespace Stratocraft.Character
                     CaveCreatureVariantKind.GiantCaveSpider => CreatureGlbRigKind.ArachnidStalker,
                     CaveCreatureVariantKind.CrystalCavernScorpion => CreatureGlbRigKind.ArachnidStalker,
                     CaveCreatureVariantKind.CaveBatCrawler => CreatureGlbRigKind.GriffinRaptor,
-                    CaveCreatureVariantKind.AbyssalSkeletonKnight => CreatureGlbRigKind.AncientGolem,
+                    CaveCreatureVariantKind.AbyssalSkeletonKnight => CreatureGlbRigKind.NightGhoul,
                     CaveCreatureVariantKind.MagmaSerpent => CreatureGlbRigKind.DireWolf,
                     _ => CreatureGlbRigKind.ArachnidStalker
                 };
@@ -109,12 +129,15 @@ namespace Stratocraft.Character
 
             return archetypeId switch
             {
-                1 or 6 or 7 or 11 or 13 or 17 or 18 or 20 => CreatureGlbRigKind.AncientGolem,
-                2 or 8 or 10 or 19 => CreatureGlbRigKind.HornedBehemoth,
+                2 => CreatureGlbRigKind.WildBoar,
+                1 or 4 or 6 or 7 or 18 => CreatureGlbRigKind.NightGhoul,
+                11 or 17 or 20 => CreatureGlbRigKind.AncientGolem,
+                3 or 12 or 21 => CreatureGlbRigKind.DireWolf,
                 5 => CreatureGlbRigKind.StagSteed,
+                8 or 10 or 13 or 19 => CreatureGlbRigKind.HornedBehemoth,
                 9 or 15 => CreatureGlbRigKind.ArachnidStalker,
                 14 or 16 => CreatureGlbRigKind.GriffinRaptor,
-                _ => isBiped ? CreatureGlbRigKind.AncientGolem : CreatureGlbRigKind.DireWolf
+                _ => isBiped ? CreatureGlbRigKind.NightGhoul : CreatureGlbRigKind.DireWolf
             };
         }
 
@@ -210,18 +233,92 @@ namespace Stratocraft.Character
             public float BlinkDashRemainingSeconds;
         }
 
+        public static float ComputeEffectiveAggroRangeMeters(
+            byte archetypeId,
+            AnatomyCapabilityFlags capabilities,
+            bool isFlyingBoss = false,
+            float aggressionMultiplier = 1.0f)
+        {
+            if (aggressionMultiplier <= 0.02f)
+            {
+                return 0f;
+            }
+
+            float baseAggro = isFlyingBoss ? 15.0f : DefaultAggressiveAggroRangeMeters;
+            if (Creature21BehaviorSystem.HasArchetypeCapability(
+                    archetypeId,
+                    capabilities,
+                    AnatomyCapabilityFlags.CapTrenchBallistic | AnatomyCapabilityFlags.CapStealthPhasing) ||
+                Creature21BehaviorSystem.CanUseVoidBlinkDash(archetypeId, capabilities))
+            {
+                baseAggro = MathF.Max(baseAggro, 18.0f);
+            }
+
+            return MathF.Max(DefaultAggressiveAggroRangeMeters, baseAggro * MathF.Max(1.0f, aggressionMultiplier));
+        }
+
+        public static bool EvaluateShouldEngageHostilePure(
+            byte archetypeId,
+            AnatomyCapabilityFlags capabilities,
+            bool isFlyingBoss,
+            bool isBiped,
+            bool isCaveVariant,
+            float horizDistMeters,
+            bool hasBeenProvoked,
+            float currentHp,
+            float maxHp,
+            float aggressionMultiplier,
+            bool isCreativeMode,
+            out float resolvedAggroRangeMeters,
+            out bool shouldPassiveFlee)
+        {
+            // [F4] Yaratici Mod aktif olsa bile yirtici/saldirgan canlilar aggroRange (>= 14m) icinde ASLA Patrol'da beklemez!
+            float effectiveMult = isCreativeMode && aggressionMultiplier <= 0.02f
+                ? 1.0f
+                : aggressionMultiplier;
+            resolvedAggroRangeMeters = ComputeEffectiveAggroRangeMeters(
+                archetypeId,
+                capabilities,
+                isFlyingBoss,
+                effectiveMult);
+
+            CreatureSpeciesAiProfile aiProfile = CreatureCombatAiCatalog.ResolveProfile(
+                archetypeId,
+                isFlyingBoss,
+                isBiped,
+                isCaveVariant);
+
+            bool shouldEngage = resolvedAggroRangeMeters > 0f &&
+                                horizDistMeters <= resolvedAggroRangeMeters &&
+                                (aiProfile.Temperament == CreatureTemperament.Aggressive ||
+                                 (aiProfile.Temperament == CreatureTemperament.Neutral &&
+                                  (hasBeenProvoked ||
+                                   currentHp < maxHp * 0.99f ||
+                                   horizDistMeters < CreatureCombatAiCatalog.WildBoarTerritorialAggroRadiusMeters)) ||
+                                 (aiProfile.Temperament == CreatureTemperament.Passive &&
+                                  hasBeenProvoked &&
+                                  currentHp < maxHp * 0.65f));
+
+            shouldPassiveFlee = aiProfile.Temperament == CreatureTemperament.Passive &&
+                                horizDistMeters <= 7.5f &&
+                                !shouldEngage;
+            return shouldEngage;
+        }
+
         /// <summary>
-        /// Saf .NET 10 ve Unity ortak anti-teleport kinematik adimi:
-        /// Patrol &lt;-&gt; AggroChase &lt;-&gt; EvadeDodge &lt;-&gt; Flee &lt;-&gt; Patrol ve 18 m/s Void Blink Dash gecislerinde
-        /// AnchorPos guncellemesini ve sifir tek-kare isinlanma garantisini ilerletir.
+        /// Saf .NET 10 ve Unity ortak canli yaratik AI ve anti-teleport kinematik adimi:
+        /// Catalog21 mizac tablosuyla (Gece Gulyabanisi #4 = Aggressive, Yaban Domuzu #2 = Bolgeci Neutral, Savas Ati #5 = Passive)
+        /// [F4] Yaratici Mod aktif olsa bile aggroRange (&gt;= 14.0m) icindeki oyuncuyu aninda takip/saldiriya alir.
         /// </summary>
-        public static void StepAntiTeleportKinematicAgent(
+        public static void StepLiveCreatureStatePure(
             ref AntiTeleportKinematicAgent a,
             System.Numerics.Vector3 playerPos,
             System.Numerics.Vector3 playerFwdXZ,
             float timeSec,
             float deltaTime,
-            Func<float, float, float>? groundHeightSampler = null)
+            Func<float, float, float>? groundHeightSampler = null,
+            bool isCreativeMode = false,
+            float aggressionMultiplier = 1.0f)
         {
             float safeDt = MathF.Max(0f, deltaTime);
             a.BlinkCooldownTimer = MathF.Max(0f, a.BlinkCooldownTimer - safeDt);
@@ -233,8 +330,33 @@ namespace Stratocraft.Character
                 ? new System.Numerics.Vector3(dx / horizDist, 0f, dz / horizDist)
                 : new System.Numerics.Vector3(0f, 0f, 1f);
 
-            float aggroRange = Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) ? 18.0f : 14.0f;
-            bool shouldEngage = horizDist <= aggroRange && (a.HasBeenProvoked || a.CurrentHp < a.MaxHp || a.ArchetypeId != 5);
+            bool shouldEngage = EvaluateShouldEngageHostilePure(
+                a.ArchetypeId,
+                a.Capabilities,
+                a.IsFlying,
+                a.IsBiped,
+                isCaveVariant: false,
+                horizDist,
+                a.HasBeenProvoked,
+                a.CurrentHp,
+                a.MaxHp,
+                aggressionMultiplier,
+                isCreativeMode,
+                out _,
+                out bool shouldPassiveFlee);
+
+            if (shouldPassiveFlee && !a.IsBlinkDashActive && a.DodgeTimer <= 0f)
+            {
+                a.State = CreatureAiState.Flee;
+                float passiveFleeSpeed = Math.Clamp(a.BaseSpeed * MathF.Max(0.25f, a.SpeedMultiplier) * 0.92f, 1.25f, 8.5f);
+                a.Position -= flatDir * (passiveFleeSpeed * safeDt);
+                if (!a.IsFlying && groundHeightSampler != null)
+                {
+                    a.Position.Y = MoveTowardsScalar(a.Position.Y, groundHeightSampler(a.Position.X, a.Position.Z), safeDt * 11.0f);
+                }
+                a.AnchorPos = a.Position;
+                return;
+            }
 
             if (!shouldEngage && !a.IsBlinkDashActive && a.DodgeTimer <= 0f)
             {
@@ -389,6 +511,25 @@ namespace Stratocraft.Character
             a.AnchorPos = a.Position;
         }
 
+        public static void StepAntiTeleportKinematicAgent(
+            ref AntiTeleportKinematicAgent a,
+            System.Numerics.Vector3 playerPos,
+            System.Numerics.Vector3 playerFwdXZ,
+            float timeSec,
+            float deltaTime,
+            Func<float, float, float>? groundHeightSampler = null)
+        {
+            StepLiveCreatureStatePure(
+                ref a,
+                playerPos,
+                playerFwdXZ,
+                timeSec,
+                deltaTime,
+                groundHeightSampler,
+                isCreativeMode: false,
+                aggressionMultiplier: 1.0f);
+        }
+
         private static System.Numerics.Vector3 MoveTowardsVec3(
             System.Numerics.Vector3 current,
             System.Numerics.Vector3 target,
@@ -531,6 +672,97 @@ namespace Stratocraft.Character
         private static readonly int s_propRimLightStrength = Shader.PropertyToID("_RimLightStrength");
         private static readonly int s_propMatCapBlendWeight = Shader.PropertyToID("_MatCapBlendWeight");
         private static readonly int s_propBlackbodyIntensity = Shader.PropertyToID("_BlackbodyIntensity");
+        private static readonly int s_propSmoothFacetBlend = Shader.PropertyToID("_SmoothFacetBlend");
+        private static readonly int s_propMicroDetailStrength = Shader.PropertyToID("_MicroDetailStrength");
+        private static readonly int s_propUsePaletteLut = Shader.PropertyToID("_UsePaletteLUT");
+        private static readonly int s_propMicroDetailArray = Shader.PropertyToID("_MicroDetailArray");
+        private static readonly int s_propMatCapAtlas16x = Shader.PropertyToID("_MatCapAtlas16x");
+
+        private static Material? s_sharedMatteOrganicCreatureMaterial;
+        private static Material? s_sharedConstructMetallicCreatureMaterial;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesOnSubsystemRegistration()
+        {
+            s_sharedMatteOrganicCreatureMaterial = null;
+            s_sharedConstructMetallicCreatureMaterial = null;
+            s_voxelTerrainMask = -1;
+        }
+
+        public static Material? ResolveCreatureSurfaceMaterial(
+            Material? sharedMat,
+            byte archetypeId,
+            bool isPhoenixBoss = false)
+        {
+            Material? baseRgbMat = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(sharedMat) ?? sharedMat;
+            if (baseRgbMat == null)
+            {
+                return null;
+            }
+
+            if (UsesMatteOrganicCreatureMaterial(archetypeId, isPhoenixBoss))
+            {
+                if (s_sharedMatteOrganicCreatureMaterial == null)
+                {
+                    s_sharedMatteOrganicCreatureMaterial = new Material(baseRgbMat)
+                    {
+                        name = "M_Stratocraft_CreatureMatteOrganic_RGB"
+                    };
+                }
+
+                if (sharedMat != null)
+                {
+                    if (sharedMat.HasProperty(s_propMicroDetailArray))
+                    {
+                        Texture? microTex = sharedMat.GetTexture(s_propMicroDetailArray);
+                        if (microTex != null) s_sharedMatteOrganicCreatureMaterial.SetTexture(s_propMicroDetailArray, microTex);
+                    }
+                    if (sharedMat.HasProperty(s_propMatCapAtlas16x))
+                    {
+                        Texture? matCapTex = sharedMat.GetTexture(s_propMatCapAtlas16x);
+                        if (matCapTex != null) s_sharedMatteOrganicCreatureMaterial.SetTexture(s_propMatCapAtlas16x, matCapTex);
+                    }
+                }
+
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propUsePaletteLut, 0.0f);
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propMatCapBlendWeight, MatteOrganicMatCapBlendWeight);
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propRimLightStrength, MatteOrganicRimLightStrength);
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propSmoothFacetBlend, MatteOrganicSmoothFacetBlend);
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propMicroDetailStrength, MatteOrganicMicroDetailStrength);
+                s_sharedMatteOrganicCreatureMaterial.SetFloat(s_propAmbientStrength, 0.72f);
+                return s_sharedMatteOrganicCreatureMaterial;
+            }
+
+            if (s_sharedConstructMetallicCreatureMaterial == null)
+            {
+                s_sharedConstructMetallicCreatureMaterial = new Material(baseRgbMat)
+                {
+                    name = "M_Stratocraft_CreatureConstruct_RGB"
+                };
+            }
+
+            if (sharedMat != null)
+            {
+                if (sharedMat.HasProperty(s_propMicroDetailArray))
+                {
+                    Texture? microTex = sharedMat.GetTexture(s_propMicroDetailArray);
+                    if (microTex != null) s_sharedConstructMetallicCreatureMaterial.SetTexture(s_propMicroDetailArray, microTex);
+                }
+                if (sharedMat.HasProperty(s_propMatCapAtlas16x))
+                {
+                    Texture? matCapTex = sharedMat.GetTexture(s_propMatCapAtlas16x);
+                    if (matCapTex != null) s_sharedConstructMetallicCreatureMaterial.SetTexture(s_propMatCapAtlas16x, matCapTex);
+                }
+            }
+
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propUsePaletteLut, 0.0f);
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propMatCapBlendWeight, 0.36f);
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propRimLightStrength, 0.14f);
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propSmoothFacetBlend, 0.24f);
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propMicroDetailStrength, MatteOrganicMicroDetailStrength);
+            s_sharedConstructMetallicCreatureMaterial.SetFloat(s_propAmbientStrength, 0.68f);
+            return s_sharedConstructMetallicCreatureMaterial;
+        }
 
         private readonly List<LiveCreatureAgent> _agents = new(32);
         private readonly List<ThrownLimbDebris> _activeLimbDebris = new(16);
@@ -539,8 +771,8 @@ namespace Stratocraft.Character
         private readonly List<PathNodeCoord> _astarPathBuffer = new(64);
         private readonly Dictionary<int, Mesh> _creatureMeshCache = new(32);
         private readonly Dictionary<int, Mesh?> _severedLimbGlbCache = new(16);
-        private readonly Dictionary<string, Mesh>?[] _creatureRigGlbCache = new Dictionary<string, Mesh>?[6];
-        private readonly bool[] _creatureRigGlbProbed = new bool[6];
+        private readonly Dictionary<string, Mesh>?[] _creatureRigGlbCache = new Dictionary<string, Mesh>?[CanonicalCreatureGlbFileNames.Length];
+        private readonly bool[] _creatureRigGlbProbed = new bool[CanonicalCreatureGlbFileNames.Length];
         private Dictionary<string, Mesh>? _phoenixBossGlbPartsCache;
         private bool _phoenixBossGlbProbed;
         private MaterialPropertyBlock? _stealthPropertyBlock;
@@ -643,7 +875,7 @@ namespace Stratocraft.Character
             CreatureArchetypeDefinition def = Creature21BehaviorSystem.GetById(archId);
 
             bool canFly = isFlyingBoss || (def.InitialCapabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
-            bool isBiped = !canFly && (def.InitialCapabilities & AnatomyCapabilityFlags.BipedalWalk) != 0 && customArchetypeId != 0;
+            bool isBiped = !canFly && (def.InitialCapabilities & AnatomyCapabilityFlags.BipedalWalk) != 0;
             float canonicalHp = customArchetypeId != 0
                 ? def.BaseMaxHp
                 : (isStarterPhoenix ? 680f : 240f);
@@ -1226,24 +1458,26 @@ namespace Stratocraft.Character
 
                 Vector3 probePosBefore = a.Root.position;
                 int probeStateBefore = (int)a.State;
-                CreatureSpeciesAiProfile aiProfile = CreatureCombatAiCatalog.ResolveProfile(
-                    a.ArchetypeId, a.IsFlyingBoss, a.IsBiped, a.CaveVariant != CaveCreatureVariantKind.None);
-                float aggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
-                float baseAggro = a.CaveVariant != CaveCreatureVariantKind.None ? 12.5f : (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 8.5f));
-                if (Creature21BehaviorSystem.HasArchetypeCapability(
-                        a.ArchetypeId,
-                        a.Capabilities,
-                        AnatomyCapabilityFlags.CapTrenchBallistic | AnatomyCapabilityFlags.CapStealthPhasing) ||
-                    Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities))
-                {
-                    baseAggro = Mathf.Max(baseAggro, 18.0f);
-                }
-                float aggroRange = baseAggro * aggroMult;
-                bool shouldEngageHostile = aggroMult > 0.02f && horizDist <= aggroRange &&
-                    (aiProfile.Temperament == CreatureTemperament.Aggressive ||
-                     (aiProfile.Temperament == CreatureTemperament.Neutral && (a.HasBeenProvoked || a.CurrentHp < a.MaxHp * 0.99f)) ||
-                     (aiProfile.Temperament == CreatureTemperament.Passive && a.HasBeenProvoked && a.CurrentHp < a.MaxHp * 0.65f));
-                bool passiveFleeTrigger = aiProfile.Temperament == CreatureTemperament.Passive && horizDist <= 7.5f && !shouldEngageHostile;
+                float rawAggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
+                // Yalnizca acikca Bariscil (DifficultyPreset == 0) secilmisse saldirganlik sifirlanir;
+                // [F4] Yaratici Mod dahil tum normal/zorluk modlarinda Aggressive canlilar >= 14.0m menzilde aktif saldirir!
+                float effectiveAggroMult = (Stage1GameSettings.DifficultyPreset == 0 && rawAggroMult <= 0.02f)
+                    ? 0f
+                    : Mathf.Max(1.0f, rawAggroMult);
+                bool shouldEngageHostile = EvaluateShouldEngageHostilePure(
+                    a.ArchetypeId,
+                    a.Capabilities,
+                    a.IsFlyingBoss,
+                    a.IsBiped,
+                    a.CaveVariant != CaveCreatureVariantKind.None,
+                    horizDist,
+                    a.HasBeenProvoked,
+                    a.CurrentHp,
+                    a.MaxHp,
+                    effectiveAggroMult,
+                    isCreativeMode: false,
+                    out _,
+                    out bool passiveFleeTrigger);
 
                 if (passiveFleeTrigger)
                 {
@@ -4553,7 +4787,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            Material? rgbMat = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(sharedMat) ?? sharedMat;
+            Material? rgbMat = ResolveCreatureSurfaceMaterial(sharedMat, a.ArchetypeId, matchesPhoenix);
 
             if (rigParts != null && rigParts.Count >= 6)
             {
@@ -4562,6 +4796,45 @@ namespace Stratocraft.Character
 
                 switch (rigKind)
                 {
+                    case CreatureGlbRigKind.WildBoar:
+                    {
+                        a.RestTorsoLocalY = 0.58f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_Torso", new Vector3(0f, 0.58f, 0f), rigParts, "Boar_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.04f, 0.44f), rigParts, "Boar_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.10f, 0.08f), rigParts, "Boar_Jaw", rgbMat);
+                        a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.02f, -0.46f), rigParts, "Boar_Tail", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.17f, -0.08f, 0.26f), rigParts, "Boar_FrontUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.25f, 0f), rigParts, "Boar_FrontLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.17f, -0.08f, 0.26f), rigParts, "Boar_FrontUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.25f, 0f), rigParts, "Boar_FrontLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.17f, -0.06f, -0.28f), rigParts, "Boar_HindUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.27f, -0.04f), rigParts, "Boar_HindLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.17f, -0.06f, -0.28f), rigParts, "Boar_HindUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.27f, -0.04f), rigParts, "Boar_HindLower_R", rgbMat);
+                        return true;
+                    }
+
+                    case CreatureGlbRigKind.NightGhoul:
+                    {
+                        a.RestTorsoLocalY = 0.90f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_BipedTorso", new Vector3(0f, 0.90f, 0f), rigParts, "Ghoul_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedHead", new Vector3(0f, 0.48f, 0.18f), rigParts, "Ghoul_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_BipedJaw", new Vector3(0f, -0.07f, 0.06f), rigParts, "Ghoul_Jaw", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedLeftArm", new Vector3(-0.21f, 0.38f, 0.08f), rigParts, "Ghoul_ArmUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_BipedLeftForearm", new Vector3(-0.05f, -0.36f, 0.04f), rigParts, "Ghoul_ArmLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedRightArm", new Vector3(0.21f, 0.38f, 0.08f), rigParts, "Ghoul_ArmUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_BipedRightForearm", new Vector3(0.05f, -0.36f, 0.04f), rigParts, "Ghoul_ArmLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedLeftLeg", new Vector3(-0.15f, -0.06f, -0.05f), rigParts, "Ghoul_LegUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_BipedLeftCalf", new Vector3(0f, -0.40f, 0.09f), rigParts, "Ghoul_LegLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedRightLeg", new Vector3(0.15f, -0.06f, -0.05f), rigParts, "Ghoul_LegUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_BipedRightCalf", new Vector3(0f, -0.40f, 0.09f), rigParts, "Ghoul_LegLower_R", rgbMat);
+                        return true;
+                    }
+
                     case CreatureGlbRigKind.DireWolf:
                     {
                         a.RestTorsoLocalY = 0.68f;
@@ -4721,7 +4994,7 @@ namespace Stratocraft.Character
                 primaryGlbMesh,
                 new Vector3(uniformFit, uniformFit, uniformFit),
                 glbVisOffset,
-                sharedMat);
+                rgbMat);
 
             a.HeadPivot = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.22f, 0.36f));
             a.JawPivot = CreateEmptyCreaturePivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.05f, 0.14f));
@@ -4879,8 +5152,11 @@ namespace Stratocraft.Character
             }
 
             float flinchPitch = a.HitFlinchTimer > 0f ? Mathf.Sin(a.HitFlinchTimer * 45f) * 24f - 18f : 0f;
-            bool isHornCharger = a.ArchetypeId == 5 || a.ArchetypeId == 8 || a.ArchetypeId == 10 || a.ArchetypeId == 13 || a.ArchetypeId == 19;
+            bool isHornCharger = a.ArchetypeId == 2 || a.ArchetypeId == 5 || a.ArchetypeId == 8 || a.ArchetypeId == 10 || a.ArchetypeId == 13 || a.ArchetypeId == 19;
             bool isArachnidStinger = a.ArchetypeId == 9 || a.ArchetypeId == 15;
+            bool useBipedRigAnim = a.UsesRealGlbBodyVisual
+                ? (a.ActiveGlbRigKind == CreatureGlbRigKind.NightGhoul || a.ActiveGlbRigKind == CreatureGlbRigKind.AncientGolem)
+                : a.IsBiped;
 
             if (a.BodyTorsoPivot != null)
             {
@@ -4915,7 +5191,7 @@ namespace Stratocraft.Character
                             lungeZ = Blend3(0f, -0.22f, 0.56f, wWindup, wStrike);
                         }
                     }
-                    else if (a.IsBiped)
+                    else if (useBipedRigAnim)
                     {
                         switch (a.ActiveAttackDirection)
                         {
@@ -5091,9 +5367,9 @@ namespace Stratocraft.Character
                 }
                 else if (isInAttackCycle)
                 {
-                    if (a.IsBiped)
+                    if (useBipedRigAnim)
                     {
-                        // 2) TUM BIPED YARATIKLAR (Golem, Ork, Minotaur, Goblin, Iskelet, Sovalye): 6 cok belirgin saldiri!
+                        // 2) TUM BIPED YARATIKLAR (NightGhoul, Golem, Ork, Goblin, Sovalye, Wraith): 6 cok belirgin saldiri!
                         switch (a.ActiveAttackDirection)
                         {
                             case CreatureAttackDirection.Overhead:

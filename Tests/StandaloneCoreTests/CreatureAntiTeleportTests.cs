@@ -269,7 +269,7 @@ namespace Stratocraft.StandaloneCoreTests
             string creaturesDir = Path.Combine(repoRoot, "Assets", "Art", "Generated", "Creatures_21");
             string previewsDir = Path.Combine(repoRoot, "BuildLogs", "Previews");
 
-            Assert.That(Stage1CreatureSimulationBridge.CanonicalCreatureGlbFileNames.Length, Is.EqualTo(6));
+            Assert.That(Stage1CreatureSimulationBridge.CanonicalCreatureGlbFileNames.Length, Is.EqualTo(8));
 
             foreach (string glbFileName in Stage1CreatureSimulationBridge.CanonicalCreatureGlbFileNames)
             {
@@ -359,7 +359,7 @@ namespace Stratocraft.StandaloneCoreTests
                 Assert.That(File.Exists(Path.Combine(creaturesDir, mappedFile)), Is.True);
             }
 
-            Assert.That(coveredRigs.Count, Is.EqualTo(6), "All 6 generated creature rigs should be actively mapped across the 21 archetypes.");
+            Assert.That(coveredRigs.Count, Is.EqualTo(8), "All 8 generated creature rigs should be actively mapped across the 21 archetypes.");
         }
 
         private static string FindRepoRoot()
