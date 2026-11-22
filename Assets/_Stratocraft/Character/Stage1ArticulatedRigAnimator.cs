@@ -65,6 +65,7 @@ namespace Stratocraft.Character
         private float _turnInPlaceStepPulse;
         private byte _lastVisHelmetTier, _lastVisChestTier, _lastVisVambraceTier, _lastVisGreavesTier;
         private bool _armorVisualsInitialized;
+        private bool _lastArmorResolverBound;
         private GameObject? _armorHelmetGo, _armorChestGo, _armorPauldronRGo, _armorPauldronLGo;
         private GameObject? _armorVambraceRGo, _armorVambraceLGo, _armorGreaveRGo, _armorGreaveLGo;
         private float _smoothedLeftFootIkLift;
@@ -77,6 +78,18 @@ namespace Stratocraft.Character
         private bool _lastProneShadowState;
         private int _lastBodyChildCount = -1;
         private readonly List<Renderer> _cachedBodyRenderers = new(32);
+
+        /// <summary>
+        /// Opsiyonel 0-GC runtime 3B zirh GLB mesh cozumleyicisi: (hitZoneIndex: 0=Baslik, 1=Gogusluk, 2=Kolcak, 3=Dizlik, byte tier) -> Mesh?.
+        /// Integrator tarafindan bir kez atanarak GlbHierarchyLoader.LoadArmorSlotMeshCached ile baglanabilir.
+        /// </summary>
+        public Func<int, byte, Mesh?>? RuntimeArmorMeshResolver { get; set; }
+
+        /// <summary>Zirh gorsel onbellegini gecersiz kilip bir sonraki senkronizasyonda yeniden yukler.</summary>
+        public void InvalidateArmorVisualsCache()
+        {
+            _armorVisualsInitialized = false;
+        }
 
         /// <summary>Oyuncunun sol kolu koptu mu? (True ise tek el agirlik cezasi devreye girer ve kol gorseli kesik guduge donusur).</summary>
         public bool PlayerLeftArmSevered { get; set; }
@@ -219,8 +232,10 @@ namespace Stratocraft.Character
             float rightFistPunch01 = 0f,
             float leftFistPunch01 = 0f,
             float cameraYawDeg = float.NaN,
-            bool isBodyInspectMode = false)
+            bool isBodyInspectMode = false,
+            float combatVerticalDipMeters = 0f)
         {
+            float clampedCombatDip = Mathf.Clamp(combatVerticalDipMeters, -0.08f, 0f);
             float horizontalSpeed = Mathf.Sqrt(
                 movementState.VelocityX * movementState.VelocityX +
                 movementState.VelocityZ * movementState.VelocityZ);
@@ -243,6 +258,11 @@ namespace Stratocraft.Character
                 out float targetRollDeg,
                 out float targetHipHeightY,
                 out float targetKneeFlexDeg);
+
+            if (clampedCombatDip < -0.001f)
+            {
+                targetKneeFlexDeg = Mathf.Clamp(targetKneeFlexDeg + Mathf.Abs(clampedCombatDip) * 185f, 0f, 125f);
+            }
 
             float blend = Mathf.Clamp01(deltaTime * 12f);
             _smoothedBodyPitchDeg = Mathf.Lerp(_smoothedBodyPitchDeg, targetPitchDeg, blend);
@@ -309,7 +329,7 @@ namespace Stratocraft.Character
                 if (_pelvisRootPivot != null)
                 {
                     float turnStepBob = _turnInPlaceStepPulse > 0.01f ? Mathf.Abs(Mathf.Sin(Time.time * 12f)) * 0.015f * _turnInPlaceStepPulse : 0f;
-                    _pelvisRootPivot.localPosition = new Vector3(0f, Mathf.Max(0.24f, _smoothedHipHeightY + strideBob + turnStepBob), 0f);
+                    _pelvisRootPivot.localPosition = new Vector3(0f, Mathf.Max(0.24f, _smoothedHipHeightY + strideBob + turnStepBob + clampedCombatDip), 0f);
                     _pelvisRootPivot.localRotation = Quaternion.Euler(0f, strideYawTwist * 0.45f, _smoothedBodyRollDeg * 0.45f);
                 }
 
@@ -340,7 +360,7 @@ namespace Stratocraft.Character
 
             if (!isBodyInspectMode)
             {
-                UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg, deltaTime, worldChunks, cameraYawDeg);
+                UpdateCameraPose(playerRoot, playerCamera, movementState, isFirstPersonMode, horizontalSpeed, cameraPitchDeg, deltaTime, worldChunks, cameraYawDeg, clampedCombatDip);
             }
             if (isFirstPersonMode && !isBodyInspectMode && playerBodyRoot != null && playerCamera != null)
             {
@@ -711,16 +731,23 @@ namespace Stratocraft.Character
             Vector3 rightPole = (viewRight * 0.70f - viewUp * 0.72f - viewFwd * 0.35f).normalized;
             Vector3 leftPole = (-viewRight * 0.70f - viewUp * 0.72f - viewFwd * 0.35f).normalized;
 
-            // 1) KILIC (Slot 1): Gercek Sag El + (2H'de) Gercek Sol El dogrudan deri kabzayi TAM MERKEZINDEN sarar!
+            // 1) KILIC (Slot 1): Gercek Sag El + (2H veya Faz K.6 Halbschwert Yari-Kilic'ta) Gercek Sol El kabza/orta-namluyu sarar!
             if (activeHolsterSlot == 1 &&
                 combatBridge.TryGetWeaponGripWorldSockets(activeHeldTransform, PlayerLeftArmSevered, out Vector3 rGrip, out Vector3 lGrip, out bool use2H))
             {
                 SetSocketFallbackItemActive(false);
 
+                bool isHalfSwordGrip = combatBridge.IsHalfSwordActive && !PlayerLeftArmSevered && activeHeldTransform != null;
+                if (isHalfSwordGrip)
+                {
+                    lGrip = combatBridge.GetHalfSwordMidBladeWorldSocket(activeHeldTransform!);
+                    use2H = true;
+                }
+
                 // Silah kabzasini iki omuzun ortak dogal erisim zarfi icinde tut (sol-ust/tepe savurmada eller ASLA kopmaz!)
                 Vector3 shR = _rightArmShoulderPivot.position;
                 Vector3 anchorRef = (use2H && _leftArmShoulderPivot != null)
-                    ? Vector3.Lerp(shR, _leftArmShoulderPivot.position, 0.38f)
+                    ? Vector3.Lerp(shR, _leftArmShoulderPivot.position, isHalfSwordGrip ? 0.45f : 0.38f)
                     : shR;
                 float maxArmReach = (UpperArmLengthMeters + ForearmLengthMeters) * 0.89f;
                 Vector3 toGripR = rGrip - anchorRef;
@@ -749,7 +776,10 @@ namespace Stratocraft.Character
 
                 if (use2H && _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null)
                 {
-                    ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, lGrip, leftPole, bladeUp, isRightHand: false);
+                    Vector3 effLeftPole = isHalfSwordGrip
+                        ? (-viewRight * 0.58f - viewUp * 0.80f - viewFwd * 0.22f).normalized
+                        : leftPole;
+                    ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, lGrip, effLeftPole, bladeUp, isRightHand: false);
                 }
                 return;
             }
@@ -952,15 +982,21 @@ namespace Stratocraft.Character
         /// <summary>
         /// Giyili 4 bolge zirhini (0:Kask, 1:Gogusluk+Omuzluk, 2:Kolcak, 3:Dizlik) kademe rengine gore
         /// gercek insan karakterinin kendi eklemlerinde 3B olarak gosterir/gizler (0 B/kare kararli durum).
+        /// Opsiyonel <paramref name="armorGlbMeshResolver"/> (veya <see cref="RuntimeArmorMeshResolver"/>) verilirse
+        /// 15 parcalik GLB zirh mesh'lerini prosedurel kutu yedegi yerine dogrudan giydirir.
         /// </summary>
         public void SyncEquipped3DArmorVisuals(
             in CharacterVitalsComponent vitals,
             bool isFirstPersonMode,
             bool isBodyInspectMode,
-            Material? fallbackMat)
+            Material? fallbackMat,
+            Func<int, byte, Mesh?>? armorGlbMeshResolver = null)
         {
             if (_spineTorsoPivot == null || _headCounterPitchPivot == null) return;
+            Func<int, byte, Mesh?>? effectiveResolver = armorGlbMeshResolver ?? RuntimeArmorMeshResolver;
+            bool resolverBound = effectiveResolver != null;
             bool changed = !_armorVisualsInitialized ||
+                           _lastArmorResolverBound != resolverBound ||
                            _lastVisHelmetTier != vitals.EquippedHelmetTier ||
                            _lastVisChestTier != vitals.EquippedChestplateTier ||
                            _lastVisVambraceTier != vitals.EquippedVambracesTier ||
@@ -968,26 +1004,27 @@ namespace Stratocraft.Character
             if (!changed) return;
 
             _armorVisualsInitialized = true;
+            _lastArmorResolverBound = resolverBound;
             _lastVisHelmetTier = vitals.EquippedHelmetTier;
             _lastVisChestTier = vitals.EquippedChestplateTier;
             _lastVisVambraceTier = vitals.EquippedVambracesTier;
             _lastVisGreavesTier = vitals.EquippedGreavesTier;
 
             Material? mat = ResolveHumanVertexColorMaterial(fallbackMat);
-            UpdateArmorVisualPiece(ref _armorHelmetGo, _headCounterPitchPivot, "RigIK_Armor_Helmet", vitals.EquippedHelmetTier, 0, mat);
-            UpdateArmorVisualPiece(ref _armorChestGo, _spineTorsoPivot, "RigIK_Armor_Chest", vitals.EquippedChestplateTier, 1, mat);
+            UpdateArmorVisualPiece(ref _armorHelmetGo, _headCounterPitchPivot, "RigIK_Armor_Helmet", vitals.EquippedHelmetTier, 0, mat, effectiveResolver);
+            UpdateArmorVisualPiece(ref _armorChestGo, _spineTorsoPivot, "RigIK_Armor_Chest", vitals.EquippedChestplateTier, 1, mat, effectiveResolver);
             if (_rightArmShoulderPivot != null)
-                UpdateArmorVisualPiece(ref _armorPauldronRGo, _rightArmShoulderPivot, "RigIK_Armor_PauldronR", vitals.EquippedChestplateTier, 4, mat);
+                UpdateArmorVisualPiece(ref _armorPauldronRGo, _rightArmShoulderPivot, "RigIK_Armor_PauldronR", vitals.EquippedChestplateTier, 4, mat, null);
             if (_leftArmShoulderPivot != null)
-                UpdateArmorVisualPiece(ref _armorPauldronLGo, _leftArmShoulderPivot, "RigIK_Armor_PauldronL", vitals.EquippedChestplateTier, 5, mat);
+                UpdateArmorVisualPiece(ref _armorPauldronLGo, _leftArmShoulderPivot, "RigIK_Armor_PauldronL", vitals.EquippedChestplateTier, 5, mat, null);
             if (_rightElbowPivot != null)
-                UpdateArmorVisualPiece(ref _armorVambraceRGo, _rightElbowPivot, "RigIK_Armor_VambraceR", vitals.EquippedVambracesTier, 2, mat);
+                UpdateArmorVisualPiece(ref _armorVambraceRGo, _rightElbowPivot, "RigIK_Armor_VambraceR", vitals.EquippedVambracesTier, 2, mat, effectiveResolver);
             if (_leftElbowPivot != null)
-                UpdateArmorVisualPiece(ref _armorVambraceLGo, _leftElbowPivot, "RigIK_Armor_VambraceL", vitals.EquippedVambracesTier, 2, mat);
+                UpdateArmorVisualPiece(ref _armorVambraceLGo, _leftElbowPivot, "RigIK_Armor_VambraceL", vitals.EquippedVambracesTier, 2, mat, effectiveResolver);
             if (_rightKneePivot != null)
-                UpdateArmorVisualPiece(ref _armorGreaveRGo, _rightKneePivot, "RigIK_Armor_GreaveR", vitals.EquippedGreavesTier, 3, mat);
+                UpdateArmorVisualPiece(ref _armorGreaveRGo, _rightKneePivot, "RigIK_Armor_GreaveR", vitals.EquippedGreavesTier, 3, mat, effectiveResolver);
             if (_leftKneePivot != null)
-                UpdateArmorVisualPiece(ref _armorGreaveLGo, _leftKneePivot, "RigIK_Armor_GreaveL", vitals.EquippedGreavesTier, 3, mat);
+                UpdateArmorVisualPiece(ref _armorGreaveLGo, _leftKneePivot, "RigIK_Armor_GreaveL", vitals.EquippedGreavesTier, 3, mat, effectiveResolver);
 
             // Yeni eklenen zirh renderer'larina FPS/TPS gorunurluk kuralini hemen uygula (kask FPS'te ShadowsOnly, kolcak gorunur!)
             _shadowModeInitialized = false;
@@ -998,7 +1035,13 @@ namespace Stratocraft.Character
         }
 
         private static void UpdateArmorVisualPiece(
-            ref GameObject? go, Transform parent, string name, byte tier, int pieceKind, Material? mat)
+            ref GameObject? go,
+            Transform parent,
+            string name,
+            byte tier,
+            int pieceKind,
+            Material? mat,
+            Func<int, byte, Mesh?>? armorGlbMeshResolver)
         {
             if (tier == 0)
             {
@@ -1016,6 +1059,17 @@ namespace Stratocraft.Character
                 if (mat != null) mr.sharedMaterial = mat;
             }
             go.SetActive(true);
+
+            if (armorGlbMeshResolver != null && pieceKind >= 0 && pieceKind <= 3)
+            {
+                Mesh? glbOverrideMesh = armorGlbMeshResolver(pieceKind, tier);
+                if (glbOverrideMesh != null)
+                {
+                    go.GetComponent<MeshFilter>().sharedMesh = glbOverrideMesh;
+                    go.transform.localScale = Vector3.one;
+                    return;
+                }
+            }
 
             (Color32 mainCol, Color32 trimCol) = tier switch
             {
@@ -1555,10 +1609,12 @@ namespace Stratocraft.Character
             float cameraPitchDeg,
             float deltaTime,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks,
-            float cameraYawDeg = float.NaN)
+            float cameraYawDeg = float.NaN,
+            float combatVerticalDipMeters = 0f)
         {
             if (cam == null) return;
 
+            float clampedDip = Mathf.Clamp(combatVerticalDipMeters, -0.08f, 0f);
             bool isProne = movementState.Stance == CharacterStance.ProneCrawling || movementState.Stance == CharacterStance.BleedOutCrawl;
             float minEyeHeight = isProne ? 0.58f : 0.72f;
             float eyeHeight = Mathf.Max(minEyeHeight, movementState.CapsuleHeightMeters - 0.14f);
@@ -1566,7 +1622,7 @@ namespace Stratocraft.Character
                 ? Mathf.Abs(Mathf.Sin(_locomotionCyclePhase)) * (isProne ? 0.014f : 0.022f)
                 : 0f;
 
-            Vector3 eyeWorld = playerRoot.position + new Vector3(0f, eyeHeight + viewBob, 0f);
+            Vector3 eyeWorld = playerRoot.position + new Vector3(0f, Mathf.Max(minEyeHeight - 0.08f, eyeHeight + viewBob + clampedDip), 0f);
             float subtleRollDeg = Mathf.Clamp(_smoothedBodyRollDeg * 0.22f, -2.5f, 2.5f);
             float effectiveYaw = float.IsNaN(cameraYawDeg) ? playerRoot.eulerAngles.y : cameraYawDeg;
             Quaternion lookRot = Quaternion.Euler(cameraPitchDeg, effectiveYaw, subtleRollDeg);
@@ -1626,7 +1682,7 @@ namespace Stratocraft.Character
                 }
 
                 // Gercek Omuz Ustu (Over-the-Shoulder) TPS Kamerasi — kamera acisiyla doner, kafa once bakar!
-                float shoulderHeight = Mathf.Max(0.50f, eyeHeight * 0.86f) + viewBob * 0.4f;
+                float shoulderHeight = Mathf.Max(0.45f, eyeHeight * 0.86f + clampedDip) + viewBob * 0.4f;
                 Vector3 shoulderPivot = playerRoot.position + Vector3.up * shoulderHeight + camFlatRight * 0.44f;
                 if (worldChunks != null && worldChunks.Count > 0)
                 {

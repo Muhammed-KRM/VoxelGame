@@ -43,22 +43,33 @@ namespace Stratocraft.Character
         public const float ThrustExtendDurationSec = 0.12f;
         public const float ThrustRetractDurationSec = 0.23f;
         public const float CrampedCloseQuartersThresholdMeters = 0.62f;
+        public const float HalfSwordCrampedThresholdMeters = 0.36f;
+        public const float HalfSwordMidBladeOffsetMeters = 0.28f;
+        public const float HalfSwordEffectiveReachMeters = 0.60f;
+        public const float HalfSwordArmorPenetrationMultiplier = 1.35f;
 
         /// <summary>
         /// Duvar/engel on acikligina gore kilic yakinlik kusagini siniflandirir:
-        /// - &lt; 0.62m (CrampedNoSwing): Genis balistik savurma kilitlenir, kilic gogus hizasinda dik toplanir.
+        /// - &lt; 0.62m (veya Yari-Kilic modunda &lt; 0.36m) (CrampedNoSwing): Genis balistik savurma kilitlenir, kilic gogus hizasinda dik toplanir.
         /// - 0.62m .. bladeLen + 0.25m (MediumWallContact): Savurma baslayabilir; temas aninda temiz duvar sekmesi olusur.
         /// - &gt;= bladeLen + 0.25m (OpenSpace): Tam serbest hareket.
         /// </summary>
         public static WallProximityZone ClassifyFrontWallClearance(
             float frontWallClearanceMeters,
-            float effectiveBladeLengthMeters)
+            float effectiveBladeLengthMeters,
+            bool isHalfSwordActive = false)
         {
-            if (frontWallClearanceMeters < CrampedCloseQuartersThresholdMeters)
+            float crampedThreshold = isHalfSwordActive
+                ? HalfSwordCrampedThresholdMeters
+                : CrampedCloseQuartersThresholdMeters;
+            if (frontWallClearanceMeters < crampedThreshold)
             {
                 return WallProximityZone.CrampedNoSwing;
             }
-            float mediumMax = MathF.Max(CrampedCloseQuartersThresholdMeters + 0.20f, effectiveBladeLengthMeters + 0.25f);
+            float effLen = isHalfSwordActive
+                ? MathF.Min(MathF.Max(0.45f, effectiveBladeLengthMeters), HalfSwordEffectiveReachMeters)
+                : effectiveBladeLengthMeters;
+            float mediumMax = MathF.Max(crampedThreshold + 0.20f, effLen + 0.25f);
             if (frontWallClearanceMeters < mediumMax)
             {
                 return WallProximityZone.MediumWallContact;
@@ -534,6 +545,200 @@ namespace Stratocraft.Character
         {
             float sideSign = incomingAttackDirUnit.X >= 0f ? -1f : 1f;
             return new Vector3(sideSign * 3.15f, 0f, 0.45f);
+        }
+
+        /// <summary>
+        /// Faz K.4: Namlu temas noktasi (hitNormalizedU), hedefe bagil yaklasma hizi (closingSpeedMps)
+        /// ve agiz hizalamasina (edgeAlignment01) gore gercekci kinetik hasar carpanini hesaplar.
+        /// - u &lt; 0.28: Hilt-Hit Glance (bogulmus kabza temasi -> 0.35x)
+        /// - u in [0.68..0.92]: Center of Percussion / Sweet-Spot (1.25x)
+        /// - closingSpeedMps in [-4..+6] m/s: 0.80x..1.25x bagil hiz carpani (0 m/s -> 1.00x)
+        /// </summary>
+        public static float EvaluateKineticHitMultiplier(
+            float hitNormalizedU,
+            float closingSpeedMps,
+            float edgeAlignment01,
+            out bool isHiltGlance,
+            out bool isSweetSpot)
+        {
+            float u = Math.Clamp(hitNormalizedU, 0.0f, 1.0f);
+            float zoneMult;
+            if (u < 0.28f)
+            {
+                isHiltGlance = true;
+                isSweetSpot = false;
+                zoneMult = 0.35f;
+            }
+            else if (u >= 0.68f && u <= 0.92f)
+            {
+                isHiltGlance = false;
+                isSweetSpot = true;
+                zoneMult = 1.25f;
+            }
+            else if (u < 0.68f)
+            {
+                isHiltGlance = false;
+                isSweetSpot = false;
+                float t = (u - 0.28f) / 0.40f;
+                zoneMult = 0.78f + t * 0.30f;
+            }
+            else
+            {
+                isHiltGlance = false;
+                isSweetSpot = false;
+                zoneMult = 1.12f;
+            }
+
+            float clampedClosing = Math.Clamp(closingSpeedMps, -4.0f, 6.0f);
+            float closingMult = clampedClosing >= 0.0f
+                ? (1.0f + (clampedClosing / 6.0f) * 0.25f)
+                : (1.0f + (clampedClosing / 4.0f) * 0.20f);
+
+            float safeEdge = Math.Clamp(edgeAlignment01, 0.35f, 1.0f);
+            return zoneMult * closingMult * safeEdge;
+        }
+
+        /// <summary>
+        /// Faz K.4: Savurma sirasinda silah arketipine gore azami kamera/govde donus hizi siniri (Turn Cap, deg/s).
+        /// Kanonik CombatWeaponArchetype indeksleri: 0=Longsword (175), 1=Greatsword (115), 2=Rapier (260), 3=Katana (220).
+        /// </summary>
+        public static float GetWeaponMaxTurnCapDegPerSec(int weaponArchetype, bool isHeavySwing)
+        {
+            float baseCapDegPerSec = weaponArchetype switch
+            {
+                (int)CombatWeaponArchetype.Rapier => 260.0f,
+                (int)CombatWeaponArchetype.Katana => 220.0f,
+                (int)CombatWeaponArchetype.Greatsword => 115.0f,
+                _ => 175.0f
+            };
+            return isHeavySwing ? (baseCapDegPerSec * 0.78f) : baseCapDegPerSec;
+        }
+
+        public static float GetWeaponMaxTurnCapDegPerSec(CombatWeaponArchetype weaponArchetype, bool isHeavySwing)
+            => GetWeaponMaxTurnCapDegPerSec((int)weaponArchetype, isHeavySwing);
+
+        /// <summary>
+        /// Faz K.4: Oyuncu/rakip denge (Posture 0..1) durumunu gunceller.
+        /// 1.0 = tam denge, 0.0 = Guard Break (postureBroken = true, 1.2s stagger).
+        /// MasterDeflect dengeyi kirilmaz kilar (%85 azaltim + taban koruma); Forte-on-Foible tuketimi yariya indirir.
+        /// </summary>
+        public static void StepPosture(
+            ref float posture01,
+            float incomingImpulse,
+            bool isMasterDeflect,
+            bool isForteOnFoible,
+            float dt,
+            out bool postureBroken)
+        {
+            float safeDt = Math.Clamp(dt, 0.0f, 0.10f);
+            posture01 = Math.Clamp(posture01, 0.0f, 1.0f);
+            postureBroken = false;
+
+            if (incomingImpulse > 0.0001f)
+            {
+                float drain = incomingImpulse * 0.024f;
+                if (isMasterDeflect)
+                {
+                    drain *= 0.15f;
+                }
+                if (isForteOnFoible)
+                {
+                    drain *= 0.50f;
+                }
+
+                posture01 -= drain;
+                if (isMasterDeflect)
+                {
+                    posture01 = Math.Clamp(MathF.Max(posture01, 0.08f), 0.0f, 1.0f);
+                    postureBroken = false;
+                }
+                else if (posture01 <= 0.0001f)
+                {
+                    posture01 = 0.0f;
+                    postureBroken = true;
+                }
+                else
+                {
+                    posture01 = Math.Clamp(posture01, 0.0f, 1.0f);
+                }
+                return;
+            }
+
+            if (safeDt > 0.0f && posture01 < 1.0f)
+            {
+                posture01 = Math.Clamp(posture01 + 0.18f * safeDt, 0.0f, 1.0f);
+            }
+        }
+
+        /// <summary>
+        /// Faz K.5: HEMA Bind kaldirac orani (r_att / r_def). Forte (u=0.25) vs Foible (u=0.80) >= 3.2x!
+        /// </summary>
+        public static float ComputeBindLeverageRatio(float defenderContactU, float attackerContactU)
+        {
+            float rDef = Math.Clamp(defenderContactU, 0.10f, 1.0f);
+            float rAtt = Math.Clamp(attackerContactU, 0.10f, 1.0f);
+            return rAtt / rDef;
+        }
+
+        /// <summary>
+        /// Faz K.5: Bind (Kilic Kilidi) aninda savunan lehine kaldirac ustunlugunu [-1..+1] araliginda hesaplar.
+        /// Forte-on-Foible (u_def &lt; u_att) pozitif ustunluk, Foible-on-Forte negatif dezavantaj uretir;
+        /// kesisim acisi (bladeCrossAngleDeg) 45..90° arasinda maksimum tutus saglar.
+        /// </summary>
+        public static float EvaluateBindLeverageAdvantage(
+            float defenderContactU,
+            float attackerContactU,
+            float bladeCrossAngleDeg)
+        {
+            float ratio = ComputeBindLeverageRatio(defenderContactU, attackerContactU);
+            float logNorm = MathF.Log(ratio) / MathF.Log(3.2f);
+            float absAngleRad = Math.Clamp(MathF.Abs(bladeCrossAngleDeg), 0.0f, 180.0f) * (MathF.PI / 180.0f);
+            float crossPurchase = Math.Clamp(MathF.Sin(absAngleRad), 0.15f, 1.0f);
+            return Math.Clamp(logNorm * crossPurchase, -1.0f, 1.0f);
+        }
+
+        /// <summary>
+        /// Faz K.5: BoundInClash penceresinde fareyi rakibin zayif tarafina kirarak Winden (sarma + gard kirma) basarisini degerlendirir.
+        /// </summary>
+        public static bool EvaluateWindenFlickSuccess(
+            Vector2 mouseFlickDirUnit,
+            Vector2 opponentWeakDirUnit,
+            float bindLeverageAdvantage,
+            float mouseFlickMagnitude)
+        {
+            if (mouseFlickMagnitude < 0.20f) return false;
+            if (mouseFlickDirUnit.LengthSquared() < 1e-4f || opponentWeakDirUnit.LengthSquared() < 1e-4f) return false;
+
+            float align = Vector2.Dot(Vector2.Normalize(mouseFlickDirUnit), Vector2.Normalize(opponentWeakDirUnit));
+            float requiredAlign = bindLeverageAdvantage >= 0.0f
+                ? (0.45f - Math.Clamp(bindLeverageAdvantage, 0f, 1f) * 0.12f)
+                : (0.45f + Math.Clamp(-bindLeverageAdvantage, 0f, 1f) * 0.22f);
+            return align >= requiredAlign;
+        }
+
+        /// <summary>
+        /// Faz K.6 (Halbschwert / Yari-Kilic): Etkin namlu boyunu (~0.60m), dar alan aciklik esigini (0.36m)
+        /// ve zirh delme / saplama hassasiyeti carpanini (1.35x) dondurur.
+        /// </summary>
+        public static void EvaluateHalfSwordParameters(
+            bool isHalfSwordActive,
+            float baseBladeLengthMeters,
+            out float effectiveReachMeters,
+            out float armorPenetrationMultiplier,
+            out float crampedClearanceThresholdMeters)
+        {
+            if (isHalfSwordActive)
+            {
+                effectiveReachMeters = MathF.Min(MathF.Max(0.45f, baseBladeLengthMeters), HalfSwordEffectiveReachMeters);
+                armorPenetrationMultiplier = HalfSwordArmorPenetrationMultiplier;
+                crampedClearanceThresholdMeters = HalfSwordCrampedThresholdMeters;
+            }
+            else
+            {
+                effectiveReachMeters = MathF.Max(0.55f, baseBladeLengthMeters);
+                armorPenetrationMultiplier = 1.0f;
+                crampedClearanceThresholdMeters = CrampedCloseQuartersThresholdMeters;
+            }
         }
 
         private static float WrapAngleRad(float rad)

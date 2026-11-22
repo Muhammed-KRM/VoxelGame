@@ -242,5 +242,129 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(ring0, Is.EqualTo(0));
             Assert.That(ring3, Is.EqualTo(3));
         }
+
+        [Test]
+        public void FazK4_KineticHitMultiplier_TurnCap_AndPosture_MeetBiomechanicsSpec()
+        {
+            // 1) Hilt-Hit Glance (u < 0.28 -> 0.35x) & Sweet-Spot (u in [0.68..0.92] -> 1.25x)
+            float hiltMult = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.18f, closingSpeedMps: 0.0f, edgeAlignment01: 1.0f,
+                out bool isHilt, out bool isSweetFromHilt);
+            Assert.That(isHilt, Is.True);
+            Assert.That(isSweetFromHilt, Is.False);
+            Assert.That(hiltMult, Is.EqualTo(0.35f).Within(0.001f));
+
+            float sweetMult = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.80f, closingSpeedMps: 0.0f, edgeAlignment01: 1.0f,
+                out bool isHiltFromSweet, out bool isSweet);
+            Assert.That(isHiltFromSweet, Is.False);
+            Assert.That(isSweet, Is.True);
+            Assert.That(sweetMult, Is.EqualTo(1.25f).Within(0.001f));
+
+            // 2) Bagil yaklasma hizi: ileri kosu (+4.8..+6 m/s -> +20%..+25%) vs geri kacis (-3..-4 m/s -> -15%..-20%)
+            float forwardCharge = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.80f, closingSpeedMps: 4.8f, edgeAlignment01: 1.0f, out _, out _);
+            float maxCharge = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.80f, closingSpeedMps: 6.0f, edgeAlignment01: 1.0f, out _, out _);
+            float backpedal = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.80f, closingSpeedMps: -3.0f, edgeAlignment01: 1.0f, out _, out _);
+            float maxRetreat = MeleeBiomechanicsSolver.EvaluateKineticHitMultiplier(
+                hitNormalizedU: 0.80f, closingSpeedMps: -4.0f, edgeAlignment01: 1.0f, out _, out _);
+
+            Assert.That(forwardCharge / sweetMult, Is.EqualTo(1.20f).Within(0.005f));
+            Assert.That(maxCharge / sweetMult, Is.EqualTo(1.25f).Within(0.005f));
+            Assert.That(backpedal / sweetMult, Is.EqualTo(0.85f).Within(0.005f));
+            Assert.That(maxRetreat / sweetMult, Is.EqualTo(0.80f).Within(0.005f));
+
+            // 3) Weapon Turn Cap (deg/s): Rapier 260, Katana 220, Longsword 175, Greatsword 115
+            Assert.That(MeleeBiomechanicsSolver.GetWeaponMaxTurnCapDegPerSec((int)CombatWeaponArchetype.Rapier, false), Is.EqualTo(260f).Within(0.1f));
+            Assert.That(MeleeBiomechanicsSolver.GetWeaponMaxTurnCapDegPerSec((int)CombatWeaponArchetype.Katana, false), Is.EqualTo(220f).Within(0.1f));
+            Assert.That(MeleeBiomechanicsSolver.GetWeaponMaxTurnCapDegPerSec((int)CombatWeaponArchetype.Longsword, false), Is.EqualTo(175f).Within(0.1f));
+            Assert.That(MeleeBiomechanicsSolver.GetWeaponMaxTurnCapDegPerSec((int)CombatWeaponArchetype.Greatsword, false), Is.EqualTo(115f).Within(0.1f));
+            Assert.That(
+                MeleeBiomechanicsSolver.GetWeaponMaxTurnCapDegPerSec((int)CombatWeaponArchetype.Greatsword, true),
+                Is.LessThan(115f));
+
+            // 4) Posture: Forte-on-Foible yari tuketim, MasterDeflect asla kirilmaz, agir darbeler Guard Break uretir
+            float pNeutral = 1.0f;
+            float pForte = 1.0f;
+            MeleeBiomechanicsSolver.StepPosture(ref pNeutral, incomingImpulse: 15.0f, isMasterDeflect: false, isForteOnFoible: false, dt: 1f / 60f, out bool brokeN);
+            MeleeBiomechanicsSolver.StepPosture(ref pForte, incomingImpulse: 15.0f, isMasterDeflect: false, isForteOnFoible: true, dt: 1f / 60f, out bool brokeF);
+            Assert.That(brokeN, Is.False);
+            Assert.That(brokeF, Is.False);
+            Assert.That(1.0f - pForte, Is.EqualTo((1.0f - pNeutral) * 0.5f).Within(0.001f));
+
+            float pDeflect = 0.10f;
+            MeleeBiomechanicsSolver.StepPosture(ref pDeflect, incomingImpulse: 45.0f, isMasterDeflect: true, isForteOnFoible: false, dt: 1f / 60f, out bool brokeDeflect);
+            Assert.That(brokeDeflect, Is.False, "MasterDeflect must never cause Posture Break!");
+            Assert.That(pDeflect, Is.GreaterThanOrEqualTo(0.08f));
+
+            float pBreak = 0.55f;
+            MeleeBiomechanicsSolver.StepPosture(ref pBreak, incomingImpulse: 30.0f, isMasterDeflect: false, isForteOnFoible: false, dt: 1f / 60f, out bool broken);
+            Assert.That(broken, Is.True);
+            Assert.That(pBreak, Is.EqualTo(0.0f).Within(0.0001f));
+
+            // Pasif yenilenme
+            MeleeBiomechanicsSolver.StepPosture(ref pBreak, incomingImpulse: 0.0f, isMasterDeflect: false, isForteOnFoible: false, dt: 0.10f, out bool brokeRegen);
+            Assert.That(brokeRegen, Is.False);
+            Assert.That(pBreak, Is.GreaterThan(0.01f));
+        }
+
+        [Test]
+        public void FazK5_BindLeverage_AndWindenFlick_RewardForteOnFoibleAndCorrectDirection()
+        {
+            // Forte (u_def=0.25) vs Foible (u_att=0.80) kaldirac orani >= 2.5x
+            float ratio = MeleeBiomechanicsSolver.ComputeBindLeverageRatio(defenderContactU: 0.25f, attackerContactU: 0.80f);
+            Assert.That(ratio, Is.GreaterThanOrEqualTo(2.5f));
+
+            float advStrong = MeleeBiomechanicsSolver.EvaluateBindLeverageAdvantage(defenderContactU: 0.25f, attackerContactU: 0.80f, bladeCrossAngleDeg: 80.0f);
+            float advEqual = MeleeBiomechanicsSolver.EvaluateBindLeverageAdvantage(defenderContactU: 0.50f, attackerContactU: 0.50f, bladeCrossAngleDeg: 80.0f);
+            float advWeak = MeleeBiomechanicsSolver.EvaluateBindLeverageAdvantage(defenderContactU: 0.80f, attackerContactU: 0.25f, bladeCrossAngleDeg: 80.0f);
+
+            Assert.That(advStrong, Is.InRange(0.75f, 1.0f));
+            Assert.That(advEqual, Is.EqualTo(0.0f).Within(0.0001f));
+            Assert.That(advWeak, Is.EqualTo(-advStrong).Within(0.001f));
+
+            // BoundInClash evresi tanimli
+            Assert.That(Enum.IsDefined(typeof(BallisticSlashPhase), BallisticSlashPhase.BoundInClash), Is.True);
+
+            // Winden: rakibin zayif tarafina fare kirmasi basarili, ters yon basarisiz
+            Vector2 weakSide = Vector2.Normalize(new Vector2(1.0f, 0.2f));
+            Assert.That(MeleeBiomechanicsSolver.EvaluateWindenFlickSuccess(weakSide, weakSide, advStrong, mouseFlickMagnitude: 0.45f), Is.True);
+            Assert.That(MeleeBiomechanicsSolver.EvaluateWindenFlickSuccess(-weakSide, weakSide, advStrong, mouseFlickMagnitude: 0.45f), Is.False);
+            Assert.That(MeleeBiomechanicsSolver.EvaluateWindenFlickSuccess(weakSide, weakSide, advStrong, mouseFlickMagnitude: 0.05f), Is.False);
+        }
+
+        [Test]
+        public void FazK6_HalfSwording_ShortensReach_UnlocksCrampedCorridor_AndBoostsArmorPenetration()
+        {
+            MeleeBiomechanicsSolver.EvaluateHalfSwordParameters(
+                isHalfSwordActive: true,
+                baseBladeLengthMeters: 1.42f,
+                out float hsReach,
+                out float hsPen,
+                out float hsCrampedThreshold);
+            MeleeBiomechanicsSolver.EvaluateHalfSwordParameters(
+                isHalfSwordActive: false,
+                baseBladeLengthMeters: 1.42f,
+                out float stdReach,
+                out float stdPen,
+                out float stdCrampedThreshold);
+
+            Assert.That(hsReach, Is.EqualTo(0.60f).Within(0.001f));
+            Assert.That(stdReach, Is.EqualTo(1.42f).Within(0.001f));
+            Assert.That(hsPen, Is.EqualTo(1.35f).Within(0.001f));
+            Assert.That(stdPen, Is.EqualTo(1.0f).Within(0.001f));
+            Assert.That(hsCrampedThreshold, Is.LessThan(stdCrampedThreshold));
+            Assert.That(MeleeBiomechanicsSolver.HalfSwordMidBladeOffsetMeters, Is.EqualTo(0.28f).Within(0.001f));
+
+            // Dar koridor avantaji: 0.48m aciklikta standart kilic kilitli (CrampedNoSwing), Yari-Kilic acik (MediumWallContact)!
+            Assert.That(
+                MeleeBiomechanicsSolver.ClassifyFrontWallClearance(0.48f, 1.10f, isHalfSwordActive: false),
+                Is.EqualTo(WallProximityZone.CrampedNoSwing));
+            Assert.That(
+                MeleeBiomechanicsSolver.ClassifyFrontWallClearance(0.48f, 1.10f, isHalfSwordActive: true),
+                Is.EqualTo(WallProximityZone.MediumWallContact));
+        }
     }
 }

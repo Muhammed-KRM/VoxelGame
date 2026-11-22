@@ -44,7 +44,9 @@ namespace Stratocraft.Character
         private Mesh? _trailMesh;
         private GameObject? _trailGo;
         private AudioSource? _audioSource;
-        private AudioClip? _clipWhooshLight, _clipWhooshHeavy, _clipSwordClash, _clipWallRicochet, _clipFleshCleave, _clipDummyThud;
+        private AudioClip? _clipWhooshLight, _clipWhooshHeavy, _clipSwordClash, _clipWallRicochet, _clipFleshCleave, _clipDummyThud, _clipBindScrape;
+        private Vector3 _prevPlayerWorldPos, _currentPlayerWorldVel;
+        private bool _playerWorldPosInit;
         private float _hitMarkerTimer;
         private Color _hitMarkerColor = Color.white;
         private string _hitMarkerLabel = string.Empty;
@@ -174,6 +176,17 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]> worldChunks, bool playerMissingArm)
         {
             EnsureInitialized(playerTransform, sharedMat, worldChunks);
+            if (_playerWorldPosInit && dt > 0.0005f)
+            {
+                _currentPlayerWorldVel = (playerTransform.position - _prevPlayerWorldPos) / dt;
+            }
+            else
+            {
+                _currentPlayerWorldVel = Vector3.zero;
+                _playerWorldPosInit = true;
+            }
+            _prevPlayerWorldPos = playerTransform.position;
+
             if (_audioSource != null)
             {
                 _audioSource.volume = 0.88f * Stage1GameSettings.CombatSfxVolume;
@@ -202,6 +215,32 @@ namespace Stratocraft.Character
                 string matName = Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId);
                 SpawnFloatingPopup(wallHitPos + Vector3.up * 0.15f, $"💥 DUVAR SEKMESİ! ({matName} | {wallSpd:F1} m/s)", new Color(1f, 0.78f, 0.28f), 1.35f, 14);
                 TriggerHitMarker(new Color(1f, 0.75f, 0.25f), "💥 ENGEL SEKMESİ");
+            }
+
+            if (combatBridge.ConsumePendingBindScrape(out Vector3 scrapePos))
+            {
+                PlayBindScrapeSfx(1.0f);
+                SpawnImpactBurst(scrapePos, isSparks: true, count: 12, speed: 4.8f);
+            }
+
+            if (combatBridge.ConsumePendingWindenBreak(out Vector3 windenPos, out float windenLev))
+            {
+                PlayBindScrapeSfx(1.18f);
+                PlaySwordClashClang(1.05f);
+                SpawnImpactBurst(windenPos, isSparks: true, count: 22, speed: 7.2f);
+                if (_duelistRoot != null)
+                {
+                    _duelistPhase = 3;
+                    _duelistStateTimer = 2.25f;
+                    _duelistStrikeResolvedThisSwing = true;
+                }
+                SpawnFloatingPopup(
+                    windenPos + Vector3.up * 0.34f,
+                    $"⚡ WINDEN (KILIÇ SARMA | Kaldıraç {windenLev:+0.00;-0.00})! Rakip Gardı Kırıldı -> RIPOSTE AÇILDI!",
+                    new Color(0.30f, 1.0f, 0.90f),
+                    2.15f,
+                    16);
+                TriggerHitMarker(new Color(0.30f, 1.0f, 0.90f), "⚡ WINDEN -> RIPOSTE!");
             }
 
             UpdateBladeSwingTrailMesh(combatBridge);
@@ -372,23 +411,39 @@ namespace Stratocraft.Character
 
             _automatonLastHitSwingId = combatBridge.CurrentSwingId;
             float uHit = (hitIdx + 1) * 0.20f;
-            string zone = uHit <= 0.35f ? "Forte (Dip)" : (uHit <= 0.65f ? "Mesne (Orta)" : "Foible (Uç 1.22x)");
-            float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
+            Vector3 toDummyDir = (dummyCenter - playerTransform.position);
+            toDummyDir.y = 0f;
+            float closingSpeedMps = toDummyDir.sqrMagnitude > 0.001f
+                ? Vector3.Dot(_currentPlayerWorldVel, toDummyDir.normalized)
+                : 0f;
+            float kineticMult = combatBridge.EvaluateStrikeKineticMultiplier(uHit, closingSpeedMps, out bool isHiltGlance, out bool isSweetSpot);
+            string zone = isHiltGlance
+                ? "Kabza Boğulması (Hilt-Hit 0.35x)"
+                : (isSweetSpot ? "Sweet-Spot (1.25x)" : (uHit <= 0.35f ? "Forte (Dip)" : (uHit <= 0.65f ? "Mesne (Orta)" : "Foible (Uç)")));
 
             combatBridge.EvaluateWeaponStanceCompatibility(playerMissingArm, out _, out float stanceDmgMult, out _, out bool mismatch);
             float preMult = combatBridge.WasLastSlashPreChambered ? 1.38f : 1.0f;
             float riposteMult = combatBridge.WasLastSlashRiposte ? 1.85f : 1.0f;
             float iaidoMult = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
             float jumpMult = combatBridge.IsAerialJumpStrike ? 1.40f : 1.0f;
+            float halfSwordPenMult = combatBridge.HalfSwordArmorPenetrationMultiplier;
             float dmg = Mathf.Lerp(24f, 92f, Mathf.Clamp01((localSpd - 1.5f) / 10.5f)) *
-                        zoneMult * combatBridge.EdgeAlignment01 * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult *
+                        kineticMult * stanceDmgMult * preMult * riposteMult * iaidoMult * jumpMult * halfSwordPenMult *
                         Stage1GameSettings.PlayerCombatDamageMultiplier;
+
+            if (!isHiltGlance && !combatBridge.IsFlatBladeSlap)
+            {
+                combatBridge.NotifyCleanHitForMastery(isSweetSpot);
+            }
 
             _automatonLastDamage = dmg;
             _automatonLastSpeedMps = localSpd;
-            _automatonLastZone = $"{zone} (u={uHit:F2})";
+            _automatonLastZone = $"{zone} (u={uHit:F2} | Bağıl={closingSpeedMps:+0.0;-0.0}m/s)";
 
             string styleBonus = string.Empty;
+            if (isHiltGlance) styleBonus += " [⚠️ KABZA TEMASI 0.35x]";
+            else if (isSweetSpot) styleBonus += " [✨ SWEET-SPOT 1.25x!]";
+            if (combatBridge.IsHalfSwordActive) styleBonus += " [🗡️ YARI-KILIÇ 1.35x]";
             if (combatBridge.IsFlatBladeSlap) styleBonus += " [👋 YASSI NAMLU ŞAPLAĞI 0.35x Künt!]";
             if (combatBridge.WasLastSlashRiposte) styleBonus += " [⚡ RIPOSTE 1.85x!]";
             if (combatBridge.WasLastSlashIaidoCharged) styleBonus += " [⚡ IAIJUTSU 1.60x!]";
@@ -436,60 +491,68 @@ namespace Stratocraft.Character
                 _duelistRoot.position = backPos;
             }
 
-            _duelistStateTimer -= dt;
-            if (_duelistPhase == 0)
+            if (combatBridge.IsBoundInClash)
             {
-                _duelistTargetBladeRad = GetQuadrantAngles(_duelistGuardDir);
-                if (_duelistStateTimer <= 0f)
+                // Faz K.5: Bind (Kilic Kilidi) sirasinda duellocu kilicini oyuncunun kilicina bastirarak kilitli tutar
+                _duelistCurrentBladeRad = Vector2.Lerp(_duelistCurrentBladeRad, GetQuadrantAngles(_duelistAttackDir) * 0.45f, Mathf.Clamp01(dt * 12f));
+            }
+            else
+            {
+                _duelistStateTimer -= dt;
+                if (_duelistPhase == 0)
                 {
-                    _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
-                    if (_duelistMode == DuelistNpcMode.BlockPracticeOnly || distToPlayer > 4.2f)
-                        _duelistStateTimer = 1.45f;
-                    else
+                    _duelistTargetBladeRad = GetQuadrantAngles(_duelistGuardDir);
+                    if (_duelistStateTimer <= 0f)
                     {
-                        _duelistAttackDir = _duelistGuardDir;
-                        _duelistStrikeCounter++;
-                        _duelistCurrentStrikeIsHeavySmash = (_duelistStrikeCounter % 3) == 0;
-                        _duelistPhase = 1;
-                        _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.78f : 0.60f;
-                        _duelistStrikeResolvedThisSwing = false;
-                        if (_duelistCurrentStrikeIsHeavySmash)
-                            SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 2.15f,
-                                $"⚠️ AĞIR YARMA DARBESİ GELİYOR ({GetDirectionLabel(_duelistAttackDir)} 5.4kg)! [Sabit Blok YARILIR -> RMB + Fare İle SAPTIR!]",
-                                new Color(1f, 0.55f, 0.12f), 1.65f, 15);
+                        _duelistGuardDir = (CombatDirectionQuadrant)(((int)_duelistGuardDir + 1) % 4);
+                        if (_duelistMode == DuelistNpcMode.BlockPracticeOnly || distToPlayer > 4.2f)
+                            _duelistStateTimer = 1.45f;
+                        else
+                        {
+                            _duelistAttackDir = _duelistGuardDir;
+                            _duelistStrikeCounter++;
+                            _duelistCurrentStrikeIsHeavySmash = (_duelistStrikeCounter % 3) == 0;
+                            _duelistPhase = 1;
+                            _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.78f : 0.60f;
+                            _duelistStrikeResolvedThisSwing = false;
+                            if (_duelistCurrentStrikeIsHeavySmash)
+                                SpawnFloatingPopup(_duelistRoot.position + Vector3.up * 2.15f,
+                                    $"⚠️ AĞIR YARMA DARBESİ GELİYOR ({GetDirectionLabel(_duelistAttackDir)} 5.4kg)! [Sabit Blok YARILIR -> RMB + Fare İle SAPTIR!]",
+                                    new Color(1f, 0.55f, 0.12f), 1.65f, 15);
+                        }
                     }
                 }
-            }
-            else if (_duelistPhase == 1)
-            {
-                _duelistTargetBladeRad = GetQuadrantAngles(_duelistAttackDir) * (_duelistCurrentStrikeIsHeavySmash ? 1.38f : 1.25f);
-                if (_duelistStateTimer <= 0f)
+                else if (_duelistPhase == 1)
                 {
-                    _duelistPhase = 2;
-                    _duelistSlashProgress01 = 0f;
-                    _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.44f : 0.36f;
+                    _duelistTargetBladeRad = GetQuadrantAngles(_duelistAttackDir) * (_duelistCurrentStrikeIsHeavySmash ? 1.38f : 1.25f);
+                    if (_duelistStateTimer <= 0f)
+                    {
+                        _duelistPhase = 2;
+                        _duelistSlashProgress01 = 0f;
+                        _duelistStateTimer = _duelistCurrentStrikeIsHeavySmash ? 0.44f : 0.36f;
+                    }
                 }
-            }
-            else if (_duelistPhase == 2)
-            {
-                float slashDur = _duelistCurrentStrikeIsHeavySmash ? 0.42f : 0.34f;
-                _duelistSlashProgress01 = Mathf.Clamp01(_duelistSlashProgress01 + dt / slashDur);
-                Vector2 startRad = GetQuadrantAngles(_duelistAttackDir) * 1.22f;
-                _duelistTargetBladeRad = Vector2.Lerp(startRad, -startRad * 0.95f, _duelistSlashProgress01);
-                if (_duelistSlashProgress01 >= 1.0f || _duelistStateTimer <= 0f)
+                else if (_duelistPhase == 2)
                 {
-                    _duelistPhase = 0;
-                    _duelistStateTimer = _duelistMode == DuelistNpcMode.AttackPracticeOnly ? 0.65f : 1.25f;
+                    float slashDur = _duelistCurrentStrikeIsHeavySmash ? 0.42f : 0.34f;
+                    _duelistSlashProgress01 = Mathf.Clamp01(_duelistSlashProgress01 + dt / slashDur);
+                    Vector2 startRad = GetQuadrantAngles(_duelistAttackDir) * 1.22f;
+                    _duelistTargetBladeRad = Vector2.Lerp(startRad, -startRad * 0.95f, _duelistSlashProgress01);
+                    if (_duelistSlashProgress01 >= 1.0f || _duelistStateTimer <= 0f)
+                    {
+                        _duelistPhase = 0;
+                        _duelistStateTimer = _duelistMode == DuelistNpcMode.AttackPracticeOnly ? 0.65f : 1.25f;
+                    }
                 }
-            }
-            else if (_duelistPhase == 3)
-            {
-                _duelistTargetBladeRad = new Vector2(0.95f, -0.75f);
-                if (_duelistStateTimer <= 0f) { _duelistPhase = 0; _duelistStateTimer = 1.1f; }
-            }
+                else if (_duelistPhase == 3)
+                {
+                    _duelistTargetBladeRad = new Vector2(0.95f, -0.75f);
+                    if (_duelistStateTimer <= 0f) { _duelistPhase = 0; _duelistStateTimer = 1.1f; }
+                }
 
-            float bladeLerpSpeed = _duelistPhase == 2 ? 22f : 10f;
-            _duelistCurrentBladeRad = Vector2.Lerp(_duelistCurrentBladeRad, _duelistTargetBladeRad, Mathf.Clamp01(dt * bladeLerpSpeed));
+                float bladeLerpSpeed = _duelistPhase == 2 ? 22f : 10f;
+                _duelistCurrentBladeRad = Vector2.Lerp(_duelistCurrentBladeRad, _duelistTargetBladeRad, Mathf.Clamp01(dt * bladeLerpSpeed));
+            }
             _duelistSwordPivot.localPosition = new Vector3(
                 0.34f - _duelistCurrentBladeRad.x * 0.32f,
                 1.22f + _duelistCurrentBladeRad.y * 0.28f,
@@ -569,24 +632,39 @@ namespace Stratocraft.Character
             ReadOnlySpan<Vector3> pCurr = combatBridge.CurrBladeWorldPoints;
 
             // A) DÜELLOCU SALDIRIRKEN:
-            if ((_duelistPhase == 1 && _duelistStateTimer < 0.24f) || _duelistPhase == 2)
+            if (!combatBridge.IsBoundInClash && ((_duelistPhase == 1 && _duelistStateTimer < 0.24f) || _duelistPhase == 2))
             {
-                bool bladesIntersect = TryFindBladeVsBladeIntersection(pPrev, pCurr, out Vector3 clashWorldPos, out float clashPlayerBladeU);
+                bool bladesIntersect = TryFindBladeVsBladeIntersection(pPrev, pCurr, out Vector3 clashWorldPos, out float clashPlayerBladeU, out float clashNpcBladeU);
                 bool playerSwingingToClash = combatBridge.IsActiveAttackSwing &&
                                              (bladesIntersect || (distToPlayer <= 2.95f && combatBridge.SlashProgress01 >= 0.18f && combatBridge.SlashProgress01 <= 0.85f));
                 if (playerSwingingToClash)
                 {
-                    _duelistPhase = 3;
-                    _duelistStateTimer = 1.65f;
                     _duelistStrikeResolvedThisSwing = true;
                     Vector3 midClash = bladesIntersect ? clashWorldPos : Vector3.Lerp(pCurr[2], _npcCurrBladePts[2], 0.5f);
-                    combatBridge.NotifySuccessfulParryOrClash(-combatBridge.CurrentSlashDirUnit, openRiposteWindow: true);
+                    float defU = bladesIntersect ? clashPlayerBladeU : 0.34f;
+                    float attU = bladesIntersect ? clashNpcBladeU : 0.76f;
+                    Vector3 playerAxis = pCurr[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1] - pCurr[0];
+                    Vector3 npcAxis = _npcCurrBladePts[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1] - _npcCurrBladePts[0];
+                    float crossAngleDeg = (playerAxis.sqrMagnitude > 0.001f && npcAxis.sqrMagnitude > 0.001f)
+                        ? Vector3.Angle(playerAxis, npcAxis)
+                        : 65f;
+                    Vector2 opponentWeakDir = _duelistAttackDir == CombatDirectionQuadrant.Right
+                        ? new Vector2(-1f, 0.2f).normalized
+                        : new Vector2(1f, 0.2f).normalized;
+
+                    combatBridge.EnterSwordBindClash(midClash, defU, attU, crossAngleDeg, opponentWeakDir);
                     PlaySwordClashClang(1.0f);
+                    PlayBindScrapeSfx(0.95f);
                     SpawnImpactBurst(midClash, isSparks: true, count: 18, speed: 6.8f);
-                    CheckAndApplyKatanaCrossguardHandLaceration(combatBridge, ref playerVitals, playerTransform.position, bladesIntersect ? clashPlayerBladeU : 0.28f);
-                    SpawnFloatingPopup(midClash + Vector3.up * 0.28f, "⚔️ KILIÇ ÇARPIŞMASI! (SWORD CLASH -> ⚡ 1.8s RIPOSTE HAZIR!)", new Color(0.35f, 0.96f, 1f), 1.85f, 16);
-                    TriggerHitMarker(new Color(0.35f, 0.96f, 1f), "⚔️ KILIÇ ÇARPIŞMASI!");
-                    combatBridge.LastCombatActionText = "⚔️ HAVADA KILIÇ ÇARPIŞMASI (Sword Clash)! Düellocu sarsıldı -> Şimdi LMB ile 1.85x KUSURSUZ KONTRA (Riposte) vur!";
+                    CheckAndApplyKatanaCrossguardHandLaceration(combatBridge, ref playerVitals, playerTransform.position, defU);
+                    string weakHint = opponentWeakDir.x >= 0f ? "SAĞA" : "SOLA";
+                    SpawnFloatingPopup(
+                        midClash + Vector3.up * 0.28f,
+                        $"⚔️ KILIÇ KİLİDİ (BIND)! Fareyi {weakHint} kır -> WINDEN + RIPOSTE!",
+                        new Color(0.35f, 0.96f, 1f),
+                        1.75f,
+                        16);
+                    TriggerHitMarker(new Color(0.35f, 0.96f, 1f), "⚔️ BIND! WINDEN YAP!");
                     return;
                 }
 
@@ -601,7 +679,14 @@ namespace Stratocraft.Character
                         float npcStrikeSpeed = _duelistCurrentStrikeIsHeavySmash ? 7.6f : 5.1f;
                         Vector2 incomingAttackDir = -GetQuadrantAngles(_duelistAttackDir).normalized;
                         ParryResolutionOutcome parryOutcome = combatBridge.EvaluateIncomingStrikeAgainstPlayerGuard(
-                            npcStrikeMass, npcStrikeSpeed, incomingAttackDir, playerMissingArm, out float bleedThroughDmg, out _);
+                            npcStrikeMass,
+                            npcStrikeSpeed,
+                            incomingAttackDir,
+                            playerMissingArm,
+                            out float bleedThroughDmg,
+                            out _,
+                            bladesIntersect ? clashPlayerBladeU : 0.36f,
+                            bladesIntersect ? clashNpcBladeU : 0.74f);
 
                         Vector3 parryPos = bladesIntersect ? clashWorldPos : pCurr[2];
                         CheckAndApplyKatanaCrossguardHandLaceration(combatBridge, ref playerVitals, playerTransform.position, bladesIntersect ? clashPlayerBladeU : 0.28f);
@@ -631,12 +716,15 @@ namespace Stratocraft.Character
                         PlaySwordClashClang(0.78f);
                         PlayFleshCleaveHit(false);
                         SpawnImpactBurst(parryPos, isSparks: true, count: 14, speed: 5.5f);
-                        SpawnFloatingPopup(playerTransform.position + Vector3.up * 1.55f,
-                            parryOutcome == ParryResolutionOutcome.GuardCrushedByMass
+                        string breakMsg = combatBridge.IsPostureBroken
+                            ? $"💥 DENGE KIRILDI (POSTURE BREAK 1.2sn)! -{bleedThroughDmg:F0} HP [Gardın Boşaldı!]"
+                            : (parryOutcome == ParryResolutionOutcome.GuardCrushedByMass
                                 ? $"💥 BLOK YARILDI (GUARD CRUSH)! -{bleedThroughDmg:F0} HP ({npcStrikeMass:F1}kg Darbeyi İnce Kılıçla Sabit Tutma -> RMB+Fare SAPTIR!)"
-                                : $"⚠️ UYUMSUZ SİLAH GUARD BREAK! (-{bleedThroughDmg:F0} HP)",
+                                : $"⚠️ UYUMSUZ SİLAH GUARD BREAK! (-{bleedThroughDmg:F0} HP)");
+                        SpawnFloatingPopup(playerTransform.position + Vector3.up * 1.55f,
+                            breakMsg,
                             new Color(1f, 0.42f, 0.18f), 2.15f, 15);
-                        TriggerHitMarker(new Color(1f, 0.42f, 0.18f), $"💥 BLOK YARILDI -{bleedThroughDmg:F0}");
+                        TriggerHitMarker(new Color(1f, 0.42f, 0.18f), combatBridge.IsPostureBroken ? $"💥 DENGE KIRILDI -{bleedThroughDmg:F0}" : $"💥 BLOK YARILDI -{bleedThroughDmg:F0}");
                         return;
                     }
                     else if (distToPlayer <= 2.85f)
@@ -743,16 +831,28 @@ namespace Stratocraft.Character
             }
 
             float uHit = (hitPt + 1) * 0.20f;
-            string zoneName = uHit >= 0.65f ? "Foible (Uç)" : (uHit <= 0.35f ? "Forte" : "Mesne");
-            float zoneMult = uHit >= 0.65f ? 1.22f : (uHit <= 0.35f ? 0.78f : 1.0f);
+            Vector3 toDuelistDir = _duelistRoot.position - playerTransform.position;
+            toDuelistDir.y = 0f;
+            float closingSpeedMps = toDuelistDir.sqrMagnitude > 0.001f
+                ? Vector3.Dot(_currentPlayerWorldVel, toDuelistDir.normalized)
+                : 0f;
+            float kineticMult = combatBridge.EvaluateStrikeKineticMultiplier(uHit, closingSpeedMps, out bool isHiltGlance, out bool isSweetSpot);
+            string zoneName = isHiltGlance
+                ? "Kabza (Hilt-Hit 0.35x)"
+                : (isSweetSpot ? "Sweet-Spot (1.25x)" : (uHit >= 0.65f ? "Foible (Uç)" : (uHit <= 0.35f ? "Forte" : "Mesne")));
             combatBridge.EvaluateWeaponStanceCompatibility(playerMissingArm, out _, out float stanceDmg, out _, out _);
             float riposteBonus = combatBridge.WasLastSlashRiposte ? 1.85f : 1.0f;
             float iaidoBonus = combatBridge.WasLastSlashIaidoCharged ? 1.60f : 1.0f;
             float preBonus = combatBridge.WasLastSlashPreChambered ? 1.38f : 1.0f;
             float crushMult = wasGuardCrushed ? 0.68f : 1.0f;
+            float halfSwordPen = combatBridge.HalfSwordArmorPenetrationMultiplier;
             float rawDamage = Mathf.Lerp(28f, 95f, Mathf.Clamp01((hitSpeed - 1.5f) / 10f)) *
-                              zoneMult * combatBridge.EdgeAlignment01 * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult *
+                              kineticMult * stanceDmg * riposteBonus * iaidoBonus * preBonus * crushMult * halfSwordPen *
                               Stage1GameSettings.PlayerCombatDamageMultiplier;
+            if (!isHiltGlance && !combatBridge.IsFlatBladeSlap)
+            {
+                combatBridge.NotifyCleanHitForMastery(isSweetSpot);
+            }
 
             _duelistHp -= rawDamage;
             if (_duelistHp <= 0f)
@@ -810,6 +910,9 @@ namespace Stratocraft.Character
                     : (combatBridge.WasLastSlashIaidoCharged
                         ? " [⚡ IAIJUTSU ŞİMŞEK KESİĞİ 1.60x!]"
                         : (combatBridge.CurrentThrustExtensionMeters >= 0.35f ? " [🗡️ İĞNE HAMLESİ!]" : string.Empty));
+                if (isHiltGlance) tag += " [⚠️ KABZA TEMASI 0.35x]";
+                else if (isSweetSpot) tag += " [✨ SWEET-SPOT 1.25x!]";
+                if (combatBridge.IsHalfSwordActive) tag += " [🗡️ YARI-KILIÇ 1.35x]";
                 SpawnFloatingPopup(pCurr[hitPt] + Vector3.up * 0.35f, $"🩸 -{rawDamage:F0} HP ({zoneName} | {hitSpeed:F1}m/s){tag}", new Color(1f, 0.32f, 0.32f), 1.75f, 15);
                 TriggerHitMarker(new Color(1f, 0.32f, 0.32f), $"-{rawDamage:F0} HP ({zoneName})");
             }
@@ -827,7 +930,7 @@ namespace Stratocraft.Character
         }
 
         private bool TryFindBladeVsBladeIntersection(
-            ReadOnlySpan<Vector3> playerPrev, ReadOnlySpan<Vector3> playerCurr, out Vector3 clashPos, out float playerBladeU)
+            ReadOnlySpan<Vector3> playerPrev, ReadOnlySpan<Vector3> playerCurr, out Vector3 clashPos, out float playerBladeU, out float npcBladeU)
         {
             for (int i = 0; i < Stage1DirectionalCombatBridge.BladeSamplePointCount; i++)
             {
@@ -838,11 +941,12 @@ namespace Stratocraft.Character
                     {
                         clashPos = Vector3.Lerp(p, _npcCurrBladePts[j], 0.5f);
                         playerBladeU = (i + 1) * 0.20f;
+                        npcBladeU = (j + 1) * 0.20f;
                         return true;
                     }
                 }
             }
-            clashPos = Vector3.zero; playerBladeU = 0.5f;
+            clashPos = Vector3.zero; playerBladeU = 0.5f; npcBladeU = 0.72f;
             return false;
         }
 
@@ -1173,6 +1277,15 @@ namespace Stratocraft.Character
             _clipWallRicochet = CreateProceduralClip("WallRicochetClink", sr, 0.26f, (t, n) => Mathf.Clamp((Mathf.Sin(t * 980f * Mathf.PI * 2f + Mathf.Cos(t * 3100f) * 3.0f) + Mathf.Sin(t * 2860f * Mathf.PI * 2f) * 0.5f) * Mathf.Exp(-n * 8.5f) * 0.55f, -0.9f, 0.9f));
             _clipFleshCleave = CreateProceduralClip("FleshCleaveHit", sr, 0.24f, (t, n) => Mathf.Clamp((Mathf.Sin(t * Mathf.Lerp(155f, 52f, n) * Mathf.PI * 2f) * 0.85f + Mathf.Sin(t * 1850f) * Mathf.Cos(t * 4210f) * 0.55f) * Mathf.Exp(-n * 7.5f) * 0.80f, -0.95f, 0.95f));
             _clipDummyThud = CreateProceduralClip("DummyWoodThud", sr, 0.22f, (t, n) => Mathf.Clamp((Mathf.Sin(t * Mathf.Lerp(210f, 88f, n) * Mathf.PI * 2f) * 0.8f + Mathf.Sin(t * 1120f * Mathf.PI * 2f) * 0.35f) * Mathf.Exp(-n * 9.0f) * 0.75f, -0.9f, 0.9f));
+            _clipBindScrape = CreateProceduralClip("BindSteelScrape", sr, 0.34f, (t, n) =>
+            {
+                float sweepHz = Mathf.Lerp(2650f, 4350f, n);
+                float ringA = Mathf.Sin(t * sweepHz * Mathf.PI * 2f + Mathf.Sin(t * 420f * Mathf.PI * 2f) * 1.8f);
+                float ringB = Mathf.Sin(t * (sweepHz * 1.47f) * Mathf.PI * 2f) * 0.55f;
+                float grit = Mathf.Sin(t * 7120f) * Mathf.Cos(t * 11380f) * 0.45f;
+                float env = Mathf.Sin(n * Mathf.PI) * Mathf.Exp(-n * 2.2f);
+                return Mathf.Clamp((ringA * 0.50f + ringB + grit) * env * 0.72f, -0.92f, 0.92f);
+            });
         }
 
         private static AudioClip CreateProceduralClip(string name, int sampleRate, float durationSec, Func<float, float, float> generator)
@@ -1195,6 +1308,7 @@ namespace Stratocraft.Character
         }
 
         private void PlaySwordClashClang(float volume = 0.95f) { if (_audioSource != null && _clipSwordClash != null) { _audioSource.pitch = UnityEngine.Random.Range(0.92f, 1.08f); _audioSource.PlayOneShot(_clipSwordClash, volume); } }
+        private void PlayBindScrapeSfx(float pitchScale = 1.0f) { if (_audioSource != null && _clipBindScrape != null) { _audioSource.pitch = Mathf.Clamp(pitchScale * UnityEngine.Random.Range(0.95f, 1.06f), 0.75f, 1.45f); _audioSource.PlayOneShot(_clipBindScrape, 0.86f); } }
         private void PlayWallRicochetClink() { if (_audioSource != null && _clipWallRicochet != null) { _audioSource.pitch = UnityEngine.Random.Range(0.90f, 1.12f); _audioSource.PlayOneShot(_clipWallRicochet, 0.85f); } }
         private void PlayFleshCleaveHit(bool heavySever) { if (_audioSource != null && _clipFleshCleave != null) { _audioSource.pitch = heavySever ? 0.85f : UnityEngine.Random.Range(0.95f, 1.08f); _audioSource.PlayOneShot(_clipFleshCleave, 0.95f); } }
         private void PlayDummyStrikeThud(bool guardCrushed) { if (_audioSource != null && _clipDummyThud != null) { _audioSource.pitch = guardCrushed ? 0.82f : UnityEngine.Random.Range(0.94f, 1.06f); _audioSource.PlayOneShot(_clipDummyThud, 0.90f); if (guardCrushed && _clipSwordClash != null) _audioSource.PlayOneShot(_clipSwordClash, 0.65f); } }
