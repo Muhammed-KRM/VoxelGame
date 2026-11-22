@@ -117,6 +117,18 @@ namespace Stratocraft.WorldGen.Generators
         /// </summary>
         public static bool InfiniteProceduralWorldMode = true;
 
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _activeWorldSeed = 1453;
+            InfiniteProceduralWorldMode = true;
+            _tsMacroCaveCache = null;
+            _tsHydrologyChamberCache = null;
+            _tsChunkCapsuleOreLut = null;
+        }
+#endif
+
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
 
@@ -1939,6 +1951,10 @@ namespace Stratocraft.WorldGen.Generators
             // Dogal tas cukur yeralti su golcukleri (0 havada duran kil kutusu, 0 B GC stackalloc post-pass):
             PopulateNaturalCaveWaterPoolsInChunk(chunkX, chunkZ, MaxEditableVoxelY, voxels, fluids);
 
+            // Kemerli ve Jeolojik On-Dengelenmis Magaralar (Terzaghi acik, duz tavan -> parabolik kemer + Stalagnate sutun):
+            CaveVaultEquilibriumGenerator.StabilizeGeneratedChunkCaves(
+                chunkX, chunkZ, voxels, MaxEditableVoxelY, out _, out _);
+
             ReadOnlySpan<float> cachedTopH = allColumnsPopulated ? colRawTopH : ReadOnlySpan<float>.Empty;
             ReadOnlySpan<byte> cachedBiomes = allColumnsPopulated ? colBiomeIds : ReadOnlySpan<byte>.Empty;
 
@@ -3317,33 +3333,13 @@ namespace Stratocraft.WorldGen.Generators
         {
             site = default;
 
-            // Baslangic vadisi cevresindeki vitrin moduler yerleskeleri (20x20 baslangic dilimi icinde):
-            if (chunkX == 0 && chunkZ == 0)
-            {
-                site = BuildModularSiteSpec(
-                    chunkX, chunkZ, localCx: 7, localCz: 6, halfExtent: 3,
-                    ProceduralModularSiteKind.MeadHallWatchtower, yawDeg: 180f, hasLootChest: false);
-                return true;
-            }
-            if (chunkX == -2 && chunkZ == -1)
-            {
-                site = BuildModularSiteSpec(
-                    chunkX, chunkZ, localCx: 11, localCz: 10, halfExtent: 3,
-                    ProceduralModularSiteKind.CarvedMarbleShrine, yawDeg: 90f, hasLootChest: false);
-                return true;
-            }
-            if (chunkX == 1 && chunkZ == 1)
+            // Baslangic vadisi ve 02_Faz2_Workshop... objelerinin etrafi tamamen temiz tutulur;
+            // vadinin acik ve duzlestirilmis tek kenarinda (1, 2) YALNIZCA 1 adet tam kapali NordicTimberCabin yerlesir!
+            if (chunkX == 1 && chunkZ == 2)
             {
                 site = BuildModularSiteSpec(
                     chunkX, chunkZ, localCx: 8, localCz: 8, halfExtent: 3,
-                    ProceduralModularSiteKind.NordicTimberCabin, yawDeg: 180f, hasLootChest: false);
-                return true;
-            }
-            if (chunkX == -3 && chunkZ == -1)
-            {
-                site = BuildModularSiteSpec(
-                    chunkX, chunkZ, localCx: 9, localCz: 8, halfExtent: 3,
-                    ProceduralModularSiteKind.CollapsedTimberStoneRuin, yawDeg: 90f, hasLootChest: false);
+                    ProceduralModularSiteKind.NordicTimberCabin, yawDeg: 180f, hasLootChest: true);
                 return true;
             }
 
@@ -4128,27 +4124,10 @@ namespace Stratocraft.WorldGen.Generators
             for (int dy = 0; dy <= effectiveTrunkH; dy++)
                 SetNaturalTreeVoxel(voxels, lx, baseY + dy, lz, woodMat, shapeId: 2, rot: 0);
 
-            int crownBaseY = baseY + effectiveTrunkH;
-            SetNaturalTreeVoxel(voxels, lx - 1, crownBaseY - 1, lz, woodMat, shapeId: 4, rot: 1);
-            SetNaturalTreeVoxel(voxels, lx + 1, crownBaseY - 1, lz, woodMat, shapeId: 4, rot: 3);
-            SetNaturalTreeVoxel(voxels, lx, crownBaseY - 1, lz - 1, woodMat, shapeId: 4, rot: 2);
-            SetNaturalTreeVoxel(voxels, lx, crownBaseY - 1, lz + 1, woodMat, shapeId: 4, rot: 0);
-
-            for (int dz = -2; dz <= 2; dz++)
-            {
-                for (int dx = -2; dx <= 2; dx++)
-                {
-                    int distMan = Math.Abs(dx) + Math.Abs(dz);
-                    if (distMan > 2) continue;
-
-                    byte leafMat = (distMan == 0 && (isIronwood || isSwampWillow)) ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Grass;
-                    byte topCapMat = isPine ? MaterialIdCatalog.Marble : leafMat;
-
-                    if (distMan > 0) SetNaturalTreeVoxel(voxels, lx + dx, crownBaseY, lz + dz, leafMat, shapeId: 1, rot: 0);
-                    if (!isPine || distMan <= 1) SetNaturalTreeVoxel(voxels, lx + dx, crownBaseY + 1, lz + dz, leafMat, shapeId: 1, rot: 0);
-                    if (distMan <= 1) SetNaturalTreeVoxel(voxels, lx + dx, crownBaseY + 2, lz + dz, topCapMat, shapeId: 6, rot: 0);
-                }
-            }
+            // 1m³ Minecraft kup yaprak vokselleri (shapeId: 1, leafMat) kaldirildi:
+            // Dogal voksel govde (FallenTreeLogInstance kesim/devrilme fizigi icin) korunur;
+            // gercek 3B organik cam/karli-cam/mese yaprak taci ve kok mahmuzu OrganicTreeCanopyVisualSystem ile baglanir!
+            _ = isPine;
         }
 
         private static void SetNaturalTreeVoxel(uint[] voxels, int lx, int ly, int lz, byte matId, byte shapeId, byte rot)

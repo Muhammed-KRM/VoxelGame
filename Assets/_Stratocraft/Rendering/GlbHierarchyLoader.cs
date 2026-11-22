@@ -96,6 +96,13 @@ namespace Stratocraft.Rendering
         private static readonly Dictionary<string, ArmorSlotCacheEntry> _armorSlotMeshCache =
             new(32, StringComparer.OrdinalIgnoreCase);
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _articulatedPartsCache.Clear();
+            _armorSlotMeshCache.Clear();
+        }
+
         /// <summary>
         /// Vucut bolgesi indeksini (0=Head, 1=Torso, 2=Arms, 3=Legs, 4=Hands, 5=Pauldrons) ve zirh kademesini (1..5+)
         /// Assets/Art/Generated/Armors_15Piece altindaki gercek 15 parca 3 katmanli (layer1/layer2/layer3) .glb dosya adina esler.

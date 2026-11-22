@@ -5,10 +5,10 @@ Kullanim (PATH uzerindeki blender ile, 0 gomulu doku, UV-free COLOR_0):
     blender --background --python Tools/AutonomousAssetFactory/generators/weapon_forged_glb_builder.py
 
 Ciktilar (Assets/Art/Generated/Weapons/*.glb):
-    1. weapon_longsword.glb   — 1.85 kg Avrupa Uzun Kilici (elmas/6-gen namlu, derin fuller, pirinc balcak, deri kabza, topuz)
-    2. weapon_katana.glb      — 1.35 kg Kavisli Katana (sori egrisi, shinogi sirti, parlak hamon agzi, pirinc habaki, dairesel tsuba, tsuka-ito sargisi, fuchi/kashira)
-    3. weapon_zweihander.glb  — 5.60 kg Alman Zweihander (ince 6-gen namlu + fuller, Parierhaken yan kancalari, deri ricasso, genis balcak + yan koruma halkalari, cift el kabza, fasetli topuz)
-    4. weapon_rapier.glb      — 0.95 kg Ronesans Eskrim Kilici (suslu canak + kafes el siperi, ince quillonlar, tel sargili kabza, igne kesitli delici namlu)
+    1. weapon_longsword.glb   — 1.85 kg Avrupa Uzun Kilici (6-gen namlu, fuller, balcak, topuz)
+    2. weapon_katana.glb      — 1.35 kg Kavisli Katana (sori, shinogi, hamon, habaki, tsuba)
+    3. weapon_zweihander.glb  — 5.60 kg Alman Zweihander (ince 6-gen namlu, Parierhaken, ricasso)
+    4. weapon_rapier.glb      — 0.95 kg Ronesans Eskrim Kilici (canak + kafes siper, igne namlu)
 
 KRITIK KOORDINAT STANDARDI (Unity +Y = Blender +Z):
     - Balcak / Tsuba alt yuzu (crossguard / tsuba underside) : y = 0.000m
@@ -21,7 +21,7 @@ import os
 
 import bmesh
 import bpy
-from mathutils import Euler, Matrix, Vector
+from mathutils import Vector
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
@@ -220,7 +220,7 @@ class SwordBuilder:
             else:
                 prev_v = vecs[max(0, i - 1)]
                 next_v = vecs[min(count - 1, i + 1)]
-            tangent = (next_v - prev_v)
+            tangent = next_v - prev_v
             if tangent.length < 1e-6:
                 tangent = Vector((0, 0, 1))
             tangent.normalize()
@@ -351,16 +351,16 @@ def make_fullered_blade_ring(z, half_w, fuller_w, ridge_t, fuller_t, x_off=0.0):
         (x_off - bevel_w, ridge_t, z),
     ]
     edge_cols = [
-        PAL["steel_edge"],    # 0->1 keskin pah
-        PAL["steel_mid"],     # 1->2 oluk egimi
+        PAL["steel_edge"],  # 0->1 keskin pah
+        PAL["steel_mid"],  # 1->2 oluk egimi
         PAL["steel_fuller"],  # 2->3 koyu fuller olugu
-        PAL["steel_mid"],     # 3->4 oluk egimi
-        PAL["steel_edge"],    # 4->5 keskin pah
-        PAL["steel_edge"],    # 5->6 keskin pah
-        PAL["steel_mid"],     # 6->7 oluk egimi
+        PAL["steel_mid"],  # 3->4 oluk egimi
+        PAL["steel_edge"],  # 4->5 keskin pah
+        PAL["steel_edge"],  # 5->6 keskin pah
+        PAL["steel_mid"],  # 6->7 oluk egimi
         PAL["steel_fuller"],  # 7->8 koyu fuller olugu
-        PAL["steel_mid"],     # 8->9 oluk egimi
-        PAL["steel_edge"],    # 9->0 keskin pah
+        PAL["steel_mid"],  # 8->9 oluk egimi
+        PAL["steel_edge"],  # 9->0 keskin pah
     ]
     return pts, edge_cols
 
@@ -388,7 +388,7 @@ def make_diamond_blade_ring(z, half_w, ridge_t, x_off=0.0):
 
 
 def build_longsword():
-    """1.85 kg Avrupa Uzun Kilici: Balcak alt yuzu y = 0.000m, kabza [-0.230..0.000], namlu [+0.020..+0.930]."""
+    """1.85 kg Avrupa Uzun Kilici: Balcak y=0.000m, kabza [-0.230..0.000], namlu [+0.020..+0.930]."""
     clear_scene()
     sb = SwordBuilder("Weapon_Longsword")
 
@@ -410,7 +410,7 @@ def build_longsword():
         (-0.180, 0.0125, 0.0110, 0.0, 0.0, PAL["leather_dark"]),
         (-0.155, 0.0138, 0.0120, 0.0, 0.0, PAL["leather_mid"]),
         (-0.125, 0.0152, 0.0130, 0.0, 0.0, PAL["leather_dark"]),
-        (-0.095, 0.0168, 0.0142, 0.0, 0.0, PAL["brass_main"]),   # Orta pirinc sargi bilezigi
+        (-0.095, 0.0168, 0.0142, 0.0, 0.0, PAL["brass_main"]),  # Orta pirinc sargi bilezigi
         (-0.088, 0.0168, 0.0142, 0.0, 0.0, PAL["brass_bright"]),
         (-0.082, 0.0156, 0.0132, 0.0, 0.0, PAL["leather_mid"]),
         (-0.055, 0.0152, 0.0128, 0.0, 0.0, PAL["leather_dark"]),
@@ -419,7 +419,7 @@ def build_longsword():
     ]
     sb.add_lathe_rings(grip_rings, segs=12)
 
-    # 3) Balcak (Crossguard: alt yuzu tam z = 0.000, ust yuzu z = +0.020, hafif one/yukari egimli zarif quillonlar)
+    # 3) Balcak (Crossguard: alt yuzu z = 0.000, ust yuzu z = +0.020, hafif egimli quillonlar)
     sb.add_tapered_bar_x(
         [
             (-0.132, 0.018, 0.0065, 0.0065, PAL["brass_bright"]),
@@ -503,7 +503,7 @@ def build_katana():
         segs=14,
     )
 
-    # 4) Yuvarlak antik pirinc/altin Tsuba (alt yuzu tam z = 0.000, ust yuzu z = +0.008, kalin kenar cerceveli)
+    # 4) Yuvarlak antik pirinc/altin Tsuba (alt yuzu z = 0.000, ust yuzu z = +0.008, kenar cerceveli)
     sb.add_lathe_rings(
         [
             (0.000, 0.037, 0.035, 0.0, 0.0, PAL["brass_dark"]),
@@ -539,14 +539,21 @@ def build_katana():
             (shinogi_x, spine_t, z),
         ]
         if is_habaki:
-            cols = [PAL["brass_bright"], PAL["brass_main"], PAL["brass_dark"], PAL["brass_dark"], PAL["brass_main"], PAL["brass_bright"]]
+            cols = [
+                PAL["brass_bright"],
+                PAL["brass_main"],
+                PAL["brass_dark"],
+                PAL["brass_dark"],
+                PAL["brass_main"],
+                PAL["brass_bright"],
+            ]
         else:
             cols = [
                 PAL["katana_hamon"],  # 0->1 parlak keskin hamon
-                PAL["steel_mid"],     # 1->2 shinogi-ji ust yuzey
-                PAL["katana_mune"],   # 2->3 koyu mune sirt
-                PAL["katana_mune"],   # 3->4 koyu mune sirt
-                PAL["steel_mid"],     # 4->5 shinogi-ji ust yuzey
+                PAL["steel_mid"],  # 1->2 shinogi-ji ust yuzey
+                PAL["katana_mune"],  # 2->3 koyu mune sirt
+                PAL["katana_mune"],  # 3->4 koyu mune sirt
+                PAL["steel_mid"],  # 4->5 shinogi-ji ust yuzey
                 PAL["katana_hamon"],  # 5->0 parlak keskin hamon
             ]
         return pts, cols
@@ -751,19 +758,36 @@ def build_rapier():
     # Dis yuzey
     outer_secs = []
     for z, r_out, _, col_out, _ in cup_profile:
-        pts = [(math.cos(2.0 * math.pi * s / cup_segs) * r_out, math.sin(2.0 * math.pi * s / cup_segs) * r_out, z) for s in range(cup_segs)]
+        pts = [
+            (
+                math.cos(2.0 * math.pi * s / cup_segs) * r_out,
+                math.sin(2.0 * math.pi * s / cup_segs) * r_out,
+                z,
+            )
+            for s in range(cup_segs)
+        ]
         outer_secs.append((pts, [col_out] * cup_segs))
     sb.add_profile_loft(outer_secs, cap_bottom=False, cap_top=True)
 
     # Ic yuzey (ters sira ki normaller ice baksin)
     inner_secs = []
     for z, _, r_in, _, col_in in reversed(cup_profile):
-        pts = [(math.cos(2.0 * math.pi * s / cup_segs) * r_in, math.sin(2.0 * math.pi * s / cup_segs) * r_in, z) for s in range(cup_segs)]
+        pts = [
+            (math.cos(2.0 * math.pi * s / cup_segs) * r_in, math.sin(2.0 * math.pi * s / cup_segs) * r_in, z)
+            for s in range(cup_segs)
+        ]
         inner_secs.append((pts, [col_in] * cup_segs))
     sb.add_profile_loft(inner_secs, cap_bottom=False, cap_top=False)
 
     # Canak kenar bilezigi (rolled rim)
-    rim_pts = [(math.cos(2.0 * math.pi * s / cup_segs) * 0.0605, math.sin(2.0 * math.pi * s / cup_segs) * 0.0605, -0.048) for s in range(cup_segs)]
+    rim_pts = [
+        (
+            math.cos(2.0 * math.pi * s / cup_segs) * 0.0605,
+            math.sin(2.0 * math.pi * s / cup_segs) * 0.0605,
+            -0.048,
+        )
+        for s in range(cup_segs)
+    ]
     sb.add_tube_along_path(rim_pts, radii=0.0042, rgba_u8=PAL["brass_bright"], segs=8, closed_loop=True)
 
     # 4) Uzun ince Quillon capraz balcak (alt yuzu z = 0.000, +0.012 ustu)

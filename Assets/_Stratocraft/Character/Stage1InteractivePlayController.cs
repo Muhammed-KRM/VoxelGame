@@ -281,6 +281,8 @@ namespace Stratocraft.Character
         private readonly Stage1HolsterAndBackpackController _holsterCtrl = new();
         private readonly Stage1StoneKnappingController _stoneKnappingCtrl = new();
         private readonly WorldLooseBuildSystem _looseBuildSystem = new();
+        private readonly OrganicTreeCanopyVisualSystem _organicTreeCanopySystem = new();
+        private Func<int, int, int, bool>? _hasGroundedTimberSupportDelegateCached;
         private int _lastModularDamageSwingId = -1;
         private readonly Stage1MindBuildingController _mindBuildingCtrl = new();
         private readonly Stage1CampfireAndCookingController _campfireCtrl = new();
@@ -464,6 +466,7 @@ namespace Stratocraft.Character
             {
                 _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in modularSite, SharedVoxelMaterial, _worldChunks);
             }
+            _organicTreeCanopySystem.SpawnOrSyncChunkTrees(key.x, key.y, SharedVoxelMaterial, _worldChunks);
         }
 
         private void RebuildChunkSkyOcclusionMap(int cx, int cz, uint[] voxels)
@@ -707,6 +710,11 @@ namespace Stratocraft.Character
                         {
                             skyMap.UpdateOnCellChanged(editedVoxels.AsSpan(0, sliceLen), lx, wy, lz, editedVoxels[cellIdx]);
                         }
+
+                        if (editedVoxels[cellIdx] == 0u)
+                        {
+                            _organicTreeCanopySystem.NotifyTreeTruncatedOrFelledAt((cx << 4) + lx, wy, (cz << 4) + lz);
+                        }
                     }
 
                     if (_fluidChunks.TryGetValue((cx, cz), out ushort[]? editedFluids) && editedFluids != null)
@@ -814,6 +822,8 @@ namespace Stratocraft.Character
             _creatureBridge.OnSiegeStructureImpact ??= HandleSiegeModularStructureImpact;
             EnsureCreaturesInitialized();
             _collapseBridge.MiningControllerForItemDrops = _miningCtrl;
+            _hasGroundedTimberSupportDelegateCached ??= _looseBuildSystem.HasGroundedTimberSupportAtVoxel;
+            _collapseBridge.ExternalTimberSupportLookup = _hasGroundedTimberSupportDelegateCached;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
             _movementBridge.SetSafeSpawnPosition(transform.position);
             // Anayasa Bolum 3.1: Ana kameramiz varsayilan olarak FPS'tir ([F5] ile Omuz Ustu TPS'e gecilir).
@@ -881,6 +891,12 @@ namespace Stratocraft.Character
             {
                 transform.position = new Vector3(transform.position.x, surfY + 0.15f, transform.position.z);
             }
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _activeInstance = null;
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -968,6 +984,7 @@ namespace Stratocraft.Character
             _cloudAndRainRenderer.Dispose();
             _skyDayNightCtrl.Dispose();
             _recipeBookPreviewRenderer.Dispose();
+            _organicTreeCanopySystem.ClearAllTrees();
             Shader.SetGlobalVector(ShaderSwimmerPosId, Vector4.zero);
             Shader.SetGlobalVector(ShaderSwimmerVelId, Vector4.zero);
             Shader.SetGlobalFloat(ShaderCameraSubmergedId, 0.0f);
@@ -1062,6 +1079,7 @@ namespace Stratocraft.Character
             _chunkDeltaLog.MarkChunkUnloaded(key.cx, key.cz, _totalSimulatedGameSeconds);
             _creatureBridge.DemoteCreaturesInChunk(key.cx, key.cz, _totalSimulatedGameSeconds);
             _looseBuildSystem.ReleaseChunkModularStructureSite(key.cx, key.cz);
+            _organicTreeCanopySystem.ReleaseChunkTrees(key.cx, key.cz);
 
             // 2) Paket 4C-2: Yalnizca oyuncu/yaratik tarafindan gercekten degistirilmis chunk'lari RLE/.sregion'a al!
             // Dogal yagmur nemi/kar/golet zaten 0.6 MB WorldHydrologyLedger icinde tutuldugu icin 500+ temiz chunk bosuna sikistirilmaz!
@@ -3982,6 +4000,8 @@ namespace Stratocraft.Character
                 {
                     _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in refreshedSite, SharedVoxelMaterial, _worldChunks);
                 }
+                _organicTreeCanopySystem.ReleaseChunkTrees(k.cx, k.cz);
+                _organicTreeCanopySystem.SpawnOrSyncChunkTrees(k.cx, k.cz, SharedVoxelMaterial, _worldChunks);
                 _dirtyChunks.Add(k);
                 _dirtyFluidChunks.Add(k);
             }

@@ -13,8 +13,8 @@ Uretilen 8 Eklemli .glb Modeli (0 gomulu doku, UV-Free COLOR_0 dogrudan mat orga
     4. Assets/Art/Generated/Creatures_21/creature_arachnid_stalker.glb (gercek 8 bacakli!)
     5. Assets/Art/Generated/Creatures_21/creature_griffin_raptor.glb
     6. Assets/Art/Generated/Creatures_21/creature_ancient_golem.glb (yalnizca #11/#17/#20 Golem/Automaton)
-    7. Assets/Art/Generated/Creatures_21/creature_wild_boar.glb (YENI: Yaban Domuzu #2 - omuz kamburu, disler, toynaklar)
-    8. Assets/Art/Generated/Creatures_21/creature_night_ghoul.glb (YENI: Gece Gulyabanisi #4 - kambur kaburga, uzun pence)
+    7. Assets/Art/Generated/Creatures_21/creature_wild_boar.glb (YENI: Yaban Domuzu #2)
+    8. Assets/Art/Generated/Creatures_21/creature_night_ghoul.glb (YENI: Gece Gulyabanisi #4)
     + BuildLogs/Previews/creature_*_contact_sheet.png (8 adet 1024x1024 4-acili denetim karti)
 """
 
@@ -100,7 +100,7 @@ PAL = {
     "gol_moss": (106, 164, 84, 255),
     "gol_bronze": (196, 152, 84, 255),
     "gol_rune": (92, 232, 248, 255),
-    # 7. Wild Boar (YENI: Mat koyu-kahve sert killi sirt, toprak-kahve kasli yan, acik boz karin, beyaz disler)
+    # 7. Wild Boar (YENI: Mat koyu-kahve sert killi sirt, toprak-kahve kasli yan, beyaz disler)
     "boar_bristle": (106, 76, 54, 255),
     "boar_coat": (158, 114, 78, 255),
     "boar_flank": (182, 136, 94, 255),
@@ -108,7 +108,7 @@ PAL = {
     "boar_snout": (168, 118, 108, 255),
     "boar_hoof": (74, 62, 54, 255),
     "boar_eye": (246, 164, 42, 255),
-    # 8. Night Ghoul (YENI: Soluk curuk kul-zeytin gergin deri, cokuk kaburga golgesi, acik kemik/omurga, kanli goz)
+    # 8. Night Ghoul (YENI: Soluk kul-zeytin gergin deri, cokuk kaburga golgesi, kemik, kanli goz)
     "ghoul_skin": (150, 156, 136, 255),
     "ghoul_hollow": (102, 108, 96, 255),
     "ghoul_sinew": (140, 96, 90, 255),
@@ -251,7 +251,7 @@ class SculptPartBuilder:
         dorsal_rgba: tuple[int, int, int, int] | None = None,
     ) -> list:
         """
-        Anatomik kas kesitli (omurga sirti, yan kas loblari, kaburga oluklari) kavisli organik uzuv/govde orer.
+        Anatomik kas kesitli (omurga sirti, yan kas loblari, kaburga oluklari) organik uzuv/govde orer.
         """
         ring_verts = []
         ring_colors = []
@@ -383,9 +383,7 @@ class SculptPartBuilder:
         rot_m = Euler(rot_euler, "XYZ").to_matrix().to_4x4()
         scale_m = Matrix.Diagonal((radii[0], radii[1], radii[2], 1.0))
         xform = Matrix.Translation(Vector(center)) @ rot_m @ scale_m
-        ret = bmesh.ops.create_uvsphere(
-            self.bm, u_segments=segs, v_segments=rings, radius=1.0, matrix=xform
-        )
+        ret = bmesh.ops.create_uvsphere(self.bm, u_segments=segs, v_segments=rings, radius=1.0, matrix=xform)
         verts = set(ret["verts"])
         faces = [f for f in self.bm.faces if all(v in verts for v in f.verts)]
         bmesh.ops.recalc_face_normals(self.bm, faces=faces)
@@ -403,9 +401,7 @@ class SculptPartBuilder:
     ) -> list:
         prev_faces = set(self.bm.faces)
         rot_m = Euler(rot_euler, "XYZ").to_matrix().to_4x4()
-        scale_m = Matrix.Diagonal(
-            (half_extents[0] * 2.0, half_extents[1] * 2.0, half_extents[2] * 2.0, 1.0)
-        )
+        scale_m = Matrix.Diagonal((half_extents[0] * 2.0, half_extents[1] * 2.0, half_extents[2] * 2.0, 1.0))
         xform = Matrix.Translation(Vector(center)) @ rot_m @ scale_m
         bmesh.ops.create_cube(self.bm, size=1.0, matrix=xform)
         new_faces = [f for f in self.bm.faces if f not in prev_faces]
@@ -1187,8 +1183,18 @@ def build_arachnid_stalker(mat):
                 [
                     ((0.0, 0.0, 0.0), 0.044, 0.044, PAL["spid_chitin"]),
                     ((dx * 0.14, dy * 0.14, 0.10), 0.038, 0.038, PAL["spid_band"]),
-                    ((dx * (reach_r * 0.46), dy * (reach_r * 0.46), arch_z), 0.035, 0.035, PAL["spid_chitin"]),
-                    ((dx * (reach_r * 0.52), dy * (reach_r * 0.52), arch_z - 0.04), 0.032, 0.032, PAL["spid_band"]),
+                    (
+                        (dx * (reach_r * 0.46), dy * (reach_r * 0.46), arch_z),
+                        0.035,
+                        0.035,
+                        PAL["spid_chitin"],
+                    ),
+                    (
+                        (dx * (reach_r * 0.52), dy * (reach_r * 0.52), arch_z - 0.04),
+                        0.032,
+                        0.032,
+                        PAL["spid_band"],
+                    ),
                     ((dx * (reach_r * 0.84), dy * (reach_r * 0.84), -0.10), 0.022, 0.022, PAL["spid_chitin"]),
                     ((dx * reach_r, dy * reach_r, -0.38), 0.008, 0.008, PAL["spid_fang"]),
                 ],
@@ -1524,7 +1530,9 @@ def build_ancient_golem(mat):
             power_x=0.78,
             power_n=0.78,
         )
-        parts.append(pb.finalize_object(mat, world_pos=(sgn * 0.38, 0.0, 1.48), smooth_shading=False, max_tris=420))
+        parts.append(
+            pb.finalize_object(mat, world_pos=(sgn * 0.38, 0.0, 1.48), smooth_shading=False, max_tris=420)
+        )
 
         pb = SculptPartBuilder(f"Golem_ArmLower_{side_lbl}", sculpt_mode="rock", subsurf_levels=1)
         pb.add_curved_tube(
@@ -1538,7 +1546,9 @@ def build_ancient_golem(mat):
             power_x=0.75,
             power_n=0.75,
         )
-        parts.append(pb.finalize_object(mat, world_pos=(sgn * 0.40, 0.0, 1.06), smooth_shading=False, max_tris=380))
+        parts.append(
+            pb.finalize_object(mat, world_pos=(sgn * 0.40, 0.0, 1.06), smooth_shading=False, max_tris=380)
+        )
 
         pb = SculptPartBuilder(f"Golem_LegUpper_{side_lbl}", sculpt_mode="rock", subsurf_levels=1)
         pb.add_curved_tube(
@@ -1551,7 +1561,9 @@ def build_ancient_golem(mat):
             power_x=0.78,
             power_n=0.78,
         )
-        parts.append(pb.finalize_object(mat, world_pos=(sgn * 0.20, 0.0, 0.88), smooth_shading=False, max_tris=340))
+        parts.append(
+            pb.finalize_object(mat, world_pos=(sgn * 0.20, 0.0, 0.88), smooth_shading=False, max_tris=340)
+        )
 
         pb = SculptPartBuilder(f"Golem_LegLower_{side_lbl}", sculpt_mode="rock", subsurf_levels=1)
         pb.add_curved_tube(
@@ -1565,7 +1577,9 @@ def build_ancient_golem(mat):
             power_x=0.76,
             power_n=0.76,
         )
-        parts.append(pb.finalize_object(mat, world_pos=(sgn * 0.20, 0.0, 0.44), smooth_shading=False, max_tris=360))
+        parts.append(
+            pb.finalize_object(mat, world_pos=(sgn * 0.20, 0.0, 0.44), smooth_shading=False, max_tris=360)
+        )
 
     sockets = create_gore_sockets(
         [
@@ -1635,7 +1649,7 @@ def build_wild_boar(mat):
         pb.add_ellipsoid((side * 0.16, 0.27, 0.00), (0.095, 0.13, 0.12), PAL["boar_flank"], segs=10, rings=6)
     parts.append(pb.finalize_object(mat, world_pos=(0.0, 0.0, 0.58), max_tris=1800))
 
-    # Head (world pivot = 0, -0.44, 0.62): Kama kafatasi + Uzun kazici burun diski + Sivri kulaklar + Ust azi disleri
+    # Head (world pivot = 0, -0.44, 0.62): Kama kafatasi + Burun diski + Sivri kulaklar + Disler
     pb = SculptPartBuilder("Boar_Head", sculpt_mode="boar", subsurf_levels=1)
     pb.add_curved_tube(
         [
@@ -1652,7 +1666,12 @@ def build_wild_boar(mat):
     )
     # Yassi kikirdak domuz burun diski ve burun delikleri
     pb.add_ellipsoid(
-        (0.0, -0.445, -0.088), (0.072, 0.024, 0.062), PAL["boar_snout"], segs=12, rings=6, rot_euler=(0.22, 0, 0)
+        (0.0, -0.445, -0.088),
+        (0.072, 0.024, 0.062),
+        PAL["boar_snout"],
+        segs=12,
+        rings=6,
+        rot_euler=(0.22, 0, 0),
     )
     for side in (-1.0, 1.0):
         pb.add_ellipsoid((side * 0.026, -0.464, -0.086), (0.014, 0.010, 0.018), PAL["pupil"], segs=8, rings=5)
@@ -1816,7 +1835,7 @@ def build_wild_boar(mat):
 def build_night_ghoul(mat):
     parts = []
 
-    # Torso (world pivot = 0, 0, 0.90): Ileri bukulmus kambur omurga + Cokuk kaburgali gogus + Sirt omur dikenleri
+    # Torso (world pivot = 0, 0, 0.90): Kambur omurga + Cokuk kaburgali gogus + Sirt dikenleri
     pb = SculptPartBuilder("Ghoul_Torso", sculpt_mode="ghoul", subsurf_levels=1)
     pb.add_curved_tube(
         [
@@ -1842,7 +1861,9 @@ def build_night_ghoul(mat):
             ],
             segs=10,
         )
-        pb.add_ellipsoid((side * 0.15, 0.05, -0.06), (0.085, 0.095, 0.085), PAL["ghoul_skin"], segs=10, rings=6)
+        pb.add_ellipsoid(
+            (side * 0.15, 0.05, -0.06), (0.085, 0.095, 0.085), PAL["ghoul_skin"], segs=10, rings=6
+        )
     # 4 cift belirgin kaburga kemeri (sunken ribcage) ve kambur sirt omurga cikintilari
     for r_idx, (rz, ry, rw) in enumerate(
         [(0.16, -0.01, 0.185), (0.23, -0.03, 0.215), (0.30, -0.06, 0.235), (0.37, -0.09, 0.220)]
@@ -1865,7 +1886,7 @@ def build_night_ghoul(mat):
         )
     parts.append(pb.finalize_object(mat, world_pos=(0.0, 0.0, 0.90), max_tris=1800))
 
-    # Head (world pivot = 0, -0.18, 1.38): Korkutucu ince uzun kafatasi + Cokuk goz cukuru + Sivri kulaklar + Disler
+    # Head (world pivot = 0, -0.18, 1.38): Ince uzun kafatasi + Cokuk goz cukuru + Kulaklar + Disler
     pb = SculptPartBuilder("Ghoul_Head", sculpt_mode="ghoul", subsurf_levels=1)
     pb.add_curved_tube(
         [
@@ -1884,9 +1905,7 @@ def build_night_ghoul(mat):
         pb.add_ellipsoid(
             (side * 0.076, -0.135, 0.012), (0.026, 0.036, 0.018), PAL["ghoul_bone"], segs=8, rings=5
         )
-        pb.add_ellipsoid(
-            (side * 0.060, -0.168, 0.040), (0.024, 0.020, 0.022), PAL["pupil"], segs=8, rings=5
-        )
+        pb.add_ellipsoid((side * 0.060, -0.168, 0.040), (0.024, 0.020, 0.022), PAL["pupil"], segs=8, rings=5)
         pb.add_ellipsoid(
             (side * 0.066, -0.180, 0.040), (0.013, 0.012, 0.012), PAL["ghoul_eye"], segs=8, rings=5
         )

@@ -622,10 +622,21 @@ namespace Stratocraft.StandaloneCoreTests
         [Test]
         public void WorldGen_Replaces1mCubeHousesWithBiomeTerraces_AndPooledSitesCollapseWhenSupportsBreak()
         {
+            // Baslangic vadisi / atolye cevresi cardak spami temiz olmalidir:
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 0, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-2, -1, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-3, -1, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(1, 1, out _), Is.False);
+
+            // Baslangic vadisi kenarinda yalnizca 1 adet tam kapali NordicTimberCabin:
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(1, 2, out ProceduralModularSiteSpec starterCabinSite), Is.True);
+            Assert.That(starterCabinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.NordicTimberCabin));
+
+            // Dis POI yerleskeleri:
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, 0, out ProceduralModularSiteSpec cabinSite), Is.True);
             Assert.That(cabinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.NordicTimberCabin));
 
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 0, out ProceduralModularSiteSpec towerSite), Is.True);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 3, out ProceduralModularSiteSpec towerSite), Is.True);
             Assert.That(towerSite.Kind, Is.EqualTo(ProceduralModularSiteKind.MeadHallWatchtower));
 
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-2, 2, out ProceduralModularSiteSpec shrineSite), Is.True);
@@ -633,6 +644,32 @@ namespace Stratocraft.StandaloneCoreTests
 
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, -2, out ProceduralModularSiteSpec ruinSite), Is.True);
             Assert.That(ruinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.CollapsedTimberStoneRuin));
+
+            // Minecraft 1m3 kup yaprak vokselleri (shapeId == 1, Grass/GlowingMoss) kaldirilmis, dogal govde korunmustur:
+            var (treeChunkVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(0, 0);
+            int cubeLeafCount = 0;
+            int trunkVoxelCount = 0;
+            for (int y = 90; y < StratocraftFloatingIslandWorldGen.MaxEditableVoxelY; y++)
+            {
+                int yBase = y << 8;
+                for (int col = 0; col < 256; col++)
+                {
+                    uint raw = treeChunkVoxels[yBase | col];
+                    if (raw == 0u || VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle) continue;
+                    byte mat = VoxelBitUtility.GetMaterialId(raw);
+                    byte shp = VoxelBitUtility.GetShapeId(raw);
+                    if (shp == 1 && (mat == MaterialIdCatalog.Grass || mat == MaterialIdCatalog.GlowingMoss))
+                    {
+                        cubeLeafCount++;
+                    }
+                    else if (shp == 2 && (mat == MaterialIdCatalog.OakWood || mat == MaterialIdCatalog.Ironwood || mat == MaterialIdCatalog.SpiritWood))
+                    {
+                        trunkVoxelCount++;
+                    }
+                }
+            }
+            Assert.That(cubeLeafCount, Is.EqualTo(0), "BuildVoxelTree must not stamp 1m3 green cube leaf voxels!");
+            Assert.That(trunkVoxelCount, Is.GreaterThanOrEqualTo(6), "BuildVoxelTree must preserve natural voxel tree trunks for felling!");
 
             var (cabinVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(2, 0);
             byte expectedTerraceMat = StratocraftFloatingIslandWorldGen.ResolveBiomeFoundationMaterial(

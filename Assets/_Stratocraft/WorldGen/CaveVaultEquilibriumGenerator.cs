@@ -520,7 +520,7 @@ namespace Stratocraft.WorldGen
                 {
                     int nx = lx + dX[d];
                     int nz = lz + dZ[d];
-                    if ((uint)nx >= 16u || (uint)nz >= 16u) continue;
+                    if (nx < 1 || nx > 14 || nz < 1 || nz > 14) continue;
                     int nCol = (nz << 4) | nx;
                     int capIdx = (cavityTopY << 8) | nCol;
                     int capRoofIdx = ((cavityTopY + 1) << 8) | nCol;
@@ -679,6 +679,7 @@ namespace Stratocraft.WorldGen
                         if (sPos >= spanStart + spanWidth - 1) break;
                         int lx = alongX ? sPos : fixedCoord;
                         int lz = alongX ? fixedCoord : sPos;
+                        if (lx <= 0 || lx >= 15 || lz <= 0 || lz >= 15) continue;
                         int col = (lz << 4) | lx;
                         int colFloor = FindFloorYBelow(voxels, col, cavityY);
                         int depth = maxSteps - k;
@@ -705,6 +706,7 @@ namespace Stratocraft.WorldGen
                         if (sPos <= spanStart) break;
                         int lx = alongX ? sPos : fixedCoord;
                         int lz = alongX ? fixedCoord : sPos;
+                        if (lx <= 0 || lx >= 15 || lz <= 0 || lz >= 15) continue;
                         int col = (lz << 4) | lx;
                         int colFloor = FindFloorYBelow(voxels, col, cavityY);
                         int depth = maxSteps - k;
@@ -751,6 +753,7 @@ namespace Stratocraft.WorldGen
                     {
                         int lx = alongX ? sPos : fixedCoord;
                         int lz = alongX ? fixedCoord : sPos;
+                        if (lx <= 0 || lx >= 15 || lz <= 0 || lz >= 15) continue;
                         int col = (lz << 4) | lx;
                         voxels[((cavityY + 1) << 8) | col] = 0u;
                         placed++;
@@ -781,6 +784,8 @@ namespace Stratocraft.WorldGen
                     int col2D = z * sizeX + x;
                     int surfY = surfaceTopY[col2D];
                     int colAnchorY = surfY > 0 ? Math.Min(anchorAboveY, surfY - 1) : anchorAboveY;
+                    bool isChunkSeamBorder = sizeX == ChunkSizeXZ && sizeZ == ChunkSizeXZ &&
+                                             (x == 0 || x == sizeX - 1 || z == 0 || z == sizeZ - 1);
 
                     for (int y = 0; y < solveMaxY; y++)
                     {
@@ -791,7 +796,7 @@ namespace Stratocraft.WorldGen
                         {
                             BlokKokenDurumu origin = VoxelBitUtility.GetOriginState(raw);
                             if (origin == BlokKokenDurumu.OyuncuItemBlogu ||
-                                (y > colAnchorY && origin == BlokKokenDurumu.DogalKutle))
+                                ((isChunkSeamBorder || y > colAnchorY) && origin == BlokKokenDurumu.DogalKutle))
                             {
                                 dst[dstIdx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
                                 continue;
@@ -841,12 +846,12 @@ namespace Stratocraft.WorldGen
             }
 
             int availableHeadroom = newCeilingY - (floorY + 1);
-            int maxRubbleLayers = Math.Max(0, availableHeadroom - 2);
-            int rubbleLayers = Math.Clamp((fallenCount + 1) / 2, 1, Math.Min(2, maxRubbleLayers));
-            if (rubbleLayers <= 0)
+            int maxRubbleLayers = Math.Min(2, availableHeadroom - 2);
+            if (maxRubbleLayers <= 0)
             {
                 return;
             }
+            int rubbleLayers = Math.Clamp((fallenCount + 1) / 2, 1, maxRubbleLayers);
 
             uint rubbleRaw = VoxelBitUtility.PackStandard(
                 MaterialIdCatalog.LooseRubble, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 3);
