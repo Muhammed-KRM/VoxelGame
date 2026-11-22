@@ -436,7 +436,7 @@ namespace Stratocraft.Character
             CombatMartialStance.HighGuard_VomTag => new Vector2(0.42f, 0.96f),
             CombatMartialStance.Iaido_QuickDraw => new Vector2(-0.88f, -0.64f),
             CombatMartialStance.Fencing_Punta => new Vector2(0.08f, 0.14f),
-            CombatMartialStance.TwoHand_Juggernaut => new Vector2(0.56f, 0.72f),
+            CombatMartialStance.TwoHand_Juggernaut => new Vector2(-0.56f, 0.72f),
             _ => new Vector2(0.42f, 0.96f)
         };
 
@@ -3393,9 +3393,9 @@ namespace Stratocraft.Character
             {
                 // Devir 078: Çift El Yarma (TwoHand_Juggernaut) guard pozunu sag-dis omuz kenarinda (periferal) tut;
                 // Greatsword ekran merkezini ve sol-ust gorus alanini ASLA kapatmaz!
-                armArcX = Mathf.Clamp(gx * 0.36f + 0.16f, -0.44f, 0.58f);
+                armArcX = Mathf.Clamp(gx * 0.36f + 0.42f, -0.44f, 0.58f);
                 armArcY = Mathf.Clamp(gy * 0.22f - 0.12f, -0.46f, 0.22f);
-                float tipX = Mathf.Clamp(gx * 0.54f + 0.22f, -0.45f, 0.78f);
+                float tipX = Mathf.Clamp(gx * 0.54f + 0.62f, -0.45f, 0.78f);
                 float tipY = Mathf.Clamp(gy * 0.88f, -0.82f, 0.92f);
                 float tipZ = Mathf.Lerp(0.24f, 0.56f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.75f));
                 bladeTipDirLocal = new Vector3(tipX, tipY, tipZ).normalized;
