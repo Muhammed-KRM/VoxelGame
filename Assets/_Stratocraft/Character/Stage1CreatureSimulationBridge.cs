@@ -1,14 +1,14 @@
-#if UNITY_5_3_OR_NEWER
 #nullable enable
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Stratocraft.CreaturesAI.CreaturesAndBosses;
+using Stratocraft.CreaturesAI.Data;
+#if UNITY_5_3_OR_NEWER
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
-using Stratocraft.CreaturesAI.CreaturesAndBosses;
-using Stratocraft.CreaturesAI.Data;
 using Stratocraft.CreaturesAI.HybridLod;
 using Stratocraft.CreaturesAI.OffScreen;
 using Stratocraft.CreaturesAI.Pathfinding;
@@ -20,6 +20,7 @@ using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen.Generators;
 using UnityEngine;
+#endif
 
 namespace Stratocraft.Character
 {
@@ -32,6 +33,9 @@ namespace Stratocraft.Character
     public sealed class Stage1CreatureSimulationBridge
     {
         public const int MaxActiveTier0Entities = 18;
+        public const float Live3DRetentionRadiusMeters = 118.0f;
+        public const float FallbackSpreadsheetDemoteRadiusMeters = 128.0f;
+        public const float VoidBlinkDashSpeedMps = Creature21BehaviorSystem.BlinkDashSpeedMetersPerSecond;
 
         public enum CreatureAiState : byte
         {
@@ -51,6 +55,364 @@ namespace Stratocraft.Character
             EvadeDodge = 13
         }
 
+        public enum CreatureGlbRigKind : byte
+        {
+            DireWolf = 0,
+            HornedBehemoth = 1,
+            StagSteed = 2,
+            ArachnidStalker = 3,
+            GriffinRaptor = 4,
+            AncientGolem = 5
+        }
+
+        public static readonly string[] CanonicalCreatureGlbFileNames =
+        {
+            "creature_dire_wolf.glb",
+            "creature_horned_behemoth.glb",
+            "creature_stag_steed.glb",
+            "creature_arachnid_stalker.glb",
+            "creature_griffin_raptor.glb",
+            "creature_ancient_golem.glb"
+        };
+
+        public static string ResolveCreatureGlbFileName(CreatureGlbRigKind rigKind)
+        {
+            int idx = (int)rigKind;
+            return (uint)idx < (uint)CanonicalCreatureGlbFileNames.Length
+                ? CanonicalCreatureGlbFileNames[idx]
+                : CanonicalCreatureGlbFileNames[0];
+        }
+
+        public static CreatureGlbRigKind ResolveCreatureGlbRigKind(
+            byte archetypeId,
+            bool isFlyingBoss = false,
+            bool isBiped = false,
+            CaveCreatureVariantKind caveVariant = CaveCreatureVariantKind.None)
+        {
+            if (caveVariant != CaveCreatureVariantKind.None)
+            {
+                return caveVariant switch
+                {
+                    CaveCreatureVariantKind.GiantCaveSpider => CreatureGlbRigKind.ArachnidStalker,
+                    CaveCreatureVariantKind.CrystalCavernScorpion => CreatureGlbRigKind.ArachnidStalker,
+                    CaveCreatureVariantKind.CaveBatCrawler => CreatureGlbRigKind.GriffinRaptor,
+                    CaveCreatureVariantKind.AbyssalSkeletonKnight => CreatureGlbRigKind.AncientGolem,
+                    CaveCreatureVariantKind.MagmaSerpent => CreatureGlbRigKind.DireWolf,
+                    _ => CreatureGlbRigKind.ArachnidStalker
+                };
+            }
+
+            if (isFlyingBoss)
+            {
+                return CreatureGlbRigKind.GriffinRaptor;
+            }
+
+            return archetypeId switch
+            {
+                1 or 6 or 7 or 11 or 13 or 17 or 18 or 20 => CreatureGlbRigKind.AncientGolem,
+                2 or 8 or 10 or 19 => CreatureGlbRigKind.HornedBehemoth,
+                5 => CreatureGlbRigKind.StagSteed,
+                9 or 15 => CreatureGlbRigKind.ArachnidStalker,
+                14 or 16 => CreatureGlbRigKind.GriffinRaptor,
+                _ => isBiped ? CreatureGlbRigKind.AncientGolem : CreatureGlbRigKind.DireWolf
+            };
+        }
+
+        public static bool IsEngagedInCombatOrNear(
+            float horizDistMeters,
+            CreatureAiState state,
+            bool isBlinkDashActive = false)
+        {
+            return horizDistMeters < Live3DRetentionRadiusMeters ||
+                   isBlinkDashActive ||
+                   state == CreatureAiState.AggroChase ||
+                   state == CreatureAiState.MeleeAttack ||
+                   state == CreatureAiState.AttackWindup ||
+                   state == CreatureAiState.AttackActive ||
+                   state == CreatureAiState.AttackRecovery ||
+                   state == CreatureAiState.DirectionalBlock ||
+                   state == CreatureAiState.EvadeDodge ||
+                   state == CreatureAiState.Flee ||
+                   state == CreatureAiState.SupportPillarSiege;
+        }
+
+        public static float ComputeSmoothPatrolSpeedMps(float baseSpeed, float speedMultiplier)
+        {
+            return Math.Clamp(baseSpeed * speedMultiplier * 0.65f, 0.85f, 6.5f);
+        }
+
+        /// <summary>
+        /// Bug 1 cozumu: Devriye (Patrol) konumunu asla dogrudan <c>AnchorPos + offset</c> noktasina isinlamaz;
+        /// <c>MoveTowards(..., patrolSpeed * deltaTime)</c> ile her karede akici ve surekli ilerletir.
+        /// </summary>
+        public static System.Numerics.Vector3 StepPatrolPositionSmooth(
+            System.Numerics.Vector3 currentPos,
+            System.Numerics.Vector3 anchorPos,
+            float timeSec,
+            float phaseOffset,
+            float baseSpeed,
+            float speedMultiplier,
+            bool isFlying,
+            float deltaTime,
+            float? sampledGroundY = null)
+        {
+            float safeDt = MathF.Max(0f, deltaTime);
+            float patrolSpeed = ComputeSmoothPatrolSpeedMps(baseSpeed, speedMultiplier);
+            float maxStep = patrolSpeed * safeDt;
+            float t = timeSec * 1.15f + phaseOffset;
+
+            if (isFlying)
+            {
+                var flyOffset = new System.Numerics.Vector3(
+                    MathF.Sin(t * 0.7f) * 2.8f,
+                    MathF.Sin(t * 1.9f) * 0.65f,
+                    MathF.Cos(t * 0.7f) * 2.4f);
+                return MoveTowardsVec3(currentPos, anchorPos + flyOffset, maxStep);
+            }
+
+            float radiusX = 2.4f * speedMultiplier;
+            float radiusZ = 2.0f * speedMultiplier;
+            var goalXZ = new System.Numerics.Vector3(
+                anchorPos.X + MathF.Sin(t) * radiusX,
+                currentPos.Y,
+                anchorPos.Z + MathF.Cos(t) * radiusZ);
+            System.Numerics.Vector3 nextPos = MoveTowardsVec3(currentPos, goalXZ, maxStep);
+
+            if (sampledGroundY.HasValue)
+            {
+                float targetY = sampledGroundY.Value - currentPos.Y > 1.65f ? currentPos.Y : sampledGroundY.Value;
+                nextPos.Y = MoveTowardsScalar(currentPos.Y, targetY, safeDt * 10.5f);
+            }
+
+            return nextPos;
+        }
+
+        public struct AntiTeleportKinematicAgent
+        {
+            public byte ArchetypeId;
+            public AnatomyCapabilityFlags Capabilities;
+            public CreatureAiState State;
+            public System.Numerics.Vector3 Position;
+            public System.Numerics.Vector3 AnchorPos;
+            public float BaseSpeed;
+            public float SpeedMultiplier;
+            public float MaxHp;
+            public float CurrentHp;
+            public float PhaseOffset;
+            public bool IsFlying;
+            public bool IsBiped;
+            public bool HasBeenProvoked;
+            public float DodgeTimer;
+            public System.Numerics.Vector3 DodgeDirXZ;
+            public float BlinkCooldownTimer;
+            public bool IsBlinkDashActive;
+            public System.Numerics.Vector3 BlinkDashTargetPos;
+            public float BlinkDashRemainingSeconds;
+        }
+
+        /// <summary>
+        /// Saf .NET 10 ve Unity ortak anti-teleport kinematik adimi:
+        /// Patrol &lt;-&gt; AggroChase &lt;-&gt; EvadeDodge &lt;-&gt; Flee &lt;-&gt; Patrol ve 18 m/s Void Blink Dash gecislerinde
+        /// AnchorPos guncellemesini ve sifir tek-kare isinlanma garantisini ilerletir.
+        /// </summary>
+        public static void StepAntiTeleportKinematicAgent(
+            ref AntiTeleportKinematicAgent a,
+            System.Numerics.Vector3 playerPos,
+            System.Numerics.Vector3 playerFwdXZ,
+            float timeSec,
+            float deltaTime,
+            Func<float, float, float>? groundHeightSampler = null)
+        {
+            float safeDt = MathF.Max(0f, deltaTime);
+            a.BlinkCooldownTimer = MathF.Max(0f, a.BlinkCooldownTimer - safeDt);
+
+            float dx = playerPos.X - a.Position.X;
+            float dz = playerPos.Z - a.Position.Z;
+            float horizDist = MathF.Sqrt(dx * dx + dz * dz);
+            System.Numerics.Vector3 flatDir = horizDist > 0.001f
+                ? new System.Numerics.Vector3(dx / horizDist, 0f, dz / horizDist)
+                : new System.Numerics.Vector3(0f, 0f, 1f);
+
+            float aggroRange = Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) ? 18.0f : 14.0f;
+            bool shouldEngage = horizDist <= aggroRange && (a.HasBeenProvoked || a.CurrentHp < a.MaxHp || a.ArchetypeId != 5);
+
+            if (!shouldEngage && !a.IsBlinkDashActive && a.DodgeTimer <= 0f)
+            {
+                a.State = CreatureAiState.Patrol;
+                float? gY = (!a.IsFlying && groundHeightSampler != null)
+                    ? groundHeightSampler(a.Position.X, a.Position.Z)
+                    : null;
+                a.Position = StepPatrolPositionSmooth(
+                    a.Position,
+                    a.AnchorPos,
+                    timeSec,
+                    a.PhaseOffset,
+                    a.BaseSpeed,
+                    MathF.Max(0.25f, a.SpeedMultiplier),
+                    a.IsFlying,
+                    safeDt,
+                    gY);
+                return;
+            }
+
+            if (a.IsBlinkDashActive)
+            {
+                a.BlinkDashRemainingSeconds = MathF.Max(0f, a.BlinkDashRemainingSeconds - safeDt);
+                a.Position = Creature21BehaviorSystem.StepBlinkDashPosition(
+                    a.Position,
+                    a.BlinkDashTargetPos,
+                    safeDt,
+                    out bool dashDone,
+                    VoidBlinkDashSpeedMps);
+                if (!a.IsFlying && groundHeightSampler != null)
+                {
+                    float gY = groundHeightSampler(a.Position.X, a.Position.Z);
+                    a.Position.Y = MoveTowardsScalar(a.Position.Y, gY, safeDt * 12.0f);
+                }
+                a.AnchorPos = a.Position;
+                if (dashDone || a.BlinkDashRemainingSeconds <= 0f)
+                {
+                    a.IsBlinkDashActive = false;
+                }
+                return;
+            }
+
+            if (a.CurrentHp <= a.MaxHp * 0.32f && horizDist < 14.0f)
+            {
+                if (Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) &&
+                    a.BlinkCooldownTimer <= 0f &&
+                    Creature21BehaviorSystem.TryComputeBlinkStepTarget(
+                        a.Capabilities,
+                        a.Position,
+                        playerPos,
+                        playerFwdXZ,
+                        isEvading: true,
+                        deterministicStepSeed: (int)(a.ArchetypeId * 7 + 3),
+                        ref a.BlinkCooldownTimer,
+                        out System.Numerics.Vector3 evadeDest,
+                        out _))
+                {
+                    float destY = (!a.IsFlying && groundHeightSampler != null)
+                        ? groundHeightSampler(evadeDest.X, evadeDest.Z)
+                        : a.Position.Y;
+                    a.IsBlinkDashActive = true;
+                    a.BlinkDashTargetPos = new System.Numerics.Vector3(evadeDest.X, destY, evadeDest.Z);
+                    float dashDist = System.Numerics.Vector3.Distance(a.Position, a.BlinkDashTargetPos);
+                    a.BlinkDashRemainingSeconds = Math.Clamp(dashDist / VoidBlinkDashSpeedMps + 0.15f, 0.12f, 1.35f);
+                    a.Position = Creature21BehaviorSystem.StepBlinkDashPosition(
+                        a.Position,
+                        a.BlinkDashTargetPos,
+                        safeDt,
+                        out bool finishedNow,
+                        VoidBlinkDashSpeedMps);
+                    if (finishedNow) a.IsBlinkDashActive = false;
+                    a.AnchorPos = a.Position;
+                    return;
+                }
+
+                a.State = CreatureAiState.Flee;
+                float fleeSpeed = Math.Clamp(a.BaseSpeed * MathF.Max(0.25f, a.SpeedMultiplier) * 0.48f, 0.95f, 2.15f);
+                a.Position -= flatDir * (fleeSpeed * safeDt);
+                if (!a.IsFlying && groundHeightSampler != null)
+                {
+                    a.Position.Y = MoveTowardsScalar(a.Position.Y, groundHeightSampler(a.Position.X, a.Position.Z), safeDt * 11.5f);
+                }
+                a.AnchorPos = a.Position;
+                return;
+            }
+
+            if (a.DodgeTimer > 0f)
+            {
+                a.DodgeTimer = MathF.Max(0f, a.DodgeTimer - safeDt);
+                a.State = CreatureAiState.EvadeDodge;
+                System.Numerics.Vector3 dDir = a.DodgeDirXZ.LengthSquared() > 1e-4f
+                    ? System.Numerics.Vector3.Normalize(new System.Numerics.Vector3(a.DodgeDirXZ.X, 0f, a.DodgeDirXZ.Z))
+                    : new System.Numerics.Vector3(-flatDir.Z, 0f, flatDir.X);
+                a.Position += dDir * (5.2f * safeDt);
+                if (!a.IsFlying && groundHeightSampler != null)
+                {
+                    a.Position.Y = MoveTowardsScalar(a.Position.Y, groundHeightSampler(a.Position.X, a.Position.Z), safeDt * 12.0f);
+                }
+                a.AnchorPos = a.Position;
+                return;
+            }
+
+            if (Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) &&
+                a.BlinkCooldownTimer <= 0f &&
+                Creature21BehaviorSystem.TryComputeBlinkStepTarget(
+                    a.Capabilities,
+                    a.Position,
+                    playerPos,
+                    playerFwdXZ,
+                    isEvading: false,
+                    deterministicStepSeed: (int)(a.ArchetypeId * 5 + 1),
+                    ref a.BlinkCooldownTimer,
+                    out System.Numerics.Vector3 blinkDest,
+                    out _))
+            {
+                float destY = (!a.IsFlying && groundHeightSampler != null)
+                    ? groundHeightSampler(blinkDest.X, blinkDest.Z)
+                    : a.Position.Y;
+                a.IsBlinkDashActive = true;
+                a.BlinkDashTargetPos = new System.Numerics.Vector3(blinkDest.X, destY, blinkDest.Z);
+                float dashDist = System.Numerics.Vector3.Distance(a.Position, a.BlinkDashTargetPos);
+                a.BlinkDashRemainingSeconds = Math.Clamp(dashDist / VoidBlinkDashSpeedMps + 0.15f, 0.12f, 1.35f);
+                a.Position = Creature21BehaviorSystem.StepBlinkDashPosition(
+                    a.Position,
+                    a.BlinkDashTargetPos,
+                    safeDt,
+                    out bool finishedNow,
+                    VoidBlinkDashSpeedMps);
+                if (finishedNow) a.IsBlinkDashActive = false;
+                a.AnchorPos = a.Position;
+                return;
+            }
+
+            float standOff = a.IsFlying ? 3.15f : (a.IsBiped ? 2.65f : 2.80f);
+            if (horizDist > standOff)
+            {
+                a.State = CreatureAiState.AggroChase;
+                float chaseStep = a.BaseSpeed * MathF.Max(0.25f, a.SpeedMultiplier) * safeDt;
+                a.Position += flatDir * chaseStep;
+            }
+            else
+            {
+                a.State = CreatureAiState.MeleeAttack;
+                var tangent = new System.Numerics.Vector3(-flatDir.Z, 0f, flatDir.X);
+                a.Position += tangent * (MathF.Sin(timeSec * 2.6f + a.PhaseOffset) * 0.42f * safeDt);
+            }
+
+            if (!a.IsFlying && groundHeightSampler != null)
+            {
+                a.Position.Y = MoveTowardsScalar(a.Position.Y, groundHeightSampler(a.Position.X, a.Position.Z), safeDt * 11.5f);
+            }
+            a.AnchorPos = a.Position;
+        }
+
+        private static System.Numerics.Vector3 MoveTowardsVec3(
+            System.Numerics.Vector3 current,
+            System.Numerics.Vector3 target,
+            float maxDistanceDelta)
+        {
+            if (maxDistanceDelta <= 0f) return current;
+            System.Numerics.Vector3 diff = target - current;
+            float sqDist = diff.LengthSquared();
+            if (sqDist == 0f || sqDist <= maxDistanceDelta * maxDistanceDelta)
+            {
+                return target;
+            }
+
+            float dist = MathF.Sqrt(sqDist);
+            return current + (diff / dist) * maxDistanceDelta;
+        }
+
+        private static float MoveTowardsScalar(float current, float target, float maxDelta)
+        {
+            if (MathF.Abs(target - current) <= maxDelta) return target;
+            return current + MathF.Sign(target - current) * maxDelta;
+        }
+
+#if UNITY_5_3_OR_NEWER
         private enum AnatomicalHitRegion : byte { None = 0, Legs = 1, ArmsOrWings = 2, HeadOrTorso = 3 }
 
         public sealed class LiveCreatureAgent
@@ -105,15 +467,21 @@ namespace Stratocraft.Character
             public float StealthCooldownTimer;
             public float CurrentStealthAlpha01 = 1.0f;
             public float BlinkCooldownTimer;
+            public bool IsBlinkDashActive;
+            public Vector3 BlinkDashTargetPos;
+            public float BlinkDashRemainingSeconds;
             public float BallisticShotCooldownTimer;
             public float SiegeSlamCooldownTimer;
             public bool UsesRealGlbBodyVisual;
+            public CreatureGlbRigKind ActiveGlbRigKind;
+            public float RestTorsoLocalY = 0.68f;
             public MeshRenderer[]? CachedRenderers;
             public Transform? BodyTorsoPivot;
             public Transform? FrontLeftLeg, FrontRightLeg, HindLeftLeg, HindRightLeg;
             public Transform? FrontLeftLower, FrontRightLower, HindLeftLower, HindRightLower;
             public Transform? WingLeftInner, WingLeftOuter, WingRightInner, WingRightOuter;
             public Transform? HeadPivot, JawPivot, TailPivot, TamedCollarPivot;
+            public Transform?[]? ArachnidLegs;
 
             public bool LegSevered
             {
@@ -171,8 +539,8 @@ namespace Stratocraft.Character
         private readonly List<PathNodeCoord> _astarPathBuffer = new(64);
         private readonly Dictionary<int, Mesh> _creatureMeshCache = new(32);
         private readonly Dictionary<int, Mesh?> _severedLimbGlbCache = new(16);
-        private Dictionary<string, Mesh>? _ashStalkerGlbPartsCache;
-        private bool _ashStalkerGlbProbed;
+        private readonly Dictionary<string, Mesh>?[] _creatureRigGlbCache = new Dictionary<string, Mesh>?[6];
+        private readonly bool[] _creatureRigGlbProbed = new bool[6];
         private Dictionary<string, Mesh>? _phoenixBossGlbPartsCache;
         private bool _phoenixBossGlbProbed;
         private MaterialPropertyBlock? _stealthPropertyBlock;
@@ -758,8 +1126,8 @@ namespace Stratocraft.Character
                     var (ax, ay, az) = a.OffScreenRecord.EvaluatePositionAtTime(nowSec);
                     float analHorizDist = Vector2.Distance(new Vector2(playerPos.x, playerPos.z), new Vector2(ax, az));
 
-                    bool shouldPromoteTo3D = analHorizDist <= 88.0f;
-                    if (!shouldPromoteTo3D && analHorizDist <= 125.0f && hasFrustum)
+                    bool shouldPromoteTo3D = analHorizDist <= Live3DRetentionRadiusMeters;
+                    if (!shouldPromoteTo3D && analHorizDist <= 140.0f && hasFrustum)
                     {
                         Bounds analBounds = new Bounds(new Vector3(ax, ay + 0.9f, az), new Vector3(4.5f, 4.5f, 4.5f));
                         shouldPromoteTo3D = GeometryUtility.TestPlanesAABB(_cameraFrustumPlanes, analBounds);
@@ -777,18 +1145,9 @@ namespace Stratocraft.Character
                 Vector3 toPlayer = playerPos - a.Root.position;
                 float horizDist = new Vector2(toPlayer.x, toPlayer.z).magnitude;
 
-                // 2) Faz A.3 Işınlanma/Kaybolma Korumasi: Oyuncuya < 48m yakin veya aktif savas/takip/kacis halindeki canlilar
+                // 2) Faz A.3 Işınlanma/Kaybolma Korumasi (Bug 2 Cozumu): Oyuncuya < 118m yakin veya aktif savas/takip/kacis halindeki canlilar
                 // ASLA DES Off-Screen'e indirilip gizlenmez!
-                bool isEngagedInCombatOrNear = horizDist < 48.0f ||
-                                               a.State == CreatureAiState.AggroChase ||
-                                               a.State == CreatureAiState.MeleeAttack ||
-                                               a.State == CreatureAiState.AttackWindup ||
-                                               a.State == CreatureAiState.AttackActive ||
-                                               a.State == CreatureAiState.AttackRecovery ||
-                                               a.State == CreatureAiState.DirectionalBlock ||
-                                               a.State == CreatureAiState.EvadeDodge ||
-                                               a.State == CreatureAiState.Flee ||
-                                               a.State == CreatureAiState.SupportPillarSiege;
+                bool isEngagedInCombatOrNear = IsEngagedInCombatOrNear(horizDist, a.State, a.IsBlinkDashActive);
                 if (_offScreenSim != null && !a.IsTamed && a.State != CreatureAiState.EmberEgg && !isEngagedInCombatOrNear)
                 {
                     Vector3 pos = a.Root.position;
@@ -824,7 +1183,11 @@ namespace Stratocraft.Character
                         continue;
                     }
                 }
-                else if (horizDist > 96.0f && !a.IsTamed && a.State != CreatureAiState.EmberEgg)
+                else if (_offScreenSim == null &&
+                         horizDist > FallbackSpreadsheetDemoteRadiusMeters &&
+                         !a.IsTamed &&
+                         a.State != CreatureAiState.EmberEgg &&
+                         !isEngagedInCombatOrNear)
                 {
                     DemoteAgentToOffScreenSpreadsheet(a, i, nowSec);
                     offScreenCount++;
@@ -869,7 +1232,8 @@ namespace Stratocraft.Character
                 if (Creature21BehaviorSystem.HasArchetypeCapability(
                         a.ArchetypeId,
                         a.Capabilities,
-                        AnatomyCapabilityFlags.CapTrenchBallistic | AnatomyCapabilityFlags.CapBlinkTeleport | AnatomyCapabilityFlags.CapStealthPhasing))
+                        AnatomyCapabilityFlags.CapTrenchBallistic | AnatomyCapabilityFlags.CapStealthPhasing) ||
+                    Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities))
                 {
                     baseAggro = Mathf.Max(baseAggro, 18.0f);
                 }
@@ -883,6 +1247,7 @@ namespace Stratocraft.Character
                 if (passiveFleeTrigger)
                 {
                     ClearStealthShimmerIfNeeded(a);
+                    a.IsBlinkDashActive = false;
                     a.State = CreatureAiState.Flee;
                     Vector3 away = a.Root.position - playerPos;
                     away.y = 0f;
@@ -892,9 +1257,10 @@ namespace Stratocraft.Character
                     float fleeY = SampleStandableHeight(a, fleePos.x, fleePos.z, a.Root.position.y, worldChunks, out _);
                     fleePos.y = Mathf.Abs(fleeY - a.Root.position.y) <= 1.75f ? Mathf.MoveTowards(a.Root.position.y, fleeY, deltaTime * 11f) : a.Root.position.y;
                     a.Root.position = fleePos;
+                    a.AnchorPos = a.Root.position;
                     a.Root.rotation = ComputeSlopeAlignedCreatureRotation(fleePos, Mathf.Atan2(away.x, away.z) * Mathf.Rad2Deg, 0f, 0f, worldChunks);
                 }
-                else if (shouldEngageHostile)
+                else if (shouldEngageHostile || a.IsBlinkDashActive)
                 {
                     if (a.CaveVariant != CaveCreatureVariantKind.None && !a.HasTriggeredCaveTelegraph)
                     {
@@ -912,7 +1278,7 @@ namespace Stratocraft.Character
                 else
                 {
                     ClearStealthShimmerIfNeeded(a);
-                    StepPatrolAgent(a, time, worldChunks);
+                    StepPatrolAgent(a, time, deltaTime, worldChunks);
                 }
 
                 if (WaveADeepDiagnosticProbe.Enabled)
@@ -1344,6 +1710,7 @@ namespace Stratocraft.Character
 
             Vector3 newPos = new Vector3(ax, finalY, az);
             a.Root.position = newPos;
+            a.AnchorPos = newPos;
 
             Vector3 moveVec = a.TargetPos - newPos;
             moveVec.y = 0f;
@@ -1475,6 +1842,7 @@ namespace Stratocraft.Character
             if (mount.Root == null) return;
             mount.State = CreatureAiState.Patrol;
             mount.Root.position = new Vector3(playerPos.x, playerPos.y - 0.12f, playerPos.z);
+            mount.AnchorPos = mount.Root.position;
             if (UnityEngine.Camera.main != null)
             {
                 mount.Root.rotation = Quaternion.Euler(0f, UnityEngine.Camera.main.transform.eulerAngles.y, 0f);
@@ -1508,10 +1876,12 @@ namespace Stratocraft.Character
                     if (targetY - a.Root.position.y > 1.65f) targetY = a.Root.position.y;
                     next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 10.5f);
                     a.Root.position = next;
+                    a.AnchorPos = a.Root.position;
                 }
                 else if (a.AttackCooldown <= 0f)
                 {
                     a.State = CreatureAiState.MeleeAttack;
+                    a.AnchorPos = a.Root.position;
                     a.AttackCooldown = 1.15f;
                     float dmg = 28f * a.DamageMultiplier;
                     targetHostile.CurrentHp = Mathf.Max(0f, targetHostile.CurrentHp - dmg);
@@ -1530,6 +1900,7 @@ namespace Stratocraft.Character
                 if (targetY - a.Root.position.y > 1.65f) targetY = a.Root.position.y;
                 next.y = Mathf.MoveTowards(a.Root.position.y, targetY, dt * 10.5f);
                 a.Root.position = next;
+                a.AnchorPos = a.Root.position;
                 a.Root.rotation = ComputeSlopeAlignedCreatureRotation(next, Mathf.Atan2(toP.x, toP.z) * Mathf.Rad2Deg, 0f, 0f, worldChunks);
             }
         }
@@ -1540,6 +1911,7 @@ namespace Stratocraft.Character
             float groundY = SampleVoxelOrTerrainHeight(p.x, p.z, p.y, worldChunks);
             p.y = Mathf.MoveTowards(p.y, groundY + 0.35f, dt * 8f);
             a.Root.position = p;
+            a.AnchorPos = a.Root.position;
             float pulse = 0.55f + Mathf.Sin(Time.time * 9f) * 0.08f;
             a.Root.localScale = new Vector3(a.BaseScale.x * pulse, a.BaseScale.y * 0.45f, a.BaseScale.z * pulse);
 
@@ -1613,6 +1985,7 @@ namespace Stratocraft.Character
                         ? Mathf.Max(dropFloorY + 1.25f, playerPos.y + 1.15f)
                         : dropFloorY + 0.1f;
                     a.Root.position = new Vector3(p.x, landingY, p.z);
+                    a.AnchorPos = a.Root.position;
                     a.Root.rotation = Quaternion.Euler(0f, a.BaseYaw, 0f);
                     LastCreatureEventText = $"[TAVAN PUSUSU!] {a.DisplayName} tavandan indi ve saldiriya gecti!";
                     return false;
@@ -1627,28 +2000,40 @@ namespace Stratocraft.Character
             return true;
         }
 
-        private void StepPatrolAgent(LiveCreatureAgent a, float time, Dictionary<(int cx, int cz), uint[]> worldChunks)
+        private void StepPatrolAgent(
+            LiveCreatureAgent a,
+            float time,
+            float deltaTime,
+            Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             a.State = CreatureAiState.Patrol;
+            float safeDt = Mathf.Max(0f, deltaTime);
+            float patrolSpeed = ComputeSmoothPatrolSpeedMps(a.BaseSpeed, a.SpeedMultiplier);
+            float maxStep = patrolSpeed * safeDt;
             float t = time * 1.15f + a.PhaseOffset;
+            Vector3 curPos = a.Root.position;
+
             if (a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0)
             {
                 Vector3 offset = new Vector3(Mathf.Sin(t * 0.7f) * 2.8f, Mathf.Sin(t * 1.9f) * 0.65f, Mathf.Cos(t * 0.7f) * 2.4f);
-                a.Root.position = a.AnchorPos + offset;
+                a.Root.position = Vector3.MoveTowards(curPos, a.AnchorPos + offset, maxStep);
                 a.Root.rotation = Quaternion.Euler(Mathf.Sin(t * 1.9f) * 8f, a.BaseYaw + Mathf.Sin(t * 0.7f) * 35f, Mathf.Cos(t * 1.9f) * 8f);
                 return;
             }
 
             float radiusX = 2.4f * a.SpeedMultiplier;
             float radiusZ = 2.0f * a.SpeedMultiplier;
-            float curY = a.Root.position.y;
-            Vector3 nextPos = a.AnchorPos + new Vector3(Mathf.Sin(t) * radiusX, 0f, Mathf.Cos(t) * radiusZ);
-            float patrolTargetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, curY, worldChunks);
-            if (patrolTargetY - curY > 1.65f) patrolTargetY = curY;
-            nextPos.y = Mathf.MoveTowards(curY, patrolTargetY, 0.22f);
+            Vector3 goalXZ = new Vector3(a.AnchorPos.x + Mathf.Sin(t) * radiusX, curPos.y, a.AnchorPos.z + Mathf.Cos(t) * radiusZ);
+            Vector3 nextPos = Vector3.MoveTowards(curPos, goalXZ, maxStep);
+            float patrolTargetY = SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, curPos.y, worldChunks);
+            if (patrolTargetY - curPos.y > 1.65f) patrolTargetY = curPos.y;
+            nextPos.y = Mathf.MoveTowards(curPos.y, patrolTargetY, safeDt * 10.5f);
             a.Root.position = nextPos;
 
-            Vector3 moveDir = new Vector3(Mathf.Cos(t) * radiusX, 0f, -Mathf.Sin(t) * radiusZ);
+            Vector3 stepXZ = new Vector3(nextPos.x - curPos.x, 0f, nextPos.z - curPos.z);
+            Vector3 moveDir = stepXZ.sqrMagnitude > 1e-6f
+                ? stepXZ
+                : new Vector3(Mathf.Cos(t) * radiusX, 0f, -Mathf.Sin(t) * radiusZ);
             float moveYaw = Mathf.Atan2(moveDir.x, moveDir.z) * Mathf.Rad2Deg;
             float pitch = a.LegSevered ? 32f : Mathf.Abs(Mathf.Sin(t * 3.5f)) * 7f;
             float roll = a.LegSevered ? Mathf.Sin(t * 6f) * 14f : Mathf.Sin(t * 3.5f) * 4f;
@@ -1670,19 +2055,26 @@ namespace Stratocraft.Character
             Vector3 flatDir = new Vector3(playerPos.x - pos.x, 0f, playerPos.z - pos.z);
             if (flatDir.sqrMagnitude > 0.001f) flatDir.Normalize();
 
+            if (a.IsBlinkDashActive)
+            {
+                StepActiveBlinkDash(a, playerPos, worldChunks, deltaTime);
+                return;
+            }
+
             // Cani azalan (<= %32 HP) veya bacagi kopan canlilar panikleyip kacar;
             // ancak yaralanma oranina, yara izi sayisina ve kopan uzuvlara gore hizlari ciddi oranda duser (1.0 - 2.15 m/s) -> oyuncu kolayca yakalayabilir!
             if (!a.IsPhoenixBoss && (a.CurrentHp <= a.MaxHp * 0.32f || a.LegSevered) && horizDist < 14.0f)
             {
                 if (!a.LegSevered &&
-                    Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapBlinkTeleport) &&
+                    Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) &&
                     a.BlinkCooldownTimer <= 0f &&
-                    TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, isEvading: true, worldChunks, time))
+                    TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, isEvading: true, worldChunks, time, deltaTime))
                 {
                     return;
                 }
 
                 ClearStealthShimmerIfNeeded(a);
+                a.IsBlinkDashActive = false;
                 a.State = CreatureAiState.Flee;
                 float hpRatio01 = Mathf.Clamp01(a.CurrentHp / Mathf.Max(1f, a.MaxHp));
                 float hpWoundSlowdown = Mathf.Lerp(0.32f, 0.58f, Mathf.Clamp01(hpRatio01 / 0.32f));
@@ -1709,6 +2101,7 @@ namespace Stratocraft.Character
                     fleePos.y = sideTargetY - pos.y <= 1.65f ? Mathf.MoveTowards(pos.y, sideTargetY, deltaTime * 11.5f) : pos.y;
                 }
                 a.Root.position = fleePos;
+                a.AnchorPos = a.Root.position;
                 float fleeYaw = Mathf.Atan2(-flatDir.x, -flatDir.z) * Mathf.Rad2Deg;
                 float limpRoll = Mathf.Sin(time * 5.5f + a.PhaseOffset) * (a.LegSevered ? 18f : 10f);
                 a.Root.rotation = ComputeSlopeAlignedCreatureRotation(fleePos, fleeYaw, a.LegSevered ? 34f : 12f, limpRoll, worldChunks);
@@ -1747,23 +2140,19 @@ namespace Stratocraft.Character
                 !(a.LeftArmSevered && a.RightArmSevered) &&
                 TryExecuteSiegeCrewPlayerBlockSlam(a, pos, flatDir, worldChunks, dirtyChunks, collapseBridge))
             {
+                a.AnchorPos = a.Root.position;
                 return;
             }
 
-            // 3) CapBlinkTeleport: Kapanma veya kacinma sirasinda hedefin yanina/arkasina 3.5-5.5m taktiksel boyutsal sicrama (>= 6.5sn bekleme)!
-            if (Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapBlinkTeleport) &&
+            // 3) CapBlinkTeleport (Bug 3 Cozumu): YALNIZCA gercek Hiclik/Astral hayaletleri (#18/#21) icin 18 m/s akici gorunur atilma!
+            if (Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities) &&
                 !(a.LeftLegSevered && a.RightLegSevered) &&
                 a.BlinkCooldownTimer <= 0f)
             {
                 bool blinkEvading = a.HitFlinchTimer > 0.05f || a.DodgeTimer > 0f;
-                if (TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, blinkEvading, worldChunks, time))
+                if (TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, blinkEvading, worldChunks, time, deltaTime))
                 {
-                    pos = a.Root.position;
-                    Vector3 newToP = playerPos - pos;
-                    vertDelta = newToP.y;
-                    flatDir = new Vector3(newToP.x, 0f, newToP.z);
-                    horizDist = flatDir.magnitude;
-                    if (horizDist > 0.001f) flatDir /= horizDist;
+                    return;
                 }
             }
 
@@ -1826,6 +2215,7 @@ namespace Stratocraft.Character
                     }
                 }
                 a.Root.position = pos;
+                a.AnchorPos = a.Root.position;
                 float targetYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
                 float chasePitch = a.LegSevered ? 32f : Mathf.Sin(time * 8f) * 6f;
                 a.Root.rotation = flying
@@ -1835,6 +2225,7 @@ namespace Stratocraft.Character
             else if (vertDelta >= 2.1f && (a.Capabilities & AnatomyCapabilityFlags.VoxelSiegeBreaker) != 0)
             {
                 a.State = CreatureAiState.SupportPillarSiege;
+                a.AnchorPos = a.Root.position;
                 if (a.AttackCooldown <= 0f)
                 {
                     a.AttackCooldown = 0.75f;
@@ -1861,6 +2252,7 @@ namespace Stratocraft.Character
                     float dY = SampleStandableHeight(a, dodgePos.x, dodgePos.z, pos.y, worldChunks, out _);
                     dodgePos.y = Mathf.Abs(dY - pos.y) <= 1.72f ? Mathf.MoveTowards(pos.y, dY, deltaTime * 12f) : pos.y;
                     a.Root.position = dodgePos;
+                    a.AnchorPos = a.Root.position;
                     float dYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
                     a.Root.rotation = ComputeSlopeAlignedCreatureRotation(dodgePos, dYaw, 0f, 12f, worldChunks);
                     return;
@@ -1871,6 +2263,7 @@ namespace Stratocraft.Character
                 {
                     a.GuardTimer = Mathf.Max(0f, a.GuardTimer - deltaTime);
                     a.State = CreatureAiState.DirectionalBlock;
+                    a.AnchorPos = a.Root.position;
                     float gYaw = Mathf.Atan2(flatDir.x, flatDir.z) * Mathf.Rad2Deg;
                     a.Root.rotation = ComputeSlopeAlignedCreatureRotation(pos, gYaw, -6f, 0f, worldChunks);
                     if (a.GuardTimer <= 0f) a.State = CreatureAiState.MeleeAttack;
@@ -2098,6 +2491,7 @@ namespace Stratocraft.Character
                     meleePos.y = Mathf.Abs(meleeTargetY - pos.y) <= 1.72f ? Mathf.MoveTowards(pos.y, meleeTargetY, deltaTime * 12.5f) : pos.y;
                 }
                 a.Root.position = meleePos;
+                a.AnchorPos = a.Root.position;
 
                 Vector3 faceDir = (a.State == CreatureAiState.AttackActive || a.State == CreatureAiState.AttackWindup) && a.LockedAttackForwardXZ.sqrMagnitude > 0.01f
                     ? a.LockedAttackForwardXZ
@@ -2397,6 +2791,69 @@ namespace Stratocraft.Character
             }
         }
 
+        private void StepActiveBlinkDash(
+            LiveCreatureAgent a,
+            Vector3 playerPos,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float deltaTime)
+        {
+            if (a.Root == null || !a.IsBlinkDashActive)
+            {
+                a.IsBlinkDashActive = false;
+                return;
+            }
+
+            float safeDt = Mathf.Max(0f, deltaTime);
+            a.BlinkDashRemainingSeconds = Mathf.Max(0f, a.BlinkDashRemainingSeconds - safeDt);
+            Vector3 curPos = a.Root.position;
+
+            System.Numerics.Vector3 steppedN = Creature21BehaviorSystem.StepBlinkDashPosition(
+                new System.Numerics.Vector3(curPos.x, curPos.y, curPos.z),
+                new System.Numerics.Vector3(a.BlinkDashTargetPos.x, curPos.y, a.BlinkDashTargetPos.z),
+                safeDt,
+                out bool dashDone,
+                VoidBlinkDashSpeedMps);
+
+            Vector3 nextPos = new Vector3(steppedN.X, curPos.y, steppedN.Z);
+            if (a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0)
+            {
+                nextPos.y = Mathf.MoveTowards(curPos.y, a.BlinkDashTargetPos.y, VoidBlinkDashSpeedMps * safeDt);
+            }
+            else
+            {
+                float standY = SampleStandableHeight(a, nextPos.x, nextPos.z, curPos.y, worldChunks, out bool isHazard);
+                int checkWx = Mathf.FloorToInt(nextPos.x);
+                int checkWz = Mathf.FloorToInt(nextPos.z);
+                int checkWy = Mathf.Clamp(Mathf.FloorToInt(curPos.y + 0.65f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
+                uint bodyRaw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, checkWx, checkWy, checkWz);
+                if (isHazard || standY - curPos.y > 1.65f || VoxelBitUtility.IsPhysicallySolid(bodyRaw))
+                {
+                    a.IsBlinkDashActive = false;
+                    a.BlinkDashRemainingSeconds = 0f;
+                    a.AnchorPos = a.Root.position;
+                    return;
+                }
+                nextPos.y = Mathf.MoveTowards(curPos.y, standY, safeDt * 16.0f);
+            }
+
+            a.Root.position = nextPos;
+            a.AnchorPos = nextPos;
+            a.State = CreatureAiState.AggroChase;
+
+            Vector3 faceDir = new Vector3(playerPos.x - nextPos.x, 0f, playerPos.z - nextPos.z);
+            if (faceDir.sqrMagnitude > 0.001f)
+            {
+                float yaw = Mathf.Atan2(faceDir.x, faceDir.z) * Mathf.Rad2Deg;
+                a.Root.rotation = ComputeSlopeAlignedCreatureRotation(nextPos, yaw, 16f, 0f, worldChunks);
+            }
+
+            if (dashDone || a.BlinkDashRemainingSeconds <= 0f)
+            {
+                a.IsBlinkDashActive = false;
+                a.BlinkDashRemainingSeconds = 0f;
+            }
+        }
+
         private bool TryExecuteTacticalBlinkTeleport(
             LiveCreatureAgent a,
             int agentIndex,
@@ -2404,9 +2861,14 @@ namespace Stratocraft.Character
             Vector3 playerFwdXZ,
             bool isEvading,
             Dictionary<(int cx, int cz), uint[]> worldChunks,
-            float time)
+            float time,
+            float deltaTime)
         {
-            if (a.Root == null) return false;
+            if (a.Root == null || !Creature21BehaviorSystem.CanUseVoidBlinkDash(a.ArchetypeId, a.Capabilities))
+            {
+                return false;
+            }
+
             Vector3 curPos = a.Root.position;
             var curN = new System.Numerics.Vector3(curPos.x, curPos.y, curPos.z);
             var tgtN = new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z);
@@ -2444,18 +2906,15 @@ namespace Stratocraft.Character
 
                 a.BlinkCooldownTimer = probeCd;
                 Vector3 dest = new Vector3(candXZ.X, clampedY, candXZ.Z);
-                a.Root.position = dest;
-
-                Vector3 faceToPlayer = new Vector3(playerPos.x - dest.x, 0f, playerPos.z - dest.z);
-                if (faceToPlayer.sqrMagnitude > 0.001f)
-                {
-                    float yaw = Mathf.Atan2(faceToPlayer.x, faceToPlayer.z) * Mathf.Rad2Deg;
-                    a.Root.rotation = ComputeSlopeAlignedCreatureRotation(dest, yaw, 0f, 0f, worldChunks);
-                }
-
-                a.AttackCooldown = Mathf.Min(a.AttackCooldown, 0.25f);
+                float dashDist = Vector3.Distance(curPos, dest);
+                a.IsBlinkDashActive = true;
+                a.BlinkDashTargetPos = dest;
+                a.BlinkDashRemainingSeconds = Mathf.Clamp(dashDist / VoidBlinkDashSpeedMps + 0.15f, 0.12f, 1.35f);
+                a.AttackCooldown = Mathf.Min(a.AttackCooldown, 0.35f);
                 LastCreatureEventText =
-                    $"🌀 BOYUTSAL SIÇRAMA! {a.DisplayName} yanınıza/arkanıza ışınlandı ({blinkOffsetMeters:F1}m)!";
+                    $"🌀 HİÇLİK ATILMASI ({VoidBlinkDashSpeedMps:F0} m/s)! {a.DisplayName} yanınıza/arkanıza süzülüyor ({blinkOffsetMeters:F1}m)!";
+
+                StepActiveBlinkDash(a, playerPos, worldChunks, deltaTime);
 
                 if (WaveADeepDiagnosticProbe.Enabled)
                 {
@@ -2468,11 +2927,11 @@ namespace Stratocraft.Character
                         PrevState = (int)a.State,
                         NextState = (int)a.State,
                         HorizDistMeters = blinkOffsetMeters,
-                        WorldPosX = dest.x,
-                        WorldPosY = dest.y,
-                        WorldPosZ = dest.z,
-                        TeleportJumpMeters = Vector3.Distance(curPos, dest),
-                        EventTag = "CapBlinkTeleport"
+                        WorldPosX = a.Root.position.x,
+                        WorldPosY = a.Root.position.y,
+                        WorldPosZ = a.Root.position.z,
+                        TeleportJumpMeters = Vector3.Distance(curPos, a.Root.position),
+                        EventTag = "VoidBlinkDashStart"
                     });
                 }
                 return true;
@@ -3648,18 +4107,31 @@ namespace Stratocraft.Character
 
         private static string ResolveGeneratedAssetDiskPath(string categoryFolder, string subFolder, string fileName)
         {
-            string primary = string.IsNullOrEmpty(subFolder)
-                ? Path.Combine(Application.dataPath, "Art", "Generated", categoryFolder, fileName)
-                : Path.Combine(Application.dataPath, "Art", "Generated", categoryFolder, subFolder, fileName);
-            if (File.Exists(primary))
+            string dataPath = Application.dataPath;
+            if (!string.IsNullOrEmpty(dataPath))
             {
-                return primary;
+                string primary = string.IsNullOrEmpty(subFolder)
+                    ? Path.Combine(dataPath, "Art", "Generated", categoryFolder, fileName)
+                    : Path.Combine(dataPath, "Art", "Generated", categoryFolder, subFolder, fileName);
+                if (File.Exists(primary))
+                {
+                    return primary;
+                }
             }
 
-            string fallback = string.IsNullOrEmpty(subFolder)
-                ? Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Art", "Generated", categoryFolder, fileName)
-                : Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Art", "Generated", categoryFolder, subFolder, fileName);
-            return fallback;
+            string relCwd = string.IsNullOrEmpty(subFolder)
+                ? Path.Combine("Assets", "Art", "Generated", categoryFolder, fileName)
+                : Path.Combine("Assets", "Art", "Generated", categoryFolder, subFolder, fileName);
+            if (File.Exists(relCwd))
+            {
+                return relCwd;
+            }
+
+            return !string.IsNullOrEmpty(dataPath)
+                ? (string.IsNullOrEmpty(subFolder)
+                    ? Path.Combine(dataPath, "Art", "Generated", categoryFolder, fileName)
+                    : Path.Combine(dataPath, "Art", "Generated", categoryFolder, subFolder, fileName))
+                : relCwd;
         }
 
         private Mesh? ResolveSeveredLimbGlbMeshCached(string severedLimbName, bool isPhoenixOrBoss)
@@ -4014,6 +4486,36 @@ namespace Stratocraft.Character
             a.CachedRenderers = a.Root.GetComponentsInChildren<MeshRenderer>(includeInactive: true);
         }
 
+        private Dictionary<string, Mesh>? LoadCreatureRigGlbCached(CreatureGlbRigKind rigKind)
+        {
+            int idx = (int)rigKind;
+            if ((uint)idx >= (uint)_creatureRigGlbCache.Length) return null;
+            if (!_creatureRigGlbProbed[idx])
+            {
+                _creatureRigGlbProbed[idx] = true;
+                string glbFile = ResolveCreatureGlbFileName(rigKind);
+                string diskPath = ResolveGeneratedAssetDiskPath("Creatures_21", string.Empty, glbFile);
+                _creatureRigGlbCache[idx] = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(diskPath);
+            }
+            return _creatureRigGlbCache[idx];
+        }
+
+        private static Transform AttachGlbPartOrEmptyPivot(
+            Transform parent,
+            string pivotName,
+            Vector3 localPivotPos,
+            Dictionary<string, Mesh> parts,
+            string exactPartKey,
+            Material? creatureMat)
+        {
+            if (parts.TryGetValue(exactPartKey, out Mesh? partMesh) && partMesh != null)
+            {
+                return CreateCreatureJoint(
+                    parent, pivotName, localPivotPos, partMesh, Vector3.one, Vector3.zero, creatureMat);
+            }
+            return CreateEmptyCreaturePivot(parent, pivotName, localPivotPos);
+        }
+
         private bool TryBuildRealGlbCreatureVisuals(LiveCreatureAgent a, Material? sharedMat, Mesh? fallbackPersistedRootMesh)
         {
             if (a.Root == null) return false;
@@ -4021,18 +4523,16 @@ namespace Stratocraft.Character
             string rootName = a.Root.name;
             bool matchesPhoenix = a.IsPhoenixBoss ||
                                   rootName.IndexOf("Phoenix", StringComparison.OrdinalIgnoreCase) >= 0;
-            bool matchesAshStalker = !matchesPhoenix &&
-                                     ((!a.IsDynamicBiomeSpawn && !a.IsFlyingBoss) ||
-                                      (a.ArchetypeId == 4 && a.CaveVariant == CaveCreatureVariantKind.None) ||
-                                      a.DisplayName.IndexOf("Ash Stalker", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                      rootName.IndexOf("AshStalker", StringComparison.OrdinalIgnoreCase) >= 0);
 
-            if (!matchesPhoenix && !matchesAshStalker)
-            {
-                return false;
-            }
+            CreatureGlbRigKind rigKind = ResolveCreatureGlbRigKind(
+                a.ArchetypeId,
+                a.IsFlyingBoss,
+                a.IsBiped,
+                a.CaveVariant);
+            a.ActiveGlbRigKind = rigKind;
 
-            Dictionary<string, Mesh>? glbParts;
+            // 1) Oncelikle tum 21 yaratik arketipi icin Blender 4.2 organik cok-parcali .glb modellerini yukle
+            Dictionary<string, Mesh>? rigParts = LoadCreatureRigGlbCached(rigKind);
             if (matchesPhoenix)
             {
                 if (!_phoenixBossGlbProbed)
@@ -4044,23 +4544,158 @@ namespace Stratocraft.Character
                         "boss_phoenix_ember_avatar.glb");
                     _phoenixBossGlbPartsCache = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(phoenixPath);
                 }
-                glbParts = _phoenixBossGlbPartsCache;
-            }
-            else
-            {
-                if (!_ashStalkerGlbProbed)
+                if (_phoenixBossGlbPartsCache != null && _phoenixBossGlbPartsCache.Count > 1)
                 {
-                    _ashStalkerGlbProbed = true;
-                    string stalkerPath = ResolveGeneratedAssetDiskPath(
-                        "Creatures_21",
-                        string.Empty,
-                        "mob_ash_stalker_vat500.glb");
-                    _ashStalkerGlbPartsCache = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(stalkerPath);
+                    rigParts = _phoenixBossGlbPartsCache;
                 }
-                glbParts = _ashStalkerGlbPartsCache;
             }
 
-            Mesh? primaryGlbMesh = ExtractPrimaryMeshFromGlbParts(glbParts) ?? fallbackPersistedRootMesh;
+            Material? rgbMat = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(sharedMat) ?? sharedMat;
+
+            if (rigParts != null && rigParts.Count >= 6)
+            {
+                a.UsesRealGlbBodyVisual = true;
+                a.ArachnidLegs = null;
+
+                switch (rigKind)
+                {
+                    case CreatureGlbRigKind.DireWolf:
+                    {
+                        a.RestTorsoLocalY = 0.68f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_Torso", new Vector3(0f, 0.68f, 0f), rigParts, "Wolf_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.12f, 0.40f), rigParts, "Wolf_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.06f, 0.08f), rigParts, "Wolf_Jaw", rgbMat);
+                        a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.42f), rigParts, "Wolf_Tail", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.17f, -0.06f, 0.26f), rigParts, "Wolf_FrontUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.30f, -0.03f), rigParts, "Wolf_FrontLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.17f, -0.06f, 0.26f), rigParts, "Wolf_FrontUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.30f, -0.03f), rigParts, "Wolf_FrontLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.18f, -0.04f, -0.30f), rigParts, "Wolf_HindUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.32f, -0.06f), rigParts, "Wolf_HindLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.18f, -0.04f, -0.30f), rigParts, "Wolf_HindUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.32f, -0.06f), rigParts, "Wolf_HindLower_R", rgbMat);
+                        return true;
+                    }
+
+                    case CreatureGlbRigKind.HornedBehemoth:
+                    {
+                        a.RestTorsoLocalY = 0.78f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_Torso", new Vector3(0f, 0.78f, 0f), rigParts, "Behemoth_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.04f, 0.52f), rigParts, "Behemoth_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.10f, 0.08f), rigParts, "Behemoth_Jaw", rgbMat);
+                        a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0f, -0.56f), rigParts, "Behemoth_Tail", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.28f, -0.12f, 0.32f), rigParts, "Behemoth_FrontUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.34f, 0f), rigParts, "Behemoth_FrontLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.28f, -0.12f, 0.32f), rigParts, "Behemoth_FrontUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.34f, 0f), rigParts, "Behemoth_FrontLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.27f, -0.10f, -0.36f), rigParts, "Behemoth_HindUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.36f, 0f), rigParts, "Behemoth_HindLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.27f, -0.10f, -0.36f), rigParts, "Behemoth_HindUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.36f, 0f), rigParts, "Behemoth_HindLower_R", rgbMat);
+                        return true;
+                    }
+
+                    case CreatureGlbRigKind.StagSteed:
+                    {
+                        a.RestTorsoLocalY = 0.88f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_Torso", new Vector3(0f, 0.88f, 0f), rigParts, "Stag_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.36f, 0.46f), rigParts, "Stag_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.06f, 0.06f), rigParts, "Stag_Jaw", rgbMat);
+                        a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.06f, -0.48f), rigParts, "Stag_Tail", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.17f, -0.08f, 0.32f), rigParts, "Stag_FrontUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.40f, 0f), rigParts, "Stag_FrontLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.17f, -0.08f, 0.32f), rigParts, "Stag_FrontUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.40f, 0f), rigParts, "Stag_FrontLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.18f, -0.06f, -0.36f), rigParts, "Stag_HindUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.42f, -0.05f), rigParts, "Stag_HindLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.18f, -0.06f, -0.36f), rigParts, "Stag_HindUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.42f, -0.05f), rigParts, "Stag_HindLower_R", rgbMat);
+                        return true;
+                    }
+
+                    case CreatureGlbRigKind.ArachnidStalker:
+                    {
+                        a.RestTorsoLocalY = 0.38f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_Torso", new Vector3(0f, 0.38f, 0f), rigParts, "Arachnid_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.02f, 0.30f), rigParts, "Arachnid_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.06f, 0.08f), rigParts, "Arachnid_Jaw", rgbMat);
+                        a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.10f), rigParts, "Arachnid_Tail", rgbMat);
+
+                        var legs8 = new Transform?[8];
+                        legs8[0] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg1_L", new Vector3(-0.20f, 0f, 0.22f), rigParts, "Arachnid_Leg1_L", rgbMat);
+                        legs8[1] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg2_L", new Vector3(-0.23f, 0f, 0.09f), rigParts, "Arachnid_Leg2_L", rgbMat);
+                        legs8[2] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg3_L", new Vector3(-0.23f, 0f, -0.04f), rigParts, "Arachnid_Leg3_L", rgbMat);
+                        legs8[3] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg4_L", new Vector3(-0.20f, 0f, -0.16f), rigParts, "Arachnid_Leg4_L", rgbMat);
+                        legs8[4] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg1_R", new Vector3(0.20f, 0f, 0.22f), rigParts, "Arachnid_Leg1_R", rgbMat);
+                        legs8[5] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg2_R", new Vector3(0.23f, 0f, 0.09f), rigParts, "Arachnid_Leg2_R", rgbMat);
+                        legs8[6] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg3_R", new Vector3(0.23f, 0f, -0.04f), rigParts, "Arachnid_Leg3_R", rgbMat);
+                        legs8[7] = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_ArachnidLeg4_R", new Vector3(0.20f, 0f, -0.16f), rigParts, "Arachnid_Leg4_R", rgbMat);
+
+                        a.ArachnidLegs = legs8;
+                        a.FrontLeftLeg = legs8[0];
+                        a.HindLeftLeg = legs8[2];
+                        a.FrontRightLeg = legs8[4];
+                        a.HindRightLeg = legs8[6];
+                        return true;
+                    }
+
+                    case CreatureGlbRigKind.GriffinRaptor:
+                    {
+                        if (rigParts.ContainsKey("Griffin_Torso"))
+                        {
+                            a.RestTorsoLocalY = 0.74f;
+                            a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_BossTorso", new Vector3(0f, 0.74f, 0f), rigParts, "Griffin_Torso", rgbMat);
+                            a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BossHead", new Vector3(0f, 0.24f, 0.40f), rigParts, "Griffin_Head", rgbMat);
+                            a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_BossBeak", new Vector3(0f, -0.05f, 0.10f), rigParts, "Griffin_Jaw", rgbMat);
+                            a.TailPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BossTailPlume", new Vector3(0f, 0.02f, -0.44f), rigParts, "Griffin_Tail", rgbMat);
+
+                            a.WingLeftInner = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.20f, 0.12f, 0.14f), rigParts, "Griffin_WingInner_L", rgbMat);
+                            a.WingLeftOuter = AttachGlbPartOrEmptyPivot(a.WingLeftInner, "Articulated_WingLeftOuter", new Vector3(-0.56f, 0.06f, -0.04f), rigParts, "Griffin_WingOuter_L", rgbMat);
+                            a.WingRightInner = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.20f, 0.12f, 0.14f), rigParts, "Griffin_WingInner_R", rgbMat);
+                            a.WingRightOuter = AttachGlbPartOrEmptyPivot(a.WingRightInner, "Articulated_WingRightOuter", new Vector3(0.56f, 0.06f, -0.04f), rigParts, "Griffin_WingOuter_R", rgbMat);
+
+                            a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.18f, -0.08f, 0.26f), rigParts, "Griffin_FrontUpper_L", rgbMat);
+                            a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.34f, 0f), rigParts, "Griffin_FrontLower_L", rgbMat);
+                            a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.18f, -0.08f, 0.26f), rigParts, "Griffin_FrontUpper_R", rgbMat);
+                            a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.34f, 0f), rigParts, "Griffin_FrontLower_R", rgbMat);
+
+                            a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.19f, -0.06f, -0.30f), rigParts, "Griffin_HindUpper_L", rgbMat);
+                            a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.36f, -0.04f), rigParts, "Griffin_HindLower_L", rgbMat);
+                            a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.19f, -0.06f, -0.30f), rigParts, "Griffin_HindUpper_R", rgbMat);
+                            a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.36f, -0.04f), rigParts, "Griffin_HindLower_R", rgbMat);
+                            return true;
+                        }
+                        break;
+                    }
+
+                    case CreatureGlbRigKind.AncientGolem:
+                    {
+                        a.RestTorsoLocalY = 0.98f;
+                        a.BodyTorsoPivot = AttachGlbPartOrEmptyPivot(a.Root, "Articulated_BipedTorso", new Vector3(0f, 0.98f, 0f), rigParts, "Golem_Torso", rgbMat);
+                        a.HeadPivot = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedHead", new Vector3(0f, 0.64f, 0.04f), rigParts, "Golem_Head", rgbMat);
+                        a.JawPivot = AttachGlbPartOrEmptyPivot(a.HeadPivot, "Articulated_BipedJaw", new Vector3(0f, -0.04f, 0.06f), rigParts, "Golem_Jaw", rgbMat);
+
+                        a.FrontLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedLeftArm", new Vector3(-0.38f, 0.50f, 0f), rigParts, "Golem_ArmUpper_L", rgbMat);
+                        a.FrontLeftLower = AttachGlbPartOrEmptyPivot(a.FrontLeftLeg, "Articulated_BipedLeftForearm", new Vector3(-0.02f, -0.42f, 0f), rigParts, "Golem_ArmLower_L", rgbMat);
+                        a.FrontRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedRightArm", new Vector3(0.38f, 0.50f, 0f), rigParts, "Golem_ArmUpper_R", rgbMat);
+                        a.FrontRightLower = AttachGlbPartOrEmptyPivot(a.FrontRightLeg, "Articulated_BipedRightForearm", new Vector3(0.02f, -0.42f, 0f), rigParts, "Golem_ArmLower_R", rgbMat);
+
+                        a.HindLeftLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedLeftLeg", new Vector3(-0.20f, -0.10f, 0f), rigParts, "Golem_LegUpper_L", rgbMat);
+                        a.HindLeftLower = AttachGlbPartOrEmptyPivot(a.HindLeftLeg, "Articulated_BipedLeftCalf", new Vector3(0f, -0.44f, 0f), rigParts, "Golem_LegLower_L", rgbMat);
+                        a.HindRightLeg = AttachGlbPartOrEmptyPivot(a.BodyTorsoPivot, "Articulated_BipedRightLeg", new Vector3(0.20f, -0.10f, 0f), rigParts, "Golem_LegUpper_R", rgbMat);
+                        a.HindRightLower = AttachGlbPartOrEmptyPivot(a.HindRightLeg, "Articulated_BipedRightCalf", new Vector3(0f, -0.44f, 0f), rigParts, "Golem_LegLower_R", rgbMat);
+                        return true;
+                    }
+                }
+            }
+
+            Mesh? primaryGlbMesh = ExtractPrimaryMeshFromGlbParts(rigParts) ?? fallbackPersistedRootMesh;
             if (primaryGlbMesh == null)
             {
                 return false;
@@ -4068,55 +4703,7 @@ namespace Stratocraft.Character
 
             a.UsesRealGlbBodyVisual = true;
             float baseTorsoY = a.IsFlyingBoss ? 0.88f : (a.IsBiped ? 0.92f : 0.68f);
-
-            if (glbParts != null && glbParts.Count > 1)
-            {
-                Mesh torsoM = FindPartMeshByKeyword(glbParts, "Torso")
-                              ?? FindPartMeshByKeyword(glbParts, "Body")
-                              ?? primaryGlbMesh;
-                a.BodyTorsoPivot = CreateCreatureJoint(
-                    a.Root, "Articulated_GlbTorso", new Vector3(0f, baseTorsoY, 0f),
-                    torsoM, Vector3.one, Vector3.zero, sharedMat);
-
-                Mesh? headM = FindPartMeshByKeyword(glbParts, "Head");
-                a.HeadPivot = headM != null
-                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_GlbHead", new Vector3(0f, 0.24f, 0.34f), headM, Vector3.one, Vector3.zero, sharedMat)
-                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_GlbHead", new Vector3(0f, 0.24f, 0.34f));
-                a.JawPivot = CreateEmptyCreaturePivot(a.HeadPivot, "Articulated_GlbJaw", new Vector3(0f, -0.04f, 0.14f));
-
-                Mesh? armLM = FindPartMeshByKeyword(glbParts, "Arm", "L") ?? FindPartMeshByKeyword(glbParts, "Wing", "L");
-                Mesh? armRM = FindPartMeshByKeyword(glbParts, "Arm", "R") ?? FindPartMeshByKeyword(glbParts, "Wing", "R");
-                Mesh? legLM = FindPartMeshByKeyword(glbParts, "Leg", "L") ?? FindPartMeshByKeyword(glbParts, "Thigh", "L");
-                Mesh? legRM = FindPartMeshByKeyword(glbParts, "Leg", "R") ?? FindPartMeshByKeyword(glbParts, "Thigh", "R");
-
-                if (a.IsFlyingBoss)
-                {
-                    a.WingLeftInner = armLM != null
-                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f), armLM, Vector3.one, Vector3.zero, sharedMat)
-                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f));
-                    a.WingRightInner = armRM != null
-                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f), armRM, Vector3.one, Vector3.zero, sharedMat)
-                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f));
-                }
-                else
-                {
-                    a.FrontLeftLeg = armLM != null
-                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.24f, -0.04f, 0.22f), armLM, Vector3.one, Vector3.zero, sharedMat)
-                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.24f, -0.04f, 0.22f));
-                    a.FrontRightLeg = armRM != null
-                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.24f, -0.04f, 0.22f), armRM, Vector3.one, Vector3.zero, sharedMat)
-                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.24f, -0.04f, 0.22f));
-                }
-
-                a.HindLeftLeg = legLM != null
-                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.20f, -0.12f, -0.20f), legLM, Vector3.one, Vector3.zero, sharedMat)
-                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.20f, -0.12f, -0.20f));
-                a.HindRightLeg = legRM != null
-                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.20f, -0.12f, -0.20f), legRM, Vector3.one, Vector3.zero, sharedMat)
-                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.20f, -0.12f, -0.20f));
-                a.TailPivot = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.34f));
-                return true;
-            }
+            a.RestTorsoLocalY = baseTorsoY;
 
             float meshHeight = Mathf.Max(0.45f, primaryGlbMesh.bounds.size.y);
             float targetHeight = matchesPhoenix ? 2.25f : 1.52f;
@@ -4391,12 +4978,52 @@ namespace Stratocraft.Character
                     }
                 }
 
-                float baseTorsoY = a.IsFlyingBoss ? 0.88f : (a.IsBiped ? 0.92f : 0.68f);
+                float baseTorsoY = a.UsesRealGlbBodyVisual
+                    ? a.RestTorsoLocalY
+                    : (a.IsFlyingBoss ? 0.88f : (a.IsBiped ? 0.92f : 0.68f));
                 a.BodyTorsoPivot.localPosition = new Vector3(0f, baseTorsoY + breathBob + rearUpY, lungeZ);
                 a.BodyTorsoPivot.localRotation = Quaternion.Euler(torsoPitch + flinchPitch * 0.45f, torsoYaw, torsoRoll);
             }
 
-            if (a.IsFlyingBoss)
+            if (a.ArachnidLegs != null && a.ArachnidLegs.Length >= 8)
+            {
+                // Gercek 8-Bacakli Orumcek / Akrep Tetrapod Yuruyusu (Grup A: L1,R2,L3,R4 | Grup B: R1,L2,R3,L4)
+                float strideAmp = 22f * a.SpeedMultiplier;
+                for (int idx = 0; idx < 8; idx++)
+                {
+                    Transform? legT = a.ArachnidLegs[idx];
+                    if (legT == null) continue;
+
+                    bool isLeft = idx < 4;
+                    int pairIdx = idx & 3; // 0..3 (on -> arka)
+                    bool severed = isLeft
+                        ? (pairIdx == 0 ? a.LeftArmSevered : (pairIdx >= 2 && a.LeftLegSevered))
+                        : (pairIdx == 0 ? a.RightArmSevered : (pairIdx >= 2 && a.RightLegSevered));
+                    if (legT.gameObject.activeSelf == severed)
+                    {
+                        legT.gameObject.SetActive(!severed);
+                    }
+                    if (severed) continue;
+
+                    bool groupA = (isLeft && (pairIdx & 1) == 0) || (!isLeft && (pairIdx & 1) == 1);
+                    float legPhase = phase * 1.35f + (groupA ? 0f : Mathf.PI) + pairIdx * 0.28f;
+                    float sideSign = isLeft ? -1f : 1f;
+                    float sweepYaw = Mathf.Sin(legPhase) * strideAmp * sideSign;
+                    float liftRoll = Mathf.Max(0f, Mathf.Cos(legPhase)) * 18f * sideSign;
+                    float legPitch = 0f;
+
+                    if (isInAttackCycle && pairIdx == 0)
+                    {
+                        // On cift bacaklar saldirida sahlanip ileri pence indirir
+                        legPitch = Blend3(0f, -46f, 24f, wWindup, wStrike);
+                        sweepYaw = Blend3(sweepYaw, sideSign * 34f, -sideSign * 26f, wWindup, wStrike);
+                        liftRoll = Blend3(liftRoll, sideSign * 28f, -sideSign * 12f, wWindup, wStrike);
+                    }
+
+                    legT.localRotation = Quaternion.Euler(legPitch, sweepYaw, liftRoll);
+                }
+            }
+            else if (a.IsFlyingBoss)
             {
                 bool canFly = (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0 && !a.WingSevered;
                 float baseFlap = canFly ? Mathf.Sin(time * 7.8f + a.PhaseOffset) * 38f : -42f;
@@ -4418,6 +5045,12 @@ namespace Stratocraft.Character
                     a.WingRightInner.localRotation = Quaternion.Euler(wingPitch, 0f, -wingFlapDeg);
                 }
                 if (a.WingRightOuter != null) a.WingRightOuter.localRotation = Quaternion.Euler(0f, 0f, -outerLagDeg);
+
+                float frontTalonP = isInAttackCycle ? Blend3(16f, -92f, 24f, wWindup, wStrike) : (16f + Mathf.Cos(phase) * 14f);
+                if (a.FrontLeftLeg != null) a.FrontLeftLeg.localRotation = Quaternion.Euler(frontTalonP, 0f, 0f);
+                if (a.FrontLeftLower != null) a.FrontLeftLower.localRotation = Quaternion.Euler(isInAttackCycle ? Blend3(14f, 52f, -14f, wWindup, wStrike) : 14f, 0f, 0f);
+                if (a.FrontRightLeg != null) a.FrontRightLeg.localRotation = Quaternion.Euler(frontTalonP, 0f, 0f);
+                if (a.FrontRightLower != null) a.FrontRightLower.localRotation = Quaternion.Euler(isInAttackCycle ? Blend3(14f, 52f, -14f, wWindup, wStrike) : 14f, 0f, 0f);
 
                 float talonPitch = isInAttackCycle ? Blend3(22f, -88f, 18f, wWindup, wStrike) : (22f + Mathf.Sin(phase) * 14f);
                 if (a.HindLeftLeg != null) a.HindLeftLeg.localRotation = Quaternion.Euler(talonPitch, 0f, 0f);
@@ -4766,6 +5399,6 @@ namespace Stratocraft.Character
             }
             return voxelY > -20f ? voxelY : StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
         }
+#endif
     }
 }
-#endif
