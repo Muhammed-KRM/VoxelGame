@@ -368,7 +368,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "4 Bağımsız Kılıç Eşyası: Uzun Kılıç, Katana, Zweihänder (Ağır Kılıç) ve Rapier",
                 ingredientsOrSource: "Uzun Kılıç (WeaponSword) = 3x Dövme Demir + 1x Dal + 1x Lif ([I] Çanta) | Rapier (WeaponRapier) = 2x Dövme Demir (Örs [E]) | Katana (WeaponKatana) = 3x Dövme Demir + 1x Odun Kömürü (Örs [E]) | Zweihänder (WeaponGreatsword) = 5x Dövme Demir (Örs [E]).",
                 toolOrKeybind: "[I] Çanta Ortasında Bağlama veya Örs Yanında Dövme Demir Eldeyken [E] | Kemer [1..9] Seçimi",
-                stepByStepGuide: "4 kılıç arketipi ayrı fiziksel envanter eşyalarıdır ([1] tuşu kılıç türünü döndürmez, doğrudan 1. kemer yuvasını kuşanır/kınına sokar): 1) Uzun Kılıç (1.85 kg, 175°/sn Turn Cap): Dengeli kesik ve Şövalye Riposte uyumu. 2) Katana (1.35 kg, 220°/sn): Hızlı kavisli namlu ve Iaido şimşek çekiş uyumu. 3) Zweihänder Ağır Kılıç (5.60 kg, 115°/sn): Yüksek postür kırma ve Çift El Yarma uyumu. 4) İnce Eskrim Kılıcı / Rapier (0.95 kg, 260°/sn): Çevik zırh delici Punta saplama uyumu.")
+                stepByStepGuide: "4 kılıç arketipi ayrı fiziksel envanter eşyalarıdır ([1] tuşu kılıç türünü döndürmez, doğrudan 1. kemer yuvasını kuşanır/kınına sokar): 1) Uzun Kılıç (1.85 kg, 175°/sn Turn Cap): Dengeli kesik ve Şövalye Riposte uyumu. 2) Katana (1.35 kg, 220°/sn): Hızlı kavisli namlu ve Iaido şimşek çekiş uyumu. 3) Zweihänder Ağır Kılıç (5.60 kg, 115°/sn): Yüksek postür kırma ve Çift El Yarma uyumu. 4) İnce Eskrim Kılıcı / Rapier (0.95 kg, 260°/sn): Çevik zırh delici Punta saplama uyumu."),
+
+            new(
+                id: "craft_advanced_building_materials",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "[I] İleri Yapı Blokları (x4)",
+                title: "5 İleri İnşa Bloğu: Güçlendirilmiş Çelik, Obsidyen Tuğla, Demir Mazgal, Şam Çeliği & Floatstone",
+                ingredientsOrSource: "Güçlendirilmiş Çelik (2 Demir + 2 Taş + 1 Akı) | Obsidyen Tuğla (2 Cüruf + 2 Taş + 1 Kil) | Demir Mazgal (2 Demir + 1 Dal + 1 Lif) | Şam Çeliği (3 Demir + 1 Akı + 1 Cüruf) | Floatstone (2 Kuvars + 2 Taş + 1 Akı).",
+                toolOrKeybind: "[I] Çanta Bezi 3'lü Birleştirme Alanı -> [R / İple Bağla] (4x Voksel Yapı Bloğu)",
+                stepByStepGuide: "Yüksek dayanımlı mimari ve gökyüzü adası inşası için 5 ileri yapı bloğu doğrudan [I] çanta bezinde üretilebilir: Güçlendirilmiş Çelik (12.000 basınç dayanımı), Obsidyen Tuğla (25.000 dayanım), oksijen/sıvı geçirgen Demir Havalandırma Mazgalı, 3B prosedürel Şam Çeliği (DamascusSteel) ve yerçekiminden bağımsız Gökyüzü Adası Uçan Taşı (Floatstone).")
         };
 
         // =====================================================================
@@ -419,7 +428,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "[T]->[5] Fiziksel Yel Değirmeni: 4 Taş Kaide + 4 Ahşap Direk + 4 Yelken Kanat, Betz Verimi ve [Shift+E] Fırtına Freni",
                 ingredientsOrSource: "En az 4x Kaba Taş / Taş Kaide + 4x Ahşap Direk / Odun / Çark + 4x Yel Değirmeni Yelken Kanadı (veya 4x Kumaş/Deri + 4x Sopa).",
                 toolOrKeybind: "Yere [Sağ Tık] ile Diz -> [T] Zihin İnşası -> [5] Yel Değirmeni | Yükle: [Sağ Tık] | Topla: [E] | Fren: [Shift+E]",
-                stepByStepGuide: "1) Hellmann irtifa profili gereği rüzgâr tepelerde vadiden >= 1.3x güçlü eser; duvar arkası rüzgâr gölgesinden ve diğer değirmenlerin 14m iz konisinden kaçınarak açık sırta 4 Taş + 4 Ahşap + 4 Yelken Kanat dizip [T] -> [5] ile mühürle. 2) Betz sınırı (Cp <= 0.34 < 16/27) ve cos^2(Δψ) yönelim torkuyla dönen değirmene [Sağ Tık] ile Tahıl (6.000 J -> 2x Un), Ham Cevher (14.000 J -> Zengin Cevher Tozu) veya Mermer/Kalker (9.000 J -> 2x Kalsiyum Akı Tozu) yükle, [E] ile topla. 3) Şiddetli fırtınada (> 8.5 rad/s) kumaş yelkenlerin yırtılmaması için [Shift+E] ile mekanik şerit frenini kilitle!")
+                stepByStepGuide: "1) Hellmann irtifa profili gereği rüzgâr tepelerde vadiden >= 1.3x güçlü eser; duvar arkası rüzgâr gölgesinden ve diğer değirmenlerin 14m iz konisinden kaçınarak açık sırta 4 Taş + 4 Ahşap + 4 Yelken Kanat dizip [T] -> [5] ile mühürle. 2) Betz sınırı (Cp <= 0.34 < 16/27) ve cos^2(Δψ) yönelim torkuyla dönen değirmene [Sağ Tık] ile Tahıl (6.000 J -> 2x Un), Ham Cevher (14.000 J -> Zengin Cevher Tozu) veya Mermer/Kalker (9.000 J -> 2x Kalsiyum Akı Tozu) yükle, [E] ile topla. 3) Şiddetli fırtınada (> 8.5 rad/s) kumaş yelkenlerin yırtılmaması için [Shift+E] ile mekanik şerit frenini kilitle!"),
+
+            new(
+                id: "mind_timber_log_structures",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] -> [6..9] Kütük İnşa",
+                title: "[T]->[6..9] Kesilen Ağaç Kütükleriyle İnşa: Kütük Duvar, Çit (Palisade), Kiriş ve Kütük Kulübe",
+                ingredientsOrSource: "Devrilmiş 2m Ağaç Kütükleri (FallenTreeLog) — omuzda taşınır, [R] ile yön değiştirilip [Sağ Tık] ile doğrudan istiflenir.",
+                toolOrKeybind: "Kütüğü [E] Omuzla -> [R] Yön (Yatay/Dikey/Kiriş) -> [Sağ Tık] Yerleştir -> [T]->[6..9] Mühürle",
+                stepByStepGuide: "Baltayla kestiğin ağaç kütüğünü [E] ile omuzlayıp inşa alanına taşı: [R] tuşu Yatay Duvar, Dikey Çit (Palisade) ve Üst Kiriş (Beam) yönleri arasında döner; [Sağ Tık] kütüğü doğrudan 3B yapı parçası olarak yerleştirir ([E] ile geri omuzlanabilir). Kümeni dizdikten sonra [T] Zihin İnşasında [6] Kütük Duvar, [7] Kütük Çit, [8] Kütük Kiriş veya [9] Kütük Kulübe seçerek yapıyı mühürle!")
         };
 
         // =====================================================================

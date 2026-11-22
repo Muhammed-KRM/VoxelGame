@@ -287,6 +287,8 @@ namespace Stratocraft.Character
         private readonly Stage1WheelbarrowController _wheelbarrowCtrl = new();
         private readonly Stage1WindmillController _windmillCtrl = new();
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
+        private static readonly Func<int, byte, Mesh?> ResolveArmorSlotGlbMeshCached = static (hitZoneIndex, tier) =>
+            GlbHierarchyLoader.LoadArmorSlotMeshCached(GlbHierarchyLoader.ResolveArmorSlotGlbFileName(hitZoneIndex, tier));
         private readonly Stage1DirectionalCombatBridge _combatBridge = new();
         private readonly Stage1CreatureSimulationBridge _creatureBridge = new();
         private readonly Stage1CaveAcousticTelegraphController _caveAcousticTelegraphCtrl = new Stage1CaveAcousticTelegraphController();
@@ -2743,6 +2745,26 @@ namespace Stratocraft.Character
 
             if (_isPlayerDeathScreenOpen) return;
 
+            VisualInventorySlot activeScrollSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            if (activeScrollSlot.Kind == InventoryItemKind.ScrollMartialStance &&
+                (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)))
+            {
+                CombatMartialStance targetStance = Stage1VisualHotbarAndInventoryUi.ResolveScrollMartialStance(activeScrollSlot.SubId);
+                if (_combatBridge.UnlockMartialStance(targetStance, out string unlockMessage))
+                {
+                    if (!_holsterCtrl.IsCreativeMode)
+                    {
+                        _holsterCtrl.TryConsumeActiveMartialStanceScroll(_miningCtrl, out _);
+                    }
+                    _miningCtrl.LastFeedbackText = unlockMessage;
+                }
+                else
+                {
+                    _miningCtrl.LastFeedbackText = unlockMessage;
+                }
+                return;
+            }
+
             // Faz A.4 & A.5: [E] ile Yatak (SpawnPoint) kaydetme, Tatli Su vokselinden dogrudan icme ve su dolu Mataradan icme
             if (Input.GetKeyDown(KeyCode.E))
             {
@@ -3043,7 +3065,6 @@ namespace Stratocraft.Character
         {
             bool externalUiBlocked = _holsterCtrl.IsBackpackOpen ||
                                      _escapeMenuCtrl.IsMenuOpen ||
-                                     _holsterCtrl.IsCarryingShoulderLog ||
                                      _holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
                                      _stoneKnappingCtrl.IsBusy ||
                                      _recipeBookUi.IsOpen;
@@ -3248,6 +3269,12 @@ namespace Stratocraft.Character
             float pvx = _movementBridge.MovementState.VelocityX;
             float pvz = _movementBridge.MovementState.VelocityZ;
             _combatBridge.ProbePlayerSpeedMps = Mathf.Sqrt(pvx * pvx + pvz * pvz);
+            if (_holsterCtrl.TryResolveEquippedSwordArchetype(out CombatWeaponArchetype equippedSwordArchetype) &&
+                _combatBridge.ActiveWeaponArchetype != equippedSwordArchetype)
+            {
+                _combatBridge.SetWeaponArchetype(equippedSwordArchetype, WeaponPivot);
+            }
+
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
                 !lockCamForUi && Input.GetMouseButton(0), !lockCamForUi && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
@@ -3257,6 +3284,8 @@ namespace Stratocraft.Character
                 activeHolsterSlot: slot,
                 unscaledGestureMouseX: rawMouseX,
                 unscaledGestureMouseY: rawMouseY);
+            _holsterCtrl.InventoryUi.CurrentPosture01 = _combatBridge.PlayerPosture01;
+            _holsterCtrl.InventoryUi.ShowPostureBar = canCombat && (slot == 1 || _combatBridge.IsParryStance || _combatBridge.IsBoundInClash || _combatBridge.IsPostureBroken);
             float combatStaminaDrain = (_combatBridge.ConsumePendingStaminaDrain() + _miningCtrl.ConsumePendingMiningStaminaDrain()) *
                                        Stage1GameSettings.StaminaDrainMultiplier;
             if (combatStaminaDrain > 0f)
@@ -3321,9 +3350,12 @@ namespace Stratocraft.Character
                 _combatBridge.CurrentThrustExtensionMeters, SharedVoxelMaterial, dt, _worldChunks,
                 _combatBridge.CurrentRightFistExtend01, _combatBridge.CurrentLeftFistExtend01,
                 cameraYawDeg: _cameraYaw,
-                isBodyInspectMode: _isBodyInspectMode);
+                isBodyInspectMode: _isBodyInspectMode,
+                combatVerticalDipMeters: _movementBridge.CurrentCombatVerticalDipMeters);
+            _rigAnimator.RuntimeArmorMeshResolver ??= ResolveArmorSlotGlbMeshCached;
             _rigAnimator.SyncEquipped3DArmorVisuals(
-                in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+                in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial,
+                armorGlbMeshResolver: ResolveArmorSlotGlbMeshCached);
             if (_isBodyInspectMode && PlayerCamera != null)
             {
                 StepBodyInspectionCameraAndInput(dt);
@@ -3624,12 +3656,28 @@ namespace Stratocraft.Character
             {
                 if (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.TryDrawOwnedSwordFromHotbar(_miningCtrl))
                 {
-                    _combatBridge.CycleMartialStance();
+                    _combatBridge.CycleMartialStance(bypassUnlock: _holsterCtrl.IsCreativeMode);
                     _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
                 }
                 else
                 {
                     _miningCtrl.LastFeedbackText = "Dövüş duruşu değiştirmek için elinizde veya kemerinizde [1..9] bir Kılıç olmalı!";
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.X) &&
+                !_holsterCtrl.IsBackpackOpen &&
+                !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen &&
+                !_stoneKnappingCtrl.IsBusy &&
+                !_isBodyInspectMode)
+            {
+                if (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.TryDrawOwnedSwordFromHotbar(_miningCtrl))
+                {
+                    _combatBridge.ToggleHalfSwordMode(_rigAnimator.PlayerLeftArmSevered);
+                    _miningCtrl.LastFeedbackText = _combatBridge.LastCombatActionText;
+                }
+                else
+                {
+                    _miningCtrl.LastFeedbackText = "Yarı-Kılıç (Halbschwert) tutuşu için elinizde bir Kılıç olmalı!";
                 }
             }
             if (Input.GetKeyDown(KeyCode.F8))
@@ -6953,7 +7001,7 @@ namespace Stratocraft.Character
                         _holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(
                             removed.Kind, removed.SubId, 1, _miningCtrl, removed.ShapeDna, autoEquipIfHandEmpty: false);
                         _holsterCtrl.InventoryUi.SyncEquippedArmorToVitals(ref _movementBridge.Vitals);
-                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial, armorGlbMeshResolver: ResolveArmorSlotGlbMeshCached);
                         _miningCtrl.LastFeedbackText =
                             $"🧥 ÇIKARILDI: {Stage1VisualHotbarAndInventoryUi.GetArmorSlotName(_hoveredBodyArmorSlot)} çantaya/kemere alındı!";
                     }
@@ -6965,7 +7013,7 @@ namespace Stratocraft.Character
                         Stage1VisualHotbarAndInventoryUi.GetArmorSlotIndexForItemKind(held.Kind) == _hoveredBodyArmorSlot &&
                         _holsterCtrl.InventoryUi.TryEquipActiveHotbarArmor(ref _movementBridge.Vitals, out string equipMsg))
                     {
-                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial);
+                        _rigAnimator.SyncEquipped3DArmorVisuals(in _movementBridge.Vitals, _isFirstPersonMode, _isBodyInspectMode, SharedVoxelMaterial, armorGlbMeshResolver: ResolveArmorSlotGlbMeshCached);
                         _miningCtrl.LastFeedbackText = equipMsg;
                     }
                     else

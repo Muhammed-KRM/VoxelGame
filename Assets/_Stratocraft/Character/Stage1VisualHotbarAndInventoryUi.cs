@@ -1386,21 +1386,35 @@ namespace Stratocraft.Character
             };
         }
 
-        public static VisualInventorySlot BuildSlotForCraftOutput(PrimitiveCraftOutputId outputId) => outputId switch
+        public static VisualInventorySlot BuildSlotForCraftOutput(PrimitiveCraftOutputId outputId)
         {
-            PrimitiveCraftOutputId.PrimitiveFlintAxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 1, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.PrimitiveStonePickaxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 1, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.PrimitiveFlintKnife => new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 1, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.PrimitiveWoodenBucket => new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidBucket, SubId = 0, Count = 1, Durability01 = 0.0f },
-            PrimitiveCraftOutputId.CampfireKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableCampfire, SubId = 0, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.PrimitiveStoneKilnKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableStoneKiln, SubId = 0, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.WindmillSailPanel => new VisualInventorySlot { Kind = InventoryItemKind.WindmillSailPanel, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.WovenClothTunic => new VisualInventorySlot { Kind = InventoryItemKind.WovenClothTunic, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.OiledLeatherWindbreaker => new VisualInventorySlot { Kind = InventoryItemKind.OiledLeatherWindbreaker, SubId = MaterialIdCatalog.LeatherPadding, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.HeavyFurWinterParka => new VisualInventorySlot { Kind = InventoryItemKind.HeavyFurWinterParka, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
-            PrimitiveCraftOutputId.FurLinedWinterBoots => new VisualInventorySlot { Kind = InventoryItemKind.FurLinedWinterBoots, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
-            _ => default
-        };
+            if (PrimitiveSurvivalCraftingCatalog.TryResolveBuildingMaterialId(outputId, out byte buildingMaterialId))
+            {
+                return new VisualInventorySlot
+                {
+                    Kind = InventoryItemKind.VoxelBlock,
+                    SubId = buildingMaterialId,
+                    Count = 4,
+                    Durability01 = 1.0f
+                };
+            }
+
+            return outputId switch
+            {
+                PrimitiveCraftOutputId.PrimitiveFlintAxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolAxe, SubId = 1, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.PrimitiveStonePickaxe => new VisualInventorySlot { Kind = InventoryItemKind.ToolPickaxe, SubId = 1, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.PrimitiveFlintKnife => new VisualInventorySlot { Kind = InventoryItemKind.WeaponSword, SubId = 1, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.PrimitiveWoodenBucket => new VisualInventorySlot { Kind = InventoryItemKind.ToolFluidBucket, SubId = 0, Count = 1, Durability01 = 0.0f },
+                PrimitiveCraftOutputId.CampfireKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableCampfire, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.PrimitiveStoneKilnKit => new VisualInventorySlot { Kind = InventoryItemKind.PlaceableStoneKiln, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.WindmillSailPanel => new VisualInventorySlot { Kind = InventoryItemKind.WindmillSailPanel, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.WovenClothTunic => new VisualInventorySlot { Kind = InventoryItemKind.WovenClothTunic, SubId = MaterialIdCatalog.TacticalCloth, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.OiledLeatherWindbreaker => new VisualInventorySlot { Kind = InventoryItemKind.OiledLeatherWindbreaker, SubId = MaterialIdCatalog.LeatherPadding, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.HeavyFurWinterParka => new VisualInventorySlot { Kind = InventoryItemKind.HeavyFurWinterParka, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.FurLinedWinterBoots => new VisualInventorySlot { Kind = InventoryItemKind.FurLinedWinterBoots, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
+                _ => default
+            };
+        }
 
         public void RefreshAssemblyPreview()
         {
