@@ -38,7 +38,8 @@ namespace Stratocraft.Physics.Jobs
             Span<byte> ioUnsupportedOrCrushedMask,
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
             ReadOnlySpan<float> optionalTopHaloLoadKg = default,
-            Func<int, int, int, ulong>? microMaskLookup = null)
+            Func<int, int, int, ulong>? microMaskLookup = null,
+            bool enableLocalTerzaghiLoosening = false)
         {
             int totalVoxels = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalVoxels ||
@@ -134,7 +135,8 @@ namespace Stratocraft.Physics.Jobs
                         float totalLoad = selfMass + outAccumulatedLoadKg[idx];
                         outAccumulatedLoadKg[idx] = totalLoad;
 
-                        int lateralConfinedFaces = CountConfinedNaturalFaces(voxels, ioUnsupportedOrCrushedMask, x, y, z, sizeX, sizeY, sizeZ, raw, layout);
+                        int lateralConfinedFaces = CountConfinedNaturalFaces(
+                            voxels, ioUnsupportedOrCrushedMask, x, y, z, sizeX, sizeY, sizeZ, raw, layout, enableLocalTerzaghiLoosening);
 
                         // A) Dikey Basinc / Ezilme Kontrolu (Mikro-voxel darbogaz kesiti A_min/16 dahil)
                         if (totalLoad > props.ComputeEffectiveCrushLimit(lateralConfinedFaces, microCrossSection16))
@@ -206,12 +208,14 @@ namespace Stratocraft.Physics.Jobs
             }
 
             // 2. 2B (Hem X Hem Z Eksenli) Terzaghi Kaya Kemerlenmesi / Tavan Gevseme Kubbesi
-            // Not: YMajorChunk (tam chunk dogal dunya uretimi) icindeki parabolik kemerli dogal magara aglari
-            // jeolojik gerilme dengesinde dogdugu icin kendi kendine cokmez; Terzaghi gevsemesi yerel kazi pencerelerinde (ZMajorLocal) calisir.
-            if (layout != VoxelGridMemoryLayout.YMajorChunk)
+            // Not: Ham dokunulmamis YMajorChunk dunya uretiminde (enableLocalTerzaghiLoosening == false) dogal magaralar
+            // kendi kendine cokmez; yerel kazi/sutun kesme pencerelerinde (ZMajorLocal veya enableLocalTerzaghiLoosening == true)
+            // acik bosluk ustundeki serbest DogalKutle kubbesi gercekci Terzaghi kemerlenmesiyle gevser.
+            if (layout != VoxelGridMemoryLayout.YMajorChunk || enableLocalTerzaghiLoosening)
             {
                 newlyFailedCount += Evaluate2DTerzaghiRoofLoosening(
-                    voxels, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout);
+                    voxels, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout,
+                    allowBoundaryOpenSpan: enableLocalTerzaghiLoosening);
             }
 
             return newlyFailedCount;
@@ -227,14 +231,15 @@ namespace Stratocraft.Physics.Jobs
             int sizeY,
             int sizeZ,
             uint raw,
-            VoxelGridMemoryLayout layout)
+            VoxelGridMemoryLayout layout,
+            bool enableLocalTerzaghiLoosening)
         {
             if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
             {
                 return 0;
             }
 
-            if (layout == VoxelGridMemoryLayout.YMajorChunk)
+            if (layout == VoxelGridMemoryLayout.YMajorChunk && !enableLocalTerzaghiLoosening)
             {
                 return 4;
             }
@@ -266,11 +271,14 @@ namespace Stratocraft.Physics.Jobs
             int sizeY,
             int sizeZ,
             Span<byte> ioUnsupportedOrCrushedMask,
-            VoxelGridMemoryLayout layout)
+            VoxelGridMemoryLayout layout,
+            bool allowBoundaryOpenSpan)
         {
             int loosenedTotal = 0;
 
             // A) X ekseni boyunca acik galeri tavanlari
+            // Not: Faz 1'de kopan sutun/bloklar (mask == 1) acik bosluk sayilir; Terzaghi gevsemesi mask = 2 yazar ki
+            // X ve Z gecisleri %100 izotropik ayni bosluk geometrisini gorsun.
             for (int z = 0; z < sizeZ; z++)
             {
                 for (int y = 1; y < sizeY - 1; y++)
@@ -285,8 +293,9 @@ namespace Stratocraft.Physics.Jobs
                         {
                             int idx = GeodesicSupportDijkstraJob.GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
                             int aboveIdx = GeodesicSupportDijkstraJob.GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout);
-                            isAirUnderSolid = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) &&
-                                              VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]);
+                            bool cellEmpty = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || ioUnsupportedOrCrushedMask[idx] == 1;
+                            bool aboveSolid = VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) && ioUnsupportedOrCrushedMask[aboveIdx] != 1;
+                            isAirUnderSolid = cellEmpty && aboveSolid;
                         }
 
                         if (isAirUnderSolid)
@@ -298,7 +307,7 @@ namespace Stratocraft.Physics.Jobs
                         {
                             loosenedTotal += ApplyTerzaghiDomeAlongLine(
                                 voxels, spanStartX, currentSpan, y, fixedCoord: z, alongX: true,
-                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout);
+                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan);
                             currentSpan = 0;
                         }
                     }
@@ -320,8 +329,9 @@ namespace Stratocraft.Physics.Jobs
                         {
                             int idx = GeodesicSupportDijkstraJob.GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
                             int aboveIdx = GeodesicSupportDijkstraJob.GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout);
-                            isAirUnderSolid = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) &&
-                                              VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]);
+                            bool cellEmpty = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || ioUnsupportedOrCrushedMask[idx] == 1;
+                            bool aboveSolid = VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) && ioUnsupportedOrCrushedMask[aboveIdx] != 1;
+                            isAirUnderSolid = cellEmpty && aboveSolid;
                         }
 
                         if (isAirUnderSolid)
@@ -333,7 +343,7 @@ namespace Stratocraft.Physics.Jobs
                         {
                             loosenedTotal += ApplyTerzaghiDomeAlongLine(
                                 voxels, spanStartZ, currentSpan, y, fixedCoord: x, alongX: false,
-                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout);
+                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan);
                             currentSpan = 0;
                         }
                     }
@@ -354,10 +364,15 @@ namespace Stratocraft.Physics.Jobs
             int sizeY,
             int sizeZ,
             Span<byte> ioUnsupportedOrCrushedMask,
-            VoxelGridMemoryLayout layout)
+            VoxelGridMemoryLayout layout,
+            bool allowBoundaryOpenSpan)
         {
             int maxCoord = alongX ? sizeX : sizeZ;
-            if (cavityY <= 0 || spanStart <= 0 || (spanStart + spanWidth) >= maxCoord)
+            if (cavityY <= 0)
+            {
+                return 0;
+            }
+            if (!allowBoundaryOpenSpan && (spanStart <= 0 || (spanStart + spanWidth) >= maxCoord))
             {
                 // Acik gokyuzu veya dis sinir boslugu yeralti maden galerisi degildir
                 return 0;
@@ -372,10 +387,21 @@ namespace Stratocraft.Physics.Jobs
                 int x = alongX ? s : fixedCoord;
                 int z = alongX ? fixedCoord : s;
 
-                int floorCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, cavityY - 1, z, sizeX, sizeY, sizeZ, layout);
-                if (!VoxelBitUtility.IsPhysicallySolid(voxels[floorCheckIdx]))
+                // Yalnizca 1 blokluk yariklari degil cok katli magara galerilerini de destekle;
+                // yuzen ada altindaki tabansiz gokyuzu bosluklarini haric tutmak icin altta gercek taban ara.
+                bool hasFloorBelow = false;
+                int minFloorY = Math.Max(0, cavityY - 32);
+                for (int fy = cavityY - 1; fy >= minFloorY; fy--)
                 {
-                    // Yuzen adanin altindaki acik gokyuzu gibi tabani olmayan bosluklarda Terzaghi tavan gocugu uygulanmaz
+                    int floorCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, fy, z, sizeX, sizeY, sizeZ, layout);
+                    if (VoxelBitUtility.IsPhysicallySolid(voxels[floorCheckIdx]) && ioUnsupportedOrCrushedMask[floorCheckIdx] == 0)
+                    {
+                        hasFloorBelow = true;
+                        break;
+                    }
+                }
+                if (!hasFloorBelow)
+                {
                     continue;
                 }
 
@@ -406,7 +432,7 @@ namespace Stratocraft.Physics.Jobs
                         VoxelBitUtility.GetOriginState(domeRaw) == BlokKokenDurumu.DogalKutle &&
                         ioUnsupportedOrCrushedMask[domeIdx] == 0)
                     {
-                        ioUnsupportedOrCrushedMask[domeIdx] = 1;
+                        ioUnsupportedOrCrushedMask[domeIdx] = 2;
                         loosenedCount++;
                     }
                 }

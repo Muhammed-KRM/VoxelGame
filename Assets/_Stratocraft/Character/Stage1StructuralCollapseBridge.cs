@@ -1,17 +1,18 @@
-#if UNITY_5_3_OR_NEWER
 #nullable enable
 using System;
-using System.Collections.Generic;
-using Stratocraft.Character.Data;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
+using Stratocraft.Voxel.Data;
+using Stratocraft.WorldGen.Generators;
+#if UNITY_5_3_OR_NEWER
+using System.Collections.Generic;
+using Stratocraft.Character.Data;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
-using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen;
-using Stratocraft.WorldGen.Generators;
 using UnityEngine;
+#endif
 
 namespace Stratocraft.Character
 {
@@ -26,6 +27,247 @@ namespace Stratocraft.Character
         public const int MaxRingBufferSlots = 64;
         public const int SurgeModeActiveClusterLimit = 16;
         public const float PreCollapseWarningDurationSeconds = 0.0f;
+        public const float LocalTerzaghiRadiusSqXZ = 64.0f; // 8.0m yatay yaricap
+        public const int MinTerzaghiDomeThicknessBlocks = 2;
+        public const int MaxTerzaghiDomeThicknessBlocks = 6;
+
+        internal static bool IsTreeTrunkMaterial(byte matId) =>
+            matId == MaterialIdCatalog.OakWood ||
+            matId == MaterialIdCatalog.Ironwood ||
+            matId == MaterialIdCatalog.SpiritWood;
+
+        /// <summary>
+        /// Saf C# (.NET 10 &amp; Unity 6) yerel cozucu hazirlik gecisi:
+        /// - Yuzey alti oyma kilidini (pivotY &lt; surfY - 6) ve overburden &lt;= 3 donmasini kaldirir.
+        /// - distSqXZ &lt;= 64.0f (8.0m yaricap) icindeki acik magara/oyma boslugu ustunde gercekci parabolik
+        ///   Terzaghi gevseme kubbesini (2..6 blok kalinlik) DogalKutle olarak serbest birakir.
+        /// - Tabana yasli solid yan duvarlari (N_lat == 4, altinda bosluk yok) ve Terzaghi kubbesi ustundeki
+        ///   dag kutlesini KaliciYapi olarak sabit tutar; boylece 90m dag cokmeden 2-6m yerel gocuk olusur.
+        /// </summary>
+        public static void PrepareLocalSolveScratch(
+            int cx,
+            int cz,
+            uint[] src,
+            uint[] dst,
+            int maxY,
+            System.Numerics.Vector3 pivotWorld,
+            Func<int, int, int>? surfaceYOverride = null)
+        {
+            int sliceVolume = 16 * maxY * 16;
+            Array.Copy(src, dst, sliceVolume);
+            int baseWx = cx * 16, baseWz = cz * 16;
+            int pivotY = Math.Clamp((int)MathF.Floor(pivotWorld.Y), 1, Math.Max(1, maxY - 2));
+            int minY = Math.Max(1, pivotY - 3);
+            int minCavityVoidY = minY;
+            int maxCavityCeilingSearchY = Math.Min(maxY - 1, pivotY + 14);
+
+            for (int lz = 0; lz < 16; lz++)
+            {
+                int wz = baseWz + lz;
+                for (int lx = 0; lx < 16; lx++)
+                {
+                    int wx = baseWx + lx;
+                    float dx = (wx + 0.5f) - pivotWorld.X;
+                    float dz = (wz + 0.5f) - pivotWorld.Z;
+                    float distSqXZ = dx * dx + dz * dz;
+                    bool outsideHorizontalRadius = distSqXZ > LocalTerzaghiRadiusSqXZ;
+                    int surfY = surfaceYOverride != null
+                        ? surfaceYOverride(wx, wz)
+                        : (int)MathF.Round(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz));
+                    int colXZ = (lz << 4) | lx;
+
+                    if (outsideHorizontalRadius)
+                    {
+                        for (int y = 1; y < maxY; y++)
+                        {
+                            int idx = (y << 8) | colXZ;
+                            uint raw = dst[idx];
+                            if (VoxelBitUtility.IsPhysicallySolid(raw) &&
+                                VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
+                            {
+                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                            }
+                        }
+                        continue;
+                    }
+
+                    float normDistSq = Math.Clamp(distSqXZ / LocalTerzaghiRadiusSqXZ, 0.0f, 1.0f);
+                    int domeThickness = Math.Clamp(
+                        (int)MathF.Round(MinTerzaghiDomeThicknessBlocks +
+                                         (MaxTerzaghiDomeThicknessBlocks - MinTerzaghiDomeThicknessBlocks) * (1.0f - normDistSq)),
+                        MinTerzaghiDomeThicknessBlocks,
+                        MaxTerzaghiDomeThicknessBlocks);
+
+                    bool hasSolidFloorBelow = VoxelBitUtility.IsPhysicallySolid(src[colXZ]);
+                    bool seenOpenVoidAboveFloor = false;
+                    int freeUntilY = -1;
+
+                    for (int y = 1; y < maxY; y++)
+                    {
+                        int idx = (y << 8) | colXZ;
+                        uint raw = dst[idx];
+
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw))
+                        {
+                            if (y >= minCavityVoidY && y <= maxCavityCeilingSearchY && hasSolidFloorBelow)
+                            {
+                                seenOpenVoidAboveFloor = true;
+                            }
+                            continue;
+                        }
+
+                        if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
+                        {
+                            hasSolidFloorBelow = true;
+                            seenOpenVoidAboveFloor = false;
+                            continue;
+                        }
+
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(mat);
+                        if (props.IsUnbreakableAnchor || props.IsSkyAnchor)
+                        {
+                            hasSolidFloorBelow = true;
+                            seenOpenVoidAboveFloor = false;
+                            continue;
+                        }
+
+                        if (y < minY)
+                        {
+                            hasSolidFloorBelow = true;
+                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                            continue;
+                        }
+
+                        byte shape = VoxelBitUtility.GetShapeId(raw);
+                        bool isTreeTrunk = IsTreeTrunkMaterial(mat);
+                        bool isTreeCanopy = (mat == MaterialIdCatalog.Grass ||
+                                             mat == MaterialIdCatalog.GlowingMoss ||
+                                             mat == MaterialIdCatalog.Marble) &&
+                                            (shape != 0 || y >= surfY + 2);
+
+                        if (isTreeTrunk || isTreeCanopy)
+                        {
+                            continue;
+                        }
+
+                        // Magara icindeki Stalagnate tasiyici sutunu (N_lat == 4 tabana yasli duvar degilse) serbest birak;
+                        // altinda acik kesim boslugu (seenOpenVoidAboveFloor) varsa tavan kubbesine bu bilgiyi ilet!
+                        if (mat == MaterialIdCatalog.Stalagnate &&
+                            y <= maxCavityCeilingSearchY &&
+                            !IsSolidBackedSideWall(src, lx, y, lz, minCavityVoidY))
+                        {
+                            continue;
+                        }
+
+                        // Acik bosluk ustundeki magara tavani veya yuzey alti oyma cikintisi:
+                        // Ince yuzey tabakasi (<= 6 blok) ustu acik gokyuzune kadar serbest birakilir;
+                        // derin magara/dag kutlesinde (> 6 blok) yalnizca 2..6 blokluk parabolik Terzaghi kubbesi serbesttir.
+                        if (seenOpenVoidAboveFloor && y <= maxCavityCeilingSearchY)
+                        {
+                            int slabThickness = 1;
+                            for (int sy = y + 1; sy < maxY && slabThickness <= MaxTerzaghiDomeThicknessBlocks; sy++)
+                            {
+                                if (VoxelBitUtility.IsPhysicallySolid(src[(sy << 8) | colXZ]))
+                                    slabThickness++;
+                                else
+                                    break;
+                            }
+
+                            int releaseThickness = slabThickness <= MaxTerzaghiDomeThicknessBlocks
+                                ? slabThickness
+                                : domeThickness;
+                            freeUntilY = y + releaseThickness - 1;
+                            seenOpenVoidAboveFloor = false;
+                        }
+
+                        if (y <= freeUntilY)
+                        {
+                            continue;
+                        }
+
+                        // Tabana yasli solid yan duvarlar ve Terzaghi kubbesinin ustundeki dag kutlesi sabitlenir
+                        hasSolidFloorBelow = true;
+                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                    }
+                }
+            }
+        }
+
+        private static bool IsSolidBackedSideWall(uint[] src, int lx, int y, int lz, int minCavityVoidY)
+        {
+            int yShift = y << 8;
+            if (lx > 0 && !VoxelBitUtility.IsPhysicallySolid(src[yShift | (lz << 4) | (lx - 1)])) return false;
+            if (lx < 15 && !VoxelBitUtility.IsPhysicallySolid(src[yShift | (lz << 4) | (lx + 1)])) return false;
+            if (lz > 0 && !VoxelBitUtility.IsPhysicallySolid(src[yShift | ((lz - 1) << 4) | lx])) return false;
+            if (lz < 15 && !VoxelBitUtility.IsPhysicallySolid(src[yShift | ((lz + 1) << 4) | lx])) return false;
+
+            int colXZ = (lz << 4) | lx;
+            int startCheckY = Math.Max(1, minCavityVoidY);
+            for (int cy = y - 1; cy >= startCheckY; cy--)
+            {
+                if (!VoxelBitUtility.IsPhysicallySolid(src[(cy << 8) | colXZ]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Genisletilmis (dx, dz in [-4..4], dy in [-2..6]) yerel destek on-testi:
+        /// Genis magara kesimleri, yuzey alti oymalar ve Stalagnate sutun kesimleri guvenle algilanir.
+        /// </summary>
+        public static bool HasPotentialUnsupportedStructureNearPivot(
+            int cx,
+            int cz,
+            uint[] src,
+            int maxY,
+            System.Numerics.Vector3 pivotWorld)
+        {
+            int pLx = Math.Clamp((int)MathF.Floor(pivotWorld.X) - cx * 16, 0, 15);
+            int pLz = Math.Clamp((int)MathF.Floor(pivotWorld.Z) - cz * 16, 0, 15);
+            int pY = Math.Clamp((int)MathF.Floor(pivotWorld.Y), 1, Math.Max(1, maxY - 2));
+
+            for (int dy = -2; dy <= 6; dy++)
+            {
+                int y = pY + dy;
+                if (y <= 1 || y >= maxY) continue;
+                int yShift = y << 8;
+                for (int dz = -4; dz <= 4; dz++)
+                {
+                    int lz = pLz + dz;
+                    if ((uint)lz >= 16u) continue;
+                    int zShift = yShift | (lz << 4);
+                    for (int dx = -4; dx <= 4; dx++)
+                    {
+                        int lx = pLx + dx;
+                        if ((uint)lx >= 16u) continue;
+                        uint raw = src[zShift | lx];
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
+
+                        if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.OyuncuItemBlogu)
+                        {
+                            return true;
+                        }
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        if (IsTreeTrunkMaterial(mat) || mat == MaterialIdCatalog.Stalagnate)
+                        {
+                            return true;
+                        }
+                        // Alti bosalmis herhangi bir dogal tavan/oyma blogu varsa kontrol et
+                        if (!VoxelBitUtility.IsPhysicallySolid(src[((y - 1) << 8) | (lz << 4) | lx]))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+#if UNITY_5_3_OR_NEWER
         private const float GravityAcceleration = 9.81f;
         private const int MaxMeshVoxelsPerFallingProxy = 512;
 
@@ -117,10 +359,12 @@ namespace Stratocraft.Character
             if (sharedVoxelMaterial != null) DefaultVoxelMaterial = sharedVoxelMaterial;
             maxEditableY = Mathf.Clamp(maxEditableY, 8, Mathf.Min(StratocraftConstants.ChunkSizeY, chunkVoxels.Length >> 8));
 
+            var pivotNum = new System.Numerics.Vector3(pivotWorld.x, pivotWorld.y, pivotWorld.z);
+
             // Hizli Yerel Destek On-Testi (Early-Out):
             // Eger kirilan/konulan noktanin ustunde veya yaninda havada kalabilecek hicbir katman, agac veya oyuncu yapisi yoksa
             // 40.960 hucrelik Dijkstra + DAG cozucusunu bosuna calistirma (%92 CPU tasarrufu!).
-            if (!HasPotentialUnsupportedStructureNearPivot(cx, cz, chunkVoxels, maxEditableY, pivotWorld))
+            if (!HasPotentialUnsupportedStructureNearPivot(cx, cz, chunkVoxels, maxEditableY, pivotNum))
             {
                 feedbackText = string.Empty;
                 return 0;
@@ -131,14 +375,16 @@ namespace Stratocraft.Character
             if (_scratchSlice == null || _scratchSlice.Length < sliceVolume) _scratchSlice = new uint[sliceVolume];
             if (_detachedSnapshot == null || _detachedSnapshot.Length < sliceVolume) _detachedSnapshot = new uint[sliceVolume];
 
-            PrepareLocalSolveScratch(cx, cz, chunkVoxels, _scratchSlice, maxEditableY, pivotWorld);
+            PrepareLocalSolveScratch(cx, cz, chunkVoxels, _scratchSlice, maxEditableY, pivotNum);
 
             int clusterCount = _collapseSystem.EvaluateAndFracture(
                 _scratchSlice.AsSpan(0, sliceVolume), 16, maxEditableY, 16,
                 supportFloorY: StratocraftFloatingIslandWorldGen.DeepMantleFloorY,
                 worldOriginOffset: new System.Numerics.Vector3(cx * 16f, 0f, cz * 16f),
-                anchorPivotWorld: new System.Numerics.Vector3(pivotWorld.x, pivotWorld.y, pivotWorld.z),
-                outClusters: _evalBuffer, out int collapsedVoxels, layout: VoxelGridMemoryLayout.YMajorChunk);
+                anchorPivotWorld: pivotNum,
+                outClusters: _evalBuffer, out int collapsedVoxels,
+                layout: VoxelGridMemoryLayout.YMajorChunk,
+                enableLocalTerzaghiLoosening: true);
 
             if (collapsedVoxels <= 0)
             {
@@ -260,11 +506,6 @@ namespace Stratocraft.Character
             return massB > massA ? matB : matA;
         }
 
-        private static bool IsTreeTrunkMaterial(byte matId) =>
-            matId == MaterialIdCatalog.OakWood ||
-            matId == MaterialIdCatalog.Ironwood ||
-            matId == MaterialIdCatalog.SpiritWood;
-
         /// <summary>
         /// Canli voksel chunk dizisinden (worldChunks) agac govdesi/yapraklarini atlayarak gercek zemin yuksekligini okur.
         /// Boylece egimli arazide veya EnsureSolidFoundationUnder yukseltilerinde agac asla yerin icine girmez.
@@ -308,127 +549,6 @@ namespace Stratocraft.Character
             }
 
             return StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(worldX, worldZ);
-        }
-
-        private static void PrepareLocalSolveScratch(
-            int cx, int cz, uint[] src, uint[] dst, int maxY, Vector3 pivotWorld)
-        {
-            int sliceVolume = 16 * maxY * 16;
-            Array.Copy(src, dst, sliceVolume);
-            int baseWx = cx * 16, baseWz = cz * 16;
-            int minY = Mathf.Max(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, Mathf.FloorToInt(pivotWorld.y) - 3);
-
-            for (int lz = 0; lz < 16; lz++)
-            {
-                int wz = baseWz + lz;
-                for (int lx = 0; lx < 16; lx++)
-                {
-                    int wx = baseWx + lx;
-                    float dx = (wx + 0.5f) - pivotWorld.x;
-                    float dz = (wz + 0.5f) - pivotWorld.z;
-                    float distSqXZ = dx * dx + dz * dz;
-                    bool outsideHorizontalRadius = distSqXZ > 25.0f;
-                    int surfY = Mathf.RoundToInt(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz));
-                    int colXZ = (lz << 4) | lx;
-
-                    for (int y = 1; y < maxY; y++)
-                    {
-                        int idx = (y << 8) | colXZ;
-                        uint raw = dst[idx];
-                        if (!VoxelBitUtility.IsPhysicallySolid(raw) ||
-                            VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
-                        {
-                            continue;
-                        }
-
-                        byte mat = VoxelBitUtility.GetMaterialId(raw);
-                        byte shape = VoxelBitUtility.GetShapeId(raw);
-                        bool isTreeTrunk = IsTreeTrunkMaterial(mat);
-                        bool isTreeCanopy = (mat == MaterialIdCatalog.Grass ||
-                                             mat == MaterialIdCatalog.GlowingMoss ||
-                                             mat == MaterialIdCatalog.Marble) &&
-                                            (shape != 0 || y >= surfY + 2);
-
-                        if (!outsideHorizontalRadius && y >= minY && (isTreeTrunk || isTreeCanopy))
-                        {
-                            continue;
-                        }
-
-                        // Yeralti magaralarinda oyuncu bir tasiyici sutunu (Stalagnate) kestiginde veya ince tavan kemerini (<=3 blok)
-                        // oydugunda yerel tavan parcasinin gercekci sekilde cokebilmesi icin minY..pivotY+6 penceresini serbest birak:
-                        if (!outsideHorizontalRadius &&
-                            pivotWorld.y < surfY - 6f &&
-                            y >= minY &&
-                            y <= Mathf.FloorToInt(pivotWorld.y) + 6)
-                        {
-                            if (mat == MaterialIdCatalog.Stalagnate)
-                            {
-                                continue;
-                            }
-
-                            int overburden = 0;
-                            for (int oy = y + 1; oy < maxY && overburden <= 3; oy++)
-                            {
-                                if (VoxelBitUtility.IsPhysicallySolid(src[(oy << 8) | colXZ]))
-                                    overburden++;
-                                else
-                                    break;
-                            }
-                            if (overburden <= 3)
-                            {
-                                continue;
-                            }
-                        }
-
-                        // Dogal ada zemini ve kalin kaya kutleleri KaliciYapi olarak sabitlenir
-                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
-                    }
-                }
-            }
-        }
-
-        private static bool HasPotentialUnsupportedStructureNearPivot(
-            int cx, int cz, uint[] src, int maxY, Vector3 pivotWorld)
-        {
-            int pLx = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.x) - cx * 16, 0, 15);
-            int pLz = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.z) - cz * 16, 0, 15);
-            int pY = Mathf.Clamp(Mathf.FloorToInt(pivotWorld.y), 1, maxY - 2);
-
-            for (int dy = -1; dy <= 3; dy++)
-            {
-                int y = pY + dy;
-                if (y <= 1 || y >= maxY) continue;
-                int yShift = y << 8;
-                for (int dz = -2; dz <= 2; dz++)
-                {
-                    int lz = pLz + dz;
-                    if ((uint)lz >= 16u) continue;
-                    int zShift = yShift | (lz << 4);
-                    for (int dx = -2; dx <= 2; dx++)
-                    {
-                        int lx = pLx + dx;
-                        if ((uint)lx >= 16u) continue;
-                        uint raw = src[zShift | lx];
-                        if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
-
-                        if (VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.OyuncuItemBlogu)
-                        {
-                            return true;
-                        }
-                        byte mat = VoxelBitUtility.GetMaterialId(raw);
-                        if (IsTreeTrunkMaterial(mat) || mat == MaterialIdCatalog.Stalagnate)
-                        {
-                            return true;
-                        }
-                        // Ustte (dy >= 1) alti bosalmis dogal blok varsa kontrol et
-                        if (dy >= 1 && !VoxelBitUtility.IsPhysicallySolid(src[((y - 1) << 8) | (lz << 4) | lx]))
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-            return false;
         }
 
         /// <summary>Kopan yapi kumelerini ve kesilen agaclari 0sn gecikmeyle gercek fiziksel tork ve yercekimiyle devirir.</summary>
@@ -1715,6 +1835,6 @@ namespace Stratocraft.Character
             slot.IsActive = false;
             _activeClusterCount = Mathf.Max(0, _activeClusterCount - 1);
         }
+#endif
     }
 }
-#endif
