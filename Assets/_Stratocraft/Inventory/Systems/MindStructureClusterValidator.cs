@@ -1076,7 +1076,7 @@ namespace Stratocraft.Inventory.Systems
     }
 
     /// <summary>
-    /// Valheim &amp; Sons of the Forest 12 parcali gercek 3B moduler yapi kiti (Assets/Art/Generated/Structures_Modular/*.glb).
+    /// Valheim &amp; Sons of the Forest 13 parcali gercek 3B moduler yapi kiti (Assets/Art/Generated/Structures_Modular/*.glb).
     /// </summary>
     public enum ModularBuildPieceKind : byte
     {
@@ -1091,7 +1091,8 @@ namespace Stratocraft.Inventory.Systems
         RoofRafter26Deg2x2m = 8,
         RoofRafter45Deg2x2m = 9,
         RoofRidge2m = 10,
-        DiagonalBrace2m = 11
+        DiagonalBrace2m = 11,
+        GableWall45Deg2m = 12
     }
 
     /// <summary>
@@ -1189,7 +1190,7 @@ namespace Stratocraft.Inventory.Systems
     /// </summary>
     public static class ValheimSotfModularGraphSolver
     {
-        public const int ModularPieceCount = 12;
+        public const int ModularPieceCount = 13;
         public const float CollapseStabilityThreshold = 0.12f;
         public const float OrangeStabilityThreshold = 0.20f;
         public const float YellowStabilityThreshold = 0.45f;
@@ -1198,6 +1199,8 @@ namespace Stratocraft.Inventory.Systems
         public const float SnapCaptureRadiusMeters = 1.45f;
         public const float JointOverlapToleranceMeters = 0.26f;
         public const float GravityAccelMps2 = 9.81f;
+
+        public static string ResolveModularGlbFileName(ModularBuildPieceKind kind) => GetPieceGlbFileName(kind);
 
         public static string GetPieceGlbFileName(ModularBuildPieceKind kind) => kind switch
         {
@@ -1213,6 +1216,7 @@ namespace Stratocraft.Inventory.Systems
             ModularBuildPieceKind.RoofRafter45Deg2x2m => "mod_roof_rafter_45deg_2x2m.glb",
             ModularBuildPieceKind.RoofRidge2m => "mod_roof_ridge_2m.glb",
             ModularBuildPieceKind.DiagonalBrace2m => "mod_diagonal_brace_2m.glb",
+            ModularBuildPieceKind.GableWall45Deg2m => "mod_gable_wall_45deg_2m.glb",
             _ => "mod_log_beam_2m.glb"
         };
 
@@ -1220,16 +1224,17 @@ namespace Stratocraft.Inventory.Systems
         {
             ModularBuildPieceKind.LogBeam2m => "Soyulmuş Kütük Kiriş (2m)",
             ModularBuildPieceKind.LogPillar3m => "Soyulmuş Kütük Dikme (3m)",
-            ModularBuildPieceKind.PlankWall2x2m => "Bindirmeli Kalas Duvar (2x2m)",
-            ModularBuildPieceKind.PlankDoorway2x2m => "Çerçeveli Kapılı Kalas Duvar (2x2m)",
-            ModularBuildPieceKind.PlankWindow2x2m => "Denizlikli Pencereli Kalas Duvar (2x2m)",
+            ModularBuildPieceKind.PlankWall2x2m => "Geçmeli Nordik Kütük Duvar (2x2m)",
+            ModularBuildPieceKind.PlankDoorway2x2m => "Kemerli Kapılı Nordik Duvar (2x2m)",
+            ModularBuildPieceKind.PlankWindow2x2m => "Ahşap Kepenkli Pencereli Duvar (2x2m)",
             ModularBuildPieceKind.PlankFloor2x2m => "Kirişli Ahşap Döşeme (2x2m)",
-            ModularBuildPieceKind.StoneFoundation2x2m => "Harçlı Tarla Taşı Temel (2x2m)",
-            ModularBuildPieceKind.StoneArchPillar3m => "Oymalı Taş Kemer Sütunu (3m)",
-            ModularBuildPieceKind.RoofRafter26Deg2x2m => "26° Zona Kaplı Mertekli Çatı (2x2m)",
+            ModularBuildPieceKind.StoneFoundation2x2m => "Etekli Harçlı Taş Subasman (2x2m)",
+            ModularBuildPieceKind.StoneArchPillar3m => "Düz Abaküslü Taş Kemer Sütunu (3m)",
+            ModularBuildPieceKind.RoofRafter26Deg2x2m => "26° Kademeli Zona Çatı (2x2m)",
             ModularBuildPieceKind.RoofRafter45Deg2x2m => "45° Dik Zona Kaplı Çatı (2x2m)",
             ModularBuildPieceKind.RoofRidge2m => "İskandinav Çatı Mahyası (2m)",
             ModularBuildPieceKind.DiagonalBrace2m => "45° Çapraz Göğüsleme Payandası (2m)",
+            ModularBuildPieceKind.GableWall45Deg2m => "45° Üçgen Çatı Alınlık Duvarı (2m)",
             _ => "Modüler Yapı Parçası"
         };
 
@@ -1247,6 +1252,7 @@ namespace Stratocraft.Inventory.Systems
             ModularBuildPieceKind.RoofRafter45Deg2x2m => 85.0f,
             ModularBuildPieceKind.RoofRidge2m => 70.0f,
             ModularBuildPieceKind.DiagonalBrace2m => 80.0f,
+            ModularBuildPieceKind.GableWall45Deg2m => 90.0f,
             _ => 90.0f
         };
 
@@ -1323,7 +1329,7 @@ namespace Stratocraft.Inventory.Systems
                     localMax = new Vector3(1.00f, 0.10f, 1.00f);
                     break;
                 case ModularBuildPieceKind.StoneFoundation2x2m:
-                    localMin = new Vector3(-1.00f, -0.05f, -1.00f);
+                    localMin = new Vector3(-1.00f, -0.65f, -1.00f);
                     localMax = new Vector3(1.00f, 0.32f, 1.00f);
                     break;
                 case ModularBuildPieceKind.StoneArchPillar3m:
@@ -1345,6 +1351,10 @@ namespace Stratocraft.Inventory.Systems
                 case ModularBuildPieceKind.DiagonalBrace2m:
                     localMin = new Vector3(-0.76f, 0.00f, -0.09f);
                     localMax = new Vector3(0.76f, 1.44f, 0.09f);
+                    break;
+                case ModularBuildPieceKind.GableWall45Deg2m:
+                    localMin = new Vector3(-1.00f, 0.00f, -0.07f);
+                    localMax = new Vector3(1.00f, 2.05f, 0.07f);
                     break;
                 default:
                     localMin = new Vector3(-0.5f, 0.0f, -0.5f);
@@ -1618,6 +1628,11 @@ namespace Stratocraft.Inventory.Systems
                         AddSock(outSockets, ref n, -1.0f, 0.0f, 1.0f, 90f);
                         AddSock(outSockets, ref n, 1.0f, 0.0f, 1.0f, 270f);
                     }
+                    else if (candidateKind == ModularBuildPieceKind.GableWall45Deg2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 2.00f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 2.00f, 0.0f, 180f);
+                    }
                     else if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
                     {
                         AddSock(outSockets, ref n, 0.0f, 1.95f, 1.00f);
@@ -1729,6 +1744,24 @@ namespace Stratocraft.Inventory.Systems
                     }
                     break;
                 }
+
+                case ModularBuildPieceKind.GableWall45Deg2m:
+                    if (candidateKind == ModularBuildPieceKind.GableWall45Deg2m)
+                    {
+                        AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f, 180f);
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f, 0f);
+                    }
+                    else if (candIsRoof)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.02f, 1.00f, 90f);
+                        AddSock(outSockets, ref n, 0.0f, 0.02f, -1.00f, 90f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.RoofRidge2m)
+                    {
+                        AddSock(outSockets, ref n, 1.00f, 1.98f, 1.00f, 90f);
+                        AddSock(outSockets, ref n, 1.00f, 1.98f, -1.00f, 90f);
+                    }
+                    break;
             }
 
             return n;
@@ -1862,6 +1895,7 @@ namespace Stratocraft.Inventory.Systems
                 ModularBuildPieceKind.LogPillar3m => 0.12f,
                 ModularBuildPieceKind.LogBeam2m => 0.13f,
                 ModularBuildPieceKind.DiagonalBrace2m => 0.10f,
+                ModularBuildPieceKind.GableWall45Deg2m => 0.14f,
                 _ => 0.17f
             };
 
@@ -1871,6 +1905,7 @@ namespace Stratocraft.Inventory.Systems
                 ModularBuildPieceKind.StoneArchPillar3m => 0.18f,
                 ModularBuildPieceKind.DiagonalBrace2m => 0.10f,
                 ModularBuildPieceKind.LogBeam2m => 0.20f,
+                ModularBuildPieceKind.GableWall45Deg2m => 0.19f,
                 ModularBuildPieceKind.RoofRafter26Deg2x2m => 0.21f,
                 ModularBuildPieceKind.RoofRafter45Deg2x2m => 0.21f,
                 ModularBuildPieceKind.RoofRidge2m => 0.18f,
@@ -2265,8 +2300,53 @@ namespace Stratocraft.Inventory.Systems
         }
 
         /// <summary>
+        /// Maden tahkimati sorgusu (0 B GC): Belirtilen dunya vokselinin (wx, wy, wz) altinda/etrafinda
+        /// zemine bagli, yikilmamis tasiyici ahsap/tas moduler destek (LogPillar3m, LogBeam2m, DiagonalBrace2m vb.)
+        /// bulunup bulunmadigini denetler.
+        /// </summary>
+        public static bool HasGroundedTimberSupportAtVoxel(
+            ReadOnlySpan<ModularPlacedPieceNode> nodes,
+            int wx,
+            int wy,
+            int wz)
+        {
+            if (nodes.Length == 0) return false;
+
+            float vx = wx + 0.5f;
+            float vy = wy + 0.5f;
+            float vz = wz + 0.5f;
+            const float horizShoringReach = 1.65f;
+
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode n = ref nodes[i];
+                if (n.IsBroken || n.IsFalling || n.Stability01 < CollapseStabilityThreshold) continue;
+
+                bool isShoringSupport =
+                    n.Kind == ModularBuildPieceKind.LogPillar3m ||
+                    n.Kind == ModularBuildPieceKind.LogBeam2m ||
+                    n.Kind == ModularBuildPieceKind.DiagonalBrace2m ||
+                    n.Kind == ModularBuildPieceKind.StoneArchPillar3m ||
+                    n.Kind == ModularBuildPieceKind.StoneFoundation2x2m;
+                if (!isShoringSupport) continue;
+
+                ComputeWorldAabb(n.Kind, n.Position, n.Rotation, out Vector3 bMin, out Vector3 bMax);
+                float dx = MathF.Max(0.0f, MathF.Max(bMin.X - vx, vx - bMax.X));
+                float dz = MathF.Max(0.0f, MathF.Max(bMin.Z - vz, vz - bMax.Z));
+                if ((dx * dx + dz * dz) > horizShoringReach * horizShoringReach) continue;
+
+                if (vy >= bMin.Y - 0.65f && wy <= bMax.Y + 2.50f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Prosedurel moduler yerleske (0=NordicTimberCabin, 1=MeadHallWatchtower, 2=CarvedMarbleShrine, 3=CollapsedTimberStoneRuin)
-        /// parcalarini dunya koordinatinda kurar ve baslangic Valheim cizge stabilitelerini hesaplar (0 B GC).
+        /// parcalarini %100 kapali, sizdirmaz, on/arka GableWall45Deg2m alinlikli ve derin tas subasmanli olarak kurar (0 B GC).
         /// </summary>
         public static int BuildProceduralSitePieces(
             byte siteKindIndex,
@@ -2288,8 +2368,9 @@ namespace Stratocraft.Inventory.Systems
 
             switch (siteKindIndex)
             {
-                case 0: // NordicTimberCabin (4m x 4m Iskandinav Kutuk & Kalas Koy Kulubesi)
+                case 0: // NordicTimberCabin (%100 Kapali 4x4m Nordik Kutuk Kulube + On/Arka 45° GableWall + Dik Zona Cati)
                 {
+                    // Derin egim etekli harcli tas subasman (4x StoneFoundation2x2m) + ahsap doseme
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
@@ -2300,37 +2381,43 @@ namespace Stratocraft.Inventory.Systems
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
 
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, 1.90f, 0f);
-
+                    // 4 Tam Cephe Duvari (kapi + kepenkli pencereler + gecmeli kutuk duvarlar)
                     em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
                     em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, -1.94f, 0f);
                     em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
                     em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
                     em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, -1.0f, 90f);
                     em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, 1.0f, 90f);
-                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, -1.0f, 270f);
                     em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, 1.0f, 270f);
 
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 2.32f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 2.32f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 1.88f, -1.90f, 180f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 1.88f, -1.90f, 0f);
+                    // Yan sacak asik kutukleri + on/arka alinlik merkez kral dikmeleri + gogusleme payandalari
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 0.0f, 1.28f, -1.88f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 0.0f, 1.28f, 1.88f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 1.86f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 1.86f, -1.90f, 180f);
 
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, 1.0f, 2.32f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, 1.0f, 2.32f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 3.30f, 0.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 3.30f, 0.0f, 0f);
+                    // On ve Arka 45° Ucgen Cati Alinlik Duvarlari (Λ tam sızdırmaz kapanis!)
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, -1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, 1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, 1.94f, 180f);
+
+                    // Tam Iki Yan 45° Dik Zona Cati Egimi + Ust Mahya Kirisi
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, 1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, 1.0f, 90f);
                     break;
                 }
 
-                case 1: // MeadHallWatchtower (2 Katli Payandali Kuzey Gozetleme Kulesi & 45° Dik Cati)
+                case 1: // MeadHallWatchtower (2 Tam Katli %100 Kapali Nordik Gozetleme Kulesi + On/Arka 45° GableWall + Dik Cati)
                 {
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
@@ -2342,100 +2429,139 @@ namespace Stratocraft.Inventory.Systems
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
 
+                    // 1. Kat Tam Cevre Duvarlari + Kose Tasiyici Kutuk Dikmeler
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, 1.0f, 270f);
+
                     em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, -1.90f, 0f);
                     em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, -1.90f, 0f);
                     em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, 1.90f, 0f);
                     em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, 1.90f, 0f);
 
-                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, 0.0f, 0.32f, -1.94f, 0f);
-                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 0.0f, 0.32f, 1.94f, 180f);
-                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, 0.0f, 90f);
-                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, 0.0f, 270f);
+                    // 2. Kat Doseme + 2. Kat Tam Kepenkli Gozetleme Duvarlari + Payandalar
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.32f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.32f, 1.0f, 0f);
 
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.20f, 1.56f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.20f, 1.56f, -1.90f, 180f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.20f, 1.56f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.20f, 1.56f, 1.90f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 2.34f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 2.34f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 2.34f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.0f, 2.34f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.94f, 2.34f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 2.34f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 2.34f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 2.34f, 1.0f, 270f);
 
-                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.95f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.95f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.95f, 1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.95f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 2.88f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 2.88f, -1.90f, 180f);
 
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 3.05f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 3.05f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 3.05f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 3.05f, 1.90f, 0f);
+                    // On ve Arka 45° Ucgen Cati Alinliklari + Iki Yan 45° Cati + Mahya
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 4.34f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 4.34f, -1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 4.34f, 1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 4.34f, 1.94f, 180f);
 
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 5.78f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 5.78f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 5.78f, 1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 5.78f, 1.90f, 0f);
-
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 5.82f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 5.82f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 5.82f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 5.82f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 7.80f, 0.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 7.80f, 0.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 4.36f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 4.36f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 4.36f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 4.36f, 1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 6.34f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 6.34f, 1.0f, 90f);
                     break;
                 }
 
-                case 2: // CarvedMarbleShrine (Oymali Kemer Sutunlu Kadim Tapinak / Kutsal Sunak)
+                case 2: // CarvedMarbleShrine (%100 Kapali Tas Kemer Portalli & 45° GableWall Alinlikli Kadim Tapinak)
                 {
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, 1.0f, 0f, grounded: true);
 
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, -1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, -1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, 1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, 1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, 0.0f, 90f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, 0.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
 
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 3.26f, -1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 3.26f, -1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 3.26f, 1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 3.26f, 1.82f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.82f, 3.26f, -0.90f, 90f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.82f, 3.26f, -0.90f, 90f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.82f, 3.26f, 0.90f, 90f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.82f, 3.26f, 0.90f, 90f);
+                    // 4 Tam Kutsal Salon Duvari (cift giris portali + kepenkli pencereler)
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.92f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, 1.0f, 0.32f, -1.92f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 0.32f, 1.92f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.92f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.92f, 0.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.92f, 0.32f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.92f, 0.32f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.92f, 0.32f, 1.0f, 270f);
 
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 3.36f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 3.36f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 3.36f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 3.36f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 5.34f, 0.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 5.34f, 0.0f, 0f);
+                    // On ve arka portallarda cati egimi altina (3.32m < 3.48m) temiz oturan tas kemer sutunlari:
+                    // Yan sacak LogBeam2m (X=±1.94m) ile X ekseninde >1.0m ayriktir; icinden ASLA kiris gecmez!
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -0.84f, 0.32f, -2.02f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 0.84f, 0.32f, -2.02f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -0.84f, 0.32f, 2.02f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 0.84f, 0.32f, 2.02f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, 1.0f, 90f);
+
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, -1.92f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, -1.92f, 180f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, 1.92f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, 1.92f, 180f);
+
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, 1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, 1.0f, 90f);
                     break;
                 }
 
-                default: // 3 = CollapsedTimberStoneRuin (Yari Yikik Tas Kemer & Ahsap Harabe)
+                default: // 3 = Tahkimli Sınır Karakol Evi (%100 Kapali, 0 Kopuk Direk, 0 Ucan Yarim Cati!)
                 {
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
                     em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, 1.0f, 0f, grounded: true);
 
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, -1.0f, 0f);
                     em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
 
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.85f, 0.32f, -1.85f, 0f);
-                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.85f, 0.32f, 1.85f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.85f, 0.32f, -1.85f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, 1.0f, 270f);
 
-                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.90f, 0f);
-                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.90f, 0.32f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, 1.0f, 90f);
 
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, -1.85f, 0f);
-                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.85f, 2.32f, 0.0f, 90f);
-                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.15f, 1.05f, -1.85f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, -1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, 1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, 1.94f, 180f);
 
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, -1.0f, 0f);
-                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, 1.0f, 180f);
-                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 3.30f, 0.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, 1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, 1.0f, 90f);
                     break;
                 }
             }
