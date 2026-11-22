@@ -281,6 +281,7 @@ namespace Stratocraft.Character
         private readonly Stage1HolsterAndBackpackController _holsterCtrl = new();
         private readonly Stage1StoneKnappingController _stoneKnappingCtrl = new();
         private readonly WorldLooseBuildSystem _looseBuildSystem = new();
+        private int _lastModularDamageSwingId = -1;
         private readonly Stage1MindBuildingController _mindBuildingCtrl = new();
         private readonly Stage1CampfireAndCookingController _campfireCtrl = new();
         private readonly Stage1BloomeryAndForgingController _bloomeryCtrl = new();
@@ -458,6 +459,10 @@ namespace Stratocraft.Character
             {
                 _fluidMeshFilters[key] = fluidMf;
                 if (fluidMf.TryGetComponent<MeshRenderer>(out var fmr)) _fluidMeshRenderers[key] = fmr;
+            }
+            if (StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(key.x, key.y, out ProceduralModularSiteSpec modularSite))
+            {
+                _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in modularSite, SharedVoxelMaterial, _worldChunks);
             }
         }
 
@@ -806,6 +811,7 @@ namespace Stratocraft.Character
             _caveAcousticTelegraphCtrl.InitializeProceduralClipsOnce();
             _creatureBridge.AcousticTelegraphController = _caveAcousticTelegraphCtrl;
             _creatureBridge.OnCaveAmbushTelegraphTriggered ??= OnCaveAmbushTelegraphTriggered;
+            _creatureBridge.OnSiegeStructureImpact ??= HandleSiegeModularStructureImpact;
             EnsureCreaturesInitialized();
             _collapseBridge.MiningControllerForItemDrops = _miningCtrl;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
@@ -1055,6 +1061,7 @@ namespace Stratocraft.Character
             }
             _chunkDeltaLog.MarkChunkUnloaded(key.cx, key.cz, _totalSimulatedGameSeconds);
             _creatureBridge.DemoteCreaturesInChunk(key.cx, key.cz, _totalSimulatedGameSeconds);
+            _looseBuildSystem.ReleaseChunkModularStructureSite(key.cx, key.cz);
 
             // 2) Paket 4C-2: Yalnizca oyuncu/yaratik tarafindan gercekten degistirilmis chunk'lari RLE/.sregion'a al!
             // Dogal yagmur nemi/kar/golet zaten 0.6 MB WorldHydrologyLedger icinde tutuldugu icin 500+ temiz chunk bosuna sikistirilmaz!
@@ -3205,6 +3212,24 @@ namespace Stratocraft.Character
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
                 _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl,
                 externalMouseConsumed: stationConsumedClick || looseConsumedClick);
+            if (!uiBlocked && !stationConsumedClick && !looseConsumedClick && PlayerCamera != null &&
+                (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.ActiveHolsterSlot == 2 || _holsterCtrl.ActiveHolsterSlot == 3) &&
+                Input.GetMouseButtonDown(0))
+            {
+                Ray modRay = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+                if (Physics.Raycast(modRay, out RaycastHit modHit, 5.2f) &&
+                    modHit.collider != null &&
+                    modHit.collider.name.StartsWith("ModPiece_", StringComparison.Ordinal))
+                {
+                    float toolDmg = _holsterCtrl.ActiveHolsterSlot == 2 ? 125.0f : (_holsterCtrl.ActiveHolsterSlot == 3 ? 110.0f : 75.0f);
+                    int modHits = _looseBuildSystem.DamageModularSupportAt(modHit.point, 1.45f, toolDmg, out int brokenSup, out int collapsedPcs);
+                    if (modHits > 0 && (brokenSup > 0 || collapsedPcs > 0))
+                    {
+                        _miningCtrl.LastFeedbackText =
+                            $"🧱 MODÜLER YAPI ÇÖKÜŞÜ! {brokenSup} destek kırıldı, {collapsedPcs} üst parça fiziksel yıkıldı!";
+                    }
+                }
+            }
             if (!uiBlocked)
             {
                 _miningCtrl.StepHandSoilScooping(
@@ -3274,6 +3299,7 @@ namespace Stratocraft.Character
             {
                 _combatBridge.SetWeaponArchetype(equippedSwordArchetype, WeaponPivot);
             }
+            _combatBridge.WeaponViewDistanceOffsetMeters = Stage1GameSettings.WeaponViewDistanceOffset;
 
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
@@ -3431,6 +3457,22 @@ namespace Stratocraft.Character
             if (canCombat)
             {
                 _creatureBridge.EvaluateSweptBladeCombat(_combatBridge, dt, SharedVoxelMaterial, _feedbackArenaBridge);
+                if (_combatBridge.IsActiveAttackSwing && _combatBridge.AreBladePointsValid &&
+                    _combatBridge.CurrentSwingId != _lastModularDamageSwingId)
+                {
+                    Vector3 bladeTipWorld = _combatBridge.CurrBladeWorldPoints[Stage1DirectionalCombatBridge.BladeSamplePointCount - 1];
+                    float swingDmg = slot == 2 ? 125.0f : (slot == 3 ? 110.0f : 70.0f);
+                    int modHits = _looseBuildSystem.DamageModularSupportAt(bladeTipWorld, 1.50f, swingDmg, out int brokenSup, out int collapsedPcs);
+                    if (modHits > 0)
+                    {
+                        _lastModularDamageSwingId = _combatBridge.CurrentSwingId;
+                        if (brokenSup > 0 || collapsedPcs > 0)
+                        {
+                            _miningCtrl.LastFeedbackText =
+                                $"💥 DARBE İLE MODÜLER ÇÖKÜŞ! {brokenSup} destek kırıldı, {collapsedPcs} parça yıkılıyor!";
+                        }
+                    }
+                }
             }
 
             bool isParrying = canCombat && _combatBridge.IsParrying;
@@ -3935,6 +3977,11 @@ namespace Stratocraft.Character
                 }
                 _fluidKinematicsPool.ReleaseChunk(k.cx, k.cz);
                 _fluidKinematicsViewMap.Remove(k);
+                _looseBuildSystem.ReleaseChunkModularStructureSite(k.cx, k.cz);
+                if (StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(k.cx, k.cz, out ProceduralModularSiteSpec refreshedSite))
+                {
+                    _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in refreshedSite, SharedVoxelMaterial, _worldChunks);
+                }
                 _dirtyChunks.Add(k);
                 _dirtyFluidChunks.Add(k);
             }
@@ -6314,6 +6361,16 @@ namespace Stratocraft.Character
                         phase += 1.35f;
                     }
                 }
+            }
+        }
+
+        private void HandleSiegeModularStructureImpact(Vector3 worldPoint, float radius, float damage)
+        {
+            int hits = _looseBuildSystem.DamageModularSupportAt(worldPoint, radius, damage, out int brokenSupports, out int collapsedPieces);
+            if (hits > 0 && (brokenSupports > 0 || collapsedPieces > 0))
+            {
+                _miningCtrl.LastFeedbackText =
+                    $"💥 KUŞATMA DARBESİ! {brokenSupports} modüler taşıyıcı kırıldı, {collapsedPieces} üst parça yıkılıyor!";
             }
         }
 

@@ -81,6 +81,8 @@ htmlcov/
 # ---------- Ağır Üretilmiş İkili 3B/Doku Çıktıları (Deterministik Yerel Üretim — LFS Kotası Koruması) ----------
 Assets/Art/Generated/**/*.glb
 !Assets/Art/Generated/Character/*.glb
+!Assets/Art/Generated/Creatures_21/creature_*.glb
+!Assets/Art/Generated/Structures_Modular/mod_*.glb
 Assets/Art/Generated/**/*.dds
 Assets/Art/Generated/**/*.exr
 Assets/Art/Generated/**/*.bin

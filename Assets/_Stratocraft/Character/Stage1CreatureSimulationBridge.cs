@@ -573,6 +573,7 @@ namespace Stratocraft.Character
         public Stage1MatterCrystalAndMiningController? MiningControllerForLootDrops { get; set; }
         public Stage1CaveAcousticTelegraphController? AcousticTelegraphController { get; set; } = new Stage1CaveAcousticTelegraphController();
         public Action<CaveCreatureVariantKind, Vector3, Vector3>? OnCaveAmbushTelegraphTriggered { get; set; }
+        public Action<Vector3, float, float>? OnSiegeStructureImpact { get; set; }
         public LiveCreatureAgent? MountedCreatureAgent { get; private set; }
         public string LastCreatureEventText { get; private set; } =
             "Canlilar: Devriyede (5 Noktali 3B Namlu Kesimi | Boids Kusatma | [E] Evcillestirme & Binek | Phoenix Gunes Patlamasi)";
@@ -2679,6 +2680,8 @@ namespace Stratocraft.Character
             LiveCreatureAgent a, Vector3 targetColumnPos, Dictionary<(int cx, int cz), uint[]> worldChunks,
             HashSet<(int cx, int cz)> dirtyChunks, Stage1StructuralCollapseBridge collapseBridge)
         {
+            float modularSiegeDamage = a.IsPhoenixBoss ? 185.0f : Mathf.Clamp(a.VoxelSiegeDps * 2.2f, 95.0f, 165.0f);
+            OnSiegeStructureImpact?.Invoke(targetColumnPos, 2.25f, modularSiegeDamage);
             int centerWx = Mathf.FloorToInt(targetColumnPos.x);
             int centerWz = Mathf.FloorToInt(targetColumnPos.z);
             int baseY = Mathf.Clamp(Mathf.FloorToInt(a.Root.position.y), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 1);

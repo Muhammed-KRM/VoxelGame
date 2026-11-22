@@ -24,6 +24,7 @@ namespace Stratocraft.Character
         public static float MouseSensitivity = 1.00f;
         public static bool InvertMouseY;
         public static float CameraFieldOfView = 75.0f;
+        public static float WeaponViewDistanceOffset = 0.0f;
         public static int RenderDistanceChunks = 10;
         public static float MasterVolume = 0.85f;
         public static float CombatSfxVolume = 0.90f;
@@ -97,6 +98,7 @@ namespace Stratocraft.Character
             MouseSensitivity = Mathf.Clamp(PlayerPrefs.GetFloat("SC_MouseSens", 1.00f), 0.15f, 3.00f);
             InvertMouseY = PlayerPrefs.GetInt("SC_InvertY", 0) != 0;
             CameraFieldOfView = Mathf.Clamp(PlayerPrefs.GetFloat("SC_CamFov", 75.0f), 60.0f, 105.0f);
+            WeaponViewDistanceOffset = Mathf.Clamp(PlayerPrefs.GetFloat("SC_WeaponViewDist", 0.0f), -0.06f, 0.20f);
             RenderDistanceChunks = Mathf.Clamp(PlayerPrefs.GetInt("SC_RenderDist_v2", 10), 6, 14);
             MasterVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_MasterVol", 0.85f));
             CombatSfxVolume = Mathf.Clamp01(PlayerPrefs.GetFloat("SC_CombatVol", 0.90f));
@@ -143,6 +145,7 @@ namespace Stratocraft.Character
             PlayerPrefs.SetFloat("SC_MouseSens", MouseSensitivity);
             PlayerPrefs.SetInt("SC_InvertY", InvertMouseY ? 1 : 0);
             PlayerPrefs.SetFloat("SC_CamFov", CameraFieldOfView);
+            PlayerPrefs.SetFloat("SC_WeaponViewDist", WeaponViewDistanceOffset);
             PlayerPrefs.SetInt("SC_RenderDist_v2", RenderDistanceChunks);
             PlayerPrefs.SetFloat("SC_MasterVol", MasterVolume);
             PlayerPrefs.SetFloat("SC_CombatVol", CombatSfxVolume);
@@ -575,7 +578,7 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl)
         {
             float w = Mathf.Min(860f, Screen.width - 40f);
-            float h = Mathf.Min(610f, Screen.height - 40f);
+            float h = Mathf.Min(645f, Screen.height - 40f);
             float x = (Screen.width - w) * 0.5f;
             float y = (Screen.height - h) * 0.5f;
 
@@ -654,6 +657,12 @@ namespace Stratocraft.Character
                 Stage1GameSettings.CameraFieldOfView, 60.0f, 105.0f,
                 $"{Stage1GameSettings.CameraFieldOfView:0}°");
 
+            Stage1GameSettings.WeaponViewDistanceOffset = DrawSliderRow(
+                area.x, ref cy, area.width,
+                "Silah Kamera Mesafesi (Weapon Distance):",
+                Stage1GameSettings.WeaponViewDistanceOffset, -0.06f, 0.20f,
+                $"{Stage1GameSettings.WeaponViewDistanceOffset:+0.00;-0.00;0.00} m");
+
             Stage1GameSettings.RenderDistanceChunks = Mathf.RoundToInt(DrawSliderRow(
                 area.x, ref cy, area.width,
                 "3B Blok Görüş Mesafesi (LOD Ufuk 768m):",
@@ -731,6 +740,7 @@ namespace Stratocraft.Character
                 Stage1GameSettings.MouseSensitivity = 1.00f;
                 Stage1GameSettings.InvertMouseY = false;
                 Stage1GameSettings.CameraFieldOfView = 75.0f;
+                Stage1GameSettings.WeaponViewDistanceOffset = 0.0f;
                 Stage1GameSettings.MasterVolume = 0.85f;
                 Stage1GameSettings.CombatSfxVolume = 0.90f;
                 Stage1GameSettings.AmbientVolume = 0.75f;
