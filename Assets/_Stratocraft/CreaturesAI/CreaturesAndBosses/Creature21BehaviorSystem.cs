@@ -138,6 +138,19 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
         public const float SiegeCrewObstructingBlockRadiusMeters = 2.6f;
         public const float SiegeCrewSlamCooldownSeconds = 1.10f;
 
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesOnSubsystemRegistration()
+        {
+        }
+#endif
+
+        public static bool IsConstructOrGolemArchetype(byte creatureId)
+        {
+            // Yalnizca gercek kaya/lav/antik mekanik yapi turleri (#11 Kaya/Demir Golemi, #17 Lav Golemi, #20 Antik Mekanik Gozcu)
+            return creatureId == 11 || creatureId == 17 || creatureId == 20;
+        }
+
         private static readonly CreatureArchetypeDefinition[] Catalog21 =
         {
             // Halka 1 (Lv1: 200 - 1.000m) — 5 Canli
