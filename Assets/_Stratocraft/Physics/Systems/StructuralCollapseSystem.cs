@@ -45,7 +45,8 @@ namespace Stratocraft.Physics.Systems
             out int totalCollapsedVoxels,
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
             ReadOnlySpan<float> optionalTopHaloLoadKg = default,
-            Func<int, int, int, ulong>? microMaskLookup = null)
+            Func<int, int, int, ulong>? microMaskLookup = null,
+            bool enableLocalTerzaghiLoosening = false)
         {
             long startTicks = Stopwatch.GetTimestamp();
             int volume = sizeX * sizeY * sizeZ;
@@ -81,7 +82,8 @@ namespace Stratocraft.Physics.Systems
                     geoSpan,
                     cantSpan,
                     waveSpan,
-                    layout);
+                    layout,
+                    allowNaturalOverburdenShortcut: !enableLocalTerzaghiLoosening);
 
                 int phase2Failed = TributaryLoadDagJob.Execute(
                     workSpan,
@@ -93,7 +95,8 @@ namespace Stratocraft.Physics.Systems
                     waveSpan,
                     layout,
                     optionalTopHaloLoadKg,
-                    microMaskLookup);
+                    microMaskLookup,
+                    enableLocalTerzaghiLoosening);
 
                 int newlyBrokenInWave = 0;
                 if (phase1Detached > 0 || phase2Failed > 0)

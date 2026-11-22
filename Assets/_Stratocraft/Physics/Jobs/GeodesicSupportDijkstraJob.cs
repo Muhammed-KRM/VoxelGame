@@ -53,7 +53,8 @@ namespace Stratocraft.Physics.Jobs
             Span<ushort> outGeodesicDistance,
             Span<ushort> outCantileverSpan,
             Span<byte> outUnsupportedMask,
-            VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal)
+            VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
+            bool allowNaturalOverburdenShortcut = true)
         {
             int totalVoxels = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalVoxels ||
@@ -108,7 +109,7 @@ namespace Stratocraft.Physics.Jobs
                             props.IsSkyAnchor ||
                             VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.KaliciYapi;
                         bool isTriaxialAnchor = IsTwoDeepTriaxiallyConfinedRock(
-                            voxels, x, y, z, sizeX, sizeY, sizeZ, supportFloorY, raw, layout) ||
+                            voxels, x, y, z, sizeX, sizeY, sizeZ, supportFloorY, raw, layout, allowNaturalOverburdenShortcut) ||
                             IsFloatingIslandNaturalSpineFoundation(
                                 voxels, x, y, z, sizeX, sizeY, sizeZ, raw, layout);
 
@@ -179,6 +180,15 @@ namespace Stratocraft.Physics.Jobs
 
                         byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
                         StructuralMaterialProps nProps = StructuralMaterialProps.GetForMaterial(nMat);
+
+                        // Kohezyonsuz / dusuk cekme dayanimli dogal kutleler (Stalagnate, Dirt, Grass, Sand, Clay,
+                        // Cobblestone, Stone vb.) ustteki KaliciYapi / tavan blogundan asagiya dogru saf cekme
+                        // (StepDy == -1) ile asili kalamaz; taban veya yanal kemer destegi gerektirir.
+                        if (StepDy[dir] < 0 && IsCohesionlessOrLowTensileNaturalBlock(nRaw, nMat, in nProps))
+                        {
+                            continue;
+                        }
+
                         bool isDiagonalArchStep = dir >= 6;
                         if (isDiagonalArchStep && !nProps.IsArchCapable)
                         {
@@ -186,6 +196,7 @@ namespace Stratocraft.Physics.Jobs
                         }
 
                         bool isConfinedNaturalOverburden =
+                            allowNaturalOverburdenShortcut &&
                             layout == VoxelGridMemoryLayout.YMajorChunk &&
                             VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.DogalKutle &&
                             HasContinuousNaturalOverburden(voxels, nx, ny, nz, sizeX, sizeY, sizeZ, layout, minOverburden: 3);
@@ -408,6 +419,46 @@ namespace Stratocraft.Physics.Jobs
         }
 
         /// <summary>
+        /// Kohezyonsuz veya dusuk cekme dayanimli dogal kutlelerin (DogalKutle: Stalagnate, Dirt, Grass, Sand, Clay,
+        /// Cobblestone, Stone, Basalt, Marble vb.) ustteki bir tavan/KaliciYapi blogundan asagiya dogru saf cekme
+        /// (StepDy == -1) ile sarkmasini yasaklayan filtre.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsCohesionlessOrLowTensileNaturalBlock(
+            uint raw,
+            byte matId,
+            in StructuralMaterialProps props)
+        {
+            if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
+            {
+                return false;
+            }
+
+            if (props.IsUnbreakableAnchor || props.IsSkyAnchor)
+            {
+                return false;
+            }
+
+            if (props.IsGranular)
+            {
+                return true;
+            }
+
+            return matId == MaterialIdCatalog.Stalagnate ||
+                   matId == MaterialIdCatalog.Dirt ||
+                   matId == MaterialIdCatalog.Grass ||
+                   matId == MaterialIdCatalog.Sand ||
+                   matId == MaterialIdCatalog.Gravel ||
+                   matId == MaterialIdCatalog.LooseRubble ||
+                   matId == MaterialIdCatalog.Clay ||
+                   matId == MaterialIdCatalog.Cobblestone ||
+                   matId == MaterialIdCatalog.Stone ||
+                   matId == MaterialIdCatalog.Basalt ||
+                   matId == MaterialIdCatalog.Marble ||
+                   matId == MaterialIdCatalog.PackedIce;
+        }
+
+        /// <summary>
         /// 2-Blok Derinlikli Triaxial Kaya Hapsi:
         /// Dogal kutle (OriginState == DogalKutle) ve yuksek yogunluklu (Density &gt;= 96 veya Shape != 0) kaya,
         /// alt mesnet tabaninda veya tum 4 yatay yonde + altinda kati dogal kayayla kusatilmissa ana kaya ankrajidir.
@@ -422,7 +473,8 @@ namespace Stratocraft.Physics.Jobs
             int sizeZ,
             int supportFloorY,
             uint raw,
-            VoxelGridMemoryLayout layout)
+            VoxelGridMemoryLayout layout,
+            bool allowNaturalOverburdenShortcut)
         {
             if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
             {
@@ -457,7 +509,8 @@ namespace Stratocraft.Physics.Jobs
             {
                 // Chunk / pencere sinirini kesen dogal magara kemerlerinde ustte en az 4 blok kesintisiz dogal kaya
                 // ortusu (overburden) varsa komsu chunk'taki ana kaya kutlesine yatay kemer ankraji olusturur.
-                if (layout != VoxelGridMemoryLayout.YMajorChunk ||
+                if (!allowNaturalOverburdenShortcut ||
+                    layout != VoxelGridMemoryLayout.YMajorChunk ||
                     !HasContinuousNaturalOverburden(voxels, x, y, z, sizeX, sizeY, sizeZ, layout, minOverburden: 4))
                 {
                     return false;
