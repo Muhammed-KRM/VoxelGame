@@ -2,6 +2,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
@@ -14,6 +15,7 @@ using Stratocraft.CreaturesAI.Pathfinding;
 using Stratocraft.CreaturesAI.Systems;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
+using Stratocraft.Rendering;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen.Generators;
@@ -95,6 +97,18 @@ namespace Stratocraft.Character
             public float DodgeTimer;
             public float DodgeCooldownTimer;
             public Vector3 DodgeDirXZ;
+            // Faz 4 Canli Yetenek Durumlari (Stealth Phasing, Blink Teleport, Trench Ballistic, Siege & Ship Crew)
+            public bool IsStealthPhased;
+            public bool StealthAmbushPrimed;
+            public bool WasStealthVisualApplied;
+            public float StealthAmbushLungeTimer;
+            public float StealthCooldownTimer;
+            public float CurrentStealthAlpha01 = 1.0f;
+            public float BlinkCooldownTimer;
+            public float BallisticShotCooldownTimer;
+            public float SiegeSlamCooldownTimer;
+            public bool UsesRealGlbBodyVisual;
+            public MeshRenderer[]? CachedRenderers;
             public Transform? BodyTorsoPivot;
             public Transform? FrontLeftLeg, FrontRightLeg, HindLeftLeg, HindRightLeg;
             public Transform? FrontLeftLower, FrontRightLower, HindLeftLower, HindRightLower;
@@ -124,18 +138,49 @@ namespace Stratocraft.Character
         {
             public Transform Transform = null!;
             public Vector3 Velocity, AngularVelocityDeg;
+            public Vector3 WorldDimensions = new(0.20f, 0.45f, 0.20f);
             public float RestTimer;
         }
 
+        public struct BallisticSpineProjectile
+        {
+            public bool Active;
+            public Vector3 Position;
+            public Vector3 PrevPosition;
+            public Vector3 Velocity;
+            public float RemainingSeconds;
+            public float BaseDamage;
+            public byte SourceArchetypeId;
+            public uint SourceEntityGuid;
+            public Transform? VisualTransform;
+        }
+
+        public const int MaxPooledBallisticProjectiles = 16;
+
+        private static readonly int s_propBaseColor = Shader.PropertyToID("_BaseColor");
+        private static readonly int s_propColor = Shader.PropertyToID("_Color");
+        private static readonly int s_propAmbientStrength = Shader.PropertyToID("_AmbientStrength");
+        private static readonly int s_propRimLightStrength = Shader.PropertyToID("_RimLightStrength");
+        private static readonly int s_propMatCapBlendWeight = Shader.PropertyToID("_MatCapBlendWeight");
+        private static readonly int s_propBlackbodyIntensity = Shader.PropertyToID("_BlackbodyIntensity");
+
         private readonly List<LiveCreatureAgent> _agents = new(32);
         private readonly List<ThrownLimbDebris> _activeLimbDebris = new(16);
+        private readonly BallisticSpineProjectile[] _ballisticProjectilePool = new BallisticSpineProjectile[MaxPooledBallisticProjectiles];
         private readonly List<FacetedVoxelTriangle> _limbMeshTris = new(64);
         private readonly List<PathNodeCoord> _astarPathBuffer = new(64);
         private readonly Dictionary<int, Mesh> _creatureMeshCache = new(32);
+        private readonly Dictionary<int, Mesh?> _severedLimbGlbCache = new(16);
+        private Dictionary<string, Mesh>? _ashStalkerGlbPartsCache;
+        private bool _ashStalkerGlbProbed;
+        private Dictionary<string, Mesh>? _phoenixBossGlbPartsCache;
+        private bool _phoenixBossGlbProbed;
+        private MaterialPropertyBlock? _stealthPropertyBlock;
         private Mesh? _cachedWoundScarMesh;
         private Mesh? _cachedGoreCapMesh;
         private Mesh? _cachedSeveredLimbMesh;
         private Mesh? _cachedTamedCollarMesh;
+        private Mesh? _cachedBallisticSpineMesh;
         private int _lastAStarFrame = -1;
         private readonly Plane[] _cameraFrustumPlanes = new Plane[6];
         private VoxelChunkComponent? _navChunkBuffer;
@@ -154,6 +199,7 @@ namespace Stratocraft.Character
 
         public int AgentCount => _agents.Count;
         public IReadOnlyList<LiveCreatureAgent> Agents => _agents;
+        public int ActiveBallisticProjectileCount { get; private set; }
         public int OffScreenAnalyticalAgentCount { get; private set; }
         public string OffScreenTelemetrySummary { get; private set; } = "DES: 0";
         public Stage1MatterCrystalAndMiningController? MiningControllerForLootDrops { get; set; }
@@ -233,11 +279,11 @@ namespace Stratocraft.Character
                 ? def.BaseMaxHp
                 : (isStarterPhoenix ? 680f : 240f);
 
-            AnatomyCapabilityFlags caps = def.InitialCapabilities;
-            if (customArchetypeId == 0 || archId == 4 || archId == 8 || archId == 11 || archId == 13 || archId == 17 || archId == 19 || isStarterPhoenix)
-            {
-                caps |= AnatomyCapabilityFlags.VoxelSiegeBreaker;
-            }
+            bool isStarterAshStalker = customArchetypeId == 0 && !isFlyingBoss;
+            AnatomyCapabilityFlags caps = Creature21BehaviorSystem.ResolveInitialCapabilities(
+                archId,
+                isStarterAshStalker,
+                isStarterPhoenix);
 
             float hpMult = Mathf.Max(0.25f, Stage1GameSettings.CreatureHealthMultiplier);
             float scaledHp = canonicalHp * hpMult;
@@ -579,6 +625,13 @@ namespace Stratocraft.Character
 
             HandleTamingAndMountingInput(ref playerPos, worldChunks, sharedVoxelMat, deltaTime);
             StepThrownLimbDebris(deltaTime, worldChunks);
+            StepBallisticProjectiles(
+                playerPos,
+                isPlayerParrying,
+                ref playerVitals,
+                worldChunks,
+                deltaTime,
+                combatBridge);
 
             UnityEngine.Camera? cam = UnityEngine.Camera.main;
             bool hasFrustum = cam != null;
@@ -671,6 +724,10 @@ namespace Stratocraft.Character
 
                 a.AttackCooldown = Mathf.Max(0f, a.AttackCooldown - deltaTime);
                 a.HitFlinchTimer = Mathf.Max(0f, a.HitFlinchTimer - deltaTime);
+                a.BlinkCooldownTimer = Mathf.Max(0f, a.BlinkCooldownTimer - deltaTime);
+                a.BallisticShotCooldownTimer = Mathf.Max(0f, a.BallisticShotCooldownTimer - deltaTime);
+                a.SiegeSlamCooldownTimer = Mathf.Max(0f, a.SiegeSlamCooldownTimer - deltaTime);
+                a.StealthAmbushLungeTimer = Mathf.Max(0f, a.StealthAmbushLungeTimer - deltaTime);
 
                 if (a == MountedCreatureAgent)
                 {
@@ -809,6 +866,13 @@ namespace Stratocraft.Character
                     a.ArchetypeId, a.IsFlyingBoss, a.IsBiped, a.CaveVariant != CaveCreatureVariantKind.None);
                 float aggroMult = Stage1GameSettings.CreatureAggressionMultiplier;
                 float baseAggro = a.CaveVariant != CaveCreatureVariantKind.None ? 12.5f : (a.IsFlyingBoss ? 15.0f : (a.CurrentHp < a.MaxHp ? 14.0f : 8.5f));
+                if (Creature21BehaviorSystem.HasArchetypeCapability(
+                        a.ArchetypeId,
+                        a.Capabilities,
+                        AnatomyCapabilityFlags.CapTrenchBallistic | AnatomyCapabilityFlags.CapBlinkTeleport | AnatomyCapabilityFlags.CapStealthPhasing))
+                {
+                    baseAggro = Mathf.Max(baseAggro, 18.0f);
+                }
                 float aggroRange = baseAggro * aggroMult;
                 bool shouldEngageHostile = aggroMult > 0.02f && horizDist <= aggroRange &&
                     (aiProfile.Temperament == CreatureTemperament.Aggressive ||
@@ -818,6 +882,7 @@ namespace Stratocraft.Character
 
                 if (passiveFleeTrigger)
                 {
+                    ClearStealthShimmerIfNeeded(a);
                     a.State = CreatureAiState.Flee;
                     Vector3 away = a.Root.position - playerPos;
                     away.y = 0f;
@@ -839,12 +904,14 @@ namespace Stratocraft.Character
                         OnCaveAmbushTelegraphTriggered?.Invoke(a.CaveVariant, telegraphOrigin, playerPos);
                     }
 
+                    Vector3 playerFwdXZ = new Vector3(camFwd.x, 0f, camFwd.y);
                     StepAggroAgent(
-                        a, i, playerPos, horizDist, toPlayer.y, isPlayerParrying, ref playerVitals,
-                        worldChunks, dirtyChunks, collapseBridge, time, deltaTime, combatBridge);
+                        a, i, playerPos, playerFwdXZ, horizDist, toPlayer.y, isPlayerParrying, ref playerVitals,
+                        worldChunks, dirtyChunks, collapseBridge, time, deltaTime, combatBridge, sharedVoxelMat, worldParent);
                 }
                 else
                 {
+                    ClearStealthShimmerIfNeeded(a);
                     StepPatrolAgent(a, time, worldChunks);
                 }
 
@@ -1589,10 +1656,10 @@ namespace Stratocraft.Character
         }
 
         private void StepAggroAgent(
-            LiveCreatureAgent a, int agentIndex, Vector3 playerPos, float horizDist, float vertDelta, bool isPlayerParrying,
+            LiveCreatureAgent a, int agentIndex, Vector3 playerPos, Vector3 playerFwdXZ, float horizDist, float vertDelta, bool isPlayerParrying,
             ref CharacterVitalsComponent playerVitals, Dictionary<(int cx, int cz), uint[]> worldChunks,
             HashSet<(int cx, int cz)> dirtyChunks, Stage1StructuralCollapseBridge collapseBridge, float time, float deltaTime,
-            Stage1DirectionalCombatBridge? combatBridge = null)
+            Stage1DirectionalCombatBridge? combatBridge = null, Material? sharedVoxelMat = null, Transform? worldParent = null)
         {
             if (a.IsPhoenixBoss)
             {
@@ -1607,6 +1674,15 @@ namespace Stratocraft.Character
             // ancak yaralanma oranina, yara izi sayisina ve kopan uzuvlara gore hizlari ciddi oranda duser (1.0 - 2.15 m/s) -> oyuncu kolayca yakalayabilir!
             if (!a.IsPhoenixBoss && (a.CurrentHp <= a.MaxHp * 0.32f || a.LegSevered) && horizDist < 14.0f)
             {
+                if (!a.LegSevered &&
+                    Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapBlinkTeleport) &&
+                    a.BlinkCooldownTimer <= 0f &&
+                    TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, isEvading: true, worldChunks, time))
+                {
+                    return;
+                }
+
+                ClearStealthShimmerIfNeeded(a);
                 a.State = CreatureAiState.Flee;
                 float hpRatio01 = Mathf.Clamp01(a.CurrentHp / Mathf.Max(1f, a.MaxHp));
                 float hpWoundSlowdown = Mathf.Lerp(0.32f, 0.58f, Mathf.Clamp01(hpRatio01 / 0.32f));
@@ -1639,6 +1715,67 @@ namespace Stratocraft.Character
                 return;
             }
 
+            // 1) CapStealthPhasing: 5.5m otesinde hayalet kirinim (azaltilmis gorunurluk + comelme), <= 5.5m'de fazdan cikip 1.45x pusu atilmasi!
+            if (Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapStealthPhasing))
+            {
+                Creature21BehaviorSystem.StepStealthPhasing(
+                    a.Capabilities,
+                    horizDist,
+                    time + a.PhaseOffset,
+                    deltaTime,
+                    ref a.IsStealthPhased,
+                    ref a.StealthAmbushPrimed,
+                    ref a.StealthCooldownTimer,
+                    out float tintAlpha01,
+                    out float crouchScaleY,
+                    out bool triggeredUnphaseAmbush);
+                ApplyStealthShimmerVisuals(a, tintAlpha01, crouchScaleY, time);
+                if (triggeredUnphaseAmbush)
+                {
+                    a.StealthAmbushLungeTimer = 1.35f;
+                    a.AttackCooldown = 0f;
+                    LastCreatureEventText = $"👻 PUSU FAZINDAN ÇIKTI! {a.DisplayName} görünür oldu -> 1.45x PUSU ATILMASI!";
+                }
+            }
+            else
+            {
+                ClearStealthShimmerIfNeeded(a);
+            }
+
+            // 2) CapSiegeAndShipCrew: 2.6m icindeki engelleyici oyuncu yapisi bloklari (OyuncuItemBlogu) tespit edip agir kusatma darbesiyle parcalar!
+            if (Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapSiegeAndShipCrew) &&
+                !(a.LeftArmSevered && a.RightArmSevered) &&
+                TryExecuteSiegeCrewPlayerBlockSlam(a, pos, flatDir, worldChunks, dirtyChunks, collapseBridge))
+            {
+                return;
+            }
+
+            // 3) CapBlinkTeleport: Kapanma veya kacinma sirasinda hedefin yanina/arkasina 3.5-5.5m taktiksel boyutsal sicrama (>= 6.5sn bekleme)!
+            if (Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapBlinkTeleport) &&
+                !(a.LeftLegSevered && a.RightLegSevered) &&
+                a.BlinkCooldownTimer <= 0f)
+            {
+                bool blinkEvading = a.HitFlinchTimer > 0.05f || a.DodgeTimer > 0f;
+                if (TryExecuteTacticalBlinkTeleport(a, agentIndex, playerPos, playerFwdXZ, blinkEvading, worldChunks, time))
+                {
+                    pos = a.Root.position;
+                    Vector3 newToP = playerPos - pos;
+                    vertDelta = newToP.y;
+                    flatDir = new Vector3(newToP.x, 0f, newToP.z);
+                    horizDist = flatDir.magnitude;
+                    if (horizDist > 0.001f) flatDir /= horizDist;
+                }
+            }
+
+            // 4) CapTrenchBallistic: 6.5-17m menzilde 0-GC havuzlanmis 3B parabolik diken/kaya mermisi firlatma (>= 4.2sn bekleme)!
+            if (Creature21BehaviorSystem.HasArchetypeCapability(a.ArchetypeId, a.Capabilities, AnatomyCapabilityFlags.CapTrenchBallistic) &&
+                a.BallisticShotCooldownTimer <= 0f &&
+                horizDist >= Creature21BehaviorSystem.TrenchBallisticMinRangeMeters &&
+                horizDist <= Creature21BehaviorSystem.TrenchBallisticMaxRangeMeters)
+            {
+                TryFirePooledBallisticProjectile(a, pos, flatDir, playerPos, horizDist, sharedVoxelMat, worldParent);
+            }
+
             // Boids Suru Ayrismasi (Separation) & ±45° Kusatma Yayilmasi (Pack Flanking)
             Vector3 boidsSep = ComputeBoidsSeparationAndFlankDirection(a, agentIndex, pos, flatDir, horizDist);
 
@@ -1651,7 +1788,8 @@ namespace Stratocraft.Character
                 a.State = CreatureAiState.AggroChase;
                 bool flying = a.IsFlyingBoss && (a.Capabilities & AnatomyCapabilityFlags.WingedFlight) != 0;
                 float aggroSpeedScale = Mathf.Lerp(0.85f, 1.35f, Mathf.Clamp01(Stage1GameSettings.CreatureAggressionMultiplier * 0.5f));
-                float chaseStep = a.BaseSpeed * a.SpeedMultiplier * aggroSpeedScale * deltaTime;
+                float stealthLungeSpeedScale = a.StealthAmbushLungeTimer > 0f ? Creature21BehaviorSystem.StealthAmbushLungeMultiplier : 1.0f;
+                float chaseStep = a.BaseSpeed * a.SpeedMultiplier * aggroSpeedScale * stealthLungeSpeedScale * deltaTime;
                 Vector3 nextPos = pos + boidsSep * chaseStep;
                 if (flying)
                 {
@@ -1770,10 +1908,13 @@ namespace Stratocraft.Character
                 else if (a.State == CreatureAiState.AttackActive)
                 {
                     a.AttackStageTimer += deltaTime;
-                    // Ileri vurus hamlesi (Lunge)
+                    // Ileri vurus hamlesi (Lunge) — pusu fazindan cikista 1.45x atilma hizi!
                     if (horizDist > minPersonalSpaceDist + 0.10f)
                     {
-                        meleePos += a.LockedAttackForwardXZ * (2.6f * deltaTime);
+                        float lungeMult = (a.StealthAmbushPrimed || a.StealthAmbushLungeTimer > 0f)
+                            ? Creature21BehaviorSystem.StealthAmbushLungeMultiplier
+                            : 1.0f;
+                        meleePos += a.LockedAttackForwardXZ * (2.6f * lungeMult * deltaTime);
                     }
 
                     if (!a.AttackHitResolved && a.AttackStageTimer >= activeMove.ActiveSeconds * 0.25f)
@@ -1782,15 +1923,19 @@ namespace Stratocraft.Character
                         float probeCdBefore = a.AttackCooldown;
                         float probeHpBefore = playerVitals.CurrentHp;
 
+                        float activeReach = a.StealthAmbushPrimed
+                            ? activeMove.ReachMeters * 1.15f
+                            : activeMove.ReachMeters;
                         bool inConeHit = CreaturePatternMemory.EvaluateForwardConeMeleeHit(
                             new System.Numerics.Vector3(meleePos.x, meleePos.y, meleePos.z),
                             new System.Numerics.Vector3(a.LockedAttackForwardXZ.x, 0f, a.LockedAttackForwardXZ.z),
                             new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z),
-                            activeMove.ReachMeters,
+                            activeReach,
                             activeMove.HalfConeDegrees);
 
                         if (!inConeHit)
                         {
+                            a.StealthAmbushPrimed = false;
                             LastCreatureEventText = $"💨 {a.DisplayName} [{activeMove.Label}] ISKALADI (Koni/Menzil Disi)!";
                             if (WaveADeepDiagnosticProbe.Enabled)
                             {
@@ -1810,8 +1955,14 @@ namespace Stratocraft.Character
                         {
                             float armPenalty = (a.LeftArmSevered && a.RightArmSevered) ? 0.25f : (a.ArmSevered ? 0.45f : 1.0f);
                             float jawPenalty = a.HeadSevered ? 0.65f : 1.0f;
+                            bool isStealthAmbushStrike = a.StealthAmbushPrimed;
+                            float stealthAmbushMult = isStealthAmbushStrike
+                                ? Creature21BehaviorSystem.StealthAmbushLungeMultiplier
+                                : 1.0f;
+                            a.StealthAmbushPrimed = false;
+                            a.StealthAmbushLungeTimer = 0f;
                             float rawDmg = (a.IsFlyingBoss ? 18f : 11f) * activeMove.DamageMultiplier * ringPowerMult *
-                                           a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier * armPenalty * jawPenalty;
+                                           a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier * armPenalty * jawPenalty * stealthAmbushMult;
 
                             if (isPlayerParrying && activeMove.CanBeParried && combatBridge != null)
                             {
@@ -1866,9 +2017,10 @@ namespace Stratocraft.Character
                                     float bleedCut = Mathf.Max(14.0f, actualDmg * 0.90f);
                                     playerVitals.BleedOutTimerSeconds = Mathf.Max(0.0f, playerVitals.BleedOutTimerSeconds - bleedCut);
                                 }
+                                string ambushNote = isStealthAmbushStrike ? " [👻 1.45x PUSU ATILMASI]" : string.Empty;
                                 string critNote = isCritHead ? " [💥 MİĞFERSİZ KAFA KRİTİK 2.5x]" : (absorbedDmg > 0.5f ? $" [🛡️ {zone} Soğurdu: -{absorbedDmg:F0}]" : "");
                                 LastCreatureEventText =
-                                    $"{a.DisplayName} [{activeMove.Label}] ile vurdu! (-{actualDmg:F1} HP{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
+                                    $"{a.DisplayName} [{activeMove.Label}] ile vurdu! (-{actualDmg:F1} HP{ambushNote}{critNote} | Kalan HP: {playerVitals.CurrentHp:F0})";
 
                                 if (WaveADeepDiagnosticProbe.Enabled)
                                 {
@@ -2178,6 +2330,501 @@ namespace Stratocraft.Character
             }
         }
 
+        private void ApplyStealthShimmerVisuals(LiveCreatureAgent a, float tintAlpha01, float crouchScaleY, float time)
+        {
+            if (a.Root == null) return;
+            if (!a.IsStealthPhased)
+            {
+                ClearStealthShimmerIfNeeded(a);
+                return;
+            }
+
+            a.WasStealthVisualApplied = true;
+            a.CurrentStealthAlpha01 = tintAlpha01;
+            if (a.State != CreatureAiState.EmberEgg)
+            {
+                a.Root.localScale = new Vector3(
+                    a.BaseScale.x * 1.04f,
+                    a.BaseScale.y * crouchScaleY,
+                    a.BaseScale.z * 1.06f);
+            }
+
+            _stealthPropertyBlock ??= new MaterialPropertyBlock();
+            _stealthPropertyBlock.Clear();
+            Color ghostlyTint = new Color(0.42f, 0.50f, 0.64f, tintAlpha01);
+            _stealthPropertyBlock.SetColor(s_propBaseColor, ghostlyTint);
+            _stealthPropertyBlock.SetColor(s_propColor, ghostlyTint);
+            _stealthPropertyBlock.SetFloat(s_propAmbientStrength, Mathf.Lerp(0.10f, 0.34f, tintAlpha01));
+            _stealthPropertyBlock.SetFloat(s_propRimLightStrength, 0.68f + 0.22f * Mathf.Sin(time * 11.0f + a.PhaseOffset));
+            _stealthPropertyBlock.SetFloat(s_propMatCapBlendWeight, 0.12f);
+            _stealthPropertyBlock.SetFloat(s_propBlackbodyIntensity, 0.15f);
+
+            MeshRenderer[]? renderers = a.CachedRenderers;
+            if (renderers == null) return;
+            for (int r = 0; r < renderers.Length; r++)
+            {
+                MeshRenderer mr = renderers[r];
+                if (mr == null || mr.transform == a.Root) continue;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.SetPropertyBlock(_stealthPropertyBlock);
+            }
+        }
+
+        private static void ClearStealthShimmerIfNeeded(LiveCreatureAgent a)
+        {
+            if (!a.WasStealthVisualApplied) return;
+            a.WasStealthVisualApplied = false;
+            a.IsStealthPhased = false;
+            a.CurrentStealthAlpha01 = 1.0f;
+            if (a.Root != null && a.State != CreatureAiState.EmberEgg)
+            {
+                a.Root.localScale = a.BaseScale;
+            }
+
+            MeshRenderer[]? renderers = a.CachedRenderers;
+            if (renderers == null) return;
+            for (int r = 0; r < renderers.Length; r++)
+            {
+                MeshRenderer mr = renderers[r];
+                if (mr == null || mr.transform == a.Root) continue;
+                mr.SetPropertyBlock(null);
+                bool isMainBodyShadowCaster =
+                    mr.name.IndexOf("Torso", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    mr.name.IndexOf("GlbModel", StringComparison.OrdinalIgnoreCase) >= 0;
+                mr.shadowCastingMode = isMainBodyShadowCaster
+                    ? UnityEngine.Rendering.ShadowCastingMode.On
+                    : UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+        }
+
+        private bool TryExecuteTacticalBlinkTeleport(
+            LiveCreatureAgent a,
+            int agentIndex,
+            Vector3 playerPos,
+            Vector3 playerFwdXZ,
+            bool isEvading,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float time)
+        {
+            if (a.Root == null) return false;
+            Vector3 curPos = a.Root.position;
+            var curN = new System.Numerics.Vector3(curPos.x, curPos.y, curPos.z);
+            var tgtN = new System.Numerics.Vector3(playerPos.x, playerPos.y, playerPos.z);
+            var fwdN = new System.Numerics.Vector3(playerFwdXZ.x, 0f, playerFwdXZ.z);
+            int baseSeed = Time.frameCount + agentIndex * 5 + (int)(a.EntityGuid & 7);
+
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                float probeCd = a.BlinkCooldownTimer;
+                if (!Creature21BehaviorSystem.TryComputeBlinkStepTarget(
+                        a.Capabilities,
+                        curN,
+                        tgtN,
+                        fwdN,
+                        isEvading,
+                        baseSeed + attempt,
+                        ref probeCd,
+                        out System.Numerics.Vector3 candXZ,
+                        out float blinkOffsetMeters))
+                {
+                    return false;
+                }
+
+                float standY = SampleStandableHeight(a, candXZ.X, candXZ.Z, playerPos.y, worldChunks, out bool isHazard);
+                if (isHazard) continue;
+
+                float clampedY = Mathf.Clamp(standY, playerPos.y - 3.5f, playerPos.y + 3.5f);
+                if (Mathf.Abs(clampedY - standY) > 1.25f) continue;
+
+                int checkWx = Mathf.FloorToInt(candXZ.X);
+                int checkWz = Mathf.FloorToInt(candXZ.Z);
+                int checkWy = Mathf.Clamp(Mathf.FloorToInt(clampedY + 0.65f), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 2);
+                uint bodyRaw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, checkWx, checkWy, checkWz);
+                if (VoxelBitUtility.IsPhysicallySolid(bodyRaw)) continue;
+
+                a.BlinkCooldownTimer = probeCd;
+                Vector3 dest = new Vector3(candXZ.X, clampedY, candXZ.Z);
+                a.Root.position = dest;
+
+                Vector3 faceToPlayer = new Vector3(playerPos.x - dest.x, 0f, playerPos.z - dest.z);
+                if (faceToPlayer.sqrMagnitude > 0.001f)
+                {
+                    float yaw = Mathf.Atan2(faceToPlayer.x, faceToPlayer.z) * Mathf.Rad2Deg;
+                    a.Root.rotation = ComputeSlopeAlignedCreatureRotation(dest, yaw, 0f, 0f, worldChunks);
+                }
+
+                a.AttackCooldown = Mathf.Min(a.AttackCooldown, 0.25f);
+                LastCreatureEventText =
+                    $"🌀 BOYUTSAL SIÇRAMA! {a.DisplayName} yanınıza/arkanıza ışınlandı ({blinkOffsetMeters:F1}m)!";
+
+                if (WaveADeepDiagnosticProbe.Enabled)
+                {
+                    WaveADeepDiagnosticProbe.RecordCreatureAttackOrMotion(new WaveACreatureAttackRecord
+                    {
+                        FrameIndex = Time.frameCount,
+                        TimeSec = time,
+                        EntityGuid = unchecked((int)a.EntityGuid),
+                        ArchetypeId = a.ArchetypeId,
+                        PrevState = (int)a.State,
+                        NextState = (int)a.State,
+                        HorizDistMeters = blinkOffsetMeters,
+                        WorldPosX = dest.x,
+                        WorldPosY = dest.y,
+                        WorldPosZ = dest.z,
+                        TeleportJumpMeters = Vector3.Distance(curPos, dest),
+                        EventTag = "CapBlinkTeleport"
+                    });
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        private void TryFirePooledBallisticProjectile(
+            LiveCreatureAgent a,
+            Vector3 creaturePos,
+            Vector3 flatToPlayer,
+            Vector3 playerPos,
+            float horizDist,
+            Material? sharedMat,
+            Transform? worldParent)
+        {
+            Vector3 muzzle = creaturePos + Vector3.up * 1.15f + flatToPlayer * 0.55f;
+            Vector3 target = playerPos + Vector3.up * 1.05f;
+
+            if (!Creature21BehaviorSystem.TrySolveTrenchBallisticShot(
+                    a.Capabilities,
+                    new System.Numerics.Vector3(muzzle.x, muzzle.y, muzzle.z),
+                    new System.Numerics.Vector3(target.x, target.y, target.z),
+                    ref a.BallisticShotCooldownTimer,
+                    out System.Numerics.Vector3 launchVelN,
+                    out float flightSec))
+            {
+                return;
+            }
+
+            if (_cachedBallisticSpineMesh == null)
+            {
+                _limbMeshTris.Clear();
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f),
+                    MaterialIdCatalog.NaturalObsidian,
+                    2,
+                    165,
+                    0,
+                    _limbMeshTris);
+                _cachedBallisticSpineMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
+                    _limbMeshTris,
+                    "Mesh_PooledBallisticSpine_Shared");
+            }
+
+            int chosenSlot = -1;
+            float oldestRemaining = float.MaxValue;
+            int oldestSlot = 0;
+            for (int s = 0; s < MaxPooledBallisticProjectiles; s++)
+            {
+                if (!_ballisticProjectilePool[s].Active)
+                {
+                    chosenSlot = s;
+                    break;
+                }
+                if (_ballisticProjectilePool[s].RemainingSeconds < oldestRemaining)
+                {
+                    oldestRemaining = _ballisticProjectilePool[s].RemainingSeconds;
+                    oldestSlot = s;
+                }
+            }
+            if (chosenSlot < 0) chosenSlot = oldestSlot;
+
+            ref BallisticSpineProjectile proj = ref _ballisticProjectilePool[chosenSlot];
+            if (proj.VisualTransform == null)
+            {
+                GameObject go = new GameObject($"Pooled_BallisticSpineRock_{chosenSlot}");
+                if (worldParent != null) go.transform.SetParent(worldParent, true);
+                go.transform.localScale = new Vector3(0.22f, 0.22f, 0.58f);
+                MeshFilter mf = go.AddComponent<MeshFilter>();
+                mf.sharedMesh = _cachedBallisticSpineMesh;
+                MeshRenderer mr = go.AddComponent<MeshRenderer>();
+                if (sharedMat != null) mr.sharedMaterial = sharedMat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                proj.VisualTransform = go.transform;
+            }
+            else if (sharedMat != null && proj.VisualTransform.TryGetComponent<MeshRenderer>(out MeshRenderer existingMr) && existingMr.sharedMaterial == null)
+            {
+                existingMr.sharedMaterial = sharedMat;
+            }
+
+            Vector3 launchVel = new Vector3(launchVelN.X, launchVelN.Y, launchVelN.Z);
+            proj.Active = true;
+            proj.Position = muzzle;
+            proj.PrevPosition = muzzle;
+            proj.Velocity = launchVel;
+            proj.RemainingSeconds = Mathf.Max(2.2f, flightSec + 1.25f);
+            proj.BaseDamage = 15.0f * a.DamageMultiplier * Stage1GameSettings.CreatureDamageMultiplier;
+            proj.SourceArchetypeId = a.ArchetypeId;
+            proj.SourceEntityGuid = a.EntityGuid;
+
+            Transform vis = proj.VisualTransform!;
+            vis.position = muzzle;
+            if (launchVel.sqrMagnitude > 0.01f)
+            {
+                vis.rotation = Quaternion.LookRotation(launchVel.normalized);
+            }
+            if (!vis.gameObject.activeSelf) vis.gameObject.SetActive(true);
+
+            ActiveBallisticProjectileCount = CountActiveBallisticProjectiles();
+            LastCreatureEventText =
+                $"☄️ BALİSTİK DİKEN/KAYA! {a.DisplayName} ({horizDist:F1}m) fırlattı — Kaç veya [RMB] Blokla!";
+        }
+
+        private void StepBallisticProjectiles(
+            Vector3 playerPos,
+            bool isPlayerParrying,
+            ref CharacterVitalsComponent playerVitals,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float dt,
+            Stage1DirectionalCombatBridge? combatBridge)
+        {
+            int activeCount = 0;
+            for (int s = 0; s < MaxPooledBallisticProjectiles; s++)
+            {
+                ref BallisticSpineProjectile p = ref _ballisticProjectilePool[s];
+                if (!p.Active) continue;
+
+                p.RemainingSeconds -= dt;
+                if (p.RemainingSeconds <= 0f)
+                {
+                    DeactivateBallisticProjectileSlot(ref p);
+                    continue;
+                }
+
+                p.PrevPosition = p.Position;
+                p.Velocity.y -= Creature21BehaviorSystem.TrenchBallisticGravityMps2 * dt;
+                p.Position += p.Velocity * dt;
+
+                if (p.VisualTransform != null)
+                {
+                    p.VisualTransform.position = p.Position;
+                    if (p.Velocity.sqrMagnitude > 0.01f)
+                    {
+                        p.VisualTransform.rotation = Quaternion.LookRotation(p.Velocity.normalized);
+                    }
+                }
+
+                // 1) Oyuncu isabet / kacinma (Dodge) / [RMB] Guard Parry kontrolu
+                Vector3 playerChest = playerPos + Vector3.up * 1.05f;
+                float segDist = DistancePointToSegment(playerChest, p.PrevPosition, p.Position);
+                float horizDx = p.Position.x - playerPos.x;
+                float horizDz = p.Position.z - playerPos.z;
+                float horizDistSq = horizDx * horizDx + horizDz * horizDz;
+                float relY = p.Position.y - playerPos.y;
+
+                if ((segDist <= 0.62f || horizDistSq <= 0.34f) && relY >= 0.05f && relY <= 1.90f)
+                {
+                    HitZone hitZone = relY >= 1.42f
+                        ? HitZone.Head
+                        : (relY < 0.72f ? HitZone.Legs : (Mathf.Abs(horizDx) + Mathf.Abs(horizDz) > 0.42f ? HitZone.Arms : HitZone.Torso));
+
+                    if (isPlayerParrying)
+                    {
+                        if (combatBridge != null)
+                        {
+                            float speedMps = Mathf.Max(6.0f, p.Velocity.magnitude);
+                            Vector2 incomingDir2D = p.Velocity.y < -2.0f ? new Vector2(0f, -1f) : new Vector2(0f, -0.5f);
+                            ParryResolutionOutcome parryOutcome = combatBridge.EvaluateIncomingStrikeAgainstPlayerGuard(
+                                2.6f,
+                                speedMps,
+                                incomingDir2D,
+                                playerMissingArm: false,
+                                out float bleedDmg,
+                                out string parryNote);
+                            if (parryOutcome == ParryResolutionOutcome.GuardCrushedByMass ||
+                                parryOutcome == ParryResolutionOutcome.MismatchedSelfRecoil)
+                            {
+                                float reduced = Mathf.Max(bleedDmg, p.BaseDamage * 0.25f);
+                                playerVitals.TakeDamageRegional(hitZone, reduced, out _, out _);
+                                LastCreatureEventText = parryNote;
+                            }
+                            else
+                            {
+                                LastCreatureEventText = "🛡️ BALİSTİK DİKEN/KAYA SAPTIRILDI ([RMB] Blok)!";
+                            }
+                        }
+                        else
+                        {
+                            LastCreatureEventText = "🛡️ BALİSTİK DİKEN/KAYA BLOKLANDI ([RMB] Savunma)!";
+                        }
+
+                        DeactivateBallisticProjectileSlot(ref p);
+                        continue;
+                    }
+
+                    float actualDmg = playerVitals.TakeDamageRegional(hitZone, p.BaseDamage, out float absorbed, out bool critHead);
+                    string zoneTag = critHead
+                        ? " [💥 KAFA KRİTİK]"
+                        : (absorbed > 0.5f ? $" [🛡️ {hitZone} Soğurdu: -{absorbed:F0}]" : $" [{hitZone}]");
+                    LastCreatureEventText =
+                        $"☄️ BALİSTİK İSABET! (-{actualDmg:F1} HP{zoneTag} | Kalan HP: {playerVitals.CurrentHp:F0})";
+                    DeactivateBallisticProjectileSlot(ref p);
+                    continue;
+                }
+
+                // 2) Voksel / Arazi carpismasi
+                int wx = Mathf.FloorToInt(p.Position.x);
+                int wy = Mathf.FloorToInt(p.Position.y);
+                int wz = Mathf.FloorToInt(p.Position.z);
+                if (wy >= 1 && wy < Stage1InteractivePlayController.MaxEditableVoxelY)
+                {
+                    uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                    if (VoxelBitUtility.IsPhysicallySolid(raw))
+                    {
+                        DeactivateBallisticProjectileSlot(ref p);
+                        continue;
+                    }
+                }
+
+                float groundY = SampleVoxelOrTerrainHeight(p.Position.x, p.Position.z, p.Position.y, worldChunks);
+                if (p.Position.y <= groundY)
+                {
+                    DeactivateBallisticProjectileSlot(ref p);
+                    continue;
+                }
+
+                activeCount++;
+            }
+
+            ActiveBallisticProjectileCount = activeCount;
+        }
+
+        private static void DeactivateBallisticProjectileSlot(ref BallisticSpineProjectile proj)
+        {
+            proj.Active = false;
+            proj.RemainingSeconds = 0f;
+            if (proj.VisualTransform != null && proj.VisualTransform.gameObject.activeSelf)
+            {
+                proj.VisualTransform.gameObject.SetActive(false);
+            }
+        }
+
+        private int CountActiveBallisticProjectiles()
+        {
+            int c = 0;
+            for (int i = 0; i < MaxPooledBallisticProjectiles; i++)
+            {
+                if (_ballisticProjectilePool[i].Active) c++;
+            }
+            return c;
+        }
+
+        private bool TryExecuteSiegeCrewPlayerBlockSlam(
+            LiveCreatureAgent a,
+            Vector3 creaturePos,
+            Vector3 flatToPlayer,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            Stage1StructuralCollapseBridge collapseBridge)
+        {
+            float maxR = Creature21BehaviorSystem.SiegeCrewObstructingBlockRadiusMeters;
+            float maxRSq = maxR * maxR;
+            int baseWx = Mathf.FloorToInt(creaturePos.x);
+            int baseWz = Mathf.FloorToInt(creaturePos.z);
+            int baseWy = Mathf.Clamp(Mathf.FloorToInt(creaturePos.y), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+
+            int bestWx = 0, bestWy = -1, bestWz = 0;
+            uint bestRaw = 0u;
+            float bestScore = float.MaxValue;
+
+            for (int dz = -3; dz <= 3; dz++)
+            for (int dx = -3; dx <= 3; dx++)
+            {
+                int wx = baseWx + dx;
+                int wz = baseWz + dz;
+                float cx = wx + 0.5f - creaturePos.x;
+                float cz = wz + 0.5f - creaturePos.z;
+                float dSqXZ = cx * cx + cz * cz;
+                if (dSqXZ > maxRSq) continue;
+
+                float dot = flatToPlayer.x * cx + flatToPlayer.z * cz;
+                if (dot < -0.35f) continue;
+
+                for (int dy = 0; dy <= 2; dy++)
+                {
+                    int vy = baseWy + dy;
+                    if (vy < 1 || vy >= Stage1InteractivePlayController.MaxEditableVoxelY - 1) continue;
+                    uint raw = Stage1PlayerMovementBridge.ReadWorldVoxelRaw(worldChunks, wx, vy, wz);
+                    if (!VoxelBitUtility.IsPhysicallySolid(raw) ||
+                        VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.OyuncuItemBlogu)
+                    {
+                        continue;
+                    }
+
+                    byte mat = VoxelBitUtility.GetMaterialId(raw);
+                    if (mat == MaterialIdCatalog.Air ||
+                        mat == MaterialIdCatalog.Bedrock ||
+                        mat >= MaterialIdCatalog.DungeonSanctumImmuneStart)
+                    {
+                        continue;
+                    }
+
+                    float score = dSqXZ - dot * 0.65f + dy * 0.12f;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestWx = wx;
+                        bestWy = vy;
+                        bestWz = wz;
+                        bestRaw = raw;
+                    }
+                }
+            }
+
+            if (bestWy < 0) return false;
+
+            a.State = CreatureAiState.SupportPillarSiege;
+            a.ActiveAttackDirection = CreatureAttackDirection.Overhead;
+            Vector3 toBlock = new Vector3(bestWx + 0.5f - creaturePos.x, 0f, bestWz + 0.5f - creaturePos.z);
+            if (toBlock.sqrMagnitude > 0.001f)
+            {
+                float blockYaw = Mathf.Atan2(toBlock.x, toBlock.z) * Mathf.Rad2Deg;
+                a.Root.rotation = ComputeSlopeAlignedCreatureRotation(creaturePos, blockYaw, 14f, 0f, worldChunks);
+            }
+
+            if (a.SiegeSlamCooldownTimer <= 0f)
+            {
+                a.SiegeSlamCooldownTimer = Creature21BehaviorSystem.SiegeCrewSlamCooldownSeconds;
+                byte slamSteps = Creature21BehaviorSystem.ComputeSiegeCrewSlamDamageSteps(a.VoxelSiegeDps);
+                uint updatedRaw = bestRaw;
+                if (Creature21BehaviorSystem.TryApplySiegeCrewPlayerBlockSlam(
+                        ref updatedRaw,
+                        a.Capabilities,
+                        slamSteps,
+                        out byte nextDamage,
+                        out bool blockBroken))
+                {
+                    Stage1PlayerMovementBridge.WriteWorldVoxelRaw(worldChunks, dirtyChunks, bestWx, bestWy, bestWz, updatedRaw);
+                    if (blockBroken)
+                    {
+                        int fallen = collapseBridge.EvaluateCollapseAroundSeed(
+                            worldChunks,
+                            dirtyChunks,
+                            new Vector3Int(bestWx, bestWy, bestWz),
+                            0f,
+                            out int rubbled);
+                        LastCreatureEventText =
+                            $"🔨 KUŞATMA EKİBİ YIKIMI! {a.DisplayName} oyuncu bloğunu PARÇALADI (Domino={fallen}, Moloz={rubbled})!";
+                    }
+                    else
+                    {
+                        LastCreatureEventText =
+                            $"🔨 KUŞATMA DARBESİ: {a.DisplayName} oyuncu barikatını çatlatıyor (Hasar: {nextDamage}/15)!";
+                    }
+                }
+            }
+
+            return true;
+        }
+
         public bool EvaluateSweptBladeCombat(
             Stage1DirectionalCombatBridge combatBridge,
             float deltaTime,
@@ -2190,6 +2837,32 @@ namespace Stratocraft.Character
             ReadOnlySpan<Vector3> currPts = combatBridge.CurrBladeWorldPoints;
             float dt = Mathf.Max(0.001f, deltaTime);
             float localBladeSpeed = combatBridge.BladeLocalSwingSpeedMetersPerSec;
+
+            // 0) Havadaki balistik diken/kaya mermilerini kilicla kesme / saptirma
+            if (ActiveBallisticProjectileCount > 0 && (localBladeSpeed > 1.8f || combatBridge.IsParryStance))
+            {
+                for (int s = 0; s < MaxPooledBallisticProjectiles; s++)
+                {
+                    ref BallisticSpineProjectile proj = ref _ballisticProjectilePool[s];
+                    if (!proj.Active) continue;
+                    for (int k = 0; k < Stage1DirectionalCombatBridge.BladeSamplePointCount; k++)
+                    {
+                        if (DistancePointToSegment(proj.Position, prevPts[k], currPts[k]) <= 0.58f)
+                        {
+                            Vector3 hitPos = proj.Position;
+                            DeactivateBallisticProjectileSlot(ref proj);
+                            ActiveBallisticProjectileCount = CountActiveBallisticProjectiles();
+                            combatBridge.NotifyBladeHitRegistered();
+                            combatBridge.NotifySuccessfulParryOrClash(new Vector2(0f, 0.35f), openRiposteWindow: true);
+                            combatBridge.LastCombatActionText = "⚔️ BALİSTİK DİKEN HAVADA KESİLDİ / SAPTIRILDI!";
+                            LastCreatureEventText = combatBridge.LastCombatActionText;
+                            feedbackBridge?.NotifyCreatureStruckFeedback(
+                                hitPos, 0f, localBladeSpeed, "ProjectileDeflect", string.Empty, string.Empty, isClawClash: true);
+                            return true;
+                        }
+                    }
+                }
+            }
 
             for (int i = 0; i < _agents.Count; i++)
             {
@@ -2250,6 +2923,13 @@ namespace Stratocraft.Character
 
                 a.LastHitSwingId = combatBridge.CurrentSwingId;
                 a.HasBeenProvoked = true;
+                if (a.IsStealthPhased)
+                {
+                    a.IsStealthPhased = false;
+                    a.StealthAmbushPrimed = false;
+                    a.StealthCooldownTimer = Creature21BehaviorSystem.StealthReenterCooldownSeconds;
+                    ClearStealthShimmerIfNeeded(a);
+                }
 
                 // Faz A.3: Suru (Pack) uyarisi — ayni turden yakin suru uyeleri oyuncuya reaksiyon verir
                 CreatureSpeciesAiProfile hitProfile = CreatureCombatAiCatalog.ResolveProfile(
@@ -2475,6 +3155,14 @@ namespace Stratocraft.Character
             if (bestAgent == null) return false;
 
             _lastResolvedBareFistPunchId = punchId;
+            bestAgent.HasBeenProvoked = true;
+            if (bestAgent.IsStealthPhased)
+            {
+                bestAgent.IsStealthPhased = false;
+                bestAgent.StealthAmbushPrimed = false;
+                bestAgent.StealthCooldownTimer = Creature21BehaviorSystem.StealthReenterCooldownSeconds;
+                ClearStealthShimmerIfNeeded(bestAgent);
+            }
             bestAgent.CurrentHp = Mathf.Max(0f, bestAgent.CurrentHp - fistDmg);
             bestAgent.HitFlinchTimer = 0.28f;
             bestAgent.AttackCooldown = Mathf.Max(bestAgent.AttackCooldown, 0.55f);
@@ -2602,6 +3290,7 @@ namespace Stratocraft.Character
                 return;
             }
 
+            ClearStealthShimmerIfNeeded(a);
             a.State = CreatureAiState.Dead;
             a.Root.localScale = a.BaseScale;
             a.Root.localRotation = Quaternion.Euler(88f, a.Root.eulerAngles.y, 15f);
@@ -2819,6 +3508,10 @@ namespace Stratocraft.Character
             Transform creatureRoot, Vector3 localJointOffset, Vector3 limbDimensions,
             Vector3 slashVelocity, Material? sharedMat, string name)
         {
+            if (creatureRoot == null) return;
+
+            ActivateMatchingGoreCapSocket(creatureRoot, name);
+
             if (_cachedGoreCapMesh == null)
             {
                 _limbMeshTris.Clear();
@@ -2826,40 +3519,241 @@ namespace Stratocraft.Character
                     new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), 245, 6, 0, 8, _limbMeshTris);
                 _cachedGoreCapMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_limbMeshTris, "GoreCap_Shared");
             }
-            GameObject goreGo = new GameObject("Socket_GoreCap_" + name);
+
+            string capChildName = "Socket_GoreCap_" + name;
+            Transform? existingCap = creatureRoot.Find(capChildName);
+            GameObject goreGo = existingCap != null ? existingCap.gameObject : new GameObject(capChildName);
             goreGo.transform.SetParent(creatureRoot, false);
             goreGo.transform.localPosition = localJointOffset;
             goreGo.transform.localScale = new Vector3(0.24f, 0.15f, 0.24f);
-            goreGo.AddComponent<MeshFilter>().sharedMesh = _cachedGoreCapMesh;
-            if (sharedMat != null) goreGo.AddComponent<MeshRenderer>().sharedMaterial = sharedMat;
+            if (!goreGo.TryGetComponent<MeshFilter>(out MeshFilter capMf)) capMf = goreGo.AddComponent<MeshFilter>();
+            capMf.sharedMesh = _cachedGoreCapMesh;
+            if (!goreGo.TryGetComponent<MeshRenderer>(out MeshRenderer capMr)) capMr = goreGo.AddComponent<MeshRenderer>();
+            if (sharedMat != null) capMr.sharedMaterial = sharedMat;
+            if (!goreGo.activeSelf) goreGo.SetActive(true);
 
-            if (_cachedSeveredLimbMesh == null)
+            // Gercek 3B SeveredLimbs/*.glb uzuv mesh'ini onbellekten veya diskten (GlbHierarchyLoader.LoadArticulatedPartsFromDisk) coz
+            bool isBossCreature = IsPhoenixOrBossCreatureRoot(creatureRoot);
+            Mesh? glbSeveredMesh = ResolveSeveredLimbGlbMeshCached(name, isBossCreature);
+            Mesh limbMeshToUse;
+            Vector3 limbScale;
+            Vector3 worldDimensions;
+
+            if (glbSeveredMesh != null)
             {
-                _limbMeshTris.Clear();
-                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
-                    new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.CreatureFurAsh, 6, 0, 8, _limbMeshTris);
-                _cachedSeveredLimbMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_limbMeshTris, "Mesh_SeveredLimb_Shared");
+                limbMeshToUse = glbSeveredMesh;
+                Vector3 bSize = glbSeveredMesh.bounds.size;
+                limbScale = new Vector3(
+                    Mathf.Clamp(limbDimensions.x / Mathf.Max(0.08f, bSize.x), 0.45f, 1.65f),
+                    Mathf.Clamp(limbDimensions.y / Mathf.Max(0.08f, bSize.y), 0.45f, 1.65f),
+                    Mathf.Clamp(limbDimensions.z / Mathf.Max(0.08f, bSize.z), 0.45f, 1.65f));
+                worldDimensions = Vector3.Scale(bSize, limbScale);
             }
+            else
+            {
+                if (_cachedSeveredLimbMesh == null)
+                {
+                    _limbMeshTris.Clear();
+                    HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                        new System.Numerics.Vector3(-0.5f, -0.5f, -0.5f), MaterialIdCatalog.CreatureFurAsh, 6, 0, 8, _limbMeshTris);
+                    _cachedSeveredLimbMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_limbMeshTris, "Mesh_SeveredLimb_Shared");
+                }
+                limbMeshToUse = _cachedSeveredLimbMesh;
+                limbScale = limbDimensions;
+                worldDimensions = limbDimensions;
+            }
+
+            Vector3 launchVel = Vector3.ClampMagnitude(slashVelocity * 0.45f, 6.5f) + new Vector3(0f, 2.8f, 0f);
+
             if (_activeLimbDebris.Count >= 16)
             {
-                if (_activeLimbDebris[0].Transform != null) UnityEngine.Object.Destroy(_activeLimbDebris[0].Transform.gameObject);
+                ThrownLimbDebris recycled = _activeLimbDebris[0];
                 _activeLimbDebris.RemoveAt(0);
+                if (recycled.Transform != null)
+                {
+                    GameObject reusedGo = recycled.Transform.gameObject;
+                    reusedGo.name = name;
+                    recycled.Transform.position = creatureRoot.TransformPoint(localJointOffset);
+                    recycled.Transform.rotation = creatureRoot.rotation;
+                    recycled.Transform.localScale = limbScale;
+                    if (reusedGo.TryGetComponent<MeshFilter>(out MeshFilter rMf)) rMf.sharedMesh = limbMeshToUse;
+                    if (sharedMat != null && reusedGo.TryGetComponent<MeshRenderer>(out MeshRenderer rMr)) rMr.sharedMaterial = sharedMat;
+                    recycled.Velocity = launchVel;
+                    recycled.AngularVelocityDeg = new Vector3(280f, 190f, 340f);
+                    recycled.WorldDimensions = worldDimensions;
+                    recycled.RestTimer = 4.2f;
+                    _activeLimbDebris.Add(recycled);
+                    return;
+                }
             }
+
             GameObject limbGo = new GameObject(name);
             limbGo.transform.position = creatureRoot.TransformPoint(localJointOffset);
             limbGo.transform.rotation = creatureRoot.rotation;
-            limbGo.transform.localScale = limbDimensions;
-            limbGo.AddComponent<MeshFilter>().sharedMesh = _cachedSeveredLimbMesh;
+            limbGo.transform.localScale = limbScale;
+            limbGo.AddComponent<MeshFilter>().sharedMesh = limbMeshToUse;
             if (sharedMat != null) limbGo.AddComponent<MeshRenderer>().sharedMaterial = sharedMat;
 
-            Vector3 launchVel = Vector3.ClampMagnitude(slashVelocity * 0.45f, 6.5f) + new Vector3(0f, 2.8f, 0f);
             _activeLimbDebris.Add(new ThrownLimbDebris
             {
                 Transform = limbGo.transform,
                 Velocity = launchVel,
                 AngularVelocityDeg = new Vector3(280f, 190f, 340f),
+                WorldDimensions = worldDimensions,
                 RestTimer = 4.2f
             });
+        }
+
+        private bool IsPhoenixOrBossCreatureRoot(Transform creatureRoot)
+        {
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.Root == creatureRoot)
+                {
+                    return a.IsPhoenixBoss || a.IsFlyingBoss;
+                }
+            }
+
+            string rootName = creatureRoot.name;
+            return rootName.IndexOf("Phoenix", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   rootName.IndexOf("Boss", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static void ActivateMatchingGoreCapSocket(Transform creatureRoot, string severedTagName)
+        {
+            string socketHint = severedTagName.IndexOf("Head", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                severedTagName.IndexOf("Jaw", StringComparison.OrdinalIgnoreCase) >= 0
+                ? "Head"
+                : (severedTagName.IndexOf("LeftArm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   severedTagName.IndexOf("LeftWing", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? "L_ForeArm"
+                    : (severedTagName.IndexOf("RightArm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                       severedTagName.IndexOf("RightWing", StringComparison.OrdinalIgnoreCase) >= 0
+                        ? "R_ForeArm"
+                        : (severedTagName.IndexOf("LeftLeg", StringComparison.OrdinalIgnoreCase) >= 0 ? "L_Calf" : "R_Calf")));
+
+            int childCount = creatureRoot.childCount;
+            for (int i = 0; i < childCount; i++)
+            {
+                Transform ch = creatureRoot.GetChild(i);
+                if (ch.name.StartsWith("Socket_GoreCap_", StringComparison.OrdinalIgnoreCase) &&
+                    ch.name.IndexOf(socketHint, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    if (!ch.gameObject.activeSelf) ch.gameObject.SetActive(true);
+                    break;
+                }
+            }
+        }
+
+        private static string ResolveGeneratedAssetDiskPath(string categoryFolder, string subFolder, string fileName)
+        {
+            string primary = string.IsNullOrEmpty(subFolder)
+                ? Path.Combine(Application.dataPath, "Art", "Generated", categoryFolder, fileName)
+                : Path.Combine(Application.dataPath, "Art", "Generated", categoryFolder, subFolder, fileName);
+            if (File.Exists(primary))
+            {
+                return primary;
+            }
+
+            string fallback = string.IsNullOrEmpty(subFolder)
+                ? Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Art", "Generated", categoryFolder, fileName)
+                : Path.Combine(Directory.GetCurrentDirectory(), "Assets", "Art", "Generated", categoryFolder, subFolder, fileName);
+            return fallback;
+        }
+
+        private Mesh? ResolveSeveredLimbGlbMeshCached(string severedLimbName, bool isPhoenixOrBoss)
+        {
+            int limbKind;
+            if (severedLimbName.IndexOf("Head", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                severedLimbName.IndexOf("Jaw", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                severedLimbName.IndexOf("Horn", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                limbKind = 0;
+            }
+            else if (severedLimbName.IndexOf("LeftArm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     severedLimbName.IndexOf("LeftWing", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                limbKind = 1;
+            }
+            else if (severedLimbName.IndexOf("RightArm", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     severedLimbName.IndexOf("RightWing", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                limbKind = 2;
+            }
+            else if (severedLimbName.IndexOf("LeftLeg", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                limbKind = 3;
+            }
+            else
+            {
+                limbKind = 4;
+            }
+
+            bool useBossFolder = isPhoenixOrBoss && limbKind <= 2;
+            int cacheKey = (useBossFolder ? 10 : 0) + limbKind;
+            if (_severedLimbGlbCache.TryGetValue(cacheKey, out Mesh? cachedMesh))
+            {
+                return cachedMesh;
+            }
+
+            string categoryFolder;
+            string glbFileName;
+            if (useBossFolder)
+            {
+                categoryFolder = "Bosses_13_And_Disasters_12";
+                glbFileName = limbKind switch
+                {
+                    0 => "boss_phoenix_ember_avatar_severed_Head.glb",
+                    1 => "boss_phoenix_ember_avatar_severed_UpperArm_L.glb",
+                    _ => "boss_phoenix_ember_avatar_severed_UpperArm_R.glb"
+                };
+            }
+            else
+            {
+                categoryFolder = "Creatures_21";
+                glbFileName = limbKind switch
+                {
+                    0 => "mob_ash_stalker_vat500_severed_Head.glb",
+                    1 => "mob_ash_stalker_vat500_severed_UpperArm_L.glb",
+                    2 => "mob_ash_stalker_vat500_severed_UpperArm_R.glb",
+                    3 => "mob_ash_stalker_vat500_severed_UpperLeg_L.glb",
+                    _ => "mob_ash_stalker_vat500_severed_UpperLeg_R.glb"
+                };
+            }
+
+            string diskPath = ResolveGeneratedAssetDiskPath(categoryFolder, "SeveredLimbs", glbFileName);
+            Dictionary<string, Mesh>? parts = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(diskPath);
+            Mesh? resolved = ExtractPrimaryMeshFromGlbParts(parts);
+            _severedLimbGlbCache[cacheKey] = resolved;
+            return resolved;
+        }
+
+        private static Mesh? ExtractPrimaryMeshFromGlbParts(Dictionary<string, Mesh>? parts)
+        {
+            if (parts == null || parts.Count == 0) return null;
+            foreach (KeyValuePair<string, Mesh> kv in parts)
+            {
+                if (kv.Value != null && kv.Value.vertexCount > 0)
+                {
+                    return kv.Value;
+                }
+            }
+            return null;
+        }
+
+        private static Mesh? FindPartMeshByKeyword(Dictionary<string, Mesh> parts, string keywordA, string keywordB = "")
+        {
+            foreach (KeyValuePair<string, Mesh> kv in parts)
+            {
+                if (kv.Value == null) continue;
+                if (kv.Key.IndexOf(keywordA, StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    (string.IsNullOrEmpty(keywordB) || kv.Key.IndexOf(keywordB, StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    return kv.Value;
+                }
+            }
+            return null;
         }
 
         private void StepThrownLimbDebris(float dt, Dictionary<(int cx, int cz), uint[]> worldChunks)
@@ -2880,7 +3774,7 @@ namespace Stratocraft.Character
                     : SampleVoxelOrTerrainHeight(nextPos.x, nextPos.z, nextPos.y, worldChunks);
                 if (exactN.sqrMagnitude > 0.1f) surfNormal = exactN;
 
-                Vector3 sc = d.Transform.localScale;
+                Vector3 sc = d.WorldDimensions.sqrMagnitude > 0.0001f ? d.WorldDimensions : d.Transform.localScale;
                 Vector3 up = d.Transform.up;
                 Vector3 rt = d.Transform.right;
                 Vector3 fw = d.Transform.forward;
@@ -3001,6 +3895,9 @@ namespace Stratocraft.Character
             if (a.LimbsBuilt || a.Root == null) return;
             a.LimbsBuilt = true;
 
+            Mesh? persistedRootMesh = a.Root.TryGetComponent<MeshFilter>(out MeshFilter rootMf)
+                ? rootMf.sharedMesh
+                : null;
             if (a.Root.TryGetComponent<MeshRenderer>(out MeshRenderer staticRootMr))
             {
                 staticRootMr.enabled = false;
@@ -3014,6 +3911,12 @@ namespace Stratocraft.Character
                     ch.SetParent(null, false);
                     UnityEngine.Object.Destroy(ch.gameObject);
                 }
+            }
+
+            if (TryBuildRealGlbCreatureVisuals(a, sharedMat, persistedRootMesh))
+            {
+                a.CachedRenderers = a.Root.GetComponentsInChildren<MeshRenderer>(includeInactive: true);
+                return;
             }
 
             GetArchetypePalette(a.ArchetypeId, a.IsPhoenixBoss, a.CaveVariant, out byte primaryMat, out byte accentMat, out byte glowTemp);
@@ -3107,6 +4010,162 @@ namespace Stratocraft.Character
                 a.JawPivot = CreateCreatureJoint(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.06f, 0.14f), accentMesh, new Vector3(0.20f, 0.08f, 0.26f), new Vector3(0f, 0f, 0.09f), sharedMat);
                 a.TailPivot = CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.36f), accentMesh, new Vector3(0.12f, 0.12f, 0.56f), new Vector3(0f, 0f, -0.25f), sharedMat);
             }
+
+            a.CachedRenderers = a.Root.GetComponentsInChildren<MeshRenderer>(includeInactive: true);
+        }
+
+        private bool TryBuildRealGlbCreatureVisuals(LiveCreatureAgent a, Material? sharedMat, Mesh? fallbackPersistedRootMesh)
+        {
+            if (a.Root == null) return false;
+
+            string rootName = a.Root.name;
+            bool matchesPhoenix = a.IsPhoenixBoss ||
+                                  rootName.IndexOf("Phoenix", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool matchesAshStalker = !matchesPhoenix &&
+                                     ((!a.IsDynamicBiomeSpawn && !a.IsFlyingBoss) ||
+                                      (a.ArchetypeId == 4 && a.CaveVariant == CaveCreatureVariantKind.None) ||
+                                      a.DisplayName.IndexOf("Ash Stalker", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                      rootName.IndexOf("AshStalker", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            if (!matchesPhoenix && !matchesAshStalker)
+            {
+                return false;
+            }
+
+            Dictionary<string, Mesh>? glbParts;
+            if (matchesPhoenix)
+            {
+                if (!_phoenixBossGlbProbed)
+                {
+                    _phoenixBossGlbProbed = true;
+                    string phoenixPath = ResolveGeneratedAssetDiskPath(
+                        "Bosses_13_And_Disasters_12",
+                        string.Empty,
+                        "boss_phoenix_ember_avatar.glb");
+                    _phoenixBossGlbPartsCache = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(phoenixPath);
+                }
+                glbParts = _phoenixBossGlbPartsCache;
+            }
+            else
+            {
+                if (!_ashStalkerGlbProbed)
+                {
+                    _ashStalkerGlbProbed = true;
+                    string stalkerPath = ResolveGeneratedAssetDiskPath(
+                        "Creatures_21",
+                        string.Empty,
+                        "mob_ash_stalker_vat500.glb");
+                    _ashStalkerGlbPartsCache = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(stalkerPath);
+                }
+                glbParts = _ashStalkerGlbPartsCache;
+            }
+
+            Mesh? primaryGlbMesh = ExtractPrimaryMeshFromGlbParts(glbParts) ?? fallbackPersistedRootMesh;
+            if (primaryGlbMesh == null)
+            {
+                return false;
+            }
+
+            a.UsesRealGlbBodyVisual = true;
+            float baseTorsoY = a.IsFlyingBoss ? 0.88f : (a.IsBiped ? 0.92f : 0.68f);
+
+            if (glbParts != null && glbParts.Count > 1)
+            {
+                Mesh torsoM = FindPartMeshByKeyword(glbParts, "Torso")
+                              ?? FindPartMeshByKeyword(glbParts, "Body")
+                              ?? primaryGlbMesh;
+                a.BodyTorsoPivot = CreateCreatureJoint(
+                    a.Root, "Articulated_GlbTorso", new Vector3(0f, baseTorsoY, 0f),
+                    torsoM, Vector3.one, Vector3.zero, sharedMat);
+
+                Mesh? headM = FindPartMeshByKeyword(glbParts, "Head");
+                a.HeadPivot = headM != null
+                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_GlbHead", new Vector3(0f, 0.24f, 0.34f), headM, Vector3.one, Vector3.zero, sharedMat)
+                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_GlbHead", new Vector3(0f, 0.24f, 0.34f));
+                a.JawPivot = CreateEmptyCreaturePivot(a.HeadPivot, "Articulated_GlbJaw", new Vector3(0f, -0.04f, 0.14f));
+
+                Mesh? armLM = FindPartMeshByKeyword(glbParts, "Arm", "L") ?? FindPartMeshByKeyword(glbParts, "Wing", "L");
+                Mesh? armRM = FindPartMeshByKeyword(glbParts, "Arm", "R") ?? FindPartMeshByKeyword(glbParts, "Wing", "R");
+                Mesh? legLM = FindPartMeshByKeyword(glbParts, "Leg", "L") ?? FindPartMeshByKeyword(glbParts, "Thigh", "L");
+                Mesh? legRM = FindPartMeshByKeyword(glbParts, "Leg", "R") ?? FindPartMeshByKeyword(glbParts, "Thigh", "R");
+
+                if (a.IsFlyingBoss)
+                {
+                    a.WingLeftInner = armLM != null
+                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f), armLM, Vector3.one, Vector3.zero, sharedMat)
+                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f));
+                    a.WingRightInner = armRM != null
+                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f), armRM, Vector3.one, Vector3.zero, sharedMat)
+                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f));
+                }
+                else
+                {
+                    a.FrontLeftLeg = armLM != null
+                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.24f, -0.04f, 0.22f), armLM, Vector3.one, Vector3.zero, sharedMat)
+                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.24f, -0.04f, 0.22f));
+                    a.FrontRightLeg = armRM != null
+                        ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.24f, -0.04f, 0.22f), armRM, Vector3.one, Vector3.zero, sharedMat)
+                        : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.24f, -0.04f, 0.22f));
+                }
+
+                a.HindLeftLeg = legLM != null
+                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.20f, -0.12f, -0.20f), legLM, Vector3.one, Vector3.zero, sharedMat)
+                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.20f, -0.12f, -0.20f));
+                a.HindRightLeg = legRM != null
+                    ? CreateCreatureJoint(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.20f, -0.12f, -0.20f), legRM, Vector3.one, Vector3.zero, sharedMat)
+                    : CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.20f, -0.12f, -0.20f));
+                a.TailPivot = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.34f));
+                return true;
+            }
+
+            float meshHeight = Mathf.Max(0.45f, primaryGlbMesh.bounds.size.y);
+            float targetHeight = matchesPhoenix ? 2.25f : 1.52f;
+            float uniformFit = Mathf.Clamp(targetHeight / meshHeight, 0.42f, 1.35f);
+            float minLocalY = primaryGlbMesh.bounds.min.y * uniformFit;
+            Vector3 glbVisOffset = new Vector3(0f, -baseTorsoY - minLocalY, 0f);
+
+            a.BodyTorsoPivot = CreateCreatureJoint(
+                a.Root,
+                "Articulated_GlbModelTorso",
+                new Vector3(0f, baseTorsoY, 0f),
+                primaryGlbMesh,
+                new Vector3(uniformFit, uniformFit, uniformFit),
+                glbVisOffset,
+                sharedMat);
+
+            a.HeadPivot = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HeadSnout", new Vector3(0f, 0.22f, 0.36f));
+            a.JawPivot = CreateEmptyCreaturePivot(a.HeadPivot, "Articulated_LowerJaw", new Vector3(0f, -0.05f, 0.14f));
+            if (a.IsFlyingBoss)
+            {
+                a.WingLeftInner = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingLeftInner", new Vector3(-0.22f, 0.10f, 0.06f));
+                a.WingLeftOuter = CreateEmptyCreaturePivot(a.WingLeftInner, "Articulated_WingLeftOuter", new Vector3(-0.62f, 0f, -0.02f));
+                a.WingRightInner = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_WingRightInner", new Vector3(0.22f, 0.10f, 0.06f));
+                a.WingRightOuter = CreateEmptyCreaturePivot(a.WingRightInner, "Articulated_WingRightOuter", new Vector3(0.62f, 0f, -0.02f));
+            }
+            else
+            {
+                a.FrontLeftLeg = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontLeftLeg", new Vector3(-0.22f, -0.04f, 0.24f));
+                a.FrontLeftLower = CreateEmptyCreaturePivot(a.FrontLeftLeg, "Articulated_FrontLeftLower", new Vector3(0f, -0.32f, 0f));
+                a.FrontRightLeg = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_FrontRightLeg", new Vector3(0.22f, -0.04f, 0.24f));
+                a.FrontRightLower = CreateEmptyCreaturePivot(a.FrontRightLeg, "Articulated_FrontRightLower", new Vector3(0f, -0.32f, 0f));
+            }
+            a.HindLeftLeg = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindLeftLeg", new Vector3(-0.20f, -0.08f, -0.22f));
+            a.HindLeftLower = CreateEmptyCreaturePivot(a.HindLeftLeg, "Articulated_HindLeftLower", new Vector3(0f, -0.30f, 0f));
+            a.HindRightLeg = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_HindRightLeg", new Vector3(0.20f, -0.08f, -0.22f));
+            a.HindRightLower = CreateEmptyCreaturePivot(a.HindRightLeg, "Articulated_HindRightLower", new Vector3(0f, -0.30f, 0f));
+            a.TailPivot = CreateEmptyCreaturePivot(a.BodyTorsoPivot, "Articulated_SpineTail", new Vector3(0f, 0.04f, -0.36f));
+            return true;
+        }
+
+        private static Transform CreateEmptyCreaturePivot(Transform parent, string name, Vector3 localPivotPos)
+        {
+            Transform? existing = parent.Find(name);
+            GameObject pivot = existing != null ? existing.gameObject : new GameObject(name);
+            pivot.transform.SetParent(parent, false);
+            pivot.transform.localPosition = localPivotPos;
+            pivot.transform.localRotation = Quaternion.identity;
+            pivot.transform.localScale = Vector3.one;
+            return pivot.transform;
         }
 
         private static void GetArchetypePalette(
