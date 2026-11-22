@@ -191,10 +191,17 @@ namespace Stratocraft.Character
                 DrawToastOverlay();
             }
 
+            if (showHud && !IsMindMenuOpen &&
+                looseBuildSystem.HasValidGhostPlacement &&
+                !string.IsNullOrEmpty(looseBuildSystem.CurrentModularStatusText))
+            {
+                DrawModularStabilityHudBadge(looseBuildSystem);
+            }
+
             if (!IsMindMenuOpen) return;
 
             float panelW = Mathf.Min(940f, Screen.width - 32f);
-            float panelH = 490f;
+            float panelH = Mathf.Min(656f, Screen.height - 24f);
             float px = (Screen.width - panelW) * 0.5f;
             float py = (Screen.height - panelH) * 0.5f;
 
@@ -271,6 +278,67 @@ namespace Stratocraft.Character
                         CloseMindMenu(restoreCursorLock: true);
                         return;
                     }
+                }
+            }
+
+            // Valheim & SOTF 12 Parcali Gercek 3B Moduler Yapi Kiti Secici Bolumu
+            float modHeaderY = cardStartY + 5f * (cardH + cardGap) + 6f;
+            GUI.Label(
+                new Rect(px + 18f, modHeaderY, panelW - 190f, 22f),
+                "🏗️ VALHEIM & SOTF MODÜLER 3B YAPI SETİ  ([Sol Tık] Parça Seç | [R] 90° Döndür | [B] Sonraki)",
+                _titleStyle!);
+
+            if (looseBuildSystem.IsModularBuildModeActive)
+            {
+                Rect stopRect = new Rect(px + panelW - 172f, modHeaderY, 154f, 22f);
+                if (GUI.Button(stopRect, "Modüler Modu Kapat"))
+                {
+                    looseBuildSystem.SetModularBuildModeActive(false);
+                    CloseMindMenu(restoreCursorLock: true);
+                    return;
+                }
+            }
+
+            float modGridY = modHeaderY + 26f;
+            float modGapX = 8f;
+            float modGapY = 6f;
+            float modBtnW = (panelW - 36f - modGapX * 3f) / 4f;
+            float modBtnH = 38f;
+
+            for (int m = 0; m < ValheimSotfModularGraphSolver.ModularPieceCount; m++)
+            {
+                ModularBuildPieceKind mKind = (ModularBuildPieceKind)m;
+                int mCol = m % 4;
+                int mRow = m / 4;
+                Rect mRect = new Rect(
+                    px + 18f + mCol * (modBtnW + modGapX),
+                    modGridY + mRow * (modBtnH + modGapY),
+                    modBtnW,
+                    modBtnH);
+                bool mHov = mRect.Contains(mousePos);
+                bool mSelected = looseBuildSystem.IsModularBuildModeActive && looseBuildSystem.ActiveModularPieceKind == mKind;
+
+                GUI.color = mSelected
+                    ? new Color(0.16f, 0.44f, 0.28f, 0.96f)
+                    : (mHov ? new Color(0.22f, 0.34f, 0.48f, 0.96f) : new Color(0.11f, 0.15f, 0.21f, 0.92f));
+                GUI.Box(mRect, GUIContent.none, _panelStyle!);
+                GUI.color = prevColor;
+
+                GUI.Label(
+                    new Rect(mRect.x + 8f, mRect.y + 4f, mRect.width - 16f, mRect.height - 6f),
+                    ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(mKind),
+                    _cardDescStyle!);
+
+                if (mHov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    Event.current.Use();
+                    looseBuildSystem.SelectModularPieceForPlacement(mKind, enableModularMode: true);
+                    string chosen = ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(mKind);
+                    string msg = $"🏗️ {chosen} seçildi! ([Sağ Tık] Mıknatıslı Yerleştir | [R] 90° Döndür | [B] Parça Değiştir)";
+                    miningCtrl.LastFeedbackText = msg;
+                    ShowToast(msg, isSuccess: true, durationSec: 3.2f);
+                    CloseMindMenu(restoreCursorLock: true);
+                    return;
                 }
             }
         }
@@ -758,6 +826,26 @@ namespace Stratocraft.Character
             GUI.color = prev;
 
             GUI.Label(new Rect(x + 12f, y + 6f, w - 24f, h - 12f), _toastMessage, _toastTextStyle!);
+        }
+
+        private void DrawModularStabilityHudBadge(WorldLooseBuildSystem looseBuildSystem)
+        {
+            float w = Mathf.Min(720f, Screen.width - 40f);
+            float h = 46f;
+            float x = (Screen.width - w) * 0.5f;
+            float y = Screen.height - 132f;
+
+            Color32 c32 = looseBuildSystem.CurrentGhostTintColor;
+            Color prev = GUI.color;
+            GUI.color = new Color(0.07f, 0.09f, 0.12f, 0.88f);
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, _toastBoxStyle!);
+
+            float stab01 = Mathf.Clamp01(looseBuildSystem.CurrentGhostStability01);
+            GUI.color = new Color(c32.r / 255f, c32.g / 255f, c32.b / 255f, 0.92f);
+            GUI.Box(new Rect(x + 6f, y + h - 9f, (w - 12f) * Mathf.Max(0.04f, stab01), 5f), GUIContent.none, _toastBoxStyle!);
+            GUI.color = prev;
+
+            GUI.Label(new Rect(x + 12f, y + 4f, w - 24f, h - 14f), looseBuildSystem.CurrentModularStatusText, _toastTextStyle!);
         }
 
         private void EnsureGuiStyles()
