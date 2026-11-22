@@ -33,7 +33,7 @@ namespace Stratocraft.Character
 
         private readonly List<RegisteredMindStationInfo> _registeredNonCampfireStations = new(8);
         private readonly List<FacetedVoxelTriangle> _silhouetteTris = new(256);
-        private readonly Mesh?[] _silhouetteMeshes = new Mesh?[5];
+        private readonly Mesh?[] _silhouetteMeshes = new Mesh?[MindStructureClusterValidator.BlueprintCount];
 
         private uint _nextStationId = 100u;
         private int _hoveredBlueprintIndex;
@@ -116,7 +116,7 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // Hizli klavye kisayollari: [1..5] dogrulama, [G] secili kartin 2.8 sn dusunce silueti ipucu
+            // Hizli klavye kisayollari: [1..9] dogrulama, [G] secili kartin 2.8 sn dusunce silueti ipucu
             if (Input.GetKeyDown(KeyCode.Alpha1))
             {
                 ExecuteValidateAndBind(MindStructureBlueprintId.Campfire, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
@@ -142,10 +142,30 @@ namespace Stratocraft.Character
                 ExecuteValidateAndBind(MindStructureBlueprintId.Windmill, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
                 return;
             }
+            if (Input.GetKeyDown(KeyCode.Alpha6))
+            {
+                ExecuteValidateAndBind(MindStructureBlueprintId.LogWall, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha7))
+            {
+                ExecuteValidateAndBind(MindStructureBlueprintId.LogPalisade, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha8))
+            {
+                ExecuteValidateAndBind(MindStructureBlueprintId.LogBeam, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.Alpha9))
+            {
+                ExecuteValidateAndBind(MindStructureBlueprintId.LogCabin, cam, playerTransform, miningCtrl, looseBuildSystem, campfireCtrl, worldChunks, sharedVoxelMat, bloomeryCtrl, wheelbarrowCtrl, windmillCtrl);
+                return;
+            }
 
             if (Input.GetKeyDown(KeyCode.G))
             {
-                MindStructureBlueprintId bp = (MindStructureBlueprintId)Mathf.Clamp(_hoveredBlueprintIndex, 0, 4);
+                MindStructureBlueprintId bp = (MindStructureBlueprintId)Mathf.Clamp(_hoveredBlueprintIndex, 0, MindStructureClusterValidator.BlueprintCount - 1);
                 SpawnThoughtSilhouetteHint(bp, cam, playerTransform, miningCtrl, worldChunks, sharedVoxelMat);
                 CloseMindMenu(restoreCursorLock: true);
             }
@@ -173,7 +193,7 @@ namespace Stratocraft.Character
 
             if (!IsMindMenuOpen) return;
 
-            float panelW = Mathf.Min(700f, Screen.width - 40f);
+            float panelW = Mathf.Min(940f, Screen.width - 32f);
             float panelH = 490f;
             float px = (Screen.width - panelW) * 0.5f;
             float py = (Screen.height - panelH) * 0.5f;
@@ -186,18 +206,23 @@ namespace Stratocraft.Character
             GUI.Label(new Rect(px + 18f, py + 12f, panelW - 36f, 26f),
                 "🧠 ZİHİN İNŞA FİKİRLERİ  ([T] / [ESC] Kapat)", _titleStyle!);
             GUI.Label(new Rect(px + 18f, py + 38f, panelW - 36f, 22f),
-                "Önce malzemeleri yere [Sağ Tık] ile dizin -> Ardından buradan [Sol Tık / 1..5] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
+                "Önce malzemeleri veya 2m kütükleri yere [Sağ Tık] ile dizin -> Ardından [Sol Tık / 1..9] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
                 _subTitleStyle!);
 
             float cardStartY = py + 68f;
             float cardH = 74f;
             float cardGap = 8f;
+            float colGap = 14f;
+            float colW = (panelW - 36f - colGap) * 0.5f;
             Vector2 mousePos = Event.current.mousePosition;
 
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < MindStructureClusterValidator.BlueprintCount; i++)
             {
                 MindStructureBlueprintId bp = (MindStructureBlueprintId)i;
-                Rect cardRect = new Rect(px + 18f, cardStartY + i * (cardH + cardGap), panelW - 36f, cardH);
+                int col = i < 5 ? 0 : 1;
+                int row = i < 5 ? i : (i - 5);
+                float cardX = px + 18f + col * (colW + colGap);
+                Rect cardRect = new Rect(cardX, cardStartY + row * (cardH + cardGap), colW, cardH);
                 bool hovered = cardRect.Contains(mousePos);
                 if (hovered) _hoveredBlueprintIndex = i;
 
@@ -213,17 +238,22 @@ namespace Stratocraft.Character
                     MindStructureBlueprintId.CharcoalPit => "🪵",
                     MindStructureBlueprintId.BloomeryFurnace => "🏺",
                     MindStructureBlueprintId.WoodenWheelbarrow => "🛞",
-                    _ => "🌬️"
+                    MindStructureBlueprintId.Windmill => "🌬️",
+                    MindStructureBlueprintId.LogWall => "🧱",
+                    MindStructureBlueprintId.LogPalisade => "🛡️",
+                    MindStructureBlueprintId.LogBeam => "🏗️",
+                    MindStructureBlueprintId.LogCabin => "🏠",
+                    _ => "🪵"
                 };
 
                 string header = $"[{i + 1}] {icon} {MindStructureClusterValidator.GetDisplayName(bp)}";
                 string desc = MindStructureClusterValidator.GetShortDescription(bp);
 
-                GUI.Label(new Rect(cardRect.x + 14f, cardRect.y + 8f, cardRect.width - 190f, 24f), header, _cardTitleStyle!);
-                GUI.Label(new Rect(cardRect.x + 14f, cardRect.y + 32f, cardRect.width - 28f, 36f), desc, _cardDescStyle!);
+                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 6f, cardRect.width - 155f, 22f), header, _cardTitleStyle!);
+                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 28f, cardRect.width - 24f, 42f), desc, _cardDescStyle!);
 
-                GUI.Label(new Rect(cardRect.xMax - 180f, cardRect.y + 8f, 168f, 22f),
-                    hovered ? "[Sol Tık] Doğrula | [Sağ Tık] İpucu" : $"[{i + 1}] Seç",
+                GUI.Label(new Rect(cardRect.xMax - 148f, cardRect.y + 6f, 140f, 20f),
+                    hovered ? "[Sol] Doğrula | [Sağ] İpucu" : $"[{i + 1}] Seç",
                     _subTitleStyle!);
 
                 if (hovered && Event.current.type == EventType.MouseDown)
@@ -581,6 +611,50 @@ namespace Stratocraft.Character
                     }
                     EmitThinLineBar(new SysVec3(-1.65f, 2.85f, 0.42f), new SysVec3(1.65f, 2.85f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
                     EmitThinLineBar(new SysVec3(0f, 1.20f, 0.42f), new SysVec3(0f, 4.50f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
+                    break;
+
+                case MindStructureBlueprintId.LogWall:
+                    // 3 katmanli 2m yatay kutuk duvar silueti
+                    for (int row = 0; row < 3; row++)
+                    {
+                        float y = 0.20f + row * 0.38f;
+                        byte mat = row == 2 ? chalkGlow : chalkBlue;
+                        EmitThinLineBar(new SysVec3(-0.98f, y, 0f), new SysVec3(0.98f, y, 0f), 0.022f, mat, 30, _silhouetteTris);
+                    }
+                    EmitThinLineBar(new SysVec3(-0.98f, 0.05f, 0f), new SysVec3(-0.98f, 1.15f, 0f), 0.016f, chalkBlue, 22, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.98f, 0.05f, 0f), new SysVec3(0.98f, 1.15f, 0f), 0.016f, chalkBlue, 22, _silhouetteTris);
+                    break;
+
+                case MindStructureBlueprintId.LogPalisade:
+                    // Yan yana 4 dikey 2m kazik cit silueti + yatay kusak
+                    for (int s = 0; s < 4; s++)
+                    {
+                        float x = -0.60f + s * 0.40f;
+                        EmitThinLineBar(new SysVec3(x, 0.05f, 0f), new SysVec3(x, 1.95f, 0f), 0.020f, chalkBlue, 25, _silhouetteTris);
+                    }
+                    EmitThinLineBar(new SysVec3(-0.72f, 1.45f, 0f), new SysVec3(0.72f, 1.45f, 0f), 0.016f, chalkGlow, 38, _silhouetteTris);
+                    break;
+
+                case MindStructureBlueprintId.LogBeam:
+                    // 2 tasiyici dikme + ustte 2m yatay cati kirisi
+                    EmitThinLineBar(new SysVec3(-0.88f, 0.05f, 0f), new SysVec3(-0.88f, 1.88f, 0f), 0.018f, chalkBlue, 22, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.88f, 0.05f, 0f), new SysVec3(0.88f, 1.88f, 0f), 0.018f, chalkBlue, 22, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.02f, 1.92f, 0f), new SysVec3(1.02f, 1.92f, 0f), 0.024f, chalkGlow, 40, _silhouetteTris);
+                    break;
+
+                case MindStructureBlueprintId.LogCabin:
+                    // 4 kose dikme + kutuk duvar cerceveleri + egimli beşik cati kirisleri
+                    for (int c = 0; c < 4; c++)
+                    {
+                        float cx = (c & 1) == 0 ? -1.0f : 1.0f;
+                        float cz = (c & 2) == 0 ? -1.0f : 1.0f;
+                        EmitThinLineBar(new SysVec3(cx, 0.05f, cz), new SysVec3(cx, 1.75f, cz), 0.018f, chalkBlue, 24, _silhouetteTris);
+                    }
+                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0f, 2.45f, -1.05f), new SysVec3(0f, 2.45f, 1.05f), 0.022f, chalkGlow, 42, _silhouetteTris);
                     break;
             }
 

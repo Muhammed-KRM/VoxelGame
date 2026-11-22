@@ -2,6 +2,7 @@
 #if UNITY_5_3_OR_NEWER
 using System;
 using System.Collections.Generic;
+using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
@@ -14,7 +15,8 @@ namespace Stratocraft.Character
 {
     /// <summary>
     /// Faz 2.3 (Asama 3.1): Dunyaya VoxelData degistirmeden gercek 3B mesh'i ve 16-byte ShapeDna'siyla
-    /// serbest dizilen dogal parcalarin sahne yoneticisi, 3B hayalet onizleyicisi ve [E] geri toplama motoru.
+    /// serbest dizilen dogal parcalarin ve kesilmis 2m agac kutuklerinin (FallenTreeLog) sahne yoneticisi,
+    /// 3B hayalet onizleyicisi ve [E] geri toplama motoru.
     /// </summary>
     public sealed class WorldLooseBuildSystem
     {
@@ -36,6 +38,25 @@ namespace Stratocraft.Character
         private const int MaxLoosePartsInWorld = 512;
         private const float MaxPlaceReachMeters = 3.25f;
 
+        private static readonly Dictionary<byte, Mesh> CachedTimberLogMeshes = new(8);
+        private static readonly List<FacetedVoxelTriangle> SharedLogBuildTris = new(128);
+
+        private static readonly Action<Stage1HolsterAndBackpackController, bool>? SetIsCarryingShoulderLogDelegate =
+            CreatePropertySetter<Stage1HolsterAndBackpackController, bool>(nameof(Stage1HolsterAndBackpackController.IsCarryingShoulderLog));
+
+        private static readonly Action<Stage1HolsterAndBackpackController, byte>? SetShoulderLogMaterialIdDelegate =
+            CreatePropertySetter<Stage1HolsterAndBackpackController, byte>(nameof(Stage1HolsterAndBackpackController.ShoulderLogMaterialId));
+
+        private static Action<TTarget, TValue>? CreatePropertySetter<TTarget, TValue>(string propertyName)
+        {
+            var prop = typeof(TTarget).GetProperty(
+                propertyName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var setter = prop?.GetSetMethod(nonPublic: true);
+            if (setter == null) return null;
+            return (Action<TTarget, TValue>)Delegate.CreateDelegate(typeof(Action<TTarget, TValue>), setter);
+        }
+
         private readonly List<WorldLoosePartInstance> _parts = new(128);
         private LoosePartPoint[] _pointCloudScratch = new LoosePartPoint[128];
         private int _nextInstanceId = 1;
@@ -49,12 +70,21 @@ namespace Stratocraft.Character
         private PhysicalItemArchetype _lastGhostArchetype;
         private byte _lastGhostSubId;
         private ulong _lastGhostSeedKey;
+        private bool _lastGhostWasTimberLog;
 
         public IReadOnlyList<WorldLoosePartInstance> Parts => _parts;
         public bool IsKneeSnapAnimActive => _kneeSnapAnimTimer > 0.001f;
         public bool HasValidGhostPlacement { get; private set; }
         public Vector3 CurrentGhostWorldPosition { get; private set; }
         public InventoryItemKind CurrentGhostItemKind { get; private set; }
+        public LogPlacementOrientation CurrentLogOrientation { get; private set; } = LogPlacementOrientation.HorizontalWall;
+        public Action? OnShoulderLogConsumed { get; set; }
+
+        public LogPlacementOrientation CycleLogPlacementOrientation()
+        {
+            CurrentLogOrientation = MindStructureClusterValidator.CycleLogOrientation(CurrentLogOrientation);
+            return CurrentLogOrientation;
+        }
 
         public static LooseBuildPartKind MapItemToLoosePartKind(InventoryItemKind kind) => kind switch
         {
@@ -122,10 +152,22 @@ namespace Stratocraft.Character
                 _kneeSnapAnimTimer = Mathf.Max(0f, _kneeSnapAnimTimer - dt);
             }
 
+            bool isCarryingLog = holsterCtrl.IsCarryingShoulderLog;
+            bool menuBlockingLog = holsterCtrl.IsBackpackOpen ||
+                                   holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
+                                   holsterCtrl.InventoryUi.IsChestWindowOpen ||
+                                   Cursor.lockState == CursorLockMode.None;
+            if (isCarryingLog && !menuBlockingLog && !miningCtrl.IsCrystalActive && cam != null)
+            {
+                StepShoulderLogPlacement(
+                    cam, playerTransform, miningCtrl, holsterCtrl, worldChunks, sharedVoxelMat, rightClickConsumedExternally);
+                return;
+            }
+
             VisualInventorySlot activeSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
             bool canLoosePlace = !uiBlocked &&
                                  !miningCtrl.IsCrystalActive &&
-                                 !holsterCtrl.IsCarryingShoulderLog &&
+                                 !isCarryingLog &&
                                  !activeSlot.IsEmpty &&
                                  IsLoosePlaceableNaturalItem(activeSlot.Kind);
 
@@ -183,6 +225,149 @@ namespace Stratocraft.Character
                     in activeSlot, partKind, in outDna, finalPos, finalRot,
                     willSnapStick, willStack, miningCtrl, holsterCtrl, combatBridge, sharedVoxelMat);
             }
+        }
+
+        private void StepShoulderLogPlacement(
+            UnityEngine.Camera cam,
+            Transform playerTransform,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            Material? sharedVoxelMat,
+            bool rightClickConsumedExternally)
+        {
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                CycleLogPlacementOrientation();
+                miningCtrl.LastFeedbackText =
+                    $"🪵 Kütük İnşa Yönü [R]: {MindStructureClusterValidator.GetLogOrientationDisplayName(CurrentLogOrientation)} ([Sağ Tık] Yerleştir | [T] Zihin İnşa Menüsü)";
+            }
+            else if ((Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)) &&
+                     Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f)
+            {
+                float scr = Input.GetAxis("Mouse ScrollWheel");
+                _userPlacementYawDeg = Mathf.Repeat(_userPlacementYawDeg + (scr > 0f ? 22.5f : -22.5f), 360f);
+            }
+
+            if (!TrySampleAimSurface(cam, playerTransform.position, miningCtrl, worldChunks, out Vector3 surfPt, out Vector3 surfNrm))
+            {
+                HideGhostPreview();
+                return;
+            }
+
+            byte woodMat = holsterCtrl.ShoulderLogMaterialId != 0
+                ? holsterCtrl.ShoulderLogMaterialId
+                : MaterialIdCatalog.OakWood;
+
+            Vector3 lookFwd = playerTransform.forward;
+            lookFwd.y = 0f;
+            float basePlayerYaw = lookFwd.sqrMagnitude > 0.001f
+                ? Mathf.Atan2(lookFwd.x, lookFwd.z) * Mathf.Rad2Deg
+                : 0f;
+            float effectiveYaw = Mathf.Repeat(basePlayerYaw + 90f + _userPlacementYawDeg, 360f);
+
+            PhysicalItemShapeDna logDna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                Mathf.RoundToInt(surfPt.x * 4f),
+                Mathf.RoundToInt(surfPt.y * 4f),
+                Mathf.RoundToInt(surfPt.z * 4f),
+                (uint)_nextInstanceId).WithStage((byte)CurrentLogOrientation);
+
+            ReadOnlySpan<LoosePartPoint> cloud = SnapshotPointCloud();
+            MindStructureClusterValidator.ComputeTimberLogPlacementPose(
+                CurrentLogOrientation,
+                in logDna,
+                new SysVec3(surfPt.x, surfPt.y, surfPt.z),
+                new SysVec3(surfNrm.x, surfNrm.y, surfNrm.z),
+                effectiveYaw,
+                cloud,
+                out SysVec3 outPos,
+                out SysQuat outRot,
+                out PhysicalItemShapeDna outDna,
+                out bool stackedOnLog);
+
+            Vector3 finalPos = new Vector3(outPos.X, outPos.Y, outPos.Z);
+            Quaternion finalRot = new Quaternion(outRot.X, outRot.Y, outRot.Z, outRot.W);
+
+            HasValidGhostPlacement = true;
+            CurrentGhostWorldPosition = finalPos;
+            CurrentGhostItemKind = InventoryItemKind.SplitFirewood;
+            UpdateGhostVisualForTimberLog(woodMat, finalPos, finalRot, sharedVoxelMat);
+
+            if (!rightClickConsumedExternally && Input.GetMouseButtonDown(1))
+            {
+                PlaceCarriedShoulderLog(woodMat, in outDna, finalPos, finalRot, stackedOnLog, miningCtrl, holsterCtrl, sharedVoxelMat);
+            }
+        }
+
+        public bool TryPlaceCarriedShoulderLogDirect(
+            Vector3 surfacePoint,
+            Vector3 surfaceNormal,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Material? sharedMat,
+            out int spawnedInstanceId)
+        {
+            spawnedInstanceId = -1;
+            if (!holsterCtrl.IsCarryingShoulderLog) return false;
+
+            byte woodMat = holsterCtrl.ShoulderLogMaterialId != 0
+                ? holsterCtrl.ShoulderLogMaterialId
+                : MaterialIdCatalog.OakWood;
+            PhysicalItemShapeDna logDna = PhysicalItemShapeDna.CreateFromWorldCoord(
+                Mathf.RoundToInt(surfacePoint.x * 4f),
+                Mathf.RoundToInt(surfacePoint.y * 4f),
+                Mathf.RoundToInt(surfacePoint.z * 4f),
+                (uint)_nextInstanceId).WithStage((byte)CurrentLogOrientation);
+
+            ReadOnlySpan<LoosePartPoint> cloud = SnapshotPointCloud();
+            MindStructureClusterValidator.ComputeTimberLogPlacementPose(
+                CurrentLogOrientation,
+                in logDna,
+                new SysVec3(surfacePoint.x, surfacePoint.y, surfacePoint.z),
+                new SysVec3(surfaceNormal.x, surfaceNormal.y, surfaceNormal.z),
+                _userPlacementYawDeg,
+                cloud,
+                out SysVec3 outPos,
+                out SysQuat outRot,
+                out PhysicalItemShapeDna outDna,
+                out bool stacked);
+
+            Vector3 finalPos = new Vector3(outPos.X, outPos.Y, outPos.Z);
+            Quaternion finalRot = new Quaternion(outRot.X, outRot.Y, outRot.Z, outRot.W);
+            spawnedInstanceId = PlaceCarriedShoulderLog(
+                woodMat, in outDna, finalPos, finalRot, stacked, miningCtrl, holsterCtrl, sharedMat);
+            return spawnedInstanceId > 0;
+        }
+
+        private int PlaceCarriedShoulderLog(
+            byte woodMat,
+            in PhysicalItemShapeDna finalDna,
+            Vector3 worldPos,
+            Quaternion worldRot,
+            bool stacked,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Material? sharedMat)
+        {
+            int id = SpawnBoundOrLoosePartDirect(
+                InventoryItemKind.SplitFirewood,
+                LooseBuildPartKind.FallenTreeLog,
+                woodMat,
+                in finalDna,
+                worldPos,
+                worldRot,
+                0u,
+                sharedMat);
+
+            SetIsCarryingShoulderLogDelegate?.Invoke(holsterCtrl, false);
+            OnShoulderLogConsumed?.Invoke();
+            HideGhostPreview();
+
+            string orientLabel = MindStructureClusterValidator.GetLogOrientationDisplayName(CurrentLogOrientation);
+            miningCtrl.LastFeedbackText = stacked
+                ? $"🪵 2m Ağaç Kütüğü ({orientLabel}) mevcut kütüklerin üzerine kenetlendi! ([T] Zihin İnşa Menüsü ile Kütük Duvar / Çit / Kiriş / Kulübe mühürle)"
+                : $"🪵 2m Ağaç Kütüğü ({orientLabel}) zemine yerleştirildi! ([E] Tekrar Omuzla | [R] Yön | [T] Zihin İnşa Menüsü)";
+            return id;
         }
 
         private void PlacePartFromActiveSlot(
@@ -263,17 +448,27 @@ namespace Stratocraft.Character
                     (uint)_nextInstanceId)
                 : dna;
 
-            var tempSlot = new VisualInventorySlot
+            Mesh mesh;
+            Vector3 scale;
+            if (partKind == LooseBuildPartKind.FallenTreeLog)
             {
-                Kind = itemKind,
-                SubId = subId,
-                Count = 1,
-                Durability01 = 1f,
-                ShapeDna = effectiveDna
-            };
-            PhysicalItemArchetype arch = tempSlot.MapToPhysicalArchetype();
-            Mesh mesh = PhysicalItemMeshFactory.GetOrCreateMesh(arch, subId, in effectiveDna, out Vector3 natScale);
-            Vector3 scale = GetLooseBuildVisualScale(partKind, arch, natScale);
+                mesh = GetOrCreateTimberLogMeshCached(subId != 0 ? subId : MaterialIdCatalog.OakWood);
+                scale = new Vector3(0.38f, 1.00f, 0.38f);
+            }
+            else
+            {
+                var tempSlot = new VisualInventorySlot
+                {
+                    Kind = itemKind,
+                    SubId = subId,
+                    Count = 1,
+                    Durability01 = 1f,
+                    ShapeDna = effectiveDna
+                };
+                PhysicalItemArchetype arch = tempSlot.MapToPhysicalArchetype();
+                mesh = PhysicalItemMeshFactory.GetOrCreateMesh(arch, subId, in effectiveDna, out Vector3 natScale);
+                scale = GetLooseBuildVisualScale(partKind, arch, natScale);
+            }
 
             int id = _nextInstanceId++;
             GameObject go = new GameObject($"WorldLoosePart_{partKind}_{id}");
@@ -305,8 +500,31 @@ namespace Stratocraft.Character
             return id;
         }
 
+        private static Mesh GetOrCreateTimberLogMeshCached(byte woodMat)
+        {
+            byte actualMat = woodMat != 0 ? woodMat : MaterialIdCatalog.OakWood;
+            if (CachedTimberLogMeshes.TryGetValue(actualMat, out Mesh? cached) && cached != null)
+            {
+                return cached;
+            }
+
+            SharedLogBuildTris.Clear();
+            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                new SysVec3(-0.5f, -1.0f, -0.5f), actualMat, shapeId: 2, rotationState: 0, damageState: 0, SharedLogBuildTris);
+            HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                new SysVec3(-0.5f, 0.0f, -0.5f), actualMat, shapeId: 2, rotationState: 0, damageState: 0, SharedLogBuildTris);
+            Mesh built = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
+                SharedLogBuildTris, $"Mesh_WorldLooseTimberLog2m_{actualMat}");
+            CachedTimberLogMeshes[actualMat] = built;
+            return built;
+        }
+
         private static Vector3 GetLooseBuildVisualScale(LooseBuildPartKind partKind, PhysicalItemArchetype arch, Vector3 naturalScale)
         {
+            if (partKind == LooseBuildPartKind.FallenTreeLog)
+            {
+                return new Vector3(0.38f, 1.00f, 0.38f);
+            }
             Vector3 groundScale = PhysicalItemMeshFactory.GetWorldGroundScale(arch, naturalScale);
             return partKind switch
             {
@@ -346,7 +564,8 @@ namespace Stratocraft.Character
 
                 Vector3 closest = rayOrigin + rayDir * Mathf.Max(0f, along);
                 float perp = Vector3.Distance(closest, p.Position);
-                if (perp > 0.48f) continue;
+                float maxPerp = p.PartKind == LooseBuildPartKind.FallenTreeLog ? 0.85f : 0.48f;
+                if (perp > maxPerp) continue;
 
                 float score = perp * 2.5f + along * 0.30f;
                 if (score < bestScore)
@@ -370,6 +589,29 @@ namespace Stratocraft.Character
             if (idx < 0) return false;
 
             WorldLoosePartInstance part = _parts[idx];
+            if (part.PartKind == LooseBuildPartKind.FallenTreeLog)
+            {
+                if (holsterCtrl.IsCarryingShoulderLog)
+                {
+                    miningCtrl.LastFeedbackText =
+                        "OMUZDA ZATEN AĞIR KÜTÜK VAR: Önce omuzdaki kütüğü [Sağ Tık] ile yerleştirin veya [G] ile bırakın!";
+                    return true;
+                }
+
+                byte logMat = part.SubId != 0 ? part.SubId : MaterialIdCatalog.OakWood;
+                SetIsCarryingShoulderLogDelegate?.Invoke(holsterCtrl, true);
+                SetShoulderLogMaterialIdDelegate?.Invoke(holsterCtrl, logMat);
+                if (part.VisualGo != null)
+                {
+                    UnityEngine.Object.Destroy(part.VisualGo);
+                }
+                _parts.RemoveAt(idx);
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+                miningCtrl.LastFeedbackText =
+                    "🪵 Yerleştirilen 2m Ağaç Kütüğü tekrar omuzlandı! ([Sağ Tık] Yerleştir | [R] Yön: Yatay Duvar / Dikey Çit / Üst Kiriş)";
+                return true;
+            }
+
             if (!holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(
                     part.ItemKind, part.SubId, 1, miningCtrl, part.ShapeDna))
             {
@@ -411,7 +653,9 @@ namespace Stratocraft.Character
             {
                 WorldLoosePartInstance p = _parts[i];
                 if (p.BoundStationId == stationId &&
-                    (p.PartKind == LooseBuildPartKind.Stick || p.PartKind == LooseBuildPartKind.SplitFirewood))
+                    (p.PartKind == LooseBuildPartKind.Stick ||
+                     p.PartKind == LooseBuildPartKind.SplitFirewood ||
+                     p.PartKind == LooseBuildPartKind.FallenTreeLog))
                 {
                     count++;
                 }
@@ -544,6 +788,46 @@ namespace Stratocraft.Character
             _containerRoot = existing.transform;
         }
 
+        private void UpdateGhostVisualForTimberLog(
+            byte woodMat,
+            Vector3 worldPos,
+            Quaternion worldRot,
+            Material? sharedMat)
+        {
+            EnsureContainerRoot();
+            if (_ghostPreviewGo == null)
+            {
+                _ghostPreviewGo = new GameObject("WorldLooseGhostPreview_3D");
+                if (_containerRoot != null) _ghostPreviewGo.transform.SetParent(_containerRoot, false);
+                _ghostPreviewMf = _ghostPreviewGo.AddComponent<MeshFilter>();
+                _ghostPreviewMr = _ghostPreviewGo.AddComponent<MeshRenderer>();
+                if (_ghostPreviewMr != null)
+                {
+                    _ghostPreviewMr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    _ghostPreviewMr.receiveShadows = false;
+                }
+            }
+
+            if (_ghostPreviewMr != null && sharedMat != null && _ghostPreviewMr.sharedMaterial != sharedMat)
+            {
+                _ghostPreviewMr.sharedMaterial = sharedMat;
+            }
+
+            if (_ghostPreviewMf != null &&
+                (_ghostPreviewMf.sharedMesh == null || !_lastGhostWasTimberLog || _lastGhostSubId != woodMat))
+            {
+                _lastGhostWasTimberLog = true;
+                _lastGhostSubId = woodMat;
+                _ghostPreviewMf.sharedMesh = GetOrCreateTimberLogMeshCached(woodMat);
+                _ghostPreviewGo.transform.localScale = new Vector3(0.39f, 1.01f, 0.39f);
+            }
+
+            float pulse = 0.008f * Mathf.Sin(Time.time * 5.5f);
+            _ghostPreviewGo.transform.position = worldPos + new Vector3(0f, 0.012f + pulse, 0f);
+            _ghostPreviewGo.transform.rotation = worldRot;
+            if (!_ghostPreviewGo.activeSelf) _ghostPreviewGo.SetActive(true);
+        }
+
         private void UpdateGhostVisual(
             in VisualInventorySlot slot,
             in PhysicalItemShapeDna previewDna,
@@ -576,10 +860,12 @@ namespace Stratocraft.Character
 
             if (_ghostPreviewMf != null &&
                 (_ghostPreviewMf.sharedMesh == null ||
+                 _lastGhostWasTimberLog ||
                  _lastGhostArchetype != arch ||
                  _lastGhostSubId != slot.SubId ||
                  _lastGhostSeedKey != seedKey))
             {
+                _lastGhostWasTimberLog = false;
                 _lastGhostArchetype = arch;
                 _lastGhostSubId = slot.SubId;
                 _lastGhostSeedKey = seedKey;

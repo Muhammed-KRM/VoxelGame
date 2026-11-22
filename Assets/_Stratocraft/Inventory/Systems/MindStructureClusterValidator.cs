@@ -6,9 +6,9 @@ using Stratocraft.Inventory.Data;
 namespace Stratocraft.Inventory.Systems
 {
     /// <summary>
-    /// [T] Zihin Insa Menusundeki 4 temel fiziksel yapi fikri (Paket 2 — Faz 2.3 &amp; Faz 2.4).
+    /// [T] Zihin Insa Menusundeki fiziksel yapi fikirleri (Paket 2 — Faz 2.3, Faz 2.4, Paket 4B &amp; Kutuk Yapilari).
     /// Bu menuden secim yapmak dunyaya hazir prefab KOYMAZ; oyuncunun yere elleriyle dizdigi
-    /// gercek 3B parca kumesini dogrulayip islevsel istasyon olarak muhurler.
+    /// gercek 3B parca kumesini dogrulayip islevsel istasyon veya yapi olarak muhurler.
     /// </summary>
     public enum MindStructureBlueprintId : byte
     {
@@ -16,7 +16,21 @@ namespace Stratocraft.Inventory.Systems
         CharcoalPit = 1,       // Odun Komuru Ocagi
         BloomeryFurnace = 2,   // Ilkel Izabe Firini (Bloomery)
         WoodenWheelbarrow = 3, // Ahsap El Arabasi
-        Windmill = 4           // Fiziksel Yel Degirmeni (Paket 4B Faz 4B.5)
+        Windmill = 4,          // Fiziksel Yel Degirmeni (Paket 4B Faz 4B.5)
+        LogWall = 5,           // Kütük Duvar
+        LogPalisade = 6,       // Kütük Çit
+        LogBeam = 7,           // Kütük Kiriş
+        LogCabin = 8           // Kütük Kulübe
+    }
+
+    /// <summary>
+    /// Kesilmis 2m agac kutugunun (FallenTreeLog) [R] tusuyla degistirilen 3B yerlestirme yonelimi.
+    /// </summary>
+    public enum LogPlacementOrientation : byte
+    {
+        HorizontalWall = 0,   // Yatay Duvar Kütüğü (Horizontal Wall Log)
+        VerticalPalisade = 1, // Dikey Çit Kazığı (Vertical Palisade Stake)
+        OverheadBeam = 2      // Üst Çatı Kirişi (Overhead Roof Beam)
     }
 
     /// <summary>
@@ -41,7 +55,8 @@ namespace Stratocraft.Inventory.Systems
         RoastedOreChunk = 14,
         CrushedOrePowder = 15,
         IronBloomSponge = 16,
-        WindmillSailPanel = 17
+        WindmillSailPanel = 17,
+        FallenTreeLog = 18
     }
 
     /// <summary>
@@ -80,6 +95,126 @@ namespace Stratocraft.Inventory.Systems
     public static class MindStructureClusterValidator
     {
         public const float DefaultScanRadiusMeters = 1.85f;
+        public const int BlueprintCount = 9;
+
+        public static LogPlacementOrientation CycleLogOrientation(LogPlacementOrientation current) =>
+            (LogPlacementOrientation)(((int)current + 1) % 3);
+
+        public static string GetLogOrientationDisplayName(LogPlacementOrientation orientation) => orientation switch
+        {
+            LogPlacementOrientation.HorizontalWall => "Yatay Duvar Kütüğü (Horizontal Wall Log)",
+            LogPlacementOrientation.VerticalPalisade => "Dikey Çit Kazığı (Vertical Palisade Stake)",
+            LogPlacementOrientation.OverheadBeam => "Üst Çatı Kirişi (Overhead Roof Beam)",
+            _ => "Yatay Duvar Kütüğü (Horizontal Wall Log)"
+        };
+
+        /// <summary>
+        /// Omuzda tasinan 2m kesilmis agac kutugunun (FallenTreeLog) hedef zemin noktasi, bakis acisi,
+        /// secili [R] yonelimi (HorizontalWall, VerticalPalisade, OverheadBeam) ve etraftaki mevcut
+        /// kutuklere gore konumunu, 3B donusunu ve ShapeDna bilgisini hesaplar (0 B GC).
+        /// </summary>
+        public static void ComputeTimberLogPlacementPose(
+            LogPlacementOrientation orientation,
+            in PhysicalItemShapeDna inputDna,
+            Vector3 surfacePoint,
+            Vector3 surfaceNormal,
+            float userYawDegrees,
+            ReadOnlySpan<LoosePartPoint> existingParts,
+            out Vector3 finalPosition,
+            out Quaternion finalRotation,
+            out PhysicalItemShapeDna finalDna,
+            out bool stackedOnExistingLog)
+        {
+            stackedOnExistingLog = false;
+            finalDna = inputDna.WithStage((byte)orientation);
+
+            Vector3 n = surfaceNormal.LengthSquared() > 0.0001f
+                ? Vector3.Normalize(surfaceNormal)
+                : Vector3.UnitY;
+
+            float yawRad = userYawDegrees * (MathF.PI / 180f);
+            Vector3 horizFwd = new Vector3(MathF.Sin(yawRad), 0f, MathF.Cos(yawRad));
+
+            if (orientation == LogPlacementOrientation.VerticalPalisade)
+            {
+                // 2m kutuk dikey kazik olarak dikilir (merkez Y = zemin + 0.98m)
+                Vector3 resolvedXZ = new Vector3(surfacePoint.X, 0f, surfacePoint.Z);
+                for (int i = 0; i < existingParts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref existingParts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                    float dx = resolvedXZ.X - p.Position.X;
+                    float dz = resolvedXZ.Z - p.Position.Z;
+                    float dist = MathF.Sqrt(dx * dx + dz * dz);
+                    if (dist > 0.001f && dist < 0.36f && MathF.Abs(surfacePoint.Y + 0.98f - p.Position.Y) < 0.90f)
+                    {
+                        float push = 0.36f - dist;
+                        resolvedXZ.X += (dx / dist) * push;
+                        resolvedXZ.Z += (dz / dist) * push;
+                    }
+                }
+
+                finalPosition = new Vector3(resolvedXZ.X, surfacePoint.Y + 0.98f, resolvedXZ.Z);
+                finalRotation = WorldLoosePlacementMath.LookRotationSafe(horizFwd, Vector3.UnitY);
+                return;
+            }
+
+            if (orientation == LogPlacementOrientation.OverheadBeam)
+            {
+                // Ust tavan/cati kirisi: etraftaki dikme veya duvar kutuklerinin ustune (min +1.88m) oturur
+                float beamY = surfacePoint.Y + 1.92f;
+                for (int i = 0; i < existingParts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref existingParts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog && p.Kind != LooseBuildPartKind.RoughStoneChunk) continue;
+                    float dx = surfacePoint.X - p.Position.X;
+                    float dz = surfacePoint.Z - p.Position.Z;
+                    if ((dx * dx + dz * dz) <= 1.45f * 1.45f)
+                    {
+                        bool isVerticalSupport = p.ShapeDna.StageByte == (byte)LogPlacementOrientation.VerticalPalisade;
+                        float topSupportY = p.Position.Y + (isVerticalSupport ? 1.02f : 0.38f);
+                        if (topSupportY >= surfacePoint.Y + 1.10f && topSupportY <= surfacePoint.Y + 3.20f && topSupportY > beamY - 0.35f)
+                        {
+                            beamY = MathF.Max(beamY, topSupportY);
+                            stackedOnExistingLog = true;
+                        }
+                    }
+                }
+
+                finalPosition = new Vector3(surfacePoint.X, beamY, surfacePoint.Z);
+                // Yerel +Y ekseni 2m kutuk boyu oldugu icin +Y eksenini horizFwd yonune yatir:
+                finalRotation = WorldLoosePlacementMath.LookRotationSafe(Vector3.UnitY, horizFwd);
+                return;
+            }
+
+            // HorizontalWall (Yatay Duvar Kutugu): zemine veya mevcut yatay kutugun uzerine (+0.38m) istiflenir
+            float wallY = surfacePoint.Y + 0.20f;
+            for (int i = 0; i < existingParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref existingParts[i];
+                if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                float dx = surfacePoint.X - p.Position.X;
+                float dz = surfacePoint.Z - p.Position.Z;
+                if ((dx * dx + dz * dz) <= 0.62f * 0.62f)
+                {
+                    float candidateY = p.Position.Y + 0.38f;
+                    if (candidateY > wallY && candidateY <= surfacePoint.Y + 2.40f)
+                    {
+                        wallY = candidateY;
+                        stackedOnExistingLog = true;
+                    }
+                }
+            }
+
+            finalPosition = new Vector3(surfacePoint.X, wallY, surfacePoint.Z);
+            Vector3 tangentFwd = horizFwd - n * Vector3.Dot(horizFwd, n);
+            if (tangentFwd.LengthSquared() < 0.0001f)
+            {
+                tangentFwd = Vector3.Cross(n, Vector3.UnitX);
+            }
+            tangentFwd = Vector3.Normalize(tangentFwd);
+            finalRotation = WorldLoosePlacementMath.LookRotationSafe(-n, tangentFwd);
+        }
 
         public static string GetDisplayName(MindStructureBlueprintId blueprint) => blueprint switch
         {
@@ -88,6 +223,10 @@ namespace Stratocraft.Inventory.Systems
             MindStructureBlueprintId.BloomeryFurnace => "İlkel İzabe Fırını (Bloomery)",
             MindStructureBlueprintId.WoodenWheelbarrow => "Ahşap El Arabası",
             MindStructureBlueprintId.Windmill => "Fiziksel Yel Değirmeni",
+            MindStructureBlueprintId.LogWall => "Kütük Duvar",
+            MindStructureBlueprintId.LogPalisade => "Kütük Çit",
+            MindStructureBlueprintId.LogBeam => "Kütük Kiriş",
+            MindStructureBlueprintId.LogCabin => "Kütük Kulübe",
             _ => "Fiziksel Yapı"
         };
 
@@ -103,6 +242,14 @@ namespace Stratocraft.Inventory.Systems
                 "Öne 1 ahşap tekerlek koy, arkasına en az 2 yarılmış odun + 2 dal (toplam 6 ahşap) ve 2 bitki lifi diz.",
             MindStructureBlueprintId.Windmill =>
                 "Tabana en az 4 taş kaide, üzerine en az 4 ahşap direk/odun ve üst göbeğe 4 Yelken Kanat (WindmillSailPanel) diz; tahıl ve cevher öğütür.",
+            MindStructureBlueprintId.LogWall =>
+                "Kesilmiş 2m ağaç kütüklerini (FallenTreeLog) [R: Yatay Duvar] modunda üst üste/yan yana en az 3 adet diz; kütük siper duvarı olarak kenetlenir.",
+            MindStructureBlueprintId.LogPalisade =>
+                "Kesilmiş 2m ağaç kütüklerini [R: Dikey Çit Kazığı] modunda yan yana en az 3 adet dik; savunma kazıklı kütük çit olarak mühürlenir.",
+            MindStructureBlueprintId.LogBeam =>
+                "En az 2 adet 2m ağaç kütüğünü [R: Üst Çatı Kirişi] ve taşıyıcı dikme olarak yerleştir; tavan taşıyıcı kütük kiriş olarak mühürlenir.",
+            MindStructureBlueprintId.LogCabin =>
+                "Çevreye en az 6 adet 2m ağaç kütüğü (duvar + çatı kirişi) diz; fırtına ve soğuktan koruyan Kütük Kulübe barınağı olarak mühürlenir.",
             _ => string.Empty
         };
 
@@ -120,6 +267,10 @@ namespace Stratocraft.Inventory.Systems
                 MindStructureBlueprintId.BloomeryFurnace => ValidateBloomeryFurnace(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 MindStructureBlueprintId.WoodenWheelbarrow => ValidateWheelbarrow(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 MindStructureBlueprintId.Windmill => ValidateWindmill(aimOrigin, allParts, matchedIndicesOut, scanRadius),
+                MindStructureBlueprintId.LogWall => ValidateLogWall(aimOrigin, allParts, matchedIndicesOut, scanRadius),
+                MindStructureBlueprintId.LogPalisade => ValidateLogPalisade(aimOrigin, allParts, matchedIndicesOut, scanRadius),
+                MindStructureBlueprintId.LogBeam => ValidateLogBeam(aimOrigin, allParts, matchedIndicesOut, scanRadius),
+                MindStructureBlueprintId.LogCabin => ValidateLogCabin(aimOrigin, allParts, matchedIndicesOut, scanRadius),
                 _ => new MindValidationResult
                 {
                     IsValid = false,
@@ -644,6 +795,280 @@ namespace Stratocraft.Inventory.Systems
                 MatchedPartCount = writeCount,
                 HasStoneRing = true,
                 FeedbackMessage = "🌬️ Fiziksel Yel Değirmeni kuruldu! ([Sağ Tık] Tahıl/Cevher Yükle | [E] Un/Toz Topla | [Shift+E] Fırtına Freni)"
+            };
+        }
+
+        private static MindValidationResult ValidateLogWall(
+            Vector3 aimOrigin,
+            ReadOnlySpan<LoosePartPoint> allParts,
+            Span<int> matchedIndicesOut,
+            float scanRadius)
+        {
+            float horizRad = MathF.Max(scanRadius, 2.85f);
+            float horizRadSq = horizRad * horizRad;
+            float minY = float.MaxValue;
+            int logCount = 0;
+            Vector3 centerSum = Vector3.Zero;
+            int writeCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx + dz * dz) > horizRadSq || MathF.Abs(p.Position.Y - aimOrigin.Y) > 3.20f) continue;
+
+                bool relevant = false;
+                if (p.Kind == LooseBuildPartKind.FallenTreeLog)
+                {
+                    logCount++;
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.PlantFiber || p.Kind == LooseBuildPartKind.Stick || p.Kind == LooseBuildPartKind.RoughStoneChunk)
+                {
+                    relevant = true;
+                }
+
+                if (relevant)
+                {
+                    if (p.Position.Y < minY) minY = p.Position.Y;
+                    centerSum += p.Position;
+                    if (writeCount < matchedIndicesOut.Length) matchedIndicesOut[writeCount++] = i;
+                }
+            }
+
+            if (logCount < 3)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.LogWall,
+                    FeedbackMessage = $"Kütük Duvar (LogWall) örmek için en az 3 adet 2m Ağaç Kütüğü (FallenTreeLog) yerleştirmelisin! (Şu an: {logCount}/3)"
+                };
+            }
+
+            Vector3 center = centerSum / Math.Max(1, writeCount);
+            return new MindValidationResult
+            {
+                IsValid = true,
+                Blueprint = MindStructureBlueprintId.LogWall,
+                ClusterCenter = new Vector3(center.X, minY, center.Z),
+                ClusterBaseY = minY,
+                BonusEfficiency01 = Math.Clamp(0.25f + (logCount - 3) * 0.05f, 0.25f, 0.60f),
+                MatchedPartCount = writeCount,
+                FeedbackMessage = "🧱 Kütük Duvar (LogWall) kenetlendi ve mühürlendi! (+Siper & Rüzgâr Kalkanı)"
+            };
+        }
+
+        private static MindValidationResult ValidateLogPalisade(
+            Vector3 aimOrigin,
+            ReadOnlySpan<LoosePartPoint> allParts,
+            Span<int> matchedIndicesOut,
+            float scanRadius)
+        {
+            float horizRad = MathF.Max(scanRadius, 2.85f);
+            float horizRadSq = horizRad * horizRad;
+            float minY = float.MaxValue;
+            int logCount = 0;
+            int verticalStakeCount = 0;
+            Vector3 centerSum = Vector3.Zero;
+            int writeCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx + dz * dz) > horizRadSq || MathF.Abs(p.Position.Y - aimOrigin.Y) > 3.20f) continue;
+
+                bool relevant = false;
+                if (p.Kind == LooseBuildPartKind.FallenTreeLog)
+                {
+                    logCount++;
+                    if (p.ShapeDna.StageByte == (byte)LogPlacementOrientation.VerticalPalisade)
+                    {
+                        verticalStakeCount++;
+                    }
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.PlantFiber || p.Kind == LooseBuildPartKind.Stick)
+                {
+                    relevant = true;
+                }
+
+                if (relevant)
+                {
+                    if (p.Position.Y < minY) minY = p.Position.Y;
+                    centerSum += p.Position;
+                    if (writeCount < matchedIndicesOut.Length) matchedIndicesOut[writeCount++] = i;
+                }
+            }
+
+            if (logCount < 3)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.LogPalisade,
+                    FeedbackMessage = $"Kütük Çit (LogPalisade) için [R: Dikey Çit Kazığı] modunda yan yana en az 3 adet 2m Ağaç Kütüğü dikmelisin! (Şu an: {logCount}/3)"
+                };
+            }
+
+            Vector3 center = centerSum / Math.Max(1, writeCount);
+            float bonus = verticalStakeCount >= 3 ? 0.35f : 0.20f;
+            return new MindValidationResult
+            {
+                IsValid = true,
+                Blueprint = MindStructureBlueprintId.LogPalisade,
+                ClusterCenter = new Vector3(center.X, minY, center.Z),
+                ClusterBaseY = minY,
+                BonusEfficiency01 = bonus,
+                MatchedPartCount = writeCount,
+                FeedbackMessage = "🛡️ Kütük Çit (LogPalisade) kazıkları birbirine bağlandı ve mühürlendi!"
+            };
+        }
+
+        private static MindValidationResult ValidateLogBeam(
+            Vector3 aimOrigin,
+            ReadOnlySpan<LoosePartPoint> allParts,
+            Span<int> matchedIndicesOut,
+            float scanRadius)
+        {
+            float horizRad = MathF.Max(scanRadius, 2.85f);
+            float horizRadSq = horizRad * horizRad;
+            float minY = float.MaxValue;
+            int logCount = 0;
+            int overheadBeamCount = 0;
+            Vector3 centerSum = Vector3.Zero;
+            int writeCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx + dz * dz) > horizRadSq || MathF.Abs(p.Position.Y - aimOrigin.Y) > 3.60f) continue;
+
+                bool relevant = false;
+                if (p.Kind == LooseBuildPartKind.FallenTreeLog)
+                {
+                    logCount++;
+                    if (p.ShapeDna.StageByte == (byte)LogPlacementOrientation.OverheadBeam)
+                    {
+                        overheadBeamCount++;
+                    }
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.PlantFiber || p.Kind == LooseBuildPartKind.Stick || p.Kind == LooseBuildPartKind.RoughStoneChunk)
+                {
+                    relevant = true;
+                }
+
+                if (relevant)
+                {
+                    if (p.Position.Y < minY) minY = p.Position.Y;
+                    centerSum += p.Position;
+                    if (writeCount < matchedIndicesOut.Length) matchedIndicesOut[writeCount++] = i;
+                }
+            }
+
+            if (logCount < 2)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.LogBeam,
+                    FeedbackMessage = $"Kütük Kiriş (LogBeam) için en az 2 adet 2m Ağaç Kütüğü ([R: Üst Çatı Kirişi] + taşıyıcı) yerleştirmelisin! (Şu an: {logCount}/2)"
+                };
+            }
+
+            Vector3 center = centerSum / Math.Max(1, writeCount);
+            float bonus = overheadBeamCount >= 1 ? 0.30f : 0.15f;
+            return new MindValidationResult
+            {
+                IsValid = true,
+                Blueprint = MindStructureBlueprintId.LogBeam,
+                ClusterCenter = new Vector3(center.X, minY, center.Z),
+                ClusterBaseY = minY,
+                BonusEfficiency01 = bonus,
+                MatchedPartCount = writeCount,
+                FeedbackMessage = "🏗️ Kütük Kiriş (LogBeam) taşıyıcı tavan bağlantısı doğrulandı ve mühürlendi!"
+            };
+        }
+
+        private static MindValidationResult ValidateLogCabin(
+            Vector3 aimOrigin,
+            ReadOnlySpan<LoosePartPoint> allParts,
+            Span<int> matchedIndicesOut,
+            float scanRadius)
+        {
+            float horizRad = MathF.Max(scanRadius, 3.65f);
+            float horizRadSq = horizRad * horizRad;
+            float minY = float.MaxValue;
+            int logCount = 0;
+            int stoneCount = 0;
+            Vector3 centerSum = Vector3.Zero;
+            int writeCount = 0;
+
+            for (int i = 0; i < allParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref allParts[i];
+                if (p.BoundStationId != 0u || p.Kind == LooseBuildPartKind.None) continue;
+                float dx = p.Position.X - aimOrigin.X;
+                float dz = p.Position.Z - aimOrigin.Z;
+                if ((dx * dx + dz * dz) > horizRadSq || MathF.Abs(p.Position.Y - aimOrigin.Y) > 4.20f) continue;
+
+                bool relevant = false;
+                if (p.Kind == LooseBuildPartKind.FallenTreeLog)
+                {
+                    logCount++;
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.RoughStoneChunk)
+                {
+                    stoneCount++;
+                    relevant = true;
+                }
+                else if (p.Kind == LooseBuildPartKind.SplitFirewood ||
+                         p.Kind == LooseBuildPartKind.Stick ||
+                         p.Kind == LooseBuildPartKind.PlantFiber ||
+                         p.Kind == LooseBuildPartKind.ClayLump)
+                {
+                    relevant = true;
+                }
+
+                if (relevant)
+                {
+                    if (p.Position.Y < minY) minY = p.Position.Y;
+                    centerSum += p.Position;
+                    if (writeCount < matchedIndicesOut.Length) matchedIndicesOut[writeCount++] = i;
+                }
+            }
+
+            if (logCount < 6)
+            {
+                return new MindValidationResult
+                {
+                    IsValid = false,
+                    Blueprint = MindStructureBlueprintId.LogCabin,
+                    FeedbackMessage = $"Kütük Kulübe (LogCabin) inşası için en az 6 adet 2m Ağaç Kütüğü (FallenTreeLog) dizmelisin! (Şu an: {logCount}/6)"
+                };
+            }
+
+            Vector3 center = centerSum / Math.Max(1, writeCount);
+            return new MindValidationResult
+            {
+                IsValid = true,
+                Blueprint = MindStructureBlueprintId.LogCabin,
+                ClusterCenter = new Vector3(center.X, minY, center.Z),
+                ClusterBaseY = minY,
+                BonusEfficiency01 = 1.0f,
+                MatchedPartCount = writeCount,
+                HasStoneRing = stoneCount >= 4,
+                FeedbackMessage = "🏠 Kütük Kulübe (LogCabin) çatıldı ve mühürlendi! (+Tam Fırtına & Soğuk Barınağı)"
             };
         }
     }
