@@ -428,6 +428,114 @@ namespace Stratocraft.Character
             return desiredHiltLocalPos;
         }
 
+        /// <summary>
+        /// Faz K.3: Saplama (Thrust) uzama fazinda silah ve stile gore ileri Lunge hizi (m/s) uretir.
+        /// En yakin dusman &lt; 1.15m icindeyse Anti-Overshoot ile ileri bileseni 0'a sonumler.
+        /// </summary>
+        public static float ComputeThrustLungeSpeedMps(
+            int weaponArchetype,
+            int martialStance,
+            float nearestEnemyDistMeters)
+        {
+            // Silah tipine gore baz lunge hizi (0.15s uzama suresinde 0.42m..0.85m adim):
+            // 0: Longsword, 1: Katana, 2: Greatsword, 3: Rapier
+            float baseSpeed = weaponArchetype switch
+            {
+                3 => 5.65f, // Rapier (~0.85m)
+                1 => 4.40f, // Katana (~0.66m)
+                2 => 2.85f, // Greatsword (~0.43m)
+                _ => 3.70f  // Longsword (~0.55m)
+            };
+
+            // Eskrim (Fencing_Punta == 3) durusunda ek ileri hamle bonusu:
+            if (martialStance == 3)
+            {
+                baseSpeed = MathF.Max(baseSpeed, 5.65f);
+            }
+
+            float overshootFactor = ComputeAntiOvershootForwardFactor(nearestEnemyDistMeters);
+            return baseSpeed * overshootFactor;
+        }
+
+        /// <summary>
+        /// Faz K.3: Tam yay savurma (s in [0.05..0.50]) sirasinda Passing Step (ileri + hafif capraz)
+        /// yerel ayak isi hizi (m/s) uretir. Anti-Overshoot ile dusmanin icine gecmeyi engeller.
+        /// </summary>
+        public static Vector3 ComputePassingStepLocalVel(
+            Vector2 slashDirUnit,
+            float swingProgress01,
+            float weaponMassKg,
+            float nearestEnemyDistMeters)
+        {
+            if (swingProgress01 < 0.05f || swingProgress01 > 0.50f)
+            {
+                return Vector3.Zero;
+            }
+
+            float normT = (swingProgress01 - 0.05f) / 0.45f;
+            float bell = MathF.Sin(normT * MathF.PI);
+            float massScale = Math.Clamp(MathF.Sqrt(MathF.Max(0.8f, weaponMassKg) / 1.65f), 0.78f, 1.35f);
+            float overshootFactor = ComputeAntiOvershootForwardFactor(nearestEnemyDistMeters);
+
+            float forwardSpeed = 2.65f * bell * massScale * overshootFactor;
+            float lateralSpeed = slashDirUnit.X * 1.15f * bell * massScale;
+            return new Vector3(lateralSpeed, 0f, forwardSpeed);
+        }
+
+        /// <summary>
+        /// Faz K.3: En yakin dusmana yatay mesafe &lt; 1.15m ise ileri lunge/adim bilesenini yumusakca 0'a sonumler.
+        /// </summary>
+        public static float ComputeAntiOvershootForwardFactor(float nearestEnemyDistMeters)
+        {
+            if (nearestEnemyDistMeters <= 0f || !float.IsFinite(nearestEnemyDistMeters))
+            {
+                return 1.0f;
+            }
+
+            if (nearestEnemyDistMeters <= 1.15f)
+            {
+                return 0.0f;
+            }
+
+            if (nearestEnemyDistMeters < 1.75f)
+            {
+                return Math.Clamp((nearestEnemyDistMeters - 1.15f) / 0.60f, 0f, 1f);
+            }
+
+            return 1.0f;
+        }
+
+        /// <summary>
+        /// Faz K.3: Agir yaratik veya rakip darbesi bloklandiginda kutle/hiz oranli fiziksel geri savrulma
+        /// (Pushback m/s) ve diz/kamera cokmesi (Vertical Dip, -0.02..-0.06m) hesaplar.
+        /// </summary>
+        public static float ComputeBlockPushbackImpulse(
+            float attackerMassKg,
+            float attackerSpeedMps,
+            float defenderWeaponMassKg,
+            bool isGuardCrushed,
+            out float verticalDipMeters)
+        {
+            float impulseNs = MathF.Max(0.8f, attackerMassKg) * MathF.Max(2.5f, attackerSpeedMps);
+            float braceMass = MathF.Max(0.85f, defenderWeaponMassKg);
+            float rawPushMps = (impulseNs / (braceMass * 6.2f)) * (isGuardCrushed ? 1.45f : 1.0f);
+            float clampedPushMps = Math.Clamp(rawPushMps, 1.25f, 8.80f);
+
+            float ratio01 = Math.Clamp((clampedPushMps - 1.25f) / 7.55f, 0f, 1f);
+            verticalDipMeters = -(0.020f + ratio01 * 0.042f); // -2.0 cm .. -6.2 cm
+            return clampedPushMps;
+        }
+
+        /// <summary>
+        /// Faz K.3: MasterDeflect (son anda yonlu saptirma) aninda gelen saldiriya dik yonlu
+        /// yan kacis adimi (sidestep slip, ~0.25..0.38m) yerel hizi uretir.
+        /// </summary>
+        public static Vector3 ComputeMasterDeflectSidestepLocalVel(Vector2 incomingAttackDirUnit)
+        {
+            float sideSign = incomingAttackDirUnit.X >= 0f ? -1f : 1f;
+            return new Vector3(sideSign * 3.15f, 0f, 0.45f);
+        }
+
         private static float WrapAngleRad(float rad)
         {
             while (rad > MathF.PI) rad -= 2f * MathF.PI;

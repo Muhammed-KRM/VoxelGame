@@ -1877,6 +1877,12 @@ namespace Stratocraft.WorldGen.Generators
             // Biyom 10 (Gökyüzü Adaları Takımadası) ve Kesif Noktalari icin Bagimsiz Yuksek İrtifa Gökyüzü Adaları
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids, cachedBiomes);
             PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
+            // Halka >= 1 kara chunk'larinda %5 deterministik 4-odali Kadim Zindan damgalamasi:
+            float centerColTopH = cachedTopH.Length == 256 ? cachedTopH[(8 << 4) | 8] : SampleIslandTopSurfaceY((chunkX << 4) + 8, (chunkZ << 4) + 8);
+            if (centerColTopH >= 85.0f)
+            {
+                DungeonGeneratorSystem.StampAncientDungeonIfSelected(ActiveWorldSeed, chunkX, chunkZ, voxels, fluids);
+            }
             StampSurfaceFloraAndLandmarksInternal(chunkX, chunkZ, voxels, cachedTopH, cachedBiomes);
 
             // Paket 4B.2 Sahil Son-Uzlastirma: Yapi/agac/kaya cikintisi (outcrop) damgalama adimlari y = SeaLevelY - 1 veya
@@ -2681,9 +2687,18 @@ namespace Stratocraft.WorldGen.Generators
                 };
             }
 
-            // Dis halkalar (r >= 120m -> ring 1..6) ve derinlik kilitli kademeli cevherler:
-            float rMin = MathF.Sqrt(cellMinRSq);
-            int cellRing = Math.Clamp(1 + (int)(rMin / 1200.0f), 1, 6);
+            // Dis halkalar (r >= 120m -> Kanonik RingDifficultyCalculator 1..7) ve OreDistributionTable kademeli cevherler:
+            int cellRing = Math.Max(1, RingDifficultyCalculator.CalculateRingTier(clampedX, clampedZ));
+
+            if (maxYInCell <= 68)
+            {
+                float oreNoise01 = 0.52f + ((hOre >> 10) & 0xFFu) / 530.0f;
+                byte tableOre = OreDistributionTable.SampleOreMaterial(maxYInCell - SeaLevelY, cellRing, oreNoise01);
+                if (tableOre != MaterialIdCatalog.Stone)
+                {
+                    return tableOre;
+                }
+            }
 
             if (maxYInCell > 68)
             {
@@ -4027,7 +4042,8 @@ namespace Stratocraft.WorldGen.Generators
             int colIdx = (lz << 4) | lx;
             int biomeId = cachedBiomes.Length == 256 ? cachedBiomes[colIdx] : GetBiomeId(wx, wz);
             bool isCoreTestChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
-            if (!isCoreTestChunk && (biomeId == 2 || biomeId == 4 || biomeId == 5 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)) return;
+            // Biyom 4 (Kuzey Buzul) ve 5 (Kristal Kanyon) cam agaclari (isPine) icin acik birakilir:
+            if (!isCoreTestChunk && (biomeId == 2 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)) return;
 
             EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
             if (inWater || inLava || inAcid || inWall) return;

@@ -738,6 +738,63 @@ namespace Stratocraft.Character
             return true;
         }
 
+        /// <summary>Faz K.3: En yakin dusmana yatay mesafe (Anti-Overshoot &lt; 1.15m korumasi icin).</summary>
+        public float NearestEnemyHorizontalDistanceMeters { get; set; } = 999.0f;
+
+        private Vector3 _pendingImmediateFootworkLocalVel;
+        private float _pendingImmediateFootworkDecay = 12.0f;
+        private bool _pendingImmediateFootworkIsKnockback;
+        private float _pendingImmediateVerticalDipMeters;
+
+        private void QueueImmediateFootworkImpulse(Vector3 localVel, float decayRate, bool isKnockback, float verticalDipMeters = 0f)
+        {
+            if (isKnockback)
+            {
+                _pendingImmediateFootworkLocalVel = localVel;
+                _pendingImmediateFootworkDecay = decayRate;
+                _pendingImmediateFootworkIsKnockback = true;
+            }
+            else
+            {
+                _pendingImmediateFootworkLocalVel += localVel;
+                _pendingImmediateFootworkDecay = decayRate;
+            }
+            if (verticalDipMeters < _pendingImmediateVerticalDipMeters)
+            {
+                _pendingImmediateVerticalDipMeters = verticalDipMeters;
+            }
+        }
+
+        /// <summary>Faz K.3: Ayni karede (0-kare gecikme) uygulanacak ayak isi / blok geri savrulma itkisini tuketir.</summary>
+        public bool TryConsumeImmediateFootworkImpulse(
+            Transform? playerTransform,
+            out Vector3 worldVel,
+            out float decayRate,
+            out bool isKnockback,
+            out float verticalDipMeters)
+        {
+            if (playerTransform == null ||
+                (_pendingImmediateFootworkLocalVel.sqrMagnitude < 0.0001f && _pendingImmediateVerticalDipMeters >= -0.0001f))
+            {
+                worldVel = Vector3.zero;
+                decayRate = 12.0f;
+                isKnockback = false;
+                verticalDipMeters = 0f;
+                return false;
+            }
+
+            worldVel = playerTransform.TransformDirection(_pendingImmediateFootworkLocalVel);
+            worldVel.y = 0f;
+            decayRate = _pendingImmediateFootworkDecay;
+            isKnockback = _pendingImmediateFootworkIsKnockback;
+            verticalDipMeters = _pendingImmediateVerticalDipMeters;
+
+            _pendingImmediateFootworkLocalVel = Vector3.zero;
+            _pendingImmediateFootworkIsKnockback = false;
+            _pendingImmediateVerticalDipMeters = 0f;
+            return true;
+        }
+
         public Vector3 ConsumePendingBodyMomentumWorldDelta(Transform? playerTransform, float dt)
         {
             if (playerTransform == null || _bodyMomentumLocalVel.sqrMagnitude < 0.0001f) return Vector3.zero;
@@ -1058,6 +1115,9 @@ namespace Stratocraft.Character
 
                 _wristRecoilVelocity += new Vector3(deflectSlideDir.x * 1.35f, deflectSlideDir.y * 1.15f, -0.95f);
                 _cameraImpactKickDeg += new Vector2(deflectSlideDir.x * 2.1f, -deflectSlideDir.y * 1.6f);
+                System.Numerics.Vector3 deflectSlip = MeleeBiomechanicsSolver.ComputeMasterDeflectSidestepLocalVel(
+                    new System.Numerics.Vector2(incomingAttackDirUnit.x, incomingAttackDirUnit.y));
+                QueueImmediateFootworkImpulse(new Vector3(deflectSlip.X, 0f, deflectSlip.Z), decayRate: 10.5f, isKnockback: false);
                 resolutionSummary =
                     $"⚡ KUSURSUZ YÖNLÜ SAPTIRMA (MASTER DEFLECT)! [{playerWeaponName}] ile {attackerWeaponMassKg:F1}kg darbeyi yan-çapraz kaydırıp boşa çıkardın -> ŞİMDİ LMB İLE 2.1x KONTRA KESİK AT!";
                 LastCombatActionText = resolutionSummary;
@@ -1087,7 +1147,10 @@ namespace Stratocraft.Character
                 _angularVelocityRadPerSec = crushDir * 10.5f;
                 _wristRecoilVelocity += new Vector3(crushDir.x * 2.2f, -2.0f, -3.2f);
                 _cameraImpactKickDeg += new Vector2(crushDir.x * 4.8f, -4.2f);
-                _bodyMomentumLocalVel = new Vector3(crushDir.x * 1.45f, 0f, -1.85f);
+                float crushPushMps = MeleeBiomechanicsSolver.ComputeBlockPushbackImpulse(
+                    attackerWeaponMassKg, attackerSwingSpeedMps, playerWMass, isGuardCrushed: true, out float crushDipM);
+                _bodyMomentumLocalVel = new Vector3(crushDir.x * 1.45f, 0f, -crushPushMps * 0.45f);
+                QueueImmediateFootworkImpulse(new Vector3(crushDir.x * 1.25f, 0f, -crushPushMps), decayRate: 8.5f, isKnockback: true, verticalDipMeters: crushDipM);
                 TriggerHitStop(0.068f);
 
                 resolutionSummary =
@@ -1104,7 +1167,10 @@ namespace Stratocraft.Character
             float impactRatio01 = Mathf.Clamp01(incomingImpulseNs / Mathf.Max(1f, staticBlockCapacityNs));
             _wristRecoilVelocity += new Vector3(bounceDir.x * 1.25f, -0.85f * impactRatio01, -1.65f * impactRatio01);
             _cameraImpactKickDeg += new Vector2(bounceDir.x * 1.8f, -1.5f * impactRatio01);
-            _bodyMomentumLocalVel = new Vector3(0f, 0f, -0.65f * impactRatio01);
+            float blockPushMps = MeleeBiomechanicsSolver.ComputeBlockPushbackImpulse(
+                attackerWeaponMassKg, attackerSwingSpeedMps, playerWMass, isGuardCrushed: false, out float blockDipM);
+            _bodyMomentumLocalVel = new Vector3(0f, 0f, -blockPushMps * 0.35f);
+            QueueImmediateFootworkImpulse(new Vector3(0f, 0f, -blockPushMps), decayRate: 9.5f, isKnockback: true, verticalDipMeters: blockDipM);
 
             resolutionSummary =
                 $"🛡️ SAĞLAM YAN-SİPER BLOK! [{playerWeaponName}] ({staticBlockCapacityNs:F1} N·s kapasite) gelen {incomingImpulseNs:F1} N·s darbeyi durdurdu -> ŞİMDİ 1.85x RIPOSTE VUR!";
@@ -1764,6 +1830,12 @@ namespace Stratocraft.Character
                     _isThrustMode = true;
                     CurrentSwingId++;
                     PendingStaminaCost += 9.0f;
+                    float lungeSpeed = MeleeBiomechanicsSolver.ComputeThrustLungeSpeedMps(
+                        (int)ActiveWeaponArchetype, (int)ActiveMartialStance, NearestEnemyHorizontalDistanceMeters);
+                    if (lungeSpeed > 0.05f)
+                    {
+                        QueueImmediateFootworkImpulse(new Vector3(0f, 0f, lungeSpeed), decayRate: 7.5f, isKnockback: false);
+                    }
                 }
                 _wasHoldingThrustCombo = thrustComboHeld;
                 _isThrustMode = _thrustPhase != DiscreteThrustPhase.Inactive;
@@ -2406,7 +2478,12 @@ namespace Stratocraft.Character
                     cameraYawDeg += clampedPullYaw;
                     cameraPitchDeg = Mathf.Clamp(cameraPitchDeg + clampedPullPitch, -84f, 84f);
 
-                    Vector3 targetThrowLocalVel = new Vector3(footMomXZ.X, 0f, footMomXZ.Y);
+                    System.Numerics.Vector3 passingStep = MeleeBiomechanicsSolver.ComputePassingStepLocalVel(
+                        new System.Numerics.Vector2(_slashDirUnit.x, _slashDirUnit.y),
+                        _slashProgress01,
+                        wMass,
+                        NearestEnemyHorizontalDistanceMeters);
+                    Vector3 targetThrowLocalVel = new Vector3(footMomXZ.X + passingStep.X, 0f, footMomXZ.Y + passingStep.Z);
                     _bodyMomentumLocalVel = Vector3.Lerp(_bodyMomentumLocalVel, targetThrowLocalVel, Mathf.Clamp01(effectiveDt * 14f));
                 }
 

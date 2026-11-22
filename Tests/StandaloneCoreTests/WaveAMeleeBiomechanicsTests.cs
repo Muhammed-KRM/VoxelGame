@@ -187,5 +187,60 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(Vector3.Distance(farElbow, farHand), Is.EqualTo(l2).Within(0.002f));
             Assert.That(Vector3.Distance(shoulder, farHand), Is.LessThanOrEqualTo(l1 + l2));
         }
+
+        [Test]
+        public void FazK3_ThrustLunge_AntiOvershoot_AndHeavyBlockPushback_MeetBiomechanicsSpec()
+        {
+            // 1) Acik alanda Rapier / Longsword lunge mesafesi (decay=7.5 -> integral v/decay)
+            float rapierSpeed = MeleeBiomechanicsSolver.ComputeThrustLungeSpeedMps(weaponArchetype: 3, martialStance: 3, nearestEnemyDistMeters: 4.0f);
+            float longswordSpeed = MeleeBiomechanicsSolver.ComputeThrustLungeSpeedMps(weaponArchetype: 0, martialStance: 0, nearestEnemyDistMeters: 4.0f);
+            Assert.That(rapierSpeed / 7.5f, Is.GreaterThanOrEqualTo(0.70f), "Rapier lunge >= 0.70m");
+            Assert.That(longswordSpeed / 7.5f, Is.GreaterThanOrEqualTo(0.45f), "Longsword lunge >= 0.45m");
+
+            // 2) Anti-Overshoot: < 1.15m dusman onunde ileri lunge 0'a sonumlenir
+            float clampedSpeed = MeleeBiomechanicsSolver.ComputeThrustLungeSpeedMps(weaponArchetype: 3, martialStance: 3, nearestEnemyDistMeters: 1.05f);
+            Assert.That(clampedSpeed, Is.EqualTo(0.0f).Within(0.001f));
+
+            // 3) Passing Step: s in [0.05..0.50] ileri + yan adim uretir; < 1.15m'de ileri Z sifirlanir
+            Vector3 passOpen = MeleeBiomechanicsSolver.ComputePassingStepLocalVel(new Vector2(1f, 0f), 0.28f, 1.85f, 3.0f);
+            Vector3 passClose = MeleeBiomechanicsSolver.ComputePassingStepLocalVel(new Vector2(1f, 0f), 0.28f, 1.85f, 1.00f);
+            Assert.That(passOpen.Z, Is.GreaterThan(1.5f));
+            Assert.That(passClose.Z, Is.EqualTo(0.0f).Within(0.001f));
+            Assert.That(MathF.Abs(passClose.X), Is.GreaterThan(0.5f));
+
+            // 4) Agir Golem darbesi (6.0 kg, 9.5 m/s) bloklandiginda >= 0.40m geri savrulma + diz cokmesi
+            float golemPushMps = MeleeBiomechanicsSolver.ComputeBlockPushbackImpulse(6.0f, 9.5f, 1.65f, isGuardCrushed: false, out float dipMeters);
+            Assert.That(golemPushMps / 9.5f, Is.GreaterThanOrEqualTo(0.45f), "Heavy Golem pushback >= 0.45m");
+            Assert.That(dipMeters, Is.LessThanOrEqualTo(-0.03f), "Heavy block produces knee vertical dip");
+
+            // 5) MasterDeflect dik yan kacis adimi (sidestep slip)
+            Vector3 slip = MeleeBiomechanicsSolver.ComputeMasterDeflectSidestepLocalVel(new Vector2(0.8f, -0.6f));
+            Assert.That(MathF.Abs(slip.X), Is.GreaterThanOrEqualTo(2.5f));
+        }
+
+        [Test]
+        public void WiredSystems_Diseases_AndRingDungeonOverload_AreActive()
+        {
+            var vitals = Stratocraft.Character.Data.CharacterVitalsComponent.CreateDefault();
+            var thermal = new Stratocraft.Character.Systems.ThermalAndBiologySystem();
+
+            // FoodPoisoning & SporeInfection gercekten vitals uzerinde etki uretir ve ReduceInfections temizler
+            Stratocraft.Character.Systems.ThermalAndBiologySystem.ApplyFoodPoisoning(ref vitals, thermal, 30.0f);
+            Stratocraft.Character.Systems.ThermalAndBiologySystem.ApplySporeInfection(ref vitals, thermal, 30.0f);
+            float thirstBefore = vitals.ThirstHydration;
+            float hpBefore = vitals.CurrentHp;
+            thermal.StepBiology(ref vitals, ambientTempCelsius: 20.0f, armorThermalInsulation01: 0.2f, isSubmergedOrInRain: false, deltaTime: 2.0f);
+            Assert.That(vitals.ThirstHydration, Is.LessThan(thirstBefore), "FoodPoisoning drains hydration");
+            Assert.That(vitals.CurrentHp, Is.LessThan(hpBefore), "Active infections drain HP");
+
+            Stratocraft.Character.Systems.ThermalAndBiologySystem.ReduceInfections(ref vitals, thermal, 60.0f);
+            Assert.That(vitals.ActiveDiseaseFlags & (byte)(Stratocraft.Character.Data.BiologicalAfflictionFlags.FoodPoisoning | Stratocraft.Character.Data.BiologicalAfflictionFlags.SporeInfection), Is.EqualTo(0));
+
+            // RingDifficultyCalculator + DungeonGeneratorSystem 0-GC array overload calisir
+            int ring0 = Stratocraft.WorldGen.RingDifficultyCalculator.CalculateRingTier(50, 50);
+            int ring3 = Stratocraft.WorldGen.RingDifficultyCalculator.CalculateRingTier(3500, 0);
+            Assert.That(ring0, Is.EqualTo(0));
+            Assert.That(ring3, Is.EqualTo(3));
+        }
     }
 }

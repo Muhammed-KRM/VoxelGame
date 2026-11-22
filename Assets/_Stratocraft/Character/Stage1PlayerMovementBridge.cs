@@ -1864,9 +1864,80 @@ namespace Stratocraft.Character
             playerTransform.position = pos;
         }
 
+        private Vector3 _combatFootworkImpulseVel;
+        private float _combatFootworkDecayRate = 12.0f;
+        private float _combatVerticalDipMeters;
+
+        /// <summary>Faz K.3: Blok geri savrulmasinda olusan diz/kamera dikey cokmesi (m, <= 0).</summary>
+        public float CurrentCombatVerticalDipMeters => _combatVerticalDipMeters;
+
+        /// <summary>
+        /// Faz K.3: Savas ayak isi (Lunge, Passing Step, MasterDeflect sidestep veya 0-kare blok geri savrulmasi)
+        /// hiz itkisini kuyruga ekler.
+        /// </summary>
+        public void AddCombatFootworkImpulse(
+            Vector3 worldVel,
+            float decayRate = 12.0f,
+            bool isKnockback = false,
+            float verticalDipMeters = 0f)
+        {
+            worldVel.y = 0f;
+            if (isKnockback)
+            {
+                _combatFootworkImpulseVel = worldVel;
+                _combatFootworkDecayRate = Mathf.Clamp(decayRate, 4.0f, 24.0f);
+            }
+            else
+            {
+                _combatFootworkImpulseVel += worldVel;
+                _combatFootworkImpulseVel = Vector3.ClampMagnitude(_combatFootworkImpulseVel, 9.5f);
+                _combatFootworkDecayRate = Mathf.Clamp(decayRate, 6.0f, 28.0f);
+            }
+
+            if (verticalDipMeters < _combatVerticalDipMeters)
+            {
+                _combatVerticalDipMeters = Mathf.Clamp(verticalDipMeters, -0.08f, 0f);
+            }
+        }
+
+        /// <summary>
+        /// Faz K.3: Kuyruktaki savas ayak isi / blok geri savrulma itkisini ayni karede (0-kare gecikme)
+        /// voksel Wall-Slide korumali olarak uygular ve ustel olarak sonumler.
+        /// </summary>
+        public void FlushCombatFootworkImpulses(
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float deltaTime)
+        {
+            float dt = Mathf.Clamp(deltaTime, 0.0001f, 0.05f);
+            if (_combatVerticalDipMeters < -0.0001f)
+            {
+                _combatVerticalDipMeters = Mathf.MoveTowards(_combatVerticalDipMeters, 0f, dt * 0.24f);
+            }
+            else
+            {
+                _combatVerticalDipMeters = 0f;
+            }
+
+            if (_combatFootworkImpulseVel.sqrMagnitude < 0.0004f)
+            {
+                _combatFootworkImpulseVel = Vector3.zero;
+                return;
+            }
+
+            Vector3 stepDelta = _combatFootworkImpulseVel * dt;
+            ApplyWeaponMomentumHorizontalStep(playerTransform, worldChunks, stepDelta, dt);
+            float decay = Mathf.Exp(-_combatFootworkDecayRate * dt);
+            _combatFootworkImpulseVel *= decay;
+            if (_combatFootworkImpulseVel.sqrMagnitude < 0.0004f)
+            {
+                _combatFootworkImpulseVel = Vector3.zero;
+            }
+        }
+
         /// <summary>
         /// Kılıcın ağırlığına göre savurma veya ağır siper taşıma sırasında oluşan yatay eylemsizlik çekişini
-        /// voksel duvar ve zemin çarpışması korumalı olarak oyuncu gövdesine uygular.
+        /// voksel duvar (X/Z ayrı Wall-Slide) ve zemin çarpışması korumalı olarak oyuncu gövdesine uygular.
         /// </summary>
         public void ApplyWeaponMomentumHorizontalStep(
             Transform playerTransform,
@@ -1879,20 +1950,53 @@ namespace Stratocraft.Character
             if (worldHorizontalDelta.sqrMagnitude < 0.000001f) return;
 
             Vector3 pos = playerTransform.position;
+            float capH = _movementState.CapsuleHeightMeters;
+            float capR = _movementState.CapsuleRadiusMeters;
             Vector3 candidatePos = pos + worldHorizontalDelta;
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, _movementState.CapsuleHeightMeters, _movementState.CapsuleRadiusMeters))
+            bool moved = false;
+
+            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capH, capR))
             {
                 float nextGroundY = SampleSupportGroundHeight(worldChunks, candidatePos);
-                if (nextGroundY - pos.y > MaxKneeStepUpMeters)
+                if (nextGroundY - pos.y <= MaxKneeStepUpMeters)
                 {
-                    return;
+                    pos.x = candidatePos.x;
+                    pos.z = candidatePos.z;
+                    moved = true;
                 }
-                pos.x = candidatePos.x;
-                pos.z = candidatePos.z;
-                if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f && nextGroundY > -20f)
+            }
+            else
+            {
+                // Faz K.3: X/Z ayri Wall-Slide (duvara capraz lunge/pushback carptiginda kilitlenmek yerine kayar)
+                if (Mathf.Abs(worldHorizontalDelta.x) > 0.0001f)
                 {
-                    float diff = nextGroundY - pos.y;
-                    pos.y = diff > 0f ? nextGroundY : (Mathf.Abs(diff) < 0.05f ? nextGroundY : Mathf.MoveTowards(pos.y, nextGroundY, deltaTime * 24f));
+                    Vector3 candX = new Vector3(pos.x + worldHorizontalDelta.x, pos.y, pos.z);
+                    if (!IsHorizontalStepBlocked(worldChunks, pos, candX, capH, capR) &&
+                        SampleSupportGroundHeight(worldChunks, candX) - pos.y <= MaxKneeStepUpMeters)
+                    {
+                        pos.x = candX.x;
+                        moved = true;
+                    }
+                }
+                if (Mathf.Abs(worldHorizontalDelta.z) > 0.0001f)
+                {
+                    Vector3 candZ = new Vector3(pos.x, pos.y, pos.z + worldHorizontalDelta.z);
+                    if (!IsHorizontalStepBlocked(worldChunks, pos, candZ, capH, capR) &&
+                        SampleSupportGroundHeight(worldChunks, candZ) - pos.y <= MaxKneeStepUpMeters)
+                    {
+                        pos.z = candZ.z;
+                        moved = true;
+                    }
+                }
+            }
+
+            if (moved)
+            {
+                float finalGroundY = SampleSupportGroundHeight(worldChunks, pos);
+                if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f && finalGroundY > -20f)
+                {
+                    float diff = finalGroundY - pos.y;
+                    pos.y = diff > 0f ? finalGroundY : (Mathf.Abs(diff) < 0.05f ? finalGroundY : Mathf.MoveTowards(pos.y, finalGroundY, deltaTime * 24f));
                 }
                 playerTransform.position = pos;
                 ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);

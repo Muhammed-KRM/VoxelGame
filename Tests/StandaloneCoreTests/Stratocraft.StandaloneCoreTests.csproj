@@ -27,7 +27,7 @@
     <Compile Include="..\..\Assets\_Stratocraft\Character\**\*.cs" Link="Character\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\..\Assets\_Stratocraft\Inventory\**\*.cs" Link="Inventory\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\..\Assets\_Stratocraft\CreaturesAI\**\*.cs" Link="CreaturesAI\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="..\..\Assets\_Stratocraft\UI\**\*.cs" Exclude="..\..\Assets\_Stratocraft\UI\F3TelemetryOverlayUi.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\Assets\_Stratocraft\UI\**\*.cs" Link="UI\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\..\Assets\Tests\EditMode\**\*.cs" Link="EditMode\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\..\Assets\Tests\PlayMode\**\*.cs" Link="PlayMode\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

@@ -94,21 +94,39 @@ namespace Stratocraft.WorldGen
         /// </summary>
         public static void StampAncientDungeonIfSelected(int worldSeed, VoxelChunkComponent chunk)
         {
-            if (chunk == null || !IsAncientDungeonPlot(worldSeed, chunk.ChunkX, chunk.ChunkZ, out _, out byte sanctumMat))
+            if (chunk == null)
             {
                 return;
             }
 
-            int localChunkInPlotX = ((chunk.ChunkX % 4) + 4) % 4;
-            int localChunkInPlotZ = ((chunk.ChunkZ % 4) + 4) % 4;
+            StampAncientDungeonIfSelected(worldSeed, chunk.ChunkX, chunk.ChunkZ, chunk.Voxels, chunk.Fluids);
+        }
+
+        /// <summary>
+        /// Ham chunk dizileri uzerinde sifir-tahsisli (0-GC) yeralti 4 odali Kadim Zindan damgalamasi.
+        /// </summary>
+        public static bool StampAncientDungeonIfSelected(int worldSeed, int chunkX, int chunkZ, uint[] voxels, ushort[] fluids)
+        {
+            if (voxels == null || fluids == null || !IsAncientDungeonPlot(worldSeed, chunkX, chunkZ, out _, out byte sanctumMat))
+            {
+                return false;
+            }
+
+            int localChunkInPlotX = ((chunkX % 4) + 4) % 4;
+            int localChunkInPlotZ = ((chunkZ % 4) + 4) % 4;
             // 4 oda: (1,1)->Oda1, (2,1)->Oda2, (2,2)->Oda3, (1,2)->Oda4 (Kutsal Boss Arenasi)
             if (localChunkInPlotX < 1 || localChunkInPlotX > 2 || localChunkInPlotZ < 1 || localChunkInPlotZ > 2)
             {
-                return;
+                return false;
             }
 
             const int baseFloorY = 72; // worldY = -40m yeralti kadim zindani
             const int ceilingY = 80;
+            if (voxels.Length <= VoxelChunkComponent.GetFlatIndex(15, ceilingY, 15))
+            {
+                return false;
+            }
+
             uint sanctumWallRaw = VoxelBitUtility.PackStandard(
                 sanctumMat,
                 VoxelBitUtility.FullDensity,
@@ -131,17 +149,19 @@ namespace Stratocraft.WorldGen
                         int idx = VoxelChunkComponent.GetFlatIndex(lx, y, lz);
                         if (isShell && !isDoorway)
                         {
-                            chunk.Voxels[idx] = sanctumWallRaw;
-                            chunk.Fluids[idx] = 0;
+                            voxels[idx] = sanctumWallRaw;
+                            fluids[idx] = 0;
                         }
                         else
                         {
-                            chunk.Voxels[idx] = 0u;
-                            chunk.Fluids[idx] = 0;
+                            voxels[idx] = 0u;
+                            fluids[idx] = 0;
                         }
                     }
                 }
             }
+
+            return true;
         }
     }
 }

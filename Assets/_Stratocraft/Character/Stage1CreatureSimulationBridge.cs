@@ -304,6 +304,22 @@ namespace Stratocraft.Character
             SpawnProceduralContinentCreature(worldParent, sharedMat, worldChunks, new Vector3(72.5f, 102f, 78.5f), 4.1f, 14); // Griffin #14
         }
 
+        /// <summary>Faz K.3: Anti-Overshoot korumasi icin en yakin canli dusmana yatay mesafe (m).</summary>
+        public float GetNearestAliveHostileHorizontalDistance(Vector3 playerPos)
+        {
+            float bestSq = float.MaxValue;
+            for (int i = 0; i < _agents.Count; i++)
+            {
+                LiveCreatureAgent a = _agents[i];
+                if (a.Root == null || a.State == CreatureAiState.Dead || a.IsOffScreenAnalytical) continue;
+                float dx = a.Root.position.x - playerPos.x;
+                float dz = a.Root.position.z - playerPos.z;
+                float dSq = dx * dx + dz * dz;
+                if (dSq < bestSq) bestSq = dSq;
+            }
+            return bestSq < float.MaxValue ? Mathf.Sqrt(bestSq) : 999.0f;
+        }
+
         public void SpawnBiomeCreaturesNearPosition(
             Vector3 playerPos, Transform? worldParent, Material? sharedMat, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
@@ -311,9 +327,8 @@ namespace Stratocraft.Character
             // Merkez Zumrut Baslangic Vadisinde (r < 75m) egitmen botu ve mekanik kukla disinda hicbir vahsi canli dogmaz!
             if (distFromOrigin < 75.0f) return;
 
-            byte ring = distFromOrigin < 120f ? (byte)2
-                : (distFromOrigin < 1800f ? (byte)3
-                : (distFromOrigin < 9000f ? (byte)4 : (byte)5));
+            int canonicalRing = Stratocraft.WorldGen.RingDifficultyCalculator.CalculateRingTier(playerPos.x, playerPos.z);
+            byte ring = (byte)Mathf.Clamp(canonicalRing + 1, 1, 7);
 
             int activeTier0Count = 0;
             int nearbyCount = 0;
@@ -1800,16 +1815,38 @@ namespace Stratocraft.Character
 
                             if (isPlayerParrying && activeMove.CanBeParried && combatBridge != null)
                             {
-                                if (combatBridge.NotifyParryImpactAndCheckGuardBreak(rawDmg, out float selfHitRecoilDamage))
+                                // Faz K.3: Yaratik saldirisini gercek kutle/hiz profiliyle EvaluateIncomingStrikeAgainstPlayerGuard uzerinden gecir!
+                                float creatureStrikeMassKg = a.IsFlyingBoss
+                                    ? 6.4f
+                                    : Mathf.Clamp(1.85f + a.DamageMultiplier * 1.45f * activeMove.DamageMultiplier, 1.85f, 6.2f);
+                                float creatureStrikeSpeedMps = Mathf.Clamp(5.2f + activeMove.DamageMultiplier * 3.1f, 5.2f, 11.5f);
+                                Vector2 incomingDir2D = activeMove.Direction switch
                                 {
-                                    float totalBreakDmg = selfHitRecoilDamage + rawDmg * 0.40f;
+                                    CreatureAttackDirection.Overhead => new Vector2(0f, -1f),
+                                    CreatureAttackDirection.Underhand => new Vector2(0f, 1f),
+                                    CreatureAttackDirection.Left => new Vector2(1f, 0f),
+                                    CreatureAttackDirection.Right => new Vector2(-1f, 0f),
+                                    _ => new Vector2(0f, -0.7f)
+                                };
+                                ParryResolutionOutcome outcome = combatBridge.EvaluateIncomingStrikeAgainstPlayerGuard(
+                                    creatureStrikeMassKg,
+                                    creatureStrikeSpeedMps,
+                                    incomingDir2D,
+                                    playerMissingArm: false,
+                                    out float bleedThroughDmg,
+                                    out string parrySummary);
+                                if (outcome == ParryResolutionOutcome.GuardCrushedByMass || outcome == ParryResolutionOutcome.MismatchedSelfRecoil)
+                                {
+                                    float totalBreakDmg = Mathf.Max(bleedThroughDmg, rawDmg * 0.35f);
                                     playerVitals.CurrentHp = Mathf.Max(0f, playerVitals.CurrentHp - totalBreakDmg);
-                                    LastCreatureEventText = combatBridge.LastCombatActionText;
+                                    LastCreatureEventText = parrySummary;
+                                }
+                                else if (outcome == ParryResolutionOutcome.MasterDeflect)
+                                {
+                                    LastCreatureEventText = $"⚡ YÖNLÜ SAPTIRMA (MASTER DEFLECT)! {a.DisplayName} [{activeMove.Label}] boşa çıktı -> 2.1x KONTRA!";
                                 }
                                 else
                                 {
-                                    // Zamanlanmis RMB blogu %100 hasari engeller ve Riposte penceresi acar!
-                                    combatBridge.NotifySuccessfulParryOrClash(new Vector2(-0.30f, 0.35f), openRiposteWindow: true);
                                     LastCreatureEventText = $"🛡️ %100 BLOK & RIPOSTE! {a.DisplayName} [{activeMove.Label}] engellendi -> KONTRA VUR!";
                                 }
                             }

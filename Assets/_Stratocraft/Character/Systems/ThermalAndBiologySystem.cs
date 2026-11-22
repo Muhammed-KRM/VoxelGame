@@ -182,6 +182,72 @@ namespace Stratocraft.Character.Systems
             vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.HeavyBleeding;
         }
 
+        /// <summary>Aktif Gida Zehirlenmesi (FoodPoisoning) kalan suresi (sn).</summary>
+        public float FoodPoisoningSeconds { get; set; }
+
+        /// <summary>Aktif Spor Enfeksiyonu (SporeInfection) kalan suresi (sn).</summary>
+        public float SporeInfectionSeconds { get; set; }
+
+        /// <summary>Cig/yanmis et veya kirli su sonrasi Gida Zehirlenmesi uygular.</summary>
+        public static void ApplyFoodPoisoning(ref CharacterVitalsComponent vitals, ThermalAndBiologySystem? instance = null, float durationSeconds = 45.0f)
+        {
+            if (durationSeconds <= 0f) return;
+            if (instance != null) instance.FoodPoisoningSeconds = MathF.Max(instance.FoodPoisoningSeconds, durationSeconds);
+            vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.FoodPoisoning;
+        }
+
+        /// <summary>Bataklik veya derin magara mantar sporu temasi sonrasi Spor Enfeksiyonu uygular.</summary>
+        public static void ApplySporeInfection(ref CharacterVitalsComponent vitals, ThermalAndBiologySystem? instance = null, float durationSeconds = 60.0f)
+        {
+            if (durationSeconds <= 0f) return;
+            if (instance != null) instance.SporeInfectionSeconds = MathF.Max(instance.SporeInfectionSeconds, durationSeconds);
+            vitals.ActiveDiseaseFlags |= (byte)BiologicalAfflictionFlags.SporeInfection;
+        }
+
+        /// <summary>Temiz su veya tibbi mudahale ile gida zehirlenmesi / spor enfeksiyonunu hafifletir veya temizler.</summary>
+        public static void ReduceInfections(ref CharacterVitalsComponent vitals, ThermalAndBiologySystem? instance = null, float reduceSeconds = 25.0f)
+        {
+            if (instance != null)
+            {
+                instance.FoodPoisoningSeconds = MathF.Max(0f, instance.FoodPoisoningSeconds - reduceSeconds);
+                instance.SporeInfectionSeconds = MathF.Max(0f, instance.SporeInfectionSeconds - reduceSeconds);
+                if (instance.FoodPoisoningSeconds <= 0.01f) vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.FoodPoisoning;
+                if (instance.SporeInfectionSeconds <= 0.01f) vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.SporeInfection;
+            }
+            else
+            {
+                vitals.ActiveDiseaseFlags &= (byte)~(BiologicalAfflictionFlags.FoodPoisoning | BiologicalAfflictionFlags.SporeInfection);
+            }
+        }
+
+        private void StepDiseaseAfflictions(ref CharacterVitalsComponent vitals, float deltaTime)
+        {
+            if ((vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.FoodPoisoning) != 0)
+            {
+                if (FoodPoisoningSeconds <= 0.001f) FoodPoisoningSeconds = 45.0f;
+                vitals.ThirstHydration = MathF.Max(0.0f, vitals.ThirstHydration - 0.55f * deltaTime);
+                vitals.Stamina = MathF.Max(0.0f, vitals.Stamina - 2.2f * deltaTime);
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 0.25f * deltaTime);
+                FoodPoisoningSeconds = MathF.Max(0.0f, FoodPoisoningSeconds - deltaTime);
+                if (FoodPoisoningSeconds <= 0.001f)
+                {
+                    vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.FoodPoisoning;
+                }
+            }
+
+            if ((vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.SporeInfection) != 0)
+            {
+                if (SporeInfectionSeconds <= 0.001f) SporeInfectionSeconds = 60.0f;
+                vitals.LungOxygenPercent = MathF.Max(0.0f, vitals.LungOxygenPercent - 0.65f * deltaTime);
+                vitals.CurrentHp = MathF.Max(0.0f, vitals.CurrentHp - 0.45f * deltaTime);
+                SporeInfectionSeconds = MathF.Max(0.0f, SporeInfectionSeconds - deltaTime);
+                if (SporeInfectionSeconds <= 0.001f)
+                {
+                    vitals.ActiveDiseaseFlags &= (byte)~BiologicalAfflictionFlags.SporeInfection;
+                }
+            }
+        }
+
         /// <summary>
         /// Dalga A (Faz A.4 &amp; A.5): Cevresel sicaklik efektleri kapali olsa dahi Hayatta Kalma modunda
         /// dengeli aclik (~35 dk), susuzluk (~23 dk), agir kanama ve 30 sn BleedOutCrawl sayacini ilerletir.
@@ -450,11 +516,13 @@ namespace Stratocraft.Character.Systems
                      vitals.CurrentHp > 0.0f &&
                      !isHypothermic &&
                      !isHyperthermic &&
-                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush)) == 0)
+                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush | BiologicalAfflictionFlags.FoodPoisoning | BiologicalAfflictionFlags.SporeInfection)) == 0)
             {
                 vitals.CurrentHp = MathF.Min(vitals.MaxHp, vitals.CurrentHp + 0.8f * deltaTime);
                 vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 4.0f * deltaTime);
             }
+
+            StepDiseaseAfflictions(ref vitals, deltaTime);
 
             // 6. Atardamar Kanamasi (Arterial Bleeding) ve Dogal Pihtilasma (0.35 HP/s^2 azalma)
             float activeBleed = MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec);
@@ -648,11 +716,13 @@ namespace Stratocraft.Character.Systems
                      vitals.CurrentHp > 0.0f &&
                      !isHypothermic &&
                      !isHyperthermic &&
-                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush)) == 0)
+                     (vitals.ActiveDiseaseFlags & (byte)(BiologicalAfflictionFlags.Hypoxia | BiologicalAfflictionFlags.HeavyBleeding | BiologicalAfflictionFlags.BarotraumaCrush | BiologicalAfflictionFlags.FoodPoisoning | BiologicalAfflictionFlags.SporeInfection)) == 0)
             {
                 vitals.CurrentHp = MathF.Min(vitals.MaxHp, vitals.CurrentHp + 0.8f * deltaTime);
                 vitals.Stamina = MathF.Min(vitals.MaxStamina, vitals.Stamina + 4.0f * deltaTime);
             }
+
+            StepDiseaseAfflictions(ref vitals, deltaTime);
 
             float activeBleed = MathF.Max(BleedRateHpPerSec, GlobalPlayerBleedRateHpPerSec);
             if ((vitals.ActiveDiseaseFlags & (byte)BiologicalAfflictionFlags.HeavyBleeding) != 0 && activeBleed <= 0.001f)

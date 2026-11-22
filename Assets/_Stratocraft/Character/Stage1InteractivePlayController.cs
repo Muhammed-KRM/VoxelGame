@@ -2799,6 +2799,8 @@ namespace Stratocraft.Character
                                        activeConsumableSlot.Kind == InventoryItemKind.PotionStamina ||
                                        activeConsumableSlot.Kind == InventoryItemKind.MedicalBandage ||
                                        activeConsumableSlot.Kind == InventoryItemKind.FoodCookedMeat ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.FoodRawMeat ||
+                                       activeConsumableSlot.Kind == InventoryItemKind.FoodBurntMeat ||
                                        activeConsumableSlot.Kind == InventoryItemKind.FoodWildBerries ||
                                        activeConsumableSlot.Kind == InventoryItemKind.FoodCleanWater);
             if (isConsumableInHand && !_miningCtrl.IsCrystalActive)
@@ -2806,7 +2808,7 @@ namespace Stratocraft.Character
                 if (Input.GetMouseButtonDown(1) || Input.GetMouseButtonDown(0))
                 {
                     VisualInventorySlot slot = activeConsumableSlot;
-                    if (slot.Kind == InventoryItemKind.FoodCleanWater &&
+                    if ((slot.Kind == InventoryItemKind.FoodCleanWater || slot.Kind == InventoryItemKind.FoodRawMeat) &&
                         Input.GetMouseButtonDown(1) &&
                         (_campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
                          _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform)))
@@ -2885,6 +2887,26 @@ namespace Stratocraft.Character
                             consumed = true;
                             break;
 
+                        case InventoryItemKind.FoodRawMeat:
+                            _movementBridge.Vitals.HungerKcal = Mathf.Min(2500f, _movementBridge.Vitals.HungerKcal + 220f);
+                            if (!_holsterCtrl.IsCreativeMode)
+                            {
+                                ThermalAndBiologySystem.ApplyFoodPoisoning(ref _movementBridge.Vitals, _thermalSystem, 45.0f);
+                            }
+                            feedback = "🤢 ÇİĞ ET YENDİ (+220 kcal, ⚠️ GIDA ZEHİRLENMESİ 45sn! Temiz su iç!)";
+                            consumed = true;
+                            break;
+
+                        case InventoryItemKind.FoodBurntMeat:
+                            _movementBridge.Vitals.HungerKcal = Mathf.Min(2500f, _movementBridge.Vitals.HungerKcal + 110f);
+                            if (!_holsterCtrl.IsCreativeMode)
+                            {
+                                ThermalAndBiologySystem.ApplyFoodPoisoning(ref _movementBridge.Vitals, _thermalSystem, 25.0f);
+                            }
+                            feedback = "🤢 YANMIŞ ET YENDİ (+110 kcal, ⚠️ HAFİF GIDA ZEHİRLENMESİ 25sn!)";
+                            consumed = true;
+                            break;
+
                         case InventoryItemKind.FoodWildBerries:
                             _movementBridge.Vitals.CurrentHp = Mathf.Min(_movementBridge.Vitals.MaxHp, _movementBridge.Vitals.CurrentHp + 12f);
                             _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 20f);
@@ -2898,6 +2920,7 @@ namespace Stratocraft.Character
                             _movementBridge.Vitals.ThirstHydration = Mathf.Min(100f, _movementBridge.Vitals.ThirstHydration + 35f);
                             _movementBridge.Vitals.Stamina = Mathf.Min(_movementBridge.Vitals.MaxStamina, _movementBridge.Vitals.Stamina + 20f);
                             _movementBridge.Vitals.CoreBodyTempCelsius = Mathf.Max(37.0f, _movementBridge.Vitals.CoreBodyTempCelsius - 0.5f);
+                            ThermalAndBiologySystem.ReduceInfections(ref _movementBridge.Vitals, _thermalSystem, 30.0f);
                             feedback = $"💧 Temiz Kaynak Suyu İçildi (+%35 Hidrasyon, +20 EP | Su: %{_movementBridge.Vitals.ThirstHydration:0})";
                             consumed = true;
                             break;
@@ -3276,10 +3299,15 @@ namespace Stratocraft.Character
                 dt,
                 _isFirstPersonMode);
             transform.rotation = Quaternion.Euler(0f, bodyYawDeg, 0f);
+            _combatBridge.NearestEnemyHorizontalDistanceMeters = _creatureBridge.GetNearestAliveHostileHorizontalDistance(transform.position);
             Vector3 weaponMomentumDelta = _combatBridge.ConsumePendingBodyMomentumWorldDelta(transform, dt);
             if (weaponMomentumDelta.sqrMagnitude > 0.000001f)
             {
                 _movementBridge.ApplyWeaponMomentumHorizontalStep(transform, _worldChunks, weaponMomentumDelta, dt);
+            }
+            if (_combatBridge.TryConsumeImmediateFootworkImpulse(transform, out Vector3 lungeVel, out float lungeDecay, out bool lungeKb, out float lungeDip))
+            {
+                _movementBridge.AddCombatFootworkImpulse(lungeVel, lungeDecay, lungeKb, lungeDip);
             }
 
             // Faz A.2: 1 kare bayat FPS kamerasi giderildi — StepRigAnimation (UpdateCameraPose) silah transformundan ONCE calisir!
@@ -3388,6 +3416,12 @@ namespace Stratocraft.Character
             _feedbackArenaBridge.StepFeedbackAndArena(
                 dt, transform, _combatBridge, ref _movementBridge.Vitals,
                 SharedVoxelMaterial, _worldChunks, _rigAnimator.PlayerLeftArmSevered);
+            // Faz K.3: Yaratik ve Duellocu bloklarindan dogan geri savrulmayi ayni karede (0-kare gecikme) uygula!
+            if (_combatBridge.TryConsumeImmediateFootworkImpulse(transform, out Vector3 blockVel, out float blockDecay, out bool blockKb, out float blockDip))
+            {
+                _movementBridge.AddCombatFootworkImpulse(blockVel, blockDecay, blockKb, blockDip);
+            }
+            _movementBridge.FlushCombatFootworkImpulses(transform, _worldChunks, dt);
             if (_holsterCtrl.IsCreativeMode)
             {
                 _movementBridge.Vitals.CurrentHp = _movementBridge.Vitals.MaxHp;
@@ -4030,6 +4064,13 @@ namespace Stratocraft.Character
                 _ambientTempCelsius = StratocraftFloatingIslandWorldGen.SampleSurfaceBiomeBaseTemperatureCelsius(
                     transform.position.x, transform.position.z);
                 _thermalSystem.SyncWindChillFallbackCelsius(_ambientTempCelsius);
+                // Zehirli Turba Batakligi (Biyom 3) + yuksek islaklikta spor enfeksiyonu tetiklenir:
+                if (!_holsterCtrl.IsCreativeMode &&
+                    _movementBridge.Vitals.Wetness01 > 0.72f &&
+                    StratocraftFloatingIslandWorldGen.GetBiomeId((int)transform.position.x, (int)transform.position.z) == 3)
+                {
+                    ThermalAndBiologySystem.ApplySporeInfection(ref _movementBridge.Vitals, _thermalSystem, 50.0f);
+                }
                 // Faz A.4 & A.5: Cevresel sicaklik efektleri kapali olsa da Hayatta Kalma aclik/susuzluk & 30sn BleedOut calisir!
                 bool activeEffort = _movementBridge.MovementState.CurrentSpeedMetersPerSec > 4.2f || _combatBridge.IsActiveAttackSwing;
                 ThermalAndBiologySystem.StepSurvivalMetabolismAndBleedOut(
