@@ -73,7 +73,11 @@ namespace Stratocraft.Character
         WovenClothTunic = 55,
         OiledLeatherWindbreaker = 56,
         HeavyFurWinterParka = 57,
-        FurLinedWinterBoots = 58
+        FurLinedWinterBoots = 58,
+        WeaponKatana = 59,
+        WeaponGreatsword = 60,
+        WeaponRapier = 61,
+        ScrollMartialStance = 62
     }
 
     /// <summary>
@@ -203,7 +207,8 @@ namespace Stratocraft.Character
                    Kind == InventoryItemKind.WindmillSailPanel ||
                    Kind == InventoryItemKind.WildGrainBundle ||
                    Kind == InventoryItemKind.MilledFlour ||
-                   Kind == InventoryItemKind.CrushedFluxPowder;
+                   Kind == InventoryItemKind.CrushedFluxPowder ||
+                   Kind == InventoryItemKind.ScrollMartialStance;
         }
     }
 
@@ -231,6 +236,8 @@ namespace Stratocraft.Character
             new Stratocraft.Character.Systems.ClothingSlotWetnessState[ArmorSlotCount];
         public Stratocraft.Character.Systems.PlayerThermalGearSummary LastThermalGearSummary;
         public float LastEffectiveWindChillCelsius { get; set; } = 21.0f;
+        public float CurrentPosture01 { get; set; } = 1.0f;
+        public bool ShowPostureBar { get; set; }
 
         public VisualInventorySlot AssemblyPreviewSlot;
         public ClothMatCraftMatch ActiveAssemblyMatch { get; private set; }
@@ -280,6 +287,7 @@ namespace Stratocraft.Character
 
         private static readonly string[] CachedHotbarKeyLabels = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
         private static readonly string[] CachedStackCountStrings = BuildCachedStackCountStrings();
+        private static readonly string[] CachedPostureLabels = BuildCachedPostureLabels();
         private int _lastHpCurInt = -1;
         private int _lastHpMaxInt = -1;
         private string _cachedHpLabel = string.Empty;
@@ -297,6 +305,15 @@ namespace Stratocraft.Character
         {
             var arr = new string[257];
             for (int i = 0; i < arr.Length; i++) arr[i] = $"x{i}";
+            return arr;
+        }
+
+        private static string[] BuildCachedPostureLabels()
+        {
+            var arr = new string[101];
+            arr[0] = "💥 GARD KIRILDI! — DENGE (POSTURE) %0";
+            for (int i = 1; i <= 25; i++) arr[i] = $"⚠️ DENGE KRİTİK (POSTURE) %{i}";
+            for (int i = 26; i <= 100; i++) arr[i] = $"🛡️ DENGE (POSTURE) %{i}";
             return arr;
         }
 
@@ -367,6 +384,7 @@ namespace Stratocraft.Character
             InventoryItemKind.WildGrainBundle => 12,
             InventoryItemKind.MilledFlour => 12,
             InventoryItemKind.CrushedFluxPowder => 12,
+            InventoryItemKind.ScrollMartialStance => 4,
             _ => 1
         };
 
@@ -684,6 +702,42 @@ namespace Stratocraft.Character
                 HotbarSlots[SelectedHotbarIndex] = slot;
             }
         }
+
+        public static bool IsSwordKind(InventoryItemKind kind) =>
+            kind == InventoryItemKind.WeaponSword ||
+            kind == InventoryItemKind.WeaponKatana ||
+            kind == InventoryItemKind.WeaponGreatsword ||
+            kind == InventoryItemKind.WeaponRapier;
+
+        public static bool TryMapSwordKindToArchetype(InventoryItemKind kind, out CombatWeaponArchetype archetype)
+        {
+            switch (kind)
+            {
+                case InventoryItemKind.WeaponSword:
+                    archetype = CombatWeaponArchetype.Longsword;
+                    return true;
+                case InventoryItemKind.WeaponKatana:
+                    archetype = CombatWeaponArchetype.Katana;
+                    return true;
+                case InventoryItemKind.WeaponGreatsword:
+                    archetype = CombatWeaponArchetype.Greatsword;
+                    return true;
+                case InventoryItemKind.WeaponRapier:
+                    archetype = CombatWeaponArchetype.Rapier;
+                    return true;
+                default:
+                    archetype = CombatWeaponArchetype.Longsword;
+                    return false;
+            }
+        }
+
+        public static CombatMartialStance ResolveScrollMartialStance(byte subId) => (subId & 3) switch
+        {
+            0 => CombatMartialStance.HighGuard_VomTag,
+            1 => CombatMartialStance.Iaido_QuickDraw,
+            2 => CombatMartialStance.Fencing_Punta,
+            _ => CombatMartialStance.TwoHand_Juggernaut
+        };
 
         public static bool IsArmorKind(InventoryItemKind kind) =>
             kind == InventoryItemKind.ArmorHelmet ||
@@ -1145,6 +1199,37 @@ namespace Stratocraft.Character
             return false;
         }
 
+        public bool HasAnySwordInHotbar()
+        {
+            for (int i = 0; i < HotbarSlotCount; i++)
+            {
+                if (!HotbarSlots[i].IsEmpty && IsSwordKind(HotbarSlots[i].Kind))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public bool TryConsumeHeldMartialStanceScroll(out CombatMartialStance unlockedStance) =>
+            TryConsumeHeldMartialStanceScroll(null, out unlockedStance);
+
+        public bool TryConsumeHeldMartialStanceScroll(
+            Stage1MatterCrystalAndMiningController? miningCtrl,
+            out CombatMartialStance unlockedStance)
+        {
+            unlockedStance = CombatMartialStance.HighGuard_VomTag;
+            if (SelectedHotbarIndex < 0 || SelectedHotbarIndex >= HotbarSlotCount) return false;
+            ref VisualInventorySlot active = ref HotbarSlots[SelectedHotbarIndex];
+            if (active.IsEmpty || active.Kind != InventoryItemKind.ScrollMartialStance) return false;
+
+            unlockedStance = ResolveScrollMartialStance(active.SubId);
+            active.Count--;
+            if (active.Count <= 0) active = default;
+            if (miningCtrl != null) PushUiCountsToCrystalStorage(miningCtrl);
+            return true;
+        }
+
         /// <summary>
         /// Kemer [1..9] yuvalarinda oyuncunun gercekten sahip oldugu bir Kilic varsa onu secer ve true doner;
         /// yoksa ASLA yoktan kilic uretmez ve false doner ([G] dovus durusu tusu icin).
@@ -1153,14 +1238,14 @@ namespace Stratocraft.Character
         {
             if (SelectedHotbarIndex >= 0 && SelectedHotbarIndex < HotbarSlotCount &&
                 !HotbarSlots[SelectedHotbarIndex].IsEmpty &&
-                HotbarSlots[SelectedHotbarIndex].Kind == InventoryItemKind.WeaponSword)
+                IsSwordKind(HotbarSlots[SelectedHotbarIndex].Kind))
             {
                 return true;
             }
 
             for (int i = 0; i < HotbarSlotCount; i++)
             {
-                if (!HotbarSlots[i].IsEmpty && HotbarSlots[i].Kind == InventoryItemKind.WeaponSword)
+                if (!HotbarSlots[i].IsEmpty && IsSwordKind(HotbarSlots[i].Kind))
                 {
                     SelectedHotbarIndex = i;
                     return true;
@@ -2172,10 +2257,11 @@ namespace Stratocraft.Character
             }
 
             bool showOxygen = isSubmerged || lungOxygenPercent < 98f;
+            bool showPosture = ShowPostureBar || CurrentPosture01 < 0.99f;
             DrawVitalsHudBars(screenW, barY, currentHp, maxHp, stamina, maxStamina, isExhaustedLock, lungOxygenPercent, isSubmerged, coreBodyTemp, hungerKcal, thirstHydration);
 
             string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge);
-            float bannerY = showOxygen ? barY - 65f : barY - 49f;
+            float bannerY = barY - 49f - (showOxygen ? 16f : 0f) - (showPosture ? 15f : 0f);
             GUI.Box(new Rect(screenW * 0.5f - 285f, bannerY, 570f, 20f), activeTitle, _slotTitleBannerStyle!);
 
             // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (SADECE [C] basılıp açıldığında görünür!)
@@ -2536,7 +2622,17 @@ namespace Stratocraft.Character
 
         private static string GetShortSlotBadgeLabel(in VisualInventorySlot slot) => slot.Kind switch
         {
-            InventoryItemKind.WeaponSword => slot.SubId == 1 ? "T1 Bıçak" : "Kılıç",
+            InventoryItemKind.WeaponSword => slot.SubId == 1 ? "T1 Bıçak" : "UzunKılıç",
+            InventoryItemKind.WeaponKatana => "Katana",
+            InventoryItemKind.WeaponGreatsword => "Zweihänder",
+            InventoryItemKind.WeaponRapier => "Rapier",
+            InventoryItemKind.ScrollMartialStance => ResolveScrollMartialStance(slot.SubId) switch
+            {
+                CombatMartialStance.Iaido_QuickDraw => "Prş:Iaido",
+                CombatMartialStance.Fencing_Punta => "Prş:Eskrim",
+                CombatMartialStance.TwoHand_Juggernaut => "Prş:Yarma",
+                _ => "Prş:Şövalye"
+            },
             InventoryItemKind.ToolPickaxe => slot.SubId == 1 ? "TaşKazma" : "Kazma",
             InventoryItemKind.ToolAxe => slot.SubId == 1 ? "TaşBalta" : "Balta",
             InventoryItemKind.ToolMicroChisel => "Keski",
@@ -2854,7 +2950,7 @@ namespace Stratocraft.Character
                     GUI.Label(new Rect(rect.x + 4f, rect.y + rect.height - 20f, rect.width - 7f, 18f), GetCachedStackCountString(slot.Count), _countLabelStyle!);
                 }
 
-                if (slot.Kind == InventoryItemKind.WeaponSword ||
+                if (IsSwordKind(slot.Kind) ||
                     slot.Kind == InventoryItemKind.ToolPickaxe ||
                     slot.Kind == InventoryItemKind.ToolAxe ||
                     slot.Kind == InventoryItemKind.ToolStoneHammer ||
@@ -2952,11 +3048,24 @@ namespace Stratocraft.Character
             return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)} | [B] Tarif & Malzeme Kitabı";
         }
 
-        public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge? combatBridge = null) => slot.Kind switch
+        public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge? combatBridge = null)
+        {
+            _ = combatBridge;
+            return slot.Kind switch
         {
             InventoryItemKind.WeaponSword => slot.SubId == 1
                 ? $"İlkel Çakmaktaşı Bıçak (Kalite: %{slot.GetEffectiveShapeDna().EffectiveQualityPct} | T1)"
-                : (combatBridge != null ? combatBridge.GetWeaponDisplayName() : "Çelik Uzun Kılıç (1.85 kg)"),
+                : "Çelik Uzun Kılıç (Longsword — 1.85 kg)",
+            InventoryItemKind.WeaponKatana => "Katana (Kavisli Samuray Kılıcı — 1.35 kg)",
+            InventoryItemKind.WeaponGreatsword => "Ağır Çift El Kılıcı (Zweihänder — 5.60 kg)",
+            InventoryItemKind.WeaponRapier => "İnce Eskrim Kılıcı (Rapier — 0.95 kg)",
+            InventoryItemKind.ScrollMartialStance => ResolveScrollMartialStance(slot.SubId) switch
+            {
+                CombatMartialStance.Iaido_QuickDraw => "Kadim Dövüş Parşömeni: Iaido / Battojutsu (Şimşek Çekiş)",
+                CombatMartialStance.Fencing_Punta => "Kadim Dövüş Parşömeni: Eskrim / Punta (İğne Saplama)",
+                CombatMartialStance.TwoHand_Juggernaut => "Kadim Dövüş Parşömeni: Çift El Yarma (Zornhau / Juggernaut)",
+                _ => "Kadim Dövüş Parşömeni: Şövalye Duruşu (High Guard / Vom Tag)"
+            },
             InventoryItemKind.ToolPickaxe => slot.SubId == 1
                 ? $"İlkel Taş Kazma (Kalite: %{slot.GetEffectiveShapeDna().EffectiveQualityPct} | T1)"
                 : "Demir Kazma (T2 - 2.40 kg)",
@@ -3080,13 +3189,18 @@ namespace Stratocraft.Character
             InventoryItemKind.HeavyFurWinterParka => "Ağır Kürk Kış Parkası (1.45 clo — Tipi ve Hipotermi Kalkanı)",
             InventoryItemKind.FurLinedWinterBoots => "Kürk Astarlı Kış Çizmesi (1.45 clo — Derin Kar & Donma Direnci)",
             _ => "Boş Yuva"
-        };
+            };
+        }
 
         public static string GetSlotUsageHint(in VisualInventorySlot slot) => slot.Kind switch
         {
             InventoryItemKind.WeaponSword => slot.SubId == 1
                 ? "[Sol Tık+Fare] Hızlı Kesik & Savunma | [I] Kumaş Çantada Üretildi"
-                : "[Sol Tik+Fare] Yonsel Kesik | [Sag Tik+Fare] Capraz Blok & Saptirma | [G] Stil",
+                : "[Sol Tık+Fare] Dengeli Kesik | [Sağ Tık+Fare] Çapraz Blok & Riposte | [X] Yarı-Kılıç | [G] Stil",
+            InventoryItemKind.WeaponKatana => "[Sol Tık+Fare] Kavisli Hızlı Kesik | [Sağ Tık+Fare] Saptırma | [G] Iaido Şimşek Çekiş Uyumu",
+            InventoryItemKind.WeaponGreatsword => "[Sol Tık+Fare] Ağır Yarma Darbesi | [X] Yarı-Kılıç | [G] Çift El Zornhau Uyumu",
+            InventoryItemKind.WeaponRapier => "[Sol Tık+İleri / ScrollUp] Zırh Delici İğne Saplama | [Sağ Tık+Fare] Çevik Saptırma | [G] Eskrim Uyumu",
+            InventoryItemKind.ScrollMartialStance => "[Sol / Sağ Tık] Parşömeni Oku ve Kadim Dövüş Duruşunu Kalıcı Olarak Öğren ([G] ile Geçiş)",
             InventoryItemKind.ToolPickaxe => slot.SubId == 1
                 ? "[Sol Tık+Fare] Taş, Kömür, Bakır ve Rezonans Kuvarsı Kazma (T1 İlkel)"
                 : "[Sol Tik+Fare] Kaya ve Cevher Damari Kirma (T2+)",
@@ -3266,7 +3380,8 @@ namespace Stratocraft.Character
             float halfWidth = (totalBarWidth - 8f) * 0.5f;
 
             // 1. Oksijen Barı (Suya batınca veya oksijen <%98 olunca görünür — Açlık/Susuzluk barının üstünde)
-            if (isSubmerged || lungOxygenPercent < 98f)
+            bool showOxygen = isSubmerged || lungOxygenPercent < 98f;
+            if (showOxygen)
             {
                 Rect oxyRect = new Rect(startX, currentY - 30f, totalBarWidth, 12f);
                 float oxy01 = Mathf.Clamp01(lungOxygenPercent / 100f);
@@ -3279,6 +3394,25 @@ namespace Stratocraft.Character
                 }
                 DrawHorizontalBar(oxyRect, oxy01, oxyFill, new Color(0.04f, 0.12f, 0.20f, 0.88f), new Color(0.25f, 0.50f, 0.70f, 0.95f),
                     _cachedOxyLabel);
+            }
+
+            // 1.25. Faz K.4: DENGE (POSTURE) Barı (ShowPostureBar || CurrentPosture01 < 0.99f olduğunda Vitals üstünde, 0 B/kare GC)
+            if (ShowPostureBar || CurrentPosture01 < 0.99f)
+            {
+                float posture01 = Mathf.Clamp01(CurrentPosture01);
+                float postureY = showOxygen ? (currentY - 45f) : (currentY - 30f);
+                Rect postureRect = new Rect(startX, postureY, totalBarWidth, 12f);
+                int posturePctInt = Mathf.Clamp(Mathf.RoundToInt(posture01 * 100f), 0, 100);
+                Color postureFill = posture01 < 0.25f
+                    ? new Color(0.96f, 0.18f, 0.20f, 1.0f)
+                    : (posture01 < 0.55f ? new Color(0.98f, 0.52f, 0.14f, 1.0f) : new Color(0.95f, 0.78f, 0.22f, 1.0f));
+                DrawHorizontalBar(
+                    postureRect,
+                    posture01,
+                    postureFill,
+                    new Color(0.14f, 0.11f, 0.05f, 0.90f),
+                    new Color(0.68f, 0.54f, 0.20f, 0.96f),
+                    CachedPostureLabels[posturePctInt]);
             }
 
             // 1.5. Faz A.5: Kompakt Amber Açlık (TOK) ve Mavi Susuzluk (SU) Barları (Can/Enerji'nin hemen üstünde)
@@ -3432,13 +3566,17 @@ namespace Stratocraft.Character
 
         private Texture2D GetOrBuildIconForSlot(in VisualInventorySlot slot, CombatWeaponArchetype activeSwordArchetype)
         {
-            int key = ((int)slot.Kind << 16) | (slot.SubId << 8) | (slot.Kind == InventoryItemKind.WeaponSword ? (int)activeSwordArchetype : 0);
+            _ = activeSwordArchetype;
+            CombatWeaponArchetype iconSwordArch = TryMapSwordKindToArchetype(slot.Kind, out CombatWeaponArchetype mappedArch)
+                ? mappedArch
+                : CombatWeaponArchetype.Longsword;
+            int key = ((int)slot.Kind << 16) | (slot.SubId << 8) | (IsSwordKind(slot.Kind) ? (int)iconSwordArch : 0);
             if (_iconCache.TryGetValue(key, out Texture2D? existing) && existing != null)
             {
                 return existing;
             }
 
-            Texture2D created = BuildProceduralItemIcon(in slot, activeSwordArchetype);
+            Texture2D created = BuildProceduralItemIcon(in slot, iconSwordArch);
             _iconCache[key] = created;
             return created;
         }
@@ -3462,6 +3600,10 @@ namespace Stratocraft.Character
             {
                 case InventoryItemKind.Empty: DrawEmptyHandIcon(tex); break;
                 case InventoryItemKind.WeaponSword: DrawSwordIcon(tex, swordArch, slot.SubId == 1); break;
+                case InventoryItemKind.WeaponKatana: DrawSwordIcon(tex, CombatWeaponArchetype.Katana, false); break;
+                case InventoryItemKind.WeaponGreatsword: DrawSwordIcon(tex, CombatWeaponArchetype.Greatsword, false); break;
+                case InventoryItemKind.WeaponRapier: DrawSwordIcon(tex, CombatWeaponArchetype.Rapier, false); break;
+                case InventoryItemKind.ScrollMartialStance: DrawMartialScrollIcon(tex, slot.SubId); break;
                 case InventoryItemKind.ToolPickaxe: DrawPickaxeIcon(tex, slot.SubId == 1); break;
                 case InventoryItemKind.ToolAxe: DrawAxeIcon(tex, slot.SubId == 1); break;
                 case InventoryItemKind.ToolMicroChisel: DrawChiselIcon(tex); break;
@@ -3552,36 +3694,89 @@ namespace Stratocraft.Character
                 DrawThickLine(tex, 22, 19, 39, 36, 1, flintEdge);
                 return;
             }
-            Color bladeBright = arch == CombatWeaponArchetype.Katana ? new Color(0.85f, 0.95f, 1.0f, 1f) : new Color(0.86f, 0.89f, 0.94f, 1f);
-            Color bladeEdge = new Color(0.55f, 0.62f, 0.72f, 1f);
-            Color guardGold = arch == CombatWeaponArchetype.Rapier ? new Color(0.95f, 0.78f, 0.25f, 1f) : new Color(0.78f, 0.64f, 0.22f, 1f);
-            Color gripLeather = new Color(0.42f, 0.22f, 0.14f, 1f);
+            Color bladeBright = arch == CombatWeaponArchetype.Katana
+                ? new Color(0.88f, 0.96f, 1.0f, 1f)
+                : (arch == CombatWeaponArchetype.Rapier ? new Color(0.92f, 0.96f, 1.0f, 1f) : new Color(0.86f, 0.89f, 0.94f, 1f));
+            Color bladeEdge = new Color(0.50f, 0.58f, 0.70f, 1f);
+            Color guardGold = arch == CombatWeaponArchetype.Rapier
+                ? new Color(0.96f, 0.80f, 0.26f, 1f)
+                : (arch == CombatWeaponArchetype.Katana ? new Color(0.82f, 0.66f, 0.24f, 1f) : new Color(0.78f, 0.64f, 0.22f, 1f));
+            Color gripLeather = arch == CombatWeaponArchetype.Katana
+                ? new Color(0.58f, 0.14f, 0.18f, 1f)
+                : (arch == CombatWeaponArchetype.Rapier ? new Color(0.48f, 0.12f, 0.18f, 1f) : new Color(0.42f, 0.22f, 0.14f, 1f));
 
-            DrawThickLine(tex, 7, 7, 15, 15, 2, gripLeather);
-            FillRect(tex, 5, 5, 4, 4, guardGold);
+            DrawThickLine(tex, 6, 6, 15, 15, arch == CombatWeaponArchetype.Greatsword ? 3 : 2, gripLeather);
+            FillRect(tex, 4, 4, 4, 4, guardGold);
 
             if (arch == CombatWeaponArchetype.Rapier)
             {
-                DrawThickLine(tex, 11, 19, 19, 11, 3, guardGold);
-                DrawThickLine(tex, 13, 13, 18, 20, 2, guardGold);
+                FillCircle(tex, 16, 16, 5, new Color(0.80f, 0.84f, 0.92f, 1f));
+                DrawThickLine(tex, 10, 20, 20, 10, 2, guardGold);
+                DrawThickLine(tex, 9, 13, 15, 19, 1, guardGold);
+                DrawThickLine(tex, 17, 17, 44, 44, 1, bladeBright);
+                DrawThickLine(tex, 18, 17, 43, 42, 1, bladeEdge);
             }
             else if (arch == CombatWeaponArchetype.Katana)
             {
-                FillRect(tex, 13, 13, 6, 6, guardGold);
+                FillCircle(tex, 15, 15, 4, guardGold);
+                // Kavisli Samuray Namlusu (Sori egrisi + Hamon agzi)
+                DrawThickLine(tex, 16, 16, 28, 30, 2, bladeBright);
+                DrawThickLine(tex, 28, 30, 42, 40, 2, bladeBright);
+                DrawThickLine(tex, 17, 15, 29, 28, 1, bladeEdge);
+                DrawThickLine(tex, 29, 28, 43, 39, 1, bladeEdge);
+            }
+            else if (arch == CombatWeaponArchetype.Greatsword)
+            {
+                DrawThickLine(tex, 8, 22, 22, 8, 2, guardGold);
+                DrawThickLine(tex, 15, 15, 43, 43, 3, bladeBright);
+                DrawThickLine(tex, 17, 14, 43, 40, 1, bladeEdge);
+                // Parierhaken (ikincil durdurma kancalari)
+                DrawThickLine(tex, 19, 25, 25, 19, 2, guardGold);
             }
             else
             {
                 DrawThickLine(tex, 10, 21, 21, 10, 2, guardGold);
+                DrawThickLine(tex, 16, 16, 42, 42, 2, bladeBright);
+                DrawThickLine(tex, 17, 15, 42, 40, 1, bladeEdge);
             }
+        }
 
-            int thickness = arch == CombatWeaponArchetype.Greatsword ? 3 : (arch == CombatWeaponArchetype.Rapier ? 1 : 2);
-            DrawThickLine(tex, 16, 16, 42, 42, thickness, bladeBright);
-            DrawThickLine(tex, 17, 15, 42, 40, 1, bladeEdge);
+        private static void DrawMartialScrollIcon(Texture2D tex, byte stanceSubId)
+        {
+            Color parchment = new Color(0.93f, 0.86f, 0.68f, 1f);
+            Color parchmentShade = new Color(0.78f, 0.68f, 0.48f, 1f);
+            Color woodRoller = new Color(0.40f, 0.24f, 0.12f, 1f);
+            Color goldCap = new Color(0.88f, 0.72f, 0.24f, 1f);
 
-            if (arch == CombatWeaponArchetype.Greatsword)
+            CombatMartialStance stance = ResolveScrollMartialStance(stanceSubId);
+            Color sealColor = stance switch
             {
-                DrawThickLine(tex, 20, 24, 24, 20, 2, guardGold);
-            }
+                CombatMartialStance.Iaido_QuickDraw => new Color(0.92f, 0.18f, 0.26f, 1f),
+                CombatMartialStance.Fencing_Punta => new Color(0.16f, 0.84f, 0.72f, 1f),
+                CombatMartialStance.TwoHand_Juggernaut => new Color(0.96f, 0.50f, 0.14f, 1f),
+                _ => new Color(0.24f, 0.52f, 0.96f, 1f)
+            };
+
+            // Ust ve alt ahsap rulo cubuklari + altin basliklar
+            FillRect(tex, 9, 35, 30, 5, woodRoller);
+            FillRect(tex, 7, 36, 3, 3, goldCap);
+            FillRect(tex, 38, 36, 3, 3, goldCap);
+
+            FillRect(tex, 9, 8, 30, 5, woodRoller);
+            FillRect(tex, 7, 9, 3, 3, goldCap);
+            FillRect(tex, 38, 9, 3, 3, goldCap);
+
+            // Orta parsomen govdesi ve kenar golgesi
+            FillRect(tex, 12, 13, 24, 22, parchment);
+            FillRect(tex, 12, 13, 3, 22, parchmentShade);
+            FillRect(tex, 33, 13, 3, 22, parchmentShade);
+
+            // Kusak seridi + Muhur mumu + Kaligrafi cizgileri
+            FillRect(tex, 16, 30, 16, 2, parchmentShade * 0.75f);
+            FillRect(tex, 16, 16, 16, 2, parchmentShade * 0.75f);
+            FillRect(tex, 12, 22, 24, 4, sealColor * 0.85f);
+            FillCircle(tex, 24, 24, 5, sealColor);
+            FillCircle(tex, 24, 24, 2, Color.Lerp(sealColor, Color.white, 0.45f));
         }
 
         private static void DrawPickaxeIcon(Texture2D tex, bool isPrimitiveStone = false)
@@ -4296,9 +4491,9 @@ namespace Stratocraft.Character
         private static readonly string[] CreativeCategoryNames =
         {
             "🧱 Bloklar (25)",
-            "⚔️ Silah & Aletler (21)",
+            "⚔️ Silah & Aletler (24)",
             "🛡️ Zırh & Kış Giysi (17)",
-            "🧪 İksir & Tıp (3)",
+            "📜 İksir & Parşömen (7)",
             "🌿 Doğa, Değirmen & Metalurji (42)",
             "🌦️ Hava Aletleri (6)"
         };
@@ -4357,6 +4552,9 @@ namespace Stratocraft.Character
             (InventoryItemKind.WeaponSword, 1),
             (InventoryItemKind.ToolStoneHammer, 1),
             (InventoryItemKind.WeaponSword, 0),
+            (InventoryItemKind.WeaponKatana, 0),
+            (InventoryItemKind.WeaponGreatsword, 0),
+            (InventoryItemKind.WeaponRapier, 0),
             (InventoryItemKind.ToolPickaxe, 0),
             (InventoryItemKind.ToolAxe, 0),
             (InventoryItemKind.ToolStoneHammer, 0),
@@ -4400,7 +4598,11 @@ namespace Stratocraft.Character
         {
             (InventoryItemKind.PotionHealth, 0),
             (InventoryItemKind.PotionStamina, 0),
-            (InventoryItemKind.MedicalBandage, 0)
+            (InventoryItemKind.MedicalBandage, 0),
+            (InventoryItemKind.ScrollMartialStance, 0),
+            (InventoryItemKind.ScrollMartialStance, 1),
+            (InventoryItemKind.ScrollMartialStance, 2),
+            (InventoryItemKind.ScrollMartialStance, 3)
         };
 
         private static readonly (InventoryItemKind kind, byte subId)[] CreativeSurvival =

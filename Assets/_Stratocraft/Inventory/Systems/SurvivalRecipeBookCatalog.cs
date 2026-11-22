@@ -359,7 +359,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "Kış Giysileri: Kumaş İçlik, Yağlı Deri Rüzgârlık, Ağır Kürk Parka ve Astarlı Zırh",
                 ingredientsOrSource: "Kumaş İçlik = 3x Kumaş + 2x Lif (0.45 clo) | Yağlı Deri Rüzgârlık = 3x Deri + 1x Kumaş + 1x Lif (0.80 clo, %88 rüzgâr kesici) | Ağır Kürk Parka = 3x Kürk + 2x Deri + 1x Lif (1.45 clo) | Kürk Çizme = 2x Kürk + 1x Deri + 1x Lif.",
                 toolOrKeybind: "[I] Çanta Bezi Birleştirme Alanı -> [R / İple Bağla] -> [Sağ Tık] ile Zırh Yuvasına Kuşan",
-                stepByStepGuide: "ISO 9920 clo yalıtım sistemi: Kumaş İçlik hızlı kurur ama ıslandığında yalıtımının %82'sini kaybeder. Yağlı Deri Rüzgârlık rüzgâr soğuğunu (Wind Chill) %88 keser ve yağmuru kaydırır. Ağır Kürk Parka (1.45 clo) ve Kürk Astarlı Çizme dondurucu tipide normotermiyi korur. Metal zırhlara iç kürk/deri astar takıldığında soğuktaki (> 40W) metal termal köprü cezası %100 sıfırlanır!")
+                stepByStepGuide: "ISO 9920 clo yalıtım sistemi: Kumaş İçlik hızlı kurur ama ıslandığında yalıtımının %82'sini kaybeder. Yağlı Deri Rüzgârlık rüzgâr soğuğunu (Wind Chill) %88 keser ve yağmuru kaydırır. Ağır Kürk Parka (1.45 clo) ve Kürk Astarlı Çizme dondurucu tipide normotermiyi korur. Metal zırhlara iç kürk/deri astar takıldığında soğuktaki (> 40W) metal termal köprü cezası %100 sıfırlanır!"),
+
+            new(
+                id: "craft_four_sword_archetypes",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "4 Ayrı Kılıç Arketipi",
+                title: "4 Bağımsız Kılıç Eşyası: Uzun Kılıç, Katana, Zweihänder (Ağır Kılıç) ve Rapier",
+                ingredientsOrSource: "Uzun Kılıç (WeaponSword) = 3x Dövme Demir + 1x Dal + 1x Lif ([I] Çanta) | Rapier (WeaponRapier) = 2x Dövme Demir (Örs [E]) | Katana (WeaponKatana) = 3x Dövme Demir + 1x Odun Kömürü (Örs [E]) | Zweihänder (WeaponGreatsword) = 5x Dövme Demir (Örs [E]).",
+                toolOrKeybind: "[I] Çanta Ortasında Bağlama veya Örs Yanında Dövme Demir Eldeyken [E] | Kemer [1..9] Seçimi",
+                stepByStepGuide: "4 kılıç arketipi ayrı fiziksel envanter eşyalarıdır ([1] tuşu kılıç türünü döndürmez, doğrudan 1. kemer yuvasını kuşanır/kınına sokar): 1) Uzun Kılıç (1.85 kg, 175°/sn Turn Cap): Dengeli kesik ve Şövalye Riposte uyumu. 2) Katana (1.35 kg, 220°/sn): Hızlı kavisli namlu ve Iaido şimşek çekiş uyumu. 3) Zweihänder Ağır Kılıç (5.60 kg, 115°/sn): Yüksek postür kırma ve Çift El Yarma uyumu. 4) İnce Eskrim Kılıcı / Rapier (0.95 kg, 260°/sn): Çevik zırh delici Punta saplama uyumu.")
         };
 
         // =====================================================================
@@ -497,7 +506,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Saçılımı ve [Shift+B] Malzeme",
                 ingredientsOrSource: "3x Doğal Kuvars (T0 -> T1) | T2..T5 Rezonans Kristali (T1 -> T2..T5).",
                 toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal Arazi Fırçası <-> Mimari Blok | [Shift+V] Şekil Gez | [Shift+B] Malzeme",
-                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Shift+B] inşa malzemesini değiştirir.")
+                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Shift+B] inşa malzemesini değiştirir."),
+
+            new(
+                id: "guide_martial_stance_scrolls_and_posture",
+                tab: SurvivalRecipeBookTab.SmithingCookingAndCrystal,
+                categoryBadge: "Parşömen, Duruş & Denge",
+                title: "10. Kadim Dövüş Duruşu Parşömenleri (ScrollMartialStance), [G] Stil Kilidi, [X] Yarı-Kılıç ve Denge (Posture)",
+                ingredientsOrSource: "4 Dövüş Parşömeni (SubId 0..3): Şövalye (HighGuard_VomTag), Iaido (Iaido_QuickDraw), Eskrim (Fencing_Punta) ve Çift El Yarma (TwoHand_Juggernaut).",
+                toolOrKeybind: "Parşömen Elde [Sol/Sağ Tık]: Stili Öğren | [G]: Öğrenilen Stiller Arası Geçiş | [X]: Yarı-Kılıç (Halbschwert)",
+                stepByStepGuide: "Başlangıçta yalnızca temel Şövalye Duruşu (HighGuard_VomTag) açıktır. Harabelerden, düello ustalarından veya [F4]+[Tab] katalogdan bulunan Dövüş Parşömenleri (ScrollMartialStance) elde [Sol/Sağ Tık] ile okunarak Iaido, Eskrim (Punta) ve Çift El Yarma stilleri kalıcı olarak öğrenilir; temiz vuruş ve kusursuz saptırmalar Ustalık (StanceMastery01) oranını artırır. Savaşta Can/Enerji barının üstünde görünen DENGE (POSTURE) barı 0'a düşerse 1.2 sn Gard Kırılması (Guard Break) oluşur; dar koridorlarda ve plaka zırhlara karşı [X] Yarı-Kılıç (Halbschwert) tutuşu sol eli orta namluya kaydırarak menzili ~0.60m'ye çeker ve zırh delmeyi 1.35x yükseltir.")
         };
 
         // =====================================================================
