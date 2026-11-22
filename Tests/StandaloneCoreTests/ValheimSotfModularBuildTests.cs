@@ -6,6 +6,7 @@ using Stratocraft.Character;
 using Stratocraft.Core.Constants;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Voxel.Data;
+using Stratocraft.WorldGen;
 using Stratocraft.WorldGen.Generators;
 
 namespace Stratocraft.StandaloneCoreTests
@@ -14,9 +15,9 @@ namespace Stratocraft.StandaloneCoreTests
     public sealed class ValheimSotfModularBuildTests
     {
         [Test]
-        public void AllTwelveModularGlbAssets_ExistWithColor0_AndZeroEmbeddedTextures()
+        public void AllThirteenModularGlbAssets_IncludingGableWall45Deg_ExistWithColor0_AndZeroEmbeddedTextures()
         {
-            Assert.That(ValheimSotfModularGraphSolver.ModularPieceCount, Is.EqualTo(12));
+            Assert.That(ValheimSotfModularGraphSolver.ModularPieceCount, Is.EqualTo(13));
 
             string[] expectedFileNames =
             {
@@ -31,13 +32,15 @@ namespace Stratocraft.StandaloneCoreTests
                 "mod_roof_rafter_26deg_2x2m.glb",
                 "mod_roof_rafter_45deg_2x2m.glb",
                 "mod_roof_ridge_2m.glb",
-                "mod_diagonal_brace_2m.glb"
+                "mod_diagonal_brace_2m.glb",
+                "mod_gable_wall_45deg_2m.glb"
             };
 
             for (int i = 0; i < ValheimSotfModularGraphSolver.ModularPieceCount; i++)
             {
                 ModularBuildPieceKind kind = (ModularBuildPieceKind)i;
                 Assert.That(ValheimSotfModularGraphSolver.GetPieceGlbFileName(kind), Is.EqualTo(expectedFileNames[i]));
+                Assert.That(ValheimSotfModularGraphSolver.ResolveModularGlbFileName(kind), Is.EqualTo(expectedFileNames[i]));
 
                 ModularGlbAuditReport report = ValheimSotfModularGraphSolver.AuditModularGlbFile(kind);
                 Assert.That(report.ExistsOnDisk, Is.True, $"Missing modular GLB for {kind} ({report.ResolvedPath})");
@@ -49,6 +52,284 @@ namespace Stratocraft.StandaloneCoreTests
                 Assert.That(report.EmbeddedImageCount, Is.EqualTo(0), $"Expected 0 embedded images in {expectedFileNames[i]}");
                 Assert.That(report.FileSizeBytes, Is.GreaterThan(8_000L), $"Unexpectedly small GLB for {expectedFileNames[i]}");
             }
+        }
+
+        [Test]
+        public void AllFourOrganicFloraGlbAssets_ExistWithColor0_AndZeroEmbeddedTextures()
+        {
+            Assert.That(OrganicTreeCanopyVisualSystem.FloraAssetCount, Is.EqualTo(4));
+
+            string[] expectedFloraFiles =
+            {
+                "flora_nordic_pine_canopy.glb",
+                "flora_snow_pine_canopy.glb",
+                "flora_ancient_oak_canopy.glb",
+                "flora_tree_root_buttress.glb"
+            };
+
+            for (int i = 0; i < OrganicTreeCanopyVisualSystem.FloraAssetCount; i++)
+            {
+                OrganicFloraKind kind = (OrganicFloraKind)i;
+                Assert.That(OrganicTreeCanopyVisualSystem.GetFloraGlbFileName(kind), Is.EqualTo(expectedFloraFiles[i]));
+
+                FloraGlbAuditReport report = OrganicTreeCanopyVisualSystem.AuditFloraGlbFile(kind);
+                Assert.That(report.ExistsOnDisk, Is.True, $"Missing flora GLB for {kind} ({report.ResolvedPath})");
+                Assert.That(report.HasValidGlbHeader, Is.True, $"Invalid glTF 2.0 binary header in {expectedFloraFiles[i]}");
+                Assert.That(report.HasPositionAttribute, Is.True, $"Missing POSITION in {expectedFloraFiles[i]}");
+                Assert.That(report.HasNormalAttribute, Is.True, $"Missing NORMAL in {expectedFloraFiles[i]}");
+                Assert.That(report.HasColor0Attribute, Is.True, $"Missing COLOR_0 vertex colors in {expectedFloraFiles[i]}");
+                Assert.That(report.EmbeddedTextureCount, Is.EqualTo(0), $"Expected 0 embedded textures in {expectedFloraFiles[i]}");
+                Assert.That(report.EmbeddedImageCount, Is.EqualTo(0), $"Expected 0 embedded images in {expectedFloraFiles[i]}");
+                Assert.That(report.FileSizeBytes, Is.GreaterThan(12_000L), $"Unexpectedly small flora GLB for {expectedFloraFiles[i]}");
+            }
+        }
+
+        [Test]
+        public void AllProceduralSiteTemplates_HaveGableWalls_TwoSidedRoofs_ZeroDisconnectedPieces_AndZeroStoneArchBeamPenetration()
+        {
+            Span<ModularPlacedPieceNode> pieces = stackalloc ModularPlacedPieceNode[96];
+            Vector3 origin = new Vector3(32.0f, 96.0f, 32.0f);
+
+            for (byte siteKind = 0; siteKind < 4; siteKind++)
+            {
+                int count = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
+                    siteKind, origin, siteYawDegrees: 90.0f, chunkOwnerKey: 100 + siteKind, pieces);
+
+                Assert.That(count, Is.GreaterThanOrEqualTo(28), $"Site template {siteKind} must be a complete enclosed building.");
+
+                int foundationCount = 0;
+                int gableCount = 0;
+                int roof45Count = 0;
+                int ridgeCount = 0;
+
+                for (int i = 0; i < count; i++)
+                {
+                    ref readonly ModularPlacedPieceNode p = ref pieces[i];
+                    Assert.That(p.IsFalling, Is.False, $"Site {siteKind} piece #{i} ({p.Kind}) collapsed or floated!");
+                    Assert.That(p.IsBroken, Is.False);
+                    Assert.That(p.Stability01, Is.GreaterThanOrEqualTo(ValheimSotfModularGraphSolver.CollapseStabilityThreshold));
+
+                    if (p.Kind == ModularBuildPieceKind.StoneFoundation2x2m) foundationCount++;
+                    else if (p.Kind == ModularBuildPieceKind.GableWall45Deg2m) gableCount++;
+                    else if (p.Kind == ModularBuildPieceKind.RoofRafter45Deg2x2m) roof45Count++;
+                    else if (p.Kind == ModularBuildPieceKind.RoofRidge2m) ridgeCount++;
+
+                    // Her parca en az 1 komsu yapi parcasina yapisal olarak temas etmelidir (cimen ortasinda tek basina kopuk direk YASAK!)
+                    ValheimSotfModularGraphSolver.ComputeWorldAabb(p.Kind, p.Position, p.Rotation, out Vector3 minA, out Vector3 maxA);
+                    bool touchesNeighbor = false;
+                    for (int j = 0; j < count; j++)
+                    {
+                        if (i == j) continue;
+                        ValheimSotfModularGraphSolver.ComputeWorldAabb(
+                            pieces[j].Kind, pieces[j].Position, pieces[j].Rotation, out Vector3 minB, out Vector3 maxB);
+                        if (ValheimSotfModularGraphSolver.DoAabbsTouch(minA, maxA, minB, maxB))
+                        {
+                            touchesNeighbor = true;
+                            break;
+                        }
+                    }
+                    Assert.That(touchesNeighbor, Is.True,
+                        $"Site {siteKind} piece #{i} ({p.Kind}) is disconnected / isolated from the rest of the building!");
+
+                    // StoneArchPillar3m ASLA LogBeam2m govdesinin icinden gecmemelidir!
+                    if (p.Kind == ModularBuildPieceKind.StoneArchPillar3m)
+                    {
+                        Vector3 shrink = new Vector3(0.04f, 0.04f, 0.04f);
+                        Vector3 innerMinA = minA + shrink;
+                        Vector3 innerMaxA = maxA - shrink;
+                        for (int j = 0; j < count; j++)
+                        {
+                            if (pieces[j].Kind != ModularBuildPieceKind.LogBeam2m) continue;
+                            ValheimSotfModularGraphSolver.ComputeWorldAabb(
+                                pieces[j].Kind, pieces[j].Position, pieces[j].Rotation, out Vector3 bMin, out Vector3 bMax);
+                            bool penetrates =
+                                innerMinA.X < bMax.X && innerMaxA.X > bMin.X &&
+                                innerMinA.Y < bMax.Y && innerMaxA.Y > bMin.Y &&
+                                innerMinA.Z < bMax.Z && innerMaxA.Z > bMin.Z;
+                            Assert.That(penetrates, Is.False,
+                                $"Site {siteKind}: StoneArchPillar3m #{i} penetrates LogBeam2m #{j}!");
+                        }
+                    }
+                }
+
+                Assert.That(foundationCount, Is.EqualTo(4), $"Site {siteKind} must sit on 4 StoneFoundation2x2m blocks.");
+                Assert.That(gableCount, Is.EqualTo(4), $"Site {siteKind} must have front & back GableWall45Deg2m pairs (4 pieces).");
+                Assert.That(roof45Count, Is.EqualTo(4), $"Site {siteKind} must have complete two-sided 45° roofs (4 pieces, never half-roof).");
+                Assert.That(ridgeCount, Is.EqualTo(2), $"Site {siteKind} must have 2 RoofRidge2m pieces sealing the peak.");
+            }
+        }
+
+        [Test]
+        public void GableWall45Deg2m_MagneticallySnapsOntoPlankWall_AndSupportsRoofRidge()
+        {
+            Span<ModularPlacedPieceNode> nodes = stackalloc ModularPlacedPieceNode[6];
+            const float groundY = 96.0f;
+
+            nodes[0] = new ModularPlacedPieceNode
+            {
+                InstanceId = 1,
+                Kind = ModularBuildPieceKind.PlankWall2x2m,
+                Position = new Vector3(0f, groundY, 0f),
+                Rotation = Quaternion.Identity,
+                GroundFloorY = groundY,
+                Health = 95f,
+                MaxHealth = 95f,
+                Stability01 = 1.0f,
+                StabilityBand = ValheimStabilityBand.Blue,
+                IsGrounded = true
+            };
+
+            ValheimSotfModularGraphSolver.ComputeMagneticPlacementPose(
+                ModularBuildPieceKind.GableWall45Deg2m,
+                aimPoint: new Vector3(0.05f, groundY + 1.96f, 0.02f),
+                userYawDeg: 0f,
+                groundSurfaceY: groundY,
+                existingNodes: nodes.Slice(0, 1),
+                out Vector3 gablePos,
+                out Quaternion gableRot,
+                out bool snapped,
+                out bool isGrounded,
+                out float stab01,
+                out ValheimStabilityBand band);
+
+            Assert.That(snapped, Is.True);
+            Assert.That(isGrounded, Is.False);
+            Assert.That(gablePos.Y, Is.EqualTo(groundY + 2.00f).Within(1e-3f));
+            Assert.That(stab01, Is.GreaterThanOrEqualTo(0.75f));
+            Assert.That(band, Is.EqualTo(ValheimStabilityBand.Green));
+
+            nodes[1] = new ModularPlacedPieceNode
+            {
+                InstanceId = 2,
+                Kind = ModularBuildPieceKind.GableWall45Deg2m,
+                Position = gablePos,
+                Rotation = gableRot,
+                GroundFloorY = groundY,
+                Health = 90f,
+                MaxHealth = 90f,
+                Stability01 = stab01,
+                StabilityBand = band,
+                IsGrounded = false
+            };
+
+            // Ikinci GableWall45Deg2m yanina 180° aynalanarak tam 4m Λ ucgen alinlik kurmalidir:
+            ValheimSotfModularGraphSolver.ComputeMagneticPlacementPose(
+                ModularBuildPieceKind.GableWall45Deg2m,
+                aimPoint: new Vector3(1.88f, groundY + 2.05f, 0.0f),
+                userYawDeg: 0f,
+                groundSurfaceY: groundY,
+                existingNodes: nodes.Slice(0, 2),
+                out Vector3 mirrorPos,
+                out _,
+                out bool mirrorSnapped,
+                out _,
+                out float mirrorStab,
+                out _);
+
+            Assert.That(mirrorSnapped, Is.True);
+            Assert.That(mirrorPos.X, Is.EqualTo(2.0f).Within(1e-3f));
+            Assert.That(mirrorStab, Is.GreaterThanOrEqualTo(0.60f));
+        }
+
+        [Test]
+        public void MineTimberShoring_HasGroundedTimberSupportAtVoxel_DetectsPropsAndClearsWhenBroken()
+        {
+            var buildSys = new WorldLooseBuildSystem();
+            const float tunnelFloorY = 62.0f;
+
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(10, 65, 10), Is.False);
+
+            // Maden tabanina LogPillar3m dik ve ustune LogBeam2m tavan tahkimati yerlestir:
+            bool placedPillar = buildSys.TryPlaceModularPieceDirect(
+                ModularBuildPieceKind.LogPillar3m,
+                new Vector3(10.5f, tunnelFloorY, 10.5f),
+                userYawDeg: 0f,
+                groundSurfaceY: tunnelFloorY,
+                out int pillarId,
+                out float pillarStab);
+
+            Assert.That(placedPillar, Is.True);
+            Assert.That(pillarId, Is.GreaterThan(0));
+            Assert.That(pillarStab, Is.EqualTo(1.0f).Within(1e-4f));
+
+            bool placedBeam = buildSys.TryPlaceModularPieceDirect(
+                ModularBuildPieceKind.LogBeam2m,
+                new Vector3(11.4f, tunnelFloorY + 2.74f, 10.5f),
+                userYawDeg: 0f,
+                groundSurfaceY: tunnelFloorY,
+                out int beamId,
+                out float beamStab);
+
+            Assert.That(placedBeam, Is.True);
+            Assert.That(beamId, Is.GreaterThan(0));
+            Assert.That(beamStab, Is.GreaterThanOrEqualTo(0.75f));
+
+            // Tunel tavani vokseli (y=65..66) artik tahkimat destegine sahip olmalidir:
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(10, 65, 10), Is.True);
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(11, 66, 10), Is.True);
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(30, 65, 30), Is.False);
+
+            // Maden diregi kirildiginda ust kiris duser ve maden tahkimati kalkar:
+            buildSys.DamageModularSupportAt(new Vector3(10.5f, tunnelFloorY + 0.8f, 10.5f), radius: 0.7f, damage: 220f);
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(10, 65, 10), Is.False);
+            Assert.That(buildSys.HasGroundedTimberSupportAtVoxel(11, 66, 10), Is.False);
+        }
+
+        [Test]
+        public void OrganicTreeCanopyVisualSystem_SpawnsBiomes_RemovesFelledTrees_AndReusesPoolWithZeroGc()
+        {
+            Assert.That(
+                OrganicTreeCanopyVisualSystem.SelectCanopyKindForTree(biomeId: 0, isPine: false, crownBaseY: 102f),
+                Is.EqualTo(OrganicFloraKind.AncientOakCanopy));
+            Assert.That(
+                OrganicTreeCanopyVisualSystem.SelectCanopyKindForTree(biomeId: 5, isPine: true, crownBaseY: 100f),
+                Is.EqualTo(OrganicFloraKind.NordicPineCanopy));
+            Assert.That(
+                OrganicTreeCanopyVisualSystem.SelectCanopyKindForTree(biomeId: 4, isPine: true, crownBaseY: 114f),
+                Is.EqualTo(OrganicFloraKind.SnowPineCanopy));
+
+            var treeSys = new OrganicTreeCanopyVisualSystem();
+            ReadOnlySpan<OrganicTreePlacementSpec> specs = stackalloc OrganicTreePlacementSpec[]
+            {
+                new OrganicTreePlacementSpec(worldX: 4.5f, baseY: 96f, crownBaseY: 103f, worldZ: 11.5f, trunkHeight: 7, biomeId: 0, isPine: false),
+                new OrganicTreePlacementSpec(worldX: 12.5f, baseY: 97f, crownBaseY: 105f, worldZ: 11.5f, trunkHeight: 8, biomeId: 4, isPine: true)
+            };
+
+            int spawned = treeSys.SpawnOrSyncChunkTrees(0, 0, specs);
+            Assert.That(spawned, Is.EqualTo(2));
+            Assert.That(treeSys.ActiveTreeCount, Is.EqualTo(2));
+            Assert.That(treeSys.ActiveStandingCanopyCount, Is.EqualTo(2));
+
+            // Oyuncu 1. agacin govdesini baltayla kestiginde (wx=4, wy=98, wz=11) yalnizca o agacin 3B taci aninda kalkar!
+            int felled = treeSys.NotifyTreeTruncatedOrFelledAt(wx: 4, wy: 98, wz: 11);
+            Assert.That(felled, Is.EqualTo(1));
+            Assert.That(treeSys.ActiveTreeCount, Is.EqualTo(1));
+            Assert.That(treeSys.ActiveStandingCanopyCount, Is.EqualTo(1));
+            Assert.That(treeSys.PooledTreeVisualCount, Is.EqualTo(1));
+            Assert.That(treeSys.ActiveTreesSpan[0].CanopyKind, Is.EqualTo(OrganicFloraKind.SnowPineCanopy));
+
+            // Chunk bosaltildiginda kalan agac da havuza doner:
+            int released = treeSys.ReleaseChunkTrees(0, 0);
+            Assert.That(released, Is.EqualTo(1));
+            Assert.That(treeSys.ActiveTreeCount, Is.EqualTo(0));
+            Assert.That(treeSys.PooledTreeVisualCount, Is.EqualTo(2));
+
+            // Kararli durumda (steady-state) 64 chunk yukle/bosalt dongusu 0 B GC tahsisi uretmelidir!
+            _ = treeSys.SpawnOrSyncChunkTrees(0, 0, specs);
+            _ = treeSys.ReleaseChunkTrees(0, 0);
+
+            int totalSpawned = 0;
+            int totalReleased = 0;
+            long memBefore = GC.GetAllocatedBytesForCurrentThread();
+            for (int iter = 0; iter < 64; iter++)
+            {
+                totalSpawned += treeSys.SpawnOrSyncChunkTrees(0, 0, specs);
+                totalReleased += treeSys.ReleaseChunkTrees(0, 0);
+            }
+            long memDelta = GC.GetAllocatedBytesForCurrentThread() - memBefore;
+            Assert.That(totalSpawned, Is.EqualTo(128));
+            Assert.That(totalReleased, Is.EqualTo(128));
+            Assert.That(memDelta, Is.EqualTo(0L), $"Expected 0 B steady-state GC allocation in OrganicTreeCanopyVisualSystem, got {memDelta} B");
         }
 
         [Test]
@@ -229,7 +510,6 @@ namespace Stratocraft.StandaloneCoreTests
                     IsGrounded = false
                 };
             }
-            // Payanda: diregin govdesinden (X=0, Y=1.55) 1. ve 2. doseme birlesimine (X=1.45, Y=2.95) uzanir
             bracedChain[5] = new ModularPlacedPieceNode
             {
                 InstanceId = 15,
@@ -305,7 +585,6 @@ namespace Stratocraft.StandaloneCoreTests
             ValheimSotfModularGraphSolver.EvaluateGraphAndTriggerCollapse(tower, new Vector3(10f, groundY, 10f), out int initCollapsed);
             Assert.That(initCollapsed, Is.EqualTo(0));
 
-            // Alt kutuk dikmeyi (tower[0]) balta/kusatma hasariyla kir -> ustteki 3 katman zincirleme yikilmalidir!
             float startRoofY = tower[3].Position.Y;
             Quaternion startRoofRot = tower[3].Rotation;
 
@@ -329,7 +608,6 @@ namespace Stratocraft.StandaloneCoreTests
                     "Detached piece must receive real 3D angular torque!");
             }
 
-            // 0.40 sn fizik adimi ilerlet -> 3B yercekimi ile duser ve acisal torkla doner!
             for (int step = 0; step < 20; step++)
             {
                 int active = ValheimSotfModularGraphSolver.StepFallingPieces(tower, 0.02f);
@@ -344,7 +622,6 @@ namespace Stratocraft.StandaloneCoreTests
         [Test]
         public void WorldGen_Replaces1mCubeHousesWithBiomeTerraces_AndPooledSitesCollapseWhenSupportsBreak()
         {
-            // 4 farkli prosedurel moduler yerleske arketipinin deterministik uretildigini dogrula:
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, 0, out ProceduralModularSiteSpec cabinSite), Is.True);
             Assert.That(cabinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.NordicTimberCabin));
 
@@ -357,8 +634,6 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, -2, out ProceduralModularSiteSpec ruinSite), Is.True);
             Assert.That(ruinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.CollapsedTimberStoneRuin));
 
-            // PopulateVolumetricFloatingIslandChunk artik 1m³ kubik OyuncuItemBlogu ev duvarlari DAMGALAMAMALI,
-            // bunun yerine biyom malzemeli dogal teras duzlemelidir!
             var (cabinVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(2, 0);
             byte expectedTerraceMat = StratocraftFloatingIslandWorldGen.ResolveBiomeFoundationMaterial(
                 cabinSite.BiomeId, cabinSite.BaseY, isTopLayer: true);
@@ -385,7 +660,6 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(blockyHouseWallVoxels, Is.EqualTo(0),
                 "PopulateArchitecturalStructuresForChunk must NOT stamp 1m³ voxel cube house walls in modular site chunks!");
 
-            // WorldLooseBuildSystem 0-GC havuzlu Spawn / Release / Yeniden Spawn ve Destek Kirilinca Cokme:
             var buildSys = new WorldLooseBuildSystem();
             int spawnedCabin = buildSys.SpawnOrSyncChunkModularStructureSite(in cabinSite);
             int spawnedTower = buildSys.SpawnOrSyncChunkModularStructureSite(in towerSite);
@@ -397,7 +671,6 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(spawnedShrine, Is.GreaterThanOrEqualTo(18));
             Assert.That(spawnedRuin, Is.GreaterThanOrEqualTo(12));
 
-            // Tum parcalar ilk kurulumda %100 kararli (IsFalling == false) olmalidir:
             ReadOnlySpan<ModularPlacedPieceNode> allPieces = buildSys.ActiveModularPiecesSpan;
             for (int i = 0; i < allPieces.Length; i++)
             {
@@ -405,7 +678,6 @@ namespace Stratocraft.StandaloneCoreTests
                 Assert.That(allPieces[i].Stability01, Is.GreaterThanOrEqualTo(ValheimSotfModularGraphSolver.CollapseStabilityThreshold));
             }
 
-            // Chunk bosaltildiginda havuza iade edilmeli ve yeniden yuklendiginde havuzdan geri alinmalidir:
             int released = buildSys.ReleaseChunkModularStructureSite(cabinSite.ChunkX, cabinSite.ChunkZ);
             Assert.That(released, Is.EqualTo(spawnedCabin));
             Assert.That(buildSys.PooledModularVisualCount, Is.EqualTo(spawnedCabin));
@@ -414,7 +686,6 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(respawned, Is.EqualTo(spawnedCabin));
             Assert.That(buildSys.PooledModularVisualCount, Is.EqualTo(0), "Pooled visual slots must be reused on chunk reload!");
 
-            // Kulubenin alt tas temellerini kir -> ust duvarlar, dikmeler ve zona cati SOTF fizigiyle cokmelidir!
             Vector3 cabinFoundationCenter = new Vector3(cabinSite.WorldCenterX, cabinSite.WorldBaseY - 0.15f, cabinSite.WorldCenterZ);
             buildSys.DamageModularSupportAt(
                 cabinFoundationCenter,

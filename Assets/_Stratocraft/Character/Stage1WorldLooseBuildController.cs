@@ -62,6 +62,18 @@ namespace Stratocraft.Character
         private static readonly Mesh?[] CachedModularPieceMeshes = new Mesh?[ValheimSotfModularGraphSolver.ModularPieceCount];
         private static readonly bool[] AttemptedModularPieceLoads = new bool[ValheimSotfModularGraphSolver.ModularPieceCount];
         private static readonly Mesh?[,] CachedModularGhostMeshes = new Mesh?[ValheimSotfModularGraphSolver.ModularPieceCount, 5];
+        private static Material? _sharedModularMatteMaterial;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesOnSubsystemRegistration()
+        {
+            CachedTimberLogMeshes.Clear();
+            SharedLogBuildTris.Clear();
+            Array.Clear(CachedModularPieceMeshes, 0, CachedModularPieceMeshes.Length);
+            Array.Clear(AttemptedModularPieceLoads, 0, AttemptedModularPieceLoads.Length);
+            Array.Clear(CachedModularGhostMeshes, 0, CachedModularGhostMeshes.Length);
+            _sharedModularMatteMaterial = null;
+        }
 
         private static readonly Action<Stage1HolsterAndBackpackController, bool>? SetIsCarryingShoulderLogDelegate =
             CreatePropertySetter<Stage1HolsterAndBackpackController, bool>(nameof(Stage1HolsterAndBackpackController.IsCarryingShoulderLog));
@@ -83,7 +95,7 @@ namespace Stratocraft.Character
         private LoosePartPoint[] _pointCloudScratch = new LoosePartPoint[128];
         private ModularPlacedPieceNode[] _modularNodes = new ModularPlacedPieceNode[256];
         private ModularPieceVisualSlot[] _modularVisuals = new ModularPieceVisualSlot[256];
-        private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[64];
+        private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[128];
         private readonly Stack<ModularPieceVisualSlot> _modularVisualPool = new(128);
         private readonly HashSet<int> _spawnedChunkSiteKeys = new();
         private int _modularNodeCount;
@@ -1020,8 +1032,87 @@ namespace Stratocraft.Character
             return ghostMesh;
         }
 
-        private static Material? ResolveModularVertexColorMaterial(Material? fallbackSharedMat) =>
-            Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(fallbackSharedMat);
+        public static Material? ResolveModularVertexColorMaterial(Material? fallbackSharedMat = null)
+        {
+            if (_sharedModularMatteMaterial == null)
+            {
+                Material? humanBase = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(fallbackSharedMat);
+                if (humanBase != null)
+                {
+                    _sharedModularMatteMaterial = new Material(humanBase)
+                    {
+                        name = "M_Stratocraft_ModularTimberStone_Matte"
+                    };
+                }
+                else
+                {
+                    Shader? sh = Shader.Find("Stratocraft/VertexColorUberLit");
+                    if (sh == null) return fallbackSharedMat;
+                    _sharedModularMatteMaterial = new Material(sh)
+                    {
+                        name = "M_Stratocraft_ModularTimberStone_Matte"
+                    };
+                }
+            }
+
+            if (fallbackSharedMat != null)
+            {
+                if (fallbackSharedMat.HasProperty("_MicroDetailArray"))
+                {
+                    Texture? microArr = fallbackSharedMat.GetTexture("_MicroDetailArray");
+                    if (microArr != null) _sharedModularMatteMaterial.SetTexture("_MicroDetailArray", microArr);
+                }
+                if (fallbackSharedMat.HasProperty("_MatCapAtlas16x"))
+                {
+                    Texture? mcTex = fallbackSharedMat.GetTexture("_MatCapAtlas16x");
+                    if (mcTex != null) _sharedModularMatteMaterial.SetTexture("_MatCapAtlas16x", mcTex);
+                }
+            }
+
+            _sharedModularMatteMaterial.SetFloat("_UsePaletteLUT", 0.0f);
+            _sharedModularMatteMaterial.SetFloat("_MatCapBlendWeight", 0.05f);
+            _sharedModularMatteMaterial.SetFloat("_RimLightStrength", 0.05f);
+            _sharedModularMatteMaterial.SetFloat("_MicroDetailStrength", 0.40f);
+            _sharedModularMatteMaterial.SetFloat("_SmoothFacetBlend", 0.30f);
+            _sharedModularMatteMaterial.SetFloat("_AmbientStrength", 0.62f);
+            return _sharedModularMatteMaterial;
+        }
+
+        /// <summary>
+        /// Maden tahkimati sorgusu (0 B/kare GC): Belirtilen dunya vokselinde (wx, wy, wz) zemine bagli
+        /// LogPillar3m / LogBeam2m / DiagonalBrace2m moduler maden diregi veya dikili 2m kutuk tahkimati var mi?
+        /// </summary>
+        public bool HasGroundedTimberSupportAtVoxel(int wx, int wy, int wz)
+        {
+            if (_modularNodeCount > 0 &&
+                ValheimSotfModularGraphSolver.HasGroundedTimberSupportAtVoxel(
+                    _modularNodes.AsSpan(0, _modularNodeCount), wx, wy, wz))
+            {
+                return true;
+            }
+
+            if (_parts.Count > 0)
+            {
+                float vx = wx + 0.5f;
+                float vy = wy + 0.5f;
+                float vz = wz + 0.5f;
+                for (int i = 0; i < _parts.Count; i++)
+                {
+                    WorldLoosePartInstance p = _parts[i];
+                    if (p.PartKind != LooseBuildPartKind.FallenTreeLog) continue;
+                    float dx = p.Position.x - vx;
+                    float dz = p.Position.z - vz;
+                    if ((dx * dx + dz * dz) <= 1.55f * 1.55f &&
+                        vy >= p.Position.y - 1.15f &&
+                        wy <= p.Position.y + 2.35f)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
 
         private void StepModularPiecePlacement(
             UnityEngine.Camera cam,
@@ -1674,7 +1765,7 @@ namespace Stratocraft.Character
     {
         private ModularPlacedPieceNode[] _modularNodes = new ModularPlacedPieceNode[256];
         private int[] _visualSlotTokens = new int[256];
-        private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[64];
+        private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[128];
         private readonly Stack<int> _visualPool = new(128);
         private readonly HashSet<int> _spawnedChunkSiteKeys = new();
         private int _modularNodeCount;
@@ -1772,6 +1863,62 @@ namespace Stratocraft.Character
                 }
             }
             return hits;
+        }
+
+        public bool HasGroundedTimberSupportAtVoxel(int wx, int wy, int wz) =>
+            _modularNodeCount > 0 &&
+            ValheimSotfModularGraphSolver.HasGroundedTimberSupportAtVoxel(
+                _modularNodes.AsSpan(0, _modularNodeCount), wx, wy, wz);
+
+        public bool TryPlaceModularPieceDirect(
+            ModularBuildPieceKind kind,
+            Vector3 aimPoint,
+            float userYawDeg,
+            float groundSurfaceY,
+            out int spawnedInstanceId,
+            out float placedStability01)
+        {
+            spawnedInstanceId = -1;
+            ValheimSotfModularGraphSolver.ComputeMagneticPlacementPose(
+                kind,
+                aimPoint,
+                userYawDeg,
+                groundSurfaceY,
+                _modularNodes.AsSpan(0, _modularNodeCount),
+                out Vector3 snappedPos,
+                out Quaternion snappedRot,
+                out _,
+                out bool isGrounded,
+                out placedStability01,
+                out ValheimStabilityBand band);
+
+            if (!ValheimSotfModularGraphSolver.CanPieceStand(placedStability01))
+            {
+                return false;
+            }
+
+            float maxHp = ValheimSotfModularGraphSolver.GetPieceDefaultMaxHealth(kind);
+            int id = ++_nextModularInstanceId;
+            AppendNode(new ModularPlacedPieceNode
+            {
+                InstanceId = id,
+                Kind = kind,
+                Position = snappedPos,
+                Rotation = snappedRot,
+                GroundFloorY = groundSurfaceY,
+                Health = maxHp,
+                MaxHealth = maxHp,
+                Stability01 = placedStability01,
+                StabilityBand = band,
+                IsGrounded = isGrounded,
+                IsFalling = false,
+                IsBroken = false,
+                ChunkOwnerKey = 0
+            });
+            ValheimSotfModularGraphSolver.EvaluateGraphAndTriggerCollapse(
+                _modularNodes.AsSpan(0, _modularNodeCount), snappedPos, out _);
+            spawnedInstanceId = id;
+            return true;
         }
 
         public int StepFallingModularDebris(float dt) =>
