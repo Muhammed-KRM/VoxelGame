@@ -32,6 +32,12 @@ namespace Stratocraft.Character
         private const float ForearmLengthMeters = 0.265f;
         private static Material? _sharedHumanRgbMaterial;
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticRigMaterialCaches()
+        {
+            _sharedHumanRgbMaterial = null;
+        }
+
         private readonly List<FacetedVoxelTriangle> _limbTris = new(64);
         private float _locomotionCyclePhase;
         private float _smoothedBodyPitchDeg;
@@ -421,14 +427,22 @@ namespace Stratocraft.Character
             }
 
             string n = rt.name;
-            // True First-Person: Yalnizca kafa, boyun, sirt cantasi ve govde kiliflari ShadowsOnly yapilir!
-            // GERCEK insan kollari (UpperArm, Forearm, Hand), govde ve bacaklar FPS'te gorunur kalir!
-            if (n.IndexOf("Head", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+            // True First-Person: Kafa, boyun, govde/gogus, ust omuz / ust kol (UpperArm / Pauldron), sirt cantasi ve
+            // govde kiliflari yalnizca FPS aktifken ShadowsOnly yapilir (yerde tam golge korunur, kameranin yakin konisine
+            // ciplak pazu/koltukalti/gogus ucgenleri ASLA girmez; TPS [F5]'de tum vucut normal gorunur!).
+            // FPS'de ekranda temiz onkol (Forearm/Vambrace), bilek, eldiven/el ve 5-parmak kapali kabza kavrayisi gorunur.
+            if (rt == _rightArmShoulderPivot ||
+                rt == _leftArmShoulderPivot ||
+                n.IndexOf("Head", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Neck", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Helmet", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Visor", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Crest", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("Gorget", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("UpperArm", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Pauldron", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Torso", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("Chest", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("ExplorerPack", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("PackBedroll", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 n.IndexOf("PackFrame", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -438,13 +452,9 @@ namespace Stratocraft.Character
                 return true;
             }
 
-            if (isProne)
+            if (isProne && n.IndexOf("Pelvis", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                if (n.IndexOf("Chest", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    n.IndexOf("Torso", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    return true;
-                }
+                return true;
             }
 
             return false;
@@ -752,44 +762,20 @@ namespace Stratocraft.Character
             Vector3 rightPole = (viewRight * 0.70f - viewUp * 0.72f - viewFwd * 0.35f).normalized;
             Vector3 leftPole = (-viewRight * 0.70f - viewUp * 0.72f - viewFwd * 0.35f).normalized;
 
-            // 1) KILIC (Slot 1): Gercek Sag El + (2H veya Faz K.6 Halbschwert Yari-Kilic'ta) Gercek Sol El kabza/orta-namluyu sarar!
+            // 1) KILIC (Slot 1): Gercek Sag El + (2H veya Faz K.6 Halbschwert Yari-Kilic'ta) Gercek Sol El kabza/ricassoyu sarar!
             if (activeHolsterSlot == 1 &&
                 combatBridge.TryGetWeaponGripWorldSockets(activeHeldTransform, PlayerLeftArmSevered, out Vector3 rGrip, out Vector3 lGrip, out bool use2H))
             {
                 SetSocketFallbackItemActive(false);
 
-                bool isHalfSwordGrip = combatBridge.IsHalfSwordActive && !PlayerLeftArmSevered && activeHeldTransform != null;
-                if (isHalfSwordGrip)
-                {
-                    lGrip = combatBridge.GetHalfSwordMidBladeWorldSocket(activeHeldTransform!);
-                    use2H = true;
-                }
+                bool isHalfSwordGrip = combatBridge.IsHalfSwordActive &&
+                                       !PlayerLeftArmSevered &&
+                                       use2H &&
+                                       (combatBridge.ActiveWeaponArchetype == CombatWeaponArchetype.Longsword ||
+                                        combatBridge.ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword);
 
-                // Devir 078: FPS modunda govde kameradan -0.10m geride tutuldugu icin (fpsBackOffsetZ),
-                // ileri kalibre edilmis Greatsword (Z=0.62m) ve WeaponViewDistanceOffsetMeters (+0.22m'ye kadar)
-                // kabzalarini kameraya geri cekmemek adina omuz koprucuk uzanmasi (protraction) uygula.
+                // Silah kabzasini iki omuzun ortak dogal erisim zarfi icinde tut (omuz protraction yamasi olmadan!)
                 float baseArmLen = UpperArmLengthMeters + ForearmLengthMeters;
-                if (isFirstPersonMode && activeHeldTransform != null)
-                {
-                    float distR = (rGrip - _rightArmShoulderPivot.position).magnitude;
-                    float distL = (use2H && _leftArmShoulderPivot != null)
-                        ? (lGrip - _leftArmShoulderPivot.position).magnitude
-                        : 0f;
-                    float maxDist = Mathf.Max(distR, distL);
-                    float protractThreshold = baseArmLen * 0.90f;
-                    if (maxDist > protractThreshold)
-                    {
-                        float protractMeters = Mathf.Clamp((maxDist - protractThreshold) + 0.02f, 0f, 0.48f);
-                        Vector3 protractWorldOffset = viewFwd * protractMeters;
-                        _rightArmShoulderPivot.position += protractWorldOffset;
-                        if (_leftArmShoulderPivot != null)
-                        {
-                            _leftArmShoulderPivot.position += protractWorldOffset;
-                        }
-                    }
-                }
-
-                // Silah kabzasini iki omuzun ortak dogal erisim zarfi icinde tut (sol-ust/tepe savurmada eller ASLA kopmaz!)
                 Vector3 shR = _rightArmShoulderPivot.position;
                 Vector3 anchorRef = (use2H && _leftArmShoulderPivot != null)
                     ? Vector3.Lerp(shR, _leftArmShoulderPivot.position, isHalfSwordGrip ? 0.45f : 0.38f)

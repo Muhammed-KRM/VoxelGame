@@ -109,14 +109,13 @@ namespace Stratocraft.Character
         private Mesh? _padSelectedHolsterMesh;
         private Mesh? _beltLoopStrapMesh;
         private Mesh? _centerRingMesh;
-        private Mesh? _cachedSwordMesh;
         private Mesh? _cachedPickaxeMesh;
         private Mesh? _cachedAxeMesh;
         private Material? _cachedSwordMat;
         private Material? _cachedPickaxeMat;
         private Material? _cachedAxeMat;
         private Transform? _cachedForgedBladeChild;
-        private readonly Mesh?[] _cachedArchetypeSwordMeshes = new Mesh?[4];
+        private bool _swordLegacyChildScanned;
 
         private int _hoveredMatSlotIndex = -1;
         private MatHitZone _hoveredMatZone = MatHitZone.None;
@@ -919,10 +918,9 @@ namespace Stratocraft.Character
             GameObject? pickaxeVisual,
             GameObject? axeVisual)
         {
-            if (swordVisual != null && _cachedSwordMesh == null)
+            if (swordVisual != null && !_swordLegacyChildScanned)
             {
-                MeshFilter? mf = swordVisual.GetComponent<MeshFilter>() ?? swordVisual.GetComponentInChildren<MeshFilter>(true);
-                if (mf != null && mf.sharedMesh != null) _cachedSwordMesh = mf.sharedMesh;
+                _swordLegacyChildScanned = true;
                 MeshRenderer? mr = swordVisual.GetComponent<MeshRenderer>() ?? swordVisual.GetComponentInChildren<MeshRenderer>(true);
                 if (mr != null) _cachedSwordMat = mr.sharedMaterial;
                 Transform? socketBlade = swordVisual.transform.Find("Socket_VoxelBlade");
@@ -981,62 +979,55 @@ namespace Stratocraft.Character
                 swordArch = CombatWeaponArchetype.Longsword;
             }
 
-            if (swordArch == CombatWeaponArchetype.Longsword && _cachedSwordMesh != null && _cachedForgedBladeChild != null)
-            {
-                if (!_cachedForgedBladeChild.gameObject.activeSelf)
-                {
-                    _cachedForgedBladeChild.gameObject.SetActive(true);
-                }
-                if (mf.sharedMesh != _cachedSwordMesh) mf.sharedMesh = _cachedSwordMesh;
-                Material? targetMat = _cachedSwordMat != null ? _cachedSwordMat : sharedVoxelMat;
-                if (mr != null && targetMat != null && mr.sharedMaterial != targetMat)
-                {
-                    mr.sharedMaterial = targetMat;
-                }
-                if ((swordRoot.transform.localScale - Vector3.one).sqrMagnitude > 1e-5f)
-                {
-                    swordRoot.transform.localScale = Vector3.one;
-                }
-                return;
-            }
-
             if (_cachedForgedBladeChild != null && _cachedForgedBladeChild.gameObject.activeSelf)
             {
                 _cachedForgedBladeChild.gameObject.SetActive(false);
             }
 
-            Mesh archMesh = GetOrCreateSwordArchetypeMesh(swordArch);
+            ApplySwordArchetypeVisualMesh(swordRoot, swordArch, sharedVoxelMat ?? _cachedSwordMat, applyCombatScale: true);
+        }
+
+        /// <summary>
+        /// Elde tutulan kilic ve bel kilifi icin tek gercek 3B dovme kilic .glb mesh'ini ve celik parlaklikli
+        /// direct-RGB materyalini uygular (0 B/kare kararli durum).
+        /// </summary>
+        public static void ApplySwordArchetypeVisualMesh(
+            GameObject targetGo,
+            CombatWeaponArchetype archetype,
+            Material? fallbackSharedMat,
+            bool applyCombatScale)
+        {
+            if (targetGo == null) return;
+            MeshFilter? mf = targetGo.GetComponent<MeshFilter>() ?? targetGo.GetComponentInChildren<MeshFilter>(true);
+            if (mf == null) return;
+            MeshRenderer? mr = mf.GetComponent<MeshRenderer>();
+
+            Mesh archMesh = GetOrCreateSwordArchetypeMesh(archetype);
             if (mf.sharedMesh != archMesh)
             {
                 mf.sharedMesh = archMesh;
             }
-            Material? uberMat = sharedVoxelMat != null ? sharedVoxelMat : _cachedSwordMat;
-            if (mr != null && uberMat != null && mr.sharedMaterial != uberMat)
+
+            Material? steelRgbMat = Stage1DirectionalCombatBridge.ResolveForgedWeaponSteelMaterial(fallbackSharedMat);
+            Material? finalMat = steelRgbMat != null ? steelRgbMat : fallbackSharedMat;
+            if (mr != null && finalMat != null && mr.sharedMaterial != finalMat)
             {
-                mr.sharedMaterial = uberMat;
+                mr.sharedMaterial = finalMat;
             }
 
-            Stage1DirectionalCombatBridge.GetWeaponStats(swordArch, out _, out _, out _, out Vector3 archScale);
-            if ((swordRoot.transform.localScale - archScale).sqrMagnitude > 1e-5f)
+            if (applyCombatScale)
             {
-                swordRoot.transform.localScale = archScale;
+                Stage1DirectionalCombatBridge.GetWeaponStats(archetype, out _, out _, out _, out Vector3 archScale);
+                if ((targetGo.transform.localScale - archScale).sqrMagnitude > 1e-5f)
+                {
+                    targetGo.transform.localScale = archScale;
+                }
             }
         }
 
-        private Mesh GetOrCreateSwordArchetypeMesh(CombatWeaponArchetype archetype)
+        private static Mesh GetOrCreateSwordArchetypeMesh(CombatWeaponArchetype archetype)
         {
-            int idx = Mathf.Clamp((int)archetype, 0, _cachedArchetypeSwordMeshes.Length - 1);
-            Mesh? existing = _cachedArchetypeSwordMeshes[idx];
-            if (existing != null)
-            {
-                return existing;
-            }
-
-            _matMeshTris.Clear();
-            EmitProceduralSwordArchetypeTris(archetype, _matMeshTris);
-            Mesh created = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, $"Mesh_SwordArchetype_{archetype}");
-            _cachedArchetypeSwordMeshes[idx] = created;
-            return created;
+            return Stage1DirectionalCombatBridge.GetOrLoadForgedSwordMesh(archetype);
         }
 
         private static void ApplyCustomKnappedOrMetalMeshToToolVisual(
@@ -1368,6 +1359,12 @@ namespace Stratocraft.Character
                 PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
                 bool hasPerPieceDna = physArch != PhysicalItemArchetype.None && physArch != PhysicalItemArchetype.ArchitecturalBlock;
 
+                bool isForgedSwordSlot = Stage1VisualHotbarAndInventoryUi.IsSwordKind(slot.Kind) &&
+                                         !(slot.Kind == InventoryItemKind.WeaponSword && slot.SubId == 1);
+                Material? targetMat = isForgedSwordSlot
+                    ? (Stage1DirectionalCombatBridge.ResolveForgedWeaponSteelMaterial(sharedMat) ?? sharedMat)
+                    : sharedMat;
+
                 for (int k = 0; k < visibleInstances; k++)
                 {
                     if (hasPerPieceDna && k > 0)
@@ -1380,9 +1377,9 @@ namespace Stratocraft.Character
                         pileMf[k].sharedMesh = GetOrCreate3DMatMeshForSlot(in slot);
                     }
 
-                    if (sharedMat != null && pileMr[k] != null && pileMr[k].sharedMaterial == null)
+                    if (targetMat != null && pileMr[k] != null && pileMr[k].sharedMaterial != targetMat)
                     {
-                        pileMr[k].sharedMaterial = sharedMat;
+                        pileMr[k].sharedMaterial = targetMat;
                     }
                 }
             }
@@ -1629,8 +1626,7 @@ namespace Stratocraft.Character
                 case InventoryItemKind.WeaponRapier:
                 {
                     Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(slot.Kind, out CombatWeaponArchetype arch);
-                    EmitProceduralSwordArchetypeTris(arch, _matMeshTris);
-                    break;
+                    return GetOrCreateSwordArchetypeMesh(arch);
                 }
 
                 case InventoryItemKind.ScrollMartialStance:
@@ -1823,61 +1819,6 @@ namespace Stratocraft.Character
             HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b1, t2, b2, matId, sideSharp, ao, tris);
             HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b3, t3, t0, matId, sideSharp, ao, tris);
             HybridSurfaceNetsAndShapeMesher.AddFacetedTriangle(b3, t0, b0, matId, sideSharp, ao, tris);
-        }
-
-        private static void EmitProceduralSwordArchetypeTris(CombatWeaponArchetype archetype, List<FacetedVoxelTriangle> tris)
-        {
-            switch (archetype)
-            {
-                case CombatWeaponArchetype.Greatsword:
-                {
-                    AddUberShaderBoxTris(tris, new(0f, -0.22f, 0f), new(0.036f, 0.036f, 0.036f), MaterialIdCatalog.Bronze, 215);
-                    AddUberShaderBoxTris(tris, new(0f, -0.09f, 0f), new(0.022f, 0.11f, 0.022f), MaterialIdCatalog.OakWood, 155);
-                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.22f, 0.018f, 0.026f), MaterialIdCatalog.Bronze, 225);
-                    AddUberShaderBoxTris(tris, new(0f, 0.14f, 0f), new(0.036f, 0.09f, 0.014f), MaterialIdCatalog.LeatherPadding, 165);
-                    AddUberShaderBoxTris(tris, new(0f, 0.24f, 0f), new(0.13f, 0.014f, 0.018f), MaterialIdCatalog.Bronze, 225);
-                    AddUberShaderBoxTris(tris, new(0f, 0.56f, 0f), new(0.044f, 0.31f, 0.012f), MaterialIdCatalog.DamascusSteel, 240);
-                    AddUberShaderBoxTris(tris, new(0f, 0.94f, 0f), new(0.030f, 0.12f, 0.009f), MaterialIdCatalog.Steel, 250);
-                    break;
-                }
-                case CombatWeaponArchetype.Rapier:
-                {
-                    AddUberShaderBoxTris(tris, new(0f, -0.15f, 0f), new(0.026f, 0.026f, 0.026f), MaterialIdCatalog.GoldOre, 230);
-                    AddUberShaderBoxTris(tris, new(0f, -0.05f, 0f), new(0.015f, 0.08f, 0.015f), MaterialIdCatalog.RubyGem, 185);
-                    AddUberShaderBoxTris(tris, new(0.055f, -0.04f, 0f), new(0.010f, 0.08f, 0.012f), MaterialIdCatalog.GoldOre, 235);
-                    AddUberShaderBoxTris(tris, new(0f, 0.05f, 0f), new(0.088f, 0.040f, 0.088f), MaterialIdCatalog.Steel, 235);
-                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.14f, 0.010f, 0.014f), MaterialIdCatalog.GoldOre, 235);
-                    AddUberShaderBoxTris(tris, new(0f, 0.56f, 0f), new(0.013f, 0.48f, 0.011f), MaterialIdCatalog.Steel, 252);
-                    break;
-                }
-                case CombatWeaponArchetype.Katana:
-                {
-                    AddUberShaderBoxTris(tris, new(0f, -0.11f, 0f), new(0.018f, 0.11f, 0.022f), MaterialIdCatalog.Ironwood, 165);
-                    AddUberShaderBoxTris(tris, new(0f, 0.02f, 0f), new(0.068f, 0.008f, 0.068f), MaterialIdCatalog.GoldOre, 228);
-                    const int segs = 5;
-                    float segLen = 0.96f / segs;
-                    for (int s = 0; s < segs; s++)
-                    {
-                        float t01 = (s + 0.5f) / segs;
-                        AddUberShaderBoxTris(
-                            tris,
-                            new(t01 * t01 * 0.068f, 0.04f + (s + 0.5f) * segLen, 0f),
-                            new(Mathf.Lerp(0.024f, 0.015f, t01), segLen * 0.52f, Mathf.Lerp(0.011f, 0.007f, t01)),
-                            MaterialIdCatalog.DamascusSteel,
-                            248);
-                    }
-                    break;
-                }
-                default:
-                {
-                    AddUberShaderBoxTris(tris, new(0f, -0.16f, 0f), new(0.030f, 0.028f, 0.030f), MaterialIdCatalog.GoldOre, 225);
-                    AddUberShaderBoxTris(tris, new(0f, -0.06f, 0f), new(0.019f, 0.08f, 0.019f), MaterialIdCatalog.OakWood, 160);
-                    AddUberShaderBoxTris(tris, new(0f, 0.03f, 0f), new(0.15f, 0.015f, 0.022f), MaterialIdCatalog.GoldOre, 228);
-                    AddUberShaderBoxTris(tris, new(0f, 0.44f, 0f), new(0.032f, 0.39f, 0.010f), MaterialIdCatalog.DamascusSteel, 242);
-                    AddUberShaderBoxTris(tris, new(0f, 0.90f, 0f), new(0.020f, 0.09f, 0.008f), MaterialIdCatalog.Steel, 250);
-                    break;
-                }
-            }
         }
 
         private static void EmitProceduralMartialScrollTris(byte stanceSubId, List<FacetedVoxelTriangle> tris)
@@ -3509,11 +3450,7 @@ namespace Stratocraft.Character
                     ref readonly VisualInventorySlot hs = ref InventoryUi.HotbarSlots[h];
                     if (!hs.IsEmpty && Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(hs.Kind, out CombatWeaponArchetype beltArch))
                     {
-                        Mesh beltMesh = GetOrCreateSwordArchetypeMesh(beltArch);
-                        if (_holsteredBeltSwordProxy.TryGetComponent<MeshFilter>(out MeshFilter beltMf) && beltMf.sharedMesh != beltMesh)
-                        {
-                            beltMf.sharedMesh = beltMesh;
-                        }
+                        ApplySwordArchetypeVisualMesh(_holsteredBeltSwordProxy, beltArch, sharedMat, applyCombatScale: false);
                         break;
                     }
                 }
@@ -3778,7 +3715,12 @@ namespace Stratocraft.Character
             var mf = droppedGo.AddComponent<MeshFilter>();
             mf.sharedMesh = itemMesh;
             var mr = droppedGo.AddComponent<MeshRenderer>();
-            if (sharedVoxelMat != null) mr.sharedMaterial = sharedVoxelMat;
+            bool isDroppedForgedSword = Stage1VisualHotbarAndInventoryUi.IsSwordKind(droppedSlot.Kind) &&
+                                        !(droppedSlot.Kind == InventoryItemKind.WeaponSword && droppedSlot.SubId == 1);
+            Material? dropMat = isDroppedForgedSword
+                ? (Stage1DirectionalCombatBridge.ResolveForgedWeaponSteelMaterial(sharedVoxelMat) ?? sharedVoxelMat)
+                : sharedVoxelMat;
+            if (dropMat != null) mr.sharedMaterial = dropMat;
 
             // Olceklenmis ve dondurulmus mesh'in gercek alt sinir yuksekligini (BottomClearanceY) hesapla
             Bounds localB = itemMesh != null ? itemMesh.bounds : new Bounds(Vector3.zero, Vector3.one);

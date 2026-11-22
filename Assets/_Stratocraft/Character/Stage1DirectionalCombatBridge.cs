@@ -6,6 +6,8 @@ using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
 using Stratocraft.Voxel.Data;
 #if UNITY_5_3_OR_NEWER
+using System.IO;
+using Stratocraft.Rendering;
 using UnityEngine;
 using Stratocraft.Character.Diagnostics;
 #endif
@@ -94,9 +96,65 @@ namespace Stratocraft.Character
         {
             CombatWeaponArchetype.Rapier => new System.Numerics.Vector3(0.21f, -0.27f, 0.49f),
             CombatWeaponArchetype.Katana => new System.Numerics.Vector3(0.21f, -0.27f, 0.49f),
-            CombatWeaponArchetype.Greatsword => new System.Numerics.Vector3(0.27f, -0.38f, 0.62f),
+            CombatWeaponArchetype.Greatsword => new System.Numerics.Vector3(0.16f, -0.08f, 0.46f),
             _ => new System.Numerics.Vector3(0.22f, -0.30f, 0.53f)
         };
+
+        /// <summary>
+        /// Gercek 3B dovme kilic .glb dosya adini arketipe gore dondurur (Assets/Art/Generated/Weapons/).
+        /// </summary>
+        public static string ResolveForgedWeaponGlbFileName(CombatWeaponArchetype archetype) => archetype switch
+        {
+            CombatWeaponArchetype.Greatsword => "weapon_zweihander.glb",
+            CombatWeaponArchetype.Rapier => "weapon_rapier.glb",
+            CombatWeaponArchetype.Katana => "weapon_katana.glb",
+            _ => "weapon_longsword.glb"
+        };
+
+        /// <summary>
+        /// Tum 4 kilic arketipi icin milimetrik yerel kabza kavrama soketlerini dondurur (.NET 10 testlerinden dogrudan cagrilabilir).
+        /// Tum 4 kilic modelinde balcak/tsuba alt yuzu y = 0.00m, kabza y &lt; 0.00m ve keskin namlu y &gt; +0.02m standardindadir;
+        /// boylece sag el hicbir silah tipinde keskin namluya degmez!
+        /// </summary>
+        public static void GetWeaponArchetypeGripLocalSockets(
+            CombatWeaponArchetype archetype,
+            bool isHalfSword,
+            bool leftArmSevered,
+            out float rightY,
+            out float leftY,
+            out bool useTwoHands)
+        {
+            switch (archetype)
+            {
+                case CombatWeaponArchetype.Katana:
+                    // Tsuba alt yuzu y = 0.00m: sag el tsuba hemen alti, sol el kashira; keskin namluya ASLA degmez!
+                    rightY = -0.032f;
+                    leftY = -0.185f;
+                    useTwoHands = !leftArmSevered;
+                    break;
+
+                case CombatWeaponArchetype.Rapier:
+                    // Canak/kafes siper ici tek-el eskrim tutusu; Rapier HER ZAMAN tek eldir!
+                    rightY = -0.042f;
+                    leftY = -0.12f;
+                    useTwoHands = false;
+                    break;
+
+                case CombatWeaponArchetype.Greatsword:
+                    // Zweihander: [X] Half-Sword acikken sol el deri sargili ricasso (+0.135m), kapaliyken alt kabza (-0.225m).
+                    rightY = -0.036f;
+                    leftY = isHalfSword ? 0.135f : -0.225f;
+                    useTwoHands = !leftArmSevered;
+                    break;
+
+                default: // CombatWeaponArchetype.Longsword
+                    // Longsword: [X] Half-Sword acikken sol el orta namlu (+0.36m), kapaliyken alt kabza (-0.155m).
+                    rightY = -0.032f;
+                    leftY = isHalfSword ? 0.36f : -0.155f;
+                    useTwoHands = !leftArmSevered;
+                    break;
+            }
+        }
 
         public static float ComputeWeaponMomentOfInertia(
             float bladeMassKg = DefaultBladeMassKg,
@@ -110,6 +168,130 @@ namespace Stratocraft.Character
         }
 
 #if UNITY_5_3_OR_NEWER
+        private static readonly Mesh?[] _forgedSwordMeshCache = new Mesh?[4];
+        private static readonly bool[] _forgedSwordGlbLoadAttempted = new bool[4];
+        private static Material? _sharedForgedWeaponSteelMaterial;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetForgedWeaponStaticCaches()
+        {
+            Array.Clear(_forgedSwordMeshCache, 0, _forgedSwordMeshCache.Length);
+            Array.Clear(_forgedSwordGlbLoadAttempted, 0, _forgedSwordGlbLoadAttempted.Length);
+            _sharedForgedWeaponSteelMaterial = null;
+        }
+
+        /// <summary>
+        /// Dovme 3B kilic GLB modelleri icin dogrudan RGB celik parlaklikli URP VertexColorUberLit materyali (_UsePaletteLUT = 0).
+        /// Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial temelini kullanir; 0 B/kare kararli durum.
+        /// </summary>
+        public static Material? ResolveForgedWeaponSteelMaterial(Material? fallbackMat)
+        {
+            if (_sharedForgedWeaponSteelMaterial != null)
+            {
+                return _sharedForgedWeaponSteelMaterial;
+            }
+
+            Material? baseRgbMat = Stage1ArticulatedRigAnimator.ResolveHumanVertexColorMaterial(fallbackMat);
+            if (baseRgbMat == null)
+            {
+                return fallbackMat;
+            }
+
+            Shader? sh = baseRgbMat.shader;
+            if (sh == null)
+            {
+                return baseRgbMat;
+            }
+
+            _sharedForgedWeaponSteelMaterial = new Material(sh)
+            {
+                name = "M_Stratocraft_ForgedWeapon_SteelRGB"
+            };
+            _sharedForgedWeaponSteelMaterial.SetFloat("_UsePaletteLUT", 0.0f);
+            _sharedForgedWeaponSteelMaterial.SetFloat("_SmoothFacetBlend", 0.36f);
+            _sharedForgedWeaponSteelMaterial.SetFloat("_AmbientStrength", 0.68f);
+            _sharedForgedWeaponSteelMaterial.SetFloat("_RimLightStrength", 0.28f);
+            _sharedForgedWeaponSteelMaterial.SetFloat("_MatCapBlendWeight", 0.0f);
+            _sharedForgedWeaponSteelMaterial.SetFloat("_MicroDetailStrength", 0.0f);
+            return _sharedForgedWeaponSteelMaterial;
+        }
+
+        private static string ResolveForgedWeaponGlbDiskPath(CombatWeaponArchetype archetype)
+        {
+            string fileName = ResolveForgedWeaponGlbFileName(archetype);
+            string dataPath = Application.dataPath;
+            if (!string.IsNullOrEmpty(dataPath))
+            {
+                string viaDataPath = Path.Combine(dataPath, "Art", "Generated", "Weapons", fileName);
+                if (File.Exists(viaDataPath))
+                {
+                    return viaDataPath;
+                }
+            }
+
+            string viaRelative = Path.Combine("Assets", "Art", "Generated", "Weapons", fileName);
+            if (File.Exists(viaRelative))
+            {
+                return viaRelative;
+            }
+
+            return !string.IsNullOrEmpty(dataPath)
+                ? Path.Combine(dataPath, "Art", "Generated", "Weapons", fileName)
+                : viaRelative;
+        }
+
+        /// <summary>
+        /// 4 gercek dovme kilictan (.glb) ilgili arketip mesh'ini goreli disk yolundan yukler ve onbellege alir (0 B/kare).
+        /// Diskte .glb yoksa 6-gen/elmas namlulu deterministik prosedurel yedek uretir (asla 7-kutulu bej kalas degil!).
+        /// </summary>
+        public static Mesh GetOrLoadForgedSwordMesh(CombatWeaponArchetype archetype)
+        {
+            int idx = Mathf.Clamp((int)archetype, 0, _forgedSwordMeshCache.Length - 1);
+            Mesh? cached = _forgedSwordMeshCache[idx];
+            if (cached != null)
+            {
+                return cached;
+            }
+
+            Mesh? loadedMesh = null;
+            if (!_forgedSwordGlbLoadAttempted[idx])
+            {
+                _forgedSwordGlbLoadAttempted[idx] = true;
+                string diskPath = ResolveForgedWeaponGlbDiskPath(archetype);
+                if (!string.IsNullOrEmpty(diskPath) && File.Exists(diskPath))
+                {
+                    // Blender 4.2 RGB GLB: LoadArticulatedPartsFromDisk X-yansitma + sarim cevirmesi + Linear->Gamma COLOR_0 yapar
+                    Dictionary<string, Mesh>? parts = GlbHierarchyLoader.LoadArticulatedPartsFromDisk(diskPath);
+                    if (parts != null && parts.Count > 0)
+                    {
+                        foreach (var kv in parts)
+                        {
+                            if (kv.Value != null)
+                            {
+                                loadedMesh = kv.Value;
+                                loadedMesh.name = $"ForgedGlbSword_{archetype}";
+                                break;
+                            }
+                        }
+                    }
+
+                    if (loadedMesh == null)
+                    {
+                        GlbHierarchyLoader.LoadedGlbData? fallbackGlb =
+                            GlbHierarchyLoader.LoadGlbFromDisk(diskPath, $"ForgedGlbSword_{archetype}");
+                        if (fallbackGlb != null && fallbackGlb.CombinedMesh != null)
+                        {
+                            loadedMesh = fallbackGlb.CombinedMesh;
+                        }
+                    }
+                }
+            }
+
+            loadedMesh ??= BuildProceduralHexSwordMesh(archetype);
+            _forgedSwordMeshCache[idx] = loadedMesh;
+            return loadedMesh;
+        }
+
         private readonly CameraClutchController _clutch = new(minCutoff: 1.6f, beta: 0.015f);
         private readonly Vector3[] _prevBladeWorldPoints = new Vector3[BladeSamplePointCount];
         private readonly Vector3[] _currBladeWorldPoints = new Vector3[BladeSamplePointCount];
@@ -371,19 +553,19 @@ namespace Stratocraft.Character
             {
                 case CombatWeaponArchetype.Greatsword:
                     displayName = "Ağır Kılıç (Zweihänder 5.6kg)";
-                    massKg = 5.60f; bladeLengthM = 1.42f; visualScale = new Vector3(1.0f, 1.24f, 1.0f);
+                    massKg = 5.60f; bladeLengthM = 1.42f; visualScale = new Vector3(0.88f, 0.88f, 0.88f);
                     break;
                 case CombatWeaponArchetype.Rapier:
                     displayName = "İnce Eskrim Kılıcı (Rapier 0.95kg)";
-                    massKg = 0.95f; bladeLengthM = 1.22f; visualScale = new Vector3(0.75f, 1.24f, 0.75f);
+                    massKg = 0.95f; bladeLengthM = 1.22f; visualScale = Vector3.one;
                     break;
                 case CombatWeaponArchetype.Katana:
                     displayName = "Katana (Kavisli Samuray 1.35kg)";
-                    massKg = 1.35f; bladeLengthM = 1.12f; visualScale = new Vector3(0.92f, 1.14f, 0.94f);
+                    massKg = 1.35f; bladeLengthM = 1.12f; visualScale = Vector3.one;
                     break;
                 default:
                     displayName = "Uzun Kılıç (Longsword 1.85kg)";
-                    massKg = 1.85f; bladeLengthM = 1.10f; visualScale = new Vector3(1.0f, 1.0f, 1.0f);
+                    massKg = 1.85f; bladeLengthM = 1.10f; visualScale = Vector3.one;
                     break;
             }
         }
@@ -757,9 +939,21 @@ namespace Stratocraft.Character
         public void ApplyWeaponArchetypeScale(Transform? weaponPivot)
         {
             if (weaponPivot == null) return;
+            MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null &&
+                mf.sharedMesh.name.IndexOf("ToolPrimitiveKnife", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return;
+            }
+
             GetWeaponStats(ActiveWeaponArchetype, out _, out _, out _, out Vector3 scale);
-            weaponPivot.localScale = scale;
-            if (_builtMeshArchetypeId != (int)ActiveWeaponArchetype)
+            if ((weaponPivot.localScale - scale).sqrMagnitude > 1e-5f)
+            {
+                weaponPivot.localScale = scale;
+            }
+
+            Mesh forgedMesh = GetOrLoadForgedSwordMesh(ActiveWeaponArchetype);
+            if (_builtMeshArchetypeId != (int)ActiveWeaponArchetype || (mf != null && mf.sharedMesh != forgedMesh))
             {
                 RebuildWeaponArchetypeVisualMesh(weaponPivot, ActiveWeaponArchetype);
                 _builtMeshArchetypeId = (int)ActiveWeaponArchetype;
@@ -771,6 +965,35 @@ namespace Stratocraft.Character
             MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
             if (mf == null) return;
 
+            Transform? legacySocketBlade = weaponPivot.Find("Socket_VoxelBlade");
+            if (legacySocketBlade != null && legacySocketBlade.gameObject.activeSelf)
+            {
+                legacySocketBlade.gameObject.SetActive(false);
+            }
+            Transform? legacyDamascus = weaponPivot.Find("Forged16x32x4_DamascusSteelBlade");
+            if (legacyDamascus != null && legacyDamascus.gameObject.activeSelf)
+            {
+                legacyDamascus.gameObject.SetActive(false);
+            }
+
+            Mesh targetMesh = GetOrLoadForgedSwordMesh(archetype);
+            if (mf.sharedMesh != targetMesh)
+            {
+                mf.sharedMesh = targetMesh;
+            }
+
+            if (weaponPivot.TryGetComponent<MeshRenderer>(out MeshRenderer mr))
+            {
+                Material? steelMat = ResolveForgedWeaponSteelMaterial(mr.sharedMaterial);
+                if (steelMat != null && mr.sharedMaterial != steelMat)
+                {
+                    mr.sharedMaterial = steelMat;
+                }
+            }
+        }
+
+        private static Mesh BuildProceduralHexSwordMesh(CombatWeaponArchetype archetype)
+        {
             var verts = new List<Vector3>(256);
             var colors = new List<Color32>(256);
             var tris = new List<int>(512);
@@ -891,86 +1114,78 @@ namespace Stratocraft.Character
                     Color32 tipGleam = new(244, 248, 255, 255);
 
                     // 1) Faceted armut (scent-stopper) topuz (pommel)
-                    AddTaperedBox(verts, colors, tris, -0.265f, -0.230f, new(0.011f, 0.011f), new(0.022f, 0.019f), 0f, 0f, antiqueBrass, antiqueBrass);
-                    AddTaperedBox(verts, colors, tris, -0.230f, -0.195f, new(0.022f, 0.019f), new(0.012f, 0.013f), 0f, 0f, antiqueBrass, guardSteel);
+                    AddTaperedBox(verts, colors, tris, -0.315f, -0.285f, new(0.011f, 0.011f), new(0.022f, 0.019f), 0f, 0f, antiqueBrass, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, -0.285f, -0.255f, new(0.022f, 0.019f), new(0.012f, 0.013f), 0f, 0f, antiqueBrass, guardSteel);
 
-                    // 2) Ince iki-el bel kivrimli deri kabza + orta pirinc bilezik
-                    AddTaperedBox(verts, colors, tris, -0.195f, -0.095f, new(0.013f, 0.015f), new(0.015f, 0.017f), 0f, 0f, gripLeather, gripAccent);
-                    AddBox(verts, colors, tris, new(0f, -0.092f, 0f), new(0.017f, 0.008f, 0.019f), antiqueBrass, antiqueBrass);
-                    AddTaperedBox(verts, colors, tris, -0.084f,  0.020f, new(0.015f, 0.017f), new(0.014f, 0.016f), 0f, 0f, gripAccent, gripLeather);
+                    // 2) Ince iki-el bel kivrimli deri kabza + orta pirinc bilezik (y = -0.255 .. 0.000)
+                    AddTaperedBox(verts, colors, tris, -0.255f, -0.135f, new(0.013f, 0.015f), new(0.015f, 0.017f), 0f, 0f, gripLeather, gripAccent);
+                    AddBox(verts, colors, tris, new(0f, -0.130f, 0f), new(0.017f, 0.007f, 0.019f), antiqueBrass, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, -0.123f,  0.000f, new(0.015f, 0.017f), new(0.014f, 0.016f), 0f, 0f, gripAccent, gripLeather);
 
-                    // 3) Belirgin ince balcak (crossguard) + hafif acili quillon uclari + yan koruma halkalari
-                    AddBox(verts, colors, tris, new(0f, 0.030f, 0f), new(0.165f, 0.010f, 0.011f), guardSteel, antiqueBrass);
-                    AddTaperedBox(verts, colors, tris, 0.022f, 0.056f, new(0.010f, 0.009f), new(0.006f, 0.007f), -0.165f, -0.192f, guardSteel, antiqueBrass);
-                    AddTaperedBox(verts, colors, tris, 0.022f, 0.056f, new(0.010f, 0.009f), new(0.006f, 0.007f),  0.165f,  0.192f, guardSteel, antiqueBrass);
-                    AddBox(verts, colors, tris, new(0f, 0.030f, -0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
-                    AddBox(verts, colors, tris, new(0f, 0.030f,  0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
+                    // 3) Belirgin ince balcak (alt yuzu y = 0.000m!) + quillon uclari + yan koruma halkalari
+                    AddBox(verts, colors, tris, new(0f, 0.010f, 0f), new(0.165f, 0.010f, 0.011f), guardSteel, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, 0.004f, 0.042f, new(0.010f, 0.009f), new(0.006f, 0.007f), -0.165f, -0.192f, guardSteel, antiqueBrass);
+                    AddTaperedBox(verts, colors, tris, 0.004f, 0.042f, new(0.010f, 0.009f), new(0.006f, 0.007f),  0.165f,  0.192f, guardSteel, antiqueBrass);
+                    AddBox(verts, colors, tris, new(0f, 0.010f, -0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
+                    AddBox(verts, colors, tris, new(0f, 0.010f,  0.028f), new(0.042f, 0.007f, 0.006f), antiqueBrass, antiqueBrass);
 
-                    // 4) Deri sargili ince Ricasso (y=0.04..0.20, kalinlik 0.018m!) + Parierhaken (parry lugs)
+                    // 4) Deri sargili ince Ricasso (y = +0.020 .. +0.195) + Parierhaken (parry lugs)
                     AddHexBladeSegment(verts, colors, tris,
-                        0.040f, 0.205f,
-                        hwBot: 0.021f, fwBot: 0.010f, htBot: 0.0090f,
-                        hwTop: 0.020f, fwTop: 0.009f, htTop: 0.0086f,
+                        0.020f, 0.195f,
+                        hwBot: 0.021f, fwBot: 0.010f, htBot: 0.0080f,
+                        hwTop: 0.020f, fwTop: 0.009f, htTop: 0.0076f,
                         gripLeather, guardSteel, gripAccent, fullerDark);
-                    // Parierhaken (iki yana yukari egimli savunma kancalari)
-                    AddTaperedBox(verts, colors, tris, 0.196f, 0.246f, new(0.012f, 0.0075f), new(0.005f, 0.0045f), -0.024f, -0.086f, guardSteel, brightEdge);
-                    AddTaperedBox(verts, colors, tris, 0.196f, 0.246f, new(0.012f, 0.0075f), new(0.005f, 0.0045f),  0.024f,  0.086f, guardSteel, brightEdge);
+                    AddTaperedBox(verts, colors, tris, 0.190f, 0.242f, new(0.012f, 0.0070f), new(0.005f, 0.0042f), -0.022f, -0.084f, guardSteel, brightEdge);
+                    AddTaperedBox(verts, colors, tris, 0.190f, 0.242f, new(0.012f, 0.0070f), new(0.005f, 0.0042f),  0.022f,  0.084f, guardSteel, brightEdge);
 
-                    // 5) Ince-yassi Zweihander namlu (max kalinlik 0.018m -> 0.011m, daralan fuller + keskin pahli agizlar)
+                    // 5) Ince-yassi Zweihander 6-gen namlu
                     AddHexBladeSegment(verts, colors, tris,
-                        0.205f, 0.560f,
-                        hwBot: 0.030f, fwBot: 0.011f, htBot: 0.0090f,
-                        hwTop: 0.024f, fwTop: 0.0085f, htTop: 0.0074f,
+                        0.195f, 0.560f,
+                        hwBot: 0.028f, fwBot: 0.010f, htBot: 0.0078f,
+                        hwTop: 0.023f, fwTop: 0.0080f, htTop: 0.0066f,
                         fullerDark, steelMid, fullerDark, brightEdge);
                     AddHexBladeSegment(verts, colors, tris,
-                        0.560f, 0.920f,
-                        hwBot: 0.024f, fwBot: 0.0085f, htBot: 0.0074f,
-                        hwTop: 0.016f, fwTop: 0.0055f, htTop: 0.0055f,
+                        0.560f, 0.940f,
+                        hwBot: 0.023f, fwBot: 0.0080f, htBot: 0.0066f,
+                        hwTop: 0.015f, fwTop: 0.0050f, htTop: 0.0048f,
                         fullerDark, brightEdge, steelMid, tipGleam);
-
-                    // 6) Keskin 6-fasetli daralan mizrak ucu (tapered point)
                     AddHexBladeTip(verts, colors, tris,
-                        0.920f, 1.110f,
-                        hwBase: 0.016f, fwBase: 0.0055f, htBase: 0.0055f,
+                        0.940f, 1.120f,
+                        hwBase: 0.015f, fwBase: 0.0050f, htBase: 0.0048f,
                         steelMid, tipGleam, tipGleam);
                     break;
                 }
                 case CombatWeaponArchetype.Rapier:
                 {
-                    Color32 gripCol = new(115, 28, 36, 255), silverCup = new(220, 228, 240, 255), goldTrim = new(238, 196, 78, 255), needleBlade = new(235, 244, 255, 255);
-                    AddBox(verts, colors, tris, new(0f, -0.15f, 0f), new(0.026f, 0.026f, 0.026f), goldTrim, goldTrim);
-                    AddBox(verts, colors, tris, new(0f, -0.05f, 0f), new(0.015f, 0.08f, 0.015f), gripCol, gripCol);
-                    AddBox(verts, colors, tris, new(0.055f, -0.04f, 0f), new(0.010f, 0.08f, 0.012f), goldTrim, goldTrim);
-                    AddBox(verts, colors, tris, new(0f, 0.05f, 0f), new(0.095f, 0.042f, 0.095f), goldTrim, silverCup);
-                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.14f, 0.010f, 0.014f), goldTrim, goldTrim);
-                    AddBox(verts, colors, tris, new(0f, 0.56f, 0f), new(0.012f, 0.48f, 0.010f), silverCup, needleBlade);
+                    Color32 gripCol = new(104, 30, 38, 255), silverCup = new(196, 206, 220, 255), goldTrim = new(214, 178, 82, 255), needleBlade = new(235, 244, 255, 255);
+                    AddTaperedBox(verts, colors, tris, -0.155f, -0.118f, new(0.008f, 0.008f), new(0.016f, 0.016f), 0f, 0f, goldTrim, goldTrim);
+                    AddTaperedBox(verts, colors, tris, -0.118f, 0.000f, new(0.011f, 0.010f), new(0.012f, 0.011f), 0f, 0f, gripCol, gripCol);
+                    AddBox(verts, colors, tris, new(0.058f, -0.055f, 0f), new(0.005f, 0.058f, 0.006f), goldTrim, goldTrim);
+                    AddTaperedBox(verts, colors, tris, -0.042f, 0.016f, new(0.058f, 0.058f), new(0.018f, 0.018f), 0f, 0f, goldTrim, silverCup);
+                    AddBox(verts, colors, tris, new(0f, 0.007f, 0f), new(0.130f, 0.006f, 0.007f), goldTrim, goldTrim);
+                    AddHexBladeSegment(verts, colors, tris, 0.020f, 0.880f, 0.011f, 0.003f, 0.0045f, 0.0045f, 0.0015f, 0.0022f, silverCup, needleBlade, silverCup, needleBlade);
+                    AddHexBladeTip(verts, colors, tris, 0.880f, 1.015f, 0.0045f, 0.0015f, 0.0022f, silverCup, needleBlade, needleBlade);
                     break;
                 }
                 case CombatWeaponArchetype.Katana:
                 {
-                    Color32 tsukaCol = new(34, 30, 42, 255), wrapRed = new(168, 36, 42, 255), tsubaGold = new(188, 152, 64, 255), muneDark = new(95, 106, 122, 255), hamonBright = new(242, 248, 255, 255);
-                    AddBox(verts, colors, tris, new(0f, -0.11f, 0f), new(0.018f, 0.11f, 0.022f), tsukaCol, wrapRed);
-                    AddBox(verts, colors, tris, new(0f, 0.02f, 0f), new(0.068f, 0.008f, 0.068f), tsubaGold, tsubaGold);
-                    const int segs = 5;
-                    float segLen = 0.96f / segs;
-                    for (int s = 0; s < segs; s++)
-                    {
-                        float t01 = (s + 0.5f) / segs;
-                        AddBox(verts, colors, tris,
-                            new(t01 * t01 * 0.068f, 0.04f + (s + 0.5f) * segLen, 0f),
-                            new(Mathf.Lerp(0.024f, 0.015f, t01), segLen * 0.52f, Mathf.Lerp(0.011f, 0.007f, t01)),
-                            muneDark, hamonBright);
-                    }
+                    Color32 tsukaCol = new(38, 34, 46, 255), wrapRed = new(148, 36, 42, 255), tsubaGold = new(196, 158, 66, 255), muneDark = new(82, 92, 108, 255), hamonBright = new(236, 242, 252, 255);
+                    AddTaperedBox(verts, colors, tris, -0.235f, 0.000f, new(0.015f, 0.011f), new(0.016f, 0.012f), 0f, 0f, tsukaCol, wrapRed);
+                    AddBox(verts, colors, tris, new(0f, 0.004f, 0f), new(0.040f, 0.004f, 0.038f), tsubaGold, tsubaGold);
+                    AddHexBladeSegment(verts, colors, tris, 0.020f, 0.450f, 0.015f, 0.005f, 0.0040f, 0.013f, 0.004f, 0.0034f, muneDark, hamonBright, muneDark, hamonBright);
+                    AddHexBladeSegment(verts, colors, tris, 0.450f, 0.815f, 0.013f, 0.004f, 0.0034f, 0.011f, 0.003f, 0.0028f, muneDark, hamonBright, muneDark, hamonBright);
+                    AddHexBladeTip(verts, colors, tris, 0.815f, 0.878f, 0.011f, 0.003f, 0.0028f, muneDark, hamonBright, hamonBright);
                     break;
                 }
                 default:
                 {
-                    Color32 gripCol = new(92, 54, 30, 255), goldGuard = new(212, 174, 72, 255), steelBase = new(175, 186, 204, 255), steelTip = new(236, 242, 252, 255);
-                    AddBox(verts, colors, tris, new(0f, -0.16f, 0f), new(0.030f, 0.028f, 0.030f), goldGuard, goldGuard);
-                    AddBox(verts, colors, tris, new(0f, -0.06f, 0f), new(0.019f, 0.08f, 0.019f), gripCol, gripCol);
-                    AddBox(verts, colors, tris, new(0f, 0.03f, 0f), new(0.15f, 0.015f, 0.022f), goldGuard, goldGuard);
-                    AddBox(verts, colors, tris, new(0f, 0.44f, 0f), new(0.032f, 0.39f, 0.010f), steelBase, steelTip);
-                    AddBox(verts, colors, tris, new(0f, 0.90f, 0f), new(0.020f, 0.09f, 0.008f), steelTip, steelTip);
+                    Color32 gripCol = new(74, 44, 26, 255), goldGuard = new(196, 158, 66, 255), fullerDark = new(92, 102, 118, 255), steelBase = new(175, 186, 204, 255), steelTip = new(236, 242, 252, 255);
+                    AddTaperedBox(verts, colors, tris, -0.230f, -0.180f, new(0.012f, 0.011f), new(0.022f, 0.017f), 0f, 0f, goldGuard, goldGuard);
+                    AddTaperedBox(verts, colors, tris, -0.180f, 0.000f, new(0.013f, 0.011f), new(0.016f, 0.013f), 0f, 0f, gripCol, gripCol);
+                    AddBox(verts, colors, tris, new(0f, 0.010f, 0f), new(0.128f, 0.010f, 0.012f), goldGuard, goldGuard);
+                    AddHexBladeSegment(verts, colors, tris, 0.020f, 0.560f, 0.024f, 0.007f, 0.0052f, 0.018f, 0.005f, 0.0040f, fullerDark, steelBase, fullerDark, steelTip);
+                    AddHexBladeSegment(verts, colors, tris, 0.560f, 0.835f, 0.018f, 0.005f, 0.0040f, 0.012f, 0.003f, 0.0028f, fullerDark, steelTip, steelBase, steelTip);
+                    AddHexBladeTip(verts, colors, tris, 0.835f, 0.935f, 0.012f, 0.003f, 0.0028f, steelBase, steelTip, steelTip);
                     break;
                 }
             }
@@ -981,25 +1196,28 @@ namespace Stratocraft.Character
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-            mf.sharedMesh = mesh;
+            return mesh;
         }
 
         /// <summary>
-        /// Faz K.6 (Halbschwert / Yari-Kilic): Sol elin kavrayacagi orta namlu (y = +0.28m) dunya soketini dondurur.
+        /// Faz K.6 (Halbschwert / Yari-Kilic): Sol elin kavrayacagi arketipe ozel Yari-Kilic dunya soketini dondurur.
+        /// Katana ve Rapier asla keskin namluya cikmaz (kabza soketinde kalir).
         /// </summary>
         public Vector3 GetHalfSwordMidBladeWorldSocket(Transform weaponPivot)
         {
-            MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
-            bool isOriginAtPommel = mf == null || mf.sharedMesh == null || mf.sharedMesh.bounds.min.y >= -0.035f;
-            float midBladeY = isOriginAtPommel
-                ? (0.24f + MeleeBiomechanicsSolver.HalfSwordMidBladeOffsetMeters)
-                : MeleeBiomechanicsSolver.HalfSwordMidBladeOffsetMeters;
-            return weaponPivot.TransformPoint(new Vector3(0f, midBladeY, 0f));
+            GetWeaponArchetypeGripLocalSockets(
+                ActiveWeaponArchetype,
+                isHalfSword: true,
+                leftArmSevered: false,
+                out _,
+                out float halfSwordLeftY,
+                out _);
+            return weaponPivot.TransformPoint(new Vector3(0f, halfSwordLeftY, 0f));
         }
 
         /// <summary>
-        /// Aktif kilicin gercek dunya kabza kavrama soketlerini (Sag El = balcak alti, Sol El = pommel ustu veya Halbschwert orta namlu) dondurur.
-        /// Gercek karakterin omuz->dirsek->bilek->el 2-Kemik IK zinciri bu soketlere kilitlenir (sahte/kopuk kol yok!).
+        /// Aktif kilicin gercek dunya kabza kavrama soketlerini (Sag El = balcak/tsuba alti, Sol El = alt kabza veya Halbschwert) dondurur.
+        /// Tum 4 dovme kilicta balcak alt yuzu y = 0.00m oldugundan eller hicbir zaman keskin namluyu tutmaz!
         /// </summary>
         public bool TryGetWeaponGripWorldSockets(
             Transform? weaponPivot,
@@ -1013,41 +1231,30 @@ namespace Stratocraft.Character
             useTwoHands = false;
             if (weaponPivot == null || !weaponPivot.gameObject.activeInHierarchy) return false;
 
-            // GLB kilic kabzasinda (weapon_hilt_ironwood_longsword.glb) pommel y=0.00, deri kabza y=0.04..0.22, balcak y=0.24!
-            // Yontulmus tas bicak / prosedurel kilicta ise min.y < -0.04'tur -> dogrudan sharedMesh.bounds ile milimetrik coz!
             MeshFilter? mf = weaponPivot.GetComponent<MeshFilter>();
-            bool isOriginAtPommel = mf == null || mf.sharedMesh == null || mf.sharedMesh.bounds.min.y >= -0.035f;
-            float rightY;
-            float leftY;
-            if (isOriginAtPommel)
+            string? meshName = mf != null && mf.sharedMesh != null ? mf.sharedMesh.name : null;
+            bool isPrimitiveKnife = meshName != null &&
+                                    meshName.Length > 0 &&
+                                    meshName.IndexOf("ToolPrimitiveKnife", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (isPrimitiveKnife)
             {
-                rightY = 0.172f;
-                leftY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? 0.052f : 0.064f;
-            }
-            else if (mf != null && mf.sharedMesh != null && mf.sharedMesh.name.StartsWith("ProceduralSword_", StringComparison.Ordinal))
-            {
-                rightY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? -0.025f : -0.020f;
-                leftY = ActiveWeaponArchetype == CombatWeaponArchetype.Greatsword ? -0.160f : -0.115f;
-            }
-            else
-            {
-                Bounds b = mf!.sharedMesh!.bounds;
-                rightY = Mathf.Lerp(b.min.y, b.max.y, 0.34f);
-                leftY = Mathf.Lerp(b.min.y, b.max.y, 0.12f);
-            }
-
-            rightGripWorld = weaponPivot.TransformPoint(new Vector3(0f, rightY, 0f));
-            if (IsHalfSwordActive && !playerLeftArmSevered)
-            {
-                leftGripWorld = GetHalfSwordMidBladeWorldSocket(weaponPivot);
-                useTwoHands = true;
+                // Ilkel tas bicak istisnasi: yalnizca ahsap sap bolgesinden tek el tutus
+                rightGripWorld = weaponPivot.TransformPoint(new Vector3(0f, -0.055f, 0f));
+                leftGripWorld = weaponPivot.TransformPoint(new Vector3(0f, -0.110f, 0f));
+                useTwoHands = false;
                 return true;
             }
 
+            GetWeaponArchetypeGripLocalSockets(
+                ActiveWeaponArchetype,
+                IsHalfSwordActive && !playerLeftArmSevered,
+                playerLeftArmSevered,
+                out float rightY,
+                out float leftY,
+                out useTwoHands);
+
+            rightGripWorld = weaponPivot.TransformPoint(new Vector3(0f, rightY, 0f));
             leftGripWorld = weaponPivot.TransformPoint(new Vector3(0f, leftY, 0f));
-            useTwoHands = !playerLeftArmSevered &&
-                          ActiveWeaponArchetype != CombatWeaponArchetype.Rapier &&
-                          ActiveMartialStance != CombatMartialStance.Fencing_Punta;
             return true;
         }
 
@@ -3391,13 +3598,12 @@ namespace Stratocraft.Character
             else if (ActiveMartialStance == CombatMartialStance.TwoHand_Juggernaut &&
                      activeHolsterSlot == 1 && _preChamberWindowTimer <= 0f)
             {
-                // Devir 078: Çift El Yarma (TwoHand_Juggernaut) guard pozunu sag-dis omuz kenarinda (periferal) tut;
-                // Greatsword ekran merkezini ve sol-ust gorus alanini ASLA kapatmaz!
-                armArcX = Mathf.Clamp(gx * 0.36f + 0.42f, -0.44f, 0.58f);
-                armArcY = Mathf.Clamp(gy * 0.22f - 0.12f, -0.46f, 0.22f);
-                float tipX = Mathf.Clamp(gx * 0.54f + 0.62f, -0.45f, 0.78f);
-                float tipY = Mathf.Clamp(gy * 0.88f, -0.82f, 0.92f);
-                float tipZ = Mathf.Lerp(0.24f, 0.56f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.75f));
+                // Çift El Yarma (TwoHand_Juggernaut): iki el hotbar ustunde net gorunurken namlu sag tarafta acik kalir (sol-ustu kapatmaz!)
+                armArcX = Mathf.Clamp(gx * 0.30f + 0.34f, -0.36f, 0.46f);
+                armArcY = Mathf.Clamp(gy * 0.24f + 0.08f, -0.30f, 0.32f);
+                float tipX = Mathf.Clamp(gx * 0.45f + 0.62f, -0.35f, 0.78f);
+                float tipY = Mathf.Clamp(gy * 0.85f, -0.78f, 0.90f);
+                float tipZ = Mathf.Lerp(0.26f, 0.56f, 1.0f - Mathf.Clamp01(Mathf.Abs(gy) * 0.75f));
                 bladeTipDirLocal = new Vector3(tipX, tipY, tipZ).normalized;
                 edgeNormalLocal = new Vector3(0.76f, -0.18f, 0.62f).normalized;
             }
@@ -3469,8 +3675,8 @@ namespace Stratocraft.Character
                 Vector3 rawFpsHilt = isHarvestTool
                     ? new Vector3(0.22f + armArcX * 0.66f, -0.44f + armArcY * 0.66f, 0.40f + _smoothedArmReachZ * 0.58f) + _wristRecoilOffset + organicGripSway
                     : new Vector3(
-                        swordBase.X + armArcX * (isGreatsword ? 0.62f : 0.68f),
-                        swordBase.Y + armArcY * (isGreatsword ? 0.58f : 0.64f),
+                        swordBase.X + armArcX * (isGreatsword ? 0.52f : 0.68f),
+                        swordBase.Y + armArcY * (isGreatsword ? 0.46f : 0.64f),
                         swordBase.Z + viewDistOffset + _smoothedArmReachZ * 0.62f) + _wristRecoilOffset + organicGripSway;
 
                 float extraForwardReach = Mathf.Max(0f, viewDistOffset);

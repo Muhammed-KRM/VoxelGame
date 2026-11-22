@@ -1,6 +1,9 @@
 #nullable enable
 using System;
+using System.IO;
 using System.Numerics;
+using System.Text;
+using System.Text.Json;
 using NUnit.Framework;
 using Stratocraft.Character;
 
@@ -460,13 +463,150 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(rapierBase, Is.EqualTo(new Vector3(0.21f, -0.27f, 0.49f)));
             Assert.That(katanaBase, Is.EqualTo(new Vector3(0.21f, -0.27f, 0.49f)));
             Assert.That(longswordBase, Is.EqualTo(new Vector3(0.22f, -0.30f, 0.53f)));
-            Assert.That(greatswordBase, Is.EqualTo(new Vector3(0.27f, -0.38f, 0.62f)));
+            Assert.That(greatswordBase, Is.EqualTo(new Vector3(0.16f, -0.08f, 0.46f)));
 
             // Greatsword maksimum gorus mesafesi (+0.22m) ekliyken bile kameraya geri cekilmemeli
             Vector3 gsMaxView = greatswordBase + new Vector3(0f, 0f, 0.22f);
             Vector3 gsClamped = MeleeBiomechanicsSolver.ClampHiltToAnatomicalArmEnvelope(
                 new Vector3(0.10f, -0.26f, 0.06f), gsMaxView, upperArmLen: 0.64f + 0.22f * 0.55f, forearmLen: 0.62f + 0.22f * 0.55f);
             Assert.That(Vector3.Distance(gsClamped, gsMaxView), Is.LessThan(0.001f));
+        }
+
+        [Test]
+        public void AllFourSwordArchetypes_HaveHiltOnlyRightGrip_ValidTwoHandPolicy_AndHalfSwordSockets()
+        {
+            const float sharpBladeStartY = 0.02f;
+            CombatWeaponArchetype[] allArchetypes =
+            {
+                CombatWeaponArchetype.Longsword,
+                CombatWeaponArchetype.Greatsword,
+                CombatWeaponArchetype.Rapier,
+                CombatWeaponArchetype.Katana
+            };
+
+            foreach (CombatWeaponArchetype arch in allArchetypes)
+            {
+                Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                    arch, isHalfSword: false, leftArmSevered: false,
+                    out float rStd, out float lStd, out bool twoHStd);
+                Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                    arch, isHalfSword: true, leftArmSevered: false,
+                    out float rHs, out float lHs, out bool twoHHs);
+                Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                    arch, isHalfSword: false, leftArmSevered: true,
+                    out float rSev, out _, out bool twoHSev);
+
+                // KRITIK: 4 silah tipinin tamaminda sag el balcak/tsuba altinda (rightY < 0f) -> keskin bicaktan tutma IMKANSIZ!
+                Assert.That(rStd, Is.LessThan(0f), $"{arch} rightY must be strictly below guard underside (y=0.00m)!");
+                Assert.That(rStd, Is.LessThan(sharpBladeStartY));
+                Assert.That(rHs, Is.LessThan(0f), $"{arch} Half-Sword rightY must remain below guard underside!");
+                Assert.That(rSev, Is.LessThan(0f));
+
+                // Standart durusta sol el de kabzada (lStd < rStd < 0f)
+                Assert.That(lStd, Is.LessThan(rStd), $"{arch} standard leftY must sit below rightY on the hilt!");
+                Assert.That(twoHSev, Is.False, $"{arch} cannot be two-handed when left arm is severed!");
+
+                if (arch == CombatWeaponArchetype.Rapier)
+                {
+                    Assert.That(twoHStd, Is.False, "Rapier must ALWAYS be single-handed!");
+                    Assert.That(twoHHs, Is.False, "Rapier must ALWAYS be single-handed even if [X] toggled!");
+                    Assert.That(rStd, Is.EqualTo(-0.042f).Within(0.0001f));
+                    Assert.That(lStd, Is.EqualTo(-0.12f).Within(0.0001f));
+                }
+                else
+                {
+                    Assert.That(twoHStd, Is.True, $"{arch} must be two-handed when left arm is intact!");
+                    Assert.That(twoHHs, Is.True, $"{arch} must be two-handed in Half-Sword when left arm is intact!");
+                }
+            }
+
+            // Katana: keskin namluya ASLA degmez (Half-Sword aciksa bile tsuba alti & kashira uzerinde kalir!)
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Katana, isHalfSword: false, leftArmSevered: false,
+                out float katR, out float katL, out bool kat2H);
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Katana, isHalfSword: true, leftArmSevered: false,
+                out float katRHs, out float katLHs, out bool kat2HHs);
+            Assert.That(katR, Is.EqualTo(-0.032f).Within(0.0001f));
+            Assert.That(katL, Is.EqualTo(-0.185f).Within(0.0001f));
+            Assert.That(katRHs, Is.EqualTo(-0.032f).Within(0.0001f));
+            Assert.That(katLHs, Is.EqualTo(-0.185f).Within(0.0001f));
+            Assert.That(kat2H && kat2HHs, Is.True);
+
+            // Longsword: [X] kapaliyken alt kabza (-0.155m), [X] acikken orta namlu (+0.36m)
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Longsword, isHalfSword: false, leftArmSevered: false,
+                out float lsR, out float lsLStd, out _);
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Longsword, isHalfSword: true, leftArmSevered: false,
+                out _, out float lsLHs, out _);
+            Assert.That(lsR, Is.EqualTo(-0.032f).Within(0.0001f));
+            Assert.That(lsLStd, Is.EqualTo(-0.155f).Within(0.0001f));
+            Assert.That(lsLHs, Is.EqualTo(0.36f).Within(0.0001f));
+
+            // Greatsword (Zweihander): [X] kapaliyken alt kabza (-0.225m), [X] acikken deri ricasso (+0.135m)
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Greatsword, isHalfSword: false, leftArmSevered: false,
+                out float gsR, out float gsLStd, out _);
+            Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                CombatWeaponArchetype.Greatsword, isHalfSword: true, leftArmSevered: false,
+                out _, out float gsLHs, out _);
+            Assert.That(gsR, Is.EqualTo(-0.036f).Within(0.0001f));
+            Assert.That(gsLStd, Is.EqualTo(-0.225f).Within(0.0001f));
+            Assert.That(gsLHs, Is.EqualTo(0.135f).Within(0.0001f));
+        }
+
+        [Test]
+        public void FourForgedSwordGlbs_ExistWithZeroTextures_ValidColor0_AndGuardZeroCoordinateStandard()
+        {
+            string repoRoot = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", ".."));
+            string weaponsDir = Path.Combine(repoRoot, "Assets", "Art", "Generated", "Weapons");
+
+            CombatWeaponArchetype[] archetypes =
+            {
+                CombatWeaponArchetype.Longsword,
+                CombatWeaponArchetype.Katana,
+                CombatWeaponArchetype.Greatsword,
+                CombatWeaponArchetype.Rapier
+            };
+
+            foreach (CombatWeaponArchetype arch in archetypes)
+            {
+                string glbName = Stage1DirectionalCombatBridge.ResolveForgedWeaponGlbFileName(arch);
+                string glbPath = Path.Combine(weaponsDir, glbName);
+                Assert.That(File.Exists(glbPath), Is.True, $"Missing forged sword GLB: {glbPath}");
+
+                byte[] bytes = File.ReadAllBytes(glbPath);
+                Assert.That(bytes.Length, Is.GreaterThan(4096), $"GLB too small / low detail: {glbName}");
+                Assert.That(BitConverter.ToUInt32(bytes, 0), Is.EqualTo(0x46546C67u), $"Invalid glTF magic: {glbName}");
+
+                int jsonLen = BitConverter.ToInt32(bytes, 12);
+                string jsonStr = Encoding.UTF8.GetString(bytes, 20, jsonLen);
+                using JsonDocument doc = JsonDocument.Parse(jsonStr);
+                JsonElement root = doc.RootElement;
+
+                Assert.That(root.TryGetProperty("textures", out JsonElement texEl) ? texEl.GetArrayLength() : 0,
+                    Is.EqualTo(0), $"{glbName} must have 0 embedded textures!");
+                Assert.That(root.TryGetProperty("images", out JsonElement imgEl) ? imgEl.GetArrayLength() : 0,
+                    Is.EqualTo(0), $"{glbName} must have 0 embedded images!");
+
+                JsonElement prim = root.GetProperty("meshes")[0].GetProperty("primitives")[0];
+                JsonElement attrs = prim.GetProperty("attributes");
+                Assert.That(attrs.TryGetProperty("COLOR_0", out _), Is.True, $"{glbName} missing COLOR_0!");
+
+                int posAccIdx = attrs.GetProperty("POSITION").GetInt32();
+                JsonElement posAcc = root.GetProperty("accessors")[posAccIdx];
+                double minY = posAcc.GetProperty("min")[1].GetDouble();
+                double maxY = posAcc.GetProperty("max")[1].GetDouble();
+
+                Stage1DirectionalCombatBridge.GetWeaponArchetypeGripLocalSockets(
+                    arch, isHalfSword: false, leftArmSevered: false,
+                    out float rY, out float lY, out _);
+
+                Assert.That(minY, Is.LessThan(lY), $"{glbName} pommel minY ({minY:F3}) must extend below leftY ({lY:F3})!");
+                Assert.That(rY, Is.InRange(minY, 0.0), $"{glbName} rightY must sit strictly inside hilt [minY..0.00m)!");
+                Assert.That(maxY, Is.GreaterThan(0.80), $"{glbName} blade maxY ({maxY:F3}) must extend well above +0.02m!");
+            }
         }
     }
 }
