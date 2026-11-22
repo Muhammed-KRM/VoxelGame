@@ -113,6 +113,30 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
         public const float PhoenixRebirthDamageMultiplier = 1.50f;
         public const float PhoenixWeakPointCriticalMultiplier = 3.0f;
 
+        // Faz 4 Canli Yetenek Sabitleri (CapStealthPhasing, CapBlinkTeleport, CapTrenchBallistic, CapSiegeAndShipCrew)
+        public const float StealthStalkMinDistanceMeters = 5.5f;
+        public const float StealthShimmerMinAlpha = 0.24f;
+        public const float StealthShimmerMaxAlpha = 0.40f;
+        public const float StealthCrouchVerticalScale = 0.72f;
+        public const float StealthAmbushLungeMultiplier = 1.45f;
+        public const float StealthReenterCooldownSeconds = 5.0f;
+
+        public const float BlinkMinDistanceOffsetMeters = 3.5f;
+        public const float BlinkMaxDistanceOffsetMeters = 5.5f;
+        public const float BlinkMinCooldownSeconds = 6.5f;
+        public const float BlinkDefaultCooldownSeconds = 6.8f;
+        public const float BlinkClosingMinRangeMeters = 5.0f;
+        public const float BlinkClosingMaxRangeMeters = 17.5f;
+
+        public const float TrenchBallisticMinRangeMeters = 6.5f;
+        public const float TrenchBallisticMaxRangeMeters = 17.0f;
+        public const float TrenchBallisticMinCooldownSeconds = 4.2f;
+        public const float TrenchBallisticDefaultCooldownSeconds = 4.5f;
+        public const float TrenchBallisticGravityMps2 = 16.0f;
+
+        public const float SiegeCrewObstructingBlockRadiusMeters = 2.6f;
+        public const float SiegeCrewSlamCooldownSeconds = 1.10f;
+
         private static readonly CreatureArchetypeDefinition[] Catalog21 =
         {
             // Halka 1 (Lv1: 200 - 1.000m) — 5 Canli
@@ -390,6 +414,271 @@ namespace Stratocraft.CreaturesAI.CreaturesAndBosses
                 chunk.SetVoxel(pillarLocalX, pillarBaseY, pillarLocalZ, new VoxelCell(updated));
             }
 
+            return true;
+        }
+
+        public static AnatomyCapabilityFlags GetCapabilitiesForArchetype(byte creatureId)
+        {
+            if (creatureId < 1 || creatureId > Catalog21.Length)
+            {
+                return AnatomyCapabilityFlags.None;
+            }
+
+            return Catalog21[creatureId - 1].InitialCapabilities;
+        }
+
+        public static AnatomyCapabilityFlags ResolveInitialCapabilities(
+            byte creatureId,
+            bool isStarterAshStalker = false,
+            bool isStarterPhoenix = false)
+        {
+            AnatomyCapabilityFlags caps = GetCapabilitiesForArchetype(creatureId);
+            if (isStarterAshStalker || isStarterPhoenix ||
+                creatureId == 4 || creatureId == 8 || creatureId == 11 ||
+                creatureId == 13 || creatureId == 17 || creatureId == 19)
+            {
+                caps |= AnatomyCapabilityFlags.VoxelSiegeBreaker;
+            }
+
+            if (isStarterAshStalker)
+            {
+                caps |= AnatomyCapabilityFlags.CapStealthPhasing;
+            }
+
+            return caps;
+        }
+
+        public static bool HasArchetypeCapability(
+            byte creatureId,
+            AnatomyCapabilityFlags activeCapabilities,
+            AnatomyCapabilityFlags requiredFlag)
+        {
+            AnatomyCapabilityFlags resolved = activeCapabilities != AnatomyCapabilityFlags.None
+                ? activeCapabilities
+                : GetCapabilitiesForArchetype(creatureId);
+            return (resolved & requiredFlag) != 0;
+        }
+
+        /// <summary>
+        /// CapStealthPhasing: 5.5m uzeri takip mesafesinde hayalet kirinim (azaltilmis gorunurluk/alfa + comelme olcegi)
+        /// uygular; 5.5m ve altina indiginde fazdan cikip 1.45x pusu atilmasini tetikler.
+        /// </summary>
+        public static void StepStealthPhasing(
+            AnatomyCapabilityFlags capabilities,
+            float horizontalDistanceMeters,
+            float timeSeconds,
+            float deltaTime,
+            ref bool isStealthPhased,
+            ref bool ambushLungePrimed,
+            ref float stealthCooldownTimer,
+            out float tintAlpha01,
+            out float crouchScaleY,
+            out bool triggeredUnphaseAmbush)
+        {
+            stealthCooldownTimer = MathF.Max(0f, stealthCooldownTimer - MathF.Max(0f, deltaTime));
+            triggeredUnphaseAmbush = false;
+
+            if ((capabilities & AnatomyCapabilityFlags.CapStealthPhasing) == 0)
+            {
+                isStealthPhased = false;
+                ambushLungePrimed = false;
+                tintAlpha01 = 1.0f;
+                crouchScaleY = 1.0f;
+                return;
+            }
+
+            if (horizontalDistanceMeters > StealthStalkMinDistanceMeters && stealthCooldownTimer <= 0f)
+            {
+                isStealthPhased = true;
+                ambushLungePrimed = true;
+                float shimmerWave01 = 0.5f + 0.5f * MathF.Sin(timeSeconds * 7.2f);
+                tintAlpha01 = StealthShimmerMinAlpha + (StealthShimmerMaxAlpha - StealthShimmerMinAlpha) * shimmerWave01;
+                crouchScaleY = StealthCrouchVerticalScale;
+                return;
+            }
+
+            if (isStealthPhased && horizontalDistanceMeters <= StealthStalkMinDistanceMeters)
+            {
+                isStealthPhased = false;
+                ambushLungePrimed = true;
+                triggeredUnphaseAmbush = true;
+                stealthCooldownTimer = StealthReenterCooldownSeconds;
+                tintAlpha01 = 1.0f;
+                crouchScaleY = 1.0f;
+                return;
+            }
+
+            isStealthPhased = false;
+            tintAlpha01 = 1.0f;
+            crouchScaleY = 1.0f;
+        }
+
+        /// <summary>
+        /// CapBlinkTeleport: Kapanma veya kacinma aninda hedefin yanina/arkasina 3.5-5.5m taktiksel sicrama noktasi uretir (&gt;= 6.5sn bekleme).
+        /// </summary>
+        public static bool TryComputeBlinkStepTarget(
+            AnatomyCapabilityFlags capabilities,
+            System.Numerics.Vector3 currentPos,
+            System.Numerics.Vector3 targetPos,
+            System.Numerics.Vector3 targetForwardXZ,
+            bool isEvading,
+            int deterministicStepSeed,
+            ref float blinkCooldownTimer,
+            out System.Numerics.Vector3 candidateDestXZ,
+            out float blinkOffsetMeters)
+        {
+            candidateDestXZ = currentPos;
+            blinkOffsetMeters = 0f;
+
+            if ((capabilities & AnatomyCapabilityFlags.CapBlinkTeleport) == 0 || blinkCooldownTimer > 0f)
+            {
+                return false;
+            }
+
+            float dx = targetPos.X - currentPos.X;
+            float dz = targetPos.Z - currentPos.Z;
+            float horizDist = MathF.Sqrt(dx * dx + dz * dz);
+            if (!isEvading && (horizDist < BlinkClosingMinRangeMeters || horizDist > BlinkClosingMaxRangeMeters))
+            {
+                return false;
+            }
+
+            float fwdLen = MathF.Sqrt(targetForwardXZ.X * targetForwardXZ.X + targetForwardXZ.Z * targetForwardXZ.Z);
+            float fx, fz;
+            if (fwdLen > 1e-4f)
+            {
+                fx = targetForwardXZ.X / fwdLen;
+                fz = targetForwardXZ.Z / fwdLen;
+            }
+            else if (horizDist > 1e-4f)
+            {
+                fx = dx / horizDist;
+                fz = dz / horizDist;
+            }
+            else
+            {
+                fx = 0f;
+                fz = 1f;
+            }
+
+            float rx = fz;
+            float rz = -fx;
+            float sideSign = (deterministicStepSeed & 1) == 0 ? 1.0f : -1.0f;
+            float backWeight = isEvading ? 0.38f : 0.78f;
+            float sideWeight = isEvading ? 0.925f : 0.625f;
+
+            float dirX = -fx * backWeight + rx * (sideSign * sideWeight);
+            float dirZ = -fz * backWeight + rz * (sideSign * sideWeight);
+            float dirLen = MathF.Sqrt(dirX * dirX + dirZ * dirZ);
+            if (dirLen > 1e-5f)
+            {
+                dirX /= dirLen;
+                dirZ /= dirLen;
+            }
+
+            float step01 = ((Math.Abs(deterministicStepSeed) >> 1) & 7) / 7.0f;
+            blinkOffsetMeters = BlinkMinDistanceOffsetMeters +
+                                (BlinkMaxDistanceOffsetMeters - BlinkMinDistanceOffsetMeters) * step01;
+
+            candidateDestXZ = new System.Numerics.Vector3(
+                targetPos.X + dirX * blinkOffsetMeters,
+                targetPos.Y,
+                targetPos.Z + dirZ * blinkOffsetMeters);
+            blinkCooldownTimer = MathF.Max(BlinkMinCooldownSeconds, BlinkDefaultCooldownSeconds);
+            return true;
+        }
+
+        /// <summary>
+        /// CapTrenchBallistic: 6.5-17m menzilde 3B parabolik yay cizen balistik diken/kaya firlatma hizini cozer (&gt;= 4.2sn bekleme).
+        /// </summary>
+        public static bool TrySolveTrenchBallisticShot(
+            AnatomyCapabilityFlags capabilities,
+            System.Numerics.Vector3 muzzlePos,
+            System.Numerics.Vector3 targetPos,
+            ref float ballisticCooldownTimer,
+            out System.Numerics.Vector3 launchVelocity,
+            out float flightDurationSeconds)
+        {
+            launchVelocity = System.Numerics.Vector3.Zero;
+            flightDurationSeconds = 0f;
+
+            if ((capabilities & AnatomyCapabilityFlags.CapTrenchBallistic) == 0 || ballisticCooldownTimer > 0f)
+            {
+                return false;
+            }
+
+            float dx = targetPos.X - muzzlePos.X;
+            float dy = targetPos.Y - muzzlePos.Y;
+            float dz = targetPos.Z - muzzlePos.Z;
+            float horizDist = MathF.Sqrt(dx * dx + dz * dz);
+            if (horizDist < TrenchBallisticMinRangeMeters || horizDist > TrenchBallisticMaxRangeMeters)
+            {
+                return false;
+            }
+
+            float horizSpeed = Math.Clamp(11.5f + horizDist * 0.35f, 13.0f, 18.0f);
+            flightDurationSeconds = horizDist / horizSpeed;
+            float invHoriz = 1.0f / horizDist;
+            float vx = dx * invHoriz * horizSpeed;
+            float vz = dz * invHoriz * horizSpeed;
+            float vy = (dy + 0.5f * TrenchBallisticGravityMps2 * flightDurationSeconds * flightDurationSeconds) / flightDurationSeconds;
+
+            launchVelocity = new System.Numerics.Vector3(vx, vy, vz);
+            ballisticCooldownTimer = MathF.Max(TrenchBallisticMinCooldownSeconds, TrenchBallisticDefaultCooldownSeconds);
+            return true;
+        }
+
+        public static byte ComputeSiegeCrewSlamDamageSteps(float voxelSiegeDps)
+        {
+            int steps = (int)MathF.Round(MathF.Max(24f, voxelSiegeDps) / 6.0f);
+            return (byte)Math.Clamp(steps, 6, 15);
+        }
+
+        /// <summary>
+        /// CapSiegeAndShipCrew: Yolu tikayan oyuncu yapimi bloklara (OyuncuItemBlogu) agir kusatma darbesi vurarak catlatir veya kirar.
+        /// </summary>
+        public static bool TryApplySiegeCrewPlayerBlockSlam(
+            ref uint rawVoxel,
+            AnatomyCapabilityFlags capabilities,
+            byte slamDamageSteps,
+            out byte updatedDamageState,
+            out bool blockBroken)
+        {
+            updatedDamageState = 0;
+            blockBroken = false;
+
+            if ((capabilities & AnatomyCapabilityFlags.CapSiegeAndShipCrew) == 0)
+            {
+                return false;
+            }
+
+            if (!VoxelBitUtility.IsPhysicallySolid(rawVoxel) ||
+                VoxelBitUtility.GetOriginState(rawVoxel) != BlokKokenDurumu.OyuncuItemBlogu)
+            {
+                return false;
+            }
+
+            byte mat = VoxelBitUtility.GetMaterialId(rawVoxel);
+            if (mat == MaterialIdCatalog.Air ||
+                mat == MaterialIdCatalog.Bedrock ||
+                mat >= MaterialIdCatalog.DungeonSanctumImmuneStart)
+            {
+                return false;
+            }
+
+            int step = Math.Max(1, (int)slamDamageSteps);
+            int nextDmg = VoxelBitUtility.GetDamageState(rawVoxel) + step;
+            if (nextDmg >= 15)
+            {
+                rawVoxel = 0u;
+                updatedDamageState = 15;
+                blockBroken = true;
+                return true;
+            }
+
+            updatedDamageState = (byte)nextDmg;
+            rawVoxel = VoxelBitUtility.WithDamageState(rawVoxel, updatedDamageState);
+            blockBroken = false;
             return true;
         }
     }
