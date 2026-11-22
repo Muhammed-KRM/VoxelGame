@@ -43,6 +43,51 @@ namespace Stratocraft.Physics.Jobs
         [ThreadStatic] private static int[]? _tlsParentIdx;
         [ThreadStatic] private static short[]? _tlsSpringY;
         [ThreadStatic] private static byte[]? _tlsArchLocked;
+        [ThreadStatic] private static byte[]? _tlsTimberCellMask;
+        [ThreadStatic] private static byte[]? _tlsTimberGroundState;
+
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _tlsBucketHeads = null;
+            _tlsPrevInBucket = null;
+            _tlsNextInBucket = null;
+            _tlsNodeBucket = null;
+            _tlsAnchorCol = null;
+            _tlsParentIdx = null;
+            _tlsSpringY = null;
+            _tlsArchLocked = null;
+            _tlsTimberCellMask = null;
+            _tlsTimberGroundState = null;
+        }
+#endif
+
+        /// <summary>Maden tahkimati (direk/kiris) gorevi gorebilen ahsap malzeme kimlikleri.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsTimberShoringMaterial(byte matId) =>
+            matId == MaterialIdCatalog.OakWood ||
+            matId == MaterialIdCatalog.Ironwood ||
+            matId == MaterialIdCatalog.SpiritWood ||
+            matId == MaterialIdCatalog.WoodPlank;
+
+        /// <summary>Oyuncu veya kalici yapi kokenli ahsap maden tahkimati vokseli olup olmadigini doner.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsTimberShoringVoxel(uint raw)
+        {
+            if (!VoxelBitUtility.IsPhysicallySolid(raw))
+            {
+                return false;
+            }
+
+            BlokKokenDurumu origin = VoxelBitUtility.GetOriginState(raw);
+            if (origin != BlokKokenDurumu.OyuncuItemBlogu && origin != BlokKokenDurumu.KaliciYapi)
+            {
+                return false;
+            }
+
+            return IsTimberShoringMaterial(VoxelBitUtility.GetMaterialId(raw));
+        }
 
         public static int Execute(
             ReadOnlySpan<uint> voxels,
@@ -54,7 +99,12 @@ namespace Stratocraft.Physics.Jobs
             Span<ushort> outCantileverSpan,
             Span<byte> outUnsupportedMask,
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
-            bool allowNaturalOverburdenShortcut = true)
+            bool allowNaturalOverburdenShortcut = true,
+            Func<int, int, int, bool>? externalTimberSupportLookup = null,
+            int worldOriginX = 0,
+            int worldOriginY = 0,
+            int worldOriginZ = 0,
+            Span<byte> outGroundedTimberMask = default)
         {
             int totalVoxels = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalVoxels ||
@@ -74,7 +124,9 @@ namespace Stratocraft.Physics.Jobs
                 out int[] anchorCol,
                 out int[] parentIdx,
                 out short[] springY,
-                out byte[] archLocked);
+                out byte[] archLocked,
+                out byte[] timberCellMask,
+                out byte[] timberGroundState);
 
             Array.Fill(bucketHeads, -1, 0, MaxDialBuckets);
             Array.Fill(prevInBucket, -1, 0, totalVoxels);
@@ -83,11 +135,15 @@ namespace Stratocraft.Physics.Jobs
             Array.Fill(anchorCol, -1, 0, totalVoxels);
             Array.Fill(parentIdx, -1, 0, totalVoxels);
             Array.Clear(archLocked, 0, totalVoxels);
+            Array.Clear(timberCellMask, 0, totalVoxels);
+            Array.Clear(timberGroundState, 0, totalVoxels);
 
             for (int z = 0; z < sizeZ; z++)
             {
+                int wz = worldOriginZ + z;
                 for (int y = 0; y < sizeY; y++)
                 {
+                    int wy = worldOriginY + y;
                     for (int x = 0; x < sizeX; x++)
                     {
                         int idx = GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
@@ -96,9 +152,39 @@ namespace Stratocraft.Physics.Jobs
 
                         if (!VoxelBitUtility.IsPhysicallySolid(raw))
                         {
-                            outGeodesicDistance[idx] = UnreachableDistance;
-                            outCantileverSpan[idx] = UnreachableDistance;
+                            if (externalTimberSupportLookup != null &&
+                                externalTimberSupportLookup(worldOriginX + x, wy, wz))
+                            {
+                                timberCellMask[idx] = 2;
+                                if (y <= supportFloorY)
+                                {
+                                    outGeodesicDistance[idx] = 0;
+                                    outCantileverSpan[idx] = 0;
+                                    anchorCol[idx] = EncodeAnchorColumn(x, z);
+                                    springY[idx] = (short)y;
+                                    timberGroundState[idx] = 1;
+                                    PushBucket(bucketHeads, prevInBucket, nextInBucket, nodeBucket, 0, idx);
+                                }
+                                else
+                                {
+                                    outGeodesicDistance[idx] = UnreachableDistance;
+                                    outCantileverSpan[idx] = UnreachableDistance;
+                                }
+                            }
+                            else
+                            {
+                                outGeodesicDistance[idx] = UnreachableDistance;
+                                outCantileverSpan[idx] = UnreachableDistance;
+                            }
                             continue;
+                        }
+
+                        bool isTimberVoxel = IsTimberShoringVoxel(raw) ||
+                                             (externalTimberSupportLookup != null &&
+                                              externalTimberSupportLookup(worldOriginX + x, wy, wz));
+                        if (isTimberVoxel)
+                        {
+                            timberCellMask[idx] = 1;
                         }
 
                         byte matId = VoxelBitUtility.GetMaterialId(raw);
@@ -119,6 +205,10 @@ namespace Stratocraft.Physics.Jobs
                             outCantileverSpan[idx] = 0;
                             anchorCol[idx] = EncodeAnchorColumn(x, z);
                             springY[idx] = (short)y;
+                            if (isTimberVoxel)
+                            {
+                                timberGroundState[idx] = 1;
+                            }
                             PushBucket(bucketHeads, prevInBucket, nextInBucket, nodeBucket, 0, idx);
                         }
                         else
@@ -153,7 +243,9 @@ namespace Stratocraft.Physics.Jobs
 
                     DecodeGridIndex(current, sizeX, sizeY, sizeZ, layout, out int cx, out int cy, out int cz);
                     uint curRaw = voxels[current];
-                    byte curMat = VoxelBitUtility.GetMaterialId(curRaw);
+                    byte curTimberKind = timberCellMask[current];
+                    byte curTimberGround = timberGroundState[current];
+                    byte curMat = curTimberKind == 2 ? MaterialIdCatalog.OakWood : VoxelBitUtility.GetMaterialId(curRaw);
                     StructuralMaterialProps curProps = StructuralMaterialProps.GetForMaterial(curMat);
                     ushort currentCantilever = outCantileverSpan[current];
                     int curAnchor = anchorCol[current];
@@ -173,20 +265,25 @@ namespace Stratocraft.Physics.Jobs
 
                         int nIdx = GridIndex(nx, ny, nz, sizeX, sizeY, sizeZ, layout);
                         uint nRaw = voxels[nIdx];
-                        if (!VoxelBitUtility.IsPhysicallySolid(nRaw))
+                        bool nSolid = VoxelBitUtility.IsPhysicallySolid(nRaw);
+                        byte nTimberKind = timberCellMask[nIdx];
+                        if (!nSolid && nTimberKind != 2)
                         {
                             continue;
                         }
 
-                        byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
+                        byte nMat = nTimberKind == 2 ? MaterialIdCatalog.OakWood : VoxelBitUtility.GetMaterialId(nRaw);
                         StructuralMaterialProps nProps = StructuralMaterialProps.GetForMaterial(nMat);
 
-                        // Kohezyonsuz / dusuk cekme dayanimli dogal kutleler (Stalagnate, Dirt, Grass, Sand, Clay,
-                        // Cobblestone, Stone vb.) ustteki KaliciYapi / tavan blogundan asagiya dogru saf cekme
-                        // (StepDy == -1) ile asili kalamaz; taban veya yanal kemer destegi gerektirir.
-                        if (StepDy[dir] < 0 && IsCohesionlessOrLowTensileNaturalBlock(nRaw, nMat, in nProps))
+                        // Kohezyonsuz / dusuk cekme dayanimli dogal kutleler ve ahsap maden tahkimat direkleri
+                        // ustteki tavan blogundan asagiya dogru saf cekme (StepDy == -1) ile asili kalamaz;
+                        // yalnizca gercekten zemine basan direk sutunu yuk tasir!
+                        if (StepDy[dir] < 0)
                         {
-                            continue;
+                            if (nTimberKind != 0 || (nSolid && IsCohesionlessOrLowTensileNaturalBlock(nRaw, nMat, in nProps)))
+                            {
+                                continue;
+                            }
                         }
 
                         bool isDiagonalArchStep = dir >= 6;
@@ -197,6 +294,7 @@ namespace Stratocraft.Physics.Jobs
 
                         bool isConfinedNaturalOverburden =
                             allowNaturalOverburdenShortcut &&
+                            nSolid &&
                             layout == VoxelGridMemoryLayout.YMajorChunk &&
                             VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.DogalKutle &&
                             HasContinuousNaturalOverburden(voxels, nx, ny, nz, sizeX, sizeY, sizeZ, layout, minOverburden: 3);
@@ -212,6 +310,12 @@ namespace Stratocraft.Physics.Jobs
                             : (nProps.IsArchCapable
                                 ? nProps.MaxClosedArchArmBlocks
                                 : nProps.MaxCantileverSpanBlocks);
+                        // Dikey (+Y, horizDelta == 0) olarak kati/destekli bir zemin blogunun uzerine oturan taneli/yumusak blok
+                        // (orn. tas kopru ustundeki 1-2 kat LooseRubble veya Sand) yatay konsol yapmaz; mevcut destek kolonundan dikey yukselir.
+                        if (dir == 2 && horizDelta == 0 && currentCantilever > maxReachAllowed)
+                        {
+                            maxReachAllowed = currentCantilever;
+                        }
                         if (candCantilever > maxReachAllowed)
                         {
                             continue;
@@ -223,7 +327,7 @@ namespace Stratocraft.Physics.Jobs
                         {
                             stepCost = 0;
                         }
-                        else if (isDiagonalArchStep || (StepDy[dir] == 1 && currentCantilever > 0 && nProps.IsArchCapable))
+                        else if (isDiagonalArchStep)
                         {
                             stepCost = Math.Max(1, nProps.ArchCostKappa / 2);
                         }
@@ -233,12 +337,12 @@ namespace Stratocraft.Physics.Jobs
                         }
                         else
                         {
-                            // Dikey (+Y veya -Y asili/konsol uzeri yukselen tas)
+                            // Dikey (+Y kemer/konsol ustu oturan kutle veya -Y)
                             stepCost = 1;
                         }
 
                         int candDistInt = dist + stepCost;
-                        if (candDistInt >= MaxDialBuckets || candDistInt >= 64 && !isPureVerticalColumn)
+                        if (candDistInt >= MaxDialBuckets || (candDistInt >= 64 && !isPureVerticalColumn))
                         {
                             continue;
                         }
@@ -246,14 +350,38 @@ namespace Stratocraft.Physics.Jobs
                         ushort candDist = (ushort)candDistInt;
                         short nextSpringY = isPureVerticalColumn ? (short)ny : curSpringY;
 
-                        if (candDist < outGeodesicDistance[nIdx] ||
-                            (candDist == outGeodesicDistance[nIdx] && candCantilever < outCantileverSpan[nIdx]))
+                        // Gercek zemine basan ahsap maden tahkimati (1 = dikey direk, 2 = direk ustu yatay kiris)
+                        byte candTimberGround = 0;
+                        if (nTimberKind != 0)
+                        {
+                            if (dir == 2 && currentCantilever == 0)
+                            {
+                                candTimberGround = 1;
+                            }
+                            else if (StepDy[dir] == 0 && (curTimberGround == 1 || curTimberGround == 2) && candCantilever <= 3)
+                            {
+                                candTimberGround = 2;
+                            }
+                        }
+
+                        bool betterPath =
+                            candDist < outGeodesicDistance[nIdx] ||
+                            (candDist == outGeodesicDistance[nIdx] &&
+                             (candCantilever < outCantileverSpan[nIdx] ||
+                              (candCantilever == outCantileverSpan[nIdx] &&
+                               (nextSpringY < springY[nIdx] ||
+                                (nextSpringY == springY[nIdx] &&
+                                 candTimberGround != 0 &&
+                                 (timberGroundState[nIdx] == 0 || candTimberGround < timberGroundState[nIdx]))))));
+
+                        if (betterPath)
                         {
                             outGeodesicDistance[nIdx] = candDist;
                             outCantileverSpan[nIdx] = candCantilever;
                             anchorCol[nIdx] = isPureVerticalColumn ? EncodeAnchorColumn(nx, nz) : curAnchor;
                             springY[nIdx] = nextSpringY;
                             parentIdx[nIdx] = current;
+                            timberGroundState[nIdx] = candTimberGround;
                             PushBucket(bucketHeads, prevInBucket, nextInBucket, nodeBucket, candDist, nIdx);
                         }
                     }
@@ -275,25 +403,62 @@ namespace Stratocraft.Physics.Jobs
                 layout);
 
             int unsupportedCount = 0;
-            for (int i = 0; i < totalVoxels; i++)
+            bool writeGroundedTimber = outGroundedTimberMask.Length >= totalVoxels;
+            if (writeGroundedTimber)
             {
-                uint raw = voxels[i];
-                if (!VoxelBitUtility.IsPhysicallySolid(raw))
-                {
-                    continue;
-                }
+                outGroundedTimberMask.Slice(0, totalVoxels).Clear();
+            }
 
-                byte matId = VoxelBitUtility.GetMaterialId(raw);
-                StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(matId);
-                ushort dist = outGeodesicDistance[i];
-                ushort cant = outCantileverSpan[i];
-
-                bool detached = dist == UnreachableDistance ||
-                                (cant > props.MaxCantileverSpanBlocks && archLocked[i] == 0);
-                if (detached)
+            // Tabandan yukariya (y = 0 -> sizeY - 1) tarama: destekli bir kati taban uzerinde dikey oturan blok
+            // (orn. tas kopru ustundeki LooseRubble) yatay konsol sinirindan dolayi kati tabanin icinden dusmez!
+            for (int y = 0; y < sizeY; y++)
+            {
+                for (int z = 0; z < sizeZ; z++)
                 {
-                    outUnsupportedMask[i] = 1;
-                    unsupportedCount++;
+                    for (int x = 0; x < sizeX; x++)
+                    {
+                        int i = GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
+                        uint raw = voxels[i];
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw))
+                        {
+                            if (writeGroundedTimber && timberCellMask[i] == 2 &&
+                                timberGroundState[i] != 0 &&
+                                outGeodesicDistance[i] != UnreachableDistance)
+                            {
+                                outGroundedTimberMask[i] = timberGroundState[i];
+                            }
+                            continue;
+                        }
+
+                        byte matId = VoxelBitUtility.GetMaterialId(raw);
+                        StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(matId);
+                        ushort dist = outGeodesicDistance[i];
+                        ushort cant = outCantileverSpan[i];
+
+                        bool restsOnSupportedBelow = false;
+                        if (y > 0 && dist != UnreachableDistance)
+                        {
+                            int belowIdx = GridIndex(x, y - 1, z, sizeX, sizeY, sizeZ, layout);
+                            if (VoxelBitUtility.IsPhysicallySolid(voxels[belowIdx]) &&
+                                outUnsupportedMask[belowIdx] == 0 &&
+                                outGeodesicDistance[belowIdx] != UnreachableDistance)
+                            {
+                                restsOnSupportedBelow = true;
+                            }
+                        }
+
+                        bool detached = dist == UnreachableDistance ||
+                                        (cant > props.MaxCantileverSpanBlocks && archLocked[i] == 0 && !restsOnSupportedBelow);
+                        if (detached)
+                        {
+                            outUnsupportedMask[i] = 1;
+                            unsupportedCount++;
+                        }
+                        else if (writeGroundedTimber && timberGroundState[i] != 0)
+                        {
+                            outGroundedTimberMask[i] = timberGroundState[i];
+                        }
+                    }
                 }
             }
 
@@ -326,6 +491,10 @@ namespace Stratocraft.Physics.Jobs
                         }
 
                         uint uRaw = voxels[u];
+                        if (!VoxelBitUtility.IsPhysicallySolid(uRaw))
+                        {
+                            continue;
+                        }
                         StructuralMaterialProps uProps = StructuralMaterialProps.GetForMaterial(VoxelBitUtility.GetMaterialId(uRaw));
                         if (!uProps.IsArchCapable)
                         {
@@ -361,6 +530,10 @@ namespace Stratocraft.Physics.Jobs
                             }
 
                             uint vRaw = voxels[v];
+                            if (!VoxelBitUtility.IsPhysicallySolid(vRaw))
+                            {
+                                continue;
+                            }
                             StructuralMaterialProps vProps = StructuralMaterialProps.GetForMaterial(VoxelBitUtility.GetMaterialId(vRaw));
                             if (!vProps.IsArchCapable)
                             {
@@ -396,6 +569,33 @@ namespace Stratocraft.Physics.Jobs
                                 TraceLockArchArm(u, parentIdx, archLocked, voxels.Length);
                                 TraceLockArchArm(v, parentIdx, archLocked, voxels.Length);
                             }
+                        }
+                    }
+                }
+            }
+
+            // Kilitlenmis gercek basinc kemerinin dogrudan ustune oturan kaya/yapi kutleleri kemerden dikey destek alir
+            for (int y = 1; y < sizeY; y++)
+            {
+                for (int z = 0; z < sizeZ; z++)
+                {
+                    for (int x = 0; x < sizeX; x++)
+                    {
+                        int idx = GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
+                        if (archLocked[idx] != 0 || ioGeodesicDistance[idx] == UnreachableDistance)
+                        {
+                            continue;
+                        }
+
+                        if (!VoxelBitUtility.IsPhysicallySolid(voxels[idx]))
+                        {
+                            continue;
+                        }
+
+                        int belowIdx = GridIndex(x, y - 1, z, sizeX, sizeY, sizeZ, layout);
+                        if (archLocked[belowIdx] != 0)
+                        {
+                            archLocked[idx] = 1;
                         }
                     }
                 }
@@ -691,7 +891,9 @@ namespace Stratocraft.Physics.Jobs
             out int[] anchorCol,
             out int[] parentIdx,
             out short[] springY,
-            out byte[] archLocked)
+            out byte[] archLocked,
+            out byte[] timberCellMask,
+            out byte[] timberGroundState)
         {
             if (_tlsBucketHeads == null || _tlsBucketHeads.Length < MaxDialBuckets)
             {
@@ -708,6 +910,8 @@ namespace Stratocraft.Physics.Jobs
                 _tlsParentIdx = new int[cap];
                 _tlsSpringY = new short[cap];
                 _tlsArchLocked = new byte[cap];
+                _tlsTimberCellMask = new byte[cap];
+                _tlsTimberGroundState = new byte[cap];
             }
 
             bucketHeads = _tlsBucketHeads;
@@ -718,6 +922,8 @@ namespace Stratocraft.Physics.Jobs
             parentIdx = _tlsParentIdx!;
             springY = _tlsSpringY!;
             archLocked = _tlsArchLocked!;
+            timberCellMask = _tlsTimberCellMask!;
+            timberGroundState = _tlsTimberGroundState!;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

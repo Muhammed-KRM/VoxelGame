@@ -28,6 +28,21 @@ namespace Stratocraft.Physics.Systems
         [ThreadStatic] private static byte[]? _tlsWaveMask;
         [ThreadStatic] private static float[]? _tlsAccumulatedLoad;
         [ThreadStatic] private static uint[]? _tlsWorkingVoxels;
+        [ThreadStatic] private static byte[]? _tlsGroundedTimberMask;
+
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _tlsGeodesicDist = null;
+            _tlsCantileverSpan = null;
+            _tlsDetachedMask = null;
+            _tlsWaveMask = null;
+            _tlsAccumulatedLoad = null;
+            _tlsWorkingVoxels = null;
+            _tlsGroundedTimberMask = null;
+        }
+#endif
 
         public double LastEvaluationMilliseconds { get; private set; }
         public int MaxEvaluationsPerFrame { get; private set; } = 4;
@@ -46,7 +61,8 @@ namespace Stratocraft.Physics.Systems
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
             ReadOnlySpan<float> optionalTopHaloLoadKg = default,
             Func<int, int, int, ulong>? microMaskLookup = null,
-            bool enableLocalTerzaghiLoosening = false)
+            bool enableLocalTerzaghiLoosening = false,
+            Func<int, int, int, bool>? externalTimberSupportLookup = null)
         {
             long startTicks = Stopwatch.GetTimestamp();
             int volume = sizeX * sizeY * sizeZ;
@@ -58,7 +74,8 @@ namespace Stratocraft.Physics.Systems
                 out byte[] detachedMask,
                 out byte[] waveMask,
                 out float[] accumulatedLoad,
-                out uint[] workingVoxels);
+                out uint[] workingVoxels,
+                out byte[] groundedTimberMask);
 
             Span<ushort> geoSpan = geodesicDist.AsSpan(0, volume);
             Span<ushort> cantSpan = cantileverSpan.AsSpan(0, volume);
@@ -66,9 +83,14 @@ namespace Stratocraft.Physics.Systems
             Span<byte> waveSpan = waveMask.AsSpan(0, volume);
             Span<float> loadSpan = accumulatedLoad.AsSpan(0, volume);
             Span<uint> workSpan = workingVoxels.AsSpan(0, volume);
+            Span<byte> timberSpan = groundedTimberMask.AsSpan(0, volume);
 
             detSpan.Clear();
             voxels.Slice(0, volume).CopyTo(workSpan);
+
+            int worldOriginX = (int)MathF.Floor(worldOriginOffset.X);
+            int worldOriginY = (int)MathF.Floor(worldOriginOffset.Y);
+            int worldOriginZ = (int)MathF.Floor(worldOriginOffset.Z);
 
             int wave = 0;
             for (; wave < MaxDominoWaves; wave++)
@@ -83,7 +105,12 @@ namespace Stratocraft.Physics.Systems
                     cantSpan,
                     waveSpan,
                     layout,
-                    allowNaturalOverburdenShortcut: !enableLocalTerzaghiLoosening);
+                    allowNaturalOverburdenShortcut: !enableLocalTerzaghiLoosening,
+                    externalTimberSupportLookup: externalTimberSupportLookup,
+                    worldOriginX: worldOriginX,
+                    worldOriginY: worldOriginY,
+                    worldOriginZ: worldOriginZ,
+                    outGroundedTimberMask: timberSpan);
 
                 int phase2Failed = TributaryLoadDagJob.Execute(
                     workSpan,
@@ -96,7 +123,8 @@ namespace Stratocraft.Physics.Systems
                     layout,
                     optionalTopHaloLoadKg,
                     microMaskLookup,
-                    enableLocalTerzaghiLoosening);
+                    enableLocalTerzaghiLoosening,
+                    groundedTimberMask: timberSpan);
 
                 int newlyBrokenInWave = 0;
                 if (phase1Detached > 0 || phase2Failed > 0)
@@ -459,7 +487,8 @@ namespace Stratocraft.Physics.Systems
             out byte[] detachedMask,
             out byte[] waveMask,
             out float[] accumulatedLoad,
-            out uint[] workingVoxels)
+            out uint[] workingVoxels,
+            out byte[] groundedTimberMask)
         {
             if (_tlsGeodesicDist == null || _tlsGeodesicDist.Length < volume)
             {
@@ -470,6 +499,7 @@ namespace Stratocraft.Physics.Systems
                 _tlsWaveMask = new byte[cap];
                 _tlsAccumulatedLoad = new float[cap];
                 _tlsWorkingVoxels = new uint[cap];
+                _tlsGroundedTimberMask = new byte[cap];
             }
 
             geodesicDist = _tlsGeodesicDist;
@@ -478,6 +508,7 @@ namespace Stratocraft.Physics.Systems
             waveMask = _tlsWaveMask!;
             accumulatedLoad = _tlsAccumulatedLoad!;
             workingVoxels = _tlsWorkingVoxels!;
+            groundedTimberMask = _tlsGroundedTimberMask!;
         }
     }
 }

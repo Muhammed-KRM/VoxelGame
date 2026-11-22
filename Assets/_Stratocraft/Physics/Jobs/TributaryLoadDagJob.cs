@@ -27,6 +27,17 @@ namespace Stratocraft.Physics.Jobs
 
         [ThreadStatic] private static int[]? _tlsDistHeads;
         [ThreadStatic] private static int[]? _tlsDistNext;
+        [ThreadStatic] private static byte[]? _tlsTimberShoredCeiling;
+
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _tlsDistHeads = null;
+            _tlsDistNext = null;
+            _tlsTimberShoredCeiling = null;
+        }
+#endif
 
         public static int Execute(
             ReadOnlySpan<uint> voxels,
@@ -39,7 +50,8 @@ namespace Stratocraft.Physics.Jobs
             VoxelGridMemoryLayout layout = VoxelGridMemoryLayout.ZMajorLocal,
             ReadOnlySpan<float> optionalTopHaloLoadKg = default,
             Func<int, int, int, ulong>? microMaskLookup = null,
-            bool enableLocalTerzaghiLoosening = false)
+            bool enableLocalTerzaghiLoosening = false,
+            ReadOnlySpan<byte> groundedTimberMask = default)
         {
             int totalVoxels = sizeX * sizeY * sizeZ;
             if (voxels.Length < totalVoxels ||
@@ -70,6 +82,7 @@ namespace Stratocraft.Physics.Jobs
             EnsureSliceBuckets(sliceArea, out int[] distHeads, out int[] distNext);
             Span<int> receiverIndices = stackalloc int[8];
             int newlyFailedCount = 0;
+            bool hasGroundedTimberSpan = groundedTimberMask.Length >= totalVoxels;
 
             // 1. Tek Gecisli Topolojik DAG: Y_max -> Y_min, her Y diliminde d_sup_max -> 0!
             for (int y = sizeY - 1; y >= 0; y--)
@@ -121,6 +134,7 @@ namespace Stratocraft.Physics.Jobs
 
                         byte matId = VoxelBitUtility.GetMaterialId(raw);
                         StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(matId);
+                        BlokKokenDurumu origin = VoxelBitUtility.GetOriginState(raw);
 
                         int microCrossSection16 = 16;
                         float volumeFraction = 1.0f;
@@ -146,6 +160,13 @@ namespace Stratocraft.Physics.Jobs
                             continue;
                         }
 
+                        // Kalici ankrajli dag ortusu / bedrock yuku kendi litostatik kemeriyle dag kutlesine aktarir;
+                        // altindaki maden tahkimati direklerini sonsuz dag agirligiyla yapay olarak ezmez.
+                        if (props.IsUnbreakableAnchor || props.IsSkyAnchor || origin == BlokKokenDurumu.KaliciYapi)
+                        {
+                            continue;
+                        }
+
                         if (y == 0)
                         {
                             continue;
@@ -155,7 +176,18 @@ namespace Stratocraft.Physics.Jobs
                         if (VoxelBitUtility.IsPhysicallySolid(voxels[belowIdx]) &&
                             ioUnsupportedOrCrushedMask[belowIdx] == 0)
                         {
-                            outAccumulatedLoadKg[belowIdx] += totalLoad;
+                            // Terzaghi-Jansen Silo Yasasi: 4 yandan kusatilmis dogal dag kayasi dikey yuku yerel gevseme
+                            // derinligiyle (~6 blok) sinirlar; yalnizca acik/oyuncu kolonlari tam agirlik aktarir.
+                            float passDownLoad = (lateralConfinedFaces >= 4 && origin == BlokKokenDurumu.DogalKutle)
+                                ? MathF.Min(totalLoad, 6.0f * props.MassKg)
+                                : totalLoad;
+                            outAccumulatedLoadKg[belowIdx] += passDownLoad;
+                            continue;
+                        }
+
+                        // Altinda dogrudan zemine basan moduler ahsap tahkimat diregi/kirisi (LogPillar3m/LogBeam2m) varsa yuku direk tasir
+                        if (hasGroundedTimberSpan && groundedTimberMask[belowIdx] != 0)
+                        {
                             continue;
                         }
 
@@ -207,15 +239,14 @@ namespace Stratocraft.Physics.Jobs
                 }
             }
 
-            // 2. 2B (Hem X Hem Z Eksenli) Terzaghi Kaya Kemerlenmesi / Tavan Gevseme Kubbesi
-            // Not: Ham dokunulmamis YMajorChunk dunya uretiminde (enableLocalTerzaghiLoosening == false) dogal magaralar
-            // kendi kendine cokmez; yerel kazi/sutun kesme pencerelerinde (ZMajorLocal veya enableLocalTerzaghiLoosening == true)
-            // acik bosluk ustundeki serbest DogalKutle kubbesi gercekci Terzaghi kemerlenmesiyle gevser.
+            // 2. 3B Kemer Tanimali (d^2y/dx^2 < 0) + Tahkimat Destekli Terzaghi Kaya Kemerlenmesi / Tavan Gevseme Kubbesi
+            // Not: allowBoundaryOpenSpan DAIMA false kalir; 32x32 komsu chunk halosuyla gercek komsu duvar/sutunlar gorulur!
             if (layout != VoxelGridMemoryLayout.YMajorChunk || enableLocalTerzaghiLoosening)
             {
                 newlyFailedCount += Evaluate2DTerzaghiRoofLoosening(
-                    voxels, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout,
-                    allowBoundaryOpenSpan: enableLocalTerzaghiLoosening);
+                    voxels, geodesicDistance, sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout,
+                    allowBoundaryOpenSpan: false,
+                    groundedTimberMask: hasGroundedTimberSpan ? groundedTimberMask : ReadOnlySpan<byte>.Empty);
             }
 
             return newlyFailedCount;
@@ -267,13 +298,26 @@ namespace Stratocraft.Physics.Jobs
 
         private static int Evaluate2DTerzaghiRoofLoosening(
             ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
             int sizeX,
             int sizeY,
             int sizeZ,
             Span<byte> ioUnsupportedOrCrushedMask,
             VoxelGridMemoryLayout layout,
-            bool allowBoundaryOpenSpan)
+            bool allowBoundaryOpenSpan,
+            ReadOnlySpan<byte> groundedTimberMask)
         {
+            int totalVoxels = sizeX * sizeY * sizeZ;
+            bool hasGroundedTimber = false;
+            byte[]? timberShoredCeiling = null;
+
+            if (groundedTimberMask.Length >= totalVoxels)
+            {
+                hasGroundedTimber = BuildTimberShoredCeilingMap(
+                    voxels, ioUnsupportedOrCrushedMask, groundedTimberMask,
+                    sizeX, sizeY, sizeZ, layout, out timberShoredCeiling);
+            }
+
             int loosenedTotal = 0;
 
             // A) X ekseni boyunca acik galeri tavanlari
@@ -293,7 +337,7 @@ namespace Stratocraft.Physics.Jobs
                         {
                             int idx = GeodesicSupportDijkstraJob.GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
                             int aboveIdx = GeodesicSupportDijkstraJob.GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout);
-                            bool cellEmpty = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || ioUnsupportedOrCrushedMask[idx] == 1;
+                            bool cellEmpty = IsCavityCellEmpty(voxels, ioUnsupportedOrCrushedMask, groundedTimberMask, idx);
                             bool aboveSolid = VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) && ioUnsupportedOrCrushedMask[aboveIdx] != 1;
                             isAirUnderSolid = cellEmpty && aboveSolid;
                         }
@@ -306,8 +350,9 @@ namespace Stratocraft.Physics.Jobs
                         else if (currentSpan > 0)
                         {
                             loosenedTotal += ApplyTerzaghiDomeAlongLine(
-                                voxels, spanStartX, currentSpan, y, fixedCoord: z, alongX: true,
-                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan);
+                                voxels, geodesicDistance, spanStartX, currentSpan, y, fixedCoord: z, alongX: true,
+                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan,
+                                groundedTimberMask, hasGroundedTimber ? timberShoredCeiling : null);
                             currentSpan = 0;
                         }
                     }
@@ -329,7 +374,7 @@ namespace Stratocraft.Physics.Jobs
                         {
                             int idx = GeodesicSupportDijkstraJob.GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
                             int aboveIdx = GeodesicSupportDijkstraJob.GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout);
-                            bool cellEmpty = !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || ioUnsupportedOrCrushedMask[idx] == 1;
+                            bool cellEmpty = IsCavityCellEmpty(voxels, ioUnsupportedOrCrushedMask, groundedTimberMask, idx);
                             bool aboveSolid = VoxelBitUtility.IsPhysicallySolid(voxels[aboveIdx]) && ioUnsupportedOrCrushedMask[aboveIdx] != 1;
                             isAirUnderSolid = cellEmpty && aboveSolid;
                         }
@@ -342,8 +387,9 @@ namespace Stratocraft.Physics.Jobs
                         else if (currentSpan > 0)
                         {
                             loosenedTotal += ApplyTerzaghiDomeAlongLine(
-                                voxels, spanStartZ, currentSpan, y, fixedCoord: x, alongX: false,
-                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan);
+                                voxels, geodesicDistance, spanStartZ, currentSpan, y, fixedCoord: x, alongX: false,
+                                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, allowBoundaryOpenSpan,
+                                groundedTimberMask, hasGroundedTimber ? timberShoredCeiling : null);
                             currentSpan = 0;
                         }
                     }
@@ -353,8 +399,160 @@ namespace Stratocraft.Physics.Jobs
             return loosenedTotal;
         }
 
+        private static bool IsCavityCellEmpty(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int idx)
+        {
+            if (groundedTimberMask.Length > idx && groundedTimberMask[idx] != 0)
+            {
+                return false;
+            }
+
+            return !VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || failedMask[idx] == 1;
+        }
+
+        private static bool IsIntactSupportCell(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int idx)
+        {
+            if (groundedTimberMask.Length > idx && groundedTimberMask[idx] != 0)
+            {
+                return true;
+            }
+
+            return VoxelBitUtility.IsPhysicallySolid(voxels[idx]) && failedMask[idx] != 1;
+        }
+
+        /// <summary>
+        /// Zemine gercekten basan ahsap maden tahkimat direklerinin / kirislerinin (groundedTimberMask != 0)
+        /// temas ettigi tavan kayasi etrafindaki gercek tasima etki alanini (dx^2 + dz^2 &lt;= W_crit^2) O(1) sorgu haritasina isler.
+        /// Havadaki ahsap parcalar groundedTimberMask == 0 oldugu icin sifir destek verir.
+        /// </summary>
+        private static bool BuildTimberShoredCeilingMap(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout,
+            out byte[]? outMap)
+        {
+            int totalVoxels = sizeX * sizeY * sizeZ;
+            bool anyShoringCap = false;
+            byte[]? map = null;
+
+            for (int z = 0; z < sizeZ; z++)
+            {
+                for (int y = 1; y < sizeY - 1; y++)
+                {
+                    for (int x = 0; x < sizeX; x++)
+                    {
+                        int tIdx = GeodesicSupportDijkstraJob.GridIndex(x, y, z, sizeX, sizeY, sizeZ, layout);
+                        if (groundedTimberMask[tIdx] == 0)
+                        {
+                            continue;
+                        }
+
+                        int ceilIdx = GeodesicSupportDijkstraJob.GridIndex(x, y + 1, z, sizeX, sizeY, sizeZ, layout);
+                        uint ceilRaw = voxels[ceilIdx];
+                        if (!VoxelBitUtility.IsPhysicallySolid(ceilRaw) || failedMask[ceilIdx] == 1)
+                        {
+                            continue;
+                        }
+
+                        if (!anyShoringCap)
+                        {
+                            if (_tlsTimberShoredCeiling == null || _tlsTimberShoredCeiling.Length < totalVoxels)
+                            {
+                                _tlsTimberShoredCeiling = new byte[Math.Max(totalVoxels, 4096)];
+                            }
+                            map = _tlsTimberShoredCeiling;
+                            Array.Clear(map, 0, totalVoxels);
+                            anyShoringCap = true;
+                        }
+
+                        StructuralMaterialProps ceilProps = StructuralMaterialProps.GetForMaterial(VoxelBitUtility.GetMaterialId(ceilRaw));
+                        int radius = ceilProps.IsGranular ? 0 : Math.Clamp(ceilProps.MaxCantileverSpanBlocks, 1, 5);
+                        int radiusSq = radius * radius;
+
+                        int minDz = Math.Max(-radius, -z);
+                        int maxDz = Math.Min(radius, sizeZ - 1 - z);
+                        int minDx = Math.Max(-radius, -x);
+                        int maxDx = Math.Min(radius, sizeX - 1 - x);
+
+                        for (int dz = minDz; dz <= maxDz; dz++)
+                        {
+                            int nz = z + dz;
+                            for (int dx = minDx; dx <= maxDx; dx++)
+                            {
+                                if (dx * dx + dz * dz > radiusSq)
+                                {
+                                    continue;
+                                }
+
+                                int nx = x + dx;
+                                int targetCeilIdx = GeodesicSupportDijkstraJob.GridIndex(nx, y + 1, nz, sizeX, sizeY, sizeZ, layout);
+                                if (!VoxelBitUtility.IsPhysicallySolid(voxels[targetCeilIdx]) || failedMask[targetCeilIdx] == 1)
+                                {
+                                    continue;
+                                }
+
+                                if (HasContinuousSolidCeilingLine(voxels, failedMask, x, z, nx, nz, y + 1, sizeX, sizeY, sizeZ, layout))
+                                {
+                                    int cavIdx = GeodesicSupportDijkstraJob.GridIndex(nx, y, nz, sizeX, sizeY, sizeZ, layout);
+                                    map![cavIdx] = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            outMap = map;
+            return anyShoringCap;
+        }
+
+        private static bool HasContinuousSolidCeilingLine(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<byte> failedMask,
+            int x0,
+            int z0,
+            int x1,
+            int z1,
+            int ceilingY,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout)
+        {
+            int steps = Math.Max(Math.Abs(x1 - x0), Math.Abs(z1 - z0));
+            if (steps <= 1)
+            {
+                return true;
+            }
+
+            for (int step = 1; step < steps; step++)
+            {
+                int ix = x0 + ((x1 - x0) * step + (x1 >= x0 ? steps / 2 : -steps / 2)) / steps;
+                int iz = z0 + ((z1 - z0) * step + (z1 >= z0 ? steps / 2 : -steps / 2)) / steps;
+                int idx = GeodesicSupportDijkstraJob.GridIndex(ix, ceilingY, iz, sizeX, sizeY, sizeZ, layout);
+                if (!VoxelBitUtility.IsPhysicallySolid(voxels[idx]) || failedMask[idx] == 1)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static int ApplyTerzaghiDomeAlongLine(
             ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
             int spanStart,
             int spanWidth,
             int cavityY,
@@ -365,7 +563,9 @@ namespace Stratocraft.Physics.Jobs
             int sizeZ,
             Span<byte> ioUnsupportedOrCrushedMask,
             VoxelGridMemoryLayout layout,
-            bool allowBoundaryOpenSpan)
+            bool allowBoundaryOpenSpan,
+            ReadOnlySpan<byte> groundedTimberMask,
+            byte[]? timberShoredCeiling)
         {
             int maxCoord = alongX ? sizeX : sizeZ;
             if (cavityY <= 0)
@@ -374,13 +574,77 @@ namespace Stratocraft.Physics.Jobs
             }
             if (!allowBoundaryOpenSpan && (spanStart <= 0 || (spanStart + spanWidth) >= maxCoord))
             {
-                // Acik gokyuzu veya dis sinir boslugu yeralti maden galerisi degildir
+                // Acik gokyuzu veya pencere dis siniri boslugu yeralti maden galerisi degildir
+                return 0;
+            }
+
+            // Eger zemine basan ahsap maden tahkimati varsa, tahkimatli hucreler acikligi gercek alt-acikliklara boler
+            if (timberShoredCeiling != null)
+            {
+                int totalSubLoosened = 0;
+                int subStart = -1;
+                int spanEnd = spanStart + spanWidth;
+
+                for (int s = spanStart; s <= spanEnd; s++)
+                {
+                    bool unshoredCell = false;
+                    if (s < spanEnd)
+                    {
+                        int cx = alongX ? s : fixedCoord;
+                        int cz = alongX ? fixedCoord : s;
+                        int cavIdx = GeodesicSupportDijkstraJob.GridIndex(cx, cavityY, cz, sizeX, sizeY, sizeZ, layout);
+                        unshoredCell = timberShoredCeiling[cavIdx] == 0;
+                    }
+
+                    if (unshoredCell)
+                    {
+                        if (subStart < 0) subStart = s;
+                    }
+                    else if (subStart >= 0)
+                    {
+                        int subWidth = s - subStart;
+                        totalSubLoosened += ApplyTerzaghiDomeToUnshoredSpan(
+                            voxels, geodesicDistance, subStart, subWidth, cavityY, fixedCoord, alongX,
+                            sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, groundedTimberMask);
+                        subStart = -1;
+                    }
+                }
+
+                return totalSubLoosened;
+            }
+
+            return ApplyTerzaghiDomeToUnshoredSpan(
+                voxels, geodesicDistance, spanStart, spanWidth, cavityY, fixedCoord, alongX,
+                sizeX, sizeY, sizeZ, ioUnsupportedOrCrushedMask, layout, groundedTimberMask);
+        }
+
+        private static int ApplyTerzaghiDomeToUnshoredSpan(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
+            int spanStart,
+            int spanWidth,
+            int cavityY,
+            int fixedCoord,
+            bool alongX,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            Span<byte> ioUnsupportedOrCrushedMask,
+            VoxelGridMemoryLayout layout,
+            ReadOnlySpan<byte> groundedTimberMask)
+        {
+            if (spanWidth <= 0)
+            {
                 return 0;
             }
 
             int loosenedCount = 0;
             float halfSpan = spanWidth * 0.5f;
             float center = spanStart + halfSpan - 0.5f;
+
+            // Ayni aciklikta kemer kontrolunu malzeme bazinda onbellekle (0 B GC)
+            byte checkedArchMat = 0;
+            bool checkedArchResult = false;
 
             for (int s = spanStart; s < spanStart + spanWidth; s++)
             {
@@ -389,18 +653,8 @@ namespace Stratocraft.Physics.Jobs
 
                 // Yalnizca 1 blokluk yariklari degil cok katli magara galerilerini de destekle;
                 // yuzen ada altindaki tabansiz gokyuzu bosluklarini haric tutmak icin altta gercek taban ara.
-                bool hasFloorBelow = false;
-                int minFloorY = Math.Max(0, cavityY - 32);
-                for (int fy = cavityY - 1; fy >= minFloorY; fy--)
-                {
-                    int floorCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, fy, z, sizeX, sizeY, sizeZ, layout);
-                    if (VoxelBitUtility.IsPhysicallySolid(voxels[floorCheckIdx]) && ioUnsupportedOrCrushedMask[floorCheckIdx] == 0)
-                    {
-                        hasFloorBelow = true;
-                        break;
-                    }
-                }
-                if (!hasFloorBelow)
+                int floorY = FindSolidFloorBelow(voxels, ioUnsupportedOrCrushedMask, groundedTimberMask, x, cavityY, z, sizeX, sizeY, sizeZ, layout);
+                if (floorY < 0)
                 {
                     continue;
                 }
@@ -417,6 +671,30 @@ namespace Stratocraft.Physics.Jobs
                 StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(roofMat);
                 int hArch = props.ComputeTerzaghiArchHeight(spanWidth);
                 if (hArch <= 0)
+                {
+                    continue;
+                }
+
+                // 1) Mevcut eksen boyunca gercek yukari kavislenen kaya kemeri (d^2y/dx^2 < 0) kontrolu:
+                if (roofMat != checkedArchMat)
+                {
+                    checkedArchMat = roofMat;
+                    checkedArchResult = IsSpanSupportedByCompressionArch(
+                        voxels, geodesicDistance, ioUnsupportedOrCrushedMask, groundedTimberMask,
+                        spanStart, spanWidth, cavityY, fixedCoord, alongX,
+                        sizeX, sizeY, sizeZ, layout, in props, floorY);
+                }
+
+                if (checkedArchResult)
+                {
+                    continue;
+                }
+
+                // 2) 3B Dik Eksen (Tonoz / Dar Koridor) Kemer & Kopruleme Kontrolu:
+                // Uzun bir magara koridoru kendi uzun ekseni boyunca degil, dik enine ekseni boyunca kemerlenir/koprulenir!
+                if (IsCellSupportedTransversely(
+                        voxels, geodesicDistance, ioUnsupportedOrCrushedMask, groundedTimberMask,
+                        x, cavityY, z, alongX, sizeX, sizeY, sizeZ, layout, in props, floorY))
                 {
                     continue;
                 }
@@ -439,6 +717,373 @@ namespace Stratocraft.Physics.Jobs
             }
 
             return loosenedCount;
+        }
+
+        private static int FindSolidFloorBelow(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int x,
+            int cavityY,
+            int z,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout)
+        {
+            int minFloorY = Math.Max(0, cavityY - 32);
+            for (int fy = cavityY - 1; fy >= minFloorY; fy--)
+            {
+                int floorCheckIdx = GeodesicSupportDijkstraJob.GridIndex(x, fy, z, sizeX, sizeY, sizeZ, layout);
+                if (VoxelBitUtility.IsPhysicallySolid(voxels[floorCheckIdx]) && failedMask[floorCheckIdx] == 0)
+                {
+                    return fy;
+                }
+                if (groundedTimberMask.Length > floorCheckIdx && groundedTimberMask[floorCheckIdx] != 0)
+                {
+                    return fy;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Gercek yukari kavislenen kaya kemeri (d^2y / ds^2 &lt; 0) tanimasi:
+        /// Tavan taci iki yana dogru basamakli alcap (corbeled/parabolic haunches) zemine oturan gercek duvar/sutun
+        /// ayaklarina (H_L + H_R = 0) yaslandiginda basinc yanal ayaklara aktarilir; duz tavan (rise == 0) veya
+        /// ayagi kesilmis kemer (abutmentGrounded == false) asla kemer sayilmaz!
+        /// </summary>
+        private static bool IsSpanSupportedByCompressionArch(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int spanStart,
+            int spanWidth,
+            int cavityY,
+            int fixedCoord,
+            bool alongX,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout,
+            in StructuralMaterialProps props,
+            int referenceFloorY)
+        {
+            if (!props.IsArchCapable || spanWidth <= 0 || spanWidth > props.MaxClosedArchArmBlocks)
+            {
+                return false;
+            }
+
+            // Kemer tacindaki tum bloklar geodezik olarak kopmamis olmali
+            for (int s = spanStart; s < spanStart + spanWidth; s++)
+            {
+                int cx = alongX ? s : fixedCoord;
+                int cz = alongX ? fixedCoord : s;
+                int crownIdx = GeodesicSupportDijkstraJob.GridIndex(cx, cavityY + 1, cz, sizeX, sizeY, sizeZ, layout);
+                if (geodesicDistance[crownIdx] == GeodesicSupportDijkstraJob.UnreachableDistance)
+                {
+                    return false;
+                }
+            }
+
+            int maxCoord = alongX ? sizeX : sizeZ;
+            int maxFlankSteps = Math.Min(8, Math.Max(4, props.MaxClosedArchArmBlocks));
+
+            bool leftGrounded = TraceArchFlankToGroundedAbutment(
+                voxels, geodesicDistance, failedMask, groundedTimberMask,
+                startS: spanStart - 1, stepDir: -1, cavityY, fixedCoord, alongX,
+                sizeX, sizeY, sizeZ, maxCoord, layout, maxFlankSteps, referenceFloorY,
+                out int archRiseLeft);
+
+            if (!leftGrounded)
+            {
+                return false;
+            }
+
+            bool rightGrounded = TraceArchFlankToGroundedAbutment(
+                voxels, geodesicDistance, failedMask, groundedTimberMask,
+                startS: spanStart + spanWidth, stepDir: 1, cavityY, fixedCoord, alongX,
+                sizeX, sizeY, sizeZ, maxCoord, layout, maxFlankSteps, referenceFloorY,
+                out int archRiseRight);
+
+            if (!rightGrounded)
+            {
+                return false;
+            }
+
+            int minRise = Math.Min(archRiseLeft, archRiseRight);
+            int totalRise = archRiseLeft + archRiseRight;
+
+            if (spanWidth <= props.MaxCantileverSpanBlocks)
+            {
+                return minRise >= 1;
+            }
+
+            if (spanWidth <= props.MaxCantileverSpanBlocks + 2)
+            {
+                return minRise >= 1 && totalRise >= 2;
+            }
+
+            return minRise >= 2 && totalRise >= 4;
+        }
+
+        private static bool TraceArchFlankToGroundedAbutment(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int startS,
+            int stepDir,
+            int cavityY,
+            int fixedCoord,
+            bool alongX,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int maxCoord,
+            VoxelGridMemoryLayout layout,
+            int maxFlankSteps,
+            int referenceFloorY,
+            out int archRise)
+        {
+            archRise = 0;
+            if ((uint)startS >= (uint)maxCoord)
+            {
+                return false;
+            }
+
+            int s = startS;
+            int curY = cavityY;
+            int flatRun = 0;
+
+            for (int step = 0; step <= maxFlankSteps; step++)
+            {
+                int x = alongX ? s : fixedCoord;
+                int z = alongX ? fixedCoord : s;
+                int idx = GeodesicSupportDijkstraJob.GridIndex(x, curY, z, sizeX, sizeY, sizeZ, layout);
+                if (!IsIntactSupportCell(voxels, failedMask, groundedTimberMask, idx))
+                {
+                    return false;
+                }
+
+                if (IsColumnGroundedToCavityFloor(
+                        voxels, geodesicDistance, failedMask, groundedTimberMask,
+                        x, curY, z, referenceFloorY, sizeX, sizeY, sizeZ, layout))
+                {
+                    return true;
+                }
+
+                // Bu blok altinda bosluk bulunan gercek bir kemer omuz/bindirme (corbel) basamagidir (d^2y/ds^2 < 0)
+                int drop = (cavityY + 1) - curY;
+                if (drop > archRise)
+                {
+                    archRise = drop;
+                }
+
+                int nextS = s + stepDir;
+                if ((uint)nextS >= (uint)maxCoord)
+                {
+                    return false;
+                }
+
+                int nx = alongX ? nextS : fixedCoord;
+                int nz = alongX ? fixedCoord : nextS;
+
+                if (curY > 0)
+                {
+                    int diagDownIdx = GeodesicSupportDijkstraJob.GridIndex(nx, curY - 1, nz, sizeX, sizeY, sizeZ, layout);
+                    if (IsIntactSupportCell(voxels, failedMask, groundedTimberMask, diagDownIdx))
+                    {
+                        s = nextS;
+                        curY--;
+                        flatRun = 0;
+                        continue;
+                    }
+                }
+
+                int sameLevelIdx = GeodesicSupportDijkstraJob.GridIndex(nx, curY, nz, sizeX, sizeY, sizeZ, layout);
+                if (flatRun == 0 && IsIntactSupportCell(voxels, failedMask, groundedTimberMask, sameLevelIdx))
+                {
+                    s = nextS;
+                    flatRun = 1;
+                    continue;
+                }
+
+                return false;
+            }
+
+            return false;
+        }
+
+        private static bool IsColumnGroundedToCavityFloor(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int x,
+            int startY,
+            int z,
+            int referenceFloorY,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout)
+        {
+            int startIdx = GeodesicSupportDijkstraJob.GridIndex(x, startY, z, sizeX, sizeY, sizeZ, layout);
+            if (geodesicDistance[startIdx] != 0)
+            {
+                return false;
+            }
+
+            int targetFloorY = Math.Max(0, Math.Min(startY - 1, referenceFloorY));
+            for (int ty = startY - 1; ty >= targetFloorY; ty--)
+            {
+                int idx = GeodesicSupportDijkstraJob.GridIndex(x, ty, z, sizeX, sizeY, sizeZ, layout);
+                if (!IsIntactSupportCell(voxels, failedMask, groundedTimberMask, idx))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsCellSupportedTransversely(
+            ReadOnlySpan<uint> voxels,
+            ReadOnlySpan<ushort> geodesicDistance,
+            ReadOnlySpan<byte> failedMask,
+            ReadOnlySpan<byte> groundedTimberMask,
+            int x,
+            int cavityY,
+            int z,
+            bool primaryAlongX,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            VoxelGridMemoryLayout layout,
+            in StructuralMaterialProps props,
+            int referenceFloorY)
+        {
+            bool perpAlongX = !primaryAlongX;
+            int perpCoord = perpAlongX ? x : z;
+            int perpFixed = perpAlongX ? z : x;
+            int perpMax = perpAlongX ? sizeX : sizeZ;
+
+            int pStart = perpCoord;
+            while (pStart > 0)
+            {
+                int prev = pStart - 1;
+                int px = perpAlongX ? prev : perpFixed;
+                int pz = perpAlongX ? perpFixed : prev;
+                int pIdx = GeodesicSupportDijkstraJob.GridIndex(px, cavityY, pz, sizeX, sizeY, sizeZ, layout);
+                int pAbove = GeodesicSupportDijkstraJob.GridIndex(px, cavityY + 1, pz, sizeX, sizeY, sizeZ, layout);
+                if (IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, pIdx) &&
+                    VoxelBitUtility.IsPhysicallySolid(voxels[pAbove]) && failedMask[pAbove] != 1)
+                {
+                    pStart = prev;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            int pEnd = perpCoord;
+            while (pEnd + 1 < perpMax)
+            {
+                int next = pEnd + 1;
+                int px = perpAlongX ? next : perpFixed;
+                int pz = perpAlongX ? perpFixed : next;
+                int pIdx = GeodesicSupportDijkstraJob.GridIndex(px, cavityY, pz, sizeX, sizeY, sizeZ, layout);
+                int pAbove = GeodesicSupportDijkstraJob.GridIndex(px, cavityY + 1, pz, sizeX, sizeY, sizeZ, layout);
+                if (IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, pIdx) &&
+                    VoxelBitUtility.IsPhysicallySolid(voxels[pAbove]) && failedMask[pAbove] != 1)
+                {
+                    pEnd = next;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            int perpWidth = pEnd - pStart + 1;
+            int maxFlankSteps = Math.Min(8, Math.Max(4, props.MaxClosedArchArmBlocks));
+
+            // A) Basamakli kemer omuzu / bindirme cikintisi (corbel shoulder) kontrolu:
+            // Eger bir kenar kati duvar/kemer ayagina yaslanirken diger kenar daha yuksek bir magara bosluguna aciliyorsa
+            // (yani kapali 1-blokluk duz kesit degil, yukselen kemerin 1..W_crit blokluk bindirme omuzuysa) kemer omuzu stabildir!
+            if (perpWidth <= props.MaxCantileverSpanBlocks)
+            {
+                bool leftOpensHigher = false;
+                if (pStart > 0)
+                {
+                    int lx = perpAlongX ? (pStart - 1) : perpFixed;
+                    int lz = perpAlongX ? perpFixed : (pStart - 1);
+                    int lIdx = GeodesicSupportDijkstraJob.GridIndex(lx, cavityY, lz, sizeX, sizeY, sizeZ, layout);
+                    int lAbove = GeodesicSupportDijkstraJob.GridIndex(lx, cavityY + 1, lz, sizeX, sizeY, sizeZ, layout);
+                    leftOpensHigher = IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, lIdx) &&
+                                      IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, lAbove);
+                }
+
+                bool rightOpensHigher = false;
+                if (pEnd + 1 < perpMax)
+                {
+                    int rx = perpAlongX ? (pEnd + 1) : perpFixed;
+                    int rz = perpAlongX ? perpFixed : (pEnd + 1);
+                    int rIdx = GeodesicSupportDijkstraJob.GridIndex(rx, cavityY, rz, sizeX, sizeY, sizeZ, layout);
+                    int rAbove = GeodesicSupportDijkstraJob.GridIndex(rx, cavityY + 1, rz, sizeX, sizeY, sizeZ, layout);
+                    rightOpensHigher = IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, rIdx) &&
+                                       IsCavityCellEmpty(voxels, failedMask, groundedTimberMask, rAbove);
+                }
+
+                if (leftOpensHigher != rightOpensHigher)
+                {
+                    // Yalnizca karsi kenardaki duvar/kemer ayagi gercekten zemine basiyorsa bu omuz guvenlidir!
+                    bool wallSideGrounded = leftOpensHigher
+                        ? TraceArchFlankToGroundedAbutment(
+                            voxels, geodesicDistance, failedMask, groundedTimberMask,
+                            pEnd + 1, 1, cavityY, perpFixed, perpAlongX,
+                            sizeX, sizeY, sizeZ, perpMax, layout, maxFlankSteps, referenceFloorY, out _)
+                        : TraceArchFlankToGroundedAbutment(
+                            voxels, geodesicDistance, failedMask, groundedTimberMask,
+                            pStart - 1, -1, cavityY, perpFixed, perpAlongX,
+                            sizeX, sizeY, sizeZ, perpMax, layout, maxFlankSteps, referenceFloorY, out _);
+                    if (wallSideGrounded)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            // B) 1-voksel kalinligindaki kapali 2B duz kesit testleri (perpWidth == 1) uzun eksen Terzaghi testini bastirmaz;
+            // gercek 3B magara koridorlari (perpWidth >= 2) ise dik kesitteki dar aciklik veya kemer tonozuyla tasinir!
+            if (perpWidth < 2 || pStart <= 0 || pEnd + 1 >= perpMax)
+            {
+                return false;
+            }
+
+            if (perpWidth <= props.MaxCantileverSpanBlocks)
+            {
+                bool leftOk = TraceArchFlankToGroundedAbutment(
+                    voxels, geodesicDistance, failedMask, groundedTimberMask,
+                    pStart - 1, -1, cavityY, perpFixed, perpAlongX,
+                    sizeX, sizeY, sizeZ, perpMax, layout, maxFlankSteps, referenceFloorY, out _);
+                if (!leftOk) return false;
+
+                bool rightOk = TraceArchFlankToGroundedAbutment(
+                    voxels, geodesicDistance, failedMask, groundedTimberMask,
+                    pEnd + 1, 1, cavityY, perpFixed, perpAlongX,
+                    sizeX, sizeY, sizeZ, perpMax, layout, maxFlankSteps, referenceFloorY, out _);
+                return rightOk;
+            }
+
+            return IsSpanSupportedByCompressionArch(
+                voxels, geodesicDistance, failedMask, groundedTimberMask,
+                pStart, perpWidth, cavityY, perpFixed, perpAlongX,
+                sizeX, sizeY, sizeZ, layout, in props, referenceFloorY);
         }
 
         private static void EnsureSliceBuckets(int sliceArea, out int[] distHeads, out int[] distNext)
