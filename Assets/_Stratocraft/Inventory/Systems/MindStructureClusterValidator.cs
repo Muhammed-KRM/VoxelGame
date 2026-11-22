@@ -1,6 +1,8 @@
 #nullable enable
 using System;
+using System.IO;
 using System.Numerics;
+using System.Text;
 using Stratocraft.Inventory.Data;
 
 namespace Stratocraft.Inventory.Systems
@@ -1070,6 +1072,1392 @@ namespace Stratocraft.Inventory.Systems
                 HasStoneRing = stoneCount >= 4,
                 FeedbackMessage = "🏠 Kütük Kulübe (LogCabin) çatıldı ve mühürlendi! (+Tam Fırtına & Soğuk Barınağı)"
             };
+        }
+    }
+
+    /// <summary>
+    /// Valheim &amp; Sons of the Forest 12 parcali gercek 3B moduler yapi kiti (Assets/Art/Generated/Structures_Modular/*.glb).
+    /// </summary>
+    public enum ModularBuildPieceKind : byte
+    {
+        LogBeam2m = 0,
+        LogPillar3m = 1,
+        PlankWall2x2m = 2,
+        PlankDoorway2x2m = 3,
+        PlankWindow2x2m = 4,
+        PlankFloor2x2m = 5,
+        StoneFoundation2x2m = 6,
+        StoneArchPillar3m = 7,
+        RoofRafter26Deg2x2m = 8,
+        RoofRafter45Deg2x2m = 9,
+        RoofRidge2m = 10,
+        DiagonalBrace2m = 11
+    }
+
+    /// <summary>
+    /// Valheim renk kodlu yapisal stabilite kusagi:
+    /// Blue = 1.0 (Zemin / Tas Temel), Green &gt;= 0.75, Yellow &gt;= 0.45, Orange &gt;= 0.20, Red &lt; 0.20 (&lt; 0.12 cokme siniri).
+    /// </summary>
+    public enum ValheimStabilityBand : byte
+    {
+        Red = 0,
+        Orange = 1,
+        Yellow = 2,
+        Green = 3,
+        Blue = 4
+    }
+
+    /// <summary>
+    /// Sahnedeki veya prosedurel yerleskedeki tekil 3B moduler yapi dugumu (0-GC deger turu).
+    /// </summary>
+    public struct ModularPlacedPieceNode
+    {
+        public int InstanceId;
+        public ModularBuildPieceKind Kind;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public float GroundFloorY;
+        public float Health;
+        public float MaxHealth;
+        public float Stability01;
+        public ValheimStabilityBand StabilityBand;
+        public bool IsGrounded;
+        public bool IsFalling;
+        public bool IsBroken;
+        public Vector3 LinearVelocity;
+        public Vector3 AngularVelocityRadPerSec;
+        public float FallenElapsedSec;
+        public int ChunkOwnerKey;
+    }
+
+    /// <summary>
+    /// Mevcut moduler parca uzerindeki yerel miknatis kenetlenme (snap) soketi.
+    /// </summary>
+    public readonly struct ModularSnapSocket
+    {
+        public readonly Vector3 LocalOffset;
+        public readonly float RelativeYawDeg;
+
+        public ModularSnapSocket(Vector3 localOffset, float relativeYawDeg = 0f)
+        {
+            LocalOffset = localOffset;
+            RelativeYawDeg = relativeYawDeg;
+        }
+    }
+
+    /// <summary>
+    /// Moduler .glb dosyasinin baslik, COLOR_0 niteligi ve sifir-kaplama (0 texture) denetim raporu.
+    /// </summary>
+    public readonly struct ModularGlbAuditReport
+    {
+        public readonly bool ExistsOnDisk;
+        public readonly bool HasValidGlbHeader;
+        public readonly bool HasPositionAttribute;
+        public readonly bool HasNormalAttribute;
+        public readonly bool HasColor0Attribute;
+        public readonly int EmbeddedTextureCount;
+        public readonly int EmbeddedImageCount;
+        public readonly long FileSizeBytes;
+        public readonly string ResolvedPath;
+
+        public ModularGlbAuditReport(
+            bool existsOnDisk,
+            bool hasValidGlbHeader,
+            bool hasPositionAttribute,
+            bool hasNormalAttribute,
+            bool hasColor0Attribute,
+            int embeddedTextureCount,
+            int embeddedImageCount,
+            long fileSizeBytes,
+            string resolvedPath)
+        {
+            ExistsOnDisk = existsOnDisk;
+            HasValidGlbHeader = hasValidGlbHeader;
+            HasPositionAttribute = hasPositionAttribute;
+            HasNormalAttribute = hasNormalAttribute;
+            HasColor0Attribute = hasColor0Attribute;
+            EmbeddedTextureCount = embeddedTextureCount;
+            EmbeddedImageCount = embeddedImageCount;
+            FileSizeBytes = fileSizeBytes;
+            ResolvedPath = resolvedPath;
+        }
+    }
+
+    /// <summary>
+    /// Saf C# (0-GC, Unity-bagimsiz) Valheim Miknatisli Kenetlenme + Renk Kodlu Cizge Stabilitesi +
+    /// Sons of the Forest 3B Yercekimi &amp; Acisal Tork Yikim Cozucusu.
+    /// </summary>
+    public static class ValheimSotfModularGraphSolver
+    {
+        public const int ModularPieceCount = 12;
+        public const float CollapseStabilityThreshold = 0.12f;
+        public const float OrangeStabilityThreshold = 0.20f;
+        public const float YellowStabilityThreshold = 0.45f;
+        public const float GreenStabilityThreshold = 0.75f;
+        public const float BlueGroundedThreshold = 0.995f;
+        public const float SnapCaptureRadiusMeters = 1.45f;
+        public const float JointOverlapToleranceMeters = 0.26f;
+        public const float GravityAccelMps2 = 9.81f;
+
+        public static string GetPieceGlbFileName(ModularBuildPieceKind kind) => kind switch
+        {
+            ModularBuildPieceKind.LogBeam2m => "mod_log_beam_2m.glb",
+            ModularBuildPieceKind.LogPillar3m => "mod_log_pillar_3m.glb",
+            ModularBuildPieceKind.PlankWall2x2m => "mod_plank_wall_2x2m.glb",
+            ModularBuildPieceKind.PlankDoorway2x2m => "mod_plank_doorway_2x2m.glb",
+            ModularBuildPieceKind.PlankWindow2x2m => "mod_plank_window_2x2m.glb",
+            ModularBuildPieceKind.PlankFloor2x2m => "mod_plank_floor_2x2m.glb",
+            ModularBuildPieceKind.StoneFoundation2x2m => "mod_stone_foundation_2x2m.glb",
+            ModularBuildPieceKind.StoneArchPillar3m => "mod_stone_arch_pillar_3m.glb",
+            ModularBuildPieceKind.RoofRafter26Deg2x2m => "mod_roof_rafter_26deg_2x2m.glb",
+            ModularBuildPieceKind.RoofRafter45Deg2x2m => "mod_roof_rafter_45deg_2x2m.glb",
+            ModularBuildPieceKind.RoofRidge2m => "mod_roof_ridge_2m.glb",
+            ModularBuildPieceKind.DiagonalBrace2m => "mod_diagonal_brace_2m.glb",
+            _ => "mod_log_beam_2m.glb"
+        };
+
+        public static string GetPieceTurkishDisplayName(ModularBuildPieceKind kind) => kind switch
+        {
+            ModularBuildPieceKind.LogBeam2m => "Soyulmuş Kütük Kiriş (2m)",
+            ModularBuildPieceKind.LogPillar3m => "Soyulmuş Kütük Dikme (3m)",
+            ModularBuildPieceKind.PlankWall2x2m => "Bindirmeli Kalas Duvar (2x2m)",
+            ModularBuildPieceKind.PlankDoorway2x2m => "Çerçeveli Kapılı Kalas Duvar (2x2m)",
+            ModularBuildPieceKind.PlankWindow2x2m => "Denizlikli Pencereli Kalas Duvar (2x2m)",
+            ModularBuildPieceKind.PlankFloor2x2m => "Kirişli Ahşap Döşeme (2x2m)",
+            ModularBuildPieceKind.StoneFoundation2x2m => "Harçlı Tarla Taşı Temel (2x2m)",
+            ModularBuildPieceKind.StoneArchPillar3m => "Oymalı Taş Kemer Sütunu (3m)",
+            ModularBuildPieceKind.RoofRafter26Deg2x2m => "26° Zona Kaplı Mertekli Çatı (2x2m)",
+            ModularBuildPieceKind.RoofRafter45Deg2x2m => "45° Dik Zona Kaplı Çatı (2x2m)",
+            ModularBuildPieceKind.RoofRidge2m => "İskandinav Çatı Mahyası (2m)",
+            ModularBuildPieceKind.DiagonalBrace2m => "45° Çapraz Göğüsleme Payandası (2m)",
+            _ => "Modüler Yapı Parçası"
+        };
+
+        public static float GetPieceDefaultMaxHealth(ModularBuildPieceKind kind) => kind switch
+        {
+            ModularBuildPieceKind.StoneFoundation2x2m => 240.0f,
+            ModularBuildPieceKind.StoneArchPillar3m => 190.0f,
+            ModularBuildPieceKind.LogPillar3m => 135.0f,
+            ModularBuildPieceKind.LogBeam2m => 120.0f,
+            ModularBuildPieceKind.PlankWall2x2m => 95.0f,
+            ModularBuildPieceKind.PlankDoorway2x2m => 90.0f,
+            ModularBuildPieceKind.PlankWindow2x2m => 85.0f,
+            ModularBuildPieceKind.PlankFloor2x2m => 90.0f,
+            ModularBuildPieceKind.RoofRafter26Deg2x2m => 85.0f,
+            ModularBuildPieceKind.RoofRafter45Deg2x2m => 85.0f,
+            ModularBuildPieceKind.RoofRidge2m => 70.0f,
+            ModularBuildPieceKind.DiagonalBrace2m => 80.0f,
+            _ => 90.0f
+        };
+
+        public static ModularBuildPieceKind CyclePieceKind(ModularBuildPieceKind current, int delta = 1)
+        {
+            int next = ((int)current + delta) % ModularPieceCount;
+            if (next < 0) next += ModularPieceCount;
+            return (ModularBuildPieceKind)next;
+        }
+
+        public static ValheimStabilityBand ClassifyStabilityBand(float stability01)
+        {
+            if (stability01 >= BlueGroundedThreshold) return ValheimStabilityBand.Blue;
+            if (stability01 >= GreenStabilityThreshold) return ValheimStabilityBand.Green;
+            if (stability01 >= YellowStabilityThreshold) return ValheimStabilityBand.Yellow;
+            if (stability01 >= OrangeStabilityThreshold) return ValheimStabilityBand.Orange;
+            return ValheimStabilityBand.Red;
+        }
+
+        public static bool CanPieceStand(float stability01) => stability01 >= CollapseStabilityThreshold;
+
+        public static void GetStabilityBandRgba(ValheimStabilityBand band, out byte r, out byte g, out byte b, out byte a)
+        {
+            a = 245;
+            switch (band)
+            {
+                case ValheimStabilityBand.Blue:
+                    r = 62; g = 172; b = 255;
+                    break;
+                case ValheimStabilityBand.Green:
+                    r = 68; g = 232; b = 98;
+                    break;
+                case ValheimStabilityBand.Yellow:
+                    r = 248; g = 218; b = 58;
+                    break;
+                case ValheimStabilityBand.Orange:
+                    r = 250; g = 136; b = 42;
+                    break;
+                default:
+                    r = 246; g = 54; b = 54;
+                    break;
+            }
+        }
+
+        public static string GetStabilityBandTurkishName(ValheimStabilityBand band) => band switch
+        {
+            ValheimStabilityBand.Blue => "MAVİ (Tam Temel Desteği)",
+            ValheimStabilityBand.Green => "YEŞİL (Sağlam Taşıyıcı)",
+            ValheimStabilityBand.Yellow => "SARI (Orta Yük)",
+            ValheimStabilityBand.Orange => "TURUNCU (Kritik Konsol)",
+            _ => "KIRMIZI (Yetersiz Destek — Çöker!)"
+        };
+
+        public static void GetPieceLocalBounds(ModularBuildPieceKind kind, out Vector3 localMin, out Vector3 localMax)
+        {
+            switch (kind)
+            {
+                case ModularBuildPieceKind.LogBeam2m:
+                    localMin = new Vector3(-1.04f, 0.00f, -0.13f);
+                    localMax = new Vector3(1.04f, 0.26f, 0.13f);
+                    break;
+                case ModularBuildPieceKind.LogPillar3m:
+                    localMin = new Vector3(-0.14f, 0.00f, -0.14f);
+                    localMax = new Vector3(0.14f, 3.00f, 0.14f);
+                    break;
+                case ModularBuildPieceKind.PlankWall2x2m:
+                case ModularBuildPieceKind.PlankDoorway2x2m:
+                case ModularBuildPieceKind.PlankWindow2x2m:
+                    localMin = new Vector3(-1.00f, 0.00f, -0.06f);
+                    localMax = new Vector3(1.00f, 2.00f, 0.06f);
+                    break;
+                case ModularBuildPieceKind.PlankFloor2x2m:
+                    localMin = new Vector3(-1.00f, 0.00f, -1.00f);
+                    localMax = new Vector3(1.00f, 0.10f, 1.00f);
+                    break;
+                case ModularBuildPieceKind.StoneFoundation2x2m:
+                    localMin = new Vector3(-1.00f, -0.05f, -1.00f);
+                    localMax = new Vector3(1.00f, 0.32f, 1.00f);
+                    break;
+                case ModularBuildPieceKind.StoneArchPillar3m:
+                    localMin = new Vector3(-0.26f, 0.00f, -0.22f);
+                    localMax = new Vector3(0.26f, 3.00f, 0.22f);
+                    break;
+                case ModularBuildPieceKind.RoofRafter26Deg2x2m:
+                    localMin = new Vector3(-1.00f, 0.00f, -1.05f);
+                    localMax = new Vector3(1.00f, 1.14f, 1.02f);
+                    break;
+                case ModularBuildPieceKind.RoofRafter45Deg2x2m:
+                    localMin = new Vector3(-1.00f, 0.00f, -1.05f);
+                    localMax = new Vector3(1.00f, 2.14f, 1.02f);
+                    break;
+                case ModularBuildPieceKind.RoofRidge2m:
+                    localMin = new Vector3(-1.02f, -0.02f, -0.34f);
+                    localMax = new Vector3(1.02f, 0.28f, 0.34f);
+                    break;
+                case ModularBuildPieceKind.DiagonalBrace2m:
+                    localMin = new Vector3(-0.76f, 0.00f, -0.09f);
+                    localMax = new Vector3(0.76f, 1.44f, 0.09f);
+                    break;
+                default:
+                    localMin = new Vector3(-0.5f, 0.0f, -0.5f);
+                    localMax = new Vector3(0.5f, 1.0f, 0.5f);
+                    break;
+            }
+        }
+
+        public static void ComputeWorldAabb(
+            ModularBuildPieceKind kind,
+            Vector3 worldPos,
+            Quaternion worldRot,
+            out Vector3 worldMin,
+            out Vector3 worldMax)
+        {
+            GetPieceLocalBounds(kind, out Vector3 lMin, out Vector3 lMax);
+            Vector3 minV = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            Vector3 maxV = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+
+            for (int mask = 0; mask < 8; mask++)
+            {
+                Vector3 corner = new Vector3(
+                    (mask & 1) == 0 ? lMin.X : lMax.X,
+                    (mask & 2) == 0 ? lMin.Y : lMax.Y,
+                    (mask & 4) == 0 ? lMin.Z : lMax.Z);
+                Vector3 w = worldPos + Vector3.Transform(corner, worldRot);
+                minV = Vector3.Min(minV, w);
+                maxV = Vector3.Max(maxV, w);
+            }
+
+            worldMin = minV;
+            worldMax = maxV;
+        }
+
+        public static bool DoAabbsTouch(
+            Vector3 minA, Vector3 maxA,
+            Vector3 minB, Vector3 maxB,
+            float tolerance = JointOverlapToleranceMeters)
+        {
+            return (minA.X - tolerance <= maxB.X && maxA.X + tolerance >= minB.X) &&
+                   (minA.Y - tolerance <= maxB.Y && maxA.Y + tolerance >= minB.Y) &&
+                   (minA.Z - tolerance <= maxB.Z && maxA.Z + tolerance >= minB.Z);
+        }
+
+        public static float DistancePointToAabb(Vector3 point, Vector3 boxMin, Vector3 boxMax)
+        {
+            float cx = Math.Clamp(point.X, boxMin.X, boxMax.X);
+            float cy = Math.Clamp(point.Y, boxMin.Y, boxMax.Y);
+            float cz = Math.Clamp(point.Z, boxMin.Z, boxMax.Z);
+            float dx = point.X - cx;
+            float dy = point.Y - cy;
+            float dz = point.Z - cz;
+            return MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        /// <summary>
+        /// Goreli yolla (Application.dataPath + CWD + ust dizin yuruyusu, 0 sabit kodlu mutlak yol) .glb yolunu cozer.
+        /// </summary>
+        public static string ResolveModularGlbDiskPath(ModularBuildPieceKind kind, string? unityDataPath = null)
+        {
+            string fileName = GetPieceGlbFileName(kind);
+            if (!string.IsNullOrEmpty(unityDataPath))
+            {
+                string viaData = Path.Combine(unityDataPath, "Art", "Generated", "Structures_Modular", fileName);
+                if (File.Exists(viaData)) return viaData;
+            }
+
+            string relFromCwd = Path.Combine("Assets", "Art", "Generated", "Structures_Modular", fileName);
+            if (File.Exists(relFromCwd)) return Path.GetFullPath(relFromCwd);
+
+            string? probeDir = Directory.GetCurrentDirectory();
+            for (int depth = 0; depth < 7 && !string.IsNullOrEmpty(probeDir); depth++)
+            {
+                string candidate = Path.Combine(probeDir, "Assets", "Art", "Generated", "Structures_Modular", fileName);
+                if (File.Exists(candidate)) return candidate;
+                probeDir = Directory.GetParent(probeDir)?.FullName;
+            }
+
+            probeDir = AppContext.BaseDirectory;
+            for (int depth = 0; depth < 8 && !string.IsNullOrEmpty(probeDir); depth++)
+            {
+                string candidate = Path.Combine(probeDir, "Assets", "Art", "Generated", "Structures_Modular", fileName);
+                if (File.Exists(candidate)) return candidate;
+                probeDir = Directory.GetParent(probeDir)?.FullName;
+            }
+
+            return !string.IsNullOrEmpty(unityDataPath)
+                ? Path.Combine(unityDataPath, "Art", "Generated", "Structures_Modular", fileName)
+                : relFromCwd;
+        }
+
+        /// <summary>
+        /// .glb ikili basligini ve JSON semasini okuyarak COLOR_0 varligini ve 0 gomulu kaplama kuralini dogrular.
+        /// </summary>
+        public static ModularGlbAuditReport AuditModularGlbFile(ModularBuildPieceKind kind, string? unityDataPath = null)
+        {
+            string path = ResolveModularGlbDiskPath(kind, unityDataPath);
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return new ModularGlbAuditReport(false, false, false, false, false, -1, -1, 0L, path);
+            }
+
+            byte[] bytes = File.ReadAllBytes(path);
+            if (bytes.Length < 28 || BitConverter.ToUInt32(bytes, 0) != 0x46546C67u)
+            {
+                return new ModularGlbAuditReport(true, false, false, false, false, -1, -1, bytes.Length, path);
+            }
+
+            uint version = BitConverter.ToUInt32(bytes, 4);
+            if (version != 2u)
+            {
+                return new ModularGlbAuditReport(true, false, false, false, false, -1, -1, bytes.Length, path);
+            }
+
+            int offset = 12;
+            string? jsonText = null;
+            bool hasBinChunk = false;
+            while (offset + 8 <= bytes.Length)
+            {
+                int chunkLen = BitConverter.ToInt32(bytes, offset);
+                uint chunkType = BitConverter.ToUInt32(bytes, offset + 4);
+                int dataStart = offset + 8;
+                if (chunkLen < 0 || dataStart + chunkLen > bytes.Length) break;
+
+                if (chunkType == 0x4E4F534Au) // JSON
+                {
+                    jsonText = Encoding.UTF8.GetString(bytes, dataStart, chunkLen);
+                }
+                else if (chunkType == 0x004E4942u && chunkLen > 0) // BIN\0
+                {
+                    hasBinChunk = true;
+                }
+                offset = dataStart + chunkLen;
+            }
+
+            if (string.IsNullOrEmpty(jsonText) || !hasBinChunk)
+            {
+                return new ModularGlbAuditReport(true, false, false, false, false, -1, -1, bytes.Length, path);
+            }
+
+            bool hasPos = jsonText.Contains("\"POSITION\"", StringComparison.Ordinal);
+            bool hasNrm = jsonText.Contains("\"NORMAL\"", StringComparison.Ordinal);
+            bool hasCol0 = jsonText.Contains("\"COLOR_0\"", StringComparison.Ordinal);
+            int texCount = CountJsonArrayObjects(jsonText, "\"textures\"");
+            int imgCount = CountJsonArrayObjects(jsonText, "\"images\"");
+
+            return new ModularGlbAuditReport(
+                existsOnDisk: true,
+                hasValidGlbHeader: true,
+                hasPositionAttribute: hasPos,
+                hasNormalAttribute: hasNrm,
+                hasColor0Attribute: hasCol0,
+                embeddedTextureCount: texCount,
+                embeddedImageCount: imgCount,
+                fileSizeBytes: bytes.Length,
+                resolvedPath: path);
+        }
+
+        private static int CountJsonArrayObjects(string json, string keyToken)
+        {
+            int idx = json.IndexOf(keyToken, StringComparison.Ordinal);
+            if (idx < 0) return 0;
+            int openBracket = json.IndexOf('[', idx + keyToken.Length);
+            if (openBracket < 0) return 0;
+
+            int depth = 0;
+            int objectCount = 0;
+            for (int i = openBracket; i < json.Length; i++)
+            {
+                char c = json[i];
+                if (c == '[') depth++;
+                else if (c == ']')
+                {
+                    depth--;
+                    if (depth == 0) break;
+                }
+                else if (c == '{' && depth == 1)
+                {
+                    objectCount++;
+                }
+            }
+            return objectCount;
+        }
+
+        /// <summary>
+        /// Mevcut bir moduler parca uzerinde aday parcanin miknatisli kenetlenebilecegi yerel soketleri listeler (0 B GC).
+        /// </summary>
+        private static void AddSock(Span<ModularSnapSocket> outSockets, ref int n, float x, float y, float z, float relYaw = 0f)
+        {
+            if (n < outSockets.Length)
+            {
+                outSockets[n++] = new ModularSnapSocket(new Vector3(x, y, z), relYaw);
+            }
+        }
+
+        public static int PopulateCompatibleSnapSockets(
+            ModularBuildPieceKind hostKind,
+            ModularBuildPieceKind candidateKind,
+            Span<ModularSnapSocket> outSockets)
+        {
+            int n = 0;
+
+            bool candIsWall = candidateKind == ModularBuildPieceKind.PlankWall2x2m ||
+                              candidateKind == ModularBuildPieceKind.PlankDoorway2x2m ||
+                              candidateKind == ModularBuildPieceKind.PlankWindow2x2m;
+            bool candIsPillar = candidateKind == ModularBuildPieceKind.LogPillar3m ||
+                                candidateKind == ModularBuildPieceKind.StoneArchPillar3m;
+            bool candIsRoof = candidateKind == ModularBuildPieceKind.RoofRafter26Deg2x2m ||
+                              candidateKind == ModularBuildPieceKind.RoofRafter45Deg2x2m;
+
+            switch (hostKind)
+            {
+                case ModularBuildPieceKind.StoneFoundation2x2m:
+                    if (candidateKind == ModularBuildPieceKind.StoneFoundation2x2m)
+                    {
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f); AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, -2.0f); AddSock(outSockets, ref n, 0.0f, 0.0f, 2.0f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.32f, 0.0f);
+                        AddSock(outSockets, ref n, -2.0f, 0.32f, 0.0f); AddSock(outSockets, ref n, 2.0f, 0.32f, 0.0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.32f, -2.0f); AddSock(outSockets, ref n, 0.0f, 0.32f, 2.0f);
+                    }
+                    else if (candIsWall || candidateKind == ModularBuildPieceKind.LogBeam2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.32f, -0.94f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.32f, 0.94f, 180f);
+                        AddSock(outSockets, ref n, -0.94f, 0.32f, 0.0f, 90f);
+                        AddSock(outSockets, ref n, 0.94f, 0.32f, 0.0f, 270f);
+                    }
+                    else if (candIsPillar)
+                    {
+                        AddSock(outSockets, ref n, -0.90f, 0.32f, -0.90f); AddSock(outSockets, ref n, 0.90f, 0.32f, -0.90f);
+                        AddSock(outSockets, ref n, -0.90f, 0.32f, 0.90f); AddSock(outSockets, ref n, 0.90f, 0.32f, 0.90f);
+                    }
+                    break;
+
+                case ModularBuildPieceKind.PlankFloor2x2m:
+                    if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
+                    {
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f); AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, -2.0f); AddSock(outSockets, ref n, 0.0f, 0.0f, 2.0f);
+                    }
+                    else if (candIsWall || candidateKind == ModularBuildPieceKind.LogBeam2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.10f, -0.94f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.10f, 0.94f, 180f);
+                        AddSock(outSockets, ref n, -0.94f, 0.10f, 0.0f, 90f);
+                        AddSock(outSockets, ref n, 0.94f, 0.10f, 0.0f, 270f);
+                    }
+                    else if (candIsPillar)
+                    {
+                        AddSock(outSockets, ref n, -0.90f, 0.10f, -0.90f); AddSock(outSockets, ref n, 0.90f, 0.10f, -0.90f);
+                        AddSock(outSockets, ref n, -0.90f, 0.10f, 0.90f); AddSock(outSockets, ref n, 0.90f, 0.10f, 0.90f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.DiagonalBrace2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, -1.40f, 0.0f);
+                    }
+                    break;
+
+                case ModularBuildPieceKind.PlankWall2x2m:
+                case ModularBuildPieceKind.PlankDoorway2x2m:
+                case ModularBuildPieceKind.PlankWindow2x2m:
+                    if (candIsWall)
+                    {
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 2.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, -1.0f, 0.0f, 1.0f, 90f);
+                        AddSock(outSockets, ref n, 1.0f, 0.0f, 1.0f, 270f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 1.95f, 1.00f);
+                        AddSock(outSockets, ref n, 0.0f, 1.95f, -1.00f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, 1.00f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, -1.00f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.LogBeam2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 2.00f, 0.0f);
+                    }
+                    else if (candIsRoof)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 2.00f, 1.00f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 2.00f, -1.00f, 180f);
+                    }
+                    else if (candIsPillar)
+                    {
+                        AddSock(outSockets, ref n, -0.95f, 0.0f, 0.0f);
+                        AddSock(outSockets, ref n, 0.95f, 0.0f, 0.0f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.DiagonalBrace2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.56f, 0.72f, 90f);
+                        AddSock(outSockets, ref n, 0.0f, 0.56f, -0.72f, 270f);
+                    }
+                    break;
+
+                case ModularBuildPieceKind.LogPillar3m:
+                case ModularBuildPieceKind.StoneArchPillar3m:
+                    if (candIsPillar)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 3.00f, 0.0f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.LogBeam2m)
+                    {
+                        AddSock(outSockets, ref n, 1.00f, 2.74f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, -1.00f, 2.74f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 2.74f, 1.00f, 90f);
+                        AddSock(outSockets, ref n, 0.0f, 2.74f, -1.00f, 90f);
+                    }
+                    else if (candIsWall)
+                    {
+                        AddSock(outSockets, ref n, 1.00f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, -1.00f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, 1.00f, 90f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, -1.00f, 90f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
+                    {
+                        AddSock(outSockets, ref n, 1.00f, 2.90f, 1.00f);
+                        AddSock(outSockets, ref n, -1.00f, 2.90f, 1.00f);
+                        AddSock(outSockets, ref n, 1.00f, 2.90f, -1.00f);
+                        AddSock(outSockets, ref n, -1.00f, 2.90f, -1.00f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.DiagonalBrace2m)
+                    {
+                        AddSock(outSockets, ref n, 0.70f, 1.56f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, -0.70f, 1.56f, 0.0f, 180f);
+                        AddSock(outSockets, ref n, 0.0f, 1.56f, 0.70f, 270f);
+                        AddSock(outSockets, ref n, 0.0f, 1.56f, -0.70f, 90f);
+                    }
+                    else if (candIsRoof)
+                    {
+                        AddSock(outSockets, ref n, 1.00f, 3.00f, 1.00f, 0f);
+                        AddSock(outSockets, ref n, -1.00f, 3.00f, 1.00f, 0f);
+                    }
+                    break;
+
+                case ModularBuildPieceKind.LogBeam2m:
+                    if (candidateKind == ModularBuildPieceKind.LogBeam2m)
+                    {
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, -1.0f, 0.0f, 1.0f, 90f);
+                        AddSock(outSockets, ref n, 1.0f, 0.0f, 1.0f, 90f);
+                    }
+                    else if (candIsRoof)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.24f, 1.00f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.24f, -1.00f, 180f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.PlankFloor2x2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, 0.22f, 1.00f);
+                        AddSock(outSockets, ref n, 0.0f, 0.22f, -1.00f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.DiagonalBrace2m)
+                    {
+                        AddSock(outSockets, ref n, -0.35f, -1.38f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.35f, -1.38f, 0.0f, 180f);
+                    }
+                    break;
+
+                case ModularBuildPieceKind.RoofRafter26Deg2x2m:
+                case ModularBuildPieceKind.RoofRafter45Deg2x2m:
+                {
+                    float rise = hostKind == ModularBuildPieceKind.RoofRafter45Deg2x2m ? 2.0f : 1.0f;
+                    if (candIsRoof)
+                    {
+                        AddSock(outSockets, ref n, -2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 2.0f, 0.0f, 0.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, rise, 2.0f, 0f);
+                        AddSock(outSockets, ref n, 0.0f, 0.0f, 2.0f, 180f);
+                    }
+                    else if (candidateKind == ModularBuildPieceKind.RoofRidge2m)
+                    {
+                        AddSock(outSockets, ref n, 0.0f, rise - 0.02f, 1.00f, 0f);
+                    }
+                    break;
+                }
+            }
+
+            return n;
+        }
+
+        /// <summary>
+        /// Oyuncunun nisan noktasina ve mevcut moduler parcalara gore miknatisli kenetlenme (magnetic snap) konumunu,
+        /// [R] donusunu ve aday parcanin canli Valheim cizge stabilitesini (Stability01 + Band) hesaplar (0 B GC).
+        /// </summary>
+        public static void ComputeMagneticPlacementPose(
+            ModularBuildPieceKind candidateKind,
+            Vector3 aimPoint,
+            float userYawDeg,
+            float groundSurfaceY,
+            ReadOnlySpan<ModularPlacedPieceNode> existingNodes,
+            out Vector3 finalPosition,
+            out Quaternion finalRotation,
+            out bool snappedToPiece,
+            out bool isGrounded,
+            out float previewStability01,
+            out ValheimStabilityBand previewBand)
+        {
+            snappedToPiece = false;
+            float snappedYawDeg = MathF.Round(userYawDeg / 45.0f) * 45.0f;
+            finalRotation = CreateYawQuaternion(snappedYawDeg);
+            finalPosition = new Vector3(aimPoint.X, MathF.Max(aimPoint.Y, groundSurfaceY), aimPoint.Z);
+
+            float bestDistSq = SnapCaptureRadiusMeters * SnapCaptureRadiusMeters;
+            Span<ModularSnapSocket> sockets = stackalloc ModularSnapSocket[12];
+
+            for (int i = 0; i < existingNodes.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode host = ref existingNodes[i];
+                if (host.IsBroken || host.IsFalling) continue;
+                if (Vector3.DistanceSquared(host.Position, aimPoint) > 5.2f * 5.2f) continue;
+
+                float hostYaw = ExtractYawDegrees(host.Rotation);
+                int sCount = PopulateCompatibleSnapSockets(host.Kind, candidateKind, sockets);
+                for (int s = 0; s < sCount; s++)
+                {
+                    Vector3 worldSock = host.Position + Vector3.Transform(sockets[s].LocalOffset, host.Rotation);
+                    float dSq = Vector3.DistanceSquared(worldSock, aimPoint);
+                    if (dSq < bestDistSq)
+                    {
+                        bestDistSq = dSq;
+                        finalPosition = worldSock;
+                        finalRotation = CreateYawQuaternion(hostYaw + sockets[s].RelativeYawDeg + snappedYawDeg);
+                        snappedToPiece = true;
+                    }
+                }
+            }
+
+            ComputeWorldAabb(candidateKind, finalPosition, finalRotation, out Vector3 candMin, out Vector3 candMax);
+            isGrounded = candMin.Y <= groundSurfaceY + 0.22f;
+            previewStability01 = EvaluateCandidateStability(
+                candidateKind, finalPosition, finalRotation, candMin, candMax, isGrounded, existingNodes);
+            previewBand = ClassifyStabilityBand(previewStability01);
+        }
+
+        public static float EvaluateCandidateStability(
+            ModularBuildPieceKind candidateKind,
+            Vector3 candPos,
+            Quaternion candRot,
+            Vector3 candMin,
+            Vector3 candMax,
+            bool isGrounded,
+            ReadOnlySpan<ModularPlacedPieceNode> existingNodes)
+        {
+            _ = candPos;
+            _ = candRot;
+            if (isGrounded)
+            {
+                return 1.0f;
+            }
+
+            Vector3 candCenter = 0.5f * (candMin + candMax);
+            float bestStability = 0.0f;
+            bool bracedByActiveStrut = false;
+            float bestBraceSupport = 0.0f;
+
+            for (int i = 0; i < existingNodes.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode sup = ref existingNodes[i];
+                if (sup.IsBroken || sup.IsFalling || sup.Stability01 <= 0.01f) continue;
+
+                ComputeWorldAabb(sup.Kind, sup.Position, sup.Rotation, out Vector3 supMin, out Vector3 supMax);
+                if (!DoAabbsTouch(supMin, supMax, candMin, candMax, JointOverlapToleranceMeters))
+                {
+                    continue;
+                }
+
+                Vector3 supCenter = 0.5f * (supMin + supMax);
+                float edgeLoss = ComputeDirectionalStabilityLoss(sup.Kind, candidateKind, supCenter, candCenter, sup.IsGrounded);
+                float candidateVal = Math.Clamp(sup.Stability01 - edgeLoss, 0.0f, 1.0f);
+                if (candidateVal > bestStability)
+                {
+                    bestStability = candidateVal;
+                }
+
+                if (sup.Kind == ModularBuildPieceKind.DiagonalBrace2m && sup.Stability01 >= 0.20f)
+                {
+                    bracedByActiveStrut = true;
+                    if (sup.Stability01 > bestBraceSupport) bestBraceSupport = sup.Stability01;
+                }
+            }
+
+            if (bracedByActiveStrut)
+            {
+                bestStability = Math.Clamp(MathF.Max(bestStability + 0.22f, bestBraceSupport - 0.06f), 0.0f, 0.96f);
+            }
+
+            return bestStability;
+        }
+
+        private static float ComputeDirectionalStabilityLoss(
+            ModularBuildPieceKind supportKind,
+            ModularBuildPieceKind targetKind,
+            Vector3 supportCenter,
+            Vector3 targetCenter,
+            bool supportIsGrounded)
+        {
+            float dy = targetCenter.Y - supportCenter.Y;
+            float dx = targetCenter.X - supportCenter.X;
+            float dz = targetCenter.Z - supportCenter.Z;
+            float horizDist = MathF.Sqrt(dx * dx + dz * dz);
+
+            float verticalLoss = targetKind switch
+            {
+                ModularBuildPieceKind.StoneFoundation2x2m => 0.06f,
+                ModularBuildPieceKind.StoneArchPillar3m => 0.08f,
+                ModularBuildPieceKind.LogPillar3m => 0.12f,
+                ModularBuildPieceKind.LogBeam2m => 0.13f,
+                ModularBuildPieceKind.DiagonalBrace2m => 0.10f,
+                _ => 0.17f
+            };
+
+            float horizontalLoss = targetKind switch
+            {
+                ModularBuildPieceKind.StoneFoundation2x2m => 0.12f,
+                ModularBuildPieceKind.StoneArchPillar3m => 0.18f,
+                ModularBuildPieceKind.DiagonalBrace2m => 0.10f,
+                ModularBuildPieceKind.LogBeam2m => 0.20f,
+                ModularBuildPieceKind.RoofRafter26Deg2x2m => 0.21f,
+                ModularBuildPieceKind.RoofRafter45Deg2x2m => 0.21f,
+                ModularBuildPieceKind.RoofRidge2m => 0.18f,
+                _ => 0.24f // PlankFloor2x2m / PlankWall2x2m: 1.00 -> 0.76 -> 0.52 -> 0.28 -> 0.04 (<0.12 coker!)
+            };
+
+            float loss;
+            if (dy >= 0.28f && horizDist <= 1.35f)
+            {
+                loss = verticalLoss;
+            }
+            else if (dy < -0.55f)
+            {
+                loss = horizontalLoss + 0.28f;
+            }
+            else
+            {
+                loss = horizontalLoss;
+            }
+
+            // StoneFoundation & StoneArchPillar kagir kaide takviyesi (Valheim tas temel etkisi!)
+            if (supportKind == ModularBuildPieceKind.StoneFoundation2x2m ||
+                supportKind == ModularBuildPieceKind.StoneArchPillar3m)
+            {
+                float stoneBoost = supportIsGrounded ? 0.11f : 0.07f;
+                loss = MathF.Max(0.04f, loss - stoneBoost);
+            }
+
+            return loss;
+        }
+
+        /// <summary>
+        /// Tum aktif moduler parca cizgesinin Valheim stabilitesini (Stability01 in [0..1]) sifirdan hesaplar;
+        /// zeminden kopan (0.0) veya esik altina (&lt; 0.12f) dusen tum parcalari SOTF 3B yercekimi + acisal tork
+        /// devrilme moduna (IsFalling = true) gecirir ve kaskad dengeye ulasana kadar yineler (0 B GC).
+        /// </summary>
+        public static int EvaluateGraphAndTriggerCollapse(
+            Span<ModularPlacedPieceNode> nodes,
+            Vector3 fractureEpicenter,
+            out int newlyCollapsedCount)
+        {
+            newlyCollapsedCount = 0;
+            int count = nodes.Length;
+            if (count == 0) return 0;
+
+            Span<Vector3> minBuf = count <= 192 ? stackalloc Vector3[count] : new Vector3[count];
+            Span<Vector3> maxBuf = count <= 192 ? stackalloc Vector3[count] : new Vector3[count];
+            Span<Vector3> centerBuf = count <= 192 ? stackalloc Vector3[count] : new Vector3[count];
+            Span<float> stabBuf = count <= 192 ? stackalloc float[count] : new float[count];
+
+            for (int i = 0; i < count; i++)
+            {
+                if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
+                ComputeWorldAabb(nodes[i].Kind, nodes[i].Position, nodes[i].Rotation, out minBuf[i], out maxBuf[i]);
+                centerBuf[i] = 0.5f * (minBuf[i] + maxBuf[i]);
+            }
+
+            bool detachedAnyInPass = true;
+            int safetyCascadeGuard = 0;
+
+            while (detachedAnyInPass && safetyCascadeGuard++ < count + 2)
+            {
+                detachedAnyInPass = false;
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (nodes[i].IsBroken || nodes[i].IsFalling)
+                    {
+                        stabBuf[i] = 0.0f;
+                        continue;
+                    }
+                    bool grounded = nodes[i].IsGrounded || minBuf[i].Y <= nodes[i].GroundFloorY + 0.22f;
+                    nodes[i].IsGrounded = grounded;
+                    stabBuf[i] = grounded ? 1.0f : 0.0f;
+                }
+
+                // 1) Zemin temasindan yukariya/yana Bellman-Ford yapisal yuk gevsetmesi
+                for (int pass = 0; pass < count; pass++)
+                {
+                    bool anyImproved = false;
+                    for (int u = 0; u < count; u++)
+                    {
+                        float sU = stabBuf[u];
+                        if (sU <= CollapseStabilityThreshold) continue;
+                        if (nodes[u].IsBroken || nodes[u].IsFalling) continue;
+
+                        for (int v = 0; v < count; v++)
+                        {
+                            if (u == v || nodes[v].IsBroken || nodes[v].IsFalling || nodes[v].IsGrounded) continue;
+                            if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[v], maxBuf[v], JointOverlapToleranceMeters)) continue;
+
+                            float loss = ComputeDirectionalStabilityLoss(
+                                nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded);
+                            float cand = sU - loss;
+                            if (cand > stabBuf[v] + 1e-4f)
+                            {
+                                stabBuf[v] = Math.Clamp(cand, 0.0f, 1.0f);
+                                anyImproved = true;
+                            }
+                        }
+                    }
+
+                    if (!anyImproved) break;
+                }
+
+                // 2) DiagonalBrace2m (45° Gogusleme Payandasi) ucgenleme rijitlik takviyesi + komsu yayilimi
+                bool anyStrutBoost = false;
+                for (int b = 0; b < count; b++)
+                {
+                    if (nodes[b].IsBroken || nodes[b].IsFalling) continue;
+                    if (nodes[b].Kind != ModularBuildPieceKind.DiagonalBrace2m) continue;
+                    if (stabBuf[b] < 0.20f) continue;
+
+                    // Payandanin tutundugu en saglam ana tasiyiciyi bul
+                    float bestAnchorStab = 0.0f;
+                    int bestAnchorIdx = -1;
+                    for (int a = 0; a < count; a++)
+                    {
+                        if (a == b || nodes[a].IsBroken || nodes[a].IsFalling) continue;
+                        if (nodes[a].Kind == ModularBuildPieceKind.DiagonalBrace2m) continue;
+                        if (!DoAabbsTouch(minBuf[b], maxBuf[b], minBuf[a], maxBuf[a], JointOverlapToleranceMeters)) continue;
+                        if (stabBuf[a] > bestAnchorStab)
+                        {
+                            bestAnchorStab = stabBuf[a];
+                            bestAnchorIdx = a;
+                        }
+                    }
+
+                    if (bestAnchorIdx < 0 || bestAnchorStab < 0.30f) continue;
+
+                    for (int t = 0; t < count; t++)
+                    {
+                        if (t == b || t == bestAnchorIdx || nodes[t].IsBroken || nodes[t].IsFalling || nodes[t].IsGrounded) continue;
+                        if (!DoAabbsTouch(minBuf[b], maxBuf[b], minBuf[t], maxBuf[t], JointOverlapToleranceMeters)) continue;
+
+                        float boosted = Math.Clamp(MathF.Max(stabBuf[t] + 0.24f, bestAnchorStab - 0.14f), 0.0f, 0.96f);
+                        if (boosted > stabBuf[t] + 1e-4f)
+                        {
+                            stabBuf[t] = boosted;
+                            anyStrutBoost = true;
+                        }
+                    }
+                }
+
+                if (anyStrutBoost)
+                {
+                    for (int extraPass = 0; extraPass < 4; extraPass++)
+                    {
+                        bool changed = false;
+                        for (int u = 0; u < count; u++)
+                        {
+                            float sU = stabBuf[u];
+                            if (sU <= CollapseStabilityThreshold || nodes[u].IsBroken || nodes[u].IsFalling) continue;
+                            for (int v = 0; v < count; v++)
+                            {
+                                if (u == v || nodes[v].IsBroken || nodes[v].IsFalling || nodes[v].IsGrounded) continue;
+                                if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[v], maxBuf[v], JointOverlapToleranceMeters)) continue;
+
+                                float loss = ComputeDirectionalStabilityLoss(
+                                    nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded);
+                                float cand = sU - loss;
+                                if (cand > stabBuf[v] + 1e-4f)
+                                {
+                                    stabBuf[v] = Math.Clamp(cand, 0.0f, 1.0f);
+                                    changed = true;
+                                }
+                            }
+                        }
+                        if (!changed) break;
+                    }
+                }
+
+                // 3) Stabilitesi < 0.12f (veya kopuk = 0.0f) olan parcalari koparip SOTF 3B tork ile dusur!
+                for (int i = 0; i < count; i++)
+                {
+                    if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
+
+                    float s = stabBuf[i];
+                    nodes[i].Stability01 = s;
+                    nodes[i].StabilityBand = ClassifyStabilityBand(s);
+
+                    if (s < CollapseStabilityThreshold)
+                    {
+                        TriggerPiecePhysicalCollapse(ref nodes[i], centerBuf[i], fractureEpicenter);
+                        newlyCollapsedCount++;
+                        detachedAnyInPass = true;
+                    }
+                }
+            }
+
+            int standingCount = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (!nodes[i].IsBroken && !nodes[i].IsFalling)
+                {
+                    standingCount++;
+                }
+            }
+            return standingCount;
+        }
+
+        private static void TriggerPiecePhysicalCollapse(
+            ref ModularPlacedPieceNode node,
+            Vector3 worldCenter,
+            Vector3 fractureEpicenter)
+        {
+            node.IsFalling = true;
+            node.IsGrounded = false;
+            node.FallenElapsedSec = 0.0f;
+
+            Vector3 fromFracture = worldCenter - fractureEpicenter;
+            Vector3 horizOffset = new Vector3(fromFracture.X, 0.0f, fromFracture.Z);
+            float hLen = horizOffset.Length();
+            uint h = (uint)(node.InstanceId * 747796405 + 2891336453u);
+            float jitterAngle = ((h & 1023u) / 1024.0f) * MathF.PI * 2.0f;
+
+            Vector3 outwardDir = hLen > 0.05f
+                ? (horizOffset / hLen)
+                : new Vector3(MathF.Cos(jitterAngle), 0.0f, MathF.Sin(jitterAngle));
+
+            // 3B dogrusal devrilme itkisi + anlik asagi yercekimi baslangici
+            float lateralKick = 0.85f + ((h >> 10) & 255u) / 255.0f * 0.95f;
+            node.LinearVelocity = outwardDir * lateralKick + new Vector3(0.0f, -0.45f, 0.0f);
+
+            // Gercek fiziksel devrilme torku: r x F_gravity = Cross(outwardDir, -UnitY) -> disariya dogru devrilme ekseni!
+            Vector3 gravityTorqueAxis = Vector3.Cross(outwardDir, -Vector3.UnitY);
+            if (gravityTorqueAxis.LengthSquared() < 1e-4f)
+            {
+                gravityTorqueAxis = Vector3.UnitX;
+            }
+            else
+            {
+                gravityTorqueAxis = Vector3.Normalize(gravityTorqueAxis);
+            }
+
+            float spinRate = 1.65f + ((h >> 18) & 255u) / 255.0f * 1.85f;
+            float twistYaw = (((int)((h >> 24) & 63u) - 32) / 32.0f) * 0.95f;
+            node.AngularVelocityRadPerSec = gravityTorqueAxis * spinRate + new Vector3(0.0f, twistYaw, 0.0f);
+        }
+
+        /// <summary>
+        /// Belirtilen dunya noktasindaki moduler destek parcalarina kazma/balta/kusatma hasari uygular;
+        /// kirilan parcalar (Health &lt;= 0) silinir ve cizge yeniden hesaplanarak ustteki parcalar SOTF fizigiyle coker!
+        /// </summary>
+        public static int ApplyDamageAtPoint(
+            Span<ModularPlacedPieceNode> nodes,
+            Vector3 hitWorldPoint,
+            float hitRadius,
+            float damage,
+            out int brokenSupportCount,
+            out int collapsedPieceCount)
+        {
+            brokenSupportCount = 0;
+            collapsedPieceCount = 0;
+            if (nodes.Length == 0 || damage <= 0.0f || hitRadius <= 0.0f) return 0;
+
+            float minHitDist = float.MaxValue;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
+                ComputeWorldAabb(nodes[i].Kind, nodes[i].Position, nodes[i].Rotation, out Vector3 bMin, out Vector3 bMax);
+                float d = DistancePointToAabb(hitWorldPoint, bMin, bMax);
+                if (d <= hitRadius && d < minHitDist)
+                {
+                    minHitDist = d;
+                }
+            }
+
+            if (minHitDist == float.MaxValue)
+            {
+                return 0;
+            }
+
+            bool focusedToolSwing = hitRadius <= 1.65f;
+            int hitCount = 0;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
+                ComputeWorldAabb(nodes[i].Kind, nodes[i].Position, nodes[i].Rotation, out Vector3 bMin, out Vector3 bMax);
+                float d = DistancePointToAabb(hitWorldPoint, bMin, bMax);
+                if (d > hitRadius) continue;
+                if (focusedToolSwing && d > minHitDist + 0.30f) continue;
+
+                float effectiveDamage = focusedToolSwing
+                    ? damage
+                    : damage * Math.Clamp(1.0f - 0.72f * (d / hitRadius), 0.20f, 1.0f);
+
+                hitCount++;
+                nodes[i].Health -= effectiveDamage;
+                if (nodes[i].Health <= 0.0f)
+                {
+                    nodes[i].Health = 0.0f;
+                    nodes[i].IsBroken = true;
+                    nodes[i].Stability01 = 0.0f;
+                    nodes[i].StabilityBand = ValheimStabilityBand.Red;
+                    brokenSupportCount++;
+                }
+            }
+
+            if (brokenSupportCount > 0)
+            {
+                EvaluateGraphAndTriggerCollapse(nodes, hitWorldPoint, out collapsedPieceCount);
+            }
+
+            return hitCount;
+        }
+
+        /// <summary>
+        /// SOTF fiziksel yikim modundaki (IsFalling == true) tum parcalarin 3B yercekimi ivmesini,
+        /// acisal tork donusunu ve zemin carpma sonumlenmesini ilerletir (0 B GC).
+        /// </summary>
+        public static int StepFallingPieces(Span<ModularPlacedPieceNode> nodes, float dt)
+        {
+            if (dt <= 0.0f || nodes.Length == 0) return 0;
+            float clampedDt = MathF.Min(dt, 0.05f);
+            int activeFalling = 0;
+
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (nodes[i].IsBroken || !nodes[i].IsFalling) continue;
+                activeFalling++;
+                ref ModularPlacedPieceNode p = ref nodes[i];
+                p.FallenElapsedSec += clampedDt;
+
+                p.LinearVelocity.Y -= GravityAccelMps2 * clampedDt;
+                p.Position += p.LinearVelocity * clampedDt;
+
+                float omegaMag = p.AngularVelocityRadPerSec.Length();
+                if (omegaMag > 1e-4f)
+                {
+                    Quaternion deltaRot = Quaternion.CreateFromAxisAngle(
+                        p.AngularVelocityRadPerSec / omegaMag, omegaMag * clampedDt);
+                    p.Rotation = Quaternion.Normalize(Quaternion.Concatenate(p.Rotation, deltaRot));
+                }
+
+                float floorLimitY = p.GroundFloorY + 0.08f;
+                if (p.Position.Y < floorLimitY)
+                {
+                    p.Position.Y = floorLimitY;
+                    if (p.LinearVelocity.Y < -0.6f)
+                    {
+                        p.LinearVelocity.Y = -p.LinearVelocity.Y * 0.18f;
+                    }
+                    else
+                    {
+                        p.LinearVelocity.Y = 0.0f;
+                    }
+                    p.LinearVelocity.X *= MathF.Max(0.0f, 1.0f - 5.5f * clampedDt);
+                    p.LinearVelocity.Z *= MathF.Max(0.0f, 1.0f - 5.5f * clampedDt);
+                    p.AngularVelocityRadPerSec *= MathF.Max(0.0f, 1.0f - 4.8f * clampedDt);
+                }
+            }
+
+            return activeFalling;
+        }
+
+        private ref struct SitePieceEmitter
+        {
+            public Span<ModularPlacedPieceNode> OutPieces;
+            public Vector3 WorldOrigin;
+            public Quaternion SiteRot;
+            public int ChunkOwnerKey;
+            public int WriteCount;
+            public int NextId;
+
+            public void Emit(ModularBuildPieceKind kind, float lx, float ly, float lz, float localYawDeg, bool grounded = false)
+            {
+                if (WriteCount >= OutPieces.Length) return;
+                Vector3 wPos = WorldOrigin + Vector3.Transform(new Vector3(lx, ly, lz), SiteRot);
+                Quaternion wRot = Quaternion.Normalize(Quaternion.Concatenate(CreateYawQuaternion(localYawDeg), SiteRot));
+                float maxHp = GetPieceDefaultMaxHealth(kind);
+                OutPieces[WriteCount++] = new ModularPlacedPieceNode
+                {
+                    InstanceId = NextId++,
+                    Kind = kind,
+                    Position = wPos,
+                    Rotation = wRot,
+                    GroundFloorY = WorldOrigin.Y,
+                    Health = maxHp,
+                    MaxHealth = maxHp,
+                    Stability01 = grounded ? 1.0f : 0.8f,
+                    StabilityBand = grounded ? ValheimStabilityBand.Blue : ValheimStabilityBand.Green,
+                    IsGrounded = grounded,
+                    IsFalling = false,
+                    IsBroken = false,
+                    LinearVelocity = Vector3.Zero,
+                    AngularVelocityRadPerSec = Vector3.Zero,
+                    FallenElapsedSec = 0.0f,
+                    ChunkOwnerKey = ChunkOwnerKey
+                };
+            }
+        }
+
+        /// <summary>
+        /// Prosedurel moduler yerleske (0=NordicTimberCabin, 1=MeadHallWatchtower, 2=CarvedMarbleShrine, 3=CollapsedTimberStoneRuin)
+        /// parcalarini dunya koordinatinda kurar ve baslangic Valheim cizge stabilitelerini hesaplar (0 B GC).
+        /// </summary>
+        public static int BuildProceduralSitePieces(
+            byte siteKindIndex,
+            Vector3 worldOrigin,
+            float siteYawDegrees,
+            int chunkOwnerKey,
+            Span<ModularPlacedPieceNode> outPieces,
+            int startingInstanceId = 1)
+        {
+            var em = new SitePieceEmitter
+            {
+                OutPieces = outPieces,
+                WorldOrigin = worldOrigin,
+                SiteRot = CreateYawQuaternion(siteYawDegrees),
+                ChunkOwnerKey = chunkOwnerKey,
+                WriteCount = 0,
+                NextId = startingInstanceId
+            };
+
+            switch (siteKindIndex)
+            {
+                case 0: // NordicTimberCabin (4m x 4m Iskandinav Kutuk & Kalas Koy Kulubesi)
+                {
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, 1.0f, 0f, grounded: true);
+
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, 1.90f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, -1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, 1.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, 1.0f, 270f);
+
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 2.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 2.32f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 1.88f, -1.90f, 180f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 1.88f, -1.90f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, 1.0f, 2.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, 1.0f, 2.32f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 3.30f, 0.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 3.30f, 0.0f, 0f);
+                    break;
+                }
+
+                case 1: // MeadHallWatchtower (2 Katli Payandali Kuzey Gozetleme Kulesi & 45° Dik Cati)
+                {
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, 1.0f, 0f, grounded: true);
+
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 0.32f, 1.0f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, 1.90f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, 0.0f, 0.32f, -1.94f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWall2x2m, 0.0f, 0.32f, 1.94f, 180f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, 0.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, 0.0f, 270f);
+
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.20f, 1.56f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.20f, 1.56f, -1.90f, 180f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.20f, 1.56f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, 1.20f, 1.56f, 1.90f, 180f);
+
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.95f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.95f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.95f, 1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.95f, 1.0f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 3.05f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 3.05f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, -1.90f, 3.05f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.90f, 3.05f, 1.90f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 5.78f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 5.78f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 5.78f, 1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 5.78f, 1.90f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 5.82f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 5.82f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 5.82f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 5.82f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 7.80f, 0.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 7.80f, 0.0f, 0f);
+                    break;
+                }
+
+                case 2: // CarvedMarbleShrine (Oymali Kemer Sutunlu Kadim Tapinak / Kutsal Sunak)
+                {
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, 1.0f, 0f, grounded: true);
+
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, -1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, -1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, 1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, 1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.82f, 0.32f, 0.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, 1.82f, 0.32f, 0.0f, 90f);
+
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 3.26f, -1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 3.26f, -1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 3.26f, 1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.0f, 3.26f, 1.82f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.82f, 3.26f, -0.90f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.82f, 3.26f, -0.90f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.82f, 3.26f, 0.90f, 90f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, 1.82f, 3.26f, 0.90f, 90f);
+
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 3.36f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 3.36f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 3.36f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 3.36f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 5.34f, 0.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, 1.0f, 5.34f, 0.0f, 0f);
+                    break;
+                }
+
+                default: // 3 = CollapsedTimberStoneRuin (Yari Yikik Tas Kemer & Ahsap Harabe)
+                {
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, 1.0f, 0.0f, -1.0f, 0f, grounded: true);
+                    em.Emit(ModularBuildPieceKind.StoneFoundation2x2m, -1.0f, 0.0f, 1.0f, 0f, grounded: true);
+
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 0.32f, 1.0f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.85f, 0.32f, -1.85f, 0f);
+                    em.Emit(ModularBuildPieceKind.StoneArchPillar3m, -1.85f, 0.32f, 1.85f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogPillar3m, 1.85f, 0.32f, -1.85f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.90f, 0f);
+                    em.Emit(ModularBuildPieceKind.PlankWindow2x2m, -1.90f, 0.32f, 1.0f, 90f);
+
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.0f, 2.32f, -1.85f, 0f);
+                    em.Emit(ModularBuildPieceKind.LogBeam2m, -1.85f, 2.32f, 0.0f, 90f);
+                    em.Emit(ModularBuildPieceKind.DiagonalBrace2m, -1.15f, 1.05f, -1.85f, 0f);
+
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, -1.0f, 0f);
+                    em.Emit(ModularBuildPieceKind.RoofRafter26Deg2x2m, -1.0f, 2.32f, 1.0f, 180f);
+                    em.Emit(ModularBuildPieceKind.RoofRidge2m, -1.0f, 3.30f, 0.0f, 0f);
+                    break;
+                }
+            }
+
+            Span<ModularPlacedPieceNode> slice = outPieces.Slice(0, em.WriteCount);
+            EvaluateGraphAndTriggerCollapse(slice, worldOrigin, out _);
+            return em.WriteCount;
+        }
+
+        public static Quaternion CreateYawQuaternion(float yawDegrees)
+        {
+            float rad = yawDegrees * (MathF.PI / 180.0f);
+            return Quaternion.CreateFromAxisAngle(Vector3.UnitY, rad);
+        }
+
+        public static float ExtractYawDegrees(Quaternion q)
+        {
+            Vector3 fwd = Vector3.Transform(Vector3.UnitZ, q);
+            if (fwd.X * fwd.X + fwd.Z * fwd.Z < 1e-5f) return 0.0f;
+            float deg = MathF.Atan2(fwd.X, fwd.Z) * (180.0f / MathF.PI);
+            if (deg < 0.0f) deg += 360.0f;
+            return deg;
         }
     }
 }

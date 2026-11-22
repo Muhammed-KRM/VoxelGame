@@ -10,6 +10,75 @@ using Stratocraft.Voxel.Jobs;
 namespace Stratocraft.WorldGen.Generators
 {
     /// <summary>
+    /// 1m³ kubik Minecraft voxel ev/tapinak duvarlari yerine gercek 3B moduler .glb parcalariyla
+    /// (Assets/Art/Generated/Structures_Modular/mod_*.glb) kurulan ve tasiyicilari kirildiginda
+    /// SOTF yercekimi + acisal tork fizigiyle yikilan prosedurel yerleske turu.
+    /// </summary>
+    public enum ProceduralModularSiteKind : byte
+    {
+        NordicTimberCabin = 0,
+        MeadHallWatchtower = 1,
+        CarvedMarbleShrine = 2,
+        CollapsedTimberStoneRuin = 3
+    }
+
+    /// <summary>
+    /// Chunk basina deterministik 3B moduler yapi yerleskesi tanimi (0-GC deger turu).
+    /// </summary>
+    public readonly struct ProceduralModularSiteSpec
+    {
+        public readonly int ChunkX;
+        public readonly int ChunkZ;
+        public readonly ProceduralModularSiteKind Kind;
+        public readonly int BaseY;
+        public readonly int BiomeId;
+        public readonly byte TerraceMaterialId;
+        public readonly byte LocalCenterX;
+        public readonly byte LocalCenterZ;
+        public readonly byte TerraceHalfExtentBlocks;
+        public readonly float WorldCenterX;
+        public readonly float WorldBaseY;
+        public readonly float WorldCenterZ;
+        public readonly float YawDegrees;
+        public readonly uint DeterministicSeed;
+        public readonly bool HasLootChest;
+
+        public ProceduralModularSiteSpec(
+            int chunkX,
+            int chunkZ,
+            ProceduralModularSiteKind kind,
+            int baseY,
+            int biomeId,
+            byte terraceMaterialId,
+            byte localCenterX,
+            byte localCenterZ,
+            byte terraceHalfExtentBlocks,
+            float worldCenterX,
+            float worldBaseY,
+            float worldCenterZ,
+            float yawDegrees,
+            uint deterministicSeed,
+            bool hasLootChest)
+        {
+            ChunkX = chunkX;
+            ChunkZ = chunkZ;
+            Kind = kind;
+            BaseY = baseY;
+            BiomeId = biomeId;
+            TerraceMaterialId = terraceMaterialId;
+            LocalCenterX = localCenterX;
+            LocalCenterZ = localCenterZ;
+            TerraceHalfExtentBlocks = terraceHalfExtentBlocks;
+            WorldCenterX = worldCenterX;
+            WorldBaseY = worldBaseY;
+            WorldCenterZ = worldCenterZ;
+            YawDegrees = yawDegrees;
+            DeterministicSeed = deterministicSeed;
+            HasLootChest = hasLootChest;
+        }
+    }
+
+    /// <summary>
     /// GAME LOGIC BIBLE Bolum 2.2, 2.6 ve 10.1:
     /// 150.000m yaricapli (300km x 300km, 100x olcekli) devasa yuzen kita, 10x derinlestirilmis yeralti
     /// (DefaultSurfaceBaseY = 96, DeepMantleFloorY = 4, MaxEditableVoxelY = 160 -> ~92m-115m dikey kesit),
@@ -3232,124 +3301,177 @@ namespace Stratocraft.WorldGen.Generators
                 SetArchitecturalVoxel(voxels, 11, bY2, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, bY3, 7, MaterialIdCatalog.StarCore, shapeId: 7, rot: 1);
             }
-            else if (chunkX == 0 && chunkZ == 0)
+            else if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modularSite))
             {
-                // Kuzeydogu Cok Duvarli Yikilabilir Gozetleme Kulesi (Domino Çökme Test Yapisi: lx=5..9, lz=4..8)
-                int baseY = RoundToInt(SampleIslandTopSurfaceY(7f, 6f));
-                int[] cornerX = { 5, 9, 5, 9 };
-                int[] cornerZ = { 4, 4, 8, 8 };
-
-                for (int c = 0; c < 4; c++)
-                {
-                    int cx = cornerX[c], cz = cornerZ[c];
-                    EnsureSolidFoundationUnder(voxels, cx, baseY, cz, chunkBiomeId);
-                    SetArchitecturalVoxel(voxels, cx, baseY, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: (byte)(c & 3));
-                    SetArchitecturalVoxel(voxels, cx, baseY + 1, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, cx, baseY + 2, cz, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                }
-
-                for (int x = 5; x <= 9; x++)
-                {
-                    byte shape = (x == 7) ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 4, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 2);
-                }
-                for (int z = 5; z <= 7; z++)
-                {
-                    byte shape = (z == 6) ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, 5, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 1);
-                    SetArchitecturalVoxel(voxels, 9, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: shape, rot: 3);
-                }
-
-                for (int z = 5; z <= 7; z++)
-                    for (int x = 6; x <= 8; x++)
-                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.OakWood, shapeId: 1, rot: 0);
-
-                SetArchitecturalVoxel(voxels, 5, baseY + 4, 4, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 9, baseY + 4, 4, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
-                SetArchitecturalVoxel(voxels, 5, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 2);
-                SetArchitecturalVoxel(voxels, 9, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 3);
-                SetArchitecturalVoxel(voxels, 7, baseY + 4, 6, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
-
-                int p2Y = RoundToInt(SampleIslandTopSurfaceY(11f, 5f));
-                EnsureSolidFoundationUnder(voxels, 11, p2Y, 5, chunkBiomeId);
-                SetArchitecturalVoxel(voxels, 11, p2Y, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 63, rot: 1);
-                SetArchitecturalVoxel(voxels, 11, p2Y + 1, 5, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 11, p2Y + 2, 5, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
+                // 1m³ kubik Minecraft ev/tapinak duvarlari damgalanmaz; biyoma uygun dogal teras/kaide duzlenir
+                // ve sahnede gercek 3B Structures_Modular/mod_*.glb parcalariyla (SOTF fiziksel yikim destekli) kurulur!
+                LevelNaturalModularSiteTerrace(voxels, in modularSite);
             }
-            else if (chunkX == -2 && chunkZ == -1)
+        }
+
+        /// <summary>
+        /// Verilen chunk icinde 1m³ kubik bloklar yerine gercek 3B moduler .glb parcalariyla kurulacak
+        /// deterministik koy kulubesi, icki salonu gozetleme kulesi, mermer tapinak veya harabe yerleskesini cozer (0 B GC).
+        /// </summary>
+        public static bool TryGetChunkModularStructureSite(int chunkX, int chunkZ, out ProceduralModularSiteSpec site)
+        {
+            site = default;
+
+            // Baslangic vadisi cevresindeki vitrin moduler yerleskeleri (20x20 baslangic dilimi icinde):
+            if (chunkX == 0 && chunkZ == 0)
             {
-                int baseY = RoundToInt(SampleIslandTopSurfaceY(-20f, -6f));
-                int[] colX = { 10, 14, 10, 14 }, colZ = { 8, 8, 12, 12 };
-                for (int i = 0; i < 4; i++)
-                {
-                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i], chunkBiomeId);
-                    SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                }
-                for (int x = 10; x <= 14; x++)
-                {
-                    byte archShape = x == 12 ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, x, baseY + 2, 8, MaterialIdCatalog.Marble, shapeId: archShape, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 2, 12, MaterialIdCatalog.Marble, shapeId: archShape, rot: 2);
-                }
-                for (int z = 9; z <= 11; z++)
-                {
-                    byte archShape = z == 10 ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, 10, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: 1);
-                    SetArchitecturalVoxel(voxels, 14, baseY + 2, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: 3);
-                }
-                SetArchitecturalVoxel(voxels, 11, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 3, rot: 1);
-                SetArchitecturalVoxel(voxels, 13, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 3, rot: 3);
-                SetArchitecturalVoxel(voxels, 12, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
-                EnsureSolidFoundationUnder(voxels, 12, baseY, 10, chunkBiomeId);
-                SetArchitecturalVoxel(voxels, 12, baseY, 10, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 12, baseY + 1, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
+                site = BuildModularSiteSpec(
+                    chunkX, chunkZ, localCx: 7, localCz: 6, halfExtent: 3,
+                    ProceduralModularSiteKind.MeadHallWatchtower, yawDeg: 180f, hasLootChest: false);
+                return true;
             }
-            else if (chunkX == 1 && chunkZ == 1)
+            if (chunkX == -2 && chunkZ == -1)
             {
-                int baseY = RoundToInt(SampleIslandTopSurfaceY(24f, 24f));
-                int[] colX = { 6, 10, 6, 10 }, colZ = { 6, 6, 10, 10 };
-                for (int i = 0; i < 4; i++)
+                site = BuildModularSiteSpec(
+                    chunkX, chunkZ, localCx: 11, localCz: 10, halfExtent: 3,
+                    ProceduralModularSiteKind.CarvedMarbleShrine, yawDeg: 90f, hasLootChest: false);
+                return true;
+            }
+            if (chunkX == 1 && chunkZ == 1)
+            {
+                site = BuildModularSiteSpec(
+                    chunkX, chunkZ, localCx: 8, localCz: 8, halfExtent: 3,
+                    ProceduralModularSiteKind.NordicTimberCabin, yawDeg: 180f, hasLootChest: false);
+                return true;
+            }
+            if (chunkX == -3 && chunkZ == -1)
+            {
+                site = BuildModularSiteSpec(
+                    chunkX, chunkZ, localCx: 9, localCz: 8, halfExtent: 3,
+                    ProceduralModularSiteKind.CollapsedTimberStoneRuin, yawDeg: 90f, hasLootChest: false);
+                return true;
+            }
+
+            if (!TryGetProceduralStructureTypeForChunk(chunkX, chunkZ, out int structType, out int structBaseY))
+            {
+                return false;
+            }
+
+            uint seed = HashChamberPcg(chunkX, structType + 11, chunkZ, ActiveWorldSeed ^ 0x4D6F6453);
+            ProceduralModularSiteKind kind;
+            float yawDeg;
+
+            if (chunkX == 2 && chunkZ == 0)
+            {
+                kind = ProceduralModularSiteKind.NordicTimberCabin;
+                yawDeg = 270f;
+            }
+            else if (chunkX == 0 && chunkZ == 3)
+            {
+                kind = ProceduralModularSiteKind.MeadHallWatchtower;
+                yawDeg = 180f;
+            }
+            else if ((chunkX == -2 && chunkZ == 2) || (chunkX == -3 && chunkZ == -3))
+            {
+                kind = ProceduralModularSiteKind.CarvedMarbleShrine;
+                yawDeg = 0f;
+            }
+            else if (chunkX == 2 && chunkZ == -2)
+            {
+                kind = ProceduralModularSiteKind.CollapsedTimberStoneRuin;
+                yawDeg = 180f;
+            }
+            else
+            {
+                kind = structType switch
                 {
-                    EnsureSolidFoundationUnder(voxels, colX[i], baseY, colZ[i], chunkBiomeId);
-                    SetArchitecturalVoxel(voxels, colX[i], baseY, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, colX[i], baseY + 1, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, colX[i], baseY + 2, colZ[i], MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                }
-                for (int x = 6; x <= 10; x++)
+                    0 => ((seed & 1u) == 0u)
+                        ? ProceduralModularSiteKind.NordicTimberCabin
+                        : ProceduralModularSiteKind.MeadHallWatchtower,
+                    1 => ProceduralModularSiteKind.CarvedMarbleShrine,
+                    _ => ProceduralModularSiteKind.CollapsedTimberStoneRuin
+                };
+                yawDeg = ((seed >> 4) & 3u) * 90.0f;
+            }
+
+            int centerWx = chunkX * 16 + 8;
+            int centerWz = chunkZ * 16 + 8;
+            int biomeId = GetBiomeId(centerWx, centerWz);
+            byte terraceMat = ResolveBiomeFoundationMaterial(biomeId, structBaseY, isTopLayer: true);
+
+            site = new ProceduralModularSiteSpec(
+                chunkX: chunkX,
+                chunkZ: chunkZ,
+                kind: kind,
+                baseY: structBaseY,
+                biomeId: biomeId,
+                terraceMaterialId: terraceMat,
+                localCenterX: 8,
+                localCenterZ: 8,
+                terraceHalfExtentBlocks: 3,
+                worldCenterX: centerWx + 0.5f,
+                worldBaseY: structBaseY + 0.5f,
+                worldCenterZ: centerWz + 0.5f,
+                yawDegrees: yawDeg,
+                deterministicSeed: seed,
+                hasLootChest: true);
+            return true;
+        }
+
+        private static ProceduralModularSiteSpec BuildModularSiteSpec(
+            int chunkX,
+            int chunkZ,
+            byte localCx,
+            byte localCz,
+            byte halfExtent,
+            ProceduralModularSiteKind kind,
+            float yawDeg,
+            bool hasLootChest)
+        {
+            int wx = chunkX * 16 + localCx;
+            int wz = chunkZ * 16 + localCz;
+            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), SeaLevelY + 2, MaxEditableVoxelY - 16);
+            int biomeId = GetBiomeId(wx, wz);
+            byte terraceMat = ResolveBiomeFoundationMaterial(biomeId, baseY, isTopLayer: true);
+            uint seed = HashChamberPcg(chunkX, (int)kind + 3, chunkZ, ActiveWorldSeed ^ 0x4D6F6453);
+
+            return new ProceduralModularSiteSpec(
+                chunkX: chunkX,
+                chunkZ: chunkZ,
+                kind: kind,
+                baseY: baseY,
+                biomeId: biomeId,
+                terraceMaterialId: terraceMat,
+                localCenterX: localCx,
+                localCenterZ: localCz,
+                terraceHalfExtentBlocks: halfExtent,
+                worldCenterX: wx + 0.5f,
+                worldBaseY: baseY + 0.5f,
+                worldCenterZ: wz + 0.5f,
+                yawDegrees: yawDeg,
+                deterministicSeed: seed,
+                hasLootChest: hasLootChest);
+        }
+
+        private static void LevelNaturalModularSiteTerrace(uint[] voxels, in ProceduralModularSiteSpec site)
+        {
+            int minLx = Math.Max(1, site.LocalCenterX - site.TerraceHalfExtentBlocks);
+            int maxLx = Math.Min(14, site.LocalCenterX + site.TerraceHalfExtentBlocks);
+            int minLz = Math.Max(1, site.LocalCenterZ - site.TerraceHalfExtentBlocks);
+            int maxLz = Math.Min(14, site.LocalCenterZ + site.TerraceHalfExtentBlocks);
+            int baseY = site.BaseY;
+            byte topMat = ResolveBiomeFoundationMaterial(site.BiomeId, baseY, isTopLayer: true);
+            uint topCell = VoxelBitUtility.PackStandard(
+                topMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+
+            int maxClearY = Math.Min(MaxEditableVoxelY - 2, baseY + 7);
+            for (int lz = minLz; lz <= maxLz; lz++)
+            {
+                for (int lx = minLx; lx <= maxLx; lx++)
                 {
-                    byte archShape = x == 8 ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: archShape, rot: 0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.StoneBrick, shapeId: archShape, rot: 2);
-                }
-                for (int z = 7; z <= 9; z++)
-                {
-                    for (int x = 7; x <= 9; x++)
+                    EnsureSolidFoundationUnder(voxels, lx, baseY, lz, site.BiomeId);
+                    voxels[(baseY << 8) | (lz << 4) | lx] = topCell;
+
+                    for (int clearY = baseY + 1; clearY <= maxClearY; clearY++)
                     {
-                        byte roofShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
-                        byte roofRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
-                        SetArchitecturalVoxel(voxels, x, baseY + 3, z, MaterialIdCatalog.StoneBrick, shapeId: roofShape, rot: roofRot);
+                        voxels[(clearY << 8) | (lz << 4) | lx] = 0u;
                     }
                 }
-                SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-            }
-            else if (chunkX == -3 && chunkZ == -1)
-            {
-                int baseY = RoundToInt(SampleIslandTopSurfaceY(-39f, -8f));
-                EnsureSolidFoundationUnder(voxels, 7, baseY, 8, chunkBiomeId);
-                EnsureSolidFoundationUnder(voxels, 11, baseY, 8, chunkBiomeId);
-                for (int dy = 0; dy <= 2; dy++)
-                {
-                    SetArchitecturalVoxel(voxels, 7, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, 11, baseY + dy, 8, MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                }
-                for (int x = 7; x <= 11; x++)
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 8, MaterialIdCatalog.Marble, shapeId: x == 9 ? (byte)5 : (byte)4, rot: 0);
-            }
-            else if (TryGetProceduralStructureTypeForChunk(chunkX, chunkZ, out int structType, out int structBaseY))
-            {
-                StampProceduralWorldStructureWithChest(chunkX, chunkZ, structType, structBaseY, voxels);
             }
         }
 
@@ -3410,180 +3532,6 @@ namespace Stratocraft.WorldGen.Generators
                 _ => "Antik Harabe Ganimet Sandığı"
             };
             return true;
-        }
-
-        private static void StampProceduralWorldStructureWithChest(
-            int chunkX, int chunkZ, int structureType, int baseY, uint[] voxels)
-        {
-            int centerBiomeId = GetBiomeId(chunkX * 16 + 8, chunkZ * 16 + 8);
-            // 5x5 temel zemin dolgusu (lx=6..10, lz=6..10)
-            for (int z = 6; z <= 10; z++)
-            {
-                for (int x = 6; x <= 10; x++)
-                {
-                    EnsureSolidFoundationUnder(voxels, x, baseY, z, centerBiomeId);
-                    // Yalnizca duvarlarin icindeki 3x3 odanin (7..9) ic mekanini temizle ki dis yamaclarda kesik olusmasin
-                    if (x >= 7 && x <= 9 && z >= 7 && z <= 9)
-                    {
-                        for (int clearY = baseY + 1; clearY <= baseY + 4 && clearY < MaxEditableVoxelY - 1; clearY++)
-                        {
-                            voxels[(clearY << 8) | (z << 4) | x] = 0u;
-                        }
-                    }
-                }
-            }
-
-            if (structureType == 0)
-            {
-                // TİP 0: KÖY EVİ VE TAŞ KUYU (Sekizgen Meşe Köşe Direkleri, Kemer Kapı + Kilit Taşı, 45° Eğimli Çatı, Mazgal Baca ve Ahşap Sandık Kaidesi)
-                for (int z = 6; z <= 10; z++)
-                {
-                    for (int x = 6; x <= 10; x++)
-                    {
-                        bool isCorner = (x == 6 || x == 10) && (z == 6 || z == 10);
-                        bool isWall = x == 6 || x == 10 || z == 6 || z == 10;
-                        bool isDoorOpening = z == 6 && x == 8;
-                        byte floorMat = isWall ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.WoodPlank;
-                        SetArchitecturalVoxel(voxels, x, baseY, z, floorMat, shapeId: 1, rot: 0);
-
-                        if (isCorner)
-                        {
-                            // OctagonalColumn (shapeId: 2) tasiyici kose direkleri
-                            SetArchitecturalVoxel(voxels, x, baseY + 1, z, MaterialIdCatalog.OakWood, shapeId: 2, rot: 0);
-                            SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.OakWood, shapeId: 2, rot: 0);
-                        }
-                        else if (isWall && !isDoorOpening)
-                        {
-                            SetArchitecturalVoxel(voxels, x, baseY + 1, z, MaterialIdCatalog.StoneBrick, shapeId: 1, rot: 0);
-                            bool isSideWindowArch = (x == 6 || x == 10) && z == 8;
-                            if (isSideWindowArch)
-                            {
-                                SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.OakWood, shapeId: 4, rot: x == 6 ? (byte)1 : (byte)3);
-                            }
-                            else
-                            {
-                                SetArchitecturalVoxel(voxels, x, baseY + 2, z, MaterialIdCatalog.WoodPlank, shapeId: 1, rot: 0);
-                            }
-                        }
-                    }
-                }
-
-                // On Kapi Kemeri: ArchVoussoir (shapeId: 4) + TrapezoidalKeystone (shapeId: 5)
-                SetArchitecturalVoxel(voxels, 7, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
-                SetArchitecturalVoxel(voxels, 9, baseY + 2, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 2);
-
-                // Ramp45 (shapeId: 3) egimli ahsap besik cati + BattlementMerlon (shapeId: 6) baca ve kalkan duvar tepesi
-                for (int z = 6; z <= 10; z++)
-                {
-                    SetArchitecturalVoxel(voxels, 6, baseY + 3, z, MaterialIdCatalog.WoodPlank, shapeId: 3, rot: 1);
-                    SetArchitecturalVoxel(voxels, 10, baseY + 3, z, MaterialIdCatalog.WoodPlank, shapeId: 3, rot: 3);
-                }
-                for (int x = 7; x <= 9; x++)
-                {
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: x == 8 ? (byte)5 : (byte)4, rot: x == 9 ? (byte)2 : (byte)0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.StoneBrick, shapeId: x == 8 ? (byte)5 : (byte)4, rot: x == 9 ? (byte)2 : (byte)0);
-                    for (int z = 7; z <= 9; z++)
-                    {
-                        byte upperShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
-                        byte upperRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
-                        SetArchitecturalVoxel(voxels, x, baseY + 4, z, MaterialIdCatalog.OakWood, shapeId: upperShape, rot: upperRot);
-                    }
-                }
-                SetArchitecturalVoxel(voxels, 6, baseY + 4, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 4, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
-
-                // Köy Evi Erzak ve Ekipman Sandığı Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine işlenmiş ahşap sandık işaretçisi)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.WoodPlank, shapeId: 6, rot: 0);
-            }
-            else if (structureType == 1)
-            {
-                // TİP 1: KADİM MERMER TAPINAK VE SUNAK (Sekizgen Mermer Sütunlar, 4 Cepheli Kemer + Kilit Taşı, 45° Alınlık Çatı, Mazgal Akroterler ve Sunak Kaidesi)
-                for (int z = 6; z <= 10; z++)
-                {
-                    for (int x = 6; x <= 10; x++)
-                    {
-                        SetArchitecturalVoxel(voxels, x, baseY, z, MaterialIdCatalog.Marble, shapeId: 1, rot: 0);
-                    }
-                }
-                int[] colX = { 6, 10, 6, 10, 6, 10 }, colZ = { 6, 6, 10, 10, 8, 8 };
-                for (int i = 0; i < colX.Length; i++)
-                {
-                    for (int dy = 1; dy <= 3; dy++)
-                    {
-                        SetArchitecturalVoxel(voxels, colX[i], baseY + dy, colZ[i], MaterialIdCatalog.Marble, shapeId: 2, rot: 0);
-                    }
-                }
-                // 4 Cephede ArchVoussoir (4) + TrapezoidalKeystone (5) kemer alinliklari
-                for (int x = 6; x <= 10; x++)
-                {
-                    byte archShape = x == 8 ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 6, MaterialIdCatalog.Marble, shapeId: archShape, rot: x > 8 ? (byte)2 : (byte)0);
-                    SetArchitecturalVoxel(voxels, x, baseY + 3, 10, MaterialIdCatalog.Marble, shapeId: archShape, rot: x > 8 ? (byte)2 : (byte)0);
-                }
-                for (int z = 7; z <= 9; z++)
-                {
-                    byte archShape = z == 8 ? (byte)5 : (byte)4;
-                    SetArchitecturalVoxel(voxels, 6, baseY + 3, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: z > 8 ? (byte)3 : (byte)1);
-                    SetArchitecturalVoxel(voxels, 10, baseY + 3, z, MaterialIdCatalog.Marble, shapeId: archShape, rot: z > 8 ? (byte)3 : (byte)1);
-                }
-                // Ust Tapinak Catisi: Kose BattlementMerlon (6) akroterler + Ramp45 (3) egimli mermer alinlik catisi
-                SetArchitecturalVoxel(voxels, 6, baseY + 4, 6, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 4, 6, MaterialIdCatalog.Marble, shapeId: 6, rot: 1);
-                SetArchitecturalVoxel(voxels, 6, baseY + 4, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 2);
-                SetArchitecturalVoxel(voxels, 10, baseY + 4, 10, MaterialIdCatalog.Marble, shapeId: 6, rot: 3);
-                for (int z = 7; z <= 9; z++)
-                {
-                    SetArchitecturalVoxel(voxels, 6, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 3, rot: 1);
-                    SetArchitecturalVoxel(voxels, 10, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: 3, rot: 3);
-                    for (int x = 7; x <= 9; x++)
-                    {
-                        byte roofShape = x == 7 ? (byte)3 : (x == 9 ? (byte)3 : (byte)6);
-                        byte roofRot = x == 7 ? (byte)1 : (x == 9 ? (byte)3 : (byte)0);
-                        SetArchitecturalVoxel(voxels, x, baseY + 4, z, MaterialIdCatalog.Marble, shapeId: roofShape, rot: roofRot);
-                    }
-                }
-                SetArchitecturalVoxel(voxels, 8, baseY + 4, 8, MaterialIdCatalog.StarCore, shapeId: 7, rot: 0);
-                // Tapınak Kutsal Hazine Sandığı Sunak Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine oymalı mermer sunak kaidesi)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.Marble, shapeId: 6, rot: 0);
-            }
-            else
-            {
-                // TİP 2: ANTİK HARABE KULE VE KEMERLER (Sekizgen Taş Tuğla & Bazalt Sütunlar, Kemer + Kilit Taşı, Kırık 45° Çatı, Mazgal Siperler ve Harabe Sandık Kaidesi)
-                for (int z = 6; z <= 10; z++)
-                {
-                    for (int x = 6; x <= 10; x++)
-                    {
-                        byte floorMat = ((x + z) & 1) == 0 ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Basalt;
-                        SetArchitecturalVoxel(voxels, x, baseY, z, floorMat, shapeId: 1, rot: 0);
-                    }
-                }
-                for (int dy = 1; dy <= 2; dy++)
-                {
-                    SetArchitecturalVoxel(voxels, 6, baseY + dy, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, 10, baseY + dy, 6, MaterialIdCatalog.StoneBrick, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, 6, baseY + dy, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, 10, baseY + dy, 10, MaterialIdCatalog.Basalt, shapeId: 2, rot: 0);
-                }
-                // On Giris Kemeri: ArchVoussoir (4) + TrapezoidalKeystone (5)
-                SetArchitecturalVoxel(voxels, 7, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
-                SetArchitecturalVoxel(voxels, 9, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 2);
-                // Bati Yikik Kemer Payandasi
-                SetArchitecturalVoxel(voxels, 6, baseY + 2, 7, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 1);
-                SetArchitecturalVoxel(voxels, 6, baseY + 2, 8, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 1);
-                SetArchitecturalVoxel(voxels, 6, baseY + 2, 9, MaterialIdCatalog.StoneBrick, shapeId: 4, rot: 3);
-                // Yikik Ramp45 (3) tas cati kalintilari ve BattlementMerlon (6) burc siperleri
-                SetArchitecturalVoxel(voxels, 7, baseY + 3, 7, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 1);
-                SetArchitecturalVoxel(voxels, 7, baseY + 3, 8, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 1);
-                SetArchitecturalVoxel(voxels, 9, baseY + 3, 7, MaterialIdCatalog.StoneBrick, shapeId: 3, rot: 3);
-                SetArchitecturalVoxel(voxels, 6, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY + 3, 6, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 1);
-                SetArchitecturalVoxel(voxels, 6, baseY + 3, 10, MaterialIdCatalog.Basalt, shapeId: 6, rot: 2);
-                SetArchitecturalVoxel(voxels, 10, baseY + 3, 10, MaterialIdCatalog.Basalt, shapeId: 6, rot: 3);
-                // Harabe Ganimet Sandığı Kaidesi (lx=8, baseY+1, lz=8 — ham cevher küpü yerine oymalı taş sandık kaidesi)
-                SetArchitecturalVoxel(voxels, 8, baseY + 1, 8, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-            }
         }
 
         public static void PopulateIslandTreesForChunk(int chunkX, int chunkZ, uint[] voxels)
@@ -4112,6 +4060,12 @@ namespace Stratocraft.WorldGen.Generators
         {
             lx = Math.Clamp(lx, 3, 12);
             lz = Math.Clamp(lz, 3, 12);
+            if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modSite) &&
+                Math.Abs(lx - modSite.LocalCenterX) <= modSite.TerraceHalfExtentBlocks &&
+                Math.Abs(lz - modSite.LocalCenterZ) <= modSite.TerraceHalfExtentBlocks)
+            {
+                return;
+            }
             int wx = chunkX * 16 + lx, wz = chunkZ * 16 + lz;
             if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 9.5f)) return;
             float r = MathF.Sqrt((float)wx * wx + (float)wz * wz);
