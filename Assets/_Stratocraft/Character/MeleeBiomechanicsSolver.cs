@@ -778,32 +778,29 @@ namespace Stratocraft.Character
                 0.46f);
             armArcXY = new Vector2(armX, armY);
 
-            // Kuresel egim (elevRad) ve yatay capraz siper acisi (latAngleRad):
-            // - Orta gard: +65 deg yukari-ileri dikey bariyer
-            // - Ust Ochs cati: +24 deg yukari + alin onunde yatay capraz
-            // - Alt Pflug asili: +Z ileri yay uzerinden -41 deg asagi-ileri (sifir tekillik!)
-            float elevRad = 1.14f - 0.72f * upperW - 1.85f * lowerW;
-            float latWeight = 0.48f + 0.56f * upperW - 0.06f * lowerW;
-            float roofCenterBias = -0.88f * upperW * centerBell;
-            float latAngleRad = Math.Clamp(-latWeight * sideSmooth + roofCenterBias, -1.22f, 1.22f);
+            // XY enine siper duzlemi acisi phi (0 = dik +Y, +pi/2 = sol -X ust cati, +pi = asagi -Y asili gard):
+            // Her (gx, gy) noktasinda |bladeTipDirLocal.Z| <= 0.14 (< 0.25) kalarak gercek enine blok bariyeri olusturur!
+            float phi = (0.48f + 0.12f * upperW - 0.14f * lowerW) * sideSmooth +
+                        1.26f * upperW * centerBell +
+                        2.26f * lowerW;
+            float tiltZ = 0.14f - 0.04f * upperW;
+            float rXY = MathF.Sqrt(Math.Max(0.0001f, 1.0f - tiltZ * tiltZ));
 
-            float sinLat = MathF.Sin(latAngleRad);
-            float cosLat = MathF.Cos(latAngleRad);
-            float sinElev = MathF.Sin(elevRad);
-            float cosElev = MathF.Cos(elevRad);
+            float sinPhi = MathF.Sin(phi);
+            float cosPhi = MathF.Cos(phi);
 
             bladeTipDirLocal = new Vector3(
-                sinLat,
-                cosLat * sinElev,
-                cosLat * cosElev);
+                -rXY * sinPhi,
+                rXY * cosPhi,
+                tiltZ);
 
-            // Namlu ucuna her noktada kesinlikle dik (ortogonal) teget duzlem tabani (tLat, tUp)
-            Vector3 tLat = new Vector3(cosLat, -sinLat * sinElev, -sinLat * cosElev);
-            Vector3 tUp = new Vector3(0.0f, cosElev, -sinElev);
+            // Namlu ucuna her noktada kesinlikle dik (ortogonal) teget duzlem tabani (tPhi, tZ)
+            Vector3 tPhi = new Vector3(-cosPhi, -sinPhi, 0.0f);
+            Vector3 tZ = Vector3.Cross(bladeTipDirLocal, tPhi);
 
-            // Kesici agiz her gardda gelen saldiriya dogru yumusakca hizalanir
-            float psi = -MathF.PI * 0.5f + 1.05f * sideSmooth + 0.65f * upperW * centerBell;
-            edgeNormalLocal = Vector3.Normalize(MathF.Cos(psi) * tLat + MathF.Sin(psi) * tUp);
+            // Kesici agiz her gardda gelen saldiriya dogru (+Z) yumusakca hizalanir
+            float psi = MathF.PI * 0.5f + 0.35f * sideSmooth;
+            edgeNormalLocal = Vector3.Normalize(MathF.Cos(psi) * tPhi + MathF.Sin(psi) * tZ);
         }
 
         private static float SmoothStep(float edge0, float edge1, float x)
