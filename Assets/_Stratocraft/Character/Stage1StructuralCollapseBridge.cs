@@ -1,14 +1,14 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Physics.Data;
+using Stratocraft.Physics.Jobs;
+using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.WorldGen.Generators;
 #if UNITY_5_3_OR_NEWER
-using System.Collections.Generic;
 using Stratocraft.Character.Data;
-using Stratocraft.Physics.Jobs;
-using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Jobs;
 using Stratocraft.WorldGen;
 using UnityEngine;
@@ -17,10 +17,10 @@ using UnityEngine;
 namespace Stratocraft.Character
 {
     /// <summary>
-    /// Paket 2 — Domino Yapisal Cokus, 1.5sn Catirdama/Toz Uyari Fazi, Gercek Voksel Kume Meshi,
-    /// 64-Yuvali Dusen Kume Ring Buffer, Alt Kat Delme (Pancake Collapse),
+    /// Paket 2 — Domino Yapisal Cokus, 32x32 Komsu Chunk Halolu Pencere Cozucusu,
+    /// Delta-Yuk Tetik Kapisi, Gercek Ahsap Maden Tahkimati (Voxel + Moduler LogPillar3m/LogBeam2m),
+    /// Gercek Voksel Kume Meshi, 64-Yuvali Dusen Kume Ring Buffer, Alt Kat Delme (Pancake Collapse),
     /// 18 KB PrebakedFracturePatternLut Carpma Parcalanmasi ve Surge Mode (Suru Modu) Koprusu.
-    /// Hem blok kirildiginda hem de yeni blok insa edildiginde otomatik tetiklenir; hicbir blok havada asili kalamaz.
     /// </summary>
     public sealed class Stage1StructuralCollapseBridge
     {
@@ -30,11 +30,50 @@ namespace Stratocraft.Character
         public const float LocalTerzaghiRadiusSqXZ = 64.0f; // 8.0m yatay yaricap
         public const int MinTerzaghiDomeThicknessBlocks = 2;
         public const int MaxTerzaghiDomeThicknessBlocks = 6;
+        public const int HaloWindowSizeXZ = 32;
+        public const int HaloWindowHalfXZ = 16;
+        public const int HaloWindowBelowY = 24;
+        public const int HaloWindowAboveY = 24;
+
+        [ThreadStatic] private static uint[]? _tlsHaloSrc;
+        [ThreadStatic] private static uint[]? _tlsHaloDst;
+        [ThreadStatic] private static uint[]? _tlsHaloDetached;
+        [ThreadStatic] private static byte[]? _tlsHaloLoadedCol;
+        [ThreadStatic] private static byte[]? _tlsHaloGroundedBottom;
+        [ThreadStatic] private static StructuralCollapseSystem? _tlsPureCollapseSystem;
+
+#if UNITY_5_3_OR_NEWER
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesForDomainReloadDisabled()
+        {
+            _tlsHaloSrc = null;
+            _tlsHaloDst = null;
+            _tlsHaloDetached = null;
+            _tlsHaloLoadedCol = null;
+            _tlsHaloGroundedBottom = null;
+            _tlsPureCollapseSystem = null;
+        }
+#endif
+
+        private readonly StructuralCollapseSystem _collapseSystem = new();
+        private readonly FallingStructureClusterComponent[] _evalBuffer = new FallingStructureClusterComponent[16];
+
+        /// <summary>
+        /// Harici ahsap maden tahkimati (hem voksel OakWood/Ironwood/SpiritWood direkleri hem
+        /// moduler LogPillar3m/LogBeam2m destekleri icin) dunya voksel sorgusu: (worldX, worldY, worldZ) -> bool.
+        /// Yalnizca gercekten zemine/tabana basan direk sutunu yuk tasir; havadaki ahsap parca tasimaz.
+        /// </summary>
+        public Func<int, int, int, bool>? ExternalTimberSupportLookup { get; set; }
+
+        public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
 
         internal static bool IsTreeTrunkMaterial(byte matId) =>
             matId == MaterialIdCatalog.OakWood ||
             matId == MaterialIdCatalog.Ironwood ||
             matId == MaterialIdCatalog.SpiritWood;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static int FloorDiv16(int v) => v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
 
         /// <summary>
         /// Saf C# (.NET 10 &amp; Unity 6) yerel cozucu hazirlik gecisi:
@@ -116,10 +155,21 @@ namespace Stratocraft.Character
                             continue;
                         }
 
-                        if (VoxelBitUtility.GetOriginState(raw) != BlokKokenDurumu.DogalKutle)
+                        BlokKokenDurumu cellOrigin = VoxelBitUtility.GetOriginState(raw);
+                        if (cellOrigin == BlokKokenDurumu.KaliciYapi)
                         {
                             hasSolidFloorBelow = true;
                             seenOpenVoidAboveFloor = false;
+                            continue;
+                        }
+                        if (cellOrigin != BlokKokenDurumu.DogalKutle)
+                        {
+                            // OyuncuItemBlogu (orn. ahsap maden diregi): gercekten tabana basiyorsa (seenOpenVoidAboveFloor == false)
+                            // zeminden yukari destek tasir; tabani kesilmisse veya havadaysa ustteki tavani kilitlemez!
+                            if (!seenOpenVoidAboveFloor)
+                            {
+                                hasSolidFloorBelow = true;
+                            }
                             continue;
                         }
 
@@ -267,6 +317,727 @@ namespace Stratocraft.Character
             return false;
         }
 
+        /// <summary>
+        /// Saf C# (.NET 10 &amp; Unity 6) 32x32 Komsu Chunk Halolu (x-16..x+15, z-16..z+15, ZMajorLocal)
+        /// Yapisal Gocuk Cozucusu + Delta-Yuk Kapisi + Ahsap Maden Tahkimati (Voxel + ExternalTimberSupportLookup):
+        /// - allowBoundaryOpenSpan: false ile komsu chunk duvar/sutunlarini GERCEKTEN gorur (chunk siniri yanlis-pozitif = 0).
+        /// - Sifir yuk tasiyan taban/zemin tasi kirildiginda (Delta-Yuk == 0) aninda 0 doner.
+        /// - Kirilan parcalari gercek (cx, cz) chunk dizilerine yazar ve dirtyChunks kumesini isaretler.
+        /// </summary>
+        public int EvaluateCollapseAroundSeed(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            int seedWorldX,
+            int seedWorldY,
+            int seedWorldZ,
+            float extraCantileverLoadKg,
+            out int rubbledCount,
+            Func<int, int, int>? surfaceYOverride = null)
+        {
+            rubbledCount = 0;
+            int seedCx = FloorDiv16(seedWorldX);
+            int seedCz = FloorDiv16(seedWorldZ);
+            if (!worldChunks.TryGetValue((seedCx, seedCz), out uint[]? seedChunk) || seedChunk == null)
+            {
+                return 0;
+            }
+
+            int maxEditableY = Math.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, seedChunk.Length >> 8);
+            int collapsed = EvaluateHaloCollapseInternal(
+                _collapseSystem,
+                worldChunks,
+                dirtyChunks,
+                seedWorldX,
+                seedWorldY,
+                seedWorldZ,
+                maxEditableY,
+                _evalBuffer,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                ExternalTimberSupportLookup,
+                surfaceYOverride,
+                extraCantileverLoadKg,
+                commitDetachedToWorldChunks: true);
+
+            rubbledCount = collapsed;
+            return collapsed;
+        }
+
+        /// <summary>
+        /// Saf C# (.NET 10 &amp; Unity 6) statik 32x32 halolu yapisal denge cozucusu (0 B/kare TLS tamponlu).
+        /// </summary>
+        public static int EvaluateHaloCollapseWindowPure(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            int seedWorldX,
+            int seedWorldY,
+            int seedWorldZ,
+            int maxEditableY,
+            Span<FallingStructureClusterComponent> outClusters,
+            out int clusterCount,
+            Func<int, int, int, bool>? externalTimberSupportLookup = null,
+            Func<int, int, int>? surfaceYOverride = null,
+            float extraCantileverLoadKg = 0f,
+            bool commitDetachedToWorldChunks = true)
+        {
+            _tlsPureCollapseSystem ??= new StructuralCollapseSystem();
+            return EvaluateHaloCollapseInternal(
+                _tlsPureCollapseSystem,
+                worldChunks,
+                dirtyChunks,
+                seedWorldX,
+                seedWorldY,
+                seedWorldZ,
+                maxEditableY,
+                outClusters,
+                out clusterCount,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _,
+                externalTimberSupportLookup,
+                surfaceYOverride,
+                extraCantileverLoadKg,
+                commitDetachedToWorldChunks);
+        }
+
+        private static int EvaluateHaloCollapseInternal(
+            StructuralCollapseSystem collapseSystem,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            int seedWorldX,
+            int seedWorldY,
+            int seedWorldZ,
+            int maxEditableY,
+            Span<FallingStructureClusterComponent> outClusters,
+            out int clusterCount,
+            out int originX,
+            out int originY,
+            out int originZ,
+            out int sizeY,
+            out uint[]? detachedWindowSnapshot,
+            Func<int, int, int, bool>? externalTimberSupportLookup,
+            Func<int, int, int>? surfaceYOverride,
+            float extraCantileverLoadKg,
+            bool commitDetachedToWorldChunks)
+        {
+            clusterCount = 0;
+            detachedWindowSnapshot = null;
+
+            maxEditableY = Math.Clamp(maxEditableY, 8, StratocraftConstants.ChunkSizeY);
+            int clampedSeedY = Math.Clamp(seedWorldY, 1, maxEditableY - 2);
+
+            originX = seedWorldX - HaloWindowHalfXZ;
+            originZ = seedWorldZ - HaloWindowHalfXZ;
+            originY = Math.Max(0, clampedSeedY - HaloWindowBelowY);
+            int topWorldY = Math.Min(maxEditableY - 1, clampedSeedY + HaloWindowAboveY);
+            sizeY = Math.Max(8, topWorldY - originY + 1);
+
+            int volume = HaloWindowSizeXZ * sizeY * HaloWindowSizeXZ;
+            EnsureHaloBuffers(
+                volume,
+                out uint[] haloSrc,
+                out uint[] haloDst,
+                out uint[] haloDetached,
+                out byte[] loadedColMask,
+                out byte[] groundedBottomMask);
+
+            Array.Clear(haloSrc, 0, volume);
+            Array.Clear(loadedColMask, 0, HaloWindowSizeXZ * HaloWindowSizeXZ);
+            Array.Clear(groundedBottomMask, 0, HaloWindowSizeXZ * HaloWindowSizeXZ);
+
+            // 1) 32x32 pencereyi komsu chunk'lardan (worldChunks) ZMajorLocal duzeninde doldur:
+            int minCx = FloorDiv16(originX);
+            int maxCx = FloorDiv16(originX + HaloWindowSizeXZ - 1);
+            int minCz = FloorDiv16(originZ);
+            int maxCz = FloorDiv16(originZ + HaloWindowSizeXZ - 1);
+
+            for (int cz = minCz; cz <= maxCz; cz++)
+            {
+                int chunkBaseWz = cz << 4;
+                int lzStart = Math.Max(0, chunkBaseWz - originZ);
+                int lzEnd = Math.Min(HaloWindowSizeXZ - 1, chunkBaseWz + 15 - originZ);
+
+                for (int cx = minCx; cx <= maxCx; cx++)
+                {
+                    if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunkVoxels) || chunkVoxels == null)
+                    {
+                        continue;
+                    }
+
+                    int chunkMaxY = Math.Min(maxEditableY, chunkVoxels.Length >> 8);
+                    int chunkBaseWx = cx << 4;
+                    int lxStart = Math.Max(0, chunkBaseWx - originX);
+                    int lxEnd = Math.Min(HaloWindowSizeXZ - 1, chunkBaseWx + 15 - originX);
+
+                    for (int lz = lzStart; lz <= lzEnd; lz++)
+                    {
+                        int clz = (originZ + lz) - chunkBaseWz;
+                        int zColShift = clz << 4;
+                        int haloZBase = lz * HaloWindowSizeXZ * sizeY;
+
+                        for (int lx = lxStart; lx <= lxEnd; lx++)
+                        {
+                            int clx = (originX + lx) - chunkBaseWx;
+                            int chunkCol = zColShift | clx;
+                            int col2D = (lz << 5) | lx;
+                            loadedColMask[col2D] = 1;
+
+                            int colBaseIdx = haloZBase + lx;
+                            for (int ly = 0; ly < sizeY; ly++)
+                            {
+                                int wy = originY + ly;
+                                if (wy >= chunkMaxY) break;
+                                haloSrc[colBaseIdx + ly * HaloWindowSizeXZ] = chunkVoxels[(wy << 8) | chunkCol];
+                            }
+
+                            // Pencere alt siniri (originY > DeepMantleFloorY) gercekten ana kayaya kadar dolu mu kontrol et:
+                            if (originY > StratocraftFloatingIslandWorldGen.DeepMantleFloorY)
+                            {
+                                bool grounded = true;
+                                for (int checkY = originY; checkY >= StratocraftFloatingIslandWorldGen.DeepMantleFloorY; checkY--)
+                                {
+                                    if (checkY >= chunkMaxY || !VoxelBitUtility.IsPhysicallySolid(chunkVoxels[(checkY << 8) | chunkCol]))
+                                    {
+                                        grounded = false;
+                                        break;
+                                    }
+                                }
+                                groundedBottomMask[col2D] = grounded ? (byte)1 : (byte)0;
+                            }
+                            else
+                            {
+                                groundedBottomMask[col2D] = 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            int seedLx = HaloWindowHalfXZ;
+            int seedLz = HaloWindowHalfXZ;
+            int seedLy = clampedSeedY - originY;
+
+            // 2) Delta-Yuk Kapisi (Zero-Load Floor / Non-Supporting Edit Early-Out):
+            // Kirilan voksel taban icinde gomulu sifir-yuklu bir tassa (ustunde blok yok, yaninda konsol/kemer yok),
+            // hicbir tasiyici yol bozulmadigindan aninda 0 don!
+            if (extraCantileverLoadKg <= 0f &&
+                IsZeroLoadFloorEditInHalo(
+                    haloSrc, HaloWindowSizeXZ, sizeY, HaloWindowSizeXZ,
+                    seedLx, seedLy, seedLz,
+                    originX, originY, originZ,
+                    externalTimberSupportLookup))
+            {
+                return 0;
+            }
+
+            // 3) 32x32 Yerel Cozum Penceresini Hazirla (yalnizca distSqXZ <= 64m yerel bolge serbest, dis halka KaliciYapi):
+            var pivotWorld = new System.Numerics.Vector3(seedWorldX + 0.5f, clampedSeedY + 0.5f, seedWorldZ + 0.5f);
+            PrepareHaloSolveScratch(
+                haloSrc,
+                haloDst,
+                HaloWindowSizeXZ,
+                sizeY,
+                HaloWindowSizeXZ,
+                originX,
+                originY,
+                originZ,
+                pivotWorld,
+                loadedColMask,
+                groundedBottomMask,
+                surfaceYOverride);
+
+            int localSupportFloorY = Math.Max(0, StratocraftFloatingIslandWorldGen.DeepMantleFloorY - originY);
+            var worldOriginOffset = new System.Numerics.Vector3(originX, originY, originZ);
+
+            // 4) Gercek 3B Kemer & Tahkimat Destekli Domino Cokus Cozucusu (ZMajorLocal, allowBoundaryOpenSpan == false!)
+            clusterCount = collapseSystem.EvaluateAndFracture(
+                haloDst.AsSpan(0, volume),
+                HaloWindowSizeXZ,
+                sizeY,
+                HaloWindowSizeXZ,
+                supportFloorY: localSupportFloorY,
+                worldOriginOffset: worldOriginOffset,
+                anchorPivotWorld: pivotWorld,
+                outClusters: outClusters,
+                out int collapsedVoxels,
+                layout: VoxelGridMemoryLayout.ZMajorLocal,
+                enableLocalTerzaghiLoosening: true,
+                externalTimberSupportLookup: externalTimberSupportLookup);
+
+            if (collapsedVoxels <= 0)
+            {
+                return 0;
+            }
+
+            // 5) Kopan vokselleri gercek (cx, cz) chunk dizilerine geri yaz ve anlik goruntuyu kaydet
+            Array.Clear(haloDetached, 0, volume);
+            for (int lz = 0; lz < HaloWindowSizeXZ; lz++)
+            {
+                int wz = originZ + lz;
+                int cz = FloorDiv16(wz);
+                int clz = wz - (cz << 4);
+                int haloZBase = lz * HaloWindowSizeXZ * sizeY;
+
+                for (int lx = 0; lx < HaloWindowSizeXZ; lx++)
+                {
+                    int col2D = (lz << 5) | lx;
+                    if (loadedColMask[col2D] == 0) continue;
+
+                    int wx = originX + lx;
+                    int cx = FloorDiv16(wx);
+                    int clx = wx - (cx << 4);
+                    uint[]? targetChunk = null;
+                    bool chunkTouched = false;
+                    int colBaseIdx = haloZBase + lx;
+
+                    for (int ly = 0; ly < sizeY; ly++)
+                    {
+                        int idx = colBaseIdx + ly * HaloWindowSizeXZ;
+                        uint srcRaw = haloSrc[idx];
+                        if (haloDst[idx] == 0u && srcRaw != 0u)
+                        {
+                            haloDetached[idx] = srcRaw;
+                            if (commitDetachedToWorldChunks)
+                            {
+                                if (targetChunk == null && (!worldChunks.TryGetValue((cx, cz), out targetChunk) || targetChunk == null))
+                                {
+                                    break;
+                                }
+
+                                int wy = originY + ly;
+                                targetChunk[(wy << 8) | (clz << 4) | clx] = 0u;
+                                chunkTouched = true;
+#if UNITY_5_3_OR_NEWER
+                                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, clx, clz, includeNeighbors: true);
+#endif
+                            }
+                        }
+                    }
+
+                    if (chunkTouched)
+                    {
+                        dirtyChunks.Add((cx, cz));
+                    }
+                }
+            }
+
+            detachedWindowSnapshot = haloDetached;
+            return collapsedVoxels;
+        }
+
+        /// <summary>
+        /// Delta-Yuk (Zero-Load) Kapisi: Kirilan voksel (seed) tabana gomulu, ustunde hicbir kati blok veya
+        /// harici tahkimat tasimayan ve yan komsularindan hicbir konsol/kemer ayagini tutmayan bir taban bloguysa true doner.
+        /// </summary>
+        private static bool IsZeroLoadFloorEditInHalo(
+            uint[] haloSrc,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int seedLx,
+            int seedLy,
+            int seedLz,
+            int originX,
+            int originY,
+            int originZ,
+            Func<int, int, int, bool>? externalTimberSupportLookup)
+        {
+            if ((uint)seedLx >= (uint)sizeX || (uint)seedLy >= (uint)sizeY || (uint)seedLz >= (uint)sizeZ)
+            {
+                return false;
+            }
+
+            // Yeni bir blok yerlestirildiyse (seed su an doluysa) veya dis tahkimat varsa mutlaka coz!
+            int seedIdx = GeodesicSupportDijkstraJob.Index3D(seedLx, seedLy, seedLz, sizeX, sizeY);
+            if (VoxelBitUtility.IsPhysicallySolid(haloSrc[seedIdx]))
+            {
+                return false;
+            }
+            if (externalTimberSupportLookup != null &&
+                externalTimberSupportLookup(originX + seedLx, originY + seedLy, originZ + seedLz))
+            {
+                return false;
+            }
+
+            // Ustte kati blok veya ahsap tahkimat varsa seed dikey yuk tasiyordu -> mutlaka coz!
+            if (seedLy + 1 < sizeY)
+            {
+                int aboveIdx = GeodesicSupportDijkstraJob.Index3D(seedLx, seedLy + 1, seedLz, sizeX, sizeY);
+                if (VoxelBitUtility.IsPhysicallySolid(haloSrc[aboveIdx]))
+                {
+                    return false;
+                }
+                if (externalTimberSupportLookup != null &&
+                    externalTimberSupportLookup(originX + seedLx, originY + seedLy + 1, originZ + seedLz))
+                {
+                    return false;
+                }
+            }
+
+            // Altta kati zemin yoksa acik boslukta / kopru altindaydi -> mutlaka coz!
+            if (seedLy <= 0)
+            {
+                return false;
+            }
+            int belowIdx = GeodesicSupportDijkstraJob.Index3D(seedLx, seedLy - 1, seedLz, sizeX, sizeY);
+            if (!VoxelBitUtility.IsPhysicallySolid(haloSrc[belowIdx]))
+            {
+                return false;
+            }
+
+            ReadOnlySpan<int> hDx = stackalloc int[4] { 1, -1, 0, 0 };
+            ReadOnlySpan<int> hDz = stackalloc int[4] { 0, 0, 1, -1 };
+            int solidFloorNeighbors = 0;
+
+            for (int d = 0; d < 4; d++)
+            {
+                int nx = seedLx + hDx[d];
+                int nz = seedLz + hDz[d];
+                if ((uint)nx >= (uint)sizeX || (uint)nz >= (uint)sizeZ)
+                {
+                    return false;
+                }
+
+                uint nRaw = haloSrc[GeodesicSupportDijkstraJob.Index3D(nx, seedLy, nz, sizeX, sizeY)];
+                bool nSolid = VoxelBitUtility.IsPhysicallySolid(nRaw);
+                if (nSolid)
+                {
+                    solidFloorNeighbors++;
+                    if (VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.OyuncuItemBlogu)
+                    {
+                        return false;
+                    }
+                    byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
+                    if (nMat == MaterialIdCatalog.Stalagnate || IsTreeTrunkMaterial(nMat))
+                    {
+                        return false;
+                    }
+
+                    // Yatay komsu kendi altinda kati zemine oturmuyorsa seed bir konsolu/kemeri tutuyordu!
+                    if (!VoxelBitUtility.IsPhysicallySolid(haloSrc[GeodesicSupportDijkstraJob.Index3D(nx, seedLy - 1, nz, sizeX, sizeY)]))
+                    {
+                        return false;
+                    }
+                }
+
+                // Ust capraz komsu (kemer bindirme omuzu) altinda kati blok yoksa seed omuzu tasiyordu!
+                if (seedLy + 1 < sizeY)
+                {
+                    uint upDiagRaw = haloSrc[GeodesicSupportDijkstraJob.Index3D(nx, seedLy + 1, nz, sizeX, sizeY)];
+                    if (VoxelBitUtility.IsPhysicallySolid(upDiagRaw) && !nSolid)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            // En az 3 yatay komsusu kati taban olan gomulu zemin blogu -> Delta-Yuk == 0!
+            return solidFloorNeighbors >= 3;
+        }
+
+        private static bool IsZeroLoadFloorEditInSingleChunk(
+            uint[] chunkVoxels,
+            int maxY,
+            int seedLx,
+            int seedY,
+            int seedLz,
+            int chunkOriginX,
+            int chunkOriginZ,
+            Func<int, int, int, bool>? externalTimberSupportLookup)
+        {
+            if (seedLx <= 0 || seedLx >= 15 || seedLz <= 0 || seedLz >= 15 || seedY <= 1 || seedY >= maxY - 2)
+            {
+                return false;
+            }
+
+            int seedIdx = (seedY << 8) | (seedLz << 4) | seedLx;
+            if (VoxelBitUtility.IsPhysicallySolid(chunkVoxels[seedIdx]))
+            {
+                return false;
+            }
+            if (externalTimberSupportLookup != null &&
+                (externalTimberSupportLookup(chunkOriginX + seedLx, seedY, chunkOriginZ + seedLz) ||
+                 externalTimberSupportLookup(chunkOriginX + seedLx, seedY + 1, chunkOriginZ + seedLz)))
+            {
+                return false;
+            }
+
+            if (VoxelBitUtility.IsPhysicallySolid(chunkVoxels[((seedY + 1) << 8) | (seedLz << 4) | seedLx]))
+            {
+                return false;
+            }
+            if (!VoxelBitUtility.IsPhysicallySolid(chunkVoxels[((seedY - 1) << 8) | (seedLz << 4) | seedLx]))
+            {
+                return false;
+            }
+
+            ReadOnlySpan<int> hDx = stackalloc int[4] { 1, -1, 0, 0 };
+            ReadOnlySpan<int> hDz = stackalloc int[4] { 0, 0, 1, -1 };
+            int solidFloorNeighbors = 0;
+
+            for (int d = 0; d < 4; d++)
+            {
+                int nx = seedLx + hDx[d];
+                int nz = seedLz + hDz[d];
+                uint nRaw = chunkVoxels[(seedY << 8) | (nz << 4) | nx];
+                bool nSolid = VoxelBitUtility.IsPhysicallySolid(nRaw);
+                if (nSolid)
+                {
+                    solidFloorNeighbors++;
+                    if (VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.OyuncuItemBlogu) return false;
+                    byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
+                    if (nMat == MaterialIdCatalog.Stalagnate || IsTreeTrunkMaterial(nMat)) return false;
+                    if (!VoxelBitUtility.IsPhysicallySolid(chunkVoxels[((seedY - 1) << 8) | (nz << 4) | nx])) return false;
+                }
+
+                uint upDiagRaw = chunkVoxels[((seedY + 1) << 8) | (nz << 4) | nx];
+                if (VoxelBitUtility.IsPhysicallySolid(upDiagRaw) && !nSolid)
+                {
+                    return false;
+                }
+            }
+
+            return solidFloorNeighbors >= 3;
+        }
+
+        private static void PrepareHaloSolveScratch(
+            uint[] src,
+            uint[] dst,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            int originX,
+            int originY,
+            int originZ,
+            System.Numerics.Vector3 pivotWorld,
+            byte[] loadedColMask,
+            byte[] groundedBottomMask,
+            Func<int, int, int>? surfaceYOverride)
+        {
+            int volume = sizeX * sizeY * sizeZ;
+            Array.Copy(src, dst, volume);
+
+            int pivotLocalY = Math.Clamp((int)MathF.Floor(pivotWorld.Y) - originY, 0, Math.Max(0, sizeY - 1));
+            int minReleaseY = Math.Max(1, pivotLocalY - 4);
+            int maxCavityCeilingSearchY = Math.Min(sizeY - 1, pivotLocalY + 14);
+
+            for (int lz = 0; lz < sizeZ; lz++)
+            {
+                int wz = originZ + lz;
+                int haloZBase = lz * sizeX * sizeY;
+
+                for (int lx = 0; lx < sizeX; lx++)
+                {
+                    int col2D = (lz << 5) | lx;
+                    if (loadedColMask[col2D] == 0)
+                    {
+                        continue;
+                    }
+
+                    int wx = originX + lx;
+                    float dx = (wx + 0.5f) - pivotWorld.X;
+                    float dz = (wz + 0.5f) - pivotWorld.Z;
+                    float distSqXZ = dx * dx + dz * dz;
+
+                    bool touchesUnloadedEdge =
+                        lx == 0 || lx == sizeX - 1 || lz == 0 || lz == sizeZ - 1 ||
+                        loadedColMask[(lz << 5) | (lx - 1)] == 0 ||
+                        loadedColMask[(lz << 5) | (lx + 1)] == 0 ||
+                        loadedColMask[((lz - 1) << 5) | lx] == 0 ||
+                        loadedColMask[((lz + 1) << 5) | lx] == 0;
+
+                    bool anchorWholeColumn = distSqXZ > LocalTerzaghiRadiusSqXZ || touchesUnloadedEdge;
+                    int colBaseIdx = haloZBase + lx;
+
+                    if (anchorWholeColumn)
+                    {
+                        for (int ly = 0; ly < sizeY; ly++)
+                        {
+                            int idx = colBaseIdx + ly * sizeX;
+                            uint raw = dst[idx];
+                            if (VoxelBitUtility.IsPhysicallySolid(raw) &&
+                                VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
+                            {
+                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Pencere alt tabani (ly == 0) gercekten ana kayaya oturuyorsa mesnet olarak sabitlenir
+                    uint bottomRaw = dst[colBaseIdx];
+                    if (groundedBottomMask[col2D] != 0 &&
+                        VoxelBitUtility.IsPhysicallySolid(bottomRaw) &&
+                        VoxelBitUtility.GetOriginState(bottomRaw) == BlokKokenDurumu.DogalKutle)
+                    {
+                        dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.KaliciYapi);
+                    }
+
+                    int surfY = surfaceYOverride != null
+                        ? surfaceYOverride(wx, wz)
+                        : (int)MathF.Round(StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz));
+
+                    float normDistSq = Math.Clamp(distSqXZ / LocalTerzaghiRadiusSqXZ, 0.0f, 1.0f);
+                    int domeThickness = Math.Clamp(
+                        (int)MathF.Round(MinTerzaghiDomeThicknessBlocks +
+                                         (MaxTerzaghiDomeThicknessBlocks - MinTerzaghiDomeThicknessBlocks) * (1.0f - normDistSq)),
+                        MinTerzaghiDomeThicknessBlocks,
+                        MaxTerzaghiDomeThicknessBlocks);
+
+                    bool hasSolidFloorBelow = VoxelBitUtility.IsPhysicallySolid(src[colBaseIdx]);
+                    bool seenOpenVoidAboveFloor = false;
+                    int freeUntilY = -1;
+
+                    for (int ly = 1; ly < sizeY; ly++)
+                    {
+                        int idx = colBaseIdx + ly * sizeX;
+                        uint raw = dst[idx];
+
+                        if (!VoxelBitUtility.IsPhysicallySolid(raw))
+                        {
+                            if (ly >= minReleaseY && ly <= maxCavityCeilingSearchY && hasSolidFloorBelow)
+                            {
+                                seenOpenVoidAboveFloor = true;
+                            }
+                            continue;
+                        }
+
+                        BlokKokenDurumu origin = VoxelBitUtility.GetOriginState(raw);
+                        if (origin == BlokKokenDurumu.KaliciYapi)
+                        {
+                            hasSolidFloorBelow = true;
+                            seenOpenVoidAboveFloor = false;
+                            continue;
+                        }
+
+                        if (origin != BlokKokenDurumu.DogalKutle)
+                        {
+                            if (!seenOpenVoidAboveFloor)
+                            {
+                                hasSolidFloorBelow = true;
+                            }
+                            continue;
+                        }
+
+                        byte mat = VoxelBitUtility.GetMaterialId(raw);
+                        StructuralMaterialProps props = StructuralMaterialProps.GetForMaterial(mat);
+                        if (props.IsUnbreakableAnchor || props.IsSkyAnchor)
+                        {
+                            hasSolidFloorBelow = true;
+                            seenOpenVoidAboveFloor = false;
+                            continue;
+                        }
+
+                        if (ly < minReleaseY)
+                        {
+                            hasSolidFloorBelow = true;
+                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                            continue;
+                        }
+
+                        int wy = originY + ly;
+                        byte shape = VoxelBitUtility.GetShapeId(raw);
+                        bool isTreeTrunk = IsTreeTrunkMaterial(mat);
+                        bool isTreeCanopy = (mat == MaterialIdCatalog.Grass ||
+                                             mat == MaterialIdCatalog.GlowingMoss ||
+                                             mat == MaterialIdCatalog.Marble) &&
+                                            (shape != 0 || wy >= surfY + 2);
+
+                        if (isTreeTrunk || isTreeCanopy)
+                        {
+                            continue;
+                        }
+
+                        if (mat == MaterialIdCatalog.Stalagnate &&
+                            ly <= maxCavityCeilingSearchY &&
+                            !IsSolidBackedSideWallInHalo(src, lx, ly, lz, sizeX, sizeY, sizeZ, minReleaseY))
+                        {
+                            continue;
+                        }
+
+                        if (seenOpenVoidAboveFloor && ly <= maxCavityCeilingSearchY)
+                        {
+                            int slabThickness = 1;
+                            for (int sy = ly + 1; sy < sizeY && slabThickness <= MaxTerzaghiDomeThicknessBlocks; sy++)
+                            {
+                                if (VoxelBitUtility.IsPhysicallySolid(src[colBaseIdx + sy * sizeX]))
+                                    slabThickness++;
+                                else
+                                    break;
+                            }
+
+                            int releaseThickness = slabThickness <= MaxTerzaghiDomeThicknessBlocks
+                                ? slabThickness
+                                : domeThickness;
+                            freeUntilY = ly + releaseThickness - 1;
+                            seenOpenVoidAboveFloor = false;
+                        }
+
+                        if (ly <= freeUntilY)
+                        {
+                            continue;
+                        }
+
+                        hasSolidFloorBelow = true;
+                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                    }
+                }
+            }
+        }
+
+        private static bool IsSolidBackedSideWallInHalo(
+            uint[] src, int lx, int ly, int lz, int sizeX, int sizeY, int sizeZ, int minCavityVoidY)
+        {
+            if (lx > 0 && !VoxelBitUtility.IsPhysicallySolid(src[GeodesicSupportDijkstraJob.Index3D(lx - 1, ly, lz, sizeX, sizeY)])) return false;
+            if (lx + 1 < sizeX && !VoxelBitUtility.IsPhysicallySolid(src[GeodesicSupportDijkstraJob.Index3D(lx + 1, ly, lz, sizeX, sizeY)])) return false;
+            if (lz > 0 && !VoxelBitUtility.IsPhysicallySolid(src[GeodesicSupportDijkstraJob.Index3D(lx, ly, lz - 1, sizeX, sizeY)])) return false;
+            if (lz + 1 < sizeZ && !VoxelBitUtility.IsPhysicallySolid(src[GeodesicSupportDijkstraJob.Index3D(lx, ly, lz + 1, sizeX, sizeY)])) return false;
+
+            int startCheckY = Math.Max(0, minCavityVoidY);
+            for (int cy = ly - 1; cy >= startCheckY; cy--)
+            {
+                if (!VoxelBitUtility.IsPhysicallySolid(src[GeodesicSupportDijkstraJob.Index3D(lx, cy, lz, sizeX, sizeY)]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void EnsureHaloBuffers(
+            int volume,
+            out uint[] haloSrc,
+            out uint[] haloDst,
+            out uint[] haloDetached,
+            out byte[] loadedColMask,
+            out byte[] groundedBottomMask)
+        {
+            if (_tlsHaloSrc == null || _tlsHaloSrc.Length < volume)
+            {
+                int cap = Math.Max(volume, HaloWindowSizeXZ * 64 * HaloWindowSizeXZ);
+                _tlsHaloSrc = new uint[cap];
+                _tlsHaloDst = new uint[cap];
+                _tlsHaloDetached = new uint[cap];
+            }
+
+            const int colArea = HaloWindowSizeXZ * HaloWindowSizeXZ;
+            _tlsHaloLoadedCol ??= new byte[colArea];
+            _tlsHaloGroundedBottom ??= new byte[colArea];
+
+            haloSrc = _tlsHaloSrc;
+            haloDst = _tlsHaloDst!;
+            haloDetached = _tlsHaloDetached!;
+            loadedColMask = _tlsHaloLoadedCol;
+            groundedBottomMask = _tlsHaloGroundedBottom;
+        }
+
 #if UNITY_5_3_OR_NEWER
         private const float GravityAcceleration = 9.81f;
         private const int MaxMeshVoxelsPerFallingProxy = 512;
@@ -314,8 +1085,6 @@ namespace Stratocraft.Character
             public Transform? DustPuffGroup;
         }
 
-        private readonly StructuralCollapseSystem _collapseSystem = new();
-        private readonly FallingStructureClusterComponent[] _evalBuffer = new FallingStructureClusterComponent[16];
         private readonly ActiveFallingClusterSlot[] _ringBuffer = new ActiveFallingClusterSlot[MaxRingBufferSlots];
         private readonly List<FallenTreeLogInstance> _fallenTreeLogs = new(16);
         private readonly List<FacetedVoxelTriangle> _proxyTris = new(256);
@@ -331,7 +1100,6 @@ namespace Stratocraft.Character
         public Vector3 PreferredStrikeDirectionXZ { get; set; } = Vector3.forward;
         public int ActiveFallingClusterCount => _activeClusterCount;
         public int ActiveFallenTreeLogCount => _fallenTreeLogs.Count;
-        public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
         public float LastImpactFractureRatio { get; private set; }
         public int LastPancakeBreachedBlocksCount { get; private set; }
 
@@ -339,17 +1107,86 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]> worldChunks, HashSet<(int cx, int cz)> dirtyChunks,
             Vector3Int seedWorldVoxel, float extraCantileverLoadKg, out int rubbledCount)
         {
-            int cx = seedWorldVoxel.x >= 0 ? (seedWorldVoxel.x >> 4) : -(((-seedWorldVoxel.x) + 15) >> 4);
-            int cz = seedWorldVoxel.z >= 0 ? (seedWorldVoxel.z >> 4) : -(((-seedWorldVoxel.z) + 15) >> 4);
+            return EvaluateCollapseAroundSeed(
+                worldChunks, dirtyChunks, seedWorldVoxel, extraCantileverLoadKg,
+                DefaultVoxelMaterial, out rubbledCount, out _);
+        }
+
+        public int EvaluateCollapseAroundSeed(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            Vector3Int seedWorldVoxel,
+            float extraCantileverLoadKg,
+            Material? sharedVoxelMaterial,
+            out int rubbledCount,
+            out string feedbackText)
+        {
+            if (sharedVoxelMaterial != null) DefaultVoxelMaterial = sharedVoxelMaterial;
             rubbledCount = 0;
-            if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunkVoxels)) return 0;
-            int maxEditableY = Mathf.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, chunkVoxels.Length >> 8);
-            int collapsed = EvaluateChunkStability(
-                cx, cz, chunkVoxels, maxEditableY,
-                new Vector3(seedWorldVoxel.x + 0.5f, seedWorldVoxel.y + 0.5f, seedWorldVoxel.z + 0.5f),
-                DefaultVoxelMaterial, dirtyChunks, out _);
-            rubbledCount = collapsed;
-            return collapsed;
+            feedbackText = string.Empty;
+
+            int seedCx = FloorDiv16(seedWorldVoxel.x);
+            int seedCz = FloorDiv16(seedWorldVoxel.z);
+            if (!worldChunks.TryGetValue((seedCx, seedCz), out uint[]? seedChunk) || seedChunk == null)
+            {
+                return 0;
+            }
+
+            int maxEditableY = Mathf.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, seedChunk.Length >> 8);
+            int collapsedVoxels = EvaluateHaloCollapseInternal(
+                _collapseSystem,
+                worldChunks,
+                dirtyChunks,
+                seedWorldVoxel.x,
+                seedWorldVoxel.y,
+                seedWorldVoxel.z,
+                maxEditableY,
+                _evalBuffer,
+                out int clusterCount,
+                out int originX,
+                out int originY,
+                out int originZ,
+                out int sizeY,
+                out uint[]? detachedWindowSnapshot,
+                ExternalTimberSupportLookup,
+                surfaceYOverride: null,
+                extraCantileverLoadKg: extraCantileverLoadKg,
+                commitDetachedToWorldChunks: true);
+
+            if (collapsedVoxels <= 0 || detachedWindowSnapshot == null)
+            {
+                return 0;
+            }
+
+            rubbledCount = collapsedVoxels;
+            int consolidatedCount = ConsolidateClustersByConnectedComponent(_evalBuffer, clusterCount);
+            int spawnedDynamic = 0, surgeBaked = 0;
+            Material? matToUse = sharedVoxelMaterial != null ? sharedVoxelMaterial : DefaultVoxelMaterial;
+            Vector3 pivotWorld = new Vector3(seedWorldVoxel.x + 0.5f, seedWorldVoxel.y + 0.5f, seedWorldVoxel.z + 0.5f);
+
+            for (int i = 0; i < consolidatedCount; i++)
+            {
+                FallingStructureClusterComponent c = _evalBuffer[i];
+                if (_activeClusterCount >= SurgeModeActiveClusterLimit)
+                {
+                    BakeHaloClusterDirectlyInSurgeMode(in c, originX, originY, originZ, worldChunks, dirtyChunks, maxEditableY);
+                    surgeBaked++;
+                }
+                else
+                {
+                    SpawnFallingClusterIntoRingBuffer(
+                        c, originX, originY, originZ,
+                        HaloWindowSizeXZ, sizeY, HaloWindowSizeXZ,
+                        VoxelGridMemoryLayout.ZMajorLocal,
+                        detachedWindowSnapshot, matToUse, pivotWorld);
+                    spawnedDynamic++;
+                }
+            }
+
+            feedbackText = surgeBaked > 0
+                ? $"FIZIKSEL COKUS + SURGE MODE! {collapsedVoxels} blok ({spawnedDynamic} fiziksel govde, {surgeBaked} aninda moloz) [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]"
+                : $"FIZIKSEL DEVRILME & COKUS! {collapsedVoxels} blok ({consolidatedCount} butunluklu fiziksel kutle) kesilen yone devriliyor [{_collapseSystem.LastEvaluationMilliseconds:0.00}ms]";
+            return collapsedVoxels;
         }
 
         public int EvaluateChunkStability(
@@ -360,10 +1197,20 @@ namespace Stratocraft.Character
             maxEditableY = Mathf.Clamp(maxEditableY, 8, Mathf.Min(StratocraftConstants.ChunkSizeY, chunkVoxels.Length >> 8));
 
             var pivotNum = new System.Numerics.Vector3(pivotWorld.x, pivotWorld.y, pivotWorld.z);
+            int seedLx = Mathf.FloorToInt(pivotWorld.x) - (cx << 4);
+            int seedY = Mathf.FloorToInt(pivotWorld.y);
+            int seedLz = Mathf.FloorToInt(pivotWorld.z) - (cz << 4);
+
+            // Delta-Yuk Kapisi: taban icinde gomulu sifir yuklu tas kirildiginda 0 gocuk
+            if (IsZeroLoadFloorEditInSingleChunk(
+                    chunkVoxels, maxEditableY, seedLx, seedY, seedLz,
+                    cx << 4, cz << 4, ExternalTimberSupportLookup))
+            {
+                feedbackText = string.Empty;
+                return 0;
+            }
 
             // Hizli Yerel Destek On-Testi (Early-Out):
-            // Eger kirilan/konulan noktanin ustunde veya yaninda havada kalabilecek hicbir katman, agac veya oyuncu yapisi yoksa
-            // 40.960 hucrelik Dijkstra + DAG cozucusunu bosuna calistirma (%92 CPU tasarrufu!).
             if (!HasPotentialUnsupportedStructureNearPivot(cx, cz, chunkVoxels, maxEditableY, pivotNum))
             {
                 feedbackText = string.Empty;
@@ -384,7 +1231,8 @@ namespace Stratocraft.Character
                 anchorPivotWorld: pivotNum,
                 outClusters: _evalBuffer, out int collapsedVoxels,
                 layout: VoxelGridMemoryLayout.YMajorChunk,
-                enableLocalTerzaghiLoosening: true);
+                enableLocalTerzaghiLoosening: true,
+                externalTimberSupportLookup: ExternalTimberSupportLookup);
 
             if (collapsedVoxels <= 0)
             {
@@ -421,7 +1269,11 @@ namespace Stratocraft.Character
                 }
                 else
                 {
-                    SpawnFallingClusterIntoRingBuffer(c, cx, cz, _detachedSnapshot, maxEditableY, matToUse, pivotWorld);
+                    SpawnFallingClusterIntoRingBuffer(
+                        c, cx << 4, 0, cz << 4,
+                        16, maxEditableY, 16,
+                        VoxelGridMemoryLayout.YMajorChunk,
+                        _detachedSnapshot, matToUse, pivotWorld);
                     spawnedDynamic++;
                 }
             }
@@ -575,8 +1427,11 @@ namespace Stratocraft.Character
         }
 
         private void SpawnFallingClusterIntoRingBuffer(
-            FallingStructureClusterComponent cluster, int cx, int cz,
-            uint[] detachedSnapshot, int maxEditableY, Material? sharedMat, Vector3 pivotWorld)
+            FallingStructureClusterComponent cluster,
+            int originX, int originY, int originZ,
+            int sizeX, int sizeY, int sizeZ,
+            VoxelGridMemoryLayout layout,
+            uint[] detachedSnapshot, Material? sharedMat, Vector3 pivotWorld)
         {
             int slotIdx = _ringWriteCursor;
             _ringWriteCursor = (_ringWriteCursor + 1) % MaxRingBufferSlots;
@@ -589,16 +1444,16 @@ namespace Stratocraft.Character
 
             _proxyTris.Clear();
             byte fallbackMat = cluster.DominantMaterialId == 0 ? MaterialIdCatalog.Stone : cluster.DominantMaterialId;
-            int minLx = Mathf.Clamp(cluster.MinBounds.X, 0, 15);
-            int maxLx = Mathf.Clamp(cluster.MaxBounds.X, 0, 15);
-            int minLy = Mathf.Clamp(cluster.MinBounds.Y, 1, maxEditableY - 1);
-            int maxLy = Mathf.Clamp(cluster.MaxBounds.Y, 1, maxEditableY - 1);
-            int minLz = Mathf.Clamp(cluster.MinBounds.Z, 0, 15);
-            int maxLz = Mathf.Clamp(cluster.MaxBounds.Z, 0, 15);
+            int minLx = Mathf.Clamp(cluster.MinBounds.X, 0, sizeX - 1);
+            int maxLx = Mathf.Clamp(cluster.MaxBounds.X, 0, sizeX - 1);
+            int minLy = Mathf.Clamp(cluster.MinBounds.Y, 0, sizeY - 1);
+            int maxLy = Mathf.Clamp(cluster.MaxBounds.Y, 0, sizeY - 1);
+            int minLz = Mathf.Clamp(cluster.MinBounds.Z, 0, sizeZ - 1);
+            int maxLz = Mathf.Clamp(cluster.MaxBounds.Z, 0, sizeZ - 1);
 
-            float comLocalX = cluster.CenterOfMass.X - (cx * 16f);
-            float comLocalY = cluster.CenterOfMass.Y;
-            float comLocalZ = cluster.CenterOfMass.Z - (cz * 16f);
+            float comLocalX = cluster.CenterOfMass.X - originX;
+            float comLocalY = cluster.CenterOfMass.Y - originY;
+            float comLocalZ = cluster.CenterOfMass.Z - originZ;
 
             bool hasWoodTrunk = false;
             byte detectedWoodMat = MaterialIdCatalog.OakWood;
@@ -611,7 +1466,7 @@ namespace Stratocraft.Character
                 {
                     for (int lx = minLx; lx <= maxLx; lx++)
                     {
-                        int idx = (ly << 8) | (lz << 4) | lx;
+                        int idx = GeodesicSupportDijkstraJob.GridIndex(lx, ly, lz, sizeX, sizeY, sizeZ, layout);
                         uint raw = (uint)idx < (uint)detachedSnapshot.Length ? detachedSnapshot[idx] : 0u;
                         if (!VoxelBitUtility.IsPhysicallySolid(raw)) continue;
 
@@ -639,7 +1494,9 @@ namespace Stratocraft.Character
                 comLocalZ = centerTrunkLz + 0.5f;
             }
 
-            Vector3 basePos = new Vector3(cx * 16f + comLocalX, comLocalY, cz * 16f + comLocalZ);
+            Vector3 basePos = new Vector3(originX + comLocalX, originY + comLocalY, originZ + comLocalZ);
+            int cx = FloorDiv16(Mathf.FloorToInt(basePos.x));
+            int cz = FloorDiv16(Mathf.FloorToInt(basePos.z));
             bool isTree = hasWoodTrunk || IsTreeTrunkMaterial(cluster.DominantMaterialId);
             Vector3 cutDeltaXZ = new Vector3(pivotWorld.x - basePos.x, 0f, pivotWorld.z - basePos.z);
             Vector3 toppleDirXZ;
@@ -668,7 +1525,7 @@ namespace Stratocraft.Character
                 {
                     for (int lx = minLx; lx <= maxLx && emittedBlocks < MaxMeshVoxelsPerFallingProxy; lx++)
                     {
-                        int idx = (ly << 8) | (lz << 4) | lx;
+                        int idx = GeodesicSupportDijkstraJob.GridIndex(lx, ly, lz, sizeX, sizeY, sizeZ, layout);
                         uint raw = (uint)idx < (uint)detachedSnapshot.Length ? detachedSnapshot[idx] : 0u;
                         if (!VoxelBitUtility.IsPhysicallySolid(raw))
                         {
@@ -685,7 +1542,7 @@ namespace Stratocraft.Character
                         }
                         byte rot = VoxelBitUtility.GetRotationState(raw);
                         byte dmg = (byte)Math.Max((int)VoxelBitUtility.GetDamageState(raw), 2);
-                        byte occludedMask = ComputeDetachedClusterInternalMask(detachedSnapshot, lx, ly, lz, maxEditableY);
+                        byte occludedMask = ComputeDetachedClusterInternalMask(detachedSnapshot, lx, ly, lz, sizeX, sizeY, sizeZ, layout);
 
                         float relX = lx - comLocalX;
                         float relY = ly - comLocalY;
@@ -734,7 +1591,7 @@ namespace Stratocraft.Character
                 {
                     for (int lx = minLx; lx <= maxLx; lx++)
                     {
-                        int idx = (ly << 8) | (lz << 4) | lx;
+                        int idx = GeodesicSupportDijkstraJob.GridIndex(lx, ly, lz, sizeX, sizeY, sizeZ, layout);
                         if ((uint)idx < (uint)detachedSnapshot.Length) detachedSnapshot[idx] = 0u;
                     }
                 }
@@ -781,7 +1638,7 @@ namespace Stratocraft.Character
             if (toppleAxis.sqrMagnitude < 0.001f) toppleAxis = Vector3.right;
             toppleAxis.Normalize();
 
-            float pivotY = isTree ? (minLy + 0.65f) : minLy;
+            float pivotY = isTree ? (originY + minLy + 0.65f) : (originY + minLy);
             float hingeArm = Mathf.Max(0.85f, basePos.y - pivotY);
             Vector3 hingePivot = new Vector3(basePos.x, pivotY, basePos.z);
             float initialAngSpeedRad = isTree ? 0.92f : 0.75f;
@@ -816,21 +1673,23 @@ namespace Stratocraft.Character
             _activeClusterCount++;
         }
 
-        private static byte ComputeDetachedClusterInternalMask(uint[] snapshot, int lx, int ly, int lz, int maxEditableY)
+        private static byte ComputeDetachedClusterInternalMask(
+            uint[] snapshot, int lx, int ly, int lz, int sizeX, int sizeY, int sizeZ, VoxelGridMemoryLayout layout)
         {
             byte mask = 0;
-            if (lx < 15 && IsFullSolidInSnapshot(snapshot, lx + 1, ly, lz)) mask |= ArchitecturalShapeCatalog.FacePosX;
-            if (lx > 0 && IsFullSolidInSnapshot(snapshot, lx - 1, ly, lz)) mask |= ArchitecturalShapeCatalog.FaceNegX;
-            if (ly + 1 < maxEditableY && IsFullSolidInSnapshot(snapshot, lx, ly + 1, lz)) mask |= ArchitecturalShapeCatalog.FacePosY;
-            if (ly > 0 && IsFullSolidInSnapshot(snapshot, lx, ly - 1, lz)) mask |= ArchitecturalShapeCatalog.FaceNegY;
-            if (lz < 15 && IsFullSolidInSnapshot(snapshot, lx, ly, lz + 1)) mask |= ArchitecturalShapeCatalog.FacePosZ;
-            if (lz > 0 && IsFullSolidInSnapshot(snapshot, lx, ly, lz - 1)) mask |= ArchitecturalShapeCatalog.FaceNegZ;
+            if (lx + 1 < sizeX && IsFullSolidInSnapshot(snapshot, lx + 1, ly, lz, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FacePosX;
+            if (lx > 0 && IsFullSolidInSnapshot(snapshot, lx - 1, ly, lz, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FaceNegX;
+            if (ly + 1 < sizeY && IsFullSolidInSnapshot(snapshot, lx, ly + 1, lz, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FacePosY;
+            if (ly > 0 && IsFullSolidInSnapshot(snapshot, lx, ly - 1, lz, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FaceNegY;
+            if (lz + 1 < sizeZ && IsFullSolidInSnapshot(snapshot, lx, ly, lz + 1, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FacePosZ;
+            if (lz > 0 && IsFullSolidInSnapshot(snapshot, lx, ly, lz - 1, sizeX, sizeY, sizeZ, layout)) mask |= ArchitecturalShapeCatalog.FaceNegZ;
             return mask;
         }
 
-        private static bool IsFullSolidInSnapshot(uint[] snapshot, int lx, int ly, int lz)
+        private static bool IsFullSolidInSnapshot(
+            uint[] snapshot, int lx, int ly, int lz, int sizeX, int sizeY, int sizeZ, VoxelGridMemoryLayout layout)
         {
-            int idx = (ly << 8) | (lz << 4) | lx;
+            int idx = GeodesicSupportDijkstraJob.GridIndex(lx, ly, lz, sizeX, sizeY, sizeZ, layout);
             if ((uint)idx >= (uint)snapshot.Length) return false;
             uint raw = snapshot[idx];
             if (!VoxelBitUtility.IsPhysicallySolid(raw)) return false;
@@ -1822,6 +2681,33 @@ namespace Stratocraft.Character
                 chunkVoxels.AsSpan(0, 16 * maxEditableY * 16), 16, maxEditableY, 16,
                 lx, ly, lz, Math.Max(1, cluster.VoxelCount),
                 VoxelGridMemoryLayout.YMajorChunk, dropHeightMeters: 5.0f, cluster.DominantMaterialId);
+        }
+
+        private static void BakeHaloClusterDirectlyInSurgeMode(
+            in FallingStructureClusterComponent cluster,
+            int originX, int originY, int originZ,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            int maxEditableY)
+        {
+            int wx = originX + ((cluster.MinBounds.X + cluster.MaxBounds.X) >> 1);
+            int wy = Mathf.Clamp(originY + cluster.MinBounds.Y, 2, maxEditableY - 2);
+            int wz = originZ + ((cluster.MinBounds.Z + cluster.MaxBounds.Z) >> 1);
+            int cx = FloorDiv16(wx);
+            int cz = FloorDiv16(wz);
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? targetChunk) || targetChunk == null)
+            {
+                return;
+            }
+
+            int clx = Mathf.Clamp(wx - (cx << 4), 0, 15);
+            int clz = Mathf.Clamp(wz - (cz << 4), 0, 15);
+            int chunkMaxY = Mathf.Min(maxEditableY, targetChunk.Length >> 8);
+            StructuralCollapseSystem.RevoxelizeClusterToLooseRubble(
+                targetChunk.AsSpan(0, 16 * chunkMaxY * 16), 16, chunkMaxY, 16,
+                clx, wy, clz, Math.Max(1, cluster.VoxelCount),
+                VoxelGridMemoryLayout.YMajorChunk, dropHeightMeters: 5.0f, cluster.DominantMaterialId);
+            dirtyChunks.Add((cx, cz));
         }
 
         private void ReleaseClusterSlot(ref ActiveFallingClusterSlot slot)
