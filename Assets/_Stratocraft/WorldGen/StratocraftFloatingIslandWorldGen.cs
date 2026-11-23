@@ -268,7 +268,7 @@ namespace Stratocraft.WorldGen.Generators
             if (r > 200.0f && temp >= 0.20f && volcanic > 0.20f) return 7;
 
             // 2) Anti-Gravite Gokyuzu Adalari Takimadasi (10): Dis deniz/okyanus havzalarinda anomali bolgeleri
-            if (r > 350.0f && cont < -0.14f && (volcanic < -0.10f || smallIsland > 0.24f))
+            if (r > 350.0f && cont < -0.08f && (volcanic < -0.12f || smallIsland > 0.24f))
             {
                 return 10;
             }
@@ -282,9 +282,10 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             // 4) Safir Lagun ve Prusya Kiyilari (13) ile Karstik Kiyi Havzalari (2)
-            if (cont < -0.20f)
+            if (cont < -0.22f)
             {
-                if (hum < -0.24f) return 2; // Karstik Kirectasi Dudenleri ve Beyaz Falezler
+                if (hum < -0.18f) return 2; // Karstik Kirectasi Dudenleri ve Beyaz Falezler
+                if (temp < -0.06f && hum < 0.08f) return 5; // Soguk Kristal Kiyi Kanyonu
                 return 13;                  // Safir Lagun ve Prusya Kiyilari (Bolge 3)
             }
 
@@ -294,26 +295,26 @@ namespace Stratocraft.WorldGen.Generators
                 return 12;
             }
 
-            // 6) Sicak Guney Kusagi (temp >= +0.20): Kizil Kor & Ametist Kanyonu (6), Turba Batakligi (3), Kullu Corak (9)
-            if (temp >= 0.20f)
+            // 6) Sicak Guney Kusagi (temp >= +0.18): Kizil Kor & Ametist Kanyonu (6), Turba Batakligi (3), Kullu Corak (9)
+            if (temp >= 0.18f)
             {
                 if (hum < 0.08f) return 6;  // Kizil Kor ve Ametist Kanyonlari (Bolge 4)
-                if (hum > 0.28f) return 3;  // Zehirli Turba Batakligi ve Asit Golleri
+                if (hum > 0.24f) return 3;  // Zehirli Turba Batakligi ve Asit Golleri
                 return 9;                   // Kullu Corak Topraklar
             }
 
-            // 7) Serin Kuzey-Gecis Kusagi (temp in (-0.36 .. -0.12]): Demir Agaci Ormani (1) ve Kristal Kanyon (5)
-            if (temp < -0.12f)
+            // 7) Serin Kuzey-Gecis Kusagi (temp in (-0.36 .. -0.10]): Demir Agaci Ormani (1) ve Kristal Kanyon (5)
+            if (temp < -0.10f)
             {
                 if (hum >= 0.0f) return 1;  // Demir Agaci ve Sisli Orman
                 return 5;                   // Kristal Kanyon ve Kuvars Vadisi
             }
 
-            // 8) Iliman Merkez Kusak (temp in [-0.12 .. +0.20)):
-            if (hum > 0.26f) return 1;      // Demir Agaci ve Sisli Orman
-            if (hum < -0.26f) return 2;     // Karstik Kirectasi Dudenleri
-            if (temp > 0.07f && hum < 0.04f) return 12; // Altin ve Alacakaranlik Yaylasi (Bolge 2)
-            if (cont < 0.04f && hum > 0.04f) return 13; // Safir Lagun ve Prusya Kiyilari (Bolge 3)
+            // 8) Iliman Merkez Kusak (temp in [-0.10 .. +0.18)):
+            if (cont < 0.04f && hum > 0.02f) return 13; // Safir Lagun ve Prusya Kiyilari (Bolge 3)
+            if (hum > 0.20f) return 1;      // Demir Agaci ve Sisli Orman
+            if (hum < -0.18f) return 2;     // Karstik Kirectasi Dudenleri
+            if (temp > 0.05f && hum < 0.04f) return 12; // Altin ve Alacakaranlik Yaylasi (Bolge 2)
             return 0;                       // Zumrut Gunesi Baslangic Vadisi (Bolge 1)
         }
 
@@ -2023,7 +2024,15 @@ namespace Stratocraft.WorldGen.Generators
             // Kemerli ve Jeolojik On-Dengelenmis Magaralar (Terzaghi acik, duz tavan -> parabolik kemer + Stalagnate sutun):
             int caveStabilizeMaxY = Math.Min(MaxEditableVoxelY, Math.Max(112, maxChunkSolidFloorY + 4));
             CaveVaultEquilibriumGenerator.StabilizeGeneratedChunkCaves(
-                chunkX, chunkZ, voxels, caveStabilizeMaxY, out _, out _);
+                chunkX, chunkZ, voxels, caveStabilizeMaxY, out _, out int preSettledCollapsed);
+            if (preSettledCollapsed > 0)
+            {
+                for (int col = 0; col < 256; col++)
+                {
+                    if ((colFlags[col] & 1) == 0) continue;
+                    RemoveUngroundedCaveSliversInColumn(voxels, col, (int)MathF.Floor(colAdjustedTopH[col]) - 2);
+                }
+            }
 
             ReadOnlySpan<float> cachedTopH = allColumnsPopulated ? colRawTopH : ReadOnlySpan<float>.Empty;
             ReadOnlySpan<byte> cachedBiomes = allColumnsPopulated ? colBiomeIds : ReadOnlySpan<byte>.Empty;
