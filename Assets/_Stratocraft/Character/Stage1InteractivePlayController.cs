@@ -1046,6 +1046,8 @@ namespace Stratocraft.Character
         private void ApplySelectedHotbarSlotCallback()
         {
             _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge);
+            VisualInventorySlot chosenSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            _looseBuildSystem.NotifyHotbarSlotChanged(!chosenSlot.IsEmpty && chosenSlot.Kind == InventoryItemKind.ToolStoneHammer);
         }
 
         private void ToggleBackpackMatCallback()
