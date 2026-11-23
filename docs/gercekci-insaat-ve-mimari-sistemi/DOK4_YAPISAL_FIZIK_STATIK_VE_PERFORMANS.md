@@ -164,12 +164,14 @@ public enum StructuralElementRole : byte
     DomeRingCourse = 33,            // Kubbe kasnağı ve küresel kubbe çember sırası
     DomeOculusCrown = 34,           // Kubbeyi kilitleyen tepe bileziği / kilit taşı
 
-    // --- E. Boşluklar, Merdiven, Baca ve Geçici Şantiye Kalıbı (36..41) ---
+    // --- E. Boşluklar, Merdiven, Baca ve Şantiye İskeleleri (36..42) ---
     DoorFrameOpening = 36,          // Kapı kasası ve kanat yerleşim çerçevesi
     WindowFrameOpening = 37,        // Pencere kasası (kepenk/cam yuvalı)
     StairStringerFlight = 38,       // Merdiven limon kirişi ve basamak kolu
     MasonryHearthChimney = 39,      // Taş/tuğla şömine ocağı ve duman tahliye bacası
-    TemporaryCenteringScaffold = 40 // Kemer/kubbe örülürken kilit taşı konana kadar yük taşıyan geçici ahşap kalıp/iskele
+    TemporaryCenteringScaffold = 40,// Kemer/kubbe örülürken kilit taşı konana kadar yük taşıyan geçici ahşap kalıp
+    StairwellTrimmerOpening = 41,   // Üst kat döşemesinde merdiven geçiş oyuğu + Header/Trimmer kenar kiriş çerçevesi
+    ModularScaffolding = 42         // Dış cephe yürünebilir ahşap şantiye iskelesi (platform + iç merdiven + korkuluk)
 }
 
 /// <summary>Zemin taşıma gücü ve ankraj sınıfı (Terzaghi zemin mekaniği girdisi).</summary>
@@ -217,7 +219,7 @@ public struct StructuralNode64
 
     [FieldOffset(32)] public byte EdgeCount;                  // 1B: Bu düğüme bağlı eklem sayısı (0..255)
     [FieldOffset(33)] public ArchitecturalSchool School;      // 1B: Ekol 1..4
-    [FieldOffset(34)] public StructuralElementRole Role;      // 1B: Yapısal eleman rolü (0..40)
+    [FieldOffset(34)] public StructuralElementRole Role;      // 1B: Yapısal eleman rolü (0..42)
     [FieldOffset(35)] public byte VoxelMaterialId;            // 1B: MaterialIdCatalog malzemesi (OakWood=70, Marble=14 vb.)
     [FieldOffset(36)] public byte SectionOriginAnchorPacked;  // 1B: [0..2]=AnchorType, [3..4]=Thickness, [5..6]=OriginState, [7]=IsChinked
     [FieldOffset(37)] public byte CourseAndFlagsPacked;       // 1B: [0..3]=CompletedCourses, [4..6]=ReqCourses, [7]=IsSettledCracked
@@ -327,6 +329,11 @@ $$\eta_{c+b} = \frac{\max(0, N_c)}{\phi_b \, N_{c,\text{cap}}} + \frac{M_{\max}}
 
 $$\eta_v = \frac{|V_{\max}|}{V_{\text{cap},0} \cdot \kappa_{\text{cure}} + \mu_{\text{joint}} \max(0, N_c)}, \qquad \eta_{\text{node}} = \max\!\left(\eta_{c+b},\; \eta_{t+b},\; \eta_v\right)$$
 
+#### D. Döşeme Merdiven Boşluğu (`Header / Trimmer`) ve Kapı/Pencere Lento Yük Aktarımı
+Çok katlı yapılarda döşeme veya duvar içinde sirkülasyon boşluğu açıldığında düşey yük akışı kesintiye uğramaz, boşluk çevresindeki çerçeve kirişlerine saptırılır:
+1. **Merdiven Boşluğu (`StairwellTrimmerOpening = 41` — `Header` & `Trimmer` Kiriş Çerçevesi):** Üst kat `FloorJoistDeck` döşemesinde merdiven çıkışı için boşluk açıldığında, kesilen tali döşeme kirişlerinin (*tail joists*) uç reaksiyonları $R_{\text{tail}} = \frac{1}{2} q_{\text{döşeme}} L_{\text{kesik}}$ önce boşluğu enine sınırlayan **başlık kirişine (`Header Beam`)** tekil yük olarak biner; `Header` kirişi de toplam reaksiyonu boşluğun iki yanındaki boyuna **kasnak kirişlerine (`Trimmer Joists`)** $P_{\text{trimmer}} = \frac{1}{2} \sum R_{\text{tail}}$ tekil yükü olarak (`§3.1.A` $P_{\text{tekil}}$ terimiyle) aktarır. Yan `Trimmer` kirişleri (`Standard` veya `HeavyBearing`) bulunmadan döşeme ortası kesilirse kesik döşeme uçları konsol eğilmesinden kırılır.
+2. **Kapı ve Pencere Boşlukları (`DoorFrameOpening` / `WindowFrameOpening`):** Boşluk üzerindeki duvar ve kat yükü $q_{\text{üst}}$, boşluk tavanındaki düz lentoya (`StoneOrWoodLintel`) veya tahfif kemerine (`RelievingArch`) biner ve buradan sol/sağ kapı-pencere söve dikmelerine (`Jamb Posts / Quoin Piers`) $V_{\text{söve}} = \frac{1}{2} q_{\text{üst}} L_{\text{boşluk}}$ eksenel basınç artışı olarak indirilir.
+
 ---
 
 ### 3.2 Yanal İtme (`Lateral Thrust`): Kemer, Tonoz ve Kubbe Statiği; Kalın Duvar, Payanda ve Demir Gergi Çubuğu
@@ -375,7 +382,7 @@ Yüksekliği $h_{\text{pier}}$, etkin taban kalınlığı $t_{\text{eff}} = t_w 
 $$e = \frac{H_{\text{net}} \cdot h_{\text{pier}}}{\max(1.0\text{ kN},\, N_{\text{stab}})}, \qquad \eta_{\text{thrust}} = \frac{e}{0.45 \, t_{\text{eff}} \cdot \left(1 - \dfrac{N_{\text{stab}}}{N_{c,\text{cap}}}\right)}$$
 
 - **Önemli Mimari Sonuç (*Pinnacle / Ağırlık Kulesi Etkisi*):** Gerçek Gotik katedrallerde ve Osmanlı camilerinde fil ayaklarının/payandaların tepesine konan ağırlık kuleleri $N_{\text{stab}}$ değerini büyüterek eksantrikliği $e$ küçültür ($\eta_{\text{thrust}}$ düşer!). Ancak kolon basınç limitine yakınsa ($N_{\text{stab}} \to N_{c,\text{cap}}$) ezilme başlar; formül her iki sınırı doğal olarak yakalar.
-- **Geçici Kalıp (`TemporaryCenteringScaffold`) Yasası:** Bir kemerde veya kubbede `ArchKeystone` / `DomeOculusCrown` henüz yerleştirilmemişse $H_{\text{thrust}} = 0$'dır ama her yarım kemer kolu **açık konsol ($M = q L_c^2 / 2$)** olarak çalışır. Açıklık $L > 3.0\text{ m}$ ise altta `TemporaryCenteringScaffold` olmadan kemer taşları harç tutmadan boşluğa düşer; kilit taşı konup harç ilk prizini aldığında (`MortarCureProgress255 >= 64`) kalıp güvenle sökülür!
+- **Geçici Kalıp (`TemporaryCenteringScaffold`) Yasası:** Bir kemerde veya kubbede `ArchKeystone` / `DomeOculusCrown` henüz yerleştirilmemişse $H_{\text{thrust}} = 0$'dır ama her yarım kemer kolu **açık konsol ($M = q L_c^2 / 2$)** olarak çalışır. Açıklık $L > 3.0\text{ m}$ ise altta `TemporaryCenteringScaffold` olmadan kemer taşları harç tutmadan boşluğa düşer; kilit taşı konup harç ilk priz eşiğini geçtiğinde (`CureRatio >= 0.45`, yani `MortarCureProgress255 >= 115`) kalıp güvenle sökülür!
 
 ---
 
@@ -437,12 +444,14 @@ $$\sigma_{\text{zemin}} = \frac{N_{\text{taban}}}{A_{\text{taban}}} \left(1 + \m
 
 #### A. Kütüklerin Havada veya Kertiksiz Üst Üste Duramaması Yasası
 PlayTest'te görülen *"kütüklerin havada asılı kalması ve hiçbir kertik/destek olmadan ince bir çizgi gibi üst üste durması"* hatası 3 kesin fiziksel kuralla kökünden kapatılmıştır:
-1. **Mutlak Yerçekimi Sürekliliği:** `GeodesicSupportDist == 65535` (hiçbir temel düğümüne geçerli yol bulamayan parça) **asla** sahnede statik düğüm olarak kalamaz; önizlemede Kırmızı (`RedWillCollapse`) verir ve yerleştirilmesi reddedilir. Mevcut bir yapının alt desteği kırıldığında üstteki kopuk alt-graf aynı karede `FallingStructureClusterComponent` serbest düşüşüne geçirilir.
+1. **Mutlak Yerçekimi Sürekliliği (Anında Kopuş vs. `1.5 sn` Aşırı Yük Çatırdama Uyarısı):** `GeodesicSupportDist == 65535` (hiçbir temel düğümüne geçerli yol bulamayan parça) **asla** sahnede statik düğüm olarak kalamaz; önizlemede Kırmızı (`RedWillCollapse`) verir ve yerleştirilmesi reddedilir. Mevcut bir yapıda:
+   - **Tam Mesnet Kopuşu (`d_geo == 65535`):** Alt desteği tamamen kırılıp havada bağlantısız kalan alt-graf **`0.0 sn` gecikmeyle (anında)** `FallingStructureClusterComponent` serbest düşüşüne geçirilir.
+   - **Aşırı Yük / Kapasite Aşımı ($\eta_{\max} \ge 1.0$, ancak $d_{\text{geo}} < 65535$):** Temele bağlı olduğu halde basınç, eğilme, kesme veya yanal itme sınırını aşan düğümler `StructuralCollapseSystem.PreCollapseWarningDurationSeconds = 1.5f` (`DOK6`/`DOK7 T13` standardı) uyarınca **`1.5 sn` boyunca sesli çatırdama + görsel çatlak/kırmızı kenar uyarısı** verir; bu `1.5 sn` içinde acil dikme/payanda eklenmezse düğüm kırılır ve domino çöküşü başlar.
 2. **Silindirik Kütük Devrilme Kararsızlığı (`UnboundResting` Yasağı):** Düz zemine konan ilk yastık kütüğü (`SillBeamOrLog`) taş takoz veya temel üstünde durabilir; ancak onun üzerine konan `NotchedWallLog` sıraları eğer `JointFlags.LocksLateralRoll` bayrağına sahip **en az 2 uç bağlantısına** (köşede $90^\circ$ kesişen kütükle `SaddleNotch` / `DovetailNotch` kertiği **veya** iki uçta zemine çakılı dikey `TimberPost` kılavuz direği) sahip değilse, silindir-silindir temas genişliği $t_{\text{temas}} = 0.02\text{ m}$ kabul edilir. İkinci kütüğün üzerindeki en ufak rüzgâr veya $0.03 \, W$ kusur eksantrikliği $e > t_{\text{temas}}/2$ üreterek kütükleri anında yana yuvarlar!
 3. **Şaşırtmalı Derz (`Running Bond`) ve Köşe Kilit Taşı (`Quoin`):** Ekol 3/4 taş örmede üst üste dikey derzlerin çakışması (*stack bond*) kesme kapasitesini `%40` düşürür; şaşırtmalı örgü (`IsRunningBondStaggered`) ve köşelerde uzun-kısa kenetlenen `IsQuoinCornerLock` taşları kesme ve yanal itme direncini `%35` artırır.
 
 #### B. Kireç / Kil Harcı Islak $\to$ Kuruma $\to$ Sertleşme (Karbonatlaşma) Eğrisi
-Harçlı eklemlerde (`ClayMudMortar`, `LimeMortar`, `HydraulicPozzolanicMortar`) harç ilk sürüldüğünde ıslaktır (`MortarCureProgress255 = 0`, normalize $c = 0.0$) ve zamanla kuruyup karbonatlaşarak tam mukavemete ($c = 1.0 \leftrightarrow 255$) ulaşır:
+Harçlı eklemlerde (`ClayMudMortar`, `LimeMortar`, `HydraulicPozzolanicMortar`) harç ilk sürüldüğünde ıslaktır (`MortarCureProgress255 = 0`, normalize `CureRatio` $c = 0.0$, $\kappa_{\text{ıslak}} = 0.28$) ve `StratocraftConstants.SecondsPerInGameDay = 3600.0` (`1 oyun günü = 60 gerçek dk`, `1 oyun saati = 2.5 gerçek dk`) zaman ölçeğinde kuruyup karbonatlaşarak tam mukavemete ($c = 1.0 \leftrightarrow 255$) ulaşır. **`CureRatio < 0.45` (`MortarCureProgress255 < 115`)** aralığında harç henüz ıslak/kırılgan evrededir (`DOK1 AK-10` & `DOK5` uyumlu; bu evrede kemer kalıbı sökülürse veya çok katlı ağır kâgir yük bindirilirse taze harç ezilir); **`CureRatio >= 0.45`** olduğunda ilk priz tamamlanır:
 
 $$c(t + \Delta t) = \operatorname{clamp}\!\left(c(t) + \left(r_0 \, f_T(T_{\text{ortam}}) \, f_{\text{yağmur}}(w_{\text{açık}}) \, (1 - c(t)) - d_{\text{yıkanma}}(w_{\text{açık}})\right) \Delta t,\; 0,\; 1\right)$$
 
@@ -450,21 +459,21 @@ $$\kappa_{\text{cure}}(c) = \kappa_{\text{ıslak}} + (1 - \kappa_{\text{ıslak}}
 
 ```mermaid
 stateDiagram-v2
-    [*] --> TazeIslak: Mala ile Harç Sürüldü (c = 0.00, kappa = 0.28)
-    TazeIslak --> IlkPriz: Kuruma / Mangal Isısı (c >= 0.25, kappa >= 0.53)
+    [*] --> TazeIslak: Mala ile Harç Sürüldü (CureRatio = 0.00 < 0.45, kappa = 0.28)
+    TazeIslak --> IlkPriz: Kuruma / Mangal Isısı (CureRatio >= 0.45, kappa >= 0.60)
     TazeIslak --> YagmurYikanmasi: Çatısız Sağanak Yağmur (Kil/Taze Kireç)
     TazeIslak --> DonCatlagi: Sıcaklık < -3 C (Islak Harç Donar)
     YagmurYikanmasi --> TazeIslak: Yağmur Durdu + Mala Onarımı
-    IlkPriz --> TamSertlesmis: Karbonatlaşma Tamamlandı (c >= 0.95, kappa = 1.00)
-    IlkPriz --> KemerKalibiSokulebilir: c >= 0.25 (Kilit Taşı + İlk Priz Tamam)
+    IlkPriz --> TamSertlesmis: Karbonatlaşma Tamamlandı (CureRatio >= 0.95, kappa = 1.00)
+    IlkPriz --> KemerKalibiSokulebilir: CureRatio >= 0.45 (Kilit Taşı + İlk Priz Tamam)
 ```
 
-| Harç / Eklem Türü | $\kappa_{\text{ıslak}}$ ($c=0$) | Tam Kür Süresi (Oyun Saati) | Yağmur Davranışı | Don ($< -3^\circ\text{C}$) | Çekme ($N_{t,\text{cap}}$) | Kesme Kohezyonu ($V_0$) |
+| Harç / Eklem Türü | $\kappa_{\text{ıslak}}$ ($c=0$) | Tam Kür Süresi (`SecondsPerInGameDay = 3600s`: `1s = 2.5 gerçek dk`) | Yağmur Davranışı | Don ($< -3^\circ\text{C}$) | Çekme ($N_{t,\text{cap}}$) | Kesme Kohezyonu ($V_0$) |
 | :--- | :---: | :---: | :--- | :--- | :---: | :---: |
 | **`DryStoneInterlock` (Kuru Taş)** | `1.00` | `0` (Anında) | Yıkanmaz, su sızdırır | Etkilenmez | `0 kN` | `12 kN` ($+\mu N_c$) |
-| **`ClayMudMortar` (Kil/Çamur Harcı)** | `0.32` | `4 saat` | Çatısızsa yıkanır ($d_{\text{yıkanma}} > 0$) | Çatlar (`-25%`) | `4 kN` | `28 kN` |
-| **`LimeMortar` (Sönmüş Kireç Harcı)** | `0.28` | `10 saat` (ateş yanında `4s`) | Taze iken yavaşlar, sertleşince dayanıklı | Taze iken don riski | `18 kN` | `75 kN` |
-| **`HydraulicPozzolanicMortar` (Horasan)** | `0.38` | `6 saat` | **Su altında ve yağmurda bile tam sertleşir!** | Yüksek direnç | `36 kN` | `140 kN` |
+| **`ClayMudMortar` (Kil/Çamur Harcı)** | `0.32` | `4 oyun saati` (`10 gerçek dk`) | Çatısızsa yıkanır ($d_{\text{yıkanma}} > 0$) | Çatlar (`-25%`) | `4 kN` | `28 kN` |
+| **`LimeMortar` (Sönmüş Kireç Harcı)** | `0.28` | `10 oyun saati` (`25 dk`; ateş yanında `4s = 10 dk`) | Taze iken (`c < 0.45`) yavaşlar, sertleşince dayanıklı | Taze iken don riski | `18 kN` | `75 kN` |
+| **`HydraulicPozzolanicMortar` (Horasan)** | `0.38` | `6 oyun saati` (`15 gerçek dk`) | **Su altında ve yağmurda bile tam sertleşir!** | Yüksek direnç | `36 kN` | `140 kN` |
 | **`IronCrampLeadPoured` (Kurşunlu Kenet)** | `1.00` | `0` (Döküm anı) | Tam su/korozyon zırhı (kurşun kaplı) | Etkilenmez | `145 kN` | `210 kN` |
 | **`IronTieRodSocket` (Demir Gergi Çubuğu)** | `1.00` | `0` (Kama kilidi) | Paslanmaya karşı yağ/kireç korumalı | Etkilenmez | **`240 – 450 kN`** | `95 kN` |
 
@@ -524,31 +533,30 @@ Mevcut [EnclosedOxygenFloodFillSystem.cs](../../Assets/_Stratocraft/Character/Sy
 ```mermaid
 flowchart TD
     P["Oyuncu / Yatak / Atölye Konumu (x, y, z)"] --> BFS["0-GC 3B Kabuk Flood-Fill\n(Maks 512 Hücre, Voksel + Yapı Düğümleri)"]
-    BFS -->|"Gökyüzüne Açık Delik Var"| OUT["Açık Alan (Sheltered = false)\nTam Rüzgâr S_wind & Yağmur Islanması"]
-    BFS -->|"Üstü ve Yanları Kapalı"| IN["Kapalı Barınak (Sheltered = true)\nS_wind = 0.0, Yağmur = 0.0"]
-    IN --> SEAL["Sızdırmazlık Denetimi (sigma_seal)\n1) Kütük Chinking (Yosun/Kil Sıva)\n2) Kapı Kanadı & Pencere Kepenk/Cam\n3) Duvar Kalınlığı & Malzeme R-Değeri"]
-    SEAL --> TEMP["İç Mekân Denge Sıcaklığı T_ic\nThermalAndBiologySystem Entegrasyonu"]
+    BFS -->|"Gökyüzüne Açık Delik Var"| OUT["Açık Alan (IsRainSheltered = false)\nIsEnclosedInterior = false, Tam Rüzgâr & Yağmur"]
+    BFS -->|"Çatı Kapalı, Chinking/Kapı Eksik"| RAIN["Yalnızca Yağmur Sundurması (IsRainSheltered = true)\nIsEnclosedInterior = false, SealFactor = 0.0, Yalıtım = +0.0 C"]
+    BFS -->|"Çatı + Chinking + Kapı/Kepenk Tam"| IN["Tam Kapalı İç Mekân (IsEnclosedInterior = true)\nSealFactor >= 0.70, S_wind = 0.0, Yağmur = 0.0"]
+    IN --> TEMP["İç Mekân Denge Sıcaklığı T_ic\nThermalAndBiologySystem Entegrasyonu"]
     IN --> CHIM["Ateş & Baca Çekiş Denetimi\n(Stack Draft vs CO/Hipoksi)"]
 ```
 
-#### A. Oda Sızdırmazlık Katsayısı ($\sigma_{\text{seal}} \in [0, 1]$) ve `Chinking` Rolü
-Bir kütük kulübede ham yuvarlak kütükler üst üste dizildiğinde gökyüzü kapanır (`Sheltered = true`), fakat kütüklerin dairesel birleşim derzleri arasında rüzgâr sızdıran ince boşluklar kalır:
-- **Derz Dolgusuz Ham Kütük Duvar (`IsChinked == 0`):** $\sigma_{\text{chink}} = 0.42$ (soğuk kış rüzgârı aralıklardan sızar).
-- **Yosun + Kil veya Kireç Harcı Derz Dolgulu Kütük (`IsChinked == 1`, *Chinking / Daubing*):** $\sigma_{\text{chink}} = 1.00$ (tam rüzgâr ve ısı sızdırmazlığı).
-- **Kapı ve Pencere Açıklıkları:** Kapısız boş `DoorFrameOpening` her biri için sızdırmazlığı $-0.30$, kepenksiz/camsız açık `WindowFrameOpening` ise $-0.12$ düşürür. Kapalı ahşap/demir kapı, kapalı kepenk veya **cam pencere** sızıntıyı `0.00` yapar (cam pencere aynı zamanda gün ışığını içeri alır!).
+#### A. `IsRainSheltered` vs. `IsEnclosedInterior` Sözleşmesi ve `Chinking` Rolü (`AK-05` / `T05`)
+Bir kütük kulübede ham yuvarlak kütükler üst üste dizilip çatısı kapatıldığında dikey yağmur/kar kesilir (`IsRainSheltered = true`), fakat kütüklerin dairesel birleşim derzleri arasında rüzgâr sızdıran açıklıklar kalır:
+- **Derz Dolgusuz Ham Kütük Duvar (`IsChinked == 0`) veya Açık Kapı/Kepenksiz Pencere:** Yalnızca `IsRainSheltered = true` döner; rüzgâr sızıntısı devam ettiği için **`IsEnclosedInterior = false`**, **`SealFactor = 0.0`** ($\sigma_{\text{seal}} = 0.0$) ve termal yalıtım/konfor bonusu **`0.0 °C`** olarak kalır.
+- **Yosun + Kil veya Kireç Harcı Derz Dolgulu Kütük (`IsChinked == 1`, *Chinking / Daubing*) + Kapı & Pencere/Kepenk:** Tüm kütük duvarlarda `Chinking` tamamlandığında (veya harçlı taş / sıvalı karkas duvar örüldüğünde) ve `DoorFrameOpening` kanadı ile `WindowFrameOpening` ahşap kepenk/cam kapakları takılıp kapatıldığında **`IsEnclosedInterior = true`** ve **`SealFactor >= 0.70`** (tam sızdırmazda `1.00`, iç rüzgâr `S_wind = 0.0`) aktif olur; cam pencere ek olarak gün ışığını içeri taşır.
 
 #### B. İç Mekân Denge Sıcaklığı ($T_{\text{iç}}$) ve Biyoloji Entegrasyonu
-Kabuk ısıl direnci $R_{\text{kabuk}}$ ($\text{m}^2\text{K/W}$) ve aktif ısıtma gücü $Q_{\text{ısıtma}}$ ($\text{kW}$; şömine `18 kW`, taş fırın `25 kW`, bloomery `55 kW`) ile odanın denge sıcaklığı [ThermalAndBiologySystem.cs](../../Assets/_Stratocraft/Character/Systems/ThermalAndBiologySystem.cs) içine doğrudan `ambientTempCelsius` ve `localWindSpeedMps = 0` olarak verilir:
+`IsEnclosedInterior == false` iken ($\sigma_{\text{seal}} = 0.0$) yapısal yalıtım bonusu `0.0 °C`'dir ($T_{\text{iç,denge}} = T_{\text{dış}}$; yalnızca ateşin yakın açık-hava radyatif ısısı etki eder). `IsEnclosedInterior == true` ($\sigma_{\text{seal}} \ge 0.70$) sağlandığında ise kabuk ısıl direnci $R_{\text{kabuk}}$ ($\text{m}^2\text{K/W}$) ve aktif ısıtma gücü $Q_{\text{ısıtma}}$ ($\text{kW}$; şömine `18 kW`, taş fırın `25 kW`, bloomery `55 kW`) ile odanın denge sıcaklığı [ThermalAndBiologySystem.cs](../../Assets/_Stratocraft/Character/Systems/ThermalAndBiologySystem.cs) içine doğrudan `ambientTempCelsius` ve `localWindSpeedMps = 0` olarak verilir:
 
 $$U_{\text{etkin}} = \frac{1}{R_{\text{kabuk}} \cdot \left(0.30 + 0.70 \, \sigma_{\text{seal}}\right)}, \qquad T_{\text{iç,denge}} = T_{\text{dış}} + \Delta T_{\text{pasif}} + \frac{1000 \, Q_{\text{ısıtma}} \, \eta_{\text{ocak}}}{U_{\text{etkin}} \, A_{\text{kabuk}} + V_{\text{oda}} \, n_{\text{sızıntı}} \, 0.34}$$
 
-| Duvar / Kabuk Tipi | $R_{\text{kabuk}}$ ($\text{m}^2\text{K/W}$) | Pasif Koruma ($\Delta T_{\text{pasif}}$) | Dışarısı $-20^\circ\text{C}$ Tipide Şömineli Oda ($24\text{ m}^2$) |
-| :--- | :---: | :---: | :--- |
-| **Saz / Dal Örgü Baraka (Sıvasız)** | `0.45` | `+2.0 °C` | $+1.5^\circ\text{C}$ (Üşüme devam eder, kalın kürk gerekir) |
-| **Ham Kütük Ev (`Chinking` Yok)** | `0.85` | `+4.0 °C` | $+7.5^\circ\text{C}$ (Hipotermi önlenir ama konfor altı) |
-| **Çamur Sıvalı Karkas (`Wattle & Daub` / Kerpiç)** | `1.55` | `+6.5 °C` | $+17.5^\circ\text{C}$ (Tam konfor, giysi kurutma) |
-| **Yosun/Kil Dolgulu (`Chinked`) Kalın Kütük Ev** | `2.15` | `+8.5 °C` | **`+22.0 °C`** (Çıplak/ince kıyafetle bile tam normotermi!) |
-| **Harçlı Kalın Taş Duvar ($50\text{ cm}$) + Cam/Kepenk** | `1.95` (+Yüksek Isıl Kütle) | `+8.0 °C` | **`+21.5 °C`** (Ateş sönse bile ısıl kütle odayı saatlerce ılık tutar!) |
+| Duvar / Kabuk Tipi | Kapalılık & `SealFactor` | $R_{\text{kabuk}}$ ($\text{m}^2\text{K/W}$) | Pasif Koruma ($\Delta T_{\text{pasif}}$) | Dışarısı $-20^\circ\text{C}$ Tipide Şömineli Oda ($24\text{ m}^2$) |
+| :--- | :---: | :---: | :---: | :--- |
+| **Ham Kütük Ev (`Chinking` Yok)** | `IsRainSheltered=true`, `IsEnclosedInterior=false` (`0.00`) | `0.00` (Cereyanlı) | **`+0.0 °C`** (`0.0` bonus) | Yalnızca yağmuru keser; iç yalıtım bonusu `0.0` (`AK-05` / `T05`) |
+| **Saz / Dal Örgü Baraka (İnce Sıvalı + Kapılı)** | `IsEnclosedInterior=true` (`0.70`) | `0.65` | `+2.5 °C` | $+3.5^\circ\text{C}$ (Fırtına rüzgârı kesilir, orta kürk gerekir) |
+| **Çamur Sıvalı Karkas (`Wattle & Daub` / Kerpiç)** | `IsEnclosedInterior=true` (`0.85`) | `1.55` | `+6.5 °C` | $+17.5^\circ\text{C}$ (Tam konfor, giysi kurutma) |
+| **Yosun/Kil Dolgulu (`Chinked`) Kalın Kütük Ev** | `IsEnclosedInterior=true` (`0.95`) | `2.15` | `+8.5 °C` | **`+22.0 °C`** (Çıplak/ince kıyafetle bile tam normotermi!) |
+| **Harçlı Kalın Taş Duvar ($50\text{ cm}$) + Cam/Kepenk** | `IsEnclosedInterior=true` (`1.00`) | `1.95` (+Yüksek Isıl Kütle) | `+8.0 °C` | **`+21.5 °C`** (Ateş sönse bile ısıl kütle odayı saatlerce ılık tutar!) |
 
 ---
 
@@ -569,7 +577,7 @@ Gerçek hayatta ve *Valheim* gibi referans inşaat oyunlarında oyuncuya en unut
 
 ### 4.4 Yangın Yayılımı, Eurocode 5 Ahşap Kömürleşme Hızı ve Kesit Kaybı Çökmesi
 
-- **Tutuşma Koşulları:** Taş/tuğla baca gövdesi olmadan ahşap duvara/çatıya bitişik (`< 0.5m`) yakılan yüksek sıcaklıklı ocaklar (`Bloomery` $1200^\circ\text{C}$, açık alev), yıldırım düşmesi (`MetalLightningRod` koruma konisi dışında kalan en yüksek sivri çatı!) veya kuşatma ateş okları/ateş topu ahşap ve saz elemanları tutuşturur. Yağmur ve ıslaklık (`Wetness0_15`) tutuşma eşiğini yükseltir.
+- **Tutuşma Koşulları:** Arada taş/tuğla yangın duvarı veya baca yakası (*fireback / stone collar*, güvenli mesafe **`0.0 m`**) bulunmadan yanıcı ahşap duvara/çatıya **`< 1.20 m`** mesafede yakılan yüksek sıcaklıklı fırın/ocaklar (`Bloomery` $1200^\circ\text{C}$, açık demirci ocağı, kireç ocağı — `DOK5` §3.6 ile birebir uyumlu), yıldırım düşmesi (`MetalLightningRod` koruma konisi dışında kalan en yüksek sivri çatı!) veya kuşatma ateş okları/ateş topu ahşap ve saz elemanları tutuşturur. Yağmur ve ıslaklık (`Wetness0_15`) tutuşma eşiğini yükseltir.
 - **Eurocode 5 Kömürleşme (`Charring`) ve Gerçek Statik Çöküş:** Yanmakta olan bir ahşap elemanda yangın sadece soyut bir HP sayacını sıfırlamaz; dış yüzeyden içe doğru **kömürleşme derinliği** $d_{\text{char}}$ (`CharDepth0_15`, her kademe `12 mm`) ilerler ve kalan sağlam kesit alanını küçültür:
   $$b_{\text{kalan}} = \max(0,\, b_0 - 2 d_{\text{char}}), \qquad h_{\text{kalan}} = \max(0,\, h_0 - 2 d_{\text{char}})$$
   $$N_{c,\text{cap,ateş}} = N_{c,\text{cap},0} \cdot \frac{b_{\text{kalan}} h_{\text{kalan}}}{b_0 h_0}, \qquad M_{\text{cap,ateş}} = M_{\text{cap},0} \cdot \frac{b_{\text{kalan}} h_{\text{kalan}}^2}{b_0 h_0^2}$$
@@ -625,9 +633,9 @@ sequenceDiagram
     Queue->>Solver: Dequeue (Stopwatch bütçesi <= 0.35 ms)
     Solver->>Solver: Faz 1: Dial's Bucket Jeodezik Destek O(V_ada + E_ada)\n+ Kemer/Kubbe Kilit Taşı Doğrulaması
     Solver->>Solver: Faz 2: Topolojik Yük, Eğilme Momenti M_max,\nYanal İtki (H_thrust - N_tie - R_buttress), Euler Burkulma & Terzaghi Zemin
-    alt Tüm Düğümlerde eta_max < 1.0 (Yapı Dengede)
-        Solver->>Render: Yalnızca stres/önizleme önbelleğini güncelle (Turuncu > 0.75 ise çatırdama sesi)
-    else En Az Bir Düğümde eta_max >= 1.0 veya d_geo == Sonsuz
+    alt Tüm Düğümlerde eta_max < 1.0 ve d_geo < 65535 (Yapı Dengede)
+        Solver->>Render: Yalnızca stres/önizleme önbelleğini güncelle (Turuncu > 0.75 ise hafif gıcırtı)
+    else d_geo == 65535 (Tam Kopuk: 0.0 sn Anında) veya eta_max >= 1.0 (Aşırı Yük: 1.5 sn Çatırdama Uyarısı Sonrası)
         Solver->>Solver: Domino Dalgası (Maks 6 Dalga, Kopan Kenarları Sil & Yükü Yeniden Dağıt)
         Solver->>Cluster: GreedyClusterMerge -> Maks 12-16 Konveks Düşen Yapı Kümesi
         Solver->>Render: Yalnızca etkilenen (cx, cz) Chunk Mesh & 4m SpatialHash'i yenile
@@ -647,12 +655,12 @@ sequenceDiagram
 
 Bir şehirde (`9×9` yerleşim çekirdeği + surlar + kuleler + saray/tapınak = `8.000 – 15.000` yapı elemanı) her kütük veya kesme taş için ayrı bir Unity `GameObject` oluşturmak sahne grafiğini ve CPU çizim döngüsünü kilitler. `CityStructureRenderSystem` bunu **0-GameObject Statik Chunk Birleştirme + Aktif Instancing** mimarisiyle çözer:
 
-1. **LOD 0 (`0 – 48 m` Yakın Mesafe — Tam Geometri & Kertik/Harç Detayı):**
-   - **Durgun (`Baked`) Chunk'lar:** Bir `(cx, cz)` chunk'ındaki tüm durağan `StructuralNode64` elemanlarının `.glb` alt-üçgenleri (`POSITION + NORMAL + COLOR_0`), mevcut `BuildUnityMeshZeroGc` boru hattıyla **tek bir `ChunkCombinedStructureMesh`** içinde birleştirilir (`16×16m` başına **yalnızca `1 Draw Call`**!). Malzeme varyasyonu, harç rengi, `chinking` yosunu ve yangın islenmesi doğrudan `COLOR_0` tepe rengine yazılır.
-   - **Aktif Şantiye / Kırılma Anı (`Dynamic Overlay`):** Oyuncunun o an katman dizdiği (`CompletedCourses < RequiredCourses`) düğümler, açılıp kapanan kapı/kepenk kanatları ve düşmekte olan `FallingStructureClusterComponent` kümeleri `Graphics.RenderMeshInstanced` ile çizilir; inşa tamamlanınca chunk birleşik mesh'ine katılır (`< 0.25 ms` arka plan köşe birleştirme).
-2. **LOD 1 (`48 – 160 m` Orta Mesafe — İç Mekân Elemesi / `Interior Culling`):**
+1. **LOD 0 (`0 – 48 m` Yakın Mesafe — Tam Geometri & Kertik/Harç Detayı, `DOK6` §7 Uyumlu):**
+   - **Durgun (`Baked`) Cepheler:** Bir `(cx, cz)` chunk'ındaki tüm durağan `StructuralNode64` elemanlarının `.glb` alt-üçgenleri (`POSITION + NORMAL + COLOR_0`), mevcut `BuildUnityMeshZeroGc` boru hattıyla **tek bir `ChunkCombinedStructureMesh`** içinde birleştirilir (`16×16m` başına **yalnızca `1 Draw Call`**!). Malzeme varyasyonu, harç rengi, `chinking` yosunu ve yangın islenmesi doğrudan `COLOR_0` tepe rengine yazılır.
+   - **Aktif Şantiye / Kırılma Anı (`Dynamic Overlay`):** Oyuncunun o an katman dizdiği (`CompletedCourses < RequiredCourses`) düğümler, `1.5 sn` çatırdama uyarısındaki aşırı yüklü elemanlar, açılıp kapanan kapı/kepenk kanatları ve düşmekte olan `FallingStructureClusterComponent` kümeleri bireysel fizik / `Graphics.RenderMeshInstanced` ile çizilir; inşa tamamlanınca chunk birleşik mesh'ine katılır (`< 0.25 ms` arka plan köşe birleştirme).
+2. **LOD 1 (`48 – 128 m` Orta Mesafe — İç Mekân Elemesi / `Interior Culling`, `DOK6` §7 Uyumlu):**
    - Bina dışından görünmeyen iç bölmeler, döşeme altı kirişler (`FloorJoistDeck`), merdivenler, mobilyalar ve küçük zıvana/çivi geometrileri elenir; yalnızca dış duvar, sütun, kemer ve çatı yüzeyleri tek `ChunkExteriorShellMesh` olarak çizilir (`%60–%72` üçgen tasarrufu).
-3. **LOD 2 (`160 – 512 m+` Uzak Ufuk — `DistantHorizonLodSystem` Entegrasyonu):**
+3. **LOD 2 (`128 – 384 m+` Uzak Ufuk — `DistantHorizonLodSystem` Entegrasyonu, `DOK6` §7 Uyumlu):**
    - Her bina adası düşük üçgenli prizmatik/kubbeli ufuk silüetine (`HorizonStructureShell`, bina başına `24–64` üçgen) indirgenerek mevcut uzak ufuk kabuklarıyla birleştirilir. Uzaktan görünen koca bir ortaçağ şehri toplamda **`8 – 16 Draw Call`** harcar!
 
 ---
@@ -675,6 +683,8 @@ public sealed class SpatialHashedStructureCollisionSolver : ISolidStructureColli
 ```
 
 - **Eklenen Yeni Analitik Çarpışma Yüzeyleri (`0` Unity `MeshCollider` Maliyeti):**
+  - **Merdiven Boşluğu Tavan Geçiş Oyuğu (`StairwellTrimmerOpening = 41`, `>= 1.95 m` Net Baş Açıklığı):** Üst kat `FloorJoistDeck` döşemesinde merdiven çıkışı için `StairwellTrimmerOpening` açıldığında tam `2×2m` katı döşeme kutusu iptal edilip yalnızca kenar `Header/Trimmer` çerçeve OBB'leri bırakılır; `TryResolveCeilingHeadBonk` ve `SampleSupportGroundY` bu iç oyuk bölgesini tavan engelinden muaf tutarak merdiven tırmanışı boyunca en az **`>= 1.95 m` net kafa açıklığı** garantiler (üst kata çıkarken tavan döşemesine kafa çarpma / takılma hatası `%100` engellenir).
+  - **Yürünebilir Dış Cephe Şantiye İskelesi (`ModularScaffolding = 42`):** Çok katlı duvar, kemer ve kubbe inşasında dış cepheye kurulan ahşap iskele modülleri; üzerinde serbestçe yürünebilen kalas platform OBB'si (`IsWalkableTop = true`), katlar arası kesintisiz çıkışı sağlayan entegre iç rampa/merdiven düzlemi ve dış kenarda kazara düşmeyi önleyen `0.95 m` bel korkuluğu OBB'si üretir.
   - **Kemer ve Tonoz Altı Eğrisel Geçit (`ArchIntradosClearance`):** Kemer/tonoz altından geçen oyuncu veya binek/kervan vagonu için yerel $x \in [-L/2, +L/2]$ konumunda kemer karın yüksekliği $y_{\text{karın}}(x) = y_{\text{üzengi}} + f \left(1 - \frac{4x^2}{L^2}\right)$ analitik olarak örneklenir (`0` ekstra kutu tahsisi!).
   - **Dinamik Kapı Kanadı ve Sarmal/Düz Merdiven:** Açık kapı (`DoorOpenAngleRad > 1.1f`) geçidi serbest bırakır, kapalı/sürgülü kapı OBB engeli oluşturur; merdiven kolları (`StairStringerFlight`) `maxStepUpMeters` sınırı içinde pürüzsüz rampa/basamak yüksekliği döndürür.
 
@@ -682,11 +692,14 @@ public sealed class SpatialHashedStructureCollisionSolver : ISolidStructureColli
 
 ### 5.5 `.sregion V3` / Delta Serileştirme, `ChunkDeltaLog`, Faz 3 Klan `3D BFS` ve Faz 9 Kuşatma Gedik Uyumluluğu
 
-#### A. `.sregion` Kayıt Formatı ve `0-Byte` Dokunulmamış Şehir Deltası
-[RegionFileStore.cs](../../Assets/_Stratocraft/Core/Persistence/RegionFileStore.cs) içindeki Zstd Seviye 3 + XXH64 atomik bölge mimarisiyle tam uyumlu kayıt sözleşmesi:
-1. **Oyuncu Yapıları (`SerializedStructuralNode24`):** Oyuncunun inşa ettiği her düğüm chunk kaydına kompakt **24-Byte** (`PositionHalf3` / yerel `ushort3` + `RotSnorm64` + `School/Role/Material` + `Course/Anchor/Depth` + `CurrentHp` + `MortarCureByte`) olarak serileştirilir; kenarlar yükleme anında deterministik soket/temas komşuluğundan `< 0.1 ms` içinde yeniden bağlanır (yalnızca özel harç kürlenme veya hasar bayrağı taşıyan kenarlar ek `6-Byte` delta olarak yazılır).
-2. **Yerleşim (`Seed-Delta`) Sıkıştırması:** Prosedürel üretilen Köy, Kasaba, Şehir ve Harabeler dünya tohumundan (`worldSeed`) deterministik üretilir. Oyuncu bir şehir binasına hiç dokunmadıysa `.sregion` dosyasında **ek `0 Byte`** yer kaplar! Oyuncu şehirdeki bir evin duvarını kırdığında veya onardığında yalnızca `StructuralSeedDeltaRecord` (`SilinenBaselineNodeId` veya `EklenenNode24`) kaydedilir.
-3. **`PristineChunkDecay` Muafiyeti:** İçinde oyuncu yapısı veya değiştirilmiş yerleşim binası bulunan her chunk'ta `HasActiveStructures = true` bayrağı otomatik set edilerek `14` günlük vahşi doğa sıfırlamasından `%100` korunur.
+#### A. `.sregion V3` (`ChunkDirtyFlags.Structures = 1 << 7`) Kayıt Formatı ve `0-Byte` Dokunulmamış Şehir Deltası
+[RegionFileStore.cs](../../Assets/_Stratocraft/Core/Persistence/RegionFileStore.cs) ve [ChunkDirtyFlags.cs](../../Assets/_Stratocraft/Core/Persistence/ChunkDirtyFlags.cs) (`satır 19`: `1<<4 = Salinity`, `1<<5 = MicroPool`, `1<<6 = PlayerFluid` dolu) içindeki Zstd Seviye 3 + XXH64 atomik bölge mimarisiyle `%100` çakışmasız kayıt sözleşmesi:
+1. **`ChunkDirtyFlags.Structures = 1 << 7` (`0x80`) Opsiyonel V3 Yapı Bloğu:** `byte` içindeki boş 7. bit kullanılarak mevcut V3 kayıtlarıyla tam geriye dönük uyumlu opsiyonel bir blok eklenir. Bu bayrak set edildiğinde tek atomik chunk diliminde şu 4 veri kümesi eksiksiz saklanır:
+   - **Oyuncu Yapı Düğümleri (`SerializedStructuralNode24[]`):** Oyuncunun inşa ettiği her düğüm kompakt **24-Byte** (`PositionHalf3` / yerel `ushort3` + `RotSnorm64` + `School/Role/Material` + `Course/Anchor/Depth` + `CurrentHp` + `MortarCureByte`) olarak yazılır; kenarlar yükleme anında deterministik soket/temas komşuluğundan `< 0.1 ms` içinde yeniden bağlanır (yalnızca özel harç kürlenme veya hasar bayrağı taşıyan kenarlar ek `6-Byte` delta olarak saklanır).
+   - **Yerleşim (`Seed-Delta`) Sıkıştırması:** Prosedürel üretilen Köy, Kasaba, Şehir ve Harabeler dünya tohumundan (`worldSeed`) deterministik üretilir. Oyuncu bir şehir binasına hiç dokunmadıysa `.sregion` dosyasında **ek `0 Byte`** yer kaplar (`Structures` biti `0` kalır)! Oyuncu şehirdeki bir evin duvarını kırdığında veya ekleme yaptığında yalnızca `StructuralSeedDeltaRecord` (`SilinenBaselineNodeId` veya `EklenenNode24`) kaydedilir.
+   - **Kapı ve Kepenk Durum Bitleri (`DoorShutterStateBits`):** Her kapı ve pencere kepenginin açık/kapalı ve içten sürgülü/kilitli durum bitleri saklanır.
+   - **Chunk İçi İstasyon, Şantiye Yığını ve Yatak (`SpawnPoint`) Kayıtları:** Yerleştirilmiş zanaat tezgâhları/fırınları, `SiteMaterialPile` stokları ve aktif yatak dirilme noktaları aynı dilimde kalıcı hale getirilir.
+2. **`PristineChunkDecay` Muafiyeti:** İçinde oyuncu yapısı, istasyon/yatak veya değiştirilmiş yerleşim binası bulunan her chunk'ta `HasActiveStructures = true` bayrağı otomatik set edilerek `14` günlük vahşi doğa sıfırlamasından `%100` korunur.
 
 #### B. Ekran-Dışı `ChunkDeltaLog` Entegrasyonu
 [ChunkDeltaLog.cs](../../Assets/_Stratocraft/Voxel/Data/ChunkDeltaLog.cs) üzerinden ekran-dışı (`Unloaded`) bir chunk'a Lanchester savaş krateri (`CarveSurfaceCrater`), yıldırım veya akışkan gediği yazıldığında, oyuncu o bölgeye yaklaşıp `DrainAndApply` çalıştığı anda etkilenen chunk'ın yapı adaları `EventDrivenStructuralSolver` tarafından tek geçişte çözülür; böylece oyuncu kasabaya vardığında havada asılı kalmış yarım bina görmez, gerçek fizikle çökmüş harabe ve moloz yığını (`LooseRubble`) bulur.

@@ -1,7 +1,16 @@
 # DOK7 — Adım Adım Uygulama Planı, Dosya Envanteri, `.sregion V3` Geçişi ve `T01..T24` Test Matrisi
 
-> **Belge Kodu:** `DOK7` | **Bağlı Set:** `docs/gercekci-insaat-ve-mimari-sistemi/DOK1..DOK7`  
-> **Kapsam:** `Faz I.1 .. Faz I.6` Geliştirme Yol Haritası, C#/HLSL/Blender `.glb` Dosya Listesi, `.sregion V3` Kalıcılık & Migrasyon Planı, `T01..T24` Test Matrisi ve Kalite Kapısı Sözleşmesi
+> **Doküman Seti Navigasyonu (Gerçekçi İnşaat ve Mimari Sistemi — 7'li Şartname):**
+> - **DOK1 (Hedef & Gereksinimler):** [DOK1_HEDEF_VE_GEREKSINIMLER.md](DOK1_HEDEF_VE_GEREKSINIMLER.md)
+> - **DOK2 (Mevcut Yapı Envanteri & Dönüşüm):** [DOK2_MEVCUT_YAPI_ENVANTERI_VE_DONUSUM.md](DOK2_MEVCUT_YAPI_ENVANTERI_VE_DONUSUM.md)
+> - **DOK3 (Gerçek Hayat Mimari & Referans Araştırması):** [DOK3_GERCEK_HAYAT_MIMARI_VE_REFERANS_ARASTIRMASI.md](DOK3_GERCEK_HAYAT_MIMARI_VE_REFERANS_ARASTIRMASI.md)
+> - **DOK4 (Yapısal Fizik, Statik & Performans):** [DOK4_YAPISAL_FIZIK_STATIK_VE_PERFORMANS.md](DOK4_YAPISAL_FIZIK_STATIK_VE_PERFORMANS.md)
+> - **DOK5 (Malzeme Progresyonu, İnşaat UX & İç Mekân):** [DOK5_MALZEME_PROGRESYON_UX_VE_IC_MEKAN.md](DOK5_MALZEME_PROGRESYON_UX_VE_IC_MEKAN.md)
+> - **DOK6 (Yerleşim: Köy, Kasaba ve Şehir Birleşimi):** [DOK6_YERLESIM_KOY_KASABA_SEHIR_BIRLESIMI.md](DOK6_YERLESIM_KOY_KASABA_SEHIR_BIRLESIMI.md)
+> - **DOK7 (Bu Doküman — Adım Adım Uygulama & Test Planı):** [DOK7_ADIM_ADIM_UYGULAMA_VE_TEST_PLANI.md](DOK7_ADIM_ADIM_UYGULAMA_VE_TEST_PLANI.md)
+> - **Üst Referanslar:** [DURUM_VE_DEVIR.md](../../DURUM_VE_DEVIR.md) | [STRATOCRAFT_GELISTIRICI_DOKUMANI.md](../../STRATOCRAFT_GELISTIRICI_DOKUMANI.md)
+
+> **Belge Kodu:** `DOK7` | **Kapsam:** `Faz I.1 .. Faz I.6` Geliştirme Yol Haritası, C#/HLSL/Blender `.glb` Dosya Listesi, `.sregion V3` Kalıcılık & Migrasyon Planı, `T01..T24` Test Matrisi ve Kalite Kapısı Sözleşmesi
 
 ---
 
@@ -35,7 +44,7 @@ flowchart LR
 - **Somut İş Kalemleri:**
   1. **Mavi & İncecik Kütük Hatası Tamiri:**
      - `Stage1WorldLooseBuildController.UpdateGhostVisualForTimberLog` ve `GetOrCreateTimberLogMeshCached` içindeki cyan-mavi sabit tint (`Color32(82, 214, 255, 112)`) ile dar silindir ölçeği (`0.38, 1.00, 0.38`) kaldırılır.
-     - `StratocraftGhostPreview.shader` üzerine materyal/hologram mod bayrağı (`_PreviewStateMode`: Geçerli = sıcak şeffaf ahşap/yeşil vurgu, Sınırda = kehribar, Hatalı/Desteksiz = kızıl) eklenir; gerçek kütük çapı (`0.42–0.46 m` tam uç kertikli `.glb`) kullanılır.
+     - `StratocraftGhostPreview.shader` üzerine materyal/hologram mod bayrağı (`_PreviewStateMode`: `%70` doğal malzeme rengi + 4 kademeli Fresnel kenar stres rengi — **`Tok Zümrüt Yeşili -> Kehribar Sarısı -> Turuncu -> Kırmızı`**, **Mavi YOK!**) eklenir; gerçek kütük çapı (`0.42–0.46 m` tam uç kertikli `.glb`) kullanılır.
   2. **Havada Uçan Kütük Hatası Tamiri:**
      - Serbest/modüler kütük yerleştirmede temel ankrajı (`GroundAnchor`), alttan en az 2 destek veya köşe kertiği (`SaddleNotch` / `DovetailNotch`) yoksa `CanPieceStand == false` ile havada yerleştirme reddedilir; altındaki kütük/destek kırıldığında üst kütükler havada kalmayıp gerçek 3B yerçekimiyle düşer.
   3. **`UnifiedStructureGraph` Çekirdeği (`DOK4` uyumlu):**
@@ -71,7 +80,7 @@ flowchart LR
 ### Faz I.5 — İç Mekân, Kapı/Pencere/Merdiven/Baca, İskele, Vinç & Dokunsal İnşa UX'i
 - **Hedef Kabul Kriterleri:** `AK-15`, `AK-16`, `AK-17`, `AK-23..AK-25`.
 - **Somut İş Kalemleri:**
-  1. **İnşa UX & Lojistik:** İp çekme (`ChalkLine`) kılavuzu, akıllı snap + 1–2 dokunsal balta/mala vuruşu, şantiye malzeme yığını (`SiteMaterialPile`, `8 m` yarıçap), el arabası/kağnı yükleme, kolay sökülen ahşap iskele (`Scaffolding`) ve yüksek katlara taş/kütük çıkaran makaralı vinç (`PulleyCrane`).
+  1. **İnşa UX & Lojistik:** İp çekme (`ChalkLine`) kılavuzu, akıllı snap + 1–2 dokunsal balta/mala vuruşu, şantiye malzeme yığını (`SiteMaterialPile`: **`8.0 m`** yarıçap; Döner Vinç/Palanga aktifken **`14.0 m`**), el arabası/kağnı yükleme, kolay sökülen ahşap iskele (`Scaffolding`) ve yüksek katlara taş/kütük çıkaran makaralı vinç (`PulleyCrane`).
   2. **İç Mekân & Geçirgenlik:** Açılır-kapanır menteşeli/çift kanatlı kapılar + kilit/sürgü, camlı/kepenkli pencereler, düz/L/sarmal merdivenler + döşeme merdiven boşluğu yük aktarımı (`ModularStructureCollisionSolver` OBB uyumu).
   3. **Kapalı Mekân, Şömine/Baca & Atölyeler:** Kapalı iç mekân flood-fill/BFS algılama, baca şaftı bağlantısı (`ChimneyFlue`) ve bacasız duman/CO uyarısı, meşale/şamdan/avize, yatak/masa/sandık/raf ve örs/bloomery/kömür ocağının bina içi kurulum kuralları.
 - **Çıkış Kapısı:** `T15`, `T16`, `T17` PASS.
@@ -96,12 +105,14 @@ flowchart LR
 
 | Durum | Dosya Yolu (Göreceli) | Faz | Sorumluluk |
 | :--- | :--- | :--- | :--- |
-| **Yeni (Saf C#)** | `Assets/_Stratocraft/Inventory/Data/UnifiedStructureTypes.cs` | I.1–I.4 | `UnifiedStructureNode`, `StructuralJoint`, `BuildingSchoolKind (Ekol 1..4)`, `AnchorType`, `MortarState`, `ChinkingFlags` (`0-GC` value types). |
+| **Yeni (Saf C#)** | `Assets/_Stratocraft/Inventory/Data/UnifiedStructureTypes.cs` | I.1–I.4 | `StructuralNode64` *(DOK1/DOK6 kavramsal adı: `UnifiedStructureNode`)*, `StructuralJointEdge32` *(`StructuralJoint`)*, `ArchitecturalSchool` *(`BuildingSchoolKind`, Ekol 1..4)*, `AnchorType`, `MortarState`, `ChinkingFlags` (`0-GC` value types). |
 | **Yeni (Saf C#)** | `Assets/_Stratocraft/Inventory/Systems/UnifiedStructureGraphSolver.cs` | I.1–I.4 | Olay-güdümlü graf çözücü: basınç, çekme/eğilme açıklığı, yanal itme, burkulma, zemin taşıma kapasitesi ve zincirleme çöküş. |
-| **Yeni (Saf C#)** | `Assets/_Stratocraft/Inventory/Systems/MortarAndInteriorEnvironmentSolver.cs` | I.3–I.5 | Harç kürlenme eğrisi, kar yükü (`SWE`), rüzgâr yanal yükü, kapalı mekân BFS, ısı yalıtımı & baca/CO denetimi. |
+| **Yeni (Saf C#)** | `Assets/_Stratocraft/Inventory/Systems/MortarAndInteriorEnvironmentSolver.cs` | I.3–I.5 | Harç kürlenme eğrisi (`CureRatio < 0.45` ıslak/kırılgan eşik), kar yükü (`SWE`), rüzgâr yanal yükü, kapalı mekân BFS (`IsRainSheltered`/`IsEnclosedInterior`/`SealFactor`), ısı yalıtımı, baca/CO denetimi ve **Eurocode 5 ahşap kömürleşme (`CharDepth0_15`) kesit kaybı çökmesi**. |
 | **Yeni (Saf C#)** | `Assets/_Stratocraft/WorldGen/UnifiedSettlementBuilder.cs` | I.6 | Biyom (`0..13`) + kademe (`Köy/Kasaba/Şehir/Harabe`) tabanlı yapı üretimi ve `TerrainPlinthSolver` eğimli temel kaidesi. |
 | **Yeni (Unity)** | `Assets/_Stratocraft/Character/CityChunkLodBatchRenderer.cs` | I.6 | Şehir ölçeği (`9×9` chunk) `LOD0/LOD1/LOD2` GPU Instancing & Chunk-Batched mesh havuzu (`0-GC`). |
-| **Yeni (Unity)** | `Assets/_Stratocraft/Character/BuildingSiteLogisticsController.cs` | I.5 | İp çekme (`ChalkLine`), şantiye malzeme yığını (`8m`), iskele ve makaralı vinç/palanga etkileşimi. |
+| **Yeni (Unity)** | `Assets/_Stratocraft/Character/BuildingSiteLogisticsController.cs` | I.5 | İp çekme (`ChalkLine`), şantiye malzeme yığını (`8.0 m`; vinçle `14.0 m`), iskele ve makaralı vinç/palanga etkileşimi. |
+
+> **C# Tip Adı Eşleme Notu (`DOK4 <-> DOK7`):** Uygulama kodunda bellek/önbellek hizalı kanonik unmanaged tipler `DOK4`'teki isimleriyle (`StructuralNode64`, `StructuralJointEdge32`, `ArchitecturalSchool`) tanımlanır; `DOK1`/`DOK6`'da geçen `UnifiedStructureNode`, `StructuralJoint` ve `BuildingSchoolKind` adları bunların aynı mimari kavram eşanlamlılarıdır.
 | **Güncelleme** | `Assets/_Stratocraft/Inventory/Systems/SotfLogStackAndInputSystem.cs` | I.1–I.5 | Yeni malzeme/kesit/ekol bağlantılarıyla `UnifiedStructureGraphSolver` köprüsü; eski bağımsız parça sınırlamalarının birleştirilmesi. |
 | **Güncelleme** | `Assets/_Stratocraft/Inventory/Systems/ModularStructureCollisionSolver.cs` | I.4–I.6 | Kemer altı geçit, açılır kapı kanadı, pencere/kepenk geçirgenliği, düz/L/sarmal merdiven rampası OBB kuralları + mekânsal hash. |
 | **Güncelleme** | `Assets/_Stratocraft/Character/Stage1WorldLooseBuildController.cs` | I.1–I.6 | Mavi/incecik & uçan kütük tamiri, dokunsal balta/mala vuruşu, stres uyarı görseli, `LOD0` havuz entegrasyonu. |
@@ -138,8 +149,8 @@ Tüm yeni mimari `.glb` modelleri `Tools/AutonomousAssetFactory/generators/` alt
 `RegionFileStore.cs` hâlihazırda `RegionFormatVersionV3 = 3` formatında Seed-Delta XOR + Zstd Seviye 3 + XXH64 + `MicroVoxelPool4096` + Hidroloji/Kar verilerini atomik olarak saklamaktadır (`ChunkSerializationSnapshot`). Mevcut `V3` sözleşmesini bozmadan bina grafı kalıcılığı şu şekilde eklenir:
 
 1. **Chunk İçi Opsiyonel Yapı Bloğu (`StructureGraphSection`):**
-   - `ChunkDirtyFlags` içine `Structures = 1 << 4` bayrağı eklenir.
-   - Yapısı olan chunk'larda (oyuncu inşaatı veya oyuncu tarafından değiştirilmiş/yıkılmış/tamir edilmiş yerleşim parseli) `UnifiedStructureNode[]` + `StructuralJoint[]` + `MortarCureTick` + `SettlementSiteDeltaMask` verileri `ChunkSerializationSnapshot`'ın ek opsiyonel bölümü olarak Zstd ile sıkıştırılıp XXH64 sağlama toplamına dahil edilir.
+   - `ChunkDirtyFlags` içine **`Structures = 1 << 7` (`0x80`)** bayrağı eklenir (`ChunkDirtyFlags.cs` içinde `1 << 0 .. 1 << 6` dolu olduğu ve `1 << 4 = Salinity` olduğu için kalan tek çakışmasız `byte` bitidir).
+   - Yapısı olan chunk'larda (oyuncu inşaatı veya oyuncu tarafından değiştirilmiş/yıkılmış/tamir edilmiş yerleşim parseli) opsiyonel `V3` bloğu olarak **`SerializedStructuralNode24[]`**, yerleşim **`Seed-Delta`** maskesi, **kapı/kepenk açık–sürgülü durum bitleri**, `MortarCureTick` ve chunk içi **istasyon/yatak kayıtları** Zstd ile sıkıştırılıp XXH64 sağlama toplamına dahil edilir.
    - Hiç dokunulmamış prosedürel yerleşim chunk'ları diskte ek yer kaplamaz (**0 B delta**); chunk yüklendiğinde `UnifiedSettlementBuilder` deterministik olarak yeniden üretir.
 2. **Pristine Chunk Decay Koruması:**
    - Oyuncu tarafından bir yapı parçası yerleştirildiği veya bir yerleşim binası tamir/tahrip edildiği anda `ChunkSerializationSnapshot.HasActiveStructures = true` işaretlenir; böylece `PruneAbandonedWildernessChunks` (`14` gerçek gün) oyuncunun kurduğu evleri veya ele geçirdiği kaleleri **asla silmez**.
@@ -158,20 +169,20 @@ Aşağıdaki 24 test senaryosu `Tests/StandaloneCoreTests/` (`.NET 10` NUnit) ve
 | **T02** | `AK-02` | `.NET 10` + PlayMode | Boşlukta (`groundDist > 0.25m`, köşe kertiği/kolon desteği yok) kütük veya blok yerleştirme `CanStand == false` dönmeli; havada duran sıfır kütük kalmamalı. |
 | **T03** | `AK-03` | `.NET 10` | `UnifiedSettlementBuilder`'ın ürettiği bir köy kulübesi düğümü ile oyuncunun koyduğu bir kütük duvar düğümü aynı `UnifiedStructureNode` tipinde olmalı; oyuncu köy duvarına yeni kütük snap edebilmeli. |
 | **T04** | `AK-04` | `.NET 10` | Ekol 1'de köşe kertiği (`SaddleNotch`) olmadan 3 sıra üst üste konulan kütük duvar yanal testte devrilmeli; `SaddleNotch` ile kilitlenen `4` duvarlı kütük çerçeve `5–7` sıra kararlı kalmalı. |
-| **T05** | `AK-05` | `.NET 10` | `Chinking` yapılmamış kütük odada `IsEnclosedInterior == false` ve termal yalıtım `0.0`; derz dolgusu tamamlandığında `IsEnclosedInterior == true` ve izolasyon `>= 0.70` olmalı. |
+| **T05** | `AK-05` | `.NET 10` | `Chinking` yapılmamış çatılı kütük odada `IsRainSheltered == true`, `IsEnclosedInterior == false`, `SealFactor == 0.0` ve termal yalıtım `0.0`; `Chinking` + kapı/kepenk tamamlandığında `IsEnclosedInterior == true` ve `SealFactor >= 0.70` olmalı. |
 | **T06** | `AK-06` | `.NET 10` | Ekol 2'de `3.2m` yüksekliğinde ahşap kolon-kiriş çerçeveye `>= 25 kN` rüzgâr yükü uygulandığında `DiagonalBrace` yoksa çerçeve devrilmeli; `45°` payanda + zıvana eklenince stabil kalmalı. |
 | **T07** | `AK-07` | `.NET 10` | Ekol 2 karkas boşluğuna `WattleAndDaub` / kerpiç dolgu konduğunda duvar rüzgâr geçirgenliği sıfırlanmalı ve iç ısı korunumu sağlanmalı. |
 | **T08** | `AK-08` | `.NET 10` | `Sand/Mud` zemin tipinde temel hendeği ve kırma taş altlık olmadan kurulan 2 katlı taş duvar diferansiyel oturma hasarı almalı; `StoneFooting` sonrası oturma `0` olmalı. |
 | **T09** | `AK-09` | `.NET 10` | Harçsız/kirişsiz `3.2m` açıklığa düz dizilen taş bloklar çekme kırılmasıyla çökmeli; üzerine `TimberBeam` / `StoneLintel` veya `RelievingArch` konduğunda yük güvenle taşınmalı. |
-| **T10** | `AK-10` | `.NET 10` | `CureRatio = 0.15` ıslak kireç harcıyla bir anda `4` sıra örülen taş duvar kayma/ezilme hatası vermeli; `CureRatio >= 0.85` kuruma sonrası aynı yükü sorunsuz taşımalı. |
+| **T10** | `AK-10` | `.NET 10` | `CureRatio = 0.15 < 0.45` (`kappa_ıslak = 0.28`) ıslak kireç harcıyla bir anda `4` sıra örülen taş duvar kayma/ezilme hatası vermeli; `CureRatio >= 0.85` kuruma sonrası aynı yükü sorunsuz taşımalı. |
 | **T11** | `AK-11` | `.NET 10` + PlayMode | Ekol 4 kemerde `Keystone` (kilit taşı) konmadan kalıp kaldırılırsa kemer düşmeli; kilit taşı konduktan sonra kalıp kaldırıldığında kemer ayakta durmalı; kilit taşı kırıldığında tüm kemer çökmeli. |
 | **T12** | `AK-12` | `.NET 10` | Yanal itme üreten `4m` açıklıklı kemer/kubbe, ince ayak duvarını dışa itip yıkmalı; dış payanda (`Buttress`) veya `IronTieRod` eklendiğinde net yanal itme dengelenmeli. |
-| **T13** | `AK-13` | `.NET 10` + PlayMode | Yerleşimdeki bir köy evinin köşe kütüğü kırıldığında graf çözümü `< 2.0 ms` sürmeli, `1.5s` uyarı sonrası desteksiz çatı ve köşe kanadı fiziksel torkla düşmeli, karşı sağlam duvar ayakta kalmalı. |
+| **T13** | `AK-13` | `.NET 10` + PlayMode | Yerleşimdeki bir köy evinin köşe kütüğü veya Faz 9 Kuşatma `BreachWindow` hedefi (mancınık/top) kırıldığında graf çözümü `< 2.0 ms` sürmeli; tam kopuk (`d_geo == 65535`) parça anında, aşırı yüklü çatı/köşe kanadı `1.5s` çatırdama uyarısı sonrası fiziksel torkla düşmeli, karşı sağlam duvar ayakta kalmalı ve Faz 3 Klan `3D BFS` sınır ihlali yeniden hesaplanmalı. |
 | **T14** | `AK-14` | `.NET 10` | Dağ/buzul biyomunda yüksek `SnowLoad SWE` altında geniş aralıklı düz ahşap çatı çökme sınırına girmeli; `45°` dik çatı veya sık mertek sınır altında kalmalı. |
-| **T15** | `AK-15` | `.NET 10` + PlayMode | Kapalı Ekol 1/3 odada şömine yakılıp çatı baca çıkışı (`ChimneyFlue`) kapalıysa duman/CO konsantrasyonu eşik üstüne çıkmalı; baca takıldığında CO sıfırlanıp oda sıcaklığı yükselmeli. |
+| **T15** | `AK-15` | `.NET 10` + PlayMode | Kapalı Ekol 1/3 odada şömine yakılıp çatı baca çıkışı (`ChimneyFlue`) kapalıysa duman/CO konsantrasyonu eşik üstüne çıkmalı; baca takıldığında CO sıfırlanıp oda sıcaklığı yükselmeli. Ayrıca ahşap sütun/kirişte yangınla Eurocode 5 kömürleşme (`CharDepth0_15`) kritik eşiği aşılınca kesit kaybından gerçek yapısal çöküş tetiklenmeli. |
 | **T16** | `AK-16` | `.NET 10` + PlayMode | Kapalı kapı kapsülü bloke etmeli, `[E]` ile açılan kapıdan oyuncu geçebilmeli; pencere ok geçirip oyuncu kapsülünü tutmalı; düz ve sarmal merdivenle 2. kata yürünmeli. |
-| **T17** | `AK-17` | `.NET 10` + PlayMode | `ChalkLine` hizalama, `SiteMaterialPile` (`8m`) içinden otomatik tüketim, ahşap iskele ve vinç çalışmalı; `Stage1InputConflictPolicy` üzerinde `0` tuş çakışması doğrulanmalı. |
-| **T18** | `AK-18` | `.NET 10` | Orman biyomunda üretilen Köy Ekol 1 kütük ağırlıklı, yaylada Ekol 3 taş ağırlıklı, Şehirde ise Saray + Kubbeli Cami/Tapınak + Han + Sur/Kapı düğümlerini içermeli. |
+| **T17** | `AK-17` | `.NET 10` + PlayMode | `ChalkLine` hizalama, `SiteMaterialPile` (`8.0 m`; Döner Vinç/Palanga aktifken `14.0 m`) içinden otomatik tüketim, ahşap iskele ve vinç çalışmalı; `Stage1InputConflictPolicy` üzerinde `0` tuş çakışması doğrulanmalı. |
+| **T18** | `AK-18` | `.NET 10` | Orman biyomunda üretilen Köy Ekol 1 kütük ağırlıklı, yaylada Ekol 3 taş ağırlıklı, Şehirde ise Saray + Kubbeli Cami/Tapınak + Han + Sur/Kapı düğümlerini içermeli; yerleşim ve oyuncu yapıları Faz 3 Klan `3D BFS` kapalı alan tespiti ve Faz 9 Kuşatma `BreachWindow` (`TSA-05`) ile tam uyumlu çalışmalı. |
 | **T19** | `AK-19` | `.NET 10` | `Δh = 2.4m` eğimli yamaca yerleştirilen kasaba binasının alçak köşesi havada kalmamalı; taş temel kaidesi + istinat duvarı zemin taşıma katmanına kadar inmeli. |
 | **T20** | `AK-20` | `.NET 10` | Harabe parseli üretiminde sağlam graf -> kilit düğüm kırımı -> kısmi çöküş çalışmalı; oyuncu eksik taş/kütük parçalarını eklediğinde harabe stabilitesi yeşile dönmeli. |
 | **T21** | `AK-21` | Unity PlayMode | `9×9` chunk Şehir (`>= 3.000` yapı düğümü) çevresinde gezinti sırasında `LOD2 -> LOD1 -> LOD0` geçişlerinde chunk streaming `<= 1.5 ms`, kare süresi `<= 15.0 ms` altında kalmalı. |
