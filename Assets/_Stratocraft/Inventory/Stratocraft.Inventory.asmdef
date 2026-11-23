@@ -3,6 +3,7 @@
   "rootNamespace": "Stratocraft.Inventory",
   "references": [
     "Stratocraft.Core",
+    "Stratocraft.Rendering",
     "Stratocraft.Voxel",
     "Unity.Burst",
     "Unity.Collections",

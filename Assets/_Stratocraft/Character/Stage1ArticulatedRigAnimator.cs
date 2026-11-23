@@ -468,7 +468,6 @@ namespace Stratocraft.Character
             }
 
             const float minSafeTorsoDistSq = 0.19f * 0.19f;
-            const float minSafeArmDistSq = 0.045f * 0.045f;
             for (int r = 0; r < _cachedBodyRenderers.Count; r++)
             {
                 Renderer rend = _cachedBodyRenderers[r];
