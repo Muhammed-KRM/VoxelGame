@@ -111,8 +111,6 @@ flowchart LR
 | **Yeni (Saf C#)** | `Assets/_Stratocraft/WorldGen/UnifiedSettlementBuilder.cs` | I.6 | Biyom (`0..13`) + kademe (`Köy/Kasaba/Şehir/Harabe`) tabanlı yapı üretimi ve `TerrainPlinthSolver` eğimli temel kaidesi. |
 | **Yeni (Unity)** | `Assets/_Stratocraft/Character/CityChunkLodBatchRenderer.cs` | I.6 | Şehir ölçeği (`9×9` chunk) `LOD0/LOD1/LOD2` GPU Instancing & Chunk-Batched mesh havuzu (`0-GC`). |
 | **Yeni (Unity)** | `Assets/_Stratocraft/Character/BuildingSiteLogisticsController.cs` | I.5 | İp çekme (`ChalkLine`), şantiye malzeme yığını (`8.0 m`; vinçle `14.0 m`), iskele ve makaralı vinç/palanga etkileşimi. |
-
-> **C# Tip Adı Eşleme Notu (`DOK4 <-> DOK7`):** Uygulama kodunda bellek/önbellek hizalı kanonik unmanaged tipler `DOK4`'teki isimleriyle (`StructuralNode64`, `StructuralJointEdge32`, `ArchitecturalSchool`) tanımlanır; `DOK1`/`DOK6`'da geçen `UnifiedStructureNode`, `StructuralJoint` ve `BuildingSchoolKind` adları bunların aynı mimari kavram eşanlamlılarıdır.
 | **Güncelleme** | `Assets/_Stratocraft/Inventory/Systems/SotfLogStackAndInputSystem.cs` | I.1–I.5 | Yeni malzeme/kesit/ekol bağlantılarıyla `UnifiedStructureGraphSolver` köprüsü; eski bağımsız parça sınırlamalarının birleştirilmesi. |
 | **Güncelleme** | `Assets/_Stratocraft/Inventory/Systems/ModularStructureCollisionSolver.cs` | I.4–I.6 | Kemer altı geçit, açılır kapı kanadı, pencere/kepenk geçirgenliği, düz/L/sarmal merdiven rampası OBB kuralları + mekânsal hash. |
 | **Güncelleme** | `Assets/_Stratocraft/Character/Stage1WorldLooseBuildController.cs` | I.1–I.6 | Mavi/incecik & uçan kütük tamiri, dokunsal balta/mala vuruşu, stres uyarı görseli, `LOD0` havuz entegrasyonu. |
@@ -122,6 +120,8 @@ flowchart LR
 | **Güncelleme** | `Assets/_Stratocraft/Inventory/Systems/SurvivalRecipeBookCatalog.cs` | I.2–I.5 | Kireç yakma/söndürme/harç, demir gergi/kenet, kerpiç, wattle & daub, iskele, vinç ve mobilya tarifleri. |
 | **Güncelleme** | `Assets/_Stratocraft/Core/Persistence/RegionFileStore.cs` & `IWorldPersistenceService.cs` | I.6 | `.sregion V3` bina grafı bloğu eklenmesi ve V2/V3 migrasyon desteği. |
 | **Emekli** | `Assets/_Stratocraft/Inventory/Systems/SettlementBuildingBlueprints.cs` | I.6 | Sabit 15 şablonlu eski sistem Faz I.6 sonunda kullanımdan kaldırılır (gerekiyorsa yalnızca legacy test/migrasyon adaptörü kalır). |
+
+> **C# Tip Adı Eşleme Notu (`DOK4 <-> DOK7`):** Uygulama kodunda bellek/önbellek hizalı kanonik unmanaged tipler `DOK4`'teki isimleriyle (`StructuralNode64`, `StructuralJointEdge32`, `ArchitecturalSchool`) tanımlanır; `DOK1`/`DOK6`'da geçen `UnifiedStructureNode`, `StructuralJoint` ve `BuildingSchoolKind` adları bunların aynı mimari kavram eşanlamlılarıdır.
 
 ### 3.2. HLSL ve Shader Güncellemeleri (0 Ekstra VRAM)
 
