@@ -74,6 +74,19 @@ PAL = {
     "shingle_warm": (96, 74, 56, 244),
     "shingle_slate": (74, 76, 82, 240),
     "rafter_timber": (138, 96, 56, 234),
+    # Ekol 1-3 Yeni Mimari Malzemeler (Chinking, Wattle & Daub, Kerpic, Kirec Harci, Kesme Tas)
+    "chink_moss": (108, 124, 82, 236),
+    "chink_clay": (168, 146, 114, 240),
+    "wattle_hazel": (146, 104, 62, 238),
+    "daub_plaster": (216, 198, 168, 246),
+    "daub_shade": (194, 176, 146, 240),
+    "adobe_brick_warm": (192, 134, 92, 244),
+    "adobe_brick_mid": (176, 120, 80, 242),
+    "adobe_mortar": (154, 112, 78, 228),
+    "lime_mortar_light": (204, 198, 186, 236),
+    "ashlar_limestone": (188, 182, 170, 248),
+    "ashlar_warm": (176, 168, 154, 246),
+    "basalt_lintel": (92, 96, 102, 244),
 }
 
 
@@ -772,6 +785,523 @@ def build_mod_diagonal_brace_2m(mat):
 
 
 # ==============================================================================
+# EKOL 1 — KERTIKLI KUTUK YIGMA, SUBASMAN PABUCU & CATI ASIGI (5 PARCA)
+# ==============================================================================
+
+def build_mod_notched_log_saddle_2m(mat):
+    """
+    Ekol 1: Gercek 0.44m capli (0.42-0.46m araligi, r=0.22m), 2.16m boyunda
+    derin cift-tarafli semer kertikli (SaddleNotch) soyulmus kutuk.
+    """
+    mb = ModularMeshBuilder("Mod_Notched_Log_Saddle_2m")
+    mb.add_notched_log(
+        length=2.16,
+        radius=0.22,
+        notch_positions=(-0.86, 0.86),
+        along_axis="X",
+        center_offset=(0.0, 0.0, 0.22),
+        segs=16,
+    )
+    for sx in (-0.86, 0.86):
+        mb.add_box((sx, 0.0, 0.415), (0.028, 0.028, 0.024), PAL["wood_peg"], bevel_amt=0.005)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_notched_log_dovetail_2m(mat):
+    """
+    Ekol 1-2: 0.42m yukseklik x 0.38m kalinlikta yontulmus kutuk govdesi +
+    iki ucta yamuk kesitli kirlangic kuyrugu kertik (DovetailNotch) basliklari.
+    """
+    mb = ModularMeshBuilder("Mod_Notched_Log_Dovetail_2m")
+    # Ana yontulmus oval/karemsi kutuk govdesi (X in [-0.74..+0.74], Z in [0.0..0.42])
+    mb.add_box((0.0, 0.0, 0.21), (0.74, 0.19, 0.21), PAL["log_peeled_warm"], bevel_amt=0.032)
+    # Ust ve alt ince kabuk/pah izleri
+    mb.add_box((0.0, -0.185, 0.21), (0.72, 0.014, 0.15), PAL["log_peeled_mid"], bevel_amt=0.006)
+    mb.add_box((0.0, 0.185, 0.21), (0.72, 0.014, 0.15), PAL["log_peeled_mid"], bevel_amt=0.006)
+
+    # Her iki ucta kirlangic kuyrugu (fan-shaped dovetail tenon) gecme basliklari
+    for sign in (-1.0, 1.0):
+        # Boyun daralmasi
+        mb.add_box(
+            (sign * 0.81, 0.0, 0.21),
+            (0.08, 0.145, 0.145),
+            PAL["log_notch_carve"],
+            bevel_amt=0.012,
+        )
+        # Disa genisleyen yamuk kirlangic kuyrugu ucu (ust/alt egimli kama)
+        mb.add_box(
+            (sign * 0.94, 0.0, 0.255),
+            (0.11, 0.165, 0.095),
+            PAL["log_notch_carve"],
+            rot_euler=(0.0, -sign * 0.18, 0.0),
+            bevel_amt=0.010,
+        )
+        mb.add_box(
+            (sign * 0.94, 0.0, 0.165),
+            (0.11, 0.165, 0.095),
+            PAL["log_notch_carve"],
+            rot_euler=(0.0, sign * 0.18, 0.0),
+            bevel_amt=0.010,
+        )
+        # Uctaki oz odun kesit halkasi ve kavela pimi
+        mb.add_box(
+            (sign * 1.052, 0.0, 0.21),
+            (0.008, 0.135, 0.135),
+            PAL["log_endgrain_outer"],
+            bevel_amt=0.004,
+        )
+        mb.add_box(
+            (sign * 1.058, 0.0, 0.21),
+            (0.006, 0.075, 0.075),
+            PAL["log_endgrain_heart"],
+            bevel_amt=0.003,
+        )
+        mb.add_box((sign * 0.90, 0.0, 0.375), (0.024, 0.024, 0.020), PAL["wood_peg"], bevel_amt=0.004)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_chinked_log_course_2m(mat):
+    """
+    Ekol 1: Ust uste 2 sira 0.44m capli semer kertikli kutuk + aralarindaki derze
+    sikistirilmis yosun ve kil derz dolgusu (ChinkingMossClay -> SealFactor >= 0.70).
+    """
+    mb = ModularMeshBuilder("Mod_Chinked_Log_Course_2m")
+    # Alt kutuk (merkez Z=0.22m) ve ust kutuk (merkez Z=0.62m)
+    for cz in (0.22, 0.62):
+        mb.add_notched_log(
+            length=2.16,
+            radius=0.22,
+            notch_positions=(-0.86, 0.86),
+            along_axis="X",
+            center_offset=(0.0, 0.0, cz),
+            segs=14,
+        )
+    # Iki kutuk birlesim derzi boyunca (Z=0.42m) on ve arka yosun + kil siva seridi
+    seg_count = 8
+    seg_w = 1.68 / seg_count
+    for i in range(seg_count):
+        cx = -0.84 + (i + 0.5) * seg_w
+        col_front = PAL["chink_clay"] if (i % 2 == 0) else PAL["chink_moss"]
+        col_back = PAL["chink_moss"] if (i % 2 == 0) else PAL["chink_clay"]
+        mb.add_box(
+            (cx, -0.175, 0.42),
+            (seg_w * 0.52, 0.036, 0.048),
+            col_front,
+            rot_euler=(0.08 * ((i % 3) - 1), 0.0, 0.0),
+            bevel_amt=0.010,
+        )
+        mb.add_box(
+            (cx, 0.175, 0.42),
+            (seg_w * 0.52, 0.036, 0.048),
+            col_back,
+            rot_euler=(-0.08 * ((i % 3) - 1), 0.0, 0.0),
+            bevel_amt=0.010,
+        )
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_stone_footing_pad(mat):
+    """
+    Ekol 1-2: Esik kutugunu (SillLog) ve dikmeleri toprak neminden yukselten
+    0.68m x 0.68m x 0.36m kirma tas + yassi bazalt subasman pabucu.
+    """
+    mb = ModularMeshBuilder("Mod_Stone_Footing_Pad")
+    # Alt sikistirilmis cakil ve harc yatagi (Z in [0.0..0.16])
+    mb.add_box((0.0, 0.0, 0.08), (0.31, 0.31, 0.08), PAL["mortar_bed"], bevel_amt=0.012)
+    tones = (PAL["stone_dark"], PAL["stone_warm"], PAL["stone_cool"], PAL["stone_moss_tint"])
+    seed = 5
+    for kx in (-0.19, 0.19):
+        for ky in (-0.19, 0.19):
+            mb.add_irregular_stone(
+                (kx, ky, 0.11),
+                (0.16, 0.16, 0.10),
+                tones[seed % len(tones)],
+                seed,
+            )
+            seed += 1
+    # Ust yontulmus yassi kapak tasi + kutuk/dikme oturtma besigi (Z in [0.20..0.36])
+    mb.add_box((0.0, 0.0, 0.27), (0.27, 0.27, 0.07), PAL["ashlar_limestone"], bevel_amt=0.014)
+    mb.add_box((-0.20, 0.0, 0.345), (0.045, 0.24, 0.022), PAL["stone_dark"], bevel_amt=0.006)
+    mb.add_box((0.20, 0.0, 0.345), (0.045, 0.24, 0.022), PAL["stone_dark"], bevel_amt=0.006)
+    mb.add_box((0.0, 0.0, 0.355), (0.025, 0.025, 0.020), PAL["iron_hardware"], bevel_amt=0.004)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_roof_purlin_2m(mat):
+    """
+    Ekol 1: 2.08m uzunlukta, 0.26m capli cati asik kutugu (Roof Purlin);
+    ust yuzeyde 4 mertek oturtma kertigi ve uclarda alinlik gecme zivanalari.
+    """
+    mb = ModularMeshBuilder("Mod_Roof_Purlin_2m")
+    mb.add_notched_log(
+        length=2.04,
+        radius=0.13,
+        notch_positions=(-0.75, -0.25, 0.25, 0.75),
+        along_axis="X",
+        center_offset=(0.0, 0.0, 0.13),
+        segs=14,
+    )
+    # Uclarda alinlik duvarina gecen kare zivana dilleri + kavelalar
+    for sign in (-1.0, 1.0):
+        mb.add_box(
+            (sign * 1.04, 0.0, 0.13),
+            (0.055, 0.068, 0.068),
+            PAL["log_notch_carve"],
+            bevel_amt=0.008,
+        )
+        mb.add_box((sign * 0.75, 0.0, 0.25), (0.020, 0.020, 0.018), PAL["wood_peg"], bevel_amt=0.004)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+# ==============================================================================
+# EKOL 2 — AHSAP KARKAS (ZIVANA DIKME, KIRIS, WATTLE & DAUB, KERPIC) (4 PARCA)
+# ==============================================================================
+
+def build_mod_timber_post_mortise_3m(mat):
+    """
+    Ekol 2: 3.0m yukseklikte (0.24m x 0.24m kare kesit) yontma mese/demir agaci dikme;
+    orta ve ust zivana delikleri (Mortise), kavela pimleri ve 45° payanda yuvalari.
+    """
+    mb = ModularMeshBuilder("Mod_Timber_Post_Mortise_3m")
+    # Alt nem kesici tas/demir papuc (Z in [0.0..0.10])
+    mb.add_box((0.0, 0.0, 0.05), (0.14, 0.14, 0.05), PAL["stone_dark"], bevel_amt=0.008)
+    mb.add_box((0.0, 0.0, 0.115), (0.128, 0.128, 0.025), PAL["iron_hardware"], bevel_amt=0.005)
+    # Ana 0.24m x 0.24m kare dikme govdesi (Z in [0.12..2.96])
+    mb.add_box((0.0, 0.0, 1.54), (0.12, 0.12, 1.42), PAL["stud_frame"], bevel_amt=0.012)
+    # Kose pah citasi vurgusu
+    mb.add_box((0.0, 0.0, 1.54), (0.105, 0.124, 1.36), PAL["plank_warm"], bevel_amt=0.008)
+    mb.add_box((0.0, 0.0, 1.54), (0.124, 0.105, 1.36), PAL["plank_mid"], bevel_amt=0.008)
+
+    # Orta (Z=1.45m) ve Ust (Z=2.76m) zivana yuvalari (Mortise slots) + 45° payanda cepleri (Z=2.15m)
+    for mz in (1.45, 2.76):
+        mb.add_box((0.0, 0.0, mz), (0.128, 0.052, 0.105), PAL["bark_dark"], bevel_amt=0.004)
+        mb.add_box((0.0, 0.0, mz), (0.052, 0.128, 0.105), PAL["bark_dark"], bevel_amt=0.004)
+        for p_off in (-0.065, 0.065):
+            mb.add_box((0.0, p_off, mz + 0.05), (0.134, 0.018, 0.018), PAL["wood_peg"], bevel_amt=0.003)
+    # 45° capraz payanda (mod_diagonal_brace_2m) karsilik yuvasi
+    for sign in (-1.0, 1.0):
+        mb.add_box(
+            (sign * 0.118, 0.0, 2.15),
+            (0.022, 0.058, 0.095),
+            PAL["bark_dark"],
+            rot_euler=(0.0, sign * 0.785, 0.0),
+            bevel_amt=0.004,
+        )
+    # Ust baslik zivana dili (Z in [2.94..3.00])
+    mb.add_box((0.0, 0.0, 2.97), (0.065, 0.065, 0.035), PAL["log_notch_carve"], bevel_amt=0.006)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_timber_beam_tenon_2m(mat):
+    """
+    Ekol 2: 2.0m aciklik (zivana dilleriyle 2.18m), 0.22m x 0.26m kesitli
+    yatay ana tasiyici kiris (MainBeam); her iki ucta gecme zivana dili (Tenon) + kavelalar.
+    """
+    mb = ModularMeshBuilder("Mod_Timber_Beam_Tenon_2m")
+    # Ana kare/dikdortgen kiris govdesi (X in [-0.96..+0.96], Z in [0.0..0.26])
+    mb.add_box((0.0, 0.0, 0.13), (0.96, 0.11, 0.13), PAL["stud_frame"], bevel_amt=0.012)
+    mb.add_box((0.0, 0.0, 0.13), (0.94, 0.114, 0.105), PAL["plank_warm"], bevel_amt=0.008)
+    # Her iki ucta dikme mortise yuvasina giren zivana dili (Tenon: X in [±0.96..±1.09])
+    for sign in (-1.0, 1.0):
+        mb.add_box(
+            (sign * 1.02, 0.0, 0.13),
+            (0.075, 0.050, 0.092),
+            PAL["log_notch_carve"],
+            bevel_amt=0.008,
+        )
+        # Cift mese kavela pimi
+        for dz in (0.085, 0.175):
+            mb.add_box(
+                (sign * 1.03, 0.0, dz),
+                (0.018, 0.065, 0.018),
+                PAL["wood_peg"],
+                bevel_amt=0.003,
+            )
+        # Demir kusak bilezigi
+        mb.add_box(
+            (sign * 0.91, 0.0, 0.13),
+            (0.022, 0.118, 0.134),
+            PAL["iron_hardware"],
+            bevel_amt=0.004,
+        )
+    # Ust yuzeyde 3 adet tali doseme kirisi (joist) oturtma yuvası
+    for jx in (-0.62, 0.0, 0.62):
+        mb.add_box((jx, 0.0, 0.245), (0.055, 0.116, 0.022), PAL["log_notch_carve"], bevel_amt=0.004)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_wattle_daub_panel_2x2m(mat):
+    """
+    Ekol 2: 2.0m x 2.0m (0.16m kalinlik) ahsap karkas cerceve + icinde dal orgu (Wattle)
+    uzerine camur/kirec siva (Daub) uygulanmis yalitimli dolgu duvar paneli.
+    """
+    mb = ModularMeshBuilder("Mod_Wattle_Daub_Panel_2x2m")
+    # Dis ahsap karkas cercevesi + orta dikme + yatay kusak (0.16m kalinlik)
+    mb.add_box((0.0, 0.0, 0.06), (1.00, 0.080, 0.06), PAL["stud_frame"], bevel_amt=0.008)
+    mb.add_box((0.0, 0.0, 1.94), (1.00, 0.080, 0.06), PAL["stud_frame"], bevel_amt=0.008)
+    mb.add_box((-0.94, 0.0, 1.00), (0.06, 0.080, 0.88), PAL["stud_frame"], bevel_amt=0.008)
+    mb.add_box((0.94, 0.0, 1.00), (0.06, 0.080, 0.88), PAL["stud_frame"], bevel_amt=0.008)
+    mb.add_box((0.0, 0.0, 1.00), (0.055, 0.078, 0.88), PAL["stud_frame"], bevel_amt=0.007)
+    mb.add_box((0.0, 0.0, 1.00), (0.88, 0.074, 0.050), PAL["stud_frame"], bevel_amt=0.007)
+
+    # Sol alt ve sag ust kose capraz karkas goguslemeleri (yarim-ahsap Tudor/Anadolu gorunumu)
+    mb.add_box(
+        (-0.47, 0.0, 0.53),
+        (0.045, 0.072, 0.56),
+        PAL["plank_dark"],
+        rot_euler=(0.0, -0.785, 0.0),
+        bevel_amt=0.006,
+    )
+    mb.add_box(
+        (0.47, 0.0, 1.47),
+        (0.045, 0.072, 0.56),
+        PAL["plank_dark"],
+        rot_euler=(0.0, -0.785, 0.0),
+        bevel_amt=0.006,
+    )
+
+    # 4 karkas gozunde camur-kirec siva (Daub) panelleri
+    quads = [
+        (-0.47, 0.53, PAL["daub_plaster"]),
+        (0.47, 0.53, PAL["daub_shade"]),
+        (-0.47, 1.47, PAL["daub_shade"]),
+        (0.47, 1.47, PAL["daub_plaster"]),
+    ]
+    for qx, qz, col in quads:
+        mb.add_box((qx, 0.0, qz), (0.415, 0.048, 0.415), col, bevel_amt=0.008)
+
+    # Sag alt gozde dokunsal gercekcilik icin kismen gorunen findik/sogut dal orgu (Wattle) cubuklari
+    for wx in (0.28, 0.47, 0.66):
+        mb.add_box((wx, -0.050, 0.36), (0.014, 0.010, 0.16), PAL["wattle_hazel"], bevel_amt=0.002)
+    for wz in (0.26, 0.33, 0.40, 0.47):
+        mb.add_box(
+            (0.47, -0.052, wz),
+            (0.24, 0.010, 0.013),
+            PAL["log_peeled_mid"],
+            rot_euler=(0.0, 0.04 if (int(wz * 100) % 2 == 0) else -0.04, 0.0),
+            bevel_amt=0.002,
+        )
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_adobe_wall_2x2m(mat):
+    """
+    Ekol 2: 2.0m x 2.0m (0.34m kalinlik) yuksek isil kutleli kerpic tugla (Adobe Brick) duvari;
+    alt tas subasman, 7 sira sasirtmali guneste kurutulmus kerpic ve ust ahsap hatil kirisi.
+    """
+    mb = ModularMeshBuilder("Mod_Adobe_Wall_2x2m")
+    # Alt nem kesici tas temel sirasi (Z in [0.0..0.18])
+    mb.add_box((0.0, 0.0, 0.09), (0.99, 0.175, 0.09), PAL["stone_dark"], bevel_amt=0.012)
+    # Iceride kerpic camur harci cekirdegi (Z in [0.18..1.88])
+    mb.add_box((0.0, 0.0, 1.03), (0.96, 0.145, 0.85), PAL["adobe_mortar"], bevel_amt=0.010)
+
+    # 7 sira sasirtmali (running bond) kerpic tugla (Z in [0.18..1.86])
+    rows = 7
+    z0 = 0.18
+    z1 = 1.86
+    step_z = (z1 - z0) / rows
+    brick_tones = (PAL["adobe_brick_warm"], PAL["adobe_brick_mid"], PAL["chink_clay"])
+    for r in range(rows):
+        cz = z0 + (r + 0.5) * step_z
+        hz = step_z * 0.43
+        cols = 5 if (r % 2 == 0) else 6
+        step_x = 2.0 / cols
+        for c in range(cols):
+            x_left = -1.0 + c * step_x + 0.012
+            x_right = -1.0 + (c + 1) * step_x - 0.012
+            if r % 2 == 1 and (c == 0 or c == cols - 1):
+                pass
+            cx = 0.5 * (x_left + x_right)
+            hx = 0.5 * (x_right - x_left)
+            tone = brick_tones[(r * 3 + c) % len(brick_tones)]
+            mb.add_box((cx, 0.0, cz), (hx, 0.168, hz), tone, bevel_amt=0.012)
+
+    # Ust ahsap baglama hatili / duvar yastigi (Wall Plate, Z in [1.86..2.00])
+    mb.add_box((0.0, 0.0, 1.93), (1.00, 0.172, 0.07), PAL["stud_frame"], bevel_amt=0.010)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+# ==============================================================================
+# EKOL 3 — TAS YIGMA, KIREC HARCI, KOSE KILIT TASI, LENTO & TAHFIF KEMERI (5 PARCA)
+# ==============================================================================
+
+def build_mod_rubble_stone_course_2x1m(mat):
+    """
+    Ekol 3: 2.0m genislik x 1.0m yukseklik x 0.44m kalinlikta sasirtmali (Running Bond)
+    kirma tas (Rubble Stone) duvar sirasi + kirec harci (LimeMortar COLOR_0) derz yatagi.
+    """
+    mb = ModularMeshBuilder("Mod_Rubble_Stone_Course_2x1m")
+    # Kirec harci ic cekirdek yatagi (Z in [0.02..0.98])
+    mb.add_box((0.0, 0.0, 0.50), (0.95, 0.185, 0.48), PAL["lime_mortar_light"], bevel_amt=0.012)
+
+    stone_tones = (
+        PAL["stone_warm"],
+        PAL["stone_cool"],
+        PAL["stone_light"],
+        PAL["stone_dark"],
+        PAL["ashlar_warm"],
+    )
+    seed = 19
+    # 3 yatay sira sasirtmali kirma tas (on ve arka yuz + kenet taslari)
+    row_zs = (0.17, 0.50, 0.83)
+    for r_idx, cz in enumerate(row_zs):
+        count_x = 5 if (r_idx % 2 == 0) else 6
+        step_x = 1.92 / count_x
+        for c_idx in range(count_x):
+            cx = -0.96 + (c_idx + 0.5) * step_x
+            rx = step_x * 0.47
+            for side_y in (-0.115, 0.115):
+                mb.add_irregular_stone(
+                    (cx, side_y, cz),
+                    (rx, 0.115, 0.155),
+                    stone_tones[seed % len(stone_tones)],
+                    seed,
+                )
+                seed += 1
+    # Ust derz yuzeyinde 4 adet enine baglama tasi (through-stones)
+    for tx in (-0.72, -0.24, 0.24, 0.72):
+        mb.add_box((tx, 0.0, 0.975), (0.17, 0.205, 0.025), PAL["ashlar_limestone"], bevel_amt=0.008)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_ashlar_quoin_corner(mat):
+    """
+    Ekol 3: 0.72m x 0.72m L-tabanli, 2.0m yukseklikte uzun-kisa sasirtmali (Long-and-Short Work)
+    gonyeli kesme kose kilit tasi (Ashlar Quoin Corner) + kirec harci derzleri ve kenet yuvalari.
+    """
+    mb = ModularMeshBuilder("Mod_Ashlar_Quoin_Corner")
+    courses = 6
+    dz = 2.0 / courses
+    tones = (PAL["ashlar_limestone"], PAL["ashlar_warm"], PAL["arch_carved"], PAL["stone_light"])
+
+    # Kose harc omurgasi
+    mb.add_box((-0.12, -0.12, 1.00), (0.20, 0.20, 0.98), PAL["lime_mortar_light"], bevel_amt=0.008)
+
+    for i in range(courses):
+        cz = (i + 0.5) * dz
+        hz = dz * 0.455
+        tone = tones[i % len(tones)]
+        if i % 2 == 0:
+            # +X kolu uzun (0.68m), +Y kolu kisa (0.44m)
+            mb.add_box((0.0, -0.14, cz), (0.34, 0.22, hz), tone, bevel_amt=0.014)
+            mb.add_box(
+                (-0.14, 0.18, cz),
+                (0.20, 0.16, hz * 0.96),
+                tones[(i + 1) % len(tones)],
+                bevel_amt=0.012,
+            )
+        else:
+            # +Y kolu uzun (0.68m), +X kolu kisa (0.44m)
+            mb.add_box((-0.14, 0.0, cz), (0.22, 0.34, hz), tone, bevel_amt=0.014)
+            mb.add_box(
+                (0.18, -0.14, cz),
+                (0.16, 0.20, hz * 0.96),
+                tones[(i + 1) % len(tones)],
+                bevel_amt=0.012,
+            )
+
+    # Ust yuzeyde demir/kursun kenet (LeadCramp) baglanti demirleri
+    mb.add_box((0.08, -0.14, 1.99), (0.09, 0.024, 0.012), PAL["iron_hardware"], bevel_amt=0.003)
+    mb.add_box((-0.14, 0.08, 1.99), (0.024, 0.09, 0.012), PAL["iron_hardware"], bevel_amt=0.003)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_stone_lintel_2m(mat):
+    """
+    Ekol 3: 2.20m boy x 0.46m derinlik x 0.38m yukseklikte yekpare yontulmus tas lento
+    (Stone Lintel); uc mesnet yastiklari, alt damlalik silmesi ve demir kenet pimleri.
+    """
+    mb = ModularMeshBuilder("Mod_Stone_Lintel_2m")
+    # Ana yekpare tas lento kirisi (X in [-1.10..+1.10], Z in [0.04..0.36])
+    mb.add_box((0.0, 0.0, 0.20), (1.10, 0.23, 0.16), PAL["basalt_lintel"], bevel_amt=0.016)
+    # Ust yuk dagitici kesme tas sirti
+    mb.add_box((0.0, 0.0, 0.35), (1.06, 0.21, 0.03), PAL["ashlar_limestone"], bevel_amt=0.010)
+    # Her iki ucta sove ustune oturan genisletilmis mesnet yastiklari (X = ±0.92m)
+    for sign in (-1.0, 1.0):
+        mb.add_box((sign * 0.92, 0.0, 0.03), (0.18, 0.235, 0.03), PAL["arch_carved"], bevel_amt=0.008)
+        mb.add_box((sign * 0.95, 0.0, 0.375), (0.065, 0.028, 0.014), PAL["iron_hardware"], bevel_amt=0.003)
+    # Orta kilit kabartmasi
+    mb.add_box((0.0, 0.0, 0.20), (0.14, 0.242, 0.168), PAL["arch_keystone"], bevel_amt=0.012)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_relieving_arch_2m(mat):
+    """
+    Ekol 3: 2.16m genislik x 0.46m derinlik x 0.96m yukseklikte alt tas lento +
+    harcli alin dolgusu (tympanum) + 7 kama tasli (voussoir + keystone) Tahfif Kemeri.
+    """
+    mb = ModularMeshBuilder("Mod_Relieving_Arch_2m")
+    # 1) Alt yatay lento kirisi (Z in [0.0..0.22])
+    mb.add_box((0.0, 0.0, 0.11), (1.08, 0.22, 0.11), PAL["basalt_lintel"], bevel_amt=0.014)
+    # 2) Lento ile kemer arasindaki geri cekilmis harcli tas alin dolgusu (Tympanum)
+    mb.add_box((0.0, 0.0, 0.36), (0.78, 0.185, 0.15), PAL["lime_mortar_light"], bevel_amt=0.010)
+    for tx in (-0.42, 0.0, 0.42):
+        mb.add_irregular_stone((tx, 0.0, 0.38), (0.22, 0.195, 0.11), PAL["stone_warm"], int((tx + 1.0) * 10))
+
+    # 3) Ust tahfif kemeri halkasi (7 kama tasi: -3..+3, merkezde yuksek Keystone)
+    arch_cx = 0.0
+    arch_cz = -0.12
+    arch_r = 0.92
+    tones = (PAL["ashlar_limestone"], PAL["arch_carved"], PAL["ashlar_warm"])
+    for k in range(-3, 4):
+        ang = k * 0.26  # radyan (-0.78 .. +0.78)
+        px = arch_cx + arch_r * math.sin(ang)
+        pz = arch_cz + arch_r * math.cos(ang)
+        is_keystone = k == 0
+        col = PAL["arch_keystone"] if is_keystone else tones[abs(k) % len(tones)]
+        hx = 0.145 if is_keystone else 0.135
+        hy = 0.238 if is_keystone else 0.228
+        hz = 0.205 if is_keystone else 0.175
+        mb.add_box(
+            (px, 0.0, pz),
+            (hx, hy, hz),
+            col,
+            rot_euler=(0.0, ang, 0.0),
+            bevel_amt=0.012,
+        )
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+def build_mod_stepped_plinth_base(mat):
+    """
+    Ekol 3 & Faz I.6 (TerrainPlinthSolver): 2.0m x 2.0m taban x 1.20m yukseklikte
+    egimli yamaca oturan 3 kademeli agir harcli tas temel kaidesi & istinat duvari.
+    """
+    mb = ModularMeshBuilder("Mod_Stepped_Plinth_Base")
+    # 1. Alt genis kademe (Z in [0.0..0.42], 2.04m x 2.04m)
+    mb.add_box((0.0, 0.0, 0.21), (1.02, 1.02, 0.21), PAL["stone_dark"], bevel_amt=0.016)
+    # 2. Orta harcli kesme/kirma tas kademesi (Z in [0.42..0.84], 1.94m x 1.94m)
+    mb.add_box((0.0, 0.0, 0.63), (0.93, 0.93, 0.21), PAL["lime_mortar_light"], bevel_amt=0.010)
+    tones = (PAL["ashlar_limestone"], PAL["stone_warm"], PAL["stone_cool"], PAL["ashlar_warm"])
+    seed = 31
+    for side in (-1.0, 1.0):
+        for off in (-0.62, 0.0, 0.62):
+            mb.add_box(
+                (off, side * 0.85, 0.63),
+                (0.29, 0.12, 0.195),
+                tones[seed % len(tones)],
+                bevel_amt=0.012,
+            )
+            seed += 1
+            mb.add_box(
+                (side * 0.85, off, 0.63),
+                (0.12, 0.29, 0.195),
+                tones[seed % len(tones)],
+                bevel_amt=0.012,
+            )
+            seed += 1
+    # Su tahliye barbakan delikleri (weep holes)
+    for wx in (-0.45, 0.45):
+        mb.add_box((wx, -0.975, 0.46), (0.045, 0.025, 0.065), PAL["bark_dark"], bevel_amt=0.004)
+        mb.add_box((wx, 0.975, 0.46), (0.045, 0.025, 0.065), PAL["bark_dark"], bevel_amt=0.004)
+
+    # 3. Ust kornisli platform kademesi (Z in [0.84..1.20], 2.00m x 2.00m ust tabla)
+    mb.add_box((0.0, 0.0, 1.00), (0.96, 0.96, 0.16), PAL["ashlar_warm"], bevel_amt=0.014)
+    mb.add_box((0.0, 0.0, 1.16), (1.00, 1.00, 0.04), PAL["ashlar_limestone"], bevel_amt=0.010)
+    return mb.finalize_object(mat, smooth_shading=False)
+
+
+# ==============================================================================
 # GLB IHRACI (0 DOKU, UV-FREE COLOR_0) & 4 ACILI 512x512 CONTACT SHEET RENDER
 # ==============================================================================
 
@@ -934,8 +1464,11 @@ def main():
     import sys
 
     only_preview_id = None
+    skip_previews = False
     if "--" in sys.argv:
         extra = sys.argv[sys.argv.index("--") + 1 :]
+        if "--skip-previews" in extra:
+            skip_previews = True
         if len(extra) >= 2 and extra[0] == "--only-preview":
             only_preview_id = extra[1]
 
@@ -955,6 +1488,23 @@ def main():
         ("mod_roof_rafter_45deg_2x2m", build_mod_roof_rafter_45deg_2x2m),
         ("mod_roof_ridge_2m", build_mod_roof_ridge_2m),
         ("mod_diagonal_brace_2m", build_mod_diagonal_brace_2m),
+        # Ekol 1 (5 Parca)
+        ("mod_notched_log_saddle_2m", build_mod_notched_log_saddle_2m),
+        ("mod_notched_log_dovetail_2m", build_mod_notched_log_dovetail_2m),
+        ("mod_chinked_log_course_2m", build_mod_chinked_log_course_2m),
+        ("mod_stone_footing_pad", build_mod_stone_footing_pad),
+        ("mod_roof_purlin_2m", build_mod_roof_purlin_2m),
+        # Ekol 2 (4 Parca)
+        ("mod_timber_post_mortise_3m", build_mod_timber_post_mortise_3m),
+        ("mod_timber_beam_tenon_2m", build_mod_timber_beam_tenon_2m),
+        ("mod_wattle_daub_panel_2x2m", build_mod_wattle_daub_panel_2x2m),
+        ("mod_adobe_wall_2x2m", build_mod_adobe_wall_2x2m),
+        # Ekol 3 (5 Parca)
+        ("mod_rubble_stone_course_2x1m", build_mod_rubble_stone_course_2x1m),
+        ("mod_ashlar_quoin_corner", build_mod_ashlar_quoin_corner),
+        ("mod_stone_lintel_2m", build_mod_stone_lintel_2m),
+        ("mod_relieving_arch_2m", build_mod_relieving_arch_2m),
+        ("mod_stepped_plinth_base", build_mod_stepped_plinth_base),
     ]
 
     built_objs = []
@@ -967,12 +1517,17 @@ def main():
         print(f"[ModularKitBuilder] Exported {asset_id}.glb ({tris} tris, {size_kb:.1f} KB)")
         built_objs.append((asset_id, obj))
 
+    if skip_previews:
+        return
+
     scene, cam_obj, cam_data = setup_studio_render_rig()
     all_objs = [o for _, o in built_objs]
     for asset_id, obj in built_objs:
         if only_preview_id and asset_id != only_preview_id:
             continue
-        sheet_path = render_piece_4_angle_contact_sheet(scene, cam_obj, cam_data, obj, all_objs, asset_id)
+        sheet_path = render_piece_4_angle_contact_sheet(
+            scene, cam_obj, cam_data, obj, all_objs, asset_id
+        )
         print(f"[ModularKitBuilder] Preview: {sheet_path}")
 
     overview_sheet = render_kit_lineup_contact_sheet(scene, cam_obj, cam_data, all_objs)
