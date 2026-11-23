@@ -31,6 +31,7 @@ struct StratocraftVaryings
     nointerpolation uint matId      : TEXCOORD3;
     float3 tempSharpAo              : TEXCOORD4;
     float4 directColorAndFog        : TEXCOORD5; // rgb = vertexCol.rgb, a = fogFactor
+    float3 structureVisualMeta      : TEXCOORD6; // x = mortarWetness01, y = stressCrack01, z = charDepth01 (0 VRAM)
     UNITY_VERTEX_INPUT_INSTANCE_ID
     UNITY_VERTEX_OUTPUT_STEREO
 };
@@ -319,6 +320,115 @@ float4 _StratoBiomeFogTint;
 float4 _StratoBiomeNeonA;
 float4 _StratoBiomeNeonB;
 
+// Birlesik 4-Ekollu Insaat Gorsel Durum Globalleri (0.0 MB VRAM, SRP-Batcher uyumlu)
+// x = globalWetMortarOverride, y = globalStressCrackOverride, z = globalCharDepthOverride, w = activeMask
+float4 _StratoStructureVisualParams;
+
+/// 0 MB VRAM: Kagir yapi bloklarinda (StoneBrick=120, CutAshlar=126, FiredClayBrick=128, LimeMortarWall=132)
+/// islak harc (koyu, parlak) -> kuru sertlesmis kirec harci (acik tebesir, mat) gecisini 3B derz bandinda uygular.
+void ApplyProceduralMortarCureTone(
+    uint matId,
+    float3 posWS,
+    float mortarWetness01,
+    inout float3 albedo,
+    inout float roughness)
+{
+    bool isMasonryMat = (matId == 120u || matId == 126u || matId == 128u || matId == 132u);
+    if (!isMasonryMat && mortarWetness01 <= 0.005)
+    {
+        return;
+    }
+
+    const float kStep = 0.19634954; // 2*PI / 32m Floating-Origin kilitli
+    float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
+
+    // Yatay harc derzi (0.25m kurs yuksekligi) + sasirtmali Running Bond dusey derz
+    float courseIdx = floor(p.y * 4.0);
+    float horizFrac = frac(p.y * 4.0);
+    float horizJoint = 1.0 - smoothstep(0.04, 0.11, min(horizFrac, 1.0 - horizFrac));
+
+    float stagger = frac(courseIdx * 0.5) * 0.5;
+    float vertCoord = (p.x + p.z) * 2.0 + stagger;
+    float vertFrac = frac(vertCoord);
+    float vertJoint = 1.0 - smoothstep(0.03, 0.09, min(vertFrac, 1.0 - vertFrac));
+
+    float jointMask = saturate(max(horizJoint, vertJoint * 0.85));
+    float wet = saturate(mortarWetness01);
+
+    float3 dryLimeMortar = ConvertLutSrgbToActiveColorSpace(float3(0.76, 0.74, 0.69));
+    float3 wetLimeMortar = ConvertLutSrgbToActiveColorSpace(float3(0.32, 0.30, 0.27));
+    float3 mortarCol = lerp(dryLimeMortar, wetLimeMortar, wet);
+    float mortarRough = lerp(0.90, 0.22, wet);
+
+    float blendW = isMasonryMat ? (jointMask * 0.78) : (jointMask * wet * 0.65);
+    albedo = lerp(albedo, mortarCol, blendW);
+    roughness = lerp(roughness, mortarRough, blendW);
+}
+
+/// 0 MB VRAM: Asiri yuklu yapi dugumlerinde (stressCrack01 > 0) 3B prosedurel stres catlaklari ve kritik kehribar vurgusu.
+void ApplyProceduralStructuralStressCracks(
+    float3 posWS,
+    float stressCrack01,
+    inout float3 albedo,
+    inout float roughness,
+    out float3 stressCrackEmission)
+{
+    stressCrackEmission = float3(0.0, 0.0, 0.0);
+    if (stressCrack01 <= 0.01)
+    {
+        return;
+    }
+
+    const float kStep = 0.19634954;
+    float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
+    float3 warp = 0.28 * sin(p.yzx * (29.0 * kStep));
+    float3 q = p * (43.0 * kStep) + warp * 2.2;
+    float ridgeA = 1.0 - abs(sin(q.x + cos(q.y)) * cos(q.z - sin(q.x)));
+    float ridgeB = 1.0 - abs(sin(q.y * 1.7 - sin(q.z)) * cos(q.x * 1.4));
+    float crackRaw = saturate(max(ridgeA, ridgeB * 0.92));
+
+    float crackThreshold = lerp(0.90, 0.66, saturate(stressCrack01));
+    float crackMask = smoothstep(crackThreshold, min(0.99, crackThreshold + 0.12), crackRaw) * saturate(stressCrack01);
+
+    float3 darkFissure = ConvertLutSrgbToActiveColorSpace(float3(0.07, 0.06, 0.055));
+    albedo = lerp(albedo, darkFissure, crackMask * 0.88);
+    roughness = lerp(roughness, 0.94, crackMask);
+
+    // Kritik yuk esiginde (> 0.65) catlak kenarinda hafif turuncu-kizil gerilme vurgusu
+    float warnPulse = 0.75 + 0.25 * sin(_Time.y * 8.0);
+    float warnEdge = saturate(stressCrack01 - 0.65) * 2.85 * crackMask * warnPulse;
+    stressCrackEmission = ConvertLutSrgbToActiveColorSpace(float3(0.92, 0.34, 0.06)) * (warnEdge * 0.32);
+}
+
+/// 0 MB VRAM: Eurocode 5 ahsap komurlesmesi (CharDepth0_15 / 15.0 -> Charred) — timsah derisi catlakli siyah komur kabugu.
+void ApplyProceduralWoodCharring(
+    float3 posWS,
+    float charDepth01,
+    inout float3 albedo,
+    inout float roughness,
+    inout float metallic)
+{
+    if (charDepth01 <= 0.01)
+    {
+        return;
+    }
+
+    float c = saturate(charDepth01);
+    const float kStep = 0.19634954;
+    float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
+    float charCell = abs(sin(p.x * (57.0 * kStep)) * cos(p.y * (49.0 * kStep)) * sin(p.z * (53.0 * kStep)));
+    float charCrackle = smoothstep(0.06, 0.28, charCell);
+
+    float3 charcoalBase = ConvertLutSrgbToActiveColorSpace(float3(0.045, 0.040, 0.038));
+    float3 ashCrack = ConvertLutSrgbToActiveColorSpace(float3(0.11, 0.095, 0.088));
+    float3 charredCol = lerp(charcoalBase, ashCrack, charCrackle * 0.45);
+
+    float charBlend = smoothstep(0.04, 0.85, c);
+    albedo = lerp(albedo, charredCol, charBlend * 0.94);
+    roughness = lerp(roughness, 0.94, charBlend);
+    metallic = lerp(metallic, 0.0, charBlend);
+}
+
 /// Paket 4A Faz 4A.3: Gunes vektoru yonunde dunya-uzayi 3B bulut katmani izdusumu ile
 /// zemin uzerine yumusak dinamik bulut golgesi [0.25 .. 1.0] dusurur.
 /// Globaller set edilmediginde (_GlobalCloudGridParams.w <= 0.001 veya x <= 0.005) %100 1.0 doner!
@@ -411,6 +521,8 @@ StratocraftVaryings StratocraftUberVert(StratocraftAttributes input)
     output.directColorAndFog = float4(
         input.color.rgb,
         ComputeFogFactor(posCS.z));
+
+    output.structureVisualMeta = saturate(input.uv1.yzw);
 
     return output;
 }
@@ -569,6 +681,16 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
         normalWS = normalize(lerp(normalWS, float3(0.0, 1.0, 0.0), snowMask * 0.35));
     }
 
+    // Birlesik 4-Ekollu Insaat (0 VRAM): Islak/kuru harc tonu, stres catlagi ve Eurocode 5 komurlesme (Charred)
+    float mortarWet01 = max(input.structureVisualMeta.x, _StratoStructureVisualParams.x * _StratoStructureVisualParams.w);
+    float stressCrack01 = max(input.structureVisualMeta.y, _StratoStructureVisualParams.y * _StratoStructureVisualParams.w);
+    float charDepth01 = max(input.structureVisualMeta.z, _StratoStructureVisualParams.z * _StratoStructureVisualParams.w);
+
+    ApplyProceduralMortarCureTone(input.matId, input.positionWS, mortarWet01, albedo, roughness);
+    float3 stressCrackEmission = float3(0.0, 0.0, 0.0);
+    ApplyProceduralStructuralStressCracks(input.positionWS, stressCrack01, albedo, roughness, stressCrackEmission);
+    ApplyProceduralWoodCharring(input.positionWS, charDepth01, albedo, roughness, metallic);
+
     // Yukseklik bazli hafif jeolojik derinlik gradyani (magara ve falez tabanlarina hacim katar)
     float heightFactor = saturate((input.positionWS.y + 4.0) / 18.0);
     albedo *= lerp(0.78, 1.06, heightFactor);
@@ -709,7 +831,7 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     }
 
     float fresnelRim = pow(1.0 - saturate(dot(normalWS, viewDirWS)), 3.2) * _RimLightStrength * combinedIndirectAo;
-    float3 finalRgb = litRgb + totalSpecular * cavityAo + fresnelRim * float3(0.62, 0.74, 0.95) + biomeNeonEmission;
+    float3 finalRgb = litRgb + totalSpecular * cavityAo + fresnelRim * float3(0.62, 0.74, 0.95) + biomeNeonEmission + stressCrackEmission;
 
     // Stefan-Boltzmann T^4 Kara Cisim (MagmaBlock Catlak Kor Isinimi / Lav / Demirci Orsu) Emisyonu
     float effectiveHeatNorm = (input.matId == 11u)

@@ -2,6 +2,7 @@
 using System;
 using System.Numerics;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Data;
 
 namespace Stratocraft.Inventory.Systems
@@ -168,6 +169,30 @@ namespace Stratocraft.Inventory.Systems
     }
 
     /// <summary>
+    /// Serbest 2m kutuk yerlestirme gecerlilik sonucu (DOK2 C2..C5 + Karar A1).
+    /// </summary>
+    public struct FreeformLogPlacementValidation
+    {
+        public bool CanPlace;
+        public JointConnectionKind PrimaryJoint;
+        public int PreviewStateMode;
+        public float Stability01;
+        public string FeedbackReason;
+    }
+
+    /// <summary>
+    /// Serbest _parts (FallenTreeLog) yercekimi ve destek grafi durumu (0-GC).
+    /// </summary>
+    public struct LooseLogSupportState
+    {
+        public ushort GeoSupportDist;
+        public bool IsFalling;
+        public Vector3 Velocity;
+        public Vector3 AngularVelocity;
+        public float FallenElapsedSec;
+    }
+
+    /// <summary>
     /// Sons of the Forest + Gercekci Insa Muhendisligi Cozucusu:
     /// 1) Coklu malzeme (Kutuk, Demir Agaci, Tas, Bazalt, Mermer, Celik) + 3 Kesit Kalinligi
     /// 2) Katman katman (Course 1..N) ust uste dizme ve miknatisli snap noktalari
@@ -179,6 +204,141 @@ namespace Stratocraft.Inventory.Systems
     {
         public const int MaterialKindCount = 6;
         public const int ThicknessKindCount = 3;
+
+        /// <summary>EmitOctagonalPillar yerel govde yaricapi (0.38m -> yerel cap 0.76m).</summary>
+        public const float TimberLogMeshLocalRadiusMeters = 0.38f;
+
+        /// <summary>Gercek 2m agac kutugu dunya capi (0.42..0.46m bandinda tam 0.44m — B2 cift 0.38x hatasi giderildi).</summary>
+        public const float TimberLogTargetDiameterMeters = 0.44f;
+
+        /// <summary>0.76m yerel capi tam 0.44m dunya capina esleyen XZ olcegi (~0.5789f).</summary>
+        public const float TimberLogVisualScaleXZ = TimberLogTargetDiameterMeters / (TimberLogMeshLocalRadiusMeters * 2.0f);
+
+        /// <summary>Semer kertik oturmasiyla (2 cm yuvalanma) dikey sira adimi (0.42m -> 0.00 cm hava boslugu!).</summary>
+        public const float TimberLogCourseStepYMeters = 0.42f;
+
+        /// <summary>2m kutugun gercek OBB/carpistirici XZ yari genisligi (0.22m).</summary>
+        public const float TimberLogHalfExtentXZ = TimberLogTargetDiameterMeters * 0.5f;
+
+        /// <summary>DOK2 C6: Eski 26cm hava boslugu yerine gercek temas toleransi (8 cm).</summary>
+        public const float StrictJointContactToleranceMeters = 0.08f;
+
+        /// <summary>DOK2 C6: Kazi sonrasi canli zemin temas esigi (12 cm).</summary>
+        public const float StrictGroundContactToleranceMeters = 0.12f;
+
+        public static float ComputeTimberLogWorldDiameterMeters(
+            float localMeshRadius = TimberLogMeshLocalRadiusMeters,
+            float scaleXZ = TimberLogVisualScaleXZ) =>
+            localMeshRadius * 2.0f * scaleXZ;
+
+        public static float ComputeStackedTimberLogAirGapMeters(
+            float diameterMeters = TimberLogTargetDiameterMeters,
+            float courseStepYMeters = TimberLogCourseStepYMeters) =>
+            MathF.Max(0.0f, courseStepYMeters - diameterMeters);
+
+        /// <summary>
+        /// DOK2 B1: LUT-kodlu (R=70 OakWood, G=0, B=183 -> elektrik mavisi) yerine gercek dogal ahsap RGB rengi doner.
+        /// R == 3 (Grass wind) ve R == 11 (Magma) haric tutulur.
+        /// </summary>
+        public static void ResolveTimberLogDirectRgb(byte woodMaterialId, byte facetShadeByte, out byte r, out byte g, out byte b)
+        {
+            byte baseR, baseG, baseB;
+            switch (woodMaterialId)
+            {
+                case MaterialIdCatalog.Ironwood:
+                    baseR = 114; baseG = 78; baseB = 50;
+                    break;
+                case MaterialIdCatalog.SpiritWood:
+                    baseR = 148; baseG = 124; baseB = 94;
+                    break;
+                case MaterialIdCatalog.YggdrasilBranch:
+                    baseR = 178; baseG = 132; baseB = 76;
+                    break;
+                default: // OakWood (70) ve standart cam/mese kutugu
+                    baseR = 168; baseG = 118; baseB = 72;
+                    break;
+            }
+
+            float shade = Math.Clamp(facetShadeByte / 185.0f, 0.72f, 1.18f);
+            int rr = Math.Clamp((int)MathF.Round(baseR * shade), 8, 255);
+            if (rr == 3 || rr == 11) rr++;
+            int gg = Math.Clamp((int)MathF.Round(baseG * shade), 8, 255);
+            int bb = Math.Clamp((int)MathF.Round(baseB * shade), 8, 255);
+
+            r = (byte)rr;
+            g = (byte)gg;
+            b = (byte)bb;
+        }
+
+        /// <summary>
+        /// DOK5 §2.2: Mavi hayalet rengi TAMAMEN kaldirildi (ValheimStabilityBand.Blue -> Tok Zumrut Yesili).
+        /// 4 kademeli Fresnel stres modu: 0=Yesil, 1=Kehribar Sarisi, 2=Turuncu, 3=Kirmizi.
+        /// </summary>
+        public static ValheimStabilityBand NormalizeStabilityBandWithoutBlue(ValheimStabilityBand band) =>
+            band == ValheimStabilityBand.Blue ? ValheimStabilityBand.Green : band;
+
+        public static int MapStabilityToPreviewStateMode(
+            ValheimStabilityBand band,
+            bool canPlace,
+            out byte r,
+            out byte g,
+            out byte b)
+        {
+            if (!canPlace || band == ValheimStabilityBand.Red)
+            {
+                r = 242; g = 36; b = 32;
+                return 3;
+            }
+
+            switch (band)
+            {
+                case ValheimStabilityBand.Orange:
+                    r = 250; g = 114; b = 22;
+                    return 2;
+                case ValheimStabilityBand.Yellow:
+                    r = 242; g = 190; b = 38;
+                    return 1;
+                case ValheimStabilityBand.Green:
+                case ValheimStabilityBand.Blue:
+                default:
+                    // Tok Zumrut Yesili — ASLA mavi degil!
+                    r = 28; g = 198; b = 98;
+                    return 0;
+            }
+        }
+
+        /// <summary>
+        /// DOK2 C2: Gokyuzune bakilirken (camDir.Y > 0.15f) havaya +3.2m sahte yuzey uydurulmasini kesin engeller.
+        /// </summary>
+        public static bool TryResolveAimSurfaceFallbackPure(
+            Vector3 playerPos,
+            Vector3 camDir,
+            bool hasGroundAtForwardProbe,
+            float sampledGroundY,
+            out Vector3 surfacePoint)
+        {
+            surfacePoint = Vector3.Zero;
+            if (camDir.Y > 0.15f || !hasGroundAtForwardProbe)
+            {
+                return false;
+            }
+
+            if (MathF.Abs(sampledGroundY - playerPos.Y) > 3.50f)
+            {
+                return false;
+            }
+
+            Vector3 flatFwd = new Vector3(camDir.X, 0f, camDir.Z);
+            if (flatFwd.LengthSquared() < 1e-4f)
+            {
+                return false;
+            }
+
+            flatFwd = Vector3.Normalize(flatFwd);
+            Vector3 probe = playerPos + flatFwd * 3.40f;
+            surfacePoint = new Vector3(probe.X, sampledGroundY, probe.Z);
+            return true;
+        }
 
         public static StructuralMaterialProfile GetMaterialProfile(BuildStructuralMaterialKind kind) => kind switch
         {
@@ -502,6 +662,44 @@ namespace Stratocraft.Inventory.Systems
             out bool snappedToStructure,
             out int resolvedCourseIndex1Based)
         {
+            ComputeSotfFreeformSnapPose(
+                role,
+                in inputDna,
+                surfacePoint,
+                surfaceNormal,
+                userYawDegrees,
+                existingParts,
+                existingModularNodes,
+                sampleTerrainY: null,
+                out finalPosition,
+                out finalRotation,
+                out finalDna,
+                out snappedToStructure,
+                out resolvedCourseIndex1Based,
+                out _);
+        }
+
+        /// <summary>
+        /// DOK2 C2..C5 tamirli serbest 2m kutuk konumlama ve destek/kertik/temel dogrulama surumu.
+        /// Desteksiz +2.00m havada kiris, +2.52m havada mertek, kertiksiz/dikmesiz ust uste yigma ve ucurum kenari
+        /// bosluga uzatmayi kokten engeller.
+        /// </summary>
+        public static void ComputeSotfFreeformSnapPose(
+            SotfFreeformLogRole role,
+            in PhysicalItemShapeDna inputDna,
+            Vector3 surfacePoint,
+            Vector3 surfaceNormal,
+            float userYawDegrees,
+            ReadOnlySpan<LoosePartPoint> existingParts,
+            ReadOnlySpan<ModularPlacedPieceNode> existingModularNodes,
+            Func<float, float, float?>? sampleTerrainY,
+            out Vector3 finalPosition,
+            out Quaternion finalRotation,
+            out PhysicalItemShapeDna finalDna,
+            out bool snappedToStructure,
+            out int resolvedCourseIndex1Based,
+            out FreeformLogPlacementValidation validation)
+        {
             snappedToStructure = false;
             resolvedCourseIndex1Based = 1;
             finalDna = inputDna.WithStage((byte)role);
@@ -511,10 +709,13 @@ namespace Stratocraft.Inventory.Systems
             Vector3 horizFwd = new Vector3(MathF.Sin(yawRad), 0f, MathF.Cos(yawRad));
             Vector3 n = surfaceNormal.LengthSquared() > 1e-4f ? Vector3.Normalize(surfaceNormal) : Vector3.UnitY;
 
-            // 1) Dikey Kolon / Dikme: mevcut dikmelerin 2.0m hizasina veya ustune (+2.0m) kenetlenir
+            // 1) Dikey Kolon / Dikme: mevcut dikmelerin 2.0m hizasina (canli arazi kotuyla!) veya ustune (+2.0m) kenetlenir
             if (role == SotfFreeformLogRole.VerticalSupportColumn)
             {
-                Vector3 bestPos = new Vector3(surfacePoint.X, surfacePoint.Y + 1.00f, surfacePoint.Z);
+                float baseGroundY = sampleTerrainY != null && sampleTerrainY(surfacePoint.X, surfacePoint.Z) is float gy0
+                    ? gy0
+                    : surfacePoint.Y;
+                Vector3 bestPos = new Vector3(surfacePoint.X, baseGroundY + 1.00f, surfacePoint.Z);
                 float bestDistSq = 1.15f * 1.15f;
                 ReadOnlySpan<float> ox = stackalloc float[4] { 2.0f, -2.0f, 0f, 0f };
                 ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, 2.0f, -2.0f };
@@ -526,7 +727,7 @@ namespace Stratocraft.Inventory.Systems
                     bool isVert = p.ShapeDna.StageByte == (byte)SotfFreeformLogRole.VerticalSupportColumn;
                     if (!isVert) continue;
 
-                    // Ust uste kolon uzatma (+2.0m)
+                    // Ust uste kolon uzatma (+2.0m): yalnizca alt dikme saglam destekliyse izin ver
                     Vector3 topCand = new Vector3(p.Position.X, p.Position.Y + 2.00f, p.Position.Z);
                     float dTopSq = Vector3.DistanceSquared(topCand, surfacePoint + new Vector3(0f, 1.0f, 0f));
                     if (dTopSq < bestDistSq)
@@ -537,10 +738,15 @@ namespace Stratocraft.Inventory.Systems
                         resolvedCourseIndex1Based = 2;
                     }
 
-                    // 2.0m aciklikla karsi kolon dikme (SOTF duvar/kiris araligi!)
+                    // 2.0m aciklikla karsi kolon dikme (DOK2 C5: hedef XZ'deki gercek zemin kotunu ornekle!)
                     for (int k = 0; k < 4; k++)
                     {
-                        Vector3 spanCand = new Vector3(p.Position.X + ox[k], surfacePoint.Y + 1.00f, p.Position.Z + oz[k]);
+                        float candX = p.Position.X + ox[k];
+                        float candZ = p.Position.Z + oz[k];
+                        float candGroundY = sampleTerrainY != null && sampleTerrainY(candX, candZ) is float sampledY
+                            ? sampledY
+                            : surfacePoint.Y;
+                        Vector3 spanCand = new Vector3(candX, candGroundY + 1.00f, candZ);
                         float dSpanSq = (spanCand.X - surfacePoint.X) * (spanCand.X - surfacePoint.X) +
                                         (spanCand.Z - surfacePoint.Z) * (spanCand.Z - surfacePoint.Z);
                         if (dSpanSq < bestDistSq)
@@ -554,17 +760,22 @@ namespace Stratocraft.Inventory.Systems
 
                 finalPosition = bestPos;
                 finalRotation = WorldLoosePlacementMath.LookRotationSafe(horizFwd, Vector3.UnitY);
+                validation = CanPlacePiece(
+                    role, finalPosition, finalRotation, snappedToStructure, resolvedCourseIndex1Based,
+                    surfacePoint.Y, existingParts, existingModularNodes, sampleTerrainY);
                 return;
             }
 
-            // 2) Ust Ana Kiris: iki dikmenin tepesine (zemin + 2.00m) veya duvar ustune kilitlenir
+            // 2) Ust Ana Kiris: YALNIZCA iki dikme tepesi veya tasiyici duvar ustunde yukselir (DOK2 C3: +2.00m sahte ucus KAPALI!)
             if (role == SotfFreeformLogRole.HorizontalMainBeam)
             {
-                float beamY = surfacePoint.Y + 2.00f;
+                float beamY = surfacePoint.Y + TimberLogHalfExtentXZ;
                 Vector3 beamXZ = new Vector3(surfacePoint.X, 0f, surfacePoint.Z);
+                Vector3 beamAxis = horizFwd;
+                bool foundDualSupport = false;
 
-                // Iki dikey kolon ortasini yakala
-                for (int i = 0; i < existingParts.Length; i++)
+                // Iki dikey kolon ortasini yakala (iki uc destekli gercek kiris)
+                for (int i = 0; i < existingParts.Length && !foundDualSupport; i++)
                 {
                     ref readonly LoosePartPoint pA = ref existingParts[i];
                     if (pA.Kind != LooseBuildPartKind.FallenTreeLog) continue;
@@ -585,20 +796,77 @@ namespace Stratocraft.Inventory.Systems
                             {
                                 beamXZ = new Vector3(mid.X, 0f, mid.Z);
                                 beamY = MathF.Max(pA.Position.Y, pB.Position.Y) + 1.05f;
-                                Vector3 axis = Vector3.Normalize(new Vector3(pB.Position.X - pA.Position.X, 0f, pB.Position.Z - pA.Position.Z));
-                                finalPosition = new Vector3(beamXZ.X, beamY, beamXZ.Z);
-                                finalRotation = WorldLoosePlacementMath.LookRotationSafe(Vector3.UnitY, axis);
+                                beamAxis = Vector3.Normalize(new Vector3(pB.Position.X - pA.Position.X, 0f, pB.Position.Z - pA.Position.Z));
                                 snappedToStructure = true;
-                                return;
+                                foundDualSupport = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!foundDualSupport)
+                {
+                    // Mevcut iki moduler duvar/kolon tepesine oturuyor mu kontrol et:
+                    int bearingModularHits = 0;
+                    float bestTopY = beamY;
+                    for (int m = 0; m < existingModularNodes.Length; m++)
+                    {
+                        ref readonly ModularPlacedPieceNode mn = ref existingModularNodes[m];
+                        if (mn.IsBroken || mn.IsFalling) continue;
+                        if (!IsVerticalLoadBearingElement(mn.Kind)) continue;
+                        float dx = mn.Position.X - surfacePoint.X;
+                        float dz = mn.Position.Z - surfacePoint.Z;
+                        if ((dx * dx + dz * dz) <= 1.55f * 1.55f)
+                        {
+                            ValheimSotfModularGraphSolver.ComputeWorldAabb(mn.Kind, mn.Position, mn.Rotation, out _, out Vector3 mMax);
+                            if (mMax.Y <= surfacePoint.Y + 3.4f)
+                            {
+                                bestTopY = MathF.Max(bestTopY, mMax.Y + TimberLogHalfExtentXZ);
+                                bearingModularHits++;
                             }
                         }
                     }
 
-                    float dPostSq = (pA.Position.X - surfacePoint.X) * (pA.Position.X - surfacePoint.X) +
-                                    (pA.Position.Z - surfacePoint.Z) * (pA.Position.Z - surfacePoint.Z);
-                    if (dPostSq <= 1.45f * 1.45f)
+                    if (bearingModularHits >= 2)
                     {
-                        beamY = MathF.Max(beamY, pA.Position.Y + 1.05f);
+                        beamY = bestTopY;
+                        snappedToStructure = true;
+                    }
+                }
+
+                finalPosition = new Vector3(beamXZ.X, beamY, beamXZ.Z);
+                finalRotation = WorldLoosePlacementMath.LookRotationSafe(Vector3.UnitY, beamAxis);
+                validation = CanPlacePiece(
+                    role, finalPosition, finalRotation, snappedToStructure, resolvedCourseIndex1Based,
+                    surfacePoint.Y, existingParts, existingModularNodes, sampleTerrainY);
+                return;
+            }
+
+            // 3) Egimli Cati Mertegi (DOK2 C3: desteksiz +2.52m havada yerlestirme KAPALI; yalnizca kiris/duvar ustune oturur!)
+            if (role == SotfFreeformLogRole.InclinedRoofRafter)
+            {
+                float baseRoofY = surfacePoint.Y + TimberLogHalfExtentXZ;
+                for (int i = 0; i < existingParts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref existingParts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                    byte pRole = p.ShapeDna.StageByte;
+                    if (pRole != (byte)SotfFreeformLogRole.HorizontalMainBeam &&
+                        pRole != (byte)SotfFreeformLogRole.HorizontalWallCourse &&
+                        pRole != (byte)SotfFreeformLogRole.VerticalSupportColumn)
+                    {
+                        continue;
+                    }
+
+                    float dx = p.Position.X - surfacePoint.X;
+                    float dz = p.Position.Z - surfacePoint.Z;
+                    if ((dx * dx + dz * dz) <= 1.50f * 1.50f && p.Position.Y >= surfacePoint.Y + 0.80f)
+                    {
+                        float topRef = pRole == (byte)SotfFreeformLogRole.VerticalSupportColumn
+                            ? p.Position.Y + 1.00f
+                            : p.Position.Y + TimberLogHalfExtentXZ;
+                        baseRoofY = MathF.Max(baseRoofY, topRef + 0.30f);
                         snappedToStructure = true;
                     }
                 }
@@ -607,52 +875,35 @@ namespace Stratocraft.Inventory.Systems
                 {
                     ref readonly ModularPlacedPieceNode mn = ref existingModularNodes[m];
                     if (mn.IsBroken || mn.IsFalling) continue;
+                    if (!IsVerticalLoadBearingElement(mn.Kind) && mn.Kind != ModularBuildPieceKind.LogBeam2m) continue;
                     float dx = mn.Position.X - surfacePoint.X;
                     float dz = mn.Position.Z - surfacePoint.Z;
                     if ((dx * dx + dz * dz) <= 1.55f * 1.55f)
                     {
                         ValheimSotfModularGraphSolver.ComputeWorldAabb(mn.Kind, mn.Position, mn.Rotation, out _, out Vector3 mMax);
-                        if (mMax.Y > beamY - 0.5f && mMax.Y <= surfacePoint.Y + 3.4f)
+                        if (mMax.Y >= surfacePoint.Y + 1.10f && mMax.Y <= surfacePoint.Y + 4.50f)
                         {
-                            beamY = mMax.Y + 0.14f;
+                            baseRoofY = MathF.Max(baseRoofY, mMax.Y + 0.30f);
                             snappedToStructure = true;
                         }
-                    }
-                }
-
-                finalPosition = new Vector3(beamXZ.X, beamY, beamXZ.Z);
-                finalRotation = WorldLoosePlacementMath.LookRotationSafe(Vector3.UnitY, horizFwd);
-                return;
-            }
-
-            // 3) Egimli Cati Mertegi (35 derece egimle kiris/duvar ustune kilitlenir)
-            if (role == SotfFreeformLogRole.InclinedRoofRafter)
-            {
-                float baseRoofY = surfacePoint.Y + 2.00f;
-                for (int i = 0; i < existingParts.Length; i++)
-                {
-                    ref readonly LoosePartPoint p = ref existingParts[i];
-                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
-                    float dx = p.Position.X - surfacePoint.X;
-                    float dz = p.Position.Z - surfacePoint.Z;
-                    if ((dx * dx + dz * dz) <= 1.50f * 1.50f && p.Position.Y >= surfacePoint.Y + 0.80f)
-                    {
-                        baseRoofY = MathF.Max(baseRoofY, p.Position.Y + 0.35f);
-                        snappedToStructure = true;
                     }
                 }
 
                 const float pitchRad = 35.0f * (MathF.PI / 180.0f);
                 Vector3 rafterAxis = Vector3.Normalize(horizFwd * MathF.Cos(pitchRad) + Vector3.UnitY * MathF.Sin(pitchRad));
                 Vector3 rafterNormal = Vector3.Normalize(-horizFwd * MathF.Sin(pitchRad) + Vector3.UnitY * MathF.Cos(pitchRad));
-                finalPosition = new Vector3(surfacePoint.X, baseRoofY + 0.52f, surfacePoint.Z);
+                float finalRafterY = snappedToStructure ? baseRoofY + 0.22f : surfacePoint.Y + TimberLogHalfExtentXZ;
+                finalPosition = new Vector3(surfacePoint.X, finalRafterY, surfacePoint.Z);
                 finalRotation = WorldLoosePlacementMath.LookRotationSafe(-rafterNormal, rafterAxis);
+                validation = CanPlacePiece(
+                    role, finalPosition, finalRotation, snappedToStructure, resolvedCourseIndex1Based,
+                    surfacePoint.Y, existingParts, existingModularNodes, sampleTerrainY);
                 return;
             }
 
-            // 4) Yatay Duvar Kutugu (Sons of the Forest Katman 1..6 ust uste kilitlenme + iki dikme arasi miknatis + uc uca 2m kenetlenme!)
-            const float courseStepY = 0.38f;
-            float wallY = surfacePoint.Y + 0.20f;
+            // 4) Yatay Duvar Kutugu (B2: 0.42m sira adimi = 0cm hava boslugu; C4: iki ucta dikme veya capraz kertik sarti!)
+            const float courseStepY = TimberLogCourseStepYMeters;
+            float wallY = surfacePoint.Y + TimberLogHalfExtentXZ;
             Vector3 wallXZ = new Vector3(surfacePoint.X, 0f, surfacePoint.Z);
             Vector3 wallAxis = horizFwd;
             int stackedCount = 0;
@@ -675,7 +926,7 @@ namespace Stratocraft.Inventory.Systems
                         {
                             wallXZ = new Vector3(mid.X, 0f, mid.Z);
                             wallAxis = Vector3.Normalize(new Vector3(pB.Position.X - pA.Position.X, 0f, pB.Position.Z - pA.Position.Z));
-                            wallY = MathF.Min(pA.Position.Y, pB.Position.Y) - 0.78f;
+                            wallY = MathF.Min(pA.Position.Y, pB.Position.Y) - 1.00f + TimberLogHalfExtentXZ;
                             snappedToStructure = true;
                             break;
                         }
@@ -726,6 +977,21 @@ namespace Stratocraft.Inventory.Systems
                                         (endPos.Z - surfacePoint.Z) * (endPos.Z - surfacePoint.Z);
                             if (eSq < bestEndSnapSq)
                             {
+                                // DOK2 C4: Ucurum kenarinda altinda zemin olmayan bosluga uc-uca snap yapma!
+                                if (sampleTerrainY != null)
+                                {
+                                    Vector3 farTip = endPos + existingAxis * (sign * 0.88f);
+                                    float? midGround = sampleTerrainY(endPos.X, endPos.Z);
+                                    float? tipGround = sampleTerrainY(farTip.X, farTip.Z);
+                                    if (!midGround.HasValue || !tipGround.HasValue ||
+                                        (p.Position.Y - TimberLogHalfExtentXZ) - midGround.Value > 0.45f ||
+                                        (p.Position.Y - TimberLogHalfExtentXZ) - tipGround.Value > 0.45f)
+                                    {
+                                        continue;
+                                    }
+                                    wallY = MathF.Max(midGround.Value, tipGround.Value) + TimberLogHalfExtentXZ;
+                                }
+
                                 bestEndSnapSq = eSq;
                                 wallXZ = new Vector3(endPos.X, 0f, endPos.Z);
                                 wallAxis = existingAxis;
@@ -743,6 +1009,617 @@ namespace Stratocraft.Inventory.Systems
             if (tangentAxis.LengthSquared() < 1e-4f) tangentAxis = Vector3.Cross(upNormal, Vector3.UnitX);
             tangentAxis = Vector3.Normalize(tangentAxis);
             finalRotation = WorldLoosePlacementMath.LookRotationSafe(-upNormal, tangentAxis);
+
+            validation = CanPlacePiece(
+                role, finalPosition, finalRotation, snappedToStructure, resolvedCourseIndex1Based,
+                surfacePoint.Y, existingParts, existingModularNodes, sampleTerrainY);
+        }
+
+        /// <summary>
+        /// DOK2 C2..C5 &amp; AK-02: Bir serbest 2m kutuk yapi elemaninin fiziksel temel (GroundAnchor / StoneFooting)
+        /// veya iki ucta dikme (TimberPost) / capraz kertik (SaddleNotch / DovetailNotch) destegiyle yerlestirilip
+        /// yerlestirilemeyecegini kesin olarak denetler (0 B GC).
+        /// </summary>
+        public static FreeformLogPlacementValidation CanPlacePiece(
+            SotfFreeformLogRole role,
+            Vector3 candidatePosition,
+            Quaternion candidateRotation,
+            bool snappedToStructure,
+            int resolvedCourseIndex1Based,
+            float referenceGroundY,
+            ReadOnlySpan<LoosePartPoint> existingParts,
+            ReadOnlySpan<ModularPlacedPieceNode> existingModularNodes,
+            Func<float, float, float?>? sampleTerrainY = null)
+        {
+            static bool HasModularSupportAt(
+                Vector3 probePt,
+                float maxHorizDist,
+                float minTopOffset,
+                float maxTopOffset,
+                ReadOnlySpan<ModularPlacedPieceNode> modularNodes,
+                out bool isStoneFooting)
+            {
+                isStoneFooting = false;
+                for (int m = 0; m < modularNodes.Length; m++)
+                {
+                    ref readonly ModularPlacedPieceNode mn = ref modularNodes[m];
+                    if (mn.IsBroken || mn.IsFalling) continue;
+                    if (!IsVerticalLoadBearingElement(mn.Kind) && mn.Kind != ModularBuildPieceKind.LogBeam2m) continue;
+
+                    ValheimSotfModularGraphSolver.ComputeWorldAabb(mn.Kind, mn.Position, mn.Rotation, out Vector3 mMin, out Vector3 mMax);
+                    bool withinXZ = probePt.X >= mMin.X - maxHorizDist && probePt.X <= mMax.X + maxHorizDist &&
+                                    probePt.Z >= mMin.Z - maxHorizDist && probePt.Z <= mMax.Z + maxHorizDist;
+                    if (!withinXZ) continue;
+                    if (probePt.Y >= mMin.Y - 0.15f && probePt.Y <= mMax.Y + maxTopOffset && mMax.Y >= probePt.Y - minTopOffset)
+                    {
+                        isStoneFooting = mn.Kind == ModularBuildPieceKind.StoneFoundation2x2m;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            static bool HasVerticalPostNear(
+                Vector3 endPt,
+                float maxHorizDist,
+                ReadOnlySpan<LoosePartPoint> parts,
+                ReadOnlySpan<ModularPlacedPieceNode> modularNodes)
+            {
+                float maxHorizSq = maxHorizDist * maxHorizDist;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref parts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                    if (p.ShapeDna.StageByte != (byte)SotfFreeformLogRole.VerticalSupportColumn) continue;
+                    float dx = p.Position.X - endPt.X;
+                    float dz = p.Position.Z - endPt.Z;
+                    if ((dx * dx + dz * dz) <= maxHorizSq &&
+                        endPt.Y >= p.Position.Y - 1.12f &&
+                        endPt.Y <= p.Position.Y + 1.28f)
+                    {
+                        return true;
+                    }
+                }
+
+                return HasModularSupportAt(endPt, maxHorizDist, 2.2f, 0.30f, modularNodes, out _);
+            }
+
+            static bool HasPerpendicularNotchNear(
+                Vector3 endPt,
+                Vector3 logAxisXZ,
+                ReadOnlySpan<LoosePartPoint> parts)
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref parts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                    if (p.ShapeDna.StageByte != (byte)SotfFreeformLogRole.HorizontalWallCourse) continue;
+
+                    Vector3 otherAxis = Vector3.Transform(Vector3.UnitY, p.Rotation);
+                    otherAxis.Y = 0f;
+                    if (otherAxis.LengthSquared() < 1e-4f) continue;
+                    otherAxis = Vector3.Normalize(otherAxis);
+
+                    // Capraz dik kutuk kesisimi (SaddleNotch / DovetailNotch: |dot| < 0.38 -> ~68..90 derece)
+                    if (MathF.Abs(Vector3.Dot(logAxisXZ, otherAxis)) > 0.38f) continue;
+                    if (MathF.Abs(p.Position.Y - endPt.Y) > 0.48f) continue;
+
+                    // endPt noktasi diger kutugun [center - 1.05 .. center + 1.05] ekseni uzerinde mi?
+                    Vector3 rel = endPt - p.Position;
+                    float proj = rel.X * otherAxis.X + rel.Z * otherAxis.Z;
+                    if (MathF.Abs(proj) > 1.12f) continue;
+                    float perpX = rel.X - otherAxis.X * proj;
+                    float perpZ = rel.Z - otherAxis.Z * proj;
+                    if ((perpX * perpX + perpZ * perpZ) <= 0.52f * 0.52f)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            float localGroundY = sampleTerrainY != null && sampleTerrainY(candidatePosition.X, candidatePosition.Z) is float gyCenter
+                ? gyCenter
+                : referenceGroundY;
+
+            // 1) Dikey Kolon / Dikme
+            if (role == SotfFreeformLogRole.VerticalSupportColumn)
+            {
+                float bottomY = candidatePosition.Y - 1.00f;
+                if (HasModularSupportAt(new Vector3(candidatePosition.X, bottomY, candidatePosition.Z), 0.35f, 0.35f, 0.16f, existingModularNodes, out bool onStoneFooting))
+                {
+                    return new FreeformLogPlacementValidation
+                    {
+                        CanPlace = true,
+                        PrimaryJoint = onStoneFooting ? JointConnectionKind.StoneFooting : JointConnectionKind.MortiseTenonPeg,
+                        PreviewStateMode = 0,
+                        Stability01 = 1.0f,
+                        FeedbackReason = onStoneFooting ? "Taş temel üzerinde sağlam dikme." : "Alt taşıyıcı üzerinde hizalı dikme."
+                    };
+                }
+
+                if (MathF.Abs(bottomY - localGroundY) <= StrictGroundContactToleranceMeters + 0.08f)
+                {
+                    return new FreeformLogPlacementValidation
+                    {
+                        CanPlace = true,
+                        PrimaryJoint = JointConnectionKind.GroundAnchor,
+                        PreviewStateMode = 0,
+                        Stability01 = 0.92f,
+                        FeedbackReason = "Zemine oturan dikey dikme."
+                    };
+                }
+
+                // Ust uste dikme uzatma: tam altinda baska bir dikey dikme var mi?
+                for (int i = 0; i < existingParts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref existingParts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog || p.ShapeDna.StageByte != (byte)SotfFreeformLogRole.VerticalSupportColumn) continue;
+                    float dx = p.Position.X - candidatePosition.X;
+                    float dz = p.Position.Z - candidatePosition.Z;
+                    float dy = candidatePosition.Y - p.Position.Y;
+                    if ((dx * dx + dz * dz) <= 0.25f * 0.25f && dy >= 1.85f && dy <= 2.15f)
+                    {
+                        return new FreeformLogPlacementValidation
+                        {
+                            CanPlace = true,
+                            PrimaryJoint = JointConnectionKind.MortiseTenonPeg,
+                            PreviewStateMode = 0,
+                            Stability01 = 0.84f,
+                            FeedbackReason = "Alt dikmeye zıvanalı kolon uzantısı."
+                        };
+                    }
+                }
+
+                return new FreeformLogPlacementValidation
+                {
+                    CanPlace = false,
+                    PrimaryJoint = JointConnectionKind.None,
+                    PreviewStateMode = 3,
+                    Stability01 = 0f,
+                    FeedbackReason = "DESTEKSİZ DİKME: Dikey kütük havada duramaz; sağlam zemin, taş temel veya alt dikme gerekir!"
+                };
+            }
+
+            Vector3 logAxis = Vector3.Transform(Vector3.UnitY, candidateRotation);
+            Vector3 logAxisXZ = new Vector3(logAxis.X, 0f, logAxis.Z);
+            if (logAxisXZ.LengthSquared() > 1e-4f) logAxisXZ = Vector3.Normalize(logAxisXZ);
+            else logAxisXZ = Vector3.UnitX;
+
+            Vector3 endA = candidatePosition - logAxisXZ * 0.90f;
+            Vector3 endB = candidatePosition + logAxisXZ * 0.90f;
+
+            // 2) Ust Ana Kiris: Iki ucta dikme/duvar mesnedi ZORUNLU!
+            if (role == SotfFreeformLogRole.HorizontalMainBeam)
+            {
+                bool supportA = HasVerticalPostNear(endA, 0.58f, existingParts, existingModularNodes) ||
+                                HasPerpendicularNotchNear(endA, logAxisXZ, existingParts);
+                bool supportB = HasVerticalPostNear(endB, 0.58f, existingParts, existingModularNodes) ||
+                                HasPerpendicularNotchNear(endB, logAxisXZ, existingParts);
+
+                if (supportA && supportB)
+                {
+                    return new FreeformLogPlacementValidation
+                    {
+                        CanPlace = true,
+                        PrimaryJoint = JointConnectionKind.MortiseTenonPeg,
+                        PreviewStateMode = 0,
+                        Stability01 = 0.88f,
+                        FeedbackReason = "İki uçta dikme/duvar destekli ana kiriş."
+                    };
+                }
+
+                return new FreeformLogPlacementValidation
+                {
+                    CanPlace = false,
+                    PrimaryJoint = JointConnectionKind.None,
+                    PreviewStateMode = 3,
+                    Stability01 = 0f,
+                    FeedbackReason = "DESTEKSİZ ANA KİRİŞ: Kiriş havada duramaz; her iki uçta dikme (TimberPost) veya duvar mesnedi gerekir!"
+                };
+            }
+
+            // 3) Egimli Cati Mertegi: Altinda kiris veya duvar mesnedi ZORUNLU!
+            if (role == SotfFreeformLogRole.InclinedRoofRafter)
+            {
+                if (!snappedToStructure)
+                {
+                    return new FreeformLogPlacementValidation
+                    {
+                        CanPlace = false,
+                        PrimaryJoint = JointConnectionKind.None,
+                        PreviewStateMode = 3,
+                        Stability01 = 0f,
+                        FeedbackReason = "DESTEKSİZ ÇATI MERTEĞİ: Mertek havada duramaz; önce duvar ve üst ana kiriş kurun!"
+                    };
+                }
+
+                bool hasBearing = false;
+                for (int i = 0; i < existingParts.Length; i++)
+                {
+                    ref readonly LoosePartPoint p = ref existingParts[i];
+                    if (p.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                    float dx = p.Position.X - candidatePosition.X;
+                    float dz = p.Position.Z - candidatePosition.Z;
+                    if ((dx * dx + dz * dz) <= 1.55f * 1.55f &&
+                        p.Position.Y <= candidatePosition.Y - 0.10f &&
+                        p.Position.Y >= candidatePosition.Y - 1.35f)
+                    {
+                        hasBearing = true;
+                        break;
+                    }
+                }
+                if (!hasBearing)
+                {
+                    hasBearing = HasModularSupportAt(candidatePosition - new Vector3(0f, 0.45f, 0f), 1.25f, 1.50f, 0.45f, existingModularNodes, out _);
+                }
+
+                if (hasBearing)
+                {
+                    return new FreeformLogPlacementValidation
+                    {
+                        CanPlace = true,
+                        PrimaryJoint = JointConnectionKind.SaddleNotch,
+                        PreviewStateMode = 0,
+                        Stability01 = 0.80f,
+                        FeedbackReason = "Kiriş/duvar destekli eğimli çatı merteği."
+                    };
+                }
+
+                return new FreeformLogPlacementValidation
+                {
+                    CanPlace = false,
+                    PrimaryJoint = JointConnectionKind.None,
+                    PreviewStateMode = 3,
+                    Stability01 = 0f,
+                    FeedbackReason = "DESTEKSİZ ÇATI MERTEĞİ: Alt taşıyıcı kiriş veya duvar bulunamadı!"
+                };
+            }
+
+            // 4) Yatay Duvar Kutugu:
+            //    a) 1. sira (zemin/temel kotu): Iki uc da zemine/tasa oturmali (ucurum kenari bosluga uzatma YASAK!)
+            //    b) 2+ sira (ust uste dizme): Iki ucta dikey dikme (TimberPost) VEYA capraz kertik (SaddleNotch/DovetailNotch) ZORUNLU!
+            float logBottomY = candidatePosition.Y - TimberLogHalfExtentXZ;
+            bool isGroundCourse = resolvedCourseIndex1Based <= 1 &&
+                                  MathF.Abs(logBottomY - localGroundY) <= 0.34f;
+
+            if (isGroundCourse)
+            {
+                if (sampleTerrainY != null)
+                {
+                    float? gA = sampleTerrainY(endA.X, endA.Z);
+                    float? gB = sampleTerrainY(endB.X, endB.Z);
+                    bool endASupported = (gA.HasValue && (logBottomY - gA.Value) <= 0.38f) ||
+                                         HasVerticalPostNear(endA, 0.45f, existingParts, existingModularNodes) ||
+                                         HasModularSupportAt(new Vector3(endA.X, logBottomY, endA.Z), 0.35f, 0.40f, 0.20f, existingModularNodes, out _);
+                    bool endBSupported = (gB.HasValue && (logBottomY - gB.Value) <= 0.38f) ||
+                                         HasVerticalPostNear(endB, 0.45f, existingParts, existingModularNodes) ||
+                                         HasModularSupportAt(new Vector3(endB.X, logBottomY, endB.Z), 0.35f, 0.40f, 0.20f, existingModularNodes, out _);
+                    if (!endASupported || !endBSupported)
+                    {
+                        return new FreeformLogPlacementValidation
+                        {
+                            CanPlace = false,
+                            PrimaryJoint = JointConnectionKind.None,
+                            PreviewStateMode = 3,
+                            Stability01 = 0f,
+                            FeedbackReason = "UÇURUM / DESTEKSİZ UZATMA: Kütüğün her iki ucu da zemin, taş temel veya dikme üzerine oturmalıdır!"
+                        };
+                    }
+                }
+
+                bool onFooting = HasModularSupportAt(new Vector3(candidatePosition.X, logBottomY, candidatePosition.Z), 0.35f, 0.35f, 0.20f, existingModularNodes, out bool isStoneFoot);
+                return new FreeformLogPlacementValidation
+                {
+                    CanPlace = true,
+                    PrimaryJoint = (onFooting && isStoneFoot) ? JointConnectionKind.StoneFooting : JointConnectionKind.GroundAnchor,
+                    PreviewStateMode = 0,
+                    Stability01 = 0.96f,
+                    FeedbackReason = onFooting ? "Taş temel üzerinde taban kütüğü." : "Zemine oturan taban duvar kütüğü."
+                };
+            }
+
+            // Yuksek / Ust uste sira: altinda temas eden yatay kutuk + iki ucta dikme veya capraz kertik sart!
+            bool hasLowerHorizontalLog = false;
+            for (int i = 0; i < existingParts.Length; i++)
+            {
+                ref readonly LoosePartPoint p = ref existingParts[i];
+                if (p.Kind != LooseBuildPartKind.FallenTreeLog || p.ShapeDna.StageByte != (byte)SotfFreeformLogRole.HorizontalWallCourse) continue;
+                float dx = p.Position.X - candidatePosition.X;
+                float dz = p.Position.Z - candidatePosition.Z;
+                float dy = candidatePosition.Y - p.Position.Y;
+                if ((dx * dx + dz * dz) <= 0.55f * 0.55f && dy >= 0.28f && dy <= TimberLogTargetDiameterMeters + 0.08f)
+                {
+                    hasLowerHorizontalLog = true;
+                    break;
+                }
+            }
+
+            bool endAPost = HasVerticalPostNear(endA, 0.58f, existingParts, existingModularNodes);
+            bool endBPost = HasVerticalPostNear(endB, 0.58f, existingParts, existingModularNodes);
+            bool endANotch = HasPerpendicularNotchNear(endA, logAxisXZ, existingParts);
+            bool endBNotch = HasPerpendicularNotchNear(endB, logAxisXZ, existingParts);
+
+            bool endALocked = endAPost || endANotch;
+            bool endBLocked = endBPost || endBNotch;
+
+            if (hasLowerHorizontalLog && endALocked && endBLocked)
+            {
+                JointConnectionKind joint = (endANotch || endBNotch)
+                    ? JointConnectionKind.SaddleNotch
+                    : JointConnectionKind.MortiseTenonPeg;
+                return new FreeformLogPlacementValidation
+                {
+                    CanPlace = true,
+                    PrimaryJoint = joint,
+                    PreviewStateMode = 0,
+                    Stability01 = 0.90f,
+                    FeedbackReason = joint == JointConnectionKind.SaddleNotch
+                        ? "Çapraz semer kertikli kilitli kütük sırası."
+                        : "İki uçta dikme destekli kütük duvar sırası."
+                };
+            }
+
+            return new FreeformLogPlacementValidation
+            {
+                CanPlace = false,
+                PrimaryJoint = JointConnectionKind.None,
+                PreviewStateMode = 3,
+                Stability01 = 0f,
+                FeedbackReason = "KERTİKSİZ / DİKMESİZ YIĞMA YASAK: Kütükleri üst üste dizmek için her iki uçta dikey dikme (TimberPost) veya çapraz köşe kertiği (SaddleNotch) gerekir!"
+            };
+        }
+
+        /// <summary>
+        /// DOK2 C1: Serbest FallenTreeLog listesinde alttaki kutuk [E] ile alindiginda veya zemin kazildiginda
+        /// kopan tum ust kutukleri (GeoSupportDist == 65535) aninda (0.0s) yercekimi dususune gecirir (0 B GC).
+        /// </summary>
+        public static int RecomputeLooseLogSupportAndTriggerFalls(
+            ReadOnlySpan<LoosePartPoint> logs,
+            Span<LooseLogSupportState> states,
+            Func<float, float, float> sampleFloorY,
+            out int detachedCount)
+        {
+            int n = Math.Min(logs.Length, states.Length);
+            detachedCount = 0;
+            if (n == 0) return 0;
+
+            Span<int> queue = n <= 256 ? stackalloc int[n] : new int[n];
+            int qHead = 0, qTail = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                if (logs[i].Kind != LooseBuildPartKind.FallenTreeLog)
+                {
+                    states[i].GeoSupportDist = 0;
+                    states[i].IsFalling = false;
+                    continue;
+                }
+
+                states[i].GeoSupportDist = MortarConstants.DetachedGeodesicDistance;
+                float floorY = sampleFloorY(logs[i].Position.X, logs[i].Position.Z);
+                bool isVertical = logs[i].ShapeDna.StageByte == (byte)SotfFreeformLogRole.VerticalSupportColumn;
+                float bottomY = logs[i].Position.Y - (isVertical ? 1.00f : TimberLogHalfExtentXZ);
+
+                if (bottomY <= floorY + StrictGroundContactToleranceMeters + 0.06f)
+                {
+                    states[i].GeoSupportDist = 0;
+                    states[i].IsFalling = false;
+                    states[i].Velocity = Vector3.Zero;
+                    states[i].AngularVelocity = Vector3.Zero;
+                    queue[qTail++] = i;
+                }
+            }
+
+            // BFS: Zemine oturan kutuklerden temas/kertik/dikme yoluyla bagli olanlari yay
+            while (qHead < qTail)
+            {
+                int cur = queue[qHead++];
+                ushort nextDist = (ushort)Math.Min(ushort.MaxValue - 1, states[cur].GeoSupportDist + 1);
+                ref readonly LoosePartPoint pCur = ref logs[cur];
+                bool curVert = pCur.ShapeDna.StageByte == (byte)SotfFreeformLogRole.VerticalSupportColumn;
+
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == cur || states[j].GeoSupportDist <= nextDist) continue;
+                    ref readonly LoosePartPoint pNext = ref logs[j];
+                    if (pNext.Kind != LooseBuildPartKind.FallenTreeLog) continue;
+
+                    // pNext ustte ve fiziksel olarak pCur'a dayaniyor mu?
+                    float dx = pNext.Position.X - pCur.Position.X;
+                    float dz = pNext.Position.Z - pCur.Position.Z;
+                    float horizDistSq = dx * dx + dz * dz;
+                    float dy = pNext.Position.Y - pCur.Position.Y;
+
+                    bool physicallySupported = false;
+                    if (curVert)
+                    {
+                        // Alt dikme uzerindeki dikme (+2.0m) veya iki ucu dikmeye oturan yatay kutuk/kiris (<= 1.25m)
+                        if (horizDistSq <= 1.25f * 1.25f && dy >= -0.95f && dy <= 2.18f)
+                        {
+                            physicallySupported = true;
+                        }
+                    }
+                    else
+                    {
+                        // Alt yatay kutugun tam ustundeki sira (<= 0.50m ustte) veya capraz kesisen kertikli kutuk
+                        if (horizDistSq <= 1.20f * 1.20f && dy >= 0.12f && dy <= TimberLogTargetDiameterMeters + 0.16f)
+                        {
+                            physicallySupported = true;
+                        }
+                    }
+
+                    if (physicallySupported)
+                    {
+                        states[j].GeoSupportDist = nextDist;
+                        states[j].IsFalling = false;
+                        queue[qTail++] = j;
+                    }
+                }
+            }
+
+            // Desteksiz kalan (GeoSupportDist == 65535) tum kutukler Karar A1 geregi 0.0s aninda dusmeye baslar!
+            for (int i = 0; i < n; i++)
+            {
+                if (logs[i].Kind != LooseBuildPartKind.FallenTreeLog) continue;
+                if (states[i].GeoSupportDist == MortarConstants.DetachedGeodesicDistance)
+                {
+                    if (!states[i].IsFalling)
+                    {
+                        states[i].IsFalling = true;
+                        states[i].FallenElapsedSec = 0f;
+                        states[i].Velocity = new Vector3(0f, -0.35f, 0f);
+                        float sign = ((logs[i].InstanceId & 1) == 0) ? 1f : -1f;
+                        states[i].AngularVelocity = new Vector3(sign * 0.45f, 0f, -sign * 0.35f);
+                    }
+                    detachedCount++;
+                }
+            }
+
+            return detachedCount;
+        }
+
+        /// <summary>
+        /// Dusmekte olan serbest kutukleri yercekimi altinda indirir ve zemine carptiginda oturtur (0 B GC).
+        /// </summary>
+        public static int StepLooseLogsUnderGravity(
+            Span<LoosePartPoint> logs,
+            Span<LooseLogSupportState> states,
+            float dt,
+            Func<float, float, float> sampleFloorY)
+        {
+            if (dt <= 0f) return 0;
+            int n = Math.Min(logs.Length, states.Length);
+            int activeFalling = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                if (!states[i].IsFalling) continue;
+                ref LoosePartPoint log = ref logs[i];
+                ref LooseLogSupportState st = ref states[i];
+
+                st.FallenElapsedSec += dt;
+                st.Velocity.Y -= 9.81f * dt;
+                Vector3 nextPos = log.Position + st.Velocity * dt;
+
+                bool isVert = log.ShapeDna.StageByte == (byte)SotfFreeformLogRole.VerticalSupportColumn;
+                float halfBottom = isVert ? 1.00f : TimberLogHalfExtentXZ;
+                float floorY = sampleFloorY(nextPos.X, nextPos.Z) + halfBottom;
+
+                if (nextPos.Y <= floorY)
+                {
+                    nextPos.Y = floorY;
+                    log.Position = nextPos;
+                    st.Velocity = Vector3.Zero;
+                    st.AngularVelocity = Vector3.Zero;
+                    st.IsFalling = false;
+                    st.GeoSupportDist = 0;
+                }
+                else
+                {
+                    log.Position = nextPos;
+                    activeFalling++;
+                }
+            }
+
+            return activeFalling;
+        }
+
+        /// <summary>
+        /// DOK2 C6: Iki moduler yapi dugumu arasinda eski 26cm hava boslugu yerine siki 8cm fiziksel temas denetimi.
+        /// </summary>
+        public static bool HasStrictStructuralContact(
+            in ModularPlacedPieceNode a,
+            in ModularPlacedPieceNode b,
+            float toleranceMeters = StrictJointContactToleranceMeters)
+        {
+            if (a.IsBroken || a.IsFalling || b.IsBroken || b.IsFalling) return false;
+            ValheimSotfModularGraphSolver.ComputeWorldAabb(a.Kind, a.Position, a.Rotation, out Vector3 minA, out Vector3 maxA);
+            ValheimSotfModularGraphSolver.ComputeWorldAabb(b.Kind, b.Position, b.Rotation, out Vector3 minB, out Vector3 maxB);
+
+            return maxA.X + toleranceMeters >= minB.X && minA.X - toleranceMeters <= maxB.X &&
+                   maxA.Y + toleranceMeters >= minB.Y && minA.Y - toleranceMeters <= maxB.Y &&
+                   maxA.Z + toleranceMeters >= minB.Z && minA.Z - toleranceMeters <= maxB.Z;
+        }
+
+        /// <summary>
+        /// DOK2 C6: Alti kazilan binalarin kalici IsGrounded=true acigiyla havada asili kalmasini engeller.
+        /// Canli arazi kotunu ornekleyip zeminden kopan dugumlerde IsGrounded=false yapar ve siki 8cm temas grafiyla
+        /// zemine ulasamayan tum parcalari aninda (0.0s) dususe gecirir (0 B GC).
+        /// </summary>
+        public static void RevalidateModularGroundAndSupportAfterExcavation(
+            Span<ModularPlacedPieceNode> nodes,
+            Func<float, float, float> sampleLiveTerrainY,
+            out int ungroundedCount,
+            out int collapsedCount,
+            float jointToleranceMeters = StrictJointContactToleranceMeters)
+        {
+            ungroundedCount = 0;
+            collapsedCount = 0;
+            int n = nodes.Length;
+            if (n == 0) return;
+
+            Span<bool> reached = n <= 512 ? stackalloc bool[n] : new bool[n];
+            Span<int> queue = n <= 512 ? stackalloc int[n] : new int[n];
+            int qHead = 0, qTail = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                ref ModularPlacedPieceNode node = ref nodes[i];
+                if (node.IsBroken || node.IsFalling) continue;
+
+                float liveGroundY = sampleLiveTerrainY(node.Position.X, node.Position.Z);
+                ValheimSotfModularGraphSolver.ComputeWorldAabb(node.Kind, node.Position, node.Rotation, out Vector3 wMin, out _);
+
+                bool trulyTouchingGround = wMin.Y <= liveGroundY + StrictGroundContactToleranceMeters;
+                if (node.IsGrounded && !trulyTouchingGround)
+                {
+                    node.IsGrounded = false;
+                    ungroundedCount++;
+                }
+                else if (trulyTouchingGround)
+                {
+                    node.IsGrounded = true;
+                }
+
+                node.GroundFloorY = liveGroundY;
+
+                if (node.IsGrounded)
+                {
+                    reached[i] = true;
+                    queue[qTail++] = i;
+                }
+            }
+
+            while (qHead < qTail)
+            {
+                int cur = queue[qHead++];
+                for (int j = 0; j < n; j++)
+                {
+                    if (j == cur || reached[j] || nodes[j].IsBroken || nodes[j].IsFalling) continue;
+                    if (HasStrictStructuralContact(in nodes[cur], in nodes[j], jointToleranceMeters))
+                    {
+                        reached[j] = true;
+                        queue[qTail++] = j;
+                    }
+                }
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                ref ModularPlacedPieceNode node = ref nodes[i];
+                if (node.IsBroken || node.IsFalling) continue;
+                if (!reached[i])
+                {
+                    node.IsGrounded = false;
+                    node.Stability01 = 0f;
+                    node.StabilityBand = ValheimStabilityBand.Red;
+                    node.IsFalling = true;
+                    node.FallenElapsedSec = 0f;
+                    node.LinearVelocity = new Vector3(0f, -0.40f, 0f);
+                    collapsedCount++;
+                }
+            }
         }
 
         // =====================================================================
@@ -882,14 +1759,14 @@ namespace Stratocraft.Inventory.Systems
             Vector3 ax = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, logPart.Rotation));
             Vector3 ay = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, logPart.Rotation));
             Vector3 az = Vector3.Normalize(Vector3.Transform(Vector3.UnitZ, logPart.Rotation));
-            // 2m kutuk yerel olarak Y in [-1..+1], XZ cap ~0.38m:
+            // 2m kutuk yerel olarak Y in [-1..+1], gercek dunya capi 0.44m (yari genislik 0.22m):
             return new SolidStructureObb
             {
                 Center = logPart.Position,
                 AxisX = ax,
                 AxisY = ay,
                 AxisZ = az,
-                HalfExtents = new Vector3(0.20f, 1.00f, 0.20f),
+                HalfExtents = new Vector3(TimberLogHalfExtentXZ, 1.00f, TimberLogHalfExtentXZ),
                 IsWalkableSurface = true
             };
         }

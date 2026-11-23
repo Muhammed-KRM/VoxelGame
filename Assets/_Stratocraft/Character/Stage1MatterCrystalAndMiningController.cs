@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
@@ -27,12 +28,14 @@ namespace Stratocraft.Character
     {
         private static readonly float[] BrushRadiusSteps = { 0.5f, 1.15f, 1.85f, 2.65f, 3.50f };
         private static readonly string[] BrushAreaLabels = { "1x1x1 Tek Blok", "2x2x2 Orta Alan", "3x3x3 Genis Alan", "5x5x5 Dev Kazi", "7x7x7 Efsanevi Alan" };
+        // Karar A3: [C] Madde Kristali YALNIZCA ham dogal maddeleri (IsCraftedItemBlockMaterial == false) sekillendirebilir;
+        // StoneBrick (120), WoodPlank (121), BedBlock (168) ve 126..136 islenmis bloklar ASLA Kristal paletinde yer almaz!
         private static readonly byte[] BuildableMaterials =
         {
             MaterialIdCatalog.Stone, MaterialIdCatalog.Dirt, MaterialIdCatalog.Grass, MaterialIdCatalog.Sand,
-            MaterialIdCatalog.Clay, MaterialIdCatalog.Gravel, MaterialIdCatalog.PackedIce, MaterialIdCatalog.Cobblestone,
-            MaterialIdCatalog.Basalt, MaterialIdCatalog.Marble, MaterialIdCatalog.NaturalObsidian, MaterialIdCatalog.OakWood,
-            MaterialIdCatalog.Ironwood, MaterialIdCatalog.StoneBrick, MaterialIdCatalog.WoodPlank, MaterialIdCatalog.BedBlock, MaterialIdCatalog.LooseRubble
+            MaterialIdCatalog.Clay, MaterialIdCatalog.Gravel, MaterialIdCatalog.Limestone, MaterialIdCatalog.PackedIce,
+            MaterialIdCatalog.Cobblestone, MaterialIdCatalog.Basalt, MaterialIdCatalog.Marble, MaterialIdCatalog.NaturalObsidian,
+            MaterialIdCatalog.OakWood, MaterialIdCatalog.Ironwood, MaterialIdCatalog.LooseRubble
         };
         private static readonly byte[] ShapeWheelCycle = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 63 };
         private static readonly float[] RayMarchOffsets = { 0.15f, 0.38f, 0.62f, 0.88f, 1.15f };
@@ -287,6 +290,12 @@ namespace Stratocraft.Character
         public void SelectMaterial(byte materialId)
         {
             if (materialId == MaterialIdCatalog.Air) return;
+            if (IsCrystalActive && !MatterCrystalDecisionA3Policy.CanCrystalShapeOrPlaceMaterial(materialId, out string a3Reject))
+            {
+                LastFeedbackText = a3Reject;
+                return;
+            }
+
             int idx = Array.IndexOf(BuildableMaterials, materialId);
             if (idx >= 0)
             {
@@ -302,8 +311,14 @@ namespace Stratocraft.Character
         public bool CanCrystalVacuumMaterial(byte mat, out byte requiredTier)
         {
             CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
-            requiredTier = MaterialIdCatalog.GetRequiredCrystalTierForTerrain(mat);
-            return CurrentCrystalTier >= 1 && requiredTier > 0 && requiredTier <= CurrentCrystalTier;
+            return MatterCrystalDecisionA3Policy.CanCrystalVacuumVoxel(
+                mat, CurrentCrystalTier, ArchitecturalSchool.RawNaturalCrystal, out requiredTier, out _);
+        }
+
+        public bool CanCrystalVacuumStructuralNode(in StructuralNode64 node, out byte requiredTier, out string feedback)
+        {
+            CrystalStorage.CrystalTier = (byte)Mathf.Clamp(CurrentCrystalTier, 0, 5);
+            return MatterCrystalDecisionA3Policy.CanCrystalVacuumNode(in node, CurrentCrystalTier, out requiredTier, out feedback);
         }
 
         public static byte GetRequiredToolTierForMaterial(byte mat)
@@ -1957,7 +1972,7 @@ namespace Stratocraft.Character
                 if (item.SpawnAge >= 0.20f &&
                     vacuumActive &&
                     canCrystalAbsorbItem &&
-                    (isCreativeVac || !MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(item.MaterialId)) &&
+                    (isCreativeVac || MatterCrystalDecisionA3Policy.CanCrystalAbsorbDroppedItem(item.MaterialId, out _)) &&
                     distToPlayer <= vacuumRadius)
                 {
                     item.IsSettled = false;
@@ -2146,7 +2161,7 @@ namespace Stratocraft.Character
         {
             feedbackNote = string.Empty;
             if (IsCrystalActive && CurrentCrystalTier >= 1 &&
-                !MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(item.MaterialId) &&
+                MatterCrystalDecisionA3Policy.CanCrystalAbsorbDroppedItem(item.MaterialId, out _) &&
                 (item.ExplicitKind == InventoryItemKind.Empty ||
                  item.ExplicitKind == InventoryItemKind.RoughStoneChunk ||
                  item.ExplicitKind == InventoryItemKind.LooseDirtClod ||
@@ -2219,6 +2234,11 @@ namespace Stratocraft.Character
 
                 if (!isCreative)
                 {
+                    if (MaterialIdCatalog.IsCraftedItemBlockMaterial(curMat))
+                    {
+                        hitCraftedBlock = true;
+                        continue;
+                    }
                     if (MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(curMat)) { hitImmuneOre = true; continue; }
                     if (!CanCrystalVacuumMaterial(curMat, out byte reqTier))
                     {
@@ -2274,7 +2294,7 @@ namespace Stratocraft.Character
             else if (hitImmuneOre)
                 LastFeedbackText = "ERR_ORE_RESONANCE_IMMUNE: Cevherler (30..46) [2] Demir Kazma ile kirilmalidir!";
             else if (hitCraftedBlock)
-                LastFeedbackText = "ERR_CRYSTAL_CRAFTED_BLOCK_FORBIDDEN: Oyuncu yapisi bloklar icin [Shift+LMB] veya [2] Kazma kullanin!";
+                LastFeedbackText = "⛔ MADDE KRİSTALİ BAĞIŞIKLIĞI (Karar A3): Tuğla, harçlı taş, kertikli kütük vb. işlenmiş bloklar ve Ekol 1..4 yapıları [C] Kristal ile vakumlanamaz! Gerçek kazma/balta veya kuşatma aracı kullanın.";
         }
 
         private void ExecuteFlintStoneKnappingStrike(
@@ -2412,6 +2432,12 @@ namespace Stratocraft.Character
             }
 
             byte mat = SelectedMaterialId;
+            if (IsCrystalActive && !placingFromHandSlot &&
+                !MatterCrystalDecisionA3Policy.CanCrystalShapeOrPlaceMaterial(mat, out string a3PlaceReject))
+            {
+                LastFeedbackText = a3PlaceReject;
+                return;
+            }
             byte preservedDmg = 0;
             byte placeShape = (placingFromHandSlot && SelectedShapeId == 0) ? (byte)1 : SelectedShapeId;
 
@@ -2447,9 +2473,10 @@ namespace Stratocraft.Character
                 }
 
                 bool isNatural = placeShape == 0;
+                // Karar A3: [C] Kristal ile yerlestirilen tum ham dogal kutleler DogalKutle olarak kalir (diger oyuncular Kristal ile kolayca vakumlayabilir!)
                 BlokKokenDurumu origin = placingFromHandSlot
                     ? BlokKokenDurumu.OyuncuItemBlogu
-                    : (placeShape == 0 ? BlokKokenDurumu.DogalKutle : BlokKokenDurumu.OyuncuItemBlogu);
+                    : BlokKokenDurumu.DogalKutle;
                 if (placeShape == VoxelBitUtility.ChiseledMicroVoxelShapeId)
                 {
                     bool isRawShard = consumedFromHandKind == InventoryItemKind.RoughStoneChunk ||
@@ -2580,6 +2607,11 @@ namespace Stratocraft.Character
             }
 
             byte mat = SelectedMaterialId;
+            if (!MatterCrystalDecisionA3Policy.CanCrystalShapeOrPlaceMaterial(mat, out string a3ScatterReject))
+            {
+                LastFeedbackText = a3ScatterReject;
+                return;
+            }
             if (!isCreative && CrystalStorage.GetMassQ24_8(mat) < 32u)
             {
                 LastFeedbackText = $"Depoda doğal arazi saçılımı için yeterli {GetMaterialDisplayName(mat)} kütlesi yok! ([Sol Tık] ile vakumlayın)";
@@ -3488,6 +3520,7 @@ namespace Stratocraft.Character
 #else
 #nullable enable
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 
 namespace Stratocraft.Character
 {
@@ -3521,3 +3554,126 @@ namespace Stratocraft.Character
     }
 }
 #endif
+
+#nullable enable
+namespace Stratocraft.Character
+{
+    /// <summary>
+    /// Karar A3 — [C] Madde Kristali Bagisikligi kanonik politika sinifi (Unity &amp; .NET 10 ortak).
+    /// - [C] Kristal YALNIZCA ham dogal maddeleri (!IsCraftedItemBlockMaterial) vakumlayabilir ve yerlestirebilir.
+    /// - Islenmis mimari bloklar (120..199, 126..136 dahil) ve Ekol 1..4 CrystalImmune yapilar ASLA uretilemez ve vakumla kirilamaz.
+    /// - RawNaturalCrystal (Ekol 0) dogal kristal barinak bloklari her oyuncu tarafindan Kristal ile kolayca vakumlanabilir.
+    /// </summary>
+    public static class MatterCrystalDecisionA3Policy
+    {
+        public static bool CanCrystalShapeOrPlaceMaterial(byte materialId, out string turkishRejectionMessage)
+        {
+            if (Stratocraft.Core.Constants.MaterialIdCatalog.IsCraftedItemBlockMaterial(materialId))
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage =
+                    $"⛔ KARAR A3 KISITI: [C] Madde Kristali işlenmiş mimari blok ({name}) üretemez! Tuğla, harçlı taş veya kertikli kütük yalnızca gerçek alet ve zanaat tezgâhlarıyla yapılır.";
+                return false;
+            }
+
+            if (!Stratocraft.Core.Structures.StructureMaterialCatalog.CanExtractOrShapeWithMatterCrystal(materialId))
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage =
+                    $"⛔ KARAR A3 KISITI: [C] Madde Kristali {name} maddesini şekillendiremez; yalnızca ham doğal maddeler (Taş, Toprak, Kireçtaşı, Kil vb.) kullanılabilir!";
+                return false;
+            }
+
+            turkishRejectionMessage = string.Empty;
+            return true;
+        }
+
+        public static bool CanCrystalVacuumVoxel(
+            byte materialId,
+            int crystalTier,
+            Stratocraft.Core.Structures.ArchitecturalSchool school,
+            out byte requiredTier,
+            out string turkishRejectionMessage)
+        {
+            requiredTier = Stratocraft.Core.Constants.MaterialIdCatalog.GetRequiredCrystalTierForTerrain(materialId);
+
+            if (school != Stratocraft.Core.Structures.ArchitecturalSchool.RawNaturalCrystal)
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage =
+                    $"⛔ MADDE KRİSTALİ BAĞIŞIKLIĞI (Karar A3): Ekol 1..4 yapı elemanı ({name}) [C] Kristal vakumuna %100 bağışıktır! Gerçek kazma, balta veya kuşatma aracı kullanın.";
+                return false;
+            }
+
+            if (Stratocraft.Core.Constants.MaterialIdCatalog.IsCraftedItemBlockMaterial(materialId))
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage =
+                    $"⛔ MADDE KRİSTALİ BAĞIŞIKLIĞI (Karar A3): {name} işlenmiş mimari bloktur; [C] Kristal ile vakumlanamaz veya kırılamaz! Gerçek kazma/balta kullanın.";
+                return false;
+            }
+
+            if (Stratocraft.Core.Constants.MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(materialId))
+            {
+                turkishRejectionMessage = "ERR_ORE_RESONANCE_IMMUNE: Cevher ve mücevher damarları [C] Kristal ile vakumlanamaz; kazma kullanın!";
+                return false;
+            }
+
+            if (requiredTier == 0)
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage = $"⛔ {name} [C] Madde Kristali ile vakumlanamaz!";
+                return false;
+            }
+
+            if (crystalTier < requiredTier)
+            {
+                turkishRejectionMessage = $"ERR_CRYSTAL_TIER_TOO_LOW: Bu doğal madde için Kristal Kademe T{requiredTier} gereklidir!";
+                return false;
+            }
+
+            turkishRejectionMessage = string.Empty;
+            return true;
+        }
+
+        public static bool CanCrystalVacuumNode(
+            in Stratocraft.Core.Structures.StructuralNode64 node,
+            int crystalTier,
+            out byte requiredTier,
+            out string turkishRejectionMessage)
+        {
+            requiredTier = Stratocraft.Core.Constants.MaterialIdCatalog.GetRequiredCrystalTierForTerrain(node.MaterialId);
+
+            if (node.IsCrystalImmune ||
+                Stratocraft.Core.Structures.StructureMaterialCatalog.IsCrystalImmune(node.School, node.MaterialId))
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(node.MaterialId);
+                turkishRejectionMessage =
+                    $"⛔ MADDE KRİSTALİ BAĞIŞIKLIĞI (Karar A3): {node.School} ekolündeki işlenmiş yapı elemanı ({name}) [C] Kristal ile kırılamaz! Gerçek alet veya kuşatma silahı gerekir.";
+                return false;
+            }
+
+            return CanCrystalVacuumVoxel(node.MaterialId, crystalTier, node.School, out requiredTier, out turkishRejectionMessage);
+        }
+
+        public static bool CanCrystalAbsorbDroppedItem(byte materialId, out string turkishRejectionMessage)
+        {
+            if (Stratocraft.Core.Constants.MaterialIdCatalog.IsCraftedItemBlockMaterial(materialId))
+            {
+                string name = Stratocraft.Core.Constants.MaterialIdCatalog.GetDisplayName(materialId);
+                turkishRejectionMessage =
+                    $"⛔ KARAR A3: İşlenmiş blok ({name}) [C] Madde Kristali ile vakumlanamaz!";
+                return false;
+            }
+
+            if (Stratocraft.Core.Constants.MaterialIdCatalog.IsVacuumImmuneResonanceOreOrGem(materialId))
+            {
+                turkishRejectionMessage = "ERR_ORE_RESONANCE_IMMUNE: Cevher ve mücevherler Kristal ile vakumlanamaz!";
+                return false;
+            }
+
+            turkishRejectionMessage = string.Empty;
+            return true;
+        }
+    }
+}
