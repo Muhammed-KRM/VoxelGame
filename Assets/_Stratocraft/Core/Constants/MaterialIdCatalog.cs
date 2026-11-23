@@ -67,6 +67,9 @@ namespace Stratocraft.Core.Constants
         /// <summary>Sonlu Akiskan Korozyon Asidi Gorsel Malzemesi (19).</summary>
         public const byte FiniteAcidSurface = 19;
 
+        /// <summary>Dogal Karstik Kirectasi / Limestone (20 - Kademe 2 Madde Kristali ile vakumlanabilir, kirec harci hammaddesi).</summary>
+        public const byte Limestone = 20;
+
         // ---------- 14 Yeralti Cevheri (Madde Kristali Vakumundan Kesin Muaf: 30..43) ----------
         /// <summary>1. Bakir Cevheri (30).</summary>
         public const byte CopperOre = 30;
@@ -210,6 +213,39 @@ namespace Stratocraft.Core.Constants
         /// <summary>Demir Havalandirma Mazgali / Grating (125 - Oksijen ve sivi gecirgen).</summary>
         public const byte IronGrating = 125;
 
+        /// <summary>Gonyeli Kesme Tas / Ashlar Blogu (126 - Ekol 3/4 islenmis mimari blok, Madde Kristali vakumuna %100 bagisik).</summary>
+        public const byte CutAshlarStone = 126;
+
+        /// <summary>Islenmis Anitsal Mermer Blogu (127 - Ekol 4 sutun/kemer/kubbe mermeri, vakum bagisik).</summary>
+        public const byte DressedMarbleBlock = 127;
+
+        /// <summary>Firinlanmis Kirmizi Kil Tugla (128 - Ekol 3/4 tonoz/kubbe/baca tuglasi, vakum bagisik).</summary>
+        public const byte FiredClayBrick = 128;
+
+        /// <summary>Terracotta Pismis Kiremit Cati Blogu (129 - Su gecirmez yanmaz cati ortusu, vakum bagisik).</summary>
+        public const byte RoofClayTile = 129;
+
+        /// <summary>Guneste Kurutulmus Kerpic Tugla Blogu (130 - Ekol 1/2 yuksek isil kutleli duvar, vakum bagisik).</summary>
+        public const byte AdobeBrickBlock = 130;
+
+        /// <summary>Dal Orgu ve Camur Siva Dolgu Paneli / Wattle &amp; Daub (131 - Ekol 2 karkas dolgusu, vakum bagisik).</summary>
+        public const byte WattleDaubPanelBlock = 131;
+
+        /// <summary>Kirec Harcli Tas Yigma Duvar Blogu (132 - Ekol 3/4 harcli kagir duvar, vakum bagisik).</summary>
+        public const byte LimeMortarStoneWall = 132;
+
+        /// <summary>Soyulmus Kertikli ve Yosun/Kil Derz Dolgulu Kutuk Blogu (133 - Ekol 1 yalitimli kutuk duvar, vakum bagisik).</summary>
+        public const byte ChinkedLogBlock = 133;
+
+        /// <summary>Dovme Demir Gergi Kirisi / Kenet Blogu (134 - Ekol 4 kemer/kubbe yanal itme gergisi, vakum bagisik).</summary>
+        public const byte IronTieBeamBlock = 134;
+
+        /// <summary>Kursun Kafesli Mimari Pencere Cami (135 - Ekol 4 isik gecirgen tam ruzgar/isi yalitimi, vakum bagisik).</summary>
+        public const byte LeadedGlassPane = 135;
+
+        /// <summary>Yarma Ahsap Zona / Pedavra Cati Kaplamasi (136 - Ekol 1/2 egimli cati ortusu, vakum bagisik).</summary>
+        public const byte TimberShingleRoof = 136;
+
         /// <summary>Kusaklama Batarya Cekirdegi (160).</summary>
         public const byte BatteryCore = 160;
 
@@ -267,6 +303,20 @@ namespace Stratocraft.Core.Constants
         }
 
         /// <summary>
+        /// <see cref="IsCraftedItemBlockMaterial"/> icin kisa yardimci esanlamli metot.
+        /// </summary>
+        public static bool IsCraftedItemBlock(byte materialId) => IsCraftedItemBlockMaterial(materialId);
+
+        /// <summary>
+        /// Karar A3 uyarinca verilen MaterialID'nin [C] Madde Kristali vakumuna %100 bagisik olup olmadigini doner.
+        /// Tum islenmis esya-bloklar (120..199, 126..136 dahil), cevher/mucevher damarlari, Bedrock ve Zindan bloklari bagisiktir.
+        /// </summary>
+        public static bool IsCrystalVacuumImmune(byte materialId)
+        {
+            return GetRequiredCrystalTierForTerrain(materialId) == 0;
+        }
+
+        /// <summary>
         /// Ham arazi blogunu Madde Kristali ile vakumlamak icin gereken minimum Kristal Kademesini (1..4) doner.
         /// Vakumlanamayan (Hava, Bedrock, Cevher, Komur, Mucevher, Esya-Blok, Zindan) malzemeler icin 0 doner.
         /// Dogal Obsidyen (6) Anayasa Bolum 2.7.D.2 ve 4.1 uyarinca Kademe 4 Kristal gerektirir.
@@ -288,7 +338,7 @@ namespace Stratocraft.Core.Constants
             return materialId switch
             {
                 Dirt or Grass or Sand or Gravel or Clay or LooseRubble or GlowingMoss => 1,
-                Stone or Cobblestone or Stalagnate or OakWood or Ironwood or SpiritWood or YggdrasilBranch => 2,
+                Stone or Cobblestone or Stalagnate or Limestone or OakWood or Ironwood or SpiritWood or YggdrasilBranch => 2,
                 PackedIce or Marble or Floatstone => 3,
                 Basalt or MagmaBlock or NaturalObsidian => 4,
                 _ => 2
@@ -319,6 +369,7 @@ namespace Stratocraft.Core.Constants
                    materialId == DamascusSteel ||
                    materialId == ReinforcedSteelBlock ||
                    materialId == IronGrating ||
+                   materialId == IronTieBeamBlock ||
                    materialId == BatteryCore;
         }
 
@@ -344,5 +395,98 @@ namespace Stratocraft.Core.Constants
                    materialId == CreatureFurAsh ||
                    materialId == PhoenixFeatherGold;
         }
+
+        /// <summary>
+        /// Verilen MaterialID icin tahsissiz (0-GC string literal) okunabilir Turkce malzeme adini doner.
+        /// </summary>
+        public static string GetDisplayName(byte materialId) => materialId switch
+        {
+            Air => "Hava",
+            Stone => "Ham Taş",
+            Dirt => "Toprak",
+            Grass => "Çimenli Toprak",
+            Sand => "Kum",
+            Bedrock => "Ana Kaya (Bedrock)",
+            NaturalObsidian => "Doğal Obsidyen",
+            Basalt => "Bazalt",
+            Cobblestone => "Kırıktaş",
+            Gravel => "Çakıl",
+            PackedIce => "Paketlenmiş Buz",
+            MagmaBlock => "Magma Bloğu",
+            FiniteWaterSurface => "Su",
+            FiniteLavaSurface => "Lav",
+            Marble => "Doğal Mermer",
+            LooseRubble => "Gevşek Moloz",
+            Clay => "Doğal Kil",
+            Stalagnate => "Dikit-Sarkıt Sütunu",
+            Floatstone => "Uçantaş (Floatstone)",
+            FiniteAcidSurface => "Korozyon Asidi",
+            Limestone => "Kireçtaşı",
+            CopperOre => "Bakır Cevheri",
+            TinOre => "Kalay Cevheri",
+            IronOre => "Demir Cevheri",
+            BauxiteAluminumOre => "Boksit Cevheri",
+            SilverOre => "Gümüş Cevheri",
+            GoldOre => "Altın Cevheri",
+            TitaniumOre => "Titanyum Cevheri",
+            MithrilOre => "Mithril Cevheri",
+            OrichalcumOre => "Orichalcum Cevheri",
+            HellIronOre => "Cehennem Demiri Cevheri",
+            DivineMetalOre => "İlahi Metal Cevheri",
+            AstralOre => "Astral Cevher",
+            AdamantiteOre => "Adamantite Cevheri",
+            VoidMetalOre => "Hiçlik Metali Cevheri",
+            Coal => "Kömür Damarı",
+            DarkMatter => "Karanlık Madde",
+            StarCore => "Yıldız Çekirdeği",
+            GemVeinStart => "Mücevher Damarı",
+            CrystalQuartzVein => "Kristal Kuvars Damarı",
+            GemVeinEnd => "Derin Mücevher Damarı",
+            Bronze => "Bronz",
+            Steel => "Çelik",
+            SulfurOre => "Kükürt Cevheri",
+            QuartzGem => "Kuvars Kristali",
+            AmethystGem => "Ametist",
+            SapphireGem => "Safir",
+            EmeraldGem => "Zümrüt",
+            RubyGem => "Yakut",
+            DiamondGem => "Elmas",
+            RedDiamondGem => "Kızıl Elmas",
+            DamascusSteel => "Şam Çeliği",
+            OakWood => "Meşe Odunu",
+            Ironwood => "Demir Ağacı",
+            SpiritWood => "Ruh Ağacı",
+            YggdrasilBranch => "Yggdrasil Dalı",
+            TacticalCloth => "Dokuma Kumaş",
+            LeatherPadding => "Dolgulu Deri",
+            BoneIvory => "Kemik / Fildişi",
+            CreatureFurAsh => "Yaratık Postu",
+            PhoenixFeatherGold => "Anka Tüyü",
+            StoneBrick => "Yontma Taş Tuğla",
+            WoodPlank => "Ahşap Kalas",
+            ReinforcedSteelBlock => "Güçlendirilmiş Çelik Kiriş",
+            ObsidianBrick => "İşlenmiş Obsidyen Tuğla",
+            ThatchTile => "Saz Çatı",
+            IronGrating => "Demir Mazgal",
+            CutAshlarStone => "Kesme Taş (Ashlar)",
+            DressedMarbleBlock => "İşlenmiş Mermer Blok",
+            FiredClayBrick => "Pişmiş Tuğla",
+            RoofClayTile => "Terracotta Kiremit",
+            AdobeBrickBlock => "Kerpiç Tuğla",
+            WattleDaubPanelBlock => "Dal Örgü ve Çamur Sıva",
+            LimeMortarStoneWall => "Kireç Harçlı Taş Duvar",
+            ChinkedLogBlock => "Derz Dolgulu Kertikli Kütük",
+            IronTieBeamBlock => "Demir Gergi Kirişi",
+            LeadedGlassPane => "Kurşunlu Mimari Cam",
+            TimberShingleRoof => "Ahşap Zona Çatı",
+            BatteryCore => "Batarya Çekirdeği",
+            GlowingMoss => "Parlayan Mağara Yosunu",
+            CampfireBlock => "Kamp Ateşi",
+            PrimitiveStoneKilnBlock => "İlkel Taş Fırın",
+            BedBlock => "Yatak",
+            >= BossTrophyBlockStart and <= BossTrophyBlockEnd => "Boss Trofe Bloğu",
+            >= DungeonSanctumImmuneStart => "Kadim Zindan Taşı",
+            _ => "Bilinmeyen Malzeme"
+        };
     }
 }

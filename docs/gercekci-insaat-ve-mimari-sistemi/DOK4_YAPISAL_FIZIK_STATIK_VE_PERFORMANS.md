@@ -113,14 +113,14 @@ Oyundaki her yapısal parça — ister oyuncunun balta ile kertik açıp koyduğ
 ### 2.2 Temel Sabit Tamsayı Enum Sözleşmeleri
 
 ```csharp
-/// <summary>4 Tarihsel ve Fiziksel İnşaat Ekolü (DOK1 & DOK3 ile birebir uyumlu).</summary>
+/// <summary>Mimari Yapı Ekolleri (UnifiedStructureTypes.cs — DOK1, DOK3 ve Karar A3 ile birebir uyumlu).</summary>
 public enum ArchitecturalSchool : byte
 {
-    None = 0,
-    Ekol1_NotchedLog = 1,       // Kertikli Kütük Yığma (Sill Log, Saddle/Dovetail Notch, Chinking, Purlin)
-    Ekol2_TimberFrame = 2,      // Ahşap Karkas / Kolon-Kiriş (Post & Beam, Zıvana, Çapraz Payanda, Kerpiç/Taş Dolgu)
-    Ekol3_StoneMasonry = 3,     // Taş Yığma (Temel Hendeği, Kuru/Harçlı Şaşırtmalı Örgü, Quoin, Lento/Tahfif Kemeri)
-    Ekol4_MonumentalVault = 4   // Anıtsal Sütun-Kemer-Tonoz-Kubbe (Derin Temel, Sütun, Kemer, Pandantif, Kubbe, Gergi Demiri)
+    RawNaturalCrystal = 0,      // [C] Madde Kristali ile ham doğal maddeden şekillendirilen zayıf (~0.45x) ve vakumlanabilir barınak
+    LogCabin = 1,               // Ekol 1: Kertikli Kütük Yığma (Sill Log, Saddle/Dovetail Notch, Chinking, Purlin) — %100 CrystalImmune
+    TimberFrame = 2,            // Ekol 2: Ahşap Karkas / Kolon-Kiriş (Post & Beam, Zıvana, Çapraz Payanda, Dolgu) — %100 CrystalImmune
+    StoneMasonry = 3,           // Ekol 3: Taş Yığma (Temel Hendeği, Kuru/Harçlı Şaşırtmalı Örgü, Quoin, Lento) — %100 CrystalImmune
+    MonumentalArchDome = 4      // Ekol 4: Anıtsal Sütun-Kemer-Tonoz-Kubbe (Derin Temel, Sütun, Kemer, Kubbe, Gergi Demiri) — %100 CrystalImmune
 }
 
 /// <summary>Ekol 1..4 kapsamındaki tüm taşıyıcı, örtü, dolgu ve geçici kalıp eleman rolleri.</summary>
@@ -450,8 +450,12 @@ PlayTest'te görülen *"kütüklerin havada asılı kalması ve hiçbir kertik/d
 2. **Silindirik Kütük Devrilme Kararsızlığı (`UnboundResting` Yasağı):** Düz zemine konan ilk yastık kütüğü (`SillBeamOrLog`) taş takoz veya temel üstünde durabilir; ancak onun üzerine konan `NotchedWallLog` sıraları eğer `JointFlags.LocksLateralRoll` bayrağına sahip **en az 2 uç bağlantısına** (köşede $90^\circ$ kesişen kütükle `SaddleNotch` / `DovetailNotch` kertiği **veya** iki uçta zemine çakılı dikey `TimberPost` kılavuz direği) sahip değilse, silindir-silindir temas genişliği $t_{\text{temas}} = 0.02\text{ m}$ kabul edilir. İkinci kütüğün üzerindeki en ufak rüzgâr veya $0.03 \, W$ kusur eksantrikliği $e > t_{\text{temas}}/2$ üreterek kütükleri anında yana yuvarlar!
 3. **Şaşırtmalı Derz (`Running Bond`) ve Köşe Kilit Taşı (`Quoin`):** Ekol 3/4 taş örmede üst üste dikey derzlerin çakışması (*stack bond*) kesme kapasitesini `%40` düşürür; şaşırtmalı örgü (`IsRunningBondStaggered`) ve köşelerde uzun-kısa kenetlenen `IsQuoinCornerLock` taşları kesme ve yanal itme direncini `%35` artırır.
 
-#### B. Kireç / Kil Harcı Islak $\to$ Kuruma $\to$ Sertleşme (Karbonatlaşma) Eğrisi
-Harçlı eklemlerde (`ClayMudMortar`, `LimeMortar`, `HydraulicPozzolanicMortar`) harç ilk sürüldüğünde ıslaktır (`MortarCureProgress255 = 0`, normalize `CureRatio` $c = 0.0$, $\kappa_{\text{ıslak}} = 0.28$) ve `StratocraftConstants.SecondsPerInGameDay = 3600.0` (`1 oyun günü = 60 gerçek dk`, `1 oyun saati = 2.5 gerçek dk`) zaman ölçeğinde kuruyup karbonatlaşarak tam mukavemete ($c = 1.0 \leftrightarrow 255$) ulaşır. **`CureRatio < 0.45` (`MortarCureProgress255 < 115`)** aralığında harç henüz ıslak/kırılgan evrededir (`DOK1 AK-10` & `DOK5` uyumlu; bu evrede kemer kalıbı sökülürse veya çok katlı ağır kâgir yük bindirilirse taze harç ezilir); **`CureRatio >= 0.45`** olduğunda ilk priz tamamlanır:
+#### B. Kireç / Kil Harcı Islak $\to$ Kuruma $\to$ Sertleşme (Karbonatlaşma) Eğrisi (Karar A2)
+Harçlı eklemlerde (`ClayMortar`, `LimeMortar`, `HorasanMortar` / `MortarType`) harç ilk sürüldüğünde ıslaktır (`MortarCureProgress255 = 0`, normalize `CureRatio` $c = 0.0$, $\kappa_{\text{ıslak}} = 0.28$) ve **Karar A2** gerçek zaman ölçeğinde kürlenerek tam mukavemete ($c = 1.0 \leftrightarrow 255$) ulaşır:
+- **Survival Kireç Harcı (`MortarType.Lime`):** **`240 sn` (`4 gerçek dk`)** içinde yük taşıma eşiğine (`CureRatio >= 0.45`) ulaşır ve **`600 sn` (`10 gerçek dk`)** içinde tam sertleşir (`CureRatio == 1.0`).
+- **Survival Kil Harcı (`MortarType.Clay`):** **`120 sn` (`2 gerçek dk`)** içinde yük taşıma eşiğine (`CureRatio >= 0.45`) ulaşır ve **`300 sn` (`5 gerçek dk`)** içinde tam sertleşir (`CureRatio == 1.0`).
+- **`[F4]` Yaratıcı Mod:** Tüm harç türleri uygulandığı anda **anında (`CureRatio == 1.0`)** kürlenir.
+- **`CureRatio < 0.45` (`MortarCureProgress255 < 115`)** aralığında harç henüz ıslak/kırılgan evrededir (`DOK1 AK-10` & `DOK5` uyumlu; bu evrede kemer kalıbı sökülürse veya çok katlı ağır kâgir yük bindirilirse taze harç ezilir); **`CureRatio >= 0.45`** olduğunda ilk priz tamamlanır:
 
 $$c(t + \Delta t) = \operatorname{clamp}\!\left(c(t) + \left(r_0 \, f_T(T_{\text{ortam}}) \, f_{\text{yağmur}}(w_{\text{açık}}) \, (1 - c(t)) - d_{\text{yıkanma}}(w_{\text{açık}})\right) \Delta t,\; 0,\; 1\right)$$
 
@@ -460,22 +464,22 @@ $$\kappa_{\text{cure}}(c) = \kappa_{\text{ıslak}} + (1 - \kappa_{\text{ıslak}}
 ```mermaid
 stateDiagram-v2
     [*] --> TazeIslak: Mala ile Harç Sürüldü (CureRatio = 0.00 < 0.45, kappa = 0.28)
-    TazeIslak --> IlkPriz: Kuruma / Mangal Isısı (CureRatio >= 0.45, kappa >= 0.60)
+    TazeIslak --> IlkPriz: Kireçte 240 sn / Kilde 120 sn (CureRatio >= 0.45, kappa >= 0.60)
     TazeIslak --> YagmurYikanmasi: Çatısız Sağanak Yağmur (Kil/Taze Kireç)
     TazeIslak --> DonCatlagi: Sıcaklık < -3 C (Islak Harç Donar)
     YagmurYikanmasi --> TazeIslak: Yağmur Durdu + Mala Onarımı
-    IlkPriz --> TamSertlesmis: Karbonatlaşma Tamamlandı (CureRatio >= 0.95, kappa = 1.00)
+    IlkPriz --> TamSertlesmis: Kireçte 600 sn / Kilde 300 sn (CureRatio == 1.00, kappa = 1.00)
     IlkPriz --> KemerKalibiSokulebilir: CureRatio >= 0.45 (Kilit Taşı + İlk Priz Tamam)
 ```
 
-| Harç / Eklem Türü | $\kappa_{\text{ıslak}}$ ($c=0$) | Tam Kür Süresi (`SecondsPerInGameDay = 3600s`: `1s = 2.5 gerçek dk`) | Yağmur Davranışı | Don ($< -3^\circ\text{C}$) | Çekme ($N_{t,\text{cap}}$) | Kesme Kohezyonu ($V_0$) |
+| Harç / Eklem Türü | $\kappa_{\text{ıslak}}$ ($c=0$) | Yük Taşıma (`c >= 0.45`) / Tam Kür (`c == 1.0`) Süresi (Karar A2) | Yağmur Davranışı | Don ($< -3^\circ\text{C}$) | Çekme ($N_{t,\text{cap}}$) | Kesme Kohezyonu ($V_0$) |
 | :--- | :---: | :---: | :--- | :--- | :---: | :---: |
-| **`DryStoneInterlock` (Kuru Taş)** | `1.00` | `0` (Anında) | Yıkanmaz, su sızdırır | Etkilenmez | `0 kN` | `12 kN` ($+\mu N_c$) |
-| **`ClayMudMortar` (Kil/Çamur Harcı)** | `0.32` | `4 oyun saati` (`10 gerçek dk`) | Çatısızsa yıkanır ($d_{\text{yıkanma}} > 0$) | Çatlar (`-25%`) | `4 kN` | `28 kN` |
-| **`LimeMortar` (Sönmüş Kireç Harcı)** | `0.28` | `10 oyun saati` (`25 dk`; ateş yanında `4s = 10 dk`) | Taze iken (`c < 0.45`) yavaşlar, sertleşince dayanıklı | Taze iken don riski | `18 kN` | `75 kN` |
-| **`HydraulicPozzolanicMortar` (Horasan)** | `0.38` | `6 oyun saati` (`15 gerçek dk`) | **Su altında ve yağmurda bile tam sertleşir!** | Yüksek direnç | `36 kN` | `140 kN` |
-| **`IronCrampLeadPoured` (Kurşunlu Kenet)** | `1.00` | `0` (Döküm anı) | Tam su/korozyon zırhı (kurşun kaplı) | Etkilenmez | `145 kN` | `210 kN` |
-| **`IronTieRodSocket` (Demir Gergi Çubuğu)** | `1.00` | `0` (Kama kilidi) | Paslanmaya karşı yağ/kireç korumalı | Etkilenmez | **`240 – 450 kN`** | `95 kN` |
+| **`DryStoneInterlock` (Kuru Taş)** | `1.00` | `0 sn / 0 sn` (Anında) | Yıkanmaz, su sızdırır | Etkilenmez | `0 kN` | `12 kN` ($+\mu N_c$) |
+| **`ClayMortar` (Kil/Çamur Harcı)** | `0.28` | **`120 sn` (`2 dk`) / `300 sn` (`5 dk`)** (`[F4]`: anında `1.0`) | Çatısızsa yıkanır ($d_{\text{yıkanma}} > 0$) | Çatlar (`-25%`) | `4 kN` | `28 kN` |
+| **`LimeMortar` (Sönmüş Kireç Harcı)** | `0.28` | **`240 sn` (`4 dk`) / `600 sn` (`10 dk`)** (`[F4]`: anında `1.0`) | Taze iken (`c < 0.45`) yavaşlar, sertleşince dayanıklı | Taze iken don riski | `18 kN` | `75 kN` |
+| **`HorasanMortar` (Horasan / Puzolanik)** | `0.38` | **`180 sn` (`3 dk`) / `450 sn` (`7.5 dk`)** (`[F4]`: anında `1.0`) | **Su altında ve yağmurda bile tam sertleşir!** | Yüksek direnç | `36 kN` | `140 kN` |
+| **`IronCramp` (Kurşunlu Kenet)** | `1.00` | `0 sn / 0 sn` (Döküm anı) | Tam su/korozyon zırhı (kurşun kaplı) | Etkilenmez | `145 kN` | `210 kN` |
+| **`IronTieRod` (Demir Gergi Çubuğu)** | `1.00` | `0 sn / 0 sn` (Kama kilidi) | Paslanmaya karşı yağ/kireç korumalı | Etkilenmez | **`240 – 450 kN`** | `95 kN` |
 
 ---
 
@@ -585,16 +589,16 @@ Gerçek hayatta ve *Valheim* gibi referans inşaat oyunlarında oyuncuya en unut
 
 ---
 
-### 4.5 `[C]` Madde Kristali ile Çelişmeyen Entegrasyon Sözleşmesi
+### 4.5 `[C]` Madde Kristali vs. Gerçek İnşaat Sözleşmesi (Karar A3)
 
-[MatterCrystalVacuumSystem.cs](../../Assets/_Stratocraft/Inventory/Systems/MatterCrystalVacuumSystem.cs) ve [ArchitecturalShapeCatalog.cs](../../Assets/_Stratocraft/Voxel/Data/ArchitecturalShapeCatalog.cs) ile Birleşik İnşaat Sistemi arasında **sıfır kural çelişkisi** vardır:
+[MatterCrystalVacuumSystem.cs](../../Assets/_Stratocraft/Inventory/Systems/MatterCrystalVacuumSystem.cs), [MaterialIdCatalog.cs](../../Assets/_Stratocraft/Core/Constants/MaterialIdCatalog.cs) ve [UnifiedStructureTypes.cs](../../Assets/_Stratocraft/Core/Structures/UnifiedStructureTypes.cs) arasında **Karar A3** uyarınca şu 4 kesin anayasal sınır geçerlidir:
 
-| İşlem Alanı | Madde Kristali (`[C]`) Yeteneği | Fiziksel ve Oyun-Dengesi Sınırı (Hilesiz Kurallar) |
+| İşlem Alanı | `[C]` Madde Kristali Yeteneği (`RawNaturalCrystal = 0`) | Gerçek İnşaat (`Ekol 1..4`) & Fiziksel Sınırlar (Karar A3) |
 | :--- | :--- | :--- |
-| **1. Temel Hendeği & Arazi Tesviyesi** | `Tier 1+` kristal ile doğal toprak/kum (`OriginState == 0`), `Tier 2+` ile ham taş hızla vakumlanarak düzgün **temel hendeği (`Foundation Trench`)** açılır ve yamaç teraslanır. | Cevher/kömür/mücevher damarları (`ERR_ORE_RESONANCE_IMMUNE`) ve işlenmiş oyuncu/klan yapıları (`OriginState != 0`, `ERR_CRYSTAL_CRAFTED_BLOCK_FORBIDDEN`) asla vakumlanamaz. |
-| **2. Doğal Kütle & Mimari Şekil Püskürtme** | Kristal içindeki sıkıştırılmış taş/mermer/bazalt kütlesi `ShapeId 1..62` (`FullMasonryCube`, `OctagonalColumn`, `ArchVoussoir`, `TrapezoidalKeystone`, `ButtressSupport`) olarak yerleştirilebilir. | Yerleştirilen her blok **daima `BlokKokenDurumu.DogalKutle (0)`** kalır (`IS_ITEM_BLOCK = 0`; batarya/mayın yapılamaz). |
-| **3. %100 Aynı Statik Fizik Grafı** | Kristalle konulan sütunlar, duvarlar ve kemer taşları doğrudan aynı statik çözücüye (`UnifiedStructuralGraph` + `StructuralCollapseSystem`) bağlanır. | **Kristal yerçekimini iptal etmez!** Kristalle havaya taş konulamaz, çamur üstüne temelsiz taş kule dikilirse batar, `5m` düz desteksiz taş tavan çekilirse eğilme çekmesinden kırılıp çöker (kristalle de kemer/sütun kurmak zorunludur!). |
-| **4. Bağlayıcı Harç & Metal Donatı Sınırı** | Kristal saf doğal kütleyi şekillendirir (`DryStoneInterlock` eşdeğeri kuru kâgir kenetlenme sağlar). | Suya dayanıklı **kireç/Horasan harcı**, **ahşap kertik/zıvana**, **kurşunlu demir kenet** ve yüksek açıklık kemerlerini tutan **demir gergi çubuğu (`IronTieRod`)** yalnızca fiziksel fırınlarda/örste üretilip elle uygulanır! |
+| **1. Gerçek `Ekol 1..4` Üretim Yolu** | `[C]` Kristal **asla** tuğla, harçlı taş duvar, kertikli kütük, zıvanalı kiriş, kesme taş (`126..136`) veya işlenmiş mimari parça üretemez. | Gerçek `Ekol 1..4` yapıları **`[C]` Kristal kullanmadan**, kazma/balta ile elde edilen ve bıçkı, fırın, harç teknesi, örs ve taşçı tezgâhında işlenen malzemelerle inşa edilir. |
+| **2. Yalnızca Ham Doğal Madde Kısıtı** | `Tier 1+` kristal yalnızca ham doğal maddeleri (`IsCraftedItemBlockMaterial == false`; doğal taş `Stone=1`, toprak `Dirt=2`, kireçtaşı `Limestone=20` vb.) vakumlayabilir ve doğal kütle olarak şekillendirebilir (temel hendeği kazma ve teraslama dahil). | Cevher/kömür/mücevher damarları (`ERR_ORE_RESONANCE_IMMUNE`) ve işlenmiş bloklar (`IsCraftedItemBlockMaterial == true`, `120..199`) kristal ile çıkarılamaz veya üretilemez. |
+| **3. Doğal Kristal Barınak Zayıflığı (`0.45x`) ve Vakum Hassasiyeti** | Doğal `[C]` kristal maddesiyle yapılan barınaklar (`ArchitecturalSchool.RawNaturalCrystal = 0`) aynı statik grafa tabidir ve **`RawNaturalCrystalStrengthFactor = 0.45f` (`~0.45x`)** oranında belirgin biçimde daha zayıftır. | Bu barınaklar ham doğal madde (`BlokKokenDurumu.DogalKutle`, `CrystalResistanceFlags.NaturalCrystalBreakable`) olarak kaldığı için diğer oyuncular veya düşmanlar tarafından **`[C]` Kristal ile kolayca vakumlanıp kırılabilir**. |
+| **4. İşlenmiş Malzeme ve `Ekol 1..4` `%100` Vakum Bağışıklığı** | Kristal vakumu `Ekol 1..4` yapılarına ve `126..136` işlenmiş mimari bloklara etki edemez (`ERR_CRYSTAL_CRAFTED_BLOCK_FORBIDDEN`). | İşlenmiş malzemeler (`IsCrystalVacuumImmune == true`) ve tüm `Ekol 1..4` yapıları **`[C]` Madde Kristali vakumuna `%100` bağışıktır** (`CrystalResistanceFlags.CrystalImmune \| RequiresRealToolOrSiege`); yalnızca gerçek aletler veya kuşatma silahlarıyla kırılabilir! |
 
 ---
 

@@ -18,6 +18,7 @@ namespace Stratocraft.Core.Persistence
         Snow = 1 << 3,
         Salinity = 1 << 4,
         MicroPool = 1 << 5,
-        PlayerFluid = 1 << 6
+        PlayerFluid = 1 << 6,
+        Structures = 1 << 7
     }
 }
