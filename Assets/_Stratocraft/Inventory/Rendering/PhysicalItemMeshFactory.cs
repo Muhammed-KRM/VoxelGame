@@ -8,6 +8,8 @@ using Stratocraft.Voxel.Jobs;
 using SysVec3 = System.Numerics.Vector3;
 
 #if UNITY_5_3_OR_NEWER
+using System.IO;
+using Stratocraft.Rendering;
 using UnityEngine;
 #endif
 
@@ -47,7 +49,193 @@ namespace Stratocraft.Inventory.Rendering
 #if UNITY_5_3_OR_NEWER
         private static readonly Dictionary<ulong, Mesh> StandardMeshCache = new(192);
         private static readonly Dictionary<ulong, Mesh> CustomKnapMeshCache = new(64);
+        private static readonly Dictionary<string, Mesh?> RawGlbTemplateCache = new(32, StringComparer.OrdinalIgnoreCase);
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticItemMeshCaches()
+        {
+            StandardMeshCache.Clear();
+            CustomKnapMeshCache.Clear();
+            RawGlbTemplateCache.Clear();
+        }
+
+        /// <summary>
+        /// PT-07 — Headless Blender 4.2 ile uretilen Assets/Art/Generated/Items/*.glb esya katalog dosyalarini
+        /// goreli disk yolundan yukler ve onbellege alir (0 B/kare kararli durum).
+        /// </summary>
+        public static Mesh? TryLoadRawItemCatalogGlb(string glbFileName)
+        {
+            if (string.IsNullOrEmpty(glbFileName)) return null;
+            if (RawGlbTemplateCache.TryGetValue(glbFileName, out Mesh? cachedRaw))
+            {
+                return cachedRaw;
+            }
+
+            string? resolvedPath = ResolveItemCatalogGlbDiskPath(glbFileName);
+            Mesh? loaded = null;
+            if (!string.IsNullOrEmpty(resolvedPath) && File.Exists(resolvedPath))
+            {
+                GlbHierarchyLoader.LoadedGlbData? data =
+                    GlbHierarchyLoader.LoadGlbFromDisk(resolvedPath, $"GlbItem_{Path.GetFileNameWithoutExtension(glbFileName)}");
+                if (data != null && data.CombinedMesh != null && data.CombinedMesh.vertexCount > 0)
+                {
+                    loaded = data.CombinedMesh;
+                }
+            }
+
+            RawGlbTemplateCache[glbFileName] = loaded;
+            return loaded;
+        }
+
+        private static string? ResolveItemCatalogGlbDiskPath(string glbFileName)
+        {
+            string normalized = glbFileName.EndsWith(".glb", StringComparison.OrdinalIgnoreCase)
+                ? glbFileName
+                : $"{glbFileName}.glb";
+            string cleanName = Path.GetFileName(normalized);
+
+            string dataPath = Application.dataPath;
+            if (!string.IsNullOrEmpty(dataPath))
+            {
+                string viaItems = Path.Combine(dataPath, "Art", "Generated", "Items", cleanName);
+                if (File.Exists(viaItems)) return viaItems;
+
+                string viaWeaponsMod = Path.Combine(dataPath, "Art", "Generated", "Weapons_Modular", cleanName);
+                if (File.Exists(viaWeaponsMod)) return viaWeaponsMod;
+            }
+
+            string relItems = Path.Combine("Assets", "Art", "Generated", "Items", cleanName);
+            if (File.Exists(relItems)) return relItems;
+
+            string relWeaponsMod = Path.Combine("Assets", "Art", "Generated", "Weapons_Modular", cleanName);
+            if (File.Exists(relWeaponsMod)) return relWeaponsMod;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Yuklenen bir katalog GLB sablonunu (Color32: R=MaterialID, G=Temp, B=Sharpness, A=AO) hedef alt-malzeme
+        /// (orn. Bakir/Demir/Altin/Mithril cevheri, Su/Lav matarasi/kovasi, Cig/Pismis/Yanmis et) ve sicaklikla klonlar.
+        /// </summary>
+        public static Mesh? CreateRemappedItemGlbMesh(
+            string glbFileName,
+            byte templatePrimaryMatId,
+            byte targetPrimaryMatId,
+            byte thermalTempByte,
+            string instanceMeshName)
+        {
+            Mesh? raw = TryLoadRawItemCatalogGlb(glbFileName);
+            if (raw == null) return null;
+            if (templatePrimaryMatId == targetPrimaryMatId && thermalTempByte == 0)
+            {
+                return raw;
+            }
+
+            Mesh clone = UnityEngine.Object.Instantiate(raw);
+            clone.name = instanceMeshName;
+            Color32[] cols = clone.colors32;
+            if (cols != null && cols.Length > 0)
+            {
+                for (int i = 0; i < cols.Length; i++)
+                {
+                    Color32 c = cols[i];
+                    if (c.r == templatePrimaryMatId)
+                    {
+                        c.r = targetPrimaryMatId;
+                    }
+                    if (thermalTempByte > c.g)
+                    {
+                        c.g = thermalTempByte;
+                    }
+                    cols[i] = c;
+                }
+                clone.colors32 = cols;
+            }
+            return clone;
+        }
+#endif
+
+        /// <summary>
+        /// PT-07: Fiziksel esya arketipine karsilik gelen Blender 4.2 katalog .glb dosya adini ve
+        /// sablondaki birincil MaterialID degerini dondurur (.NET 10 testlerinden dogrudan cagrilabilir).
+        /// </summary>
+        public static bool TryResolveCatalogItemGlbInfo(
+            PhysicalItemArchetype archetype,
+            out string glbFileName,
+            out byte templatePrimaryMatId)
+        {
+            switch (archetype)
+            {
+                case PhysicalItemArchetype.NaturalStick:
+                    glbFileName = "item_natural_stick.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.OakWood;
+                    return true;
+                case PhysicalItemArchetype.SplitFirewood:
+                    glbFileName = "item_split_firewood.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.OakWood;
+                    return true;
+                case PhysicalItemArchetype.RoughStone:
+                    glbFileName = "item_rough_stone.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Stone;
+                    return true;
+                case PhysicalItemArchetype.FlintStone:
+                case PhysicalItemArchetype.SlagGlassShard:
+                    glbFileName = "item_flint_stone.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Basalt;
+                    return true;
+                case PhysicalItemArchetype.QuartzCrystalCluster:
+                    glbFileName = "item_quartz_cluster.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.QuartzGem;
+                    return true;
+                case PhysicalItemArchetype.OreBearingRock:
+                case PhysicalItemArchetype.RoastedCrackedOre:
+                case PhysicalItemArchetype.IronBloomSponge:
+                    glbFileName = "item_ore_chunk.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.CopperOre;
+                    return true;
+                case PhysicalItemArchetype.RawMeatCut:
+                case PhysicalItemArchetype.CookedMeatCut:
+                case PhysicalItemArchetype.BurntCharredMeat:
+                    glbFileName = "item_meat_cut.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.RubyGem;
+                    return true;
+                case PhysicalItemArchetype.WildBerryCluster:
+                    glbFileName = "item_wild_berries.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.RedDiamondGem;
+                    return true;
+                case PhysicalItemArchetype.ClayCruciblePot:
+                    glbFileName = "item_clay_crucible.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Clay;
+                    return true;
+                case PhysicalItemArchetype.LeatherBellows:
+                    glbFileName = "item_leather_bellows.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.LeatherPadding;
+                    return true;
+                case PhysicalItemArchetype.WroughtIronBar:
+                case PhysicalItemArchetype.MetalIngotBar:
+                    glbFileName = "item_metal_ingot.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Steel;
+                    return true;
+                case PhysicalItemArchetype.ToolPrimitiveAxe:
+                    glbFileName = "item_tool_primitive_axe.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Basalt;
+                    return true;
+                case PhysicalItemArchetype.ToolPrimitiveKnife:
+                    glbFileName = "item_tool_primitive_knife.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Basalt;
+                    return true;
+                case PhysicalItemArchetype.ToolPrimitiveHammer:
+                    glbFileName = "item_tool_stone_hammer.glb";
+                    templatePrimaryMatId = MaterialIdCatalog.Cobblestone;
+                    return true;
+                default:
+                    glbFileName = string.Empty;
+                    templatePrimaryMatId = 0;
+                    return false;
+            }
+        }
+
+#if UNITY_5_3_OR_NEWER
         public static Mesh GetOrCreateMesh(
             PhysicalItemArchetype archetype,
             byte subMaterialId,
@@ -98,6 +286,28 @@ namespace Stratocraft.Inventory.Rendering
             if (StandardMeshCache.TryGetValue(key, out Mesh? cached) && cached != null)
             {
                 return cached;
+            }
+
+            // PT-07: Once Headless Blender 4.2 ile uretilen yuksek detayli GLB katalog modelini dene
+            if ((dna.Flags & PhysicalItemShapeDna.FlagBrokenStick) == 0 &&
+                TryResolveCatalogItemGlbInfo(archetype, out string glbFile, out byte templatePrimaryMat))
+            {
+                byte effTemp = (archetype == PhysicalItemArchetype.IronBloomSponge && dna.ThermalTempByte == 0)
+                    ? (byte)205
+                    : ((archetype == PhysicalItemArchetype.RoastedCrackedOre && dna.ThermalTempByte < 35)
+                        ? (byte)35
+                        : dna.ThermalTempByte);
+                Mesh? glbMesh = CreateRemappedItemGlbMesh(
+                    glbFile,
+                    templatePrimaryMat,
+                    resolvedMat,
+                    effTemp,
+                    $"Mesh_GlbPhysItem_{archetype}_{resolvedMat}_t{effTemp}");
+                if (glbMesh != null)
+                {
+                    StandardMeshCache[key] = glbMesh;
+                    return glbMesh;
+                }
             }
 
             SharedBuildTris.Clear();
@@ -400,7 +610,10 @@ namespace Stratocraft.Inventory.Rendering
                     break;
 
                 case PhysicalItemArchetype.ClayCruciblePot:
-                    EmitHollowTubeSegment(new SysVec3(0f, -0.08f, 0f), new SysVec3(0f, 0.09f, 0f), 0.075f, 0.098f, primaryMatId, temp, outTris);
+                    EmitHollowTubeSegment(new SysVec3(0f, -0.09f, 0f), new SysVec3(0f, -0.04f, 0f), 0.062f, 0.088f, primaryMatId, temp, outTris, sides: 8);
+                    EmitHollowTubeSegment(new SysVec3(0f, -0.04f, 0f), new SysVec3(0f, 0.06f, 0f), 0.088f, 0.098f, primaryMatId, temp, outTris, sides: 8);
+                    EmitHollowTubeSegment(new SysVec3(0f, 0.06f, 0f), new SysVec3(0f, 0.095f, 0f), 0.098f, 0.088f, primaryMatId, temp, outTris, sides: 8);
+                    EmitOrientedBox(new SysVec3(0f, 0.082f, 0.092f), new SysVec3(0.022f, 0.015f, 0.024f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMatId, temp, outTris);
                     break;
 
                 case PhysicalItemArchetype.LeatherBellows:
@@ -417,7 +630,9 @@ namespace Stratocraft.Inventory.Rendering
 
                 case PhysicalItemArchetype.WroughtIronBar:
                 case PhysicalItemArchetype.MetalIngotBar:
-                    EmitOrientedBox(SysVec3.Zero, new SysVec3(0.048f, 0.024f, 0.155f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMatId, temp, outTris);
+                    EmitOrientedBox(new SysVec3(0f, -0.008f, 0f), new SysVec3(0.052f, 0.016f, 0.155f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMatId, temp, outTris);
+                    EmitOrientedBox(new SysVec3(0f, 0.014f, 0f), new SysVec3(0.038f, 0.012f, 0.138f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMatId, temp, outTris);
+                    EmitOrientedBox(new SysVec3(0f, 0.026f, 0f), new SysVec3(0.024f, 0.004f, 0.115f), SysVec3.UnitX, SysVec3.UnitY, SysVec3.UnitZ, primaryMatId, temp, outTris);
                     break;
 
                 case PhysicalItemArchetype.SlagGlassShard:
@@ -851,20 +1066,30 @@ namespace Stratocraft.Inventory.Rendering
 
             SysVec3 tipF = new SysVec3((Rand01(ref seed) - 0.5f) * 0.02f, -0.005f, len);
             SysVec3 buttB = new SysVec3(0f, 0f, -len * 0.85f);
-            SysVec3 ridgeTop = new SysVec3((Rand01(ref seed) - 0.5f) * 0.018f, hgt, 0.01f);
-            SysVec3 keelBot = new SysVec3(0f, -hgt * 0.65f, -0.01f);
-            SysVec3 edgeL = new SysVec3(-wid, -0.004f, 0.015f);
-            SysVec3 edgeR = new SysVec3(wid, -0.004f, -0.010f);
+            SysVec3 ridgeBack = new SysVec3((Rand01(ref seed) - 0.5f) * 0.014f, hgt * 0.82f, -len * 0.32f);
+            SysVec3 ridgeFront = new SysVec3((Rand01(ref seed) - 0.5f) * 0.016f, hgt, len * 0.22f);
+            SysVec3 keelBack = new SysVec3(0f, -hgt * 0.58f, -len * 0.30f);
+            SysVec3 keelFront = new SysVec3(0f, -hgt * 0.65f, len * 0.20f);
+            SysVec3 edgeBL = new SysVec3(-wid * 0.84f, -0.003f, -len * 0.28f);
+            SysVec3 edgeFL = new SysVec3(-wid, -0.004f, len * 0.24f);
+            SysVec3 edgeBR = new SysVec3(wid * 0.84f, -0.003f, -len * 0.28f);
+            SysVec3 edgeFR = new SysVec3(wid, -0.004f, len * 0.24f);
 
-            AddTri(buttB, edgeL, ridgeTop, matId, temp, 225, outTris);
-            AddTri(edgeL, tipF, ridgeTop, matId, temp, 235, outTris);
-            AddTri(buttB, ridgeTop, edgeR, matId, temp, 195, outTris);
-            AddTri(ridgeTop, tipF, edgeR, matId, temp, 205, outTris);
+            // Ust konkoidal fasetler
+            AddTri(buttB, edgeBL, ridgeBack, matId, temp, 222, outTris);
+            AddQuad(edgeBL, edgeFL, ridgeFront, ridgeBack, matId, temp, 232, outTris);
+            AddTri(edgeFL, tipF, ridgeFront, matId, temp, 240, outTris);
+            AddTri(buttB, ridgeBack, edgeBR, matId, temp, 194, outTris);
+            AddQuad(ridgeBack, ridgeFront, edgeFR, edgeBR, matId, temp, 204, outTris);
+            AddTri(ridgeFront, tipF, edgeFR, matId, temp, 212, outTris);
 
-            AddTri(buttB, keelBot, edgeL, matId, temp, 145, outTris);
-            AddTri(edgeL, keelBot, tipF, matId, temp, 150, outTris);
-            AddTri(buttB, edgeR, keelBot, matId, temp, 145, outTris);
-            AddTri(keelBot, edgeR, tipF, matId, temp, 150, outTris);
+            // Alt konkoidal fasetler
+            AddTri(buttB, keelBack, edgeBL, matId, temp, 144, outTris);
+            AddQuad(keelBack, keelFront, edgeFL, edgeBL, matId, temp, 150, outTris);
+            AddTri(edgeFL, keelFront, tipF, matId, temp, 156, outTris);
+            AddTri(buttB, edgeBR, keelBack, matId, temp, 142, outTris);
+            AddQuad(edgeBR, edgeFR, keelFront, keelBack, matId, temp, 148, outTris);
+            AddTri(keelFront, edgeFR, tipF, matId, temp, 154, outTris);
         }
 
         private static void EmitQuartzPrismCluster(uint seed, byte matId, byte temp, List<FacetedVoxelTriangle> outTris)

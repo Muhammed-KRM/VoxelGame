@@ -937,8 +937,17 @@ namespace Stratocraft.Character
             }
             if (axeVisual != null && _cachedAxeMesh == null)
             {
+                Mesh? glbAxe = PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_tool_axe_iron.glb");
                 MeshFilter? mf = axeVisual.GetComponentInChildren<MeshFilter>(true);
-                if (mf != null && mf.sharedMesh != null) _cachedAxeMesh = mf.sharedMesh;
+                if (glbAxe != null)
+                {
+                    _cachedAxeMesh = glbAxe;
+                    if (mf != null) mf.sharedMesh = glbAxe;
+                }
+                else if (mf != null && mf.sharedMesh != null)
+                {
+                    _cachedAxeMesh = mf.sharedMesh;
+                }
                 MeshRenderer? mr = axeVisual.GetComponentInChildren<MeshRenderer>(true);
                 if (mr != null) _cachedAxeMat = mr.sharedMaterial;
             }
@@ -1529,9 +1538,9 @@ namespace Stratocraft.Character
                     break;
 
                 case InventoryItemKind.ScrollMartialStance:
-                    localOffset = new Vector3(0f, 0.036f, 0f);
+                    localOffset = new Vector3(0f, 0.032f, 0f);
                     localRot = Quaternion.Euler(8f, 28f, 84f);
-                    localScale = new Vector3(0.115f, 0.115f, 0.115f) * slotScaleFactor;
+                    localScale = new Vector3(0.32f, 0.32f, 0.32f) * slotScaleFactor;
                     break;
 
                 case InventoryItemKind.ToolPickaxe:
@@ -1548,26 +1557,46 @@ namespace Stratocraft.Character
 
                 case InventoryItemKind.ToolMicroChisel:
                     localOffset = new Vector3(0f, 0.026f, 0f);
-                    localRot = Quaternion.Euler(76f, 30f, 12f);
-                    localScale = new Vector3(0.036f, 0.115f, 0.036f) * slotScaleFactor;
+                    localRot = Quaternion.Euler(82f, 30f, 12f);
+                    localScale = new Vector3(0.42f, 0.42f, 0.42f) * slotScaleFactor;
                     break;
 
                 case InventoryItemKind.ToolFluidFlask:
-                    localOffset = new Vector3(0f, 0.044f, 0f);
+                case InventoryItemKind.FoodCleanWater:
+                    localOffset = new Vector3(0f, 0.028f, 0f);
                     localRot = Quaternion.Euler(8f, 22f, -6f);
-                    localScale = new Vector3(0.072f, 0.092f, 0.072f) * slotScaleFactor;
+                    localScale = new Vector3(0.42f, 0.42f, 0.42f) * slotScaleFactor;
                     break;
 
                 case InventoryItemKind.ToolFluidBucket:
-                    localOffset = new Vector3(0f, 0.048f, 0f);
+                    localOffset = new Vector3(0f, 0.028f, 0f);
                     localRot = Quaternion.Euler(6f, 18f, -4f);
-                    localScale = new Vector3(0.094f, 0.096f, 0.094f) * slotScaleFactor;
+                    localScale = new Vector3(0.38f, 0.38f, 0.38f) * slotScaleFactor;
                     break;
 
                 case InventoryItemKind.ToolFluidCauldron:
-                    localOffset = new Vector3(0f, 0.052f, 0f);
+                    localOffset = new Vector3(0f, 0.028f, 0f);
                     localRot = Quaternion.Euler(4f, 14f, -3f);
-                    localScale = new Vector3(0.118f, 0.102f, 0.118f) * slotScaleFactor;
+                    localScale = new Vector3(0.36f, 0.36f, 0.36f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.PotionHealth:
+                case InventoryItemKind.PotionStamina:
+                    localOffset = new Vector3(0f, 0.028f, 0f);
+                    localRot = Quaternion.Euler(6f, 24f, -4f);
+                    localScale = new Vector3(0.46f, 0.46f, 0.46f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.MedicalBandage:
+                    localOffset = new Vector3(0f, 0.026f, 0f);
+                    localRot = Quaternion.Euler(4f, 20f, 0f);
+                    localScale = new Vector3(0.48f, 0.48f, 0.48f) * slotScaleFactor;
+                    break;
+
+                case InventoryItemKind.PlaceableCampfire:
+                    localOffset = new Vector3(0f, 0.028f, 0f);
+                    localRot = Quaternion.Euler(78f, 26f, 0f);
+                    localScale = new Vector3(0.34f, 0.34f, 0.34f) * slotScaleFactor;
                     break;
 
                 default: // VoxelBlock ve diger mimari bloklar
@@ -1615,6 +1644,14 @@ namespace Stratocraft.Character
             if (_matItemMeshCache.TryGetValue(cacheKey, out Mesh? cached) && cached != null)
             {
                 return cached;
+            }
+
+            // PT-07: Kılıc ve kazma disindaki ozel alet/kap/iksir/mesale/parsomen esyalari icin Blender 4.2 GLB modellerini yukle
+            Mesh? catalogGlbMesh = TryLoadSpecialSlotCatalogGlbMesh(in slot);
+            if (catalogGlbMesh != null)
+            {
+                _matItemMeshCache[cacheKey] = catalogGlbMesh;
+                return catalogGlbMesh;
             }
 
             _matMeshTris.Clear();
@@ -1783,6 +1820,95 @@ namespace Stratocraft.Character
             Mesh created = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_matMeshTris, $"Mesh_3DMatItem_{slot.Kind}_{slot.SubId}");
             _matItemMeshCache[cacheKey] = created;
             return created;
+        }
+
+        private static Mesh? TryLoadSpecialSlotCatalogGlbMesh(in VisualInventorySlot slot)
+        {
+            switch (slot.Kind)
+            {
+                case InventoryItemKind.ToolAxe:
+                    return slot.SubId == 1
+                        ? PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_tool_primitive_axe.glb")
+                        : PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_tool_axe_iron.glb");
+
+                case InventoryItemKind.ToolMicroChisel:
+                    return PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_tool_micro_chisel.glb");
+
+                case InventoryItemKind.ToolFluidFlask:
+                case InventoryItemKind.FoodCleanWater:
+                {
+                    bool isWater = slot.Kind == InventoryItemKind.FoodCleanWater || slot.SubId == 1;
+                    bool isLava = slot.SubId == 2;
+                    byte targetMat = isLava
+                        ? MaterialIdCatalog.MagmaBlock
+                        : (isWater ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.Marble);
+                    byte temp = isLava ? (byte)230 : (byte)0;
+                    return PhysicalItemMeshFactory.CreateRemappedItemGlbMesh(
+                        "item_fluid_flask.glb",
+                        MaterialIdCatalog.AstralOre,
+                        targetMat,
+                        temp,
+                        $"Mesh_GlbFlask_{slot.Kind}_{slot.SubId}");
+                }
+
+                case InventoryItemKind.ToolFluidBucket:
+                {
+                    byte targetLiquidMat = slot.SubId == 2
+                        ? MaterialIdCatalog.MagmaBlock
+                        : (slot.SubId == 1 ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.OakWood);
+                    byte temp = slot.SubId == 2 ? (byte)230 : (byte)0;
+                    return PhysicalItemMeshFactory.CreateRemappedItemGlbMesh(
+                        "item_fluid_bucket.glb",
+                        MaterialIdCatalog.AstralOre,
+                        targetLiquidMat,
+                        temp,
+                        $"Mesh_GlbBucket_{slot.SubId}");
+                }
+
+                case InventoryItemKind.ToolFluidCauldron:
+                    return PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_fluid_cauldron.glb");
+
+                case InventoryItemKind.PotionHealth:
+                case InventoryItemKind.PotionStamina:
+                {
+                    byte targetPotionMat = slot.Kind == InventoryItemKind.PotionHealth
+                        ? MaterialIdCatalog.RubyGem
+                        : MaterialIdCatalog.GlowingMoss;
+                    return PhysicalItemMeshFactory.CreateRemappedItemGlbMesh(
+                        "item_potion_bottle.glb",
+                        MaterialIdCatalog.RubyGem,
+                        targetPotionMat,
+                        35,
+                        $"Mesh_GlbPotion_{slot.Kind}");
+                }
+
+                case InventoryItemKind.MedicalBandage:
+                    return PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_medical_bandage.glb");
+
+                case InventoryItemKind.PlaceableCampfire:
+                    return PhysicalItemMeshFactory.TryLoadRawItemCatalogGlb("item_torch_campfire.glb");
+
+                case InventoryItemKind.ScrollMartialStance:
+                {
+                    CombatMartialStance stance = Stage1VisualHotbarAndInventoryUi.ResolveScrollMartialStance(slot.SubId);
+                    byte sealMat = stance switch
+                    {
+                        CombatMartialStance.Iaido_QuickDraw => MaterialIdCatalog.RubyGem,
+                        CombatMartialStance.Fencing_Punta => MaterialIdCatalog.MithrilOre,
+                        CombatMartialStance.TwoHand_Juggernaut => MaterialIdCatalog.CopperOre,
+                        _ => MaterialIdCatalog.AstralOre
+                    };
+                    return PhysicalItemMeshFactory.CreateRemappedItemGlbMesh(
+                        "item_martial_scroll.glb",
+                        MaterialIdCatalog.RubyGem,
+                        sealMat,
+                        15,
+                        $"Mesh_GlbScroll_{slot.SubId}");
+                }
+
+                default:
+                    return null;
+            }
         }
 
         private static void AddUberShaderBoxTris(
@@ -3277,6 +3403,50 @@ namespace Stratocraft.Character
                 _heldBlockHandGloveGo.SetActive(false);
             }
 
+            // PT-07: Keski (Slot 5), Matara/Kova/Kazan (Slot 6), Iksir/Bandaj/Su (Slot 8), Zirh (Slot 9) ve Mesale/Kamp Atesi (Slot 10)
+            // icin dogrudan Blender 4.2 yuksek detayli 3B katalog mesh'ini kullan (basit sekizgen kutu cizme!)
+            bool useCatalogSlotMesh = shownSlot == 5 ||
+                                      shownSlot == 6 ||
+                                      shownSlot == 9 ||
+                                      shownSlot == 10 ||
+                                      activeUiSlot.Kind == InventoryItemKind.PotionHealth ||
+                                      activeUiSlot.Kind == InventoryItemKind.PotionStamina ||
+                                      activeUiSlot.Kind == InventoryItemKind.MedicalBandage ||
+                                      activeUiSlot.Kind == InventoryItemKind.FoodCleanWater;
+            if (useCatalogSlotMesh && !activeUiSlot.IsEmpty)
+            {
+                Mesh specialMesh = GetOrCreate3DMatMeshForSlot(in activeUiSlot);
+                if (_heldMaterialBlockMf != null && _heldMaterialBlockMf.sharedMesh != specialMesh)
+                {
+                    _heldMaterialBlockMf.sharedMesh = specialMesh;
+                    _lastHeldVisualMode = -1;
+                }
+
+                Vector3 catScale = Vector3.one * 0.78f;
+                if (specialMesh != null)
+                {
+                    Vector3 bSz = specialMesh.bounds.size;
+                    float maxB = Mathf.Max(0.01f, Mathf.Max(bSz.x, Mathf.Max(bSz.y, bSz.z)));
+                    float targetMeters = activeUiSlot.Kind switch
+                    {
+                        InventoryItemKind.ToolMicroChisel => 0.26f,
+                        InventoryItemKind.PlaceableCampfire => 0.34f,
+                        InventoryItemKind.ToolFluidCauldron => 0.25f,
+                        InventoryItemKind.ToolFluidBucket => 0.23f,
+                        InventoryItemKind.ToolFluidFlask or InventoryItemKind.FoodCleanWater => 0.19f,
+                        InventoryItemKind.PotionHealth or InventoryItemKind.PotionStamina => 0.17f,
+                        InventoryItemKind.MedicalBandage => 0.14f,
+                        _ => 0.22f
+                    };
+                    catScale = Vector3.one * (targetMeters / maxB);
+                }
+
+                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
+                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 24f, -6f);
+                _heldMaterialBlockGo.transform.localScale = catScale;
+                return;
+            }
+
             byte emptyContMat = activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron
                 ? MaterialIdCatalog.Bronze
                 : (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket ? MaterialIdCatalog.OakWood : MaterialIdCatalog.Marble);
@@ -3289,42 +3459,10 @@ namespace Stratocraft.Character
                 ? (byte)7
                 : (shownSlot == 6 ? (byte)6 : (byte)1);
 
-            if (shownSlot == 5)
-            {
-                // 4x4x4 Mimari Mikro-Keski tutusu
-                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.28f, -0.20f + drawDropY, 0.56f);
-                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(55f + drawPitchAdd, -12f, 8f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.05f, 0.24f, 0.05f);
-            }
-            else if (shownSlot == 6)
-            {
-                // Sivi Kabi tutusu: Matara kucuk/ince, Kova orta/genis, Kazan buyuk/agir!
-                if (activeUiSlot.Kind == InventoryItemKind.ToolFluidCauldron)
-                {
-                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.26f + drawDropY, 0.58f);
-                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(8f + drawPitchAdd, 18f, -4f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.24f, 0.20f, 0.24f);
-                }
-                else if (activeUiSlot.Kind == InventoryItemKind.ToolFluidBucket)
-                {
-                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.31f, -0.24f + drawDropY, 0.56f);
-                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(10f + drawPitchAdd, 22f, -5f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.20f, 0.20f, 0.20f);
-                }
-                else
-                {
-                    _heldMaterialBlockGo.transform.localPosition = new Vector3(0.30f, -0.22f + drawDropY, 0.54f);
-                    _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(12f + drawPitchAdd, 24f, -6f);
-                    _heldMaterialBlockGo.transform.localScale = new Vector3(0.13f, 0.18f, 0.13f);
-                }
-            }
-            else
-            {
-                // 3B Insa Blogu tutusu (avuc icine oturan kompakt 18cm blok!)
-                _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.22f + drawDropY, 0.54f);
-                _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 32f, -8f);
-                _heldMaterialBlockGo.transform.localScale = new Vector3(0.18f, 0.18f, 0.18f);
-            }
+            // 3B Insa Blogu /Tas Firin Kiti tutusu (avuc icine oturan kompakt 18cm blok!)
+            _heldMaterialBlockGo.transform.localPosition = new Vector3(0.32f, -0.22f + drawDropY, 0.54f);
+            _heldMaterialBlockGo.transform.localRotation = Quaternion.Euler(14f + drawPitchAdd, 32f, -8f);
+            _heldMaterialBlockGo.transform.localScale = new Vector3(0.18f, 0.18f, 0.18f);
 
             int heldVisualKey = (shownSlot << 8) | (int)activeUiSlot.Kind;
             if (_heldMaterialBlockMf != null && (_lastHeldBlockMat != displayMat || _lastHeldVisualMode != heldVisualKey || _heldMaterialBlockMf.sharedMesh == null))
