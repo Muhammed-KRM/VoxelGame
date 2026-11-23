@@ -3450,7 +3450,7 @@ namespace Stratocraft.Character
                     string shortShape = GetShortShapeBadgeName(selShape);
                     string shortBrush = GetShortBrushBadgeName(brushLabel);
                     _cachedSlotBannerText = TruncateBannerText(
-                        $"[C] T{tier}({totalStr}) | [V]{shortShape} | [T]{shortBrush} | [LMB]Vak [RMB]Koy | [Alt]Palet",
+                        $"[C] T{tier}({totalStr}) | [V]{shortShape} | [Shift+T]{shortBrush} | [LMB]Vak [RMB]Koy | [Alt]Palet",
                         72);
                 }
                 return _cachedSlotBannerText;
@@ -3462,7 +3462,7 @@ namespace Stratocraft.Character
                 {
                     _lastBannerCrystalActive = false;
                     _lastBannerSlotIdx = -1;
-                    _cachedSlotBannerText = "[0] BOŞ EL — [LMB] Yumruk | [E] Al | [Ctrl+E] Avuçla | [B] Kitap";
+                    _cachedSlotBannerText = "[0] BOŞ EL — [LMB] Yumruk | [E] Al | [T] İnşa | [B] Kitap";
                 }
                 return _cachedSlotBannerText;
             }
@@ -3638,7 +3638,7 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolPickaxe => "[LMB] Kaya & Cevher Kaz",
             InventoryItemKind.ToolAxe => "[LMB] Ağaç & Odun Kes",
             InventoryItemKind.ToolMicroChisel => "[LMB] Yont [RMB] Ekle",
-            InventoryItemKind.VoxelBlock => "[RMB] Koy [V] Şekil [R] Döndür",
+            InventoryItemKind.VoxelBlock => "[RMB] Koy [R] Döndür [C] Kristal",
             InventoryItemKind.OreChunk => slot.SubId == MaterialIdCatalog.QuartzGem ? "[C] Kristali Uyandır" : "[RMB] Kavur / Koy",
             InventoryItemKind.MetalIngot => "[RMB] Koy veya Örste İşle",
             InventoryItemKind.RoughStoneChunk => "[R] Çakmakla Yont [RMB] Koy",
@@ -3647,7 +3647,7 @@ namespace Stratocraft.Character
             InventoryItemKind.ClayCruciblePot => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0 ? "[RMB] Ateşte 12sn Pişir" : "[RMB] Fırına Koy",
             InventoryItemKind.LeatherBellows => "[RMB] Tak [E] Pompala",
             InventoryItemKind.IronBloomSponge => "[LMB] Sıcakken Kayada Döv",
-            InventoryItemKind.ToolStoneHammer => "[LMB] Cevher Kır / Demir Döv",
+            InventoryItemKind.ToolStoneHammer => "[LMB] Katman Diz / Döv [RMB/Q] İptal",
             InventoryItemKind.ResonanceCrystal => "[C] veya [RMB] Kristal Yükselt",
             InventoryItemKind.ArmorHelmet or InventoryItemKind.ArmorChestplate or InventoryItemKind.ArmorVambrace or InventoryItemKind.ArmorGreaves
                 or InventoryItemKind.WovenClothTunic or InventoryItemKind.OiledLeatherWindbreaker

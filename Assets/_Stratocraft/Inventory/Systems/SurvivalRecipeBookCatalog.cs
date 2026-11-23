@@ -433,11 +433,20 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "mind_timber_log_structures",
                 tab: SurvivalRecipeBookTab.MindBuildingStructures,
-                categoryBadge: "[T] -> [6..9] Kütük İnşa",
-                title: "[T]->[6..9] Kesilen Ağaç Kütükleriyle İnşa: Kütük Duvar, Çit (Palisade), Kiriş ve Kütük Kulübe",
-                ingredientsOrSource: "Devrilmiş 2m Ağaç Kütükleri (FallenTreeLog) — omuzda taşınır, [R] ile yön değiştirilip [Sağ Tık] ile doğrudan istiflenir.",
-                toolOrKeybind: "Kütüğü [E] Omuzla -> [R] Yön (Yatay/Dikey/Kiriş) -> [Sağ Tık] Yerleştir -> [T]->[6..9] Mühürle",
-                stepByStepGuide: "Baltayla kestiğin ağaç kütüğünü [E] ile omuzlayıp inşa alanına taşı: [R] tuşu Yatay Duvar, Dikey Çit (Palisade) ve Üst Kiriş (Beam) yönleri arasında döner; [Sağ Tık] kütüğü doğrudan 3B yapı parçası olarak yerleştirir ([E] ile geri omuzlanabilir). Kümeni dizdikten sonra [T] Zihin İnşasında [6] Kütük Duvar, [7] Kütük Çit, [8] Kütük Kiriş veya [9] Kütük Kulübe seçerek yapıyı mühürle!")
+                categoryBadge: "[T] -> [6..9] SOTF Kütük Dizme",
+                title: "[T]->[6..9] Sons of the Forest Tarzı Gerçek Kütük Dizme: Direk, Katmanlı Duvar ve Kiriş",
+                ingredientsOrSource: "Devrilmiş 2m Ağaç Kütükleri (FallenTreeLog) — [E] ile omuzda taşınır, yarı-şeffaf önizleme ile uç uca ve üst üste kilitlenir.",
+                toolOrKeybind: "Kütüğü [E] Omuzla -> [R] Yön (Yatay Sıra / Dikey Direk / Üst Kiriş) -> [Sol veya Sağ Tık] Katı Yerleştir -> [T]->[6..9] Mühürle",
+                stepByStepGuide: "Baltayla kestiğin 2m kütüğü [E] ile omuzlayıp inşa alanına taşı: ekranda yarı-şeffaf mavi kütük silüeti belirir. [R] tuşu Yatay Kütük Sırası, Dikey Taşıyıcı Direk (2m açıklık kilidi) ve Üst Kiriş yönleri arasında döner; kütükler otomatik olarak dikili direklerin arasına ve alt kütük sıralarının tam üstüne kilitlenir. Yerleştirilen her kütük %100 katı çarpışmalıdır ([E] ile geri sökülebilir)."),
+
+            new(
+                id: "mind_sotf_multimaterial_statics",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] Çok-Malzemeli Statik",
+                title: "[T] Çok-Malzemeli Katmanlı İnşa (Kütük, Taş, Mermer, Çelik) ve Gerçekçi Kolon-Kiriş Statiği",
+                ingredientsOrSource: "6 Yapı Malzemesi (Ahşap Kütük, Demir Ağacı, Örme Taş, Kesme Bazalt, Kadim Mermer, Takviyeli Çelik) + 3 Kesit Kalınlığı (İnce 0.65x, Standart 1.0x, Kalın Ana Taşıyıcı 1.45x).",
+                toolOrKeybind: "[T] Parça Seç -> [Sol Tık] Sıra Sıra Diz (1/5..5/5) | [V] Parça | [G] Malzeme | [R] Döndür | [Shift+R] Kalınlık | [Sağ Tık / ESC / Q / 0..9] Bırak",
+                stepByStepGuide: "1) Yarı-Şeffaf Hayalet & Katmanlı Dizilim: [T]'den seçilen her duvar/döşeme/çatı önce yarı-şeffaf hologram önizleme gösterir; [Sol Tık] ile her basışta kütük veya taş sıraları alttan üste katman katman dizilir (1/5 -> 5/5) ve tam katı çarpışma kazanır. [Sağ Tık], [ESC], [Q] veya [0..9] tuşları inşa modundan anında çıkıp eli boşaltır. 2) Küçük vs Büyük Bina Statiği: <= 4m açıklıklı tek katlı küçük kulübeler iç kolonsuz yalnızca duvarlarıyla güvenle ayakta durur; geniş salonlar (> 4m açıklık) veya çok katlı ağır taş/mermer yapılar ise Kalın Kolon + Ana Kiriş + Çapraz Payanda veya daha sağlam malzeme (Demir Ağacı / Taş / Mermer / Çelik) kullanılmazsa kendi eksenel yükü (kN) altında ezilerek çöker! 3) Yıkım Fiziği: Çok sağlam bir binada dahi alttaki taşıyıcı kolon veya duvar balta/kazmayla kırıldığında üstteki kiriş, döşeme ve çatı elemanları anında yeniden hesaplanarak 3B yerçekimi ve torkla zincirleme çöker!")
         };
 
         // =====================================================================
@@ -520,11 +529,11 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "guide_crystal_and_scatter",
                 tab: SurvivalRecipeBookTab.SmithingCookingAndCrystal,
-                categoryBadge: "[C] Kristal & [V] Fırça",
-                title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Saçılımı ve [Shift+B] Malzeme",
+                categoryBadge: "[C] Kristal & [Shift+T] Fırça",
+                title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Fırçası, [Shift+B / Alt] Malzeme ve [Shift+T] Vakum Alanı",
                 ingredientsOrSource: "3x Doğal Kuvars (T0 -> T1) | T2..T5 Rezonans Kristali (T1 -> T2..T5).",
-                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal Arazi Fırçası <-> Mimari Blok | [Shift+V] Şekil Gez | [Shift+B] Malzeme",
-                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası, 1.5m-3.5m yumuşak tepecik/dolgu) ile son kullanılan mimari blok şekli arasında anlık geçiş yapar; [Shift+V] mimari şekilleri döner, [Shift+B] inşa malzemesini değiştirir."),
+                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal <-> Mimari | [Shift+V / Alt+Tekerlek] Şekil | [Shift+B / Alt] Malzeme | [Shift+T / Shift+Tekerlek] Vakum Çapı",
+                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası) ile mimari blok şekli arasında geçiş yapar; [Shift+B] veya fare tekerleği malzemeyi değiştirir, [Alt] basılı tutulduğunda ise imleç serbest kalarak sağ kenardaki 17'li tam paletten doğrudan fareyle malzeme seçilir (Dodge tetiklenmez). Vakum/kazı çapı [Shift+T] veya [Shift+Tekerlek] ile büyütülür; yalın [T] tuşu ise her zaman Zihin İnşa Menüsünü açar."),
 
             new(
                 id: "guide_martial_stance_scrolls_and_posture",
