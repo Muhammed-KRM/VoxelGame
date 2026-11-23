@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
@@ -114,6 +115,7 @@ namespace Stratocraft.Character
 
         private readonly List<WorldLoosePartInstance> _parts = new(128);
         private LoosePartPoint[] _pointCloudScratch = new LoosePartPoint[128];
+        private LooseLogSupportState[] _partSupportStates = new LooseLogSupportState[128];
         private ModularPlacedPieceNode[] _modularNodes = new ModularPlacedPieceNode[256];
         private ModularPieceVisualSlot[] _modularVisuals = new ModularPieceVisualSlot[256];
         private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[128];
@@ -151,8 +153,10 @@ namespace Stratocraft.Character
         public bool ConsumedRightClickCancelThisFrame { get; private set; }
         private bool _hammerSuppressedUntilSlotChange;
         public float CurrentGhostStability01 { get; private set; } = 1.0f;
-        public ValheimStabilityBand CurrentGhostStabilityBand { get; private set; } = ValheimStabilityBand.Blue;
-        public Color32 CurrentGhostTintColor { get; private set; } = new Color32(62, 172, 255, 118);
+        public ValheimStabilityBand CurrentGhostStabilityBand { get; private set; } = ValheimStabilityBand.Green;
+        public Color32 CurrentGhostTintColor { get; private set; } = new Color32(28, 198, 98, 148);
+        public int CurrentGhostPreviewStateMode { get; private set; }
+        public BuildingSiteLogisticsCore? SiteLogistics { get; set; }
         public string CurrentModularStatusText { get; private set; } = string.Empty;
         public bool IsKneeSnapAnimActive => _kneeSnapAnimTimer > 0.001f;
         public bool HasValidGhostPlacement { get; private set; }
@@ -334,6 +338,7 @@ namespace Stratocraft.Character
             }
 
             StepFallingModularDebris(dt);
+            StepLooseTimberLogGravity(dt, worldChunks);
 
             if (miningCtrl.IsCrystalActive && IsModularBuildModeActive)
             {
@@ -520,6 +525,7 @@ namespace Stratocraft.Character
                 (uint)_nextInstanceId).WithStage((byte)CurrentLogOrientation);
 
             ReadOnlySpan<LoosePartPoint> cloud = SnapshotPointCloud();
+            float refFallbackY = playerTransform.position.y;
             SotfStructuralBuildMechanics.ComputeSotfFreeformSnapPose(
                 sotfRole,
                 in logDna,
@@ -528,23 +534,39 @@ namespace Stratocraft.Character
                 effectiveYaw,
                 cloud,
                 _modularNodes.AsSpan(0, _modularNodeCount),
+                (qx, qz) => SampleLocalTerrainFloorY(qx, qz, refFallbackY, worldChunks),
                 out SysVec3 outPos,
                 out SysQuat outRot,
-                out _,
+                out PhysicalItemShapeDna resolvedDna,
                 out bool stackedOnLog,
-                out _);
-            PhysicalItemShapeDna outDna = logDna.WithStage((byte)CurrentLogOrientation);
+                out _,
+                out FreeformLogPlacementValidation logValidation);
+            PhysicalItemShapeDna outDna = resolvedDna;
 
             Vector3 finalPos = new Vector3(outPos.X, outPos.Y, outPos.Z);
             Quaternion finalRot = new Quaternion(outRot.X, outRot.Y, outRot.Z, outRot.W);
 
-            HasValidGhostPlacement = true;
+            HasValidGhostPlacement = logValidation.CanPlace;
             CurrentGhostWorldPosition = finalPos;
             CurrentGhostItemKind = InventoryItemKind.SplitFirewood;
-            UpdateGhostVisualForTimberLog(woodMat, finalPos, finalRot, sharedVoxelMat);
+            CurrentGhostStability01 = logValidation.Stability01;
+            CurrentGhostPreviewStateMode = logValidation.PreviewStateMode;
+            CurrentGhostStabilityBand = logValidation.CanPlace ? ValheimStabilityBand.Green : ValheimStabilityBand.Red;
+            SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(
+                CurrentGhostStabilityBand, logValidation.CanPlace, out byte lr, out byte lg, out byte lb);
+            CurrentGhostTintColor = new Color32(lr, lg, lb, 148);
+            CurrentModularStatusText = logValidation.CanPlace
+                ? $"🪵 2m Kütük ({SotfStructuralBuildMechanics.GetFreeformLogRoleTurkishName(sotfRole)}) — {logValidation.FeedbackReason}"
+                : $"⚠️ {logValidation.FeedbackReason}";
+            UpdateGhostVisualForTimberLog(woodMat, finalPos, finalRot, sharedVoxelMat, logValidation.PreviewStateMode, logValidation.CanPlace);
 
             if (Input.GetMouseButtonDown(0) || (!rightClickConsumedExternally && Input.GetMouseButtonDown(1)))
             {
+                if (!logValidation.CanPlace)
+                {
+                    miningCtrl.LastFeedbackText = $"⚠️ {logValidation.FeedbackReason}";
+                    return;
+                }
                 PlaceCarriedShoulderLog(woodMat, in outDna, finalPos, finalRot, stackedOnLog, miningCtrl, holsterCtrl, sharedVoxelMat);
             }
         }
@@ -703,7 +725,11 @@ namespace Stratocraft.Character
             if (partKind == LooseBuildPartKind.FallenTreeLog)
             {
                 mesh = GetOrCreateTimberLogMeshCached(subId != 0 ? subId : MaterialIdCatalog.OakWood);
-                scale = new Vector3(0.38f, 1.00f, 0.38f);
+                // DOK2 B2: EmitOctagonalPillar yerel capi 0.76m; cift 0.38x daraltma kaldirildi -> tam 0.44m gercek kutuk capi!
+                scale = new Vector3(
+                    SotfStructuralBuildMechanics.TimberLogVisualScaleXZ,
+                    1.00f,
+                    SotfStructuralBuildMechanics.TimberLogVisualScaleXZ);
             }
             else
             {
@@ -738,7 +764,8 @@ namespace Stratocraft.Character
 
                 BoxCollider logCol = go.AddComponent<BoxCollider>();
                 logCol.center = Vector3.zero;
-                logCol.size = new Vector3(1.00f, 2.00f, 1.00f);
+                // 0.76 * TimberLogVisualScaleXZ = 0.44m (gorsel kutuk capiyla %100 birebir 1:1 temas, 0 cm hava boslugu!)
+                logCol.size = new Vector3(0.76f, 2.00f, 0.76f);
             }
             else if (sharedMat != null)
             {
@@ -778,6 +805,23 @@ namespace Stratocraft.Character
                 new SysVec3(-0.5f, 0.0f, -0.5f), actualMat, shapeId: 2, rotationState: 0, damageState: 0, SharedLogBuildTris);
             Mesh built = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(
                 SharedLogBuildTris, $"Mesh_WorldLooseTimberLog2m_{actualMat}");
+
+            // DOK2 B1: BuildUnityMeshZeroGc LUT-kodlu Color32 (R=MatID=70, G=0, B=148..210) yazar;
+            // _UsePaletteLUT=0 Direct-RGB materyal ve GhostPreview shader'inda elektrik mavisine donmemesi icin
+            // vertex renklerini faset golgelemeli gercek dogal ahsap RGB'sine cevir!
+            Color32[] lutColors = built.colors32;
+            if (lutColors != null && lutColors.Length > 0)
+            {
+                Color32[] directRgb = new Color32[lutColors.Length];
+                for (int i = 0; i < lutColors.Length; i++)
+                {
+                    Color32 src = lutColors[i];
+                    SotfStructuralBuildMechanics.ResolveTimberLogDirectRgb(actualMat, src.b, out byte rr, out byte gg, out byte bb);
+                    directRgb[i] = new Color32(rr, gg, bb, src.a);
+                }
+                built.colors32 = directRgb;
+            }
+
             CachedTimberLogMeshes[actualMat] = built;
             return built;
         }
@@ -786,7 +830,10 @@ namespace Stratocraft.Character
         {
             if (partKind == LooseBuildPartKind.FallenTreeLog)
             {
-                return new Vector3(0.38f, 1.00f, 0.38f);
+                return new Vector3(
+                    SotfStructuralBuildMechanics.TimberLogVisualScaleXZ,
+                    1.00f,
+                    SotfStructuralBuildMechanics.TimberLogVisualScaleXZ);
             }
             Vector3 groundScale = PhysicalItemMeshFactory.GetWorldGroundScale(arch, naturalScale);
             return partKind switch
@@ -846,7 +893,8 @@ namespace Stratocraft.Character
             Vector3 playerPos,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1HolsterAndBackpackController holsterCtrl,
-            Stage1DirectionalCombatBridge? combatBridge = null)
+            Stage1DirectionalCombatBridge? combatBridge = null,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
             int idx = FindBestAimedUnboundPartIndex(cam, playerPos, 2.95f);
             if (idx < 0) return false;
@@ -868,10 +916,11 @@ namespace Stratocraft.Character
                 {
                     UnityEngine.Object.Destroy(part.VisualGo);
                 }
-                _parts.RemoveAt(idx);
+                RemoveLoosePartAndRecomputeSupport(idx, worldChunks, out int detachedUpperLogs);
                 holsterCtrl.ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
-                miningCtrl.LastFeedbackText =
-                    "🪵 Yerleştirilen 2m Ağaç Kütüğü tekrar omuzlandı! ([Sağ Tık] Yerleştir | [R] Yön: Yatay Duvar / Dikey Çit / Üst Kiriş)";
+                miningCtrl.LastFeedbackText = detachedUpperLogs > 0
+                    ? $"🪵 Kütük tekrar omuzlandı! Alttan desteği çekilen {detachedUpperLogs} üst kütük yerçekimiyle düştü!"
+                    : "🪵 Yerleştirilen 2m Ağaç Kütüğü tekrar omuzlandı! ([Sol/Sağ Tık] Yerleştir | [R] Yön: Yatay Duvar / Dikey Dikme / Üst Kiriş)";
                 return true;
             }
 
@@ -997,6 +1046,7 @@ namespace Stratocraft.Character
                 }
             }
             _parts.Clear();
+            Array.Clear(_partSupportStates, 0, _partSupportStates.Length);
 
             for (int i = _modularNodeCount - 1; i >= 0; i--)
             {
@@ -1005,6 +1055,121 @@ namespace Stratocraft.Character
             _modularNodeCount = 0;
             _spawnedChunkSiteKeys.Clear();
             HideGhostPreview();
+        }
+
+        private void RemoveLoosePartAndRecomputeSupport(
+            int index,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out int detachedCount)
+        {
+            detachedCount = 0;
+            if ((uint)index >= (uint)_parts.Count) return;
+
+            _parts.RemoveAt(index);
+            if (index < _partSupportStates.Length - 1)
+            {
+                Array.Copy(_partSupportStates, index + 1, _partSupportStates, index, _parts.Count - index);
+            }
+            if (_parts.Count < _partSupportStates.Length)
+            {
+                _partSupportStates[_parts.Count] = default;
+            }
+
+            RecomputeLooseTimberLogSupport(worldChunks, out detachedCount);
+        }
+
+        private void EnsurePartSupportCapacity(int count)
+        {
+            if (_partSupportStates.Length < count)
+            {
+                Array.Resize(ref _partSupportStates, Mathf.NextPowerOfTwo(count));
+            }
+        }
+
+        public void RecomputeLooseTimberLogSupport(
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out int detachedCount)
+        {
+            int count = _parts.Count;
+            detachedCount = 0;
+            if (count == 0) return;
+
+            EnsurePartSupportCapacity(count);
+            ReadOnlySpan<LoosePartPoint> cloud = SnapshotPointCloud();
+            SotfStructuralBuildMechanics.RecomputeLooseLogSupportAndTriggerFalls(
+                cloud,
+                _partSupportStates.AsSpan(0, count),
+                (qx, qz) => SampleLocalTerrainFloorY(qx, qz, _parts[0].Position.y, worldChunks),
+                out detachedCount);
+        }
+
+        private void StepLooseTimberLogGravity(float dt, Dictionary<(int cx, int cz), uint[]>? worldChunks)
+        {
+            int count = _parts.Count;
+            if (count == 0 || dt <= 0f) return;
+
+            EnsurePartSupportCapacity(count);
+            bool anyFalling = false;
+            for (int i = 0; i < count; i++)
+            {
+                if (_partSupportStates[i].IsFalling)
+                {
+                    anyFalling = true;
+                    break;
+                }
+            }
+            if (!anyFalling) return;
+
+            ReadOnlySpan<LoosePartPoint> cloud = SnapshotPointCloud();
+            Span<LoosePartPoint> mutableCloud = _pointCloudScratch.AsSpan(0, count);
+            SotfStructuralBuildMechanics.StepLooseLogsUnderGravity(
+                mutableCloud,
+                _partSupportStates.AsSpan(0, count),
+                dt,
+                (qx, qz) => SampleLocalTerrainFloorY(qx, qz, _parts[0].Position.y, worldChunks));
+
+            for (int i = 0; i < count; i++)
+            {
+                WorldLoosePartInstance inst = _parts[i];
+                if (inst.PartKind != LooseBuildPartKind.FallenTreeLog) continue;
+                Vector3 nextPos = new Vector3(mutableCloud[i].Position.X, mutableCloud[i].Position.Y, mutableCloud[i].Position.Z);
+                if ((nextPos - inst.Position).sqrMagnitude > 1e-6f)
+                {
+                    inst.Position = nextPos;
+                    if (inst.VisualGo != null)
+                    {
+                        inst.VisualGo.transform.position = nextPos;
+                    }
+                    _parts[i] = inst;
+                }
+            }
+        }
+
+        /// <summary>
+        /// DOK2 C6: Altindaki arazi kazildiginda kalici IsGrounded=true acigini kapatir;
+        /// desteksiz kalan moduler yapilari ve serbest kutukleri aninda dususe gecirir.
+        /// </summary>
+        public void NotifyTerrainExcavated(
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            float referenceY,
+            out int ungroundedCount,
+            out int collapsedCount)
+        {
+            ungroundedCount = 0;
+            collapsedCount = 0;
+            if (_modularNodeCount > 0)
+            {
+                SotfStructuralBuildMechanics.RevalidateModularGroundAndSupportAfterExcavation(
+                    _modularNodes.AsSpan(0, _modularNodeCount),
+                    (qx, qz) => SampleLocalTerrainFloorY(qx, qz, referenceY, worldChunks),
+                    out ungroundedCount,
+                    out collapsedCount);
+                RemoveBrokenOrCollapsedIfNeeded();
+                SyncAllModularVisualTransforms();
+            }
+
+            RecomputeLooseTimberLogSupport(worldChunks, out int detachedLogs);
+            collapsedCount += detachedLogs;
         }
 
         private bool TrySampleAimSurface(
@@ -1054,18 +1219,29 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Moduler / Kutuk insa modunda yatay ileri bakilirken isin bosluga dusse bile 3.4m ilerideki zemine hayalet izdusumu ver!
-            if (maxReach > MaxPlaceReachMeters + 0.1f)
+            // DOK2 C2: Gokyuzune bakilirken (camDir.y > 0.15f) +3.2m sahte ucan nokta uydurma TAMAMEN kapatildi!
+            // Yalnizca yatay/asagi bakista ve gercek zemin orneklenebilirse zemin izdusumu verilir.
+            if (maxReach > MaxPlaceReachMeters + 0.1f && camDir.y <= 0.15f && worldChunks != null)
             {
                 Vector3 flatFwd = new Vector3(camDir.x, 0f, camDir.z);
-                if (flatFwd.sqrMagnitude < 0.001f) flatFwd = Vector3.forward;
-                flatFwd.Normalize();
-                Vector3 forwardProbe = playerPos + flatFwd * 3.40f;
-                float floorY = SampleLocalTerrainFloorY(forwardProbe.x, forwardProbe.z, playerPos.y, worldChunks);
-                float aimHeightOffset = camDir.y > 0.15f ? Mathf.Clamp((camDir.y - 0.15f) * 4.2f, 0f, 3.2f) : 0f;
-                surfacePoint = new Vector3(forwardProbe.x, floorY + aimHeightOffset, forwardProbe.z);
-                surfaceNormal = Vector3.up;
-                return true;
+                if (flatFwd.sqrMagnitude >= 0.001f)
+                {
+                    flatFwd.Normalize();
+                    Vector3 forwardProbe = playerPos + flatFwd * 3.40f;
+                    bool hasRealGround = VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                        forwardProbe.x, forwardProbe.z, playerPos.y + 1.2f, 3.2f, worldChunks, out float floorY, out Vector3 floorN);
+                    if (SotfStructuralBuildMechanics.TryResolveAimSurfaceFallbackPure(
+                            new SysVec3(playerPos.x, playerPos.y, playerPos.z),
+                            new SysVec3(camDir.x, camDir.y, camDir.z),
+                            hasRealGround,
+                            floorY,
+                            out SysVec3 fallbackPt))
+                    {
+                        surfacePoint = new Vector3(fallbackPt.X, fallbackPt.Y, fallbackPt.Z);
+                        surfaceNormal = floorN.sqrMagnitude > 0.001f ? floorN.normalized : Vector3.up;
+                        return true;
+                    }
+                }
             }
 
             return false;
@@ -1244,15 +1420,18 @@ namespace Stratocraft.Character
 
         private static Mesh? GetOrCreateModularGhostMeshCached(ModularBuildPieceKind kind, ValheimStabilityBand band)
         {
+            ValheimStabilityBand normalizedBand = SotfStructuralBuildMechanics.NormalizeStabilityBandWithoutBlue(band);
             int kIdx = Mathf.Clamp((int)kind, 0, ValheimSotfModularGraphSolver.ModularPieceCount - 1);
-            int bIdx = Mathf.Clamp((int)band, 0, 4);
+            int bIdx = Mathf.Clamp((int)normalizedBand, 0, 4);
             Mesh? existing = CachedModularGhostMeshes[kIdx, bIdx];
             if (existing != null) return existing;
 
             Mesh? baseMesh = LoadModularPieceMeshCached(kind);
             if (baseMesh == null) return null;
 
-            ValheimSotfModularGraphSolver.GetStabilityBandRgba(band, out byte tr, out byte tg, out byte tb, out byte ta);
+            SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(
+                normalizedBand, normalizedBand != ValheimStabilityBand.Red, out byte tr, out byte tg, out byte tb);
+            const byte ta = 148;
             Color32[] srcColors = baseMesh.colors32;
             int vCount = baseMesh.vertexCount;
             Color32[] tinted = new Color32[vCount];
@@ -1260,16 +1439,17 @@ namespace Stratocraft.Character
             for (int i = 0; i < vCount; i++)
             {
                 Color32 sc = (srcColors != null && i < srcColors.Length) ? srcColors[i] : new Color32(160, 120, 80, 245);
-                byte r = (byte)Mathf.Clamp((sc.r * 45 + tr * 55) / 100, 4, 255);
+                // DOK5 §2.2: %70 dogal malzeme rengini koru, yalnizca %30 stres tonu harmanla (mavi renk YOK!)
+                byte r = (byte)Mathf.Clamp((sc.r * 70 + tr * 30) / 100, 4, 255);
                 if (r == 3 || r == 11) r++;
-                byte g = (byte)Mathf.Clamp((sc.g * 45 + tg * 55) / 100, 4, 255);
-                byte b = (byte)Mathf.Clamp((sc.b * 45 + tb * 55) / 100, 4, 255);
+                byte g = (byte)Mathf.Clamp((sc.g * 70 + tg * 30) / 100, 4, 255);
+                byte b = (byte)Mathf.Clamp((sc.b * 70 + tb * 30) / 100, 4, 255);
                 tinted[i] = new Color32(r, g, b, ta);
             }
 
             Mesh ghostMesh = new Mesh
             {
-                name = $"Ghost_{baseMesh.name}_{band}",
+                name = $"Ghost_{baseMesh.name}_{normalizedBand}",
                 indexFormat = vCount > 65532 ? IndexFormat.UInt32 : IndexFormat.UInt16
             };
             ghostMesh.vertices = baseMesh.vertices;
@@ -1588,10 +1768,13 @@ namespace Stratocraft.Character
                 Vector3 uPos = new Vector3(uNode.Position.X, uNode.Position.Y, uNode.Position.Z);
                 Quaternion uRot = new Quaternion(uNode.Rotation.X, uNode.Rotation.Y, uNode.Rotation.Z, uNode.Rotation.W);
 
-                ValheimSotfModularGraphSolver.GetStabilityBandRgba(uNode.StabilityBand, out byte ur, out byte ug, out byte ub, out _);
+                ValheimStabilityBand safeBand = SotfStructuralBuildMechanics.NormalizeStabilityBandWithoutBlue(uNode.StabilityBand);
+                int uMode = SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(
+                    safeBand, safeBand != ValheimStabilityBand.Red, out byte ur, out byte ug, out byte ub);
                 CurrentGhostStability01 = uNode.Stability01;
-                CurrentGhostStabilityBand = uNode.StabilityBand;
-                CurrentGhostTintColor = new Color32(ur, ug, ub, 118);
+                CurrentGhostStabilityBand = safeBand;
+                CurrentGhostPreviewStateMode = uMode;
+                CurrentGhostTintColor = new Color32(ur, ug, ub, 148);
                 HasValidGhostPlacement = true;
                 CurrentGhostWorldPosition = uPos;
                 CurrentGhostItemKind = InventoryItemKind.ToolStoneHammer;
@@ -1602,14 +1785,26 @@ namespace Stratocraft.Character
                     $"🪵 [Sol Tık] Katman Diz ({curCourse + 1}/{reqCourse}) -> {uPieceName} [{uMatName}] | [Sağ Tık/ESC/Q] İptal";
                 miningCtrl.LastFeedbackText = CurrentModularStatusText;
 
-                UpdateGhostVisualForModularPiece(uNode.Kind, uNode.StabilityBand, uPos, uRot, sharedVoxelMat, uNode.ThicknessKind);
+                UpdateGhostVisualForModularPiece(uNode.Kind, safeBand, uPos, uRot, sharedVoxelMat, uNode.ThicknessKind);
 
                 if (Input.GetMouseButtonDown(0))
                 {
                     if (!holsterCtrl.IsCreativeMode)
                     {
                         InventoryItemKind costItem = MapBuildMaterialToInventoryCost(uMat);
-                        _ = holsterCtrl.InventoryUi?.TryConsumeItemFromInventory(costItem, 0, 1, miningCtrl, ignoreSubId: true);
+                        byte pileMatId = SotfStructuralBuildMechanics.GetMaterialProfile(uMat).VoxelMaterialId;
+                        bool consumedFromSitePile = SiteLogistics != null &&
+                            SiteLogistics.TryConsumeFromNearestSitePile(
+                                new SysVec3(uPos.x, uPos.y, uPos.z), pileMatId, 1, out _, out _);
+                        bool consumedFromInv = consumedFromSitePile ||
+                            (holsterCtrl.InventoryUi != null &&
+                             holsterCtrl.InventoryUi.TryConsumeItemFromInventory(costItem, 0, 1, miningCtrl, ignoreSubId: true));
+                        if (!consumedFromInv)
+                        {
+                            miningCtrl.LastFeedbackText =
+                                $"⚠️ YETERSİZ MALZEME: {uPieceName} katmanı için 1x {uMatName} gerekli! (Çantanızda veya 8m şantiye yığınında malzeme yok)";
+                            return;
+                        }
                     }
 
                     uNode.CompletedCourses = (holsterCtrl.IsCreativeMode && ctrlHeld)
@@ -1652,10 +1847,14 @@ namespace Stratocraft.Character
             Vector3 finalPos = new Vector3(snappedPos.X, snappedPos.Y, snappedPos.Z);
             Quaternion finalRot = new Quaternion(snappedRot.X, snappedRot.Y, snappedRot.Z, snappedRot.W);
 
-            ValheimSotfModularGraphSolver.GetStabilityBandRgba(previewBand, out byte tr, out byte tg, out byte tb, out _);
+            ValheimStabilityBand normalizedPreviewBand = SotfStructuralBuildMechanics.NormalizeStabilityBandWithoutBlue(previewBand);
+            bool canStandPreview = ValheimSotfModularGraphSolver.CanPieceStand(previewStab01);
+            int previewMode = SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(
+                normalizedPreviewBand, canStandPreview, out byte tr, out byte tg, out byte tb);
             CurrentGhostStability01 = previewStab01;
-            CurrentGhostStabilityBand = previewBand;
-            CurrentGhostTintColor = new Color32(tr, tg, tb, 118);
+            CurrentGhostStabilityBand = normalizedPreviewBand;
+            CurrentGhostPreviewStateMode = previewMode;
+            CurrentGhostTintColor = new Color32(tr, tg, tb, 148);
             HasValidGhostPlacement = true;
             CurrentGhostWorldPosition = finalPos;
             CurrentGhostItemKind = InventoryItemKind.ToolStoneHammer;
@@ -1663,7 +1862,9 @@ namespace Stratocraft.Character
             string pieceLabel = ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(ActiveModularPieceKind);
             string matLabel = SotfStructuralBuildMechanics.GetMaterialTurkishName(effectiveMat);
             string thickLabel = SotfStructuralBuildMechanics.GetThicknessTurkishName(ActiveSectionThickness);
-            string bandLabel = ValheimSotfModularGraphSolver.GetStabilityBandTurkishName(previewBand);
+            string bandLabel = normalizedPreviewBand == ValheimStabilityBand.Green
+                ? "Zümrüt Sağlam"
+                : ValheimSotfModularGraphSolver.GetStabilityBandTurkishName(normalizedPreviewBand);
             string snapTag = snappedToPiece ? "🧲 Kenetlendi" : (isGrounded ? "⛰️ Zemin" : "Havada");
             int pct = Mathf.RoundToInt(previewStab01 * 100f);
             byte reqCourses = SotfStructuralBuildMechanics.GetDefaultRequiredCourses(ActiveModularPieceKind);
@@ -1673,7 +1874,7 @@ namespace Stratocraft.Character
             miningCtrl.LastFeedbackText = CurrentModularStatusText;
 
             UpdateGhostVisualForModularPiece(
-                ActiveModularPieceKind, previewBand, finalPos, finalRot, sharedVoxelMat, ActiveSectionThickness);
+                ActiveModularPieceKind, normalizedPreviewBand, finalPos, finalRot, sharedVoxelMat, ActiveSectionThickness);
 
             if (Input.GetMouseButtonDown(0))
             {
@@ -1725,7 +1926,19 @@ namespace Stratocraft.Character
                 if (!holsterCtrl.IsCreativeMode)
                 {
                     InventoryItemKind costKind = MapBuildMaterialToInventoryCost(effectiveMat);
-                    _ = holsterCtrl.InventoryUi?.TryConsumeItemFromInventory(costKind, 0, 1, miningCtrl, ignoreSubId: true);
+                    byte pileMatId = SotfStructuralBuildMechanics.GetMaterialProfile(effectiveMat).VoxelMaterialId;
+                    bool consumedFromSitePile = SiteLogistics != null &&
+                        SiteLogistics.TryConsumeFromNearestSitePile(
+                            new SysVec3(finalPos.x, finalPos.y, finalPos.z), pileMatId, 1, out _, out _);
+                    bool consumed = consumedFromSitePile ||
+                        (holsterCtrl.InventoryUi != null &&
+                         holsterCtrl.InventoryUi.TryConsumeItemFromInventory(costKind, 0, 1, miningCtrl, ignoreSubId: true));
+                    if (!consumed)
+                    {
+                        miningCtrl.LastFeedbackText =
+                            $"⚠️ YETERSİZ MALZEME: {pieceLabel} için 1x {matLabel} gerekli! (Survival modunda bedava yapı basılamaz — çantadan veya 8m şantiye yığınından tedarik edin)";
+                        return;
+                    }
                 }
 
                 candidateNode.InstanceId = ++_nextModularInstanceId;
@@ -2190,28 +2403,29 @@ namespace Stratocraft.Character
                 {
                     float y0 = lMin.Y + cIdx * courseH + 0.01f;
                     float y1 = y0 + courseH - 0.02f;
-                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f, y0, -0.10f), new Vector3(-0.48f, y1, 0.10f), bodyCol, barkOrMortarCol);
-                    AppendBox(verts, norms, cols, tris, new Vector3(0.48f, y0, -0.10f), new Vector3(1.00f, y1, 0.10f), bodyCol, barkOrMortarCol);
+                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f, y0, -0.18f), new Vector3(-0.48f, y1, 0.18f), bodyCol, barkOrMortarCol);
+                    AppendBox(verts, norms, cols, tris, new Vector3(0.48f, y0, -0.18f), new Vector3(1.00f, y1, 0.18f), bodyCol, barkOrMortarCol);
                 }
                 else if (kind == ModularBuildPieceKind.PlankWindow2x2m && cIdx >= 1 && cIdx <= 2)
                 {
                     float y0 = lMin.Y + cIdx * courseH + 0.01f;
                     float y1 = y0 + courseH - 0.02f;
-                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f, y0, -0.10f), new Vector3(-0.42f, y1, 0.10f), bodyCol, barkOrMortarCol);
-                    AppendBox(verts, norms, cols, tris, new Vector3(0.42f, y0, -0.10f), new Vector3(1.00f, y1, 0.10f), bodyCol, barkOrMortarCol);
+                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f, y0, -0.18f), new Vector3(-0.42f, y1, 0.18f), bodyCol, barkOrMortarCol);
+                    AppendBox(verts, norms, cols, tris, new Vector3(0.42f, y0, -0.18f), new Vector3(1.00f, y1, 0.18f), bodyCol, barkOrMortarCol);
                 }
                 else if (kind == ModularBuildPieceKind.GableWall45Deg2m)
                 {
                     float y0 = lMin.Y + cIdx * courseH + 0.01f;
                     float y1 = y0 + courseH - 0.02f;
                     float taper = 1.0f - (cIdx / (float)requiredCourses) * 0.65f;
-                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f * taper, y0, -0.10f), new Vector3(1.00f * taper, y1, 0.10f), bodyCol, barkOrMortarCol);
+                    AppendBox(verts, norms, cols, tris, new Vector3(-1.00f * taper, y0, -0.18f), new Vector3(1.00f * taper, y1, 0.18f), bodyCol, barkOrMortarCol);
                 }
                 else
                 {
                     float y0 = lMin.Y + cIdx * courseH + 0.012f;
                     float y1 = y0 + courseH - 0.024f;
-                    float hz = Mathf.Max(0.11f, (lMax.Z - lMin.Z) * 0.5f);
+                    // DOK2 B3: Ince 11cm levha yerine gercek 36cm hacimli kutuk/tas duvar sirasi
+                    float hz = Mathf.Max(0.18f, (lMax.Z - lMin.Z) * 0.5f);
                     AppendBox(verts, norms, cols, tris, new Vector3(lMin.X, y0, -hz), new Vector3(lMax.X, y1, hz), bodyCol, barkOrMortarCol);
                 }
             }
@@ -2225,7 +2439,7 @@ namespace Stratocraft.Character
             return m;
         }
 
-        public static Material? ResolveSemiTransparentGhostMaterial(Color32 tint)
+        public static Material? ResolveSemiTransparentGhostMaterial(Color32 tint, int previewStateMode = 0)
         {
             if (_sharedGhostHologramMaterial == null)
             {
@@ -2242,10 +2456,18 @@ namespace Stratocraft.Character
                 _sharedGhostHologramMaterial.renderQueue = (int)RenderQueue.Transparent + 20;
             }
 
-            Color c = new Color(tint.r / 255f, tint.g / 255f, tint.b / 255f, Mathf.Clamp(tint.a / 255f, 0.34f, 0.54f));
+            Color c = new Color(tint.r / 255f, tint.g / 255f, tint.b / 255f, Mathf.Clamp(tint.a / 255f, 0.50f, 0.64f));
             if (_sharedGhostHologramMaterial.HasProperty("_GhostTint"))
             {
                 _sharedGhostHologramMaterial.SetColor("_GhostTint", c);
+            }
+            if (_sharedGhostHologramMaterial.HasProperty("_PreviewStateMode"))
+            {
+                _sharedGhostHologramMaterial.SetFloat("_PreviewStateMode", Mathf.Clamp(previewStateMode, 0, 3));
+            }
+            if (_sharedGhostHologramMaterial.HasProperty("_NaturalPreserveWeight"))
+            {
+                _sharedGhostHologramMaterial.SetFloat("_NaturalPreserveWeight", 0.70f);
             }
             if (_sharedGhostHologramMaterial.HasProperty("_BaseColor"))
             {
@@ -2560,8 +2782,10 @@ namespace Stratocraft.Character
                 }
             }
 
-            ValheimSotfModularGraphSolver.GetStabilityBandRgba(band, out byte gr, out byte gg, out byte gb, out _);
-            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(gr, gg, gb, 112));
+            ValheimStabilityBand normalizedBand = SotfStructuralBuildMechanics.NormalizeStabilityBandWithoutBlue(band);
+            int stateMode = SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(
+                normalizedBand, normalizedBand != ValheimStabilityBand.Red, out byte gr, out byte gg, out byte gb);
+            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(gr, gg, gb, 148), stateMode);
             if (ghostMat == null) ghostMat = ResolveModularVertexColorMaterial(sharedMat);
             if (_ghostPreviewMr != null && ghostMat != null && _ghostPreviewMr.sharedMaterial != ghostMat)
             {
@@ -2572,17 +2796,17 @@ namespace Stratocraft.Character
                 (_ghostPreviewMf.sharedMesh == null ||
                  !_lastGhostWasModularPiece ||
                  _lastGhostModularKind != kind ||
-                 _lastGhostModularBand != band))
+                 _lastGhostModularBand != normalizedBand))
             {
                 _lastGhostWasModularPiece = true;
                 _lastGhostWasTimberLog = false;
                 _lastGhostModularKind = kind;
-                _lastGhostModularBand = band;
-                _ghostPreviewMf.sharedMesh = GetOrCreateModularGhostMeshCached(kind, band);
+                _lastGhostModularBand = normalizedBand;
+                _ghostPreviewMf.sharedMesh = GetOrCreateModularGhostMeshCached(kind, normalizedBand);
             }
 
-            _ghostPreviewGo.transform.localScale = GetLocalScaleForPieceThickness(kind, thickness) * 1.012f;
-            float pulse = 0.006f * Mathf.Sin(Time.time * 6.0f);
+            _ghostPreviewGo.transform.localScale = GetLocalScaleForPieceThickness(kind, thickness) * 1.008f;
+            float pulse = 0.004f * Mathf.Sin(Time.time * 6.0f);
             _ghostPreviewGo.transform.position = worldPos + new Vector3(0f, pulse, 0f);
             _ghostPreviewGo.transform.rotation = worldRot;
             if (!_ghostPreviewGo.activeSelf) _ghostPreviewGo.SetActive(true);
@@ -2592,7 +2816,9 @@ namespace Stratocraft.Character
             byte woodMat,
             Vector3 worldPos,
             Quaternion worldRot,
-            Material? sharedMat)
+            Material? sharedMat,
+            int previewStateMode = 0,
+            bool canPlace = true)
         {
             EnsureContainerRoot();
             if (_ghostPreviewGo == null)
@@ -2608,8 +2834,12 @@ namespace Stratocraft.Character
                 }
             }
 
-            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(82, 214, 255, 112));
-            if (ghostMat == null) ghostMat = sharedMat;
+            // DOK5 §2.2: Mavi renk TAMAMEN kaldirildi! %70 gercek dogal ahsap rengi + 4 kademeli Fresnel stres kenari!
+            ValheimStabilityBand logBand = canPlace ? ValheimStabilityBand.Green : ValheimStabilityBand.Red;
+            int resolvedMode = canPlace ? Mathf.Clamp(previewStateMode, 0, 2) : 3;
+            SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(logBand, canPlace, out byte lr, out byte lg, out byte lb);
+            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(lr, lg, lb, 148), resolvedMode);
+            if (ghostMat == null) ghostMat = ResolveModularVertexColorMaterial(sharedMat);
             if (_ghostPreviewMr != null && ghostMat != null && _ghostPreviewMr.sharedMaterial != ghostMat)
             {
                 _ghostPreviewMr.sharedMaterial = ghostMat;
@@ -2622,11 +2852,13 @@ namespace Stratocraft.Character
                 _lastGhostWasTimberLog = true;
                 _lastGhostSubId = woodMat;
                 _ghostPreviewMf.sharedMesh = GetOrCreateTimberLogMeshCached(woodMat);
-                _ghostPreviewGo.transform.localScale = new Vector3(0.39f, 1.01f, 0.39f);
+                // DOK2 B2 & DOK5 §2.2: 1:1 gercek hacimli 0.44m capli kutuk onizlemesi (eski ince 0.39x hatasi giderildi)
+                float logScale = SotfStructuralBuildMechanics.TimberLogVisualScaleXZ * 1.008f;
+                _ghostPreviewGo.transform.localScale = new Vector3(logScale, 1.004f, logScale);
             }
 
-            float pulse = 0.008f * Mathf.Sin(Time.time * 5.5f);
-            _ghostPreviewGo.transform.position = worldPos + new Vector3(0f, 0.012f + pulse, 0f);
+            float pulse = 0.005f * Mathf.Sin(Time.time * 5.5f);
+            _ghostPreviewGo.transform.position = worldPos + new Vector3(0f, 0.006f + pulse, 0f);
             _ghostPreviewGo.transform.rotation = worldRot;
             if (!_ghostPreviewGo.activeSelf) _ghostPreviewGo.SetActive(true);
         }
@@ -2652,7 +2884,7 @@ namespace Stratocraft.Character
                 }
             }
 
-            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(110, 232, 180, 108));
+            Material? ghostMat = ResolveSemiTransparentGhostMaterial(new Color32(28, 198, 98, 148), previewStateMode: 0);
             if (ghostMat == null) ghostMat = sharedMat;
             if (_ghostPreviewMr != null && ghostMat != null && _ghostPreviewMr.sharedMaterial != ghostMat)
             {
@@ -2857,6 +3089,7 @@ namespace Stratocraft.Character
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.WorldGen.Generators;
 
@@ -2876,6 +3109,7 @@ namespace Stratocraft.Character
         private int[] _visualSlotTokens = new int[256];
         private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[128];
         private readonly List<LoosePartPoint> _looseLogs = new(64);
+        private readonly List<LooseLogSupportState> _looseLogStates = new(64);
         private readonly Stack<int> _visualPool = new(128);
         private readonly HashSet<int> _spawnedChunkSiteKeys = new();
         private int _modularNodeCount;
@@ -2884,12 +3118,14 @@ namespace Stratocraft.Character
 
         public ReadOnlySpan<ModularPlacedPieceNode> ActiveModularPiecesSpan => _modularNodes.AsSpan(0, _modularNodeCount);
         public int ActiveModularPieceCount => _modularNodeCount;
+        public int LooseLogCount => _looseLogs.Count;
         public int PooledModularVisualCount => _visualPool.Count;
         public bool IsModularBuildModeActive { get; private set; }
         public bool HasValidGhostPlacement { get; private set; }
         public ModularBuildPieceKind ActiveModularPieceKind { get; private set; } = ModularBuildPieceKind.PlankWall2x2m;
         public BuildStructuralMaterialKind ActiveStructuralMaterial { get; private set; } = BuildStructuralMaterialKind.PineTimber;
         public BuildSectionThickness ActiveSectionThickness { get; private set; } = BuildSectionThickness.Standard;
+        public BuildingSiteLogisticsCore? SiteLogistics { get; set; }
 
         public void SelectModularPieceForPlacement(ModularBuildPieceKind kind, bool enableModularMode = true)
         {
@@ -3207,6 +3443,119 @@ namespace Stratocraft.Character
                 Rotation = rotation,
                 ShapeDna = new Stratocraft.Inventory.Data.PhysicalItemShapeDna(1u, 0ul, 1f, 0, 0u).WithStage((byte)role)
             });
+            _looseLogStates.Add(default);
+        }
+
+        public bool TryPickupLooseTimberLogAtIndex(int index, Func<float, float, float> sampleFloorY, out int detachedUpperLogs)
+        {
+            detachedUpperLogs = 0;
+            if ((uint)index >= (uint)_looseLogs.Count) return false;
+            _looseLogs.RemoveAt(index);
+            if (index < _looseLogStates.Count) _looseLogStates.RemoveAt(index);
+            return RecomputeLooseTimberLogSupport(sampleFloorY, out detachedUpperLogs) >= 0;
+        }
+
+        public int RecomputeLooseTimberLogSupport(Func<float, float, float> sampleFloorY, out int detachedCount)
+        {
+            detachedCount = 0;
+            int count = _looseLogs.Count;
+            if (count == 0) return 0;
+            while (_looseLogStates.Count < count) _looseLogStates.Add(default);
+
+            Span<LoosePartPoint> pts = count <= 128 ? stackalloc LoosePartPoint[count] : new LoosePartPoint[count];
+            Span<LooseLogSupportState> sts = count <= 128 ? stackalloc LooseLogSupportState[count] : new LooseLogSupportState[count];
+            for (int i = 0; i < count; i++) { pts[i] = _looseLogs[i]; sts[i] = _looseLogStates[i]; }
+
+            SotfStructuralBuildMechanics.RecomputeLooseLogSupportAndTriggerFalls(pts, sts, sampleFloorY, out detachedCount);
+            for (int i = 0; i < count; i++) _looseLogStates[i] = sts[i];
+            return detachedCount;
+        }
+
+        public int StepLooseTimberLogGravity(float dt, Func<float, float, float> sampleFloorY)
+        {
+            int count = _looseLogs.Count;
+            if (count == 0 || dt <= 0f) return 0;
+            while (_looseLogStates.Count < count) _looseLogStates.Add(default);
+
+            Span<LoosePartPoint> pts = count <= 128 ? stackalloc LoosePartPoint[count] : new LoosePartPoint[count];
+            Span<LooseLogSupportState> sts = count <= 128 ? stackalloc LooseLogSupportState[count] : new LooseLogSupportState[count];
+            for (int i = 0; i < count; i++) { pts[i] = _looseLogs[i]; sts[i] = _looseLogStates[i]; }
+
+            int active = SotfStructuralBuildMechanics.StepLooseLogsUnderGravity(pts, sts, dt, sampleFloorY);
+            for (int i = 0; i < count; i++) { _looseLogs[i] = pts[i]; _looseLogStates[i] = sts[i]; }
+            return active;
+        }
+
+        public Vector3 GetLooseLogPosition(int index) => _looseLogs[index].Position;
+        public bool IsLooseLogFalling(int index) => index >= 0 && index < _looseLogStates.Count && _looseLogStates[index].IsFalling;
+
+        /// <summary>
+        /// DOK2 A4 (L1612/L1728): Survival'da gercek malzeme tuketimi zorunludur ([F4] Yaratici haric).
+        /// Once 8m/14m SiteMaterialPile (BuildingSiteLogisticsCore), yoksa envanter sayaci tuketilir.
+        /// </summary>
+        public bool TryPlaceModularPieceSurvival(
+            ModularBuildPieceKind kind,
+            Vector3 aimPoint,
+            float userYawDeg,
+            float groundSurfaceY,
+            BuildStructuralMaterialKind material,
+            BuildSectionThickness thickness,
+            bool isCreativeMode,
+            ref int playerInventoryMaterialCount,
+            out int spawnedInstanceId,
+            out string feedbackMessage)
+        {
+            spawnedInstanceId = -1;
+            feedbackMessage = string.Empty;
+
+            if (!isCreativeMode)
+            {
+                byte pileMatId = SotfStructuralBuildMechanics.GetMaterialProfile(material).VoxelMaterialId;
+                bool pulledFromSitePile = SiteLogistics != null &&
+                    SiteLogistics.TryConsumeFromNearestSitePile(aimPoint, pileMatId, 1, out _, out _);
+                if (!pulledFromSitePile)
+                {
+                    if (playerInventoryMaterialCount <= 0)
+                    {
+                        feedbackMessage = "YETERSİZ MALZEME: Survival modunda bedava yapı basılamaz!";
+                        return false;
+                    }
+                    playerInventoryMaterialCount--;
+                }
+            }
+
+            bool ok = TryPlaceModularPieceDirect(
+                kind, aimPoint, userYawDeg, groundSurfaceY, out spawnedInstanceId, out _, material, thickness, explicitMaterial: true);
+            if (!ok)
+            {
+                feedbackMessage = "YETERSİZ STATİK DESTEK";
+                return false;
+            }
+            feedbackMessage = "OK";
+            return true;
+        }
+
+        /// <summary>
+        /// DOK2 C6: Kazi sonrasi kalici IsGrounded=true acigini kapatir ve alt destegi bosalan yapilari dusurur.
+        /// </summary>
+        public void NotifyTerrainExcavated(
+            Func<float, float, float> sampleLiveTerrainY,
+            out int ungroundedCount,
+            out int collapsedCount)
+        {
+            ungroundedCount = 0;
+            collapsedCount = 0;
+            if (_modularNodeCount > 0)
+            {
+                SotfStructuralBuildMechanics.RevalidateModularGroundAndSupportAfterExcavation(
+                    _modularNodes.AsSpan(0, _modularNodeCount),
+                    sampleLiveTerrainY,
+                    out ungroundedCount,
+                    out collapsedCount);
+            }
+
+            RecomputeLooseTimberLogSupport(sampleLiveTerrainY, out int detachedLogs);
+            collapsedCount += detachedLogs;
         }
 
         public bool IsCapsuleStepBlockedByStructures(
