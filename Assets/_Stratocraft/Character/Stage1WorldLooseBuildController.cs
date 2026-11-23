@@ -49,6 +49,8 @@ namespace Stratocraft.Character
             public MeshFilter? MeshFilter;
             public MeshRenderer? MeshRenderer;
             public BoxCollider? BoxCollider;
+            public BoxCollider? AuxCollider1;
+            public BoxCollider? AuxCollider2;
             public ModularBuildPieceKind LastAssignedKind;
         }
 
@@ -65,7 +67,7 @@ namespace Stratocraft.Character
         private static Material? _sharedModularMatteMaterial;
         private static bool _sharedModularMatteMaterialConfigured;
         private static Material? _sharedModularMatteLastFallback;
-        private const int MaxModularVisualPoolCapacity = 256;
+        private const int MaxModularVisualPoolCapacity = 1536;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticCachesOnSubsystemRegistration()
@@ -1587,9 +1589,11 @@ namespace Stratocraft.Character
                         ReleaseModularVisualSlotToPool(ref _modularVisuals[i]);
                         RemoveModularEntrySwapBack(i);
                     }
-                    else if (_modularNodes[i].IsFalling && _modularVisuals[i].BoxCollider != null)
+                    else if (_modularNodes[i].IsFalling)
                     {
-                        _modularVisuals[i].BoxCollider!.enabled = false;
+                        if (_modularVisuals[i].BoxCollider != null) _modularVisuals[i].BoxCollider!.enabled = false;
+                        if (_modularVisuals[i].AuxCollider1 != null) _modularVisuals[i].AuxCollider1!.enabled = false;
+                        if (_modularVisuals[i].AuxCollider2 != null) _modularVisuals[i].AuxCollider2!.enabled = false;
                     }
                 }
             }
@@ -1693,6 +1697,8 @@ namespace Stratocraft.Character
                     MeshFilter = mf,
                     MeshRenderer = mr,
                     BoxCollider = bc,
+                    AuxCollider1 = null,
+                    AuxCollider2 = null,
                     LastAssignedKind = (ModularBuildPieceKind)255
                 };
             }
@@ -1710,38 +1716,81 @@ namespace Stratocraft.Character
                 {
                     slot.MeshFilter.sharedMesh = LoadModularPieceMeshCached(kind);
                 }
-                ConfigureModularBoxCollider(slot.BoxCollider, kind);
+                ConfigureModularBoxColliders(ref slot, kind);
             }
-            else if (slot.BoxCollider != null && !slot.BoxCollider.enabled)
+            else
             {
-                slot.BoxCollider.enabled = true;
+                ReEnableModularBoxColliders(in slot, kind);
             }
 
             return slot;
         }
 
-        private static void ConfigureModularBoxCollider(BoxCollider? bc, ModularBuildPieceKind kind)
+        private static void ApplyLocalSolidBoxToCollider(BoxCollider bc, in ModularStructureCollisionSolver.LocalSolidBox box)
         {
-            if (bc == null) return;
             bc.enabled = true;
+            bc.center = new Vector3(
+                (box.Min.X + box.Max.X) * 0.5f,
+                (box.Min.Y + box.Max.Y) * 0.5f,
+                (box.Min.Z + box.Max.Z) * 0.5f);
+            bc.size = new Vector3(
+                Mathf.Max(0.12f, box.Max.X - box.Min.X),
+                Mathf.Max(0.10f, box.Max.Y - box.Min.Y),
+                Mathf.Max(0.12f, box.Max.Z - box.Min.Z));
+        }
 
-            if (kind == ModularBuildPieceKind.PlankDoorway2x2m)
+        private static void ConfigureModularBoxColliders(ref ModularPieceVisualSlot slot, ModularBuildPieceKind kind)
+        {
+            if (slot.BoxCollider == null) return;
+
+            Span<ModularStructureCollisionSolver.LocalSolidBox> boxes = stackalloc ModularStructureCollisionSolver.LocalSolidBox[4];
+            int count = ModularStructureCollisionSolver.PopulateLocalSolidBoxes(kind, boxes);
+            if (count > 0)
             {
-                // Kapidan oyuncunun rahatca gecmesi icin ust lento carpistiricisi
-                bc.center = new Vector3(0.0f, 1.86f, 0.0f);
-                bc.size = new Vector3(2.00f, 0.28f, 0.14f);
+                ApplyLocalSolidBoxToCollider(slot.BoxCollider, in boxes[0]);
+                if (count >= 2 && slot.Go != null)
+                {
+                    slot.AuxCollider1 ??= slot.Go.AddComponent<BoxCollider>();
+                    ApplyLocalSolidBoxToCollider(slot.AuxCollider1, in boxes[1]);
+                }
+                else if (slot.AuxCollider1 != null)
+                {
+                    slot.AuxCollider1.enabled = false;
+                }
+
+                if (count >= 3 && slot.Go != null)
+                {
+                    slot.AuxCollider2 ??= slot.Go.AddComponent<BoxCollider>();
+                    ApplyLocalSolidBoxToCollider(slot.AuxCollider2, in boxes[2]);
+                }
+                else if (slot.AuxCollider2 != null)
+                {
+                    slot.AuxCollider2.enabled = false;
+                }
                 return;
             }
 
+            if (slot.AuxCollider1 != null) slot.AuxCollider1.enabled = false;
+            if (slot.AuxCollider2 != null) slot.AuxCollider2.enabled = false;
+
+            slot.BoxCollider.enabled = true;
             ValheimSotfModularGraphSolver.GetPieceLocalBounds(kind, out SysVec3 lMin, out SysVec3 lMax);
-            bc.center = new Vector3(
+            slot.BoxCollider.center = new Vector3(
                 (lMin.X + lMax.X) * 0.5f,
                 (lMin.Y + lMax.Y) * 0.5f,
                 (lMin.Z + lMax.Z) * 0.5f);
-            bc.size = new Vector3(
+            slot.BoxCollider.size = new Vector3(
                 Mathf.Max(0.12f, lMax.X - lMin.X),
                 Mathf.Max(0.10f, lMax.Y - lMin.Y),
                 Mathf.Max(0.12f, lMax.Z - lMin.Z));
+        }
+
+        private static void ReEnableModularBoxColliders(in ModularPieceVisualSlot slot, ModularBuildPieceKind kind)
+        {
+            if (slot.BoxCollider != null && !slot.BoxCollider.enabled) slot.BoxCollider.enabled = true;
+            bool multiBox = kind == ModularBuildPieceKind.PlankDoorway2x2m || kind == ModularBuildPieceKind.DiagonalBrace2m;
+            if (slot.AuxCollider1 != null) slot.AuxCollider1.enabled = multiBox;
+            if (slot.AuxCollider2 != null) slot.AuxCollider2.enabled = multiBox;
         }
 
         private void ReleaseModularVisualSlotToPool(ref ModularPieceVisualSlot slot)

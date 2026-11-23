@@ -967,6 +967,7 @@ namespace Stratocraft.Character
             _rasterizeTimberSupportDelegateCached ??= _looseBuildSystem.TryRasterizeGroundedTimberSupportInWindow;
             _collapseBridge.ExternalTimberSupportWindowRasterizer = _rasterizeTimberSupportDelegateCached;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
+            _movementBridge.BoundLooseBuildSystem = _looseBuildSystem;
             _movementBridge.SetSafeSpawnPosition(transform.position);
             // Anayasa Bolum 3.1: Ana kameramiz varsayilan olarak FPS'tir ([F5] ile Omuz Ustu TPS'e gecilir).
             _isFirstPersonMode = true;
