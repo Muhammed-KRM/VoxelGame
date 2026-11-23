@@ -278,6 +278,27 @@ namespace Stratocraft.WorldGen
             bool foundAny = false;
             int minScanY = Math.Max(1, supportFloorY + 1);
 
+            // Bos gokyuzu katmanlarini (orn. 256m tavanli alcak chunk'larda Y=110..255) hizla atla
+            int scanTopY = sizeY - 1;
+            if (layout == VoxelGridMemoryLayout.YMajorChunk && sizeX == 16 && sizeZ == 16 && scanTopY > 112)
+            {
+                while (scanTopY > 112)
+                {
+                    int rowBase = scanTopY << 8;
+                    bool rowHasSolid = false;
+                    for (int c = 0; c < 256; c++)
+                    {
+                        if (voxels[rowBase | c] != 0u)
+                        {
+                            rowHasSolid = true;
+                            break;
+                        }
+                    }
+                    if (rowHasSolid) break;
+                    scanTopY--;
+                }
+            }
+
             for (int lz = 0; lz < sizeZ; lz++)
             {
                 for (int lx = 0; lx < sizeX; lx++)
@@ -286,7 +307,7 @@ namespace Stratocraft.WorldGen
                     int surfY = -1;
 
                     // Yuzey agaclarini ve mimari yapilari atlayarak gercek dogal arazi tavanini (en az 2 kati DogalKutle) bul
-                    for (int y = sizeY - 1; y >= minScanY; y--)
+                    for (int y = scanTopY; y >= minScanY; y--)
                     {
                         uint raw = voxels[GeodesicSupportDijkstraJob.GridIndex(lx, y, lz, sizeX, sizeY, sizeZ, layout)];
                         if (!VoxelBitUtility.IsPhysicallySolid(raw) ||

@@ -201,12 +201,15 @@ namespace Stratocraft.WorldGen.Generators
                 -1.0f, 1.0f);
 
             // 3) Kitasallik: Negatif bolgeler Denizler / Safir Lagun Havzalari (SeaLevelY = 90 alti), pozitif bolgeler Ana Kita
-            continentalness = 0.58f * MathF.Sin(wx * 0.0072f + s3) * MathF.Cos(wz * 0.0072f - s4)
-                            + 0.42f * MathF.Cos((wx + wz) * 0.0044f + s1);
+            // Mevcut kiyi/golet topografyasi (Seed 1453 S8/T02 dahil) korunur.
+            float cwx = worldX + MathF.Sin(worldZ * 0.019f + s1) * 28.0f + MathF.Cos(worldX * 0.013f - s2) * 24.0f;
+            float cwz = worldZ + MathF.Cos(worldX * 0.019f + s2) * 28.0f + MathF.Sin(worldZ * 0.013f + s1) * 24.0f;
+            continentalness = 0.60f * MathF.Sin(cwx * 0.0125f + s3) * MathF.Cos(cwz * 0.0125f - s4)
+                            + 0.40f * MathF.Cos((cwx + cwz) * 0.0075f + s1);
 
             // Deniz icinde yukselen ufak kiyi adalari
-            float islWave = MathF.Sin(wx * 0.036f + s4) * MathF.Cos(wz * 0.036f - s2);
-            smallIslandPeak = islWave > 0.42f ? (islWave - 0.42f) / 0.58f : 0f;
+            float islWave = MathF.Sin(cwx * 0.052f + s4) * MathF.Cos(cwz * 0.052f - s2);
+            smallIslandPeak = islWave > 0.48f ? (islWave - 0.48f) / 0.52f : 0f;
 
             // 4) Volkanik Sicak Nokta: YALNIZCA sicak guney kusaginda (temperature > +0.16) aktiflesir; soguk kuzeyde bastirilir!
             float volcRaw = 0.66f * MathF.Sin(wx * 0.0068f - s2) * MathF.Cos(wz * 0.0068f + s4)
@@ -234,12 +237,20 @@ namespace Stratocraft.WorldGen.Generators
         }
 
         /// <summary>
-        /// PT-08: Verilen (worldX, worldZ) noktasindaki makro enlem-iklim sicakligini [-1..+1] dondurur.
+        /// PT-08: Verilen (worldX, worldZ) noktasindaki makro enlem-iklim sicakligini [-1..+1] dondurur (yalnizca sicaklik bilesenleri).
         /// </summary>
         public static float SampleMacroLatitudeTemperature(float worldX, float worldZ)
         {
-            SampleClimateAndTectonicFields(worldX, worldZ, out float temp, out _, out _, out _, out _, out _);
-            return temp;
+            float s1 = SeedPhaseOffset(11), s2 = SeedPhaseOffset(12), s3 = SeedPhaseOffset(13);
+            float warpX = MathF.Sin(worldZ * 0.0042f + s1) * 145.0f + MathF.Cos(worldX * 0.0029f - s2) * 110.0f;
+            float warpZ = MathF.Cos(worldX * 0.0042f + s2) * 145.0f + MathF.Sin(worldZ * 0.0029f + s1) * 110.0f;
+            float wx = worldX + warpX;
+            float wz = worldZ + warpZ;
+
+            float latitudeTemp = -MathF.Tanh(wz / 920.0f) * 0.82f;
+            float regionalTemp = 0.15f * MathF.Sin(wx * 0.0048f + wz * 0.0031f + s1)
+                               + 0.08f * MathF.Cos(wx * 0.0086f - wz * 0.0068f - s3);
+            return Math.Clamp(latitudeTemp + regionalTemp, -1.0f, 1.0f);
         }
 
         private static int ClassifyBiomeFromClimateFields(
@@ -646,11 +657,15 @@ namespace Stratocraft.WorldGen.Generators
 
         private static byte ResolveBiomeSurfaceMaterialId(float worldX, float topH, float worldZ, float r, int biomeId)
         {
-            float climateTemp = SampleMacroLatitudeTemperature(worldX, worldZ);
-            float snowlineY = ComputeSnowlineAltitudeY(climateTemp);
-            if (biomeId != 8 && biomeId != 7 && topH >= snowlineY)
+            float snowlineY = 170.0f;
+            if (biomeId == 4 || topH >= 126.0f)
             {
-                return MaterialIdCatalog.PackedIce;
+                float climateTemp = SampleMacroLatitudeTemperature(worldX, worldZ);
+                snowlineY = ComputeSnowlineAltitudeY(climateTemp);
+                if (biomeId != 8 && biomeId != 7 && topH >= snowlineY)
+                {
+                    return MaterialIdCatalog.PackedIce;
+                }
             }
 
             if (topH <= SeaLevelY + 1.15f && r > 36.0f)
@@ -1468,7 +1483,7 @@ namespace Stratocraft.WorldGen.Generators
             float provinceNoise = entranceJunctionBoost01 > 0f
                 ? MathF.Max(col.BaseProvinceNoise, 0.45f + entranceJunctionBoost01 * 0.42f)
                 : col.BaseProvinceNoise;
-            if (provinceNoise < 0.27f && y > 21)
+            if (provinceNoise < 0.27f && y > 19)
             {
                 return;
             }
@@ -1480,12 +1495,12 @@ namespace Stratocraft.WorldGen.Generators
             float qy = y + col.ColWarpY;
             float qz = cwz + warpZ;
 
-            // Katman 4 (y = 7..21): Daha derin ve katmanli Magma Denizi + Obsidyen/Bazalt kubbeler
-            if (y >= 7 && y <= 21)
+            // Katman 4 (y = 7..19): Daha derin Magma Denizi + kendini tasiyan parabolik Obsidyen/Bazalt kubbeler (y >= 20 dikissiz!)
+            if (y >= 7 && y <= 19)
             {
-                float archY = (y - 13.6f) / 6.2f;
-                float magmaWave = FastSin(qx * 0.062f + p2) * FastCos(qz * 0.062f + p1) - archY * archY * 0.52f;
-                if (y >= 8 && magmaWave > 0.14f)
+                float archY = (y - 12.8f) / 5.4f;
+                float magmaWave = FastSin(qx * 0.068f + p2) * FastCos(qz * 0.068f + p1) - archY * archY * 0.58f;
+                if (y >= 8 && magmaWave > 0.18f)
                 {
                     float colWave = FastSin(cwx * 0.45f + p1) * FastCos(cwz * 0.45f - p2);
                     if (colWave > 0.90f)
@@ -1904,7 +1919,7 @@ namespace Stratocraft.WorldGen.Generators
                         byte dungeonOverrideMat = 0;
                         bool isEntranceStoneRim = false;
 
-                        if (!fastCaveFilter || (y >= DeepMantleFloorY + 3 && y <= maxCaveY && (!lowProvinceColumn || y <= 21)))
+                        if (!fastCaveFilter || (y >= DeepMantleFloorY + 3 && y <= maxCaveY && (!lowProvinceColumn || y <= 19)))
                         {
                             float warpX = (uint)y <= (uint)maxRowWarpY ? rowWarpX[y] : 0f;
                             EvaluateUndergroundCaveNetwork(
@@ -2006,8 +2021,9 @@ namespace Stratocraft.WorldGen.Generators
             PopulateNaturalCaveWaterPoolsInChunk(chunkX, chunkZ, MaxEditableVoxelY, voxels, fluids);
 
             // Kemerli ve Jeolojik On-Dengelenmis Magaralar (Terzaghi acik, duz tavan -> parabolik kemer + Stalagnate sutun):
+            int caveStabilizeMaxY = Math.Min(MaxEditableVoxelY, Math.Max(112, maxChunkSolidFloorY + 4));
             CaveVaultEquilibriumGenerator.StabilizeGeneratedChunkCaves(
-                chunkX, chunkZ, voxels, MaxEditableVoxelY, out _, out _);
+                chunkX, chunkZ, voxels, caveStabilizeMaxY, out _, out _);
 
             ReadOnlySpan<float> cachedTopH = allColumnsPopulated ? colRawTopH : ReadOnlySpan<float>.Empty;
             ReadOnlySpan<byte> cachedBiomes = allColumnsPopulated ? colBiomeIds : ReadOnlySpan<byte>.Empty;
