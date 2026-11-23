@@ -4043,6 +4043,92 @@ namespace Stratocraft.WorldGen.Generators
             return true;
         }
 
+        /// <summary>
+        /// Voksel agac govdesi (BuildVoxelTree) ile 3B organik agac taci ve dal fizigi (OrganicTreeCanopyVisualSystem)
+        /// arasinda %100 birebir ayni yerlesim, magara agzi/havza dislama, taban kotu ve ahsap turu cozumlemesini yapar.
+        /// </summary>
+        public static bool TryResolveNaturalTreeCandidate(
+            int chunkX,
+            int chunkZ,
+            int lx,
+            int lz,
+            int trunkHeight,
+            bool isIronwood,
+            out int wx,
+            out int wz,
+            out int baseY,
+            out int effectiveTrunkH,
+            out int biomeId,
+            out byte woodMat,
+            out bool isPine,
+            ReadOnlySpan<float> cachedTopH = default,
+            ReadOnlySpan<byte> cachedBiomes = default)
+        {
+            lx = Math.Clamp(lx, 3, 12);
+            lz = Math.Clamp(lz, 3, 12);
+            wx = chunkX * 16 + lx;
+            wz = chunkZ * 16 + lz;
+            baseY = DefaultSurfaceBaseY;
+            effectiveTrunkH = Math.Clamp(trunkHeight, 5, 10);
+            biomeId = 0;
+            woodMat = MaterialIdCatalog.OakWood;
+            isPine = false;
+
+            if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modSite) &&
+                Math.Abs(lx - modSite.LocalCenterX) <= modSite.TerraceHalfExtentBlocks &&
+                Math.Abs(lz - modSite.LocalCenterZ) <= modSite.TerraceHalfExtentBlocks)
+            {
+                return false;
+            }
+
+            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 9.5f))
+            {
+                return false;
+            }
+
+            float r = MathF.Sqrt((float)wx * wx + (float)wz * wz);
+            float radialMargin;
+            if (InfiniteProceduralWorldMode)
+            {
+                radialMargin = 64000.0f;
+            }
+            else
+            {
+                radialMargin = ComputeIslandCoastRadius(wx, wz) - r;
+                if (radialMargin < 8.0f) return false;
+            }
+
+            int colIdx = (lz << 4) | lx;
+            biomeId = cachedBiomes.Length == 256 ? cachedBiomes[colIdx] : GetBiomeId(wx, wz);
+            bool isCoreTestChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
+            if (!isCoreTestChunk && (biomeId == 2 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11))
+            {
+                return false;
+            }
+
+            EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
+            if (inWater || inLava || inAcid || inWall)
+            {
+                return false;
+            }
+
+            bool hasTopCache = cachedTopH.Length == 256;
+            float surfTopY = hasTopCache ? cachedTopH[colIdx] : SampleIslandTopSurfaceY(wx, wz);
+            if (r > 24.0f && surfTopY < SeaLevelY + 1.2f)
+            {
+                return false;
+            }
+
+            baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 18);
+            isPine = biomeId == 4 || biomeId == 5;
+            bool isSwampWillow = biomeId == 3;
+            woodMat = (isIronwood || biomeId == 1)
+                ? MaterialIdCatalog.Ironwood
+                : (isSwampWillow ? MaterialIdCatalog.SpiritWood : MaterialIdCatalog.OakWood);
+
+            return true;
+        }
+
         private static void BuildVoxelTree(
             uint[] voxels,
             int chunkX,
@@ -4056,40 +4142,16 @@ namespace Stratocraft.WorldGen.Generators
         {
             lx = Math.Clamp(lx, 3, 12);
             lz = Math.Clamp(lz, 3, 12);
-            if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modSite) &&
-                Math.Abs(lx - modSite.LocalCenterX) <= modSite.TerraceHalfExtentBlocks &&
-                Math.Abs(lz - modSite.LocalCenterZ) <= modSite.TerraceHalfExtentBlocks)
+            if (!TryResolveNaturalTreeCandidate(
+                    chunkX, chunkZ, lx, lz, trunkHeight, isIronwood,
+                    out int wx, out int wz, out int baseY, out int effectiveTrunkH,
+                    out int biomeId, out byte woodMat, out bool isPine,
+                    cachedTopH, cachedBiomes))
             {
                 return;
             }
-            int wx = chunkX * 16 + lx, wz = chunkZ * 16 + lz;
-            if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 9.5f)) return;
-            float r = MathF.Sqrt((float)wx * wx + (float)wz * wz);
-            float radialMargin;
-            if (InfiniteProceduralWorldMode)
-            {
-                radialMargin = 64000.0f;
-            }
-            else
-            {
-                radialMargin = ComputeIslandCoastRadius(wx, wz) - r;
-                if (radialMargin < 8.0f) return;
-            }
-
-            int colIdx = (lz << 4) | lx;
-            int biomeId = cachedBiomes.Length == 256 ? cachedBiomes[colIdx] : GetBiomeId(wx, wz);
-            bool isCoreTestChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
-            // Biyom 4 (Kuzey Buzul) ve 5 (Kristal Kanyon) cam agaclari (isPine) icin acik birakilir:
-            if (!isCoreTestChunk && (biomeId == 2 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11)) return;
-
-            EvaluateBasinState(wx, wz, biomeId, radialMargin, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
-            if (inWater || inLava || inAcid || inWall) return;
 
             bool hasTopCache = cachedTopH.Length == 256;
-            float surfTopY = hasTopCache ? cachedTopH[colIdx] : SampleIslandTopSurfaceY(wx, wz);
-            if (r > 24.0f && surfTopY < SeaLevelY + 1.2f) return;
-
-            int baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 18);
             for (int fz = -1; fz <= 1; fz++)
             {
                 for (int fx = -1; fx <= 1; fx++)
@@ -4114,19 +4176,13 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            bool isPine = biomeId == 4 || biomeId == 5;
-            bool isSwampWillow = biomeId == 3;
-            byte woodMat = (isIronwood || biomeId == 1)
-                ? MaterialIdCatalog.Ironwood
-                : (isSwampWillow ? MaterialIdCatalog.SpiritWood : MaterialIdCatalog.OakWood);
-
-            int effectiveTrunkH = Math.Clamp(trunkHeight, 5, 10);
             for (int dy = 0; dy <= effectiveTrunkH; dy++)
                 SetNaturalTreeVoxel(voxels, lx, baseY + dy, lz, woodMat, shapeId: 2, rot: 0);
 
             // 1m³ Minecraft kup yaprak vokselleri (shapeId: 1, leafMat) kaldirildi:
             // Dogal voksel govde (FallenTreeLogInstance kesim/devrilme fizigi icin) korunur;
-            // gercek 3B organik cam/karli-cam/mese yaprak taci ve kok mahmuzu OrganicTreeCanopyVisualSystem ile baglanir!
+            // gercek 3B organik cam/karli-cam/mese yaprak taci, 2-katmanli (kalin/ince) dal mimarisi
+            // ve kok mahmuzu OrganicTreeCanopyVisualSystem ile birebir ayni koordinat ve malzemede baglanir!
             _ = isPine;
         }
 
