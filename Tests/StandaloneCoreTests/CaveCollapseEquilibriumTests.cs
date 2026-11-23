@@ -130,6 +130,10 @@ namespace Stratocraft.StandaloneCoreTests
         [Test]
         public void Test1b_RealWorldGenChunks_StabilizeGeneratedChunkCaves_ReachesTrueStaticEquilibriumFast()
         {
+            var (warmVox, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(2, 2);
+            CaveVaultEquilibriumGenerator.StabilizeGeneratedChunkCaves(
+                2, 2, warmVox, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY, out _, out _);
+
             (int cx, int cz)[] coords = { (0, 0), (1, 0), (-1, 1) };
             var sw = Stopwatch.StartNew();
             foreach (var (cx, cz) in coords)
@@ -459,6 +463,124 @@ namespace Stratocraft.StandaloneCoreTests
 
             Assert.That(cutAbutmentCollapsed, Is.GreaterThan(0),
                 "Sag ayagi kesilmis kemer yatay itki dengesini (H_L + H_R = 0) kaybedip gocmelidir!");
+        }
+
+        [Test]
+        public void Test7_ExternalTimberSupportWindowRasterizer_SkipsDistantModularPiecesFast_AndHonorsOverlappingPillar()
+        {
+            const int maxY = 104;
+            const int mountainTopY = 84;
+            uint[] caveChunk = BuildSolidMountainChunk(maxY, mountainTopY);
+            // 10x10 genis magara salonu (x=3..12, z=3..12, y=51..58)
+            CarveBox(caveChunk, 3, 12, 51, 58, 3, 12);
+
+            // Uzak chunk'lara 120 adet moduler tahkimat sutunu yerlestir (x=400..520)
+            var looseSys = new WorldLooseBuildSystem();
+            for (int i = 0; i < 120; i++)
+            {
+                bool ok = looseSys.TryPlaceModularPieceDirect(
+                    Stratocraft.Inventory.Systems.ModularBuildPieceKind.LogPillar3m,
+                    new System.Numerics.Vector3(400f + (i % 20) * 3f, mountainTopY, 400f + (i / 20) * 3f),
+                    0f,
+                    mountainTopY,
+                    out _,
+                    out _);
+                Assert.That(ok, Is.True);
+            }
+
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>();
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    worldChunks[(dx, dz)] = (dx == 0 && dz == 0)
+                        ? caveChunk
+                        : BuildSolidMountainChunk(maxY, mountainTopY);
+                }
+            }
+            var dirtyChunks = new HashSet<(int cx, int cz)>();
+            var clusters = new FallingStructureClusterComponent[GreedyBoxFractureJob.MaxCompoundBoxes];
+
+            // Warmup JIT for TryRasterizeGroundedTimberSupportInWindow and halo path
+            _ = Stage1StructuralCollapseBridge.EvaluateHaloCollapseWindowPure(
+                worldChunks,
+                dirtyChunks,
+                seedWorldX: 8,
+                seedWorldY: 59,
+                seedWorldZ: 8,
+                maxEditableY: maxY,
+                outClusters: clusters,
+                out _,
+                externalTimberSupportLookup: looseSys.HasGroundedTimberSupportAtVoxel,
+                surfaceYOverride: (_, _) => mountainTopY,
+                extraCantileverLoadKg: 0f,
+                commitDetachedToWorldChunks: false,
+                externalTimberSupportWindowRasterizer: looseSys.TryRasterizeGroundedTimberSupportInWindow);
+
+            // 1A) Rasterizer'in pencere disindaki 120 moduler parcayi <2ms'de eledigini dogrula:
+            byte[] checkMask = new byte[32 * 49 * 32];
+            var rastSw = Stopwatch.StartNew();
+            bool anyInWindow = looseSys.TryRasterizeGroundedTimberSupportInWindow(
+                -8, 35, -8, 32, 49, 32, checkMask, isZMajorLocal: true);
+            rastSw.Stop();
+            Assert.That(anyInWindow, Is.False, "Uzak 120 parca magara penceresiyle kesismemelidir.");
+            Assert.That(rastSw.Elapsed.TotalMilliseconds, Is.LessThan(5.0),
+                $"Uzak 120 moduler parca rasterizer on-elemesi <5ms surmeli, gercek={rastSw.Elapsed.TotalMilliseconds:F3}ms");
+
+            // 1B) 120 uzak parca yukluyken 6-dalgalik tam 10x10 magara cokusunun delege firtinasi olmadan (<150ms) tamamlandigini dogrula:
+            var sw = Stopwatch.StartNew();
+            int distantCollapsed = Stage1StructuralCollapseBridge.EvaluateHaloCollapseWindowPure(
+                worldChunks,
+                dirtyChunks,
+                seedWorldX: 8,
+                seedWorldY: 59,
+                seedWorldZ: 8,
+                maxEditableY: maxY,
+                outClusters: clusters,
+                out _,
+                externalTimberSupportLookup: looseSys.HasGroundedTimberSupportAtVoxel,
+                surfaceYOverride: (_, _) => mountainTopY,
+                extraCantileverLoadKg: 0f,
+                commitDetachedToWorldChunks: false,
+                externalTimberSupportWindowRasterizer: looseSys.TryRasterizeGroundedTimberSupportInWindow);
+            sw.Stop();
+
+            Assert.That(sw.Elapsed.TotalMilliseconds, Is.LessThan(150.0),
+                $"Uzak 120 moduler parca varken 6-dalgali halo cozucusu <150ms surmeli, gercek={sw.Elapsed.TotalMilliseconds:F2}ms");
+            Assert.That(distantCollapsed, Is.GreaterThan(0),
+                "Duz tavanli kemersiz 10x10 magara tahkimat yokken gocuk vermelidir.");
+
+            // 2) Magara merkezine (x=8, y=51..58, z=8) gercek zemine basan 2 adet ust uste ahsap direk koyuldugunda tavani tutmalidir
+            looseSys.TryPlaceModularPieceDirect(
+                Stratocraft.Inventory.Systems.ModularBuildPieceKind.LogPillar3m,
+                new System.Numerics.Vector3(8.5f, 51.0f, 8.5f),
+                0f, 51.0f, out _, out _);
+            looseSys.TryPlaceModularPieceDirect(
+                Stratocraft.Inventory.Systems.ModularBuildPieceKind.LogPillar3m,
+                new System.Numerics.Vector3(8.5f, 54.0f, 8.5f),
+                0f, 51.0f, out _, out _);
+            looseSys.TryPlaceModularPieceDirect(
+                Stratocraft.Inventory.Systems.ModularBuildPieceKind.LogPillar3m,
+                new System.Numerics.Vector3(8.5f, 56.5f, 8.5f),
+                0f, 51.0f, out _, out _);
+
+            int shoredCollapsed = Stage1StructuralCollapseBridge.EvaluateHaloCollapseWindowPure(
+                worldChunks,
+                dirtyChunks,
+                seedWorldX: 8,
+                seedWorldY: 59,
+                seedWorldZ: 8,
+                maxEditableY: maxY,
+                outClusters: clusters,
+                out _,
+                externalTimberSupportLookup: looseSys.HasGroundedTimberSupportAtVoxel,
+                surfaceYOverride: (_, _) => mountainTopY,
+                extraCantileverLoadKg: 0f,
+                commitDetachedToWorldChunks: false,
+                externalTimberSupportWindowRasterizer: looseSys.TryRasterizeGroundedTimberSupportInWindow);
+
+            Assert.That(shoredCollapsed, Is.EqualTo(0),
+                "Pencere icindeki zemine basan ahsap maden tahkimati rasterizer tarafindan taninip tavani tutmalidir!");
         }
     }
 }

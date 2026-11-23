@@ -283,6 +283,13 @@ namespace Stratocraft.Character
         private GUIStyle? _slotTitleBannerStyle;
         private GUIStyle? _tooltipBoxStyle;
         private GUIStyle? _vitalsLabelStyle;
+        private GUIStyle? _carouselCenterNameStyle;
+        private GUIStyle? _carouselCenterCountStyle;
+        private GUIStyle? _carouselSideNameStyle;
+        private GUIStyle? _carouselSideCountStyle;
+        private GUIStyle? _dockHeaderStyle;
+        private GUIStyle? _dockCountStyle;
+        private GUIStyle? _dockHintStyle;
         private bool _iconsInitialized;
 
         private static readonly string[] CachedHotbarKeyLabels = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
@@ -300,6 +307,68 @@ namespace Stratocraft.Character
         private string _cachedHungerLabel = string.Empty;
         private string _cachedThirstLabel = string.Empty;
         private string _cachedOxyLabel = string.Empty;
+        private int _lastBannerSlotIdx = int.MinValue;
+        private bool _lastBannerCrystalActive;
+        private int _lastBannerCrystalTier = -1;
+        private string _lastBannerBrushLabel = string.Empty;
+        private byte _lastBannerSelectedMat;
+        private byte _lastBannerShapeId = 255;
+        private bool _lastBannerCreative;
+        private int _lastBannerCrystalTotalBlocks = -1;
+        private InventoryItemKind _lastBannerItemKind;
+        private byte _lastBannerItemSubId;
+        private int _lastBannerItemCount = -1;
+        private int _lastBannerStoredFluid = -1;
+        private int _lastBannerSlotQuality = -1;
+        private byte _lastBannerItemFlags;
+        private string _cachedSlotBannerText = string.Empty;
+        private int _lastCarouselAnchorIdx = -1;
+        private float _carouselVisualOffset;
+        private int _lastCarouselAnimFrame = -1;
+        private int _lastCarouselCenterStockValue = -1;
+        private string _cachedCarouselCenterStockText = string.Empty;
+        private const int CrystalCountCacheSlots = 18;
+        private readonly int[] _cachedCrystalCountValues = CreateFilledIntArray(CrystalCountCacheSlots, -1);
+        private readonly string[] _cachedCrystalCountStrings = CreateFilledStringArray(CrystalCountCacheSlots, string.Empty);
+
+        private static int[] CreateFilledIntArray(int length, int value)
+        {
+            var arr = new int[length];
+            for (int i = 0; i < arr.Length; i++) arr[i] = value;
+            return arr;
+        }
+
+        private static string[] CreateFilledStringArray(int length, string value)
+        {
+            var arr = new string[length];
+            for (int i = 0; i < arr.Length; i++) arr[i] = value;
+            return arr;
+        }
+
+        private string GetCachedCrystalCountString(int cacheSlot, int count)
+        {
+            if ((uint)count < (uint)CachedStackCountStrings.Length)
+                return CachedStackCountStrings[count];
+            if ((uint)cacheSlot >= (uint)CrystalCountCacheSlots)
+                cacheSlot = CrystalCountCacheSlots - 1;
+            if (_cachedCrystalCountValues[cacheSlot] == count)
+                return _cachedCrystalCountStrings[cacheSlot];
+            _cachedCrystalCountValues[cacheSlot] = count;
+            string formatted = count >= 10000 ? $"x{count / 1000}k" : $"x{count}";
+            _cachedCrystalCountStrings[cacheSlot] = formatted;
+            return formatted;
+        }
+
+        private string GetCachedCarouselCenterStockString(int count)
+        {
+            if ((uint)count < (uint)CachedStackCountStrings.Length)
+                return CachedStackCountStrings[count];
+            if (_lastCarouselCenterStockValue == count && _cachedCarouselCenterStockText.Length > 0)
+                return _cachedCarouselCenterStockText;
+            _lastCarouselCenterStockValue = count;
+            _cachedCarouselCenterStockText = $"x{count}";
+            return _cachedCarouselCenterStockText;
+        }
 
         private static string[] BuildCachedStackCountStrings()
         {
@@ -2202,7 +2271,8 @@ namespace Stratocraft.Character
             bool showDebugHints = false,
             bool isCreativeMode = false,
             float hungerKcal = 2000f,
-            float thirstHydration = 100f)
+            float thirstHydration = 100f,
+            float f3RightPanelBottomY = 0f)
         {
             EnsureTexturesAndStyles();
             Event ev = Event.current;
@@ -2274,14 +2344,15 @@ namespace Stratocraft.Character
             bool showPosture = ShowPostureBar || CurrentPosture01 < 0.99f;
             DrawVitalsHudBars(screenW, barY, currentHp, maxHp, stamina, maxStamina, isExhaustedLock, lungOxygenPercent, isSubmerged, coreBodyTemp, hungerKcal, thirstHydration);
 
-            string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge);
-            float bannerY = barY - 49f - (showOxygen ? 16f : 0f) - (showPosture ? 15f : 0f);
+            string activeTitle = FormatSelectedSlotBannerText(miningCtrl, combatBridge, isCreativeMode);
+            float bannerY = barY - 54f - (showOxygen ? 16f : 0f) - (showPosture ? 15f : 0f);
             GUI.Box(new Rect(screenW * 0.5f - 285f, bannerY, 570f, 20f), activeTitle, _slotTitleBannerStyle!);
 
-            // [C] Madde Kristali Aktifken: Kristal İçeriği & Materyal Seçim Paneli (SADECE [C] basılıp açıldığında görünür!)
-            if (miningCtrl.IsCrystalActive)
+            // [C] Madde Kristali Aktifken: Tek Satir 7'li Kayar Serit + Opsiyonel [Alt] Sag Kenar Tam Paleti
+            if (miningCtrl.IsCrystalActive && !isBackpackOpen && !IsCreativeCatalogOpen)
             {
-                DrawCrystalContentsAndMaterialPickerPanel(screenW, barY, miningCtrl, combatBridge, ev, mousePos, isCreativeMode);
+                DrawCrystalContentsAndMaterialPickerPanel(
+                    screenW, screenH, bannerY, miningCtrl, combatBridge, ev, mousePos, isCreativeMode, f3RightPanelBottomY);
             }
 
             if (isBackpackOpen)
@@ -2463,55 +2534,277 @@ namespace Stratocraft.Character
 
         private void DrawCrystalContentsAndMaterialPickerPanel(
             float screenW,
-            float barY,
+            float screenH,
+            float bannerY,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge combatBridge,
             Event ev,
-            Vector2 mousePos,
-            bool isCreativeMode = false)
+            Vector2 screenMousePos,
+            bool isCreativeMode,
+            float f3RightPanelBottomY)
         {
             ReadOnlySpan<byte> mats = Stage1MatterCrystalAndMiningController.GetCrystalBuildableMaterials();
-            const int cols = 8;
-            int rows = Mathf.CeilToInt(mats.Length / (float)cols);
-            const float cellW = 58f;
-            const float cellH = 48f;
-            const float gap = 4f;
-            float panelW = cols * cellW + (cols - 1) * gap + 16f;
-            float panelH = rows * cellH + (rows - 1) * gap + 30f;
-            float px = (screenW - panelW) * 0.5f;
-            float py = barY - panelH - 36f;
+            int matCount = mats.Length;
+            if (matCount <= 0) return;
 
-            Rect bgRect = new Rect(px, py, panelW, panelH);
-            GUI.DrawTexture(bgRect, _windowBgTex!);
             byte selectedMat = miningCtrl.SelectedMaterialId;
-            string stockSummary = isCreativeMode ? "∞ Sınırsız" : $"{miningCtrl.CrystalStorage.CurrentTotalBlocks} Blok";
-            string header =
-                $"◆ MADDE KRİSTALİ DEPOSU ({stockSummary} | Seçili: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(selectedMat)}) — [Tekerlek/Shift+B] Malzeme | [V]: {Stage1MatterCrystalAndMiningController.GetShapeDisplayName(miningCtrl.SelectedShapeId)} | [T]: {miningCtrl.BrushAreaLabel}";
-            GUI.Label(new Rect(px + 6f, py + 3f, panelW - 12f, 20f), header, _slotTitleBannerStyle!);
+            int selectedIdx = -1;
+            for (int i = 0; i < matCount; i++)
+            {
+                if (mats[i] == selectedMat)
+                {
+                    selectedIdx = i;
+                    break;
+                }
+            }
 
+            bool isCustomNon17 = selectedIdx < 0;
+            int anchorIdx;
+            if (!isCustomNon17)
+            {
+                if (_lastCarouselAnchorIdx < 0 || _lastCarouselAnchorIdx >= matCount)
+                {
+                    _lastCarouselAnchorIdx = selectedIdx;
+                    _carouselVisualOffset = 0f;
+                }
+                else if (selectedIdx != _lastCarouselAnchorIdx)
+                {
+                    int rawDelta = selectedIdx - _lastCarouselAnchorIdx;
+                    int half = matCount / 2;
+                    if (rawDelta > half) rawDelta -= matCount;
+                    else if (rawDelta < -half) rawDelta += matCount;
+                    _carouselVisualOffset = Mathf.Clamp(_carouselVisualOffset + rawDelta, -3.0f, 3.0f);
+                    _lastCarouselAnchorIdx = selectedIdx;
+                }
+                anchorIdx = selectedIdx;
+            }
+            else
+            {
+                anchorIdx = _lastCarouselAnchorIdx >= 0 ? Mathf.Clamp(_lastCarouselAnchorIdx, 0, matCount - 1) : 0;
+                _carouselVisualOffset = 0f;
+            }
+
+            if (ev.type == EventType.Repaint && _lastCarouselAnimFrame != Time.frameCount)
+            {
+                _lastCarouselAnimFrame = Time.frameCount;
+                if (Mathf.Abs(_carouselVisualOffset) > 0.004f)
+                {
+                    float dt = Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+                    _carouselVisualOffset = Mathf.Lerp(_carouselVisualOffset, 0f, 1f - Mathf.Exp(-18f * dt));
+                    if (Mathf.Abs(_carouselVisualOffset) <= 0.004f)
+                    {
+                        _carouselVisualOffset = 0f;
+                    }
+                }
+                else
+                {
+                    _carouselVisualOffset = 0f;
+                }
+            }
+
+            const float panelW = 530f;
+            const float panelH = 42f;
+            float px = (screenW - panelW) * 0.5f;
+            float py = bannerY - panelH - 4f;
+
+            GUI.DrawTexture(new Rect(px, py, panelW, panelH), _windowBgTex!);
+
+            Rect groupRect = new Rect(px + 4f, py, panelW - 8f, panelH);
+            const float groupCenterX = (panelW - 8f) * 0.5f; // 261f
+            bool isSliding = !isCustomNon17 && Mathf.Abs(_carouselVisualOffset) > 0.004f;
+            int minOff = isSliding ? -4 : -3;
+            int maxOff = isSliding ? 4 : 3;
+
+            Color savedGroupColor = GUI.color;
+            GUI.BeginGroup(groupRect);
+            try
+            {
+                Vector2 localMousePos = ev.mousePosition;
+
+                // Dis kartlari once (-4..-1, +1..+4), merkez karti (0) en son ciz.
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    for (int offset = minOff; offset <= maxOff; offset++)
+                    {
+                        if (pass == 0 && offset == 0) continue;
+                        if (pass == 1 && offset != 0) continue;
+
+                        int matIdx;
+                        byte matId;
+                        int cacheSlot;
+                        if (offset == 0 && isCustomNon17)
+                        {
+                            matIdx = -1;
+                            matId = selectedMat;
+                            cacheSlot = CrystalCountCacheSlots - 1;
+                        }
+                        else
+                        {
+                            matIdx = ((anchorIdx + offset) % matCount + matCount) % matCount;
+                            matId = mats[matIdx];
+                            cacheSlot = matIdx;
+                        }
+
+                        int count = miningCtrl.GetMaterialCountInCrystal(matId);
+                        float vPos = offset + _carouselVisualOffset;
+                        float absV = Mathf.Abs(vPos);
+                        float sign = vPos < 0f ? -1f : 1f;
+                        float centerX = absV <= 1f
+                            ? groupCenterX + sign * (104f * absV)
+                            : groupCenterX + sign * (104f + (absV - 1f) * 62f);
+
+                        float centerMorph = 1f - Mathf.Clamp01(absV);
+                        float cardW = Mathf.Lerp(58f, 134f, centerMorph);
+                        float cardH = Mathf.Lerp(34f, 38f, centerMorph);
+                        float cardX = centerX - cardW * 0.5f;
+                        float cardY = (panelH - cardH) * 0.5f;
+                        Rect cardRect = new Rect(cardX, cardY, cardW, cardH);
+
+                        bool isSelectedCard = offset == 0;
+                        bool isHovered = cardRect.Contains(localMousePos);
+
+                        float distAlpha;
+                        if (absV <= 0.5f) distAlpha = 1f;
+                        else if (absV <= 1.5f) distAlpha = Mathf.Lerp(1f, 0.90f, absV - 0.5f);
+                        else if (absV <= 2.5f) distAlpha = Mathf.Lerp(0.90f, 0.74f, absV - 1.5f);
+                        else if (absV <= 3.0f) distAlpha = Mathf.Lerp(0.74f, 0.58f, (absV - 2.5f) * 2f);
+                        else distAlpha = Mathf.Lerp(0.58f, 0f, Mathf.Clamp01(absV - 3.0f));
+
+                        bool isZeroStock = !isCreativeMode && count <= 0;
+                        float rgbTint = isZeroStock ? 0.55f : 1f;
+                        float alphaTint = distAlpha * (isZeroStock ? 0.62f : 1f);
+                        GUI.color = new Color(rgbTint, rgbTint, rgbTint, alphaTint);
+
+                        Texture2D cardBg = isSelectedCard
+                            ? _slotSelectedBgTex!
+                            : (isHovered ? _slotHoverBgTex! : _slotBgTex!);
+                        GUI.DrawTexture(cardRect, cardBg);
+
+                        if (isSelectedCard)
+                        {
+                            GUI.color = new Color(0.25f, 0.95f, 1.0f, 0.98f * distAlpha);
+                            GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, cardRect.width, 2f), _whitePixelTex!);
+                            GUI.DrawTexture(new Rect(cardRect.x, cardRect.yMax - 2f, cardRect.width, 2f), _whitePixelTex!);
+                            GUI.DrawTexture(new Rect(cardRect.x, cardRect.y, 2f, cardRect.height), _whitePixelTex!);
+                            GUI.DrawTexture(new Rect(cardRect.xMax - 2f, cardRect.y, 2f, cardRect.height), _whitePixelTex!);
+                        }
+
+                        var previewSlot = new VisualInventorySlot
+                        {
+                            Kind = InventoryItemKind.VoxelBlock,
+                            SubId = matId,
+                            Count = Mathf.Max(1, count),
+                            Durability01 = 1f
+                        };
+                        Texture2D icon = GetOrBuildIconForSlot(in previewSlot, combatBridge.ActiveWeaponArchetype);
+
+                        if (centerMorph >= 0.5f)
+                        {
+                            GUI.color = new Color(rgbTint, rgbTint, rgbTint, alphaTint);
+                            GUI.DrawTexture(new Rect(cardX + 6f, cardY + 5f, 28f, 28f), icon);
+
+                            float textW = Mathf.Max(20f, cardW - 42f);
+                            GUI.color = new Color(1f, 1f, 1f, distAlpha);
+                            GUI.Label(new Rect(cardX + 38f, cardY + 3f, textW, 16f), GetCarouselMaterialDisplayName(matId), _carouselCenterNameStyle!);
+
+                            string centerStock = isCreativeMode ? "∞" : GetCachedCarouselCenterStockString(count);
+                            GUI.color = isZeroStock
+                                ? new Color(0.95f, 0.45f, 0.40f, distAlpha)
+                                : new Color(1f, 1f, 1f, distAlpha);
+                            GUI.Label(new Rect(cardX + 38f, cardY + 19f, textW, 16f), centerStock, _carouselCenterCountStyle!);
+                        }
+                        else
+                        {
+                            GUI.color = new Color(rgbTint, rgbTint, rgbTint, alphaTint);
+                            GUI.DrawTexture(new Rect(cardX + 4f, cardY + 2f, 18f, 18f), icon);
+
+                            string countText = isCreativeMode ? "∞" : GetCachedCrystalCountString(cacheSlot, count);
+                            GUI.color = isZeroStock
+                                ? new Color(0.95f, 0.45f, 0.40f, distAlpha)
+                                : new Color(1f, 1f, 1f, distAlpha);
+                            GUI.Label(new Rect(cardX + 22f, cardY + 2f, Mathf.Max(16f, cardW - 24f), 15f), countText, _carouselSideCountStyle!);
+
+                            GUI.color = new Color(1f, 1f, 1f, distAlpha);
+                            GUI.Label(new Rect(cardX + 2f, cardY + 18f, Mathf.Max(16f, cardW - 4f), 14f), GetShortMaterialBadgeName(matId), _carouselSideNameStyle!);
+                        }
+
+                        if (ev.type == EventType.MouseDown && cardRect.Contains(localMousePos))
+                        {
+                            miningCtrl.SelectMaterial(matId);
+                            string selStock = isCreativeMode ? "∞" : GetCachedCarouselCenterStockString(count);
+                            miningCtrl.LastFeedbackText =
+                                $"💎 Kristal Malzemesi Seçildi: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} (Stok: {selStock}) -> [Sağ Tık] Dünyaya Koy";
+                            ev.Use();
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                GUI.color = savedGroupColor;
+                GUI.EndGroup();
+            }
+
+            if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
+            {
+                DrawCrystalFullPaletteAltDock(
+                    screenW, screenH, miningCtrl, combatBridge, ev, screenMousePos, isCreativeMode, f3RightPanelBottomY, mats, selectedMat, isCustomNon17);
+            }
+        }
+
+        private void DrawCrystalFullPaletteAltDock(
+            float screenW,
+            float screenH,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1DirectionalCombatBridge combatBridge,
+            Event ev,
+            Vector2 screenMousePos,
+            bool isCreativeMode,
+            float f3RightPanelBottomY,
+            ReadOnlySpan<byte> mats,
+            byte selectedMat,
+            bool isCustomNon17)
+        {
+            const int dockCols = 3;
+            const float cellW = 54f;
+            const float cellH = 44f;
+            const float gap = 4f;
+            const float dockW = 186f; // 8 + 3*54 + 2*4 + 8
+            const float dockH = 318f; // 26 + 6*44 + 5*4 + 8
+
+            float dockX = screenW - dockW - 10f;
+            float minTopY = isCreativeMode ? 38f : 12f;
+            float dockY = Mathf.Clamp(
+                Mathf.Max(minTopY, f3RightPanelBottomY > 0.5f ? f3RightPanelBottomY + 8f : minTopY),
+                minTopY,
+                Mathf.Max(minTopY, screenH - dockH - 12f));
+
+            GUI.DrawTexture(new Rect(dockX, dockY, dockW, dockH), _windowBgTex!);
+            GUI.Label(new Rect(dockX + 6f, dockY + 3f, dockW - 12f, 20f), "◆ PALET (17) [Alt]", _dockHeaderStyle!);
+
+            Color prevColor = GUI.color;
             for (int i = 0; i < mats.Length; i++)
             {
                 byte matId = mats[i];
                 int count = miningCtrl.GetMaterialCountInCrystal(matId);
-                int col = i % cols;
-                int row = i / cols;
-                float cx = px + 8f + col * (cellW + gap);
-                float cy = py + 24f + row * (cellH + gap);
+                int col = i % dockCols;
+                int row = i / dockCols;
+                float cx = dockX + 8f + col * (cellW + gap);
+                float cy = dockY + 26f + row * (cellH + gap);
                 Rect cellRect = new Rect(cx, cy, cellW, cellH);
 
                 bool isSelected = matId == selectedMat;
-                bool isHovered = cellRect.Contains(mousePos);
+                bool isHovered = cellRect.Contains(screenMousePos);
+                GUI.color = prevColor;
                 GUI.DrawTexture(cellRect, isSelected ? _slotSelectedBgTex! : (isHovered ? _slotHoverBgTex! : _slotBgTex!));
 
                 if (isSelected)
                 {
-                    Color prev = GUI.color;
                     GUI.color = new Color(0.25f, 0.95f, 1.0f, 0.98f);
                     GUI.DrawTexture(new Rect(cellRect.x, cellRect.y, cellRect.width, 2f), _whitePixelTex!);
                     GUI.DrawTexture(new Rect(cellRect.x, cellRect.yMax - 2f, cellRect.width, 2f), _whitePixelTex!);
                     GUI.DrawTexture(new Rect(cellRect.x, cellRect.y, 2f, cellRect.height), _whitePixelTex!);
                     GUI.DrawTexture(new Rect(cellRect.xMax - 2f, cellRect.y, 2f, cellRect.height), _whitePixelTex!);
-                    GUI.color = prev;
                 }
 
                 var previewSlot = new VisualInventorySlot
@@ -2522,26 +2815,109 @@ namespace Stratocraft.Character
                     Durability01 = 1f
                 };
                 Texture2D icon = GetOrBuildIconForSlot(in previewSlot, combatBridge.ActiveWeaponArchetype);
-                Color prevIconCol = GUI.color;
-                if (!isCreativeMode && count <= 0) GUI.color = new Color(0.55f, 0.55f, 0.55f, 0.55f);
-                GUI.DrawTexture(new Rect(cellRect.x + 13f, cellRect.y + 3f, 32f, 28f), icon);
-                GUI.color = prevIconCol;
 
-                string shortName = GetShortMaterialBadgeName(matId);
-                string countText = isCreativeMode ? "∞" : GetCachedStackCountString(count);
-                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + 1f, cellRect.width - 4f, 14f), shortName, _keyBadgeStyle!);
-                GUI.Label(new Rect(cellRect.x + 2f, cellRect.y + cellH - 17f, cellRect.width - 5f, 16f), countText, _countLabelStyle!);
+                bool isZeroStock = !isCreativeMode && count <= 0;
+                GUI.color = isZeroStock ? new Color(0.55f, 0.55f, 0.55f, 0.55f) : prevColor;
+                GUI.DrawTexture(new Rect(cx + 4f, cy + 16f, 22f, 22f), icon);
 
-                if (ev.type == EventType.MouseDown && cellRect.Contains(mousePos))
+                GUI.color = prevColor;
+                GUI.Label(new Rect(cx + 2f, cy + 1f, cellW - 4f, 14f), GetShortMaterialBadgeName(matId), _keyBadgeStyle!);
+                if (isZeroStock) GUI.color = new Color(0.95f, 0.45f, 0.40f, 0.85f);
+                string countText = isCreativeMode ? "∞" : GetCachedCrystalCountString(i, count);
+                GUI.Label(new Rect(cx + 24f, cy + 27f, cellW - 27f, 15f), countText, _dockCountStyle!);
+
+                if (ev.type == EventType.MouseDown && cellRect.Contains(screenMousePos))
                 {
                     miningCtrl.SelectMaterial(matId);
-                    string selStock = isCreativeMode ? "∞" : $"x{count}";
+                    string selStock = isCreativeMode ? "∞" : GetCachedCarouselCenterStockString(count);
                     miningCtrl.LastFeedbackText =
                         $"💎 Kristal Malzemesi Seçildi: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(matId)} (Stok: {selStock}) -> [Sağ Tık] Dünyaya Koy";
                     ev.Use();
                 }
             }
+
+            // 18. yuva (col = 2, row = 5): Ozel Kreatif materyal aktifse onu vurgulu goster, yoksa kisa ipucu goster.
+            float s18x = dockX + 8f + 2 * (cellW + gap);
+            float s18y = dockY + 26f + 5 * (cellH + gap);
+            Rect s18Rect = new Rect(s18x, s18y, cellW, cellH);
+            if (isCustomNon17)
+            {
+                int customCount = miningCtrl.GetMaterialCountInCrystal(selectedMat);
+                GUI.color = prevColor;
+                GUI.DrawTexture(s18Rect, _slotSelectedBgTex!);
+                GUI.color = new Color(0.25f, 0.95f, 1.0f, 0.98f);
+                GUI.DrawTexture(new Rect(s18Rect.x, s18Rect.y, s18Rect.width, 2f), _whitePixelTex!);
+                GUI.DrawTexture(new Rect(s18Rect.x, s18Rect.yMax - 2f, s18Rect.width, 2f), _whitePixelTex!);
+                GUI.DrawTexture(new Rect(s18Rect.x, s18Rect.y, 2f, s18Rect.height), _whitePixelTex!);
+                GUI.DrawTexture(new Rect(s18Rect.xMax - 2f, s18Rect.y, 2f, s18Rect.height), _whitePixelTex!);
+
+                var customSlot = new VisualInventorySlot
+                {
+                    Kind = InventoryItemKind.VoxelBlock,
+                    SubId = selectedMat,
+                    Count = Mathf.Max(1, customCount),
+                    Durability01 = 1f
+                };
+                Texture2D customIcon = GetOrBuildIconForSlot(in customSlot, combatBridge.ActiveWeaponArchetype);
+                bool customZero = !isCreativeMode && customCount <= 0;
+                GUI.color = customZero ? new Color(0.55f, 0.55f, 0.55f, 0.55f) : prevColor;
+                GUI.DrawTexture(new Rect(s18x + 4f, s18y + 16f, 22f, 22f), customIcon);
+
+                GUI.color = prevColor;
+                GUI.Label(new Rect(s18x + 2f, s18y + 1f, cellW - 4f, 14f), GetShortMaterialBadgeName(selectedMat), _keyBadgeStyle!);
+                if (customZero) GUI.color = new Color(0.95f, 0.45f, 0.40f, 0.85f);
+                string customCountText = isCreativeMode ? "∞" : GetCachedCrystalCountString(CrystalCountCacheSlots - 1, customCount);
+                GUI.Label(new Rect(s18x + 24f, s18y + 27f, cellW - 27f, 15f), customCountText, _dockCountStyle!);
+
+                if (ev.type == EventType.MouseDown && s18Rect.Contains(screenMousePos))
+                {
+                    miningCtrl.SelectMaterial(selectedMat);
+                    ev.Use();
+                }
+            }
+            else
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                GUI.DrawTexture(s18Rect, _slotBgTex!);
+                GUI.Label(s18Rect, "Alt+Tkr\nŞekil", _dockHintStyle!);
+            }
+
+            GUI.color = prevColor;
         }
+
+        private static string GetCarouselMaterialDisplayName(byte matId) => matId switch
+        {
+            MaterialIdCatalog.Stone => "Ham Taş",
+            MaterialIdCatalog.Dirt => "Toprak",
+            MaterialIdCatalog.Grass => "Çimen Toprak",
+            MaterialIdCatalog.Sand => "Kum",
+            MaterialIdCatalog.Clay => "Doğal Kil",
+            MaterialIdCatalog.Gravel => "Çakıl",
+            MaterialIdCatalog.PackedIce => "Paket Buz",
+            MaterialIdCatalog.Cobblestone => "Kırıktaş",
+            MaterialIdCatalog.Basalt => "Bazalt",
+            MaterialIdCatalog.Marble => "Kadim Mermer",
+            MaterialIdCatalog.NaturalObsidian => "Obsidyen",
+            MaterialIdCatalog.OakWood => "Meşe Odunu",
+            MaterialIdCatalog.Ironwood => "Demirağaç",
+            MaterialIdCatalog.StoneBrick => "Taş Tuğla",
+            MaterialIdCatalog.WoodPlank => "Ahşap Kalas",
+            MaterialIdCatalog.BedBlock => "Yatak",
+            MaterialIdCatalog.LooseRubble => "Taş Moloz",
+            MaterialIdCatalog.GlowingMoss => "Parlak Yosun",
+            MaterialIdCatalog.QuartzGem => "Kuvars",
+            MaterialIdCatalog.CopperOre => "Bakır Cevher",
+            MaterialIdCatalog.IronOre => "Demir Cevher",
+            MaterialIdCatalog.GoldOre => "Altın Cevher",
+            MaterialIdCatalog.MithrilOre => "Mithril Cv.",
+            MaterialIdCatalog.AstralOre => "Astral Cv.",
+            MaterialIdCatalog.StarCore => "Yıldız Çek.",
+            MaterialIdCatalog.MagmaBlock => "Magma Bloğu",
+            MaterialIdCatalog.TitaniumOre => "Titanyum Cv.",
+            MaterialIdCatalog.OrichalcumOre => "Orichalcum",
+            MaterialIdCatalog.ObsidianBrick => "Obsid. Tuğla",
+            _ => GetShortMaterialBadgeName(matId)
+        };
 
         private void DrawCenterClothCraftOverlay(
             float screenW,
@@ -2725,6 +3101,13 @@ namespace Stratocraft.Character
             MaterialIdCatalog.StoneBrick => "Tuğla",
             MaterialIdCatalog.LooseRubble => "Moloz",
             MaterialIdCatalog.WoodPlank => "Kalas",
+            MaterialIdCatalog.BedBlock => "Yatak",
+            MaterialIdCatalog.GlowingMoss => "Yosun",
+            MaterialIdCatalog.StarCore => "YıldızÇ",
+            MaterialIdCatalog.MagmaBlock => "Magma",
+            MaterialIdCatalog.TitaniumOre => "TitanCv",
+            MaterialIdCatalog.OrichalcumOre => "OrichCv",
+            MaterialIdCatalog.ObsidianBrick => "ObsTuğ",
             MaterialIdCatalog.Coal => "Kömür",
             MaterialIdCatalog.CopperOre => "BakırCv",
             MaterialIdCatalog.IronOre => "DemirCv",
@@ -3033,34 +3416,247 @@ namespace Stratocraft.Character
 
         public string FormatSelectedSlotBannerText(
             Stage1MatterCrystalAndMiningController miningCtrl,
-            Stage1DirectionalCombatBridge combatBridge)
+            Stage1DirectionalCombatBridge combatBridge,
+            bool isCreativeMode = false)
         {
+            _ = combatBridge;
             if (miningCtrl.IsCrystalActive)
             {
-                return $"[C] MADDE KRİSTALİ AKTİF (T{miningCtrl.CurrentCrystalTier} | {miningCtrl.BrushAreaLabel}) — [Sol Tık] Vakumla | [Sağ Tık] İnşa ({Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(miningCtrl.SelectedMaterialId)}) | [V] Mod | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                int tier = miningCtrl.CurrentCrystalTier;
+                byte selMat = miningCtrl.SelectedMaterialId;
+                byte selShape = miningCtrl.SelectedShapeId;
+                string brushLabel = miningCtrl.BrushAreaLabel;
+                int curTotalBlocks = isCreativeMode ? 0 : miningCtrl.CrystalStorage.CurrentTotalBlocks;
+
+                if (_cachedSlotBannerText.Length == 0 ||
+                    !_lastBannerCrystalActive ||
+                    _lastBannerCrystalTier != tier ||
+                    _lastBannerSelectedMat != selMat ||
+                    _lastBannerShapeId != selShape ||
+                    _lastBannerCreative != isCreativeMode ||
+                    _lastBannerCrystalTotalBlocks != curTotalBlocks ||
+                    !string.Equals(_lastBannerBrushLabel, brushLabel, StringComparison.Ordinal))
+                {
+                    _lastBannerCrystalActive = true;
+                    _lastBannerCrystalTier = tier;
+                    _lastBannerSelectedMat = selMat;
+                    _lastBannerShapeId = selShape;
+                    _lastBannerCreative = isCreativeMode;
+                    _lastBannerCrystalTotalBlocks = curTotalBlocks;
+                    _lastBannerBrushLabel = brushLabel;
+                    string totalStr = isCreativeMode
+                        ? "∞"
+                        : (curTotalBlocks >= 100000 ? $"{curTotalBlocks / 1000}k" : curTotalBlocks.ToString());
+                    string shortShape = GetShortShapeBadgeName(selShape);
+                    string shortBrush = GetShortBrushBadgeName(brushLabel);
+                    _cachedSlotBannerText = TruncateBannerText(
+                        $"[C] T{tier}({totalStr}) | [V]{shortShape} | [T]{shortBrush} | [LMB]Vak [RMB]Koy | [Alt]Palet",
+                        72);
+                }
+                return _cachedSlotBannerText;
             }
 
             if (SelectedHotbarIndex == -1)
             {
-                return "[0] BOŞ EL — [Sol Tık] Yumruk / Çalı Kırma | [E] Eşya Al | [Ctrl+E Basılı Tut] Toprak/Kum/Kil Avuçla | [B] Tarif & Malzeme Kitabı";
+                if (_cachedSlotBannerText.Length == 0 || _lastBannerCrystalActive || _lastBannerSlotIdx != -1)
+                {
+                    _lastBannerCrystalActive = false;
+                    _lastBannerSlotIdx = -1;
+                    _cachedSlotBannerText = "[0] BOŞ EL — [LMB] Yumruk | [E] Al | [Ctrl+E] Avuçla | [B] Kitap";
+                }
+                return _cachedSlotBannerText;
             }
 
             VisualInventorySlot slot = GetActiveHotbarSlot();
             if (slot.IsEmpty)
             {
-                return $"[{SelectedHotbarIndex + 1}] BOŞ KILIF YUVASI — [I] 3B Kumaş Çantayı açıp eşya sürükleyin | [B] Tarif & Malzeme Kitabı";
+                if (_cachedSlotBannerText.Length == 0 ||
+                    _lastBannerCrystalActive ||
+                    _lastBannerSlotIdx != SelectedHotbarIndex ||
+                    _lastBannerItemKind != InventoryItemKind.Empty)
+                {
+                    _lastBannerCrystalActive = false;
+                    _lastBannerSlotIdx = SelectedHotbarIndex;
+                    _lastBannerItemKind = InventoryItemKind.Empty;
+                    _cachedSlotBannerText = $"[{SelectedHotbarIndex + 1}] BOŞ YUVA — [I] Çanta Aç & Sürükle | [B] Tarif Kitabı";
+                }
+                return _cachedSlotBannerText;
             }
 
+            int qualPct = slot.GetEffectiveShapeDna().EffectiveQualityPct;
+            byte itemFlags = slot.ShapeDna.Flags;
             if (IsFluidContainerKind(slot.Kind))
             {
                 int stored = GetSlotStoredFluidUnits(in slot);
-                int maxU = GetFluidContainerMaxUnits(slot.Kind);
-                string capInfo = slot.SubId == 0 ? $"BOŞ (Kapasite: {maxU} Br)" : $"{stored}/{maxU} Birim";
-                return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} [{capInfo}] — {GetSlotUsageHint(in slot)} | [B] Tarif & Malzeme Kitabı";
+                if (_cachedSlotBannerText.Length == 0 ||
+                    _lastBannerCrystalActive ||
+                    _lastBannerSlotIdx != SelectedHotbarIndex ||
+                    _lastBannerItemKind != slot.Kind ||
+                    _lastBannerItemSubId != slot.SubId ||
+                    _lastBannerStoredFluid != stored ||
+                    _lastBannerItemFlags != itemFlags)
+                {
+                    _lastBannerCrystalActive = false;
+                    _lastBannerSlotIdx = SelectedHotbarIndex;
+                    _lastBannerItemKind = slot.Kind;
+                    _lastBannerItemSubId = slot.SubId;
+                    _lastBannerStoredFluid = stored;
+                    _lastBannerItemFlags = itemFlags;
+                    int maxU = GetFluidContainerMaxUnits(slot.Kind);
+                    string capInfo = slot.SubId == 0 ? $"Boş/{maxU}" : $"{stored}/{maxU}";
+                    _cachedSlotBannerText = TruncateBannerText(
+                        $"[{SelectedHotbarIndex + 1}] {GetBannerSlotTitle(in slot)} ({capInfo}) — [LMB] Al [RMB] Dök | [B] Kitap",
+                        72);
+                }
+                return _cachedSlotBannerText;
             }
 
-            return $"[{SelectedHotbarIndex + 1}] {GetSlotDisplayName(in slot, combatBridge)} (Adet: {slot.Count}) — {GetSlotUsageHint(in slot)} | [B] Tarif & Malzeme Kitabı";
+            if (_cachedSlotBannerText.Length == 0 ||
+                _lastBannerCrystalActive ||
+                _lastBannerSlotIdx != SelectedHotbarIndex ||
+                _lastBannerItemKind != slot.Kind ||
+                _lastBannerItemSubId != slot.SubId ||
+                _lastBannerItemCount != slot.Count ||
+                _lastBannerSlotQuality != qualPct ||
+                _lastBannerItemFlags != itemFlags)
+            {
+                _lastBannerCrystalActive = false;
+                _lastBannerSlotIdx = SelectedHotbarIndex;
+                _lastBannerItemKind = slot.Kind;
+                _lastBannerItemSubId = slot.SubId;
+                _lastBannerItemCount = slot.Count;
+                _lastBannerSlotQuality = qualPct;
+                _lastBannerItemFlags = itemFlags;
+                string countSuffix = slot.Count > 1 ? $" x{slot.Count}" : string.Empty;
+                _cachedSlotBannerText = TruncateBannerText(
+                    $"[{SelectedHotbarIndex + 1}] {GetBannerSlotTitle(in slot)}{countSuffix} — {GetShortBannerUsageHint(in slot)} | [B] Kitap",
+                    72);
+            }
+            return _cachedSlotBannerText;
         }
+
+        private static string TruncateBannerText(string text, int maxLen)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxLen) return text;
+            return maxLen > 3 ? string.Concat(text.Substring(0, maxLen - 3), "...") : text.Substring(0, maxLen);
+        }
+
+        private static string GetShortShapeBadgeName(byte shapeId) => shapeId switch
+        {
+            0 => "Doğal",
+            ArchitecturalShapeCatalog.FullMasonryCube => "TamKüp",
+            ArchitecturalShapeCatalog.OctagonalColumn => "Sütun",
+            ArchitecturalShapeCatalog.Ramp45 => "Rampa45",
+            ArchitecturalShapeCatalog.ArchVoussoir => "Kemer",
+            ArchitecturalShapeCatalog.TrapezoidalKeystone => "Kilit",
+            ArchitecturalShapeCatalog.BattlementMerlon => "Siper",
+            ArchitecturalShapeCatalog.FacetedCrystalSpire => "Sivri",
+            ArchitecturalShapeCatalog.HalfSlab => "Yarım",
+            ArchitecturalShapeCatalog.QuarterBeam => "Kiriş",
+            ArchitecturalShapeCatalog.Ramp22Low => "Rampa22A",
+            ArchitecturalShapeCatalog.Ramp22High => "Rampa22Ü",
+            ArchitecturalShapeCatalog.InnerRoofCorner45 => "İçÇatı",
+            ArchitecturalShapeCatalog.OuterRoofCorner45 => "DışÇatı",
+            ArchitecturalShapeCatalog.StairStep => "Basamak",
+            VoxelBitUtility.ChiseledMicroVoxelShapeId => "Mikro4",
+            _ => "Şekil"
+        };
+
+        private static string GetShortBrushBadgeName(string brushLabel)
+        {
+            if (string.IsNullOrEmpty(brushLabel)) return "1x1";
+            if (brushLabel.StartsWith("2x2", StringComparison.Ordinal)) return "2x2";
+            if (brushLabel.StartsWith("3x3", StringComparison.Ordinal)) return "3x3";
+            if (brushLabel.StartsWith("5x5", StringComparison.Ordinal)) return "5x5";
+            if (brushLabel.StartsWith("7x7", StringComparison.Ordinal)) return "7x7";
+            return "1x1";
+        }
+
+        private static string GetBannerSlotTitle(in VisualInventorySlot slot) => slot.Kind switch
+        {
+            InventoryItemKind.WeaponSword => slot.SubId == 1 ? "Çakmaktaşı Bıçak" : "Çelik Uzun Kılıç",
+            InventoryItemKind.WeaponKatana => "Katana",
+            InventoryItemKind.WeaponGreatsword => "Zweihänder",
+            InventoryItemKind.WeaponRapier => "Rapier",
+            InventoryItemKind.ScrollMartialStance => ResolveScrollMartialStance(slot.SubId) switch
+            {
+                CombatMartialStance.Iaido_QuickDraw => "Parşömen: Iaido",
+                CombatMartialStance.Fencing_Punta => "Parşömen: Eskrim",
+                CombatMartialStance.TwoHand_Juggernaut => "Parşömen: Yarma",
+                _ => "Parşömen: Şövalye"
+            },
+            InventoryItemKind.ToolPickaxe => slot.SubId == 1 ? "Taş Kazma" : "Demir Kazma",
+            InventoryItemKind.ToolAxe => slot.SubId == 1 ? "Taş Balta" : "Demir Balta",
+            InventoryItemKind.ToolMicroChisel => "Mikro-Keski",
+            InventoryItemKind.ToolFluidFlask => slot.SubId == 2 ? "Lav Matarası" : (slot.SubId == 1 ? "Su Matarası" : "Boş Matara"),
+            InventoryItemKind.ToolFluidBucket => slot.SubId == 2 ? "Lav Kovası" : (slot.SubId == 1 ? "Su Kovası" : "Boş Kova"),
+            InventoryItemKind.ToolFluidCauldron => slot.SubId == 2 ? "Lav Kazanı" : (slot.SubId == 1 ? "Su Kazanı" : "Boş Kazan"),
+            InventoryItemKind.VoxelBlock or InventoryItemKind.OreChunk => GetShortMaterialBadgeName(slot.SubId),
+            InventoryItemKind.MetalIngot => slot.SubId switch { 1 => "Bakır Külçe", 2 => "Demir Külçe", 3 => "Mithril Külçe", _ => "Külçe" },
+            InventoryItemKind.RoughStoneChunk => "Kaba Taş",
+            InventoryItemKind.LooseDirtClod => "Toprak Topağı",
+            InventoryItemKind.SandPile => "İnce Kum",
+            InventoryItemKind.ClayLump => "Kil Topağı",
+            InventoryItemKind.LeafPile => "Yaprak Öbeği",
+            InventoryItemKind.SplitFirewood => "Yarma Odun",
+            InventoryItemKind.Stick => "Kuru Dal",
+            InventoryItemKind.FlintStone => "Çakmaktaşı",
+            InventoryItemKind.PlantFiber => "Bitki Lifi",
+            InventoryItemKind.KnappedAxeHead => "Taş Balta Başı",
+            InventoryItemKind.KnappedPickaxeHead => "Taş Kazma Başı",
+            InventoryItemKind.KnappedKnifeBlade => "Taş Bıçak Ağzı",
+            InventoryItemKind.KnappedHammerHead => "Taş Çekiç Başı",
+            InventoryItemKind.ToolStoneHammer => slot.SubId == 1 ? "Taş Çekiç" : "Demirci Çekici",
+            InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0 ? "Çiğ Kil Boru" : "Pişmiş Kil Boru",
+            InventoryItemKind.LeatherBellows => "Deri Körük",
+            InventoryItemKind.ClayCruciblePot => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0 ? "Çiğ Kil Pota" : "Pişmiş Kil Pota",
+            InventoryItemKind.IronBloomSponge => "Sünger Demir",
+            InventoryItemKind.WroughtIronBar => "Dövme Demir",
+            InventoryItemKind.SlagShard => "Cüruf",
+            InventoryItemKind.WoodenWheel => "Ahşap Teker",
+            InventoryItemKind.ResonanceCrystal => Mathf.Clamp((int)slot.SubId, 2, 5) switch
+            {
+                2 => "T2 Rezonans",
+                3 => "T3 Rezonans",
+                4 => "T4 Rezonans",
+                _ => "T5 Rezonans"
+            },
+            InventoryItemKind.WovenClothTunic => "Kumaş Tunik",
+            InventoryItemKind.OiledLeatherWindbreaker => "Deri Rüzgârlık",
+            InventoryItemKind.HeavyFurWinterParka => "Kürk Parka",
+            InventoryItemKind.FurLinedWinterBoots => "Kürk Çizme",
+            _ => GetShortSlotBadgeLabel(in slot)
+        };
+
+        private static string GetShortBannerUsageHint(in VisualInventorySlot slot) => slot.Kind switch
+        {
+            InventoryItemKind.WeaponSword => slot.SubId == 1 ? "[LMB] Kesik" : "[LMB] Kesik [RMB] Blok [G] Stil",
+            InventoryItemKind.WeaponKatana => "[LMB] Kesik [RMB] Saptır [G] Stil",
+            InventoryItemKind.WeaponGreatsword => "[LMB] Yarma [X] Yarı-Kılıç [G] Stil",
+            InventoryItemKind.WeaponRapier => "[LMB+İleri] Sapla [RMB] Saptır",
+            InventoryItemKind.ScrollMartialStance => "[LMB/RMB] Oku & Öğren",
+            InventoryItemKind.ToolPickaxe => "[LMB] Kaya & Cevher Kaz",
+            InventoryItemKind.ToolAxe => "[LMB] Ağaç & Odun Kes",
+            InventoryItemKind.ToolMicroChisel => "[LMB] Yont [RMB] Ekle",
+            InventoryItemKind.VoxelBlock => "[RMB] Koy [V] Şekil [R] Döndür",
+            InventoryItemKind.OreChunk => slot.SubId == MaterialIdCatalog.QuartzGem ? "[C] Kristali Uyandır" : "[RMB] Kavur / Koy",
+            InventoryItemKind.MetalIngot => "[RMB] Koy veya Örste İşle",
+            InventoryItemKind.RoughStoneChunk => "[R] Çakmakla Yont [RMB] Koy",
+            InventoryItemKind.FlintStone => "[R] Taş Yont / Ateş Yak",
+            InventoryItemKind.ClayTuyerePipe => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0 ? "[RMB] Ateşte 12sn Pişir" : "[RMB] Fırına Tak",
+            InventoryItemKind.ClayCruciblePot => (slot.ShapeDna.Flags & PhysicalItemShapeDna.FlagUnfiredClay) != 0 ? "[RMB] Ateşte 12sn Pişir" : "[RMB] Fırına Koy",
+            InventoryItemKind.LeatherBellows => "[RMB] Tak [E] Pompala",
+            InventoryItemKind.IronBloomSponge => "[LMB] Sıcakken Kayada Döv",
+            InventoryItemKind.ToolStoneHammer => "[LMB] Cevher Kır / Demir Döv",
+            InventoryItemKind.ResonanceCrystal => "[C] veya [RMB] Kristal Yükselt",
+            InventoryItemKind.ArmorHelmet or InventoryItemKind.ArmorChestplate or InventoryItemKind.ArmorVambrace or InventoryItemKind.ArmorGreaves
+                or InventoryItemKind.WovenClothTunic or InventoryItemKind.OiledLeatherWindbreaker
+                or InventoryItemKind.HeavyFurWinterParka or InventoryItemKind.FurLinedWinterBoots => "[RMB] Kuşan / Çıkar",
+            InventoryItemKind.PotionHealth or InventoryItemKind.PotionStamina or InventoryItemKind.MedicalBandage => "[LMB] Kullan",
+            InventoryItemKind.FoodRawMeat => "[RMB] Kamp Ateşinde Pişir",
+            InventoryItemKind.FoodCookedMeat or InventoryItemKind.FoodWildBerries or InventoryItemKind.FoodCleanWater => "[LMB] Tüket",
+            _ => "[RMB] Kullan / Koy"
+        };
 
         public static string GetSlotDisplayName(in VisualInventorySlot slot, Stage1DirectionalCombatBridge? combatBridge = null)
         {
@@ -3359,6 +3955,8 @@ namespace Stratocraft.Character
                 fontSize = 12,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
                 normal = { textColor = new Color(0.88f, 0.96f, 1.0f, 1.0f) }
             };
             _tooltipBoxStyle = new GUIStyle(GUI.skin.box)
@@ -3374,7 +3972,72 @@ namespace Stratocraft.Character
                 fontSize = 10,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
                 normal = { textColor = new Color(0.96f, 0.98f, 1.0f, 1.0f) }
+            };
+            _carouselCenterNameStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(0.95f, 0.98f, 1.0f, 1.0f) }
+            };
+            _carouselCenterCountStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(1.0f, 0.95f, 0.55f, 1.0f) }
+            };
+            _carouselSideNameStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 9,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(0.78f, 0.86f, 0.96f, 1.0f) }
+            };
+            _carouselSideCountStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 10,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleRight,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(1.0f, 0.95f, 0.55f, 1.0f) }
+            };
+            _dockHeaderStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(0.88f, 0.96f, 1.0f, 1.0f) }
+            };
+            _dockCountStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 10,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.LowerRight,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(1.0f, 0.95f, 0.55f, 1.0f) }
+            };
+            _dockHintStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 9,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = true,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(0.68f, 0.78f, 0.90f, 0.85f) }
             };
         }
 
@@ -3560,6 +4223,12 @@ namespace Stratocraft.Character
         }
 
         private static readonly Dictionary<int, Texture2D> s_staticIconCache = new(64);
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticCachesOnSubsystemRegistration()
+        {
+            s_staticIconCache.Clear();
+        }
 
         /// <summary>
         /// [B] Tarif kitabi malzeme seridi icin envanterdeki ayni prosedurel esya ikonunu (48x48) dondurur.
@@ -4267,6 +4936,9 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Stone => new Color(0.56f, 0.58f, 0.62f, 1f),
             MaterialIdCatalog.Dirt or MaterialIdCatalog.Grass => new Color(0.52f, 0.36f, 0.22f, 1f),
             MaterialIdCatalog.Sand => new Color(0.88f, 0.80f, 0.52f, 1f),
+            MaterialIdCatalog.Clay => new Color(0.64f, 0.46f, 0.36f, 1f),
+            MaterialIdCatalog.Gravel => new Color(0.54f, 0.52f, 0.49f, 1f),
+            MaterialIdCatalog.PackedIce => new Color(0.56f, 0.82f, 0.96f, 1f),
             MaterialIdCatalog.Basalt => new Color(0.26f, 0.28f, 0.32f, 1f),
             MaterialIdCatalog.NaturalObsidian => new Color(0.24f, 0.14f, 0.38f, 1f),
             MaterialIdCatalog.Cobblestone => new Color(0.48f, 0.50f, 0.52f, 1f),
@@ -4274,7 +4946,15 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Marble => new Color(0.92f, 0.92f, 0.95f, 1f),
             MaterialIdCatalog.OakWood => new Color(0.60f, 0.40f, 0.22f, 1f),
             MaterialIdCatalog.Ironwood => new Color(0.38f, 0.30f, 0.26f, 1f),
+            MaterialIdCatalog.WoodPlank => new Color(0.72f, 0.52f, 0.30f, 1f),
+            MaterialIdCatalog.BedBlock => new Color(0.76f, 0.24f, 0.24f, 1f),
             MaterialIdCatalog.LooseRubble => new Color(0.50f, 0.46f, 0.40f, 1f),
+            MaterialIdCatalog.GlowingMoss => new Color(0.32f, 0.92f, 0.54f, 1f),
+            MaterialIdCatalog.StarCore => new Color(1.00f, 0.86f, 0.36f, 1f),
+            MaterialIdCatalog.MagmaBlock => new Color(0.95f, 0.34f, 0.08f, 1f),
+            MaterialIdCatalog.TitaniumOre => new Color(0.70f, 0.78f, 0.86f, 1f),
+            MaterialIdCatalog.OrichalcumOre => new Color(0.92f, 0.56f, 0.26f, 1f),
+            MaterialIdCatalog.ObsidianBrick => new Color(0.18f, 0.12f, 0.28f, 1f),
             MaterialIdCatalog.Coal => new Color(0.16f, 0.16f, 0.18f, 1f),
             MaterialIdCatalog.CopperOre => new Color(0.92f, 0.50f, 0.22f, 1f),
             MaterialIdCatalog.IronOre => new Color(0.82f, 0.64f, 0.52f, 1f),

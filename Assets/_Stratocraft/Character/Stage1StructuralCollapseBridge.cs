@@ -40,6 +40,15 @@ namespace Stratocraft.Character
         [ThreadStatic] private static uint[]? _tlsHaloDetached;
         [ThreadStatic] private static byte[]? _tlsHaloLoadedCol;
         [ThreadStatic] private static byte[]? _tlsHaloGroundedBottom;
+        [ThreadStatic] private static byte[]? _tlsTimberSupportMask;
+        [ThreadStatic] private static int _tlsTimberMaskOriginX;
+        [ThreadStatic] private static int _tlsTimberMaskOriginY;
+        [ThreadStatic] private static int _tlsTimberMaskOriginZ;
+        [ThreadStatic] private static int _tlsTimberMaskSizeX;
+        [ThreadStatic] private static int _tlsTimberMaskSizeY;
+        [ThreadStatic] private static int _tlsTimberMaskSizeZ;
+        [ThreadStatic] private static bool _tlsTimberMaskIsZMajor;
+        [ThreadStatic] private static Func<int, int, int, bool>? _tlsReadMaskDelegateCached;
         [ThreadStatic] private static StructuralCollapseSystem? _tlsPureCollapseSystem;
 
 #if UNITY_5_3_OR_NEWER
@@ -51,6 +60,8 @@ namespace Stratocraft.Character
             _tlsHaloDetached = null;
             _tlsHaloLoadedCol = null;
             _tlsHaloGroundedBottom = null;
+            _tlsTimberSupportMask = null;
+            _tlsReadMaskDelegateCached = null;
             _tlsPureCollapseSystem = null;
         }
 #endif
@@ -64,6 +75,73 @@ namespace Stratocraft.Character
         /// Yalnizca gercekten zemine/tabana basan direk sutunu yuk tasir; havadaki ahsap parca tasimaz.
         /// </summary>
         public Func<int, int, int, bool>? ExternalTimberSupportLookup { get; set; }
+
+        /// <summary>
+        /// Pencere-tabanli tek seferlik tahkimat maske rasterizer'i: (originX, originY, originZ, sizeX, sizeY, sizeZ, outMask, isZMajorLocal) -> bool.
+        /// Baglandiginda yuzbinlerce voksel basina dunya taramasini O(1) yerel bitmask okumaya veya tahkimat yoksa 0 cagriye dusurur.
+        /// </summary>
+        public Func<int, int, int, int, int, int, byte[], bool, bool>? ExternalTimberSupportWindowRasterizer { get; set; }
+
+        private static byte[] EnsureTimberSupportMaskBuffer(int volume)
+        {
+            if (_tlsTimberSupportMask == null || _tlsTimberSupportMask.Length < volume)
+            {
+                _tlsTimberSupportMask = new byte[Math.Max(volume, HaloWindowSizeXZ * 64 * HaloWindowSizeXZ)];
+            }
+            return _tlsTimberSupportMask;
+        }
+
+        private static bool ReadTlsTimberSupportMask(int wx, int wy, int wz)
+        {
+            int lx = wx - _tlsTimberMaskOriginX;
+            int ly = wy - _tlsTimberMaskOriginY;
+            int lz = wz - _tlsTimberMaskOriginZ;
+            if ((uint)lx >= (uint)_tlsTimberMaskSizeX ||
+                (uint)ly >= (uint)_tlsTimberMaskSizeY ||
+                (uint)lz >= (uint)_tlsTimberMaskSizeZ ||
+                _tlsTimberSupportMask == null)
+            {
+                return false;
+            }
+            int idx = _tlsTimberMaskIsZMajor
+                ? (lx + _tlsTimberMaskSizeX * (ly + _tlsTimberMaskSizeY * lz))
+                : (((ly * _tlsTimberMaskSizeZ) + lz) * _tlsTimberMaskSizeX + lx);
+            return (uint)idx < (uint)_tlsTimberSupportMask.Length && _tlsTimberSupportMask[idx] != 0;
+        }
+
+        private static Func<int, int, int, bool>? PrepareEffectiveTimberLookupForWindow(
+            Func<int, int, int, bool>? fallbackLookup,
+            Func<int, int, int, int, int, int, byte[], bool, bool>? windowRasterizer,
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            bool isZMajorLocal)
+        {
+            if (windowRasterizer == null)
+            {
+                return fallbackLookup;
+            }
+
+            int volume = sizeX * sizeY * sizeZ;
+            byte[] mask = EnsureTimberSupportMaskBuffer(volume);
+            if (!windowRasterizer(originX, originY, originZ, sizeX, sizeY, sizeZ, mask, isZMajorLocal))
+            {
+                return null;
+            }
+
+            _tlsTimberMaskOriginX = originX;
+            _tlsTimberMaskOriginY = originY;
+            _tlsTimberMaskOriginZ = originZ;
+            _tlsTimberMaskSizeX = sizeX;
+            _tlsTimberMaskSizeY = sizeY;
+            _tlsTimberMaskSizeZ = sizeZ;
+            _tlsTimberMaskIsZMajor = isZMajorLocal;
+            _tlsReadMaskDelegateCached ??= ReadTlsTimberSupportMask;
+            return _tlsReadMaskDelegateCached;
+        }
 
         public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
 
@@ -361,7 +439,8 @@ namespace Stratocraft.Character
                 ExternalTimberSupportLookup,
                 surfaceYOverride,
                 extraCantileverLoadKg,
-                commitDetachedToWorldChunks: true);
+                commitDetachedToWorldChunks: true,
+                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer);
 
             rubbledCount = collapsed;
             return collapsed;
@@ -382,7 +461,8 @@ namespace Stratocraft.Character
             Func<int, int, int, bool>? externalTimberSupportLookup = null,
             Func<int, int, int>? surfaceYOverride = null,
             float extraCantileverLoadKg = 0f,
-            bool commitDetachedToWorldChunks = true)
+            bool commitDetachedToWorldChunks = true,
+            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null)
         {
             _tlsPureCollapseSystem ??= new StructuralCollapseSystem();
             return EvaluateHaloCollapseInternal(
@@ -403,7 +483,8 @@ namespace Stratocraft.Character
                 externalTimberSupportLookup,
                 surfaceYOverride,
                 extraCantileverLoadKg,
-                commitDetachedToWorldChunks);
+                commitDetachedToWorldChunks,
+                externalTimberSupportWindowRasterizer);
         }
 
         private static int EvaluateHaloCollapseInternal(
@@ -424,7 +505,8 @@ namespace Stratocraft.Character
             Func<int, int, int, bool>? externalTimberSupportLookup,
             Func<int, int, int>? surfaceYOverride,
             float extraCantileverLoadKg,
-            bool commitDetachedToWorldChunks)
+            bool commitDetachedToWorldChunks,
+            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null)
         {
             clusterCount = 0;
             detachedWindowSnapshot = null;
@@ -523,6 +605,14 @@ namespace Stratocraft.Character
             int seedLz = HaloWindowHalfXZ;
             int seedLy = clampedSeedY - originY;
 
+            // 1B) Tek seferlik pencere AABB tahkimat on-elemesi ve O(1) bitmask rasterizasyonu:
+            Func<int, int, int, bool>? effectiveTimberLookup = PrepareEffectiveTimberLookupForWindow(
+                externalTimberSupportLookup,
+                externalTimberSupportWindowRasterizer,
+                originX, originY, originZ,
+                HaloWindowSizeXZ, sizeY, HaloWindowSizeXZ,
+                isZMajorLocal: true);
+
             // 2) Delta-Yuk Kapisi (Zero-Load Floor / Non-Supporting Edit Early-Out):
             // Kirilan voksel taban icinde gomulu sifir-yuklu bir tassa (ustunde blok yok, yaninda konsol/kemer yok),
             // hicbir tasiyici yol bozulmadigindan aninda 0 don!
@@ -531,7 +621,7 @@ namespace Stratocraft.Character
                     haloSrc, HaloWindowSizeXZ, sizeY, HaloWindowSizeXZ,
                     seedLx, seedLy, seedLz,
                     originX, originY, originZ,
-                    externalTimberSupportLookup))
+                    effectiveTimberLookup))
             {
                 return 0;
             }
@@ -568,7 +658,7 @@ namespace Stratocraft.Character
                 out int collapsedVoxels,
                 layout: VoxelGridMemoryLayout.ZMajorLocal,
                 enableLocalTerzaghiLoosening: true,
-                externalTimberSupportLookup: externalTimberSupportLookup);
+                externalTimberSupportLookup: effectiveTimberLookup);
 
             if (collapsedVoxels <= 0)
             {
@@ -614,7 +704,10 @@ namespace Stratocraft.Character
                                 targetChunk[(wy << 8) | (clz << 4) | clx] = 0u;
                                 chunkTouched = true;
 #if UNITY_5_3_OR_NEWER
-                                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, clx, clz, includeNeighbors: true);
+                                Stage1InteractivePlayController.NotifyWorldVoxelEdited(
+                                    cx, cz, wy, clx, clz,
+                                    includeNeighbors: true,
+                                    checkTreeFell: IsTreeTrunkMaterial(VoxelBitUtility.GetMaterialId(srcRaw)));
 #endif
                             }
                         }
@@ -1041,6 +1134,55 @@ namespace Stratocraft.Character
 #if UNITY_5_3_OR_NEWER
         private const float GravityAcceleration = 9.81f;
         private const int MaxMeshVoxelsPerFallingProxy = 512;
+        private static Mesh? _sharedDustCubeMesh;
+
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetUnityStaticCachesForDomainReloadDisabled()
+        {
+            _sharedDustCubeMesh = null;
+        }
+
+        private static Mesh GetOrCreateSharedDustCubeMesh()
+        {
+            if (_sharedDustCubeMesh != null) return _sharedDustCubeMesh;
+            var m = new Mesh { name = "CollapseDustCube_Shared" };
+            var verts = new Vector3[]
+            {
+                new(-0.5f, -0.5f, -0.5f), new( 0.5f, -0.5f, -0.5f), new( 0.5f,  0.5f, -0.5f), new(-0.5f,  0.5f, -0.5f),
+                new( 0.5f, -0.5f,  0.5f), new(-0.5f, -0.5f,  0.5f), new(-0.5f,  0.5f,  0.5f), new( 0.5f,  0.5f,  0.5f),
+                new(-0.5f,  0.5f, -0.5f), new( 0.5f,  0.5f, -0.5f), new( 0.5f,  0.5f,  0.5f), new(-0.5f,  0.5f,  0.5f),
+                new(-0.5f, -0.5f,  0.5f), new( 0.5f, -0.5f,  0.5f), new( 0.5f, -0.5f, -0.5f), new(-0.5f, -0.5f, -0.5f),
+                new(-0.5f, -0.5f,  0.5f), new(-0.5f, -0.5f, -0.5f), new(-0.5f,  0.5f, -0.5f), new(-0.5f,  0.5f,  0.5f),
+                new( 0.5f, -0.5f, -0.5f), new( 0.5f, -0.5f,  0.5f), new( 0.5f,  0.5f,  0.5f), new( 0.5f,  0.5f, -0.5f),
+            };
+            var norms = new Vector3[]
+            {
+                Vector3.back, Vector3.back, Vector3.back, Vector3.back,
+                Vector3.forward, Vector3.forward, Vector3.forward, Vector3.forward,
+                Vector3.up, Vector3.up, Vector3.up, Vector3.up,
+                Vector3.down, Vector3.down, Vector3.down, Vector3.down,
+                Vector3.left, Vector3.left, Vector3.left, Vector3.left,
+                Vector3.right, Vector3.right, Vector3.right, Vector3.right,
+            };
+            var cols = new Color32[24];
+            Array.Fill(cols, new Color32(150, 144, 134, 240));
+            var tris = new int[]
+            {
+                0,2,1, 0,3,2,
+                4,6,5, 4,7,6,
+                8,10,9, 8,11,10,
+                12,14,13, 12,15,14,
+                16,18,17, 16,19,18,
+                20,22,21, 20,23,22
+            };
+            m.vertices = verts;
+            m.normals = norms;
+            m.colors32 = cols;
+            m.triangles = tris;
+            m.RecalculateBounds();
+            _sharedDustCubeMesh = m;
+            return m;
+        }
 
         /// <summary>
         /// Baltayla kesilip devrildikten sonra yerde tek parca kutuk olarak yatan ve oyuncunun baltayla vurarak
@@ -1151,7 +1293,8 @@ namespace Stratocraft.Character
                 ExternalTimberSupportLookup,
                 surfaceYOverride: null,
                 extraCantileverLoadKg: extraCantileverLoadKg,
-                commitDetachedToWorldChunks: true);
+                commitDetachedToWorldChunks: true,
+                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer);
 
             if (collapsedVoxels <= 0 || detachedWindowSnapshot == null)
             {
@@ -1201,10 +1344,17 @@ namespace Stratocraft.Character
             int seedY = Mathf.FloorToInt(pivotWorld.y);
             int seedLz = Mathf.FloorToInt(pivotWorld.z) - (cz << 4);
 
+            Func<int, int, int, bool>? effectiveTimberLookup = PrepareEffectiveTimberLookupForWindow(
+                ExternalTimberSupportLookup,
+                ExternalTimberSupportWindowRasterizer,
+                cx << 4, 0, cz << 4,
+                16, maxEditableY, 16,
+                isZMajorLocal: false);
+
             // Delta-Yuk Kapisi: taban icinde gomulu sifir yuklu tas kirildiginda 0 gocuk
             if (IsZeroLoadFloorEditInSingleChunk(
                     chunkVoxels, maxEditableY, seedLx, seedY, seedLz,
-                    cx << 4, cz << 4, ExternalTimberSupportLookup))
+                    cx << 4, cz << 4, effectiveTimberLookup))
             {
                 feedbackText = string.Empty;
                 return 0;
@@ -1232,7 +1382,7 @@ namespace Stratocraft.Character
                 outClusters: _evalBuffer, out int collapsedVoxels,
                 layout: VoxelGridMemoryLayout.YMajorChunk,
                 enableLocalTerzaghiLoosening: true,
-                externalTimberSupportLookup: ExternalTimberSupportLookup);
+                externalTimberSupportLookup: effectiveTimberLookup);
 
             if (collapsedVoxels <= 0)
             {
@@ -1246,12 +1396,16 @@ namespace Stratocraft.Character
             {
                 if (_scratchSlice[i] == 0u && chunkVoxels[i] != 0u)
                 {
-                    _detachedSnapshot[i] = chunkVoxels[i];
+                    uint detachedRaw = chunkVoxels[i];
+                    _detachedSnapshot[i] = detachedRaw;
                     chunkVoxels[i] = 0u;
                     int wy = i >> 8;
                     int lz = (i >> 4) & 15;
                     int lx = i & 15;
-                    Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
+                    Stage1InteractivePlayController.NotifyWorldVoxelEdited(
+                        cx, cz, wy, lx, lz,
+                        includeNeighbors: true,
+                        checkTreeFell: IsTreeTrunkMaterial(VoxelBitUtility.GetMaterialId(detachedRaw)));
                 }
             }
 
@@ -1703,17 +1857,19 @@ namespace Stratocraft.Character
             groupObj.transform.SetParent(parentProxy, false);
             groupObj.transform.localPosition = new Vector3(0f, relBottomY, 0f);
 
+            Mesh dustMesh = GetOrCreateSharedDustCubeMesh();
             for (int i = 0; i < 4; i++)
             {
                 float angle = i * (Mathf.PI * 0.5f) + 0.35f;
-                GameObject puff = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                puff.name = $"DustSpeck_{i}";
-                UnityEngine.Object.Destroy(puff.GetComponent<Collider>());
+                GameObject puff = new GameObject($"DustSpeck_{i}");
                 puff.transform.SetParent(groupObj.transform, false);
                 puff.transform.localPosition = new Vector3(Mathf.Cos(angle) * 0.45f, -0.08f * i, Mathf.Sin(angle) * 0.45f);
                 puff.transform.localScale = new Vector3(0.18f, 0.14f, 0.18f);
                 puff.transform.localRotation = Quaternion.Euler(22f * i, 37f * i, 15f * i);
-                if (sharedMat != null && puff.TryGetComponent(out MeshRenderer mr))
+                MeshFilter mf = puff.AddComponent<MeshFilter>();
+                mf.sharedMesh = dustMesh;
+                MeshRenderer mr = puff.AddComponent<MeshRenderer>();
+                if (sharedMat != null)
                 {
                     mr.sharedMaterial = sharedMat;
                 }

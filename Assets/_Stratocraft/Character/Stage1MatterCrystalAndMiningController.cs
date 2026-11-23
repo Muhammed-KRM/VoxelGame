@@ -58,6 +58,7 @@ namespace Stratocraft.Character
         private Vector3Int _lastMinedVoxelCoord = new(int.MinValue, int.MinValue, int.MinValue);
         private int _knappingStrikeProgress;
         private Vector3Int _lastKnappedRockCoord = new(int.MinValue, int.MinValue, int.MinValue);
+        private readonly List<(int cx, int cz, int minLx, int maxLx, int minWy, int maxWy, int minLz, int maxLz)> _vacuumFluidRegionsScratch = new(8);
         private float _handScoopTimer;
         private Vector3Int _handScoopTargetCell = new(int.MinValue, int.MinValue, int.MinValue);
         private int _worldDropSeedCounter;
@@ -806,10 +807,10 @@ namespace Stratocraft.Character
                 else
                 {
                     voxels[idx] = 0u;
-                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+                    MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy, checkTreeFell: false);
                     WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
                     SpawnDroppedWorldItem(new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), mat, VoxelBitUtility.ChiseledMicroVoxelShapeId, 1, sharedMat);
-                    collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out _);
+                    collapseBridge.EvaluateCollapseAroundSeed(worldChunks, dirty, new Vector3Int(wx, wy, wz), 0f, sharedMat, out _, out _);
                     LastFeedbackText = $"0.25m MIKRO-KESKI: {GetMaterialDisplayName(mat)} Mikro-Blok sokuldu ve yere dustu!";
                 }
             }
@@ -1211,7 +1212,7 @@ namespace Stratocraft.Character
             {
                 CarveSmoothSdfCraterNeighbors(wx, wy, wz, maxY, worldChunks, dirty);
             }
-            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy, checkTreeFell: isWood);
             WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
 
             Vector3 dropWorldPos = new Vector3(wx + 0.5f, wy + 0.55f, wz + 0.5f);
@@ -1258,7 +1259,7 @@ namespace Stratocraft.Character
                 harvestNote = $"Yere 3B {GetMaterialDisplayName(mat == MaterialIdCatalog.Grass ? MaterialIdCatalog.Dirt : mat)} Item Dustu";
             }
 
-            collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out string msg);
+            collapseBridge.EvaluateCollapseAroundSeed(worldChunks, dirty, new Vector3Int(wx, wy, wz), 0f, sharedMat, out _, out string msg);
             LastFeedbackText = !string.IsNullOrEmpty(msg) ? $"{msg} | {harvestNote}" : $"{GetMaterialDisplayName(mat)} Kirildi! ({harvestNote})";
         }
 
@@ -1298,7 +1299,7 @@ namespace Stratocraft.Character
                     nChunk[nIdx] = nextDens < 28 ? 0u : VoxelBitUtility.WithDensityOrLiquid(nRaw, (byte)nextDens);
                 }
 
-                MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny);
+                MarkChunkAndNeighborsDirty(ncx, ncz, nlx, nlz, dirty, worldChunks, ny, checkTreeFell: false);
             }
         }
 
@@ -2196,7 +2197,7 @@ namespace Stratocraft.Character
             byte lastVacuumedMat = MaterialIdCatalog.Air;
             bool hadZeroSelectedBefore = !isCreative && GetMaterialCountInCrystal(SelectedMaterialId) <= 0;
             uint vacuumedQ24_8 = 0u;
-            (int cx, int cz) touched = (FloorDiv16(targetVc.x), FloorDiv16(targetVc.z));
+            _vacuumFluidRegionsScratch.Clear();
 
             for (int wy = minWy; wy <= maxWy; wy++)
             for (int wz = minWz; wz <= maxWz; wz++)
@@ -2246,17 +2247,20 @@ namespace Stratocraft.Character
                     vacuumedQ24_8 += gained;
                     voxels[idx] = nextDens == 0 ? 0u : VoxelBitUtility.WithDensityOrLiquid(curRaw, nextDens);
                 }
-                touched = (cx, cz);
-                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
-                WakeChunkFluidsOnEdit(cx, cz, lx, wy, lz, maxY, fluidChunks, dirtyFluidChunks);
+                MarkChunkAndNeighborsDirty(
+                    cx, cz, lx, lz, dirty, worldChunks, wy,
+                    checkTreeFell: Stage1StructuralCollapseBridge.IsTreeTrunkMaterial(curMat));
+                RecordTouchedVacuumFluidRegion(cx, cz, lx, wy, lz);
             }
-            if (vacuumedQ24_8 > 0u && worldChunks.TryGetValue(touched, out uint[]? tv))
+
+            if (vacuumedQ24_8 > 0u)
             {
+                FlushVacuumFluidWakes(maxY, fluidChunks, dirtyFluidChunks);
                 if (hadZeroSelectedBefore && lastVacuumedMat != MaterialIdCatalog.Air)
                 {
                     SelectMaterial(lastVacuumedMat);
                 }
-                collapseBridge.EvaluateChunkStability(touched.cx, touched.cz, tv, maxY, center, sharedMat, dirty, out string msg);
+                collapseBridge.EvaluateCollapseAroundSeed(worldChunks, dirty, targetVc, extraCantileverLoadKg: 0f, sharedMat, out _, out string msg);
                 LastFeedbackText = !string.IsNullOrEmpty(msg)
                     ? msg
                     : $"💎 Kristale Vakumlandı: +{vacuumedQ24_8 / 256f:0.00} {GetMaterialDisplayName(lastVacuumedMat)} ({BrushAreaLabel} | Kristal Deposu: {CrystalStorage.CurrentTotalBlocks} Blok)";
@@ -2478,8 +2482,8 @@ namespace Stratocraft.Character
                 FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, sliceLen), 16, maxY, 16, lx, wy, lz, radius: 2);
                 dirtyFluidChunks?.Add((cx, cz));
             }
-            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
-            collapseBridge.EvaluateChunkStability(cx, cz, voxels, maxY, new Vector3(wx + 0.5f, wy + 0.5f, wz + 0.5f), sharedMat, dirty, out string msg);
+            MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy, checkTreeFell: false);
+            collapseBridge.EvaluateCollapseAroundSeed(worldChunks, dirty, new Vector3Int(wx, wy, wz), 0f, sharedMat, out _, out string msg);
             if (WaveADeepDiagnosticProbe.Enabled)
             {
                 RecordArchShapeProbeEvent("Place", wx, wy, wz, placeShape, placeShape == 0 ? (byte)0 : _selectedRotation24, mat, placeShape, placeShape);
@@ -2595,7 +2599,6 @@ namespace Stratocraft.Character
             uint spentMassQ24_8 = 0u;
             int modifiedCells = 0;
             bool blockedByPlayerCapsule = false;
-            (int cx, int cz) lastTouchedChunk = (FloorDiv16(Mathf.FloorToInt(center.x)), FloorDiv16(Mathf.FloorToInt(center.z)));
 
             for (int wy = minWy; wy <= maxWy; wy++)
             for (int wz = minWz; wz <= maxWz; wz++)
@@ -2643,8 +2646,7 @@ namespace Stratocraft.Character
                             mat, curDens, 0, 0, BlokKokenDurumu.DogalKutle, coatDmg);
                         spentMassQ24_8 += 32u;
                         modifiedCells++;
-                        lastTouchedChunk = (cx, cz);
-                        MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+                        MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy, checkTreeFell: false);
                     }
                     continue;
                 }
@@ -2666,7 +2668,6 @@ namespace Stratocraft.Character
 
                 spentMassQ24_8 += neededQ24_8;
                 modifiedCells++;
-                lastTouchedChunk = (cx, cz);
 
                 if (fluidChunks != null && fluidChunks.TryGetValue((cx, cz), out ushort[]? fluids) && fluids != null)
                 {
@@ -2675,17 +2676,18 @@ namespace Stratocraft.Character
                     FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, sliceLen), 16, maxY, 16, lx, wy, lz, radius: 2);
                     dirtyFluidChunks?.Add((cx, cz));
                 }
-                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy);
+                MarkChunkAndNeighborsDirty(cx, cz, lx, lz, dirty, worldChunks, wy, checkTreeFell: false);
             }
 
         ScatterDone:
             if (modifiedCells > 0)
             {
                 holsterCtrl?.InventoryUi.SyncWithCrystalStorage(this);
-                if (worldChunks.TryGetValue(lastTouchedChunk, out uint[]? tv) && tv != null)
-                {
-                    collapseBridge.EvaluateChunkStability(lastTouchedChunk.cx, lastTouchedChunk.cz, tv, maxY, center, sharedMat, dirty, out _);
-                }
+                Vector3Int scatterSeed = new Vector3Int(
+                    Mathf.FloorToInt(center.x),
+                    Mathf.Clamp(Mathf.FloorToInt(center.y), 1, maxY - 2),
+                    Mathf.FloorToInt(center.z));
+                collapseBridge.EvaluateCollapseAroundSeed(worldChunks, dirty, scatterSeed, 0f, sharedMat, out _, out _);
                 LastFeedbackText =
                     $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI (Kademe T{Mathf.Max(1, CurrentCrystalTier)} | R={rXZ:0.1}m): {GetMaterialDisplayName(mat)} (-{spentMassQ24_8 / 256f:0.00} Blok | {modifiedCells} Hücre Yumuşatıldı | Kalan: {CrystalStorage.CurrentTotalBlocks}) | [V] Mimariye Geç | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
             }
@@ -3390,7 +3392,71 @@ namespace Stratocraft.Character
             _ => $"Materyal #{m}"
         };
         private static int FloorDiv16(int v) => v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
-        private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks, int wy = -1)
+        private void RecordTouchedVacuumFluidRegion(int cx, int cz, int lx, int wy, int lz)
+        {
+            for (int i = 0; i < _vacuumFluidRegionsScratch.Count; i++)
+            {
+                var r = _vacuumFluidRegionsScratch[i];
+                if (r.cx == cx && r.cz == cz)
+                {
+                    _vacuumFluidRegionsScratch[i] = (
+                        cx, cz,
+                        Math.Min(r.minLx, lx), Math.Max(r.maxLx, lx),
+                        Math.Min(r.minWy, wy), Math.Max(r.maxWy, wy),
+                        Math.Min(r.minLz, lz), Math.Max(r.maxLz, lz));
+                    return;
+                }
+            }
+            _vacuumFluidRegionsScratch.Add((cx, cz, lx, lx, wy, wy, lz, lz));
+        }
+
+        private void FlushVacuumFluidWakes(
+            int maxY,
+            Dictionary<(int cx, int cz), ushort[]>? fluidChunks,
+            HashSet<(int cx, int cz)>? dirtyFluidChunks)
+        {
+            if (_vacuumFluidRegionsScratch.Count == 0 || fluidChunks == null) return;
+            int vol = 16 * maxY * 16;
+            for (int i = 0; i < _vacuumFluidRegionsScratch.Count; i++)
+            {
+                var r = _vacuumFluidRegionsScratch[i];
+                if (!fluidChunks.TryGetValue((r.cx, r.cz), out ushort[]? fluids) || fluids == null) continue;
+                int cLx = (r.minLx + r.maxLx) >> 1;
+                int cWy = (r.minWy + r.maxWy) >> 1;
+                int cLz = (r.minLz + r.maxLz) >> 1;
+                int halfSpan = Math.Max(Math.Max(r.maxLx - r.minLx, r.maxLz - r.minLz), r.maxWy - r.minWy) >> 1;
+                int wakeRadius = Math.Clamp(halfSpan + 2, 2, 6);
+
+                FluidSimulationSystem.WakeFluidNeighborhood(fluids.AsSpan(0, vol), 16, maxY, 16, cLx, cWy, cLz, radius: wakeRadius);
+                dirtyFluidChunks?.Add((r.cx, r.cz));
+
+                if (r.minLx <= 2 && fluidChunks.TryGetValue((r.cx - 1, r.cz), out ushort[]? wFl) && wFl != null)
+                {
+                    FluidSimulationSystem.WakeFluidNeighborhood(wFl.AsSpan(0, vol), 16, maxY, 16, 15, cWy, cLz, radius: wakeRadius);
+                    dirtyFluidChunks?.Add((r.cx - 1, r.cz));
+                }
+                if (r.maxLx >= 13 && fluidChunks.TryGetValue((r.cx + 1, r.cz), out ushort[]? eFl) && eFl != null)
+                {
+                    FluidSimulationSystem.WakeFluidNeighborhood(eFl.AsSpan(0, vol), 16, maxY, 16, 0, cWy, cLz, radius: wakeRadius);
+                    dirtyFluidChunks?.Add((r.cx + 1, r.cz));
+                }
+                if (r.minLz <= 2 && fluidChunks.TryGetValue((r.cx, r.cz - 1), out ushort[]? sFl) && sFl != null)
+                {
+                    FluidSimulationSystem.WakeFluidNeighborhood(sFl.AsSpan(0, vol), 16, maxY, 16, cLx, cWy, 15, radius: wakeRadius);
+                    dirtyFluidChunks?.Add((r.cx, r.cz - 1));
+                }
+                if (r.maxLz >= 13 && fluidChunks.TryGetValue((r.cx, r.cz + 1), out ushort[]? nFl) && nFl != null)
+                {
+                    FluidSimulationSystem.WakeFluidNeighborhood(nFl.AsSpan(0, vol), 16, maxY, 16, cLx, cWy, 0, radius: wakeRadius);
+                    dirtyFluidChunks?.Add((r.cx, r.cz + 1));
+                }
+
+                Stage1InteractivePlayController.WakeFluidChunkAndNeighborsStatic(r.cx, r.cz);
+            }
+            _vacuumFluidRegionsScratch.Clear();
+        }
+
+        private static void MarkChunkAndNeighborsDirty(int cx, int cz, int lx, int lz, HashSet<(int cx, int cz)> dirty, Dictionary<(int cx, int cz), uint[]> chunks, int wy = -1, bool checkTreeFell = true)
         {
             dirty.Add((cx, cz));
             bool west = lx <= 1;
@@ -3410,7 +3476,7 @@ namespace Stratocraft.Character
 
             if (wy >= 0)
             {
-                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true);
+                Stage1InteractivePlayController.NotifyWorldVoxelEdited(cx, cz, wy, lx, lz, includeNeighbors: true, checkTreeFell: checkTreeFell);
             }
         }
     }

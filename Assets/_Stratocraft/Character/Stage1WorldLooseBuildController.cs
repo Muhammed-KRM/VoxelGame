@@ -63,6 +63,9 @@ namespace Stratocraft.Character
         private static readonly bool[] AttemptedModularPieceLoads = new bool[ValheimSotfModularGraphSolver.ModularPieceCount];
         private static readonly Mesh?[,] CachedModularGhostMeshes = new Mesh?[ValheimSotfModularGraphSolver.ModularPieceCount, 5];
         private static Material? _sharedModularMatteMaterial;
+        private static bool _sharedModularMatteMaterialConfigured;
+        private static Material? _sharedModularMatteLastFallback;
+        private const int MaxModularVisualPoolCapacity = 256;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticCachesOnSubsystemRegistration()
@@ -73,6 +76,8 @@ namespace Stratocraft.Character
             Array.Clear(AttemptedModularPieceLoads, 0, AttemptedModularPieceLoads.Length);
             Array.Clear(CachedModularGhostMeshes, 0, CachedModularGhostMeshes.Length);
             _sharedModularMatteMaterial = null;
+            _sharedModularMatteMaterialConfigured = false;
+            _sharedModularMatteLastFallback = null;
         }
 
         private static readonly Action<Stage1HolsterAndBackpackController, bool>? SetIsCarryingShoulderLogDelegate =
@@ -904,7 +909,66 @@ namespace Stratocraft.Character
                 }
                 else
                 {
+                    if (Application.isPlaying)
+                    {
+                        for (int i = existingMod.childCount - 1; i >= 0; i--)
+                        {
+                            UnityEngine.Object.Destroy(existingMod.GetChild(i).gameObject);
+                        }
+                    }
                     _modularSitesRoot = existingMod;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Uzak chunk veya yeraltindaki moduler yapi parcalarini ve golgelerini budar (0 B GC).
+        /// Yeraltindayken yalnizca oyuncunun yakinindaki maden tahkimat direklerini acik tutar.
+        /// </summary>
+        public void UpdateModularVisibilityAndShadowCulling(
+            Vector3 cameraWorldPos,
+            bool isCameraUnderground,
+            float maxVisibleDist = 128f,
+            float maxShadowDist = 42f)
+        {
+            float maxVisSq = maxVisibleDist * maxVisibleDist;
+            float maxShadSq = maxShadowDist * maxShadowDist;
+            const float undergroundVisSq = 64f * 64f;
+
+            for (int i = 0; i < _modularNodeCount; i++)
+            {
+                ref readonly ModularPlacedPieceNode node = ref _modularNodes[i];
+                ref ModularPieceVisualSlot vis = ref _modularVisuals[i];
+                if (vis.MeshRenderer == null) continue;
+
+                float dx = node.Position.X - cameraWorldPos.x;
+                float dz = node.Position.Z - cameraWorldPos.z;
+                float distSq = dx * dx + dz * dz;
+
+                bool show;
+                if (isCameraUnderground)
+                {
+                    float dy = Mathf.Abs(node.Position.Y - cameraWorldPos.y);
+                    show = dy <= 24f && distSq <= undergroundVisSq;
+                }
+                else
+                {
+                    show = distSq <= maxVisSq;
+                }
+
+                if (vis.MeshRenderer.enabled != show)
+                {
+                    vis.MeshRenderer.enabled = show;
+                }
+                if (show)
+                {
+                    var sm = distSq <= maxShadSq
+                        ? UnityEngine.Rendering.ShadowCastingMode.On
+                        : UnityEngine.Rendering.ShadowCastingMode.Off;
+                    if (vis.MeshRenderer.shadowCastingMode != sm)
+                    {
+                        vis.MeshRenderer.shadowCastingMode = sm;
+                    }
                 }
             }
         }
@@ -1053,8 +1117,17 @@ namespace Stratocraft.Character
                         name = "M_Stratocraft_ModularTimberStone_Matte"
                     };
                 }
+                _sharedModularMatteMaterial.enableInstancing = true;
+                _sharedModularMatteMaterialConfigured = false;
+                _sharedModularMatteLastFallback = null;
             }
 
+            if (_sharedModularMatteMaterialConfigured && ReferenceEquals(_sharedModularMatteLastFallback, fallbackSharedMat))
+            {
+                return _sharedModularMatteMaterial;
+            }
+
+            _sharedModularMatteMaterial.enableInstancing = true;
             if (fallbackSharedMat != null)
             {
                 if (fallbackSharedMat.HasProperty("_MicroDetailArray"))
@@ -1075,6 +1148,8 @@ namespace Stratocraft.Character
             _sharedModularMatteMaterial.SetFloat("_MicroDetailStrength", 0.40f);
             _sharedModularMatteMaterial.SetFloat("_SmoothFacetBlend", 0.30f);
             _sharedModularMatteMaterial.SetFloat("_AmbientStrength", 0.62f);
+            _sharedModularMatteLastFallback = fallbackSharedMat;
+            _sharedModularMatteMaterialConfigured = true;
             return _sharedModularMatteMaterial;
         }
 
@@ -1104,7 +1179,7 @@ namespace Stratocraft.Character
                     float dz = p.Position.z - vz;
                     if ((dx * dx + dz * dz) <= 1.55f * 1.55f &&
                         vy >= p.Position.y - 1.15f &&
-                        wy <= p.Position.y + 2.35f)
+                        vy <= p.Position.y + 2.35f)
                     {
                         return true;
                     }
@@ -1112,6 +1187,115 @@ namespace Stratocraft.Character
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Pencere-tabanli tek seferlik maden tahkimati maske rasterizasyonu (0 B GC):
+        /// Pencereyle kesisen hicbir moduler/kutuk tahkimat yoksa hemen false doner (normal magara kazilarinda 0 delege cagrisi!).
+        /// </summary>
+        public bool TryRasterizeGroundedTimberSupportInWindow(
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            byte[] outMask,
+            bool isZMajorLocal)
+        {
+            return TryRasterizeGroundedTimberSupportInWindow(
+                originX, originY, originZ, sizeX, sizeY, sizeZ, outMask.AsSpan(), isZMajorLocal);
+        }
+
+        public bool TryRasterizeGroundedTimberSupportInWindow(
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            Span<byte> outMask,
+            bool isZMajorLocal)
+        {
+            bool anyWritten = _modularNodeCount > 0 &&
+                ValheimSotfModularGraphSolver.TryRasterizeGroundedTimberSupportInWindow(
+                    _modularNodes.AsSpan(0, _modularNodeCount),
+                    originX, originY, originZ,
+                    sizeX, sizeY, sizeZ,
+                    outMask,
+                    isZMajorLocal);
+
+            if (_parts.Count == 0 || sizeX <= 0 || sizeY <= 0 || sizeZ <= 0)
+            {
+                return anyWritten;
+            }
+
+            int requiredLen = sizeX * sizeY * sizeZ;
+            if (outMask.Length < requiredLen) return anyWritten;
+
+            const float reach = 1.55f;
+            const float reachSq = reach * reach;
+            float winMinX = originX;
+            float winMaxX = originX + sizeX;
+            float winMinY = originY;
+            float winMaxY = originY + sizeY;
+            float winMinZ = originZ;
+            float winMaxZ = originZ + sizeZ;
+
+            for (int i = 0; i < _parts.Count; i++)
+            {
+                WorldLoosePartInstance p = _parts[i];
+                if (p.PartKind != LooseBuildPartKind.FallenTreeLog) continue;
+
+                float px = p.Position.x;
+                float py = p.Position.y;
+                float pz = p.Position.z;
+                if (px + reach < winMinX || px - reach > winMaxX ||
+                    pz + reach < winMinZ || pz - reach > winMaxZ ||
+                    py + 2.35f < winMinY || py - 1.15f > winMaxY)
+                {
+                    continue;
+                }
+
+                int minLx = Math.Max(0, Mathf.FloorToInt(px - reach - 0.5f) - originX);
+                int maxLx = Math.Min(sizeX - 1, Mathf.CeilToInt(px + reach - 0.5f) - originX);
+                int minLy = Math.Max(0, Mathf.FloorToInt(py - 1.15f - 0.5f) - originY);
+                int maxLy = Math.Min(sizeY - 1, Mathf.CeilToInt(py + 2.35f - 0.5f) - originY);
+                int minLz = Math.Max(0, Mathf.FloorToInt(pz - reach - 0.5f) - originZ);
+                int maxLz = Math.Min(sizeZ - 1, Mathf.CeilToInt(pz + reach - 0.5f) - originZ);
+
+                for (int lz = minLz; lz <= maxLz; lz++)
+                {
+                    float dz = (originZ + lz + 0.5f) - pz;
+                    float dzSq = dz * dz;
+                    if (dzSq > reachSq) continue;
+
+                    for (int lx = minLx; lx <= maxLx; lx++)
+                    {
+                        float dx = (originX + lx + 0.5f) - px;
+                        if ((dx * dx + dzSq) > reachSq) continue;
+
+                        for (int ly = minLy; ly <= maxLy; ly++)
+                        {
+                            float vy = originY + ly + 0.5f;
+                            if (vy < py - 1.15f || vy > py + 2.35f) continue;
+
+                            if (!anyWritten)
+                            {
+                                outMask.Slice(0, requiredLen).Clear();
+                                anyWritten = true;
+                            }
+
+                            int idx = isZMajorLocal
+                                ? (lx + sizeX * (ly + sizeY * lz))
+                                : (((ly * sizeZ) + lz) * sizeX + lx);
+                            outMask[idx] = 1;
+                        }
+                    }
+                }
+            }
+
+            return anyWritten;
         }
 
         private void StepModularPiecePlacement(
@@ -1565,7 +1749,14 @@ namespace Stratocraft.Character
             if (slot.Go != null)
             {
                 slot.Go.SetActive(false);
-                _modularVisualPool.Push(slot);
+                if (_modularVisualPool.Count < MaxModularVisualPoolCapacity)
+                {
+                    _modularVisualPool.Push(slot);
+                }
+                else
+                {
+                    UnityEngine.Object.Destroy(slot.Go);
+                }
             }
             slot = default;
         }
@@ -1869,6 +2060,25 @@ namespace Stratocraft.Character
             _modularNodeCount > 0 &&
             ValheimSotfModularGraphSolver.HasGroundedTimberSupportAtVoxel(
                 _modularNodes.AsSpan(0, _modularNodeCount), wx, wy, wz);
+
+        public bool TryRasterizeGroundedTimberSupportInWindow(
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            byte[] outMask,
+            bool isZMajorLocal)
+        {
+            return _modularNodeCount > 0 &&
+                   ValheimSotfModularGraphSolver.TryRasterizeGroundedTimberSupportInWindow(
+                       _modularNodes.AsSpan(0, _modularNodeCount),
+                       originX, originY, originZ,
+                       sizeX, sizeY, sizeZ,
+                       outMask,
+                       isZMajorLocal);
+        }
 
         public bool TryPlaceModularPieceDirect(
             ModularBuildPieceKind kind,

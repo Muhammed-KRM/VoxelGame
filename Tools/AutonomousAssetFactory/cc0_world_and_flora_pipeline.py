@@ -466,6 +466,8 @@ class SculptedMeshBuilder:
         droop,
         seed_val,
         snowy=False,
+        low_poly=False,
+        cap_root=True,
     ):
         """
         Asla kup olmayan, gercek sarkik cam igne yaprak salkimi (kavisli, tirtikli konik-yelpaze bough).
@@ -477,6 +479,117 @@ class SculptedMeshBuilder:
         d2.normalize()
         perp = Vector((-d2.y, d2.x, 0.0))
         orig = Vector(origin)
+
+        def _classify_bough_col(nz, band_idx):
+            if snowy and nz > 0.22:
+                return PAL["snow_bright"] if nz > 0.55 else PAL["snow_shade"]
+            if snowy:
+                return PAL["pine_cold"] if nz > -0.22 else PAL["pine_deep"]
+            if nz > 0.40:
+                return PAL["pine_tip"] if band_idx >= 1 else PAL["pine_sun"]
+            if nz > -0.12:
+                return PAL["pine_mid"]
+            return PAL["pine_deep"]
+
+        def _paint_bough_face(face, band_idx):
+            bmesh.ops.recalc_face_normals(self.bm, faces=[face])
+            col = _classify_bough_col(face.normal.z, band_idx)
+            self.paint_faces([face], col, z_ao_origin=-1.2, z_ao_span=5.5, z_ao_strength=0.14)
+
+        if low_poly:
+            # 4 istasyon (kok -> genis omuz -> sarkik orta -> sivri uc) & 5 nokta profili (paylasilan vertex)
+            stations = [
+                (0.00, 0.14 * width, 0.045, 0.00),
+                (0.32, 0.64 * width, 0.175, -0.14 * droop),
+                (0.68, 0.48 * width, 0.135, -0.52 * droop),
+            ]
+            prof_angles = [
+                (0.0, 1.0),
+                (1.00, 0.16),
+                (0.58, -0.74),
+                (-0.58, -0.74),
+                (-1.00, 0.16),
+            ]
+            ring_verts = []
+            for st_i, (t, half_w, half_h, dz) in enumerate(stations):
+                c_pt = orig + d2 * (t * length) + Vector((0.0, 0.0, dz))
+                rv = []
+                for p_i, (lat_k, up_k) in enumerate(prof_angles):
+                    jag = 1.0 + 0.11 * math.sin(seed_val * 5.7 + st_i * 2.3 + p_i * 1.9)
+                    pt = (
+                        c_pt
+                        + perp * (lat_k * half_w * jag)
+                        + Vector((0.0, 0.0, up_k * half_h * jag))
+                    )
+                    rv.append(self.bm.verts.new(pt))
+                ring_verts.append(rv)
+
+            n_prof = len(prof_angles)
+            bough_faces = []
+            bough_verts = [v for rv in ring_verts for v in rv]
+            for i in range(len(ring_verts) - 1):
+                r0, r1 = ring_verts[i], ring_verts[i + 1]
+                for s in range(n_prof):
+                    sn = (s + 1) % n_prof
+                    try:
+                        f = self.bm.faces.new((r0[s], r0[sn], r1[sn], r1[s]))
+                        f.smooth = True
+                        bough_faces.append(f)
+                    except ValueError:
+                        pass
+
+            tip_pt = orig + d2 * length + Vector((0.0, 0.0, -droop))
+            tip_vert = self.bm.verts.new(tip_pt)
+            bough_verts.append(tip_vert)
+            r_last = ring_verts[-1]
+            for s in range(n_prof):
+                sn = (s + 1) % n_prof
+                try:
+                    f = self.bm.faces.new((r_last[s], r_last[sn], tip_vert))
+                    f.smooth = True
+                    bough_faces.append(f)
+                except ValueError:
+                    pass
+
+            if cap_root:
+                r0 = ring_verts[0]
+                ctr = sum((v.co for v in r0), Vector((0.0, 0.0, 0.0))) / len(r0)
+                cv = self.bm.verts.new(ctr)
+                bough_verts.append(cv)
+                for s in range(n_prof):
+                    sn = (s + 1) % n_prof
+                    try:
+                        f = self.bm.faces.new((r0[sn], r0[s], cv))
+                        f.smooth = True
+                        bough_faces.append(f)
+                    except ValueError:
+                        pass
+
+            bmesh.ops.recalc_face_normals(self.bm, faces=bough_faces)
+            self.bm.normal_update()
+            vert_cols = {}
+            for v in bough_verts:
+                nz = v.normal.z
+                dist_ratio = max(0.0, min(1.0, (v.co - orig).xy.length / max(0.25, length)))
+                col_u8 = _classify_bough_col(nz, 1 if dist_ratio > 0.42 else 0)
+                lin = srgb_to_linear_rgba(col_u8)
+                t_h = max(0.0, min(1.0, (v.co.z + 1.2) / 5.5))
+                shade = (1.0 - 0.14 * 0.62) + 0.14 * t_h
+                if nz < -0.42:
+                    shade *= 0.82
+                elif nz > 0.52:
+                    shade *= 1.06
+                ao = max(0.50, min(1.0, lin[3] * (0.86 + 0.14 * t_h)))
+                vert_cols[v] = (
+                    max(0.012, min(1.0, lin[0] * shade)),
+                    max(0.012, min(1.0, lin[1] * shade)),
+                    max(0.012, min(1.0, lin[2] * shade)),
+                    ao,
+                )
+            for f in bough_faces:
+                for loop in f.loops:
+                    loop[self.color_layer] = vert_cols[loop.vert]
+            return
 
         # 4 istasyonlu sarkik dal profili (kok -> orta genisleme -> tirtikli sarkik uc)
         stations = [
@@ -517,20 +630,7 @@ class SculptedMeshBuilder:
                 sn = (s + 1) % n_prof
                 try:
                     f = self.bm.faces.new((r0[s], r0[sn], r1[sn], r1[s]))
-                    bmesh.ops.recalc_face_normals(self.bm, faces=[f])
-                    nz = f.normal.z
-                    if snowy and nz > 0.28:
-                        col = PAL["snow_bright"] if nz > 0.58 else PAL["snow_shade"]
-                    elif snowy:
-                        col = PAL["pine_cold"] if nz > -0.2 else PAL["pine_deep"]
-                    else:
-                        if nz > 0.45:
-                            col = PAL["pine_tip"] if i >= 1 else PAL["pine_sun"]
-                        elif nz > -0.10:
-                            col = PAL["pine_mid"]
-                        else:
-                            col = PAL["pine_deep"]
-                    self.paint_faces([f], col, z_ao_origin=-1.2, z_ao_span=5.5, z_ao_strength=0.14)
+                    _paint_bough_face(f, i)
                 except ValueError:
                     pass
 
@@ -552,7 +652,15 @@ class SculptedMeshBuilder:
                 except ValueError:
                     pass
 
-    def add_organic_foliage_lobe(self, center, radii, seed_val, palette_quad, subdivs=3):
+    def add_organic_foliage_lobe(
+        self,
+        center,
+        radii,
+        seed_val,
+        palette_quad,
+        subdivs=3,
+        smooth_shared=False,
+    ):
         """
         Asla kup veya tek top olmayan, alt-bolumlenmis yassi bulutsu organik mese yaprak obegi.
         palette_quad = (deep_shadow, mid_leaf, sun_leaf, warm_tip)
@@ -567,7 +675,8 @@ class SculptedMeshBuilder:
             # Cok-oktavli dogal yaprak demeti girinti-cikintisi
             w1 = math.sin(d.x * 5.1 + seed_val * 1.7) * math.cos(d.y * 4.7 - seed_val * 1.3)
             w2 = math.sin((d.x - d.y) * 8.3 + d.z * 6.1 + seed_val * 2.9)
-            disp = 1.0 + 0.19 * w1 + 0.11 * w2
+            amp1, amp2 = (0.12, 0.06) if subdivs <= 1 else (0.19, 0.11)
+            disp = 1.0 + amp1 * w1 + amp2 * w2
             # Alt yuzeyi semsiye gibi icbukey/duz yap ki alttaki kalin mese dallari net gorunsun!
             z_squash = 0.54 if d.z < -0.10 else 1.06
             v.co = c_vec + Vector(
@@ -580,6 +689,41 @@ class SculptedMeshBuilder:
 
         new_faces = [f for f in self.bm.faces if f not in prev_faces and f.is_valid]
         bmesh.ops.recalc_face_normals(self.bm, faces=new_faces)
+
+        if smooth_shared:
+            for f in new_faces:
+                f.smooth = True
+            self.bm.normal_update()
+            vert_cols = {}
+            for v in new_verts:
+                nz = v.normal.z
+                tonal = math.sin(v.co.x * 5.8 + v.co.y * 5.1 + seed_val)
+                if nz < -0.20:
+                    col_u8 = palette_quad[0]
+                elif nz < 0.30:
+                    col_u8 = palette_quad[1]
+                elif tonal > 0.35 and nz > 0.52:
+                    col_u8 = palette_quad[3]
+                else:
+                    col_u8 = palette_quad[2]
+                lin = srgb_to_linear_rgba(col_u8)
+                t_h = max(0.0, min(1.0, (v.co.z - 0.2) / 4.2))
+                shade = (1.0 - 0.18 * 0.62) + 0.18 * t_h
+                if nz < -0.42:
+                    shade *= 0.82
+                elif nz > 0.52:
+                    shade *= 1.06
+                ao = max(0.50, min(1.0, lin[3] * (0.86 + 0.14 * t_h)))
+                vert_cols[v] = (
+                    max(0.012, min(1.0, lin[0] * shade)),
+                    max(0.012, min(1.0, lin[1] * shade)),
+                    max(0.012, min(1.0, lin[2] * shade)),
+                    ao,
+                )
+            for f in new_faces:
+                for loop in f.loops:
+                    loop[self.color_layer] = vert_cols[loop.vert]
+            return
 
         for f in new_faces:
             fc = f.calc_center_median()
@@ -595,7 +739,7 @@ class SculptedMeshBuilder:
                 col = palette_quad[2]
             self.paint_faces([f], col, z_ao_origin=0.2, z_ao_span=4.2, z_ao_strength=0.18)
 
-    def finalize_object(self, mat, smooth_shading=False):
+    def finalize_object(self, mat, smooth_shading=False, preserve_face_smooth=False):
         bmesh.ops.triangulate(self.bm, faces=self.bm.faces[:])
         bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces[:])
 
@@ -603,8 +747,9 @@ class SculptedMeshBuilder:
         self.bm.to_mesh(mesh)
         self.bm.free()
 
-        for p in mesh.polygons:
-            p.use_smooth = smooth_shading
+        if not preserve_face_smooth:
+            for p in mesh.polygons:
+                p.use_smooth = smooth_shading
 
         obj = bpy.data.objects.new(self.name, mesh)
         obj.location = Vector((0.0, 0.0, 0.0))
@@ -1189,20 +1334,20 @@ def _build_pine_canopy_common(name, snowy, mat):
     mb = SculptedMeshBuilder(name)
     # Ust incelen cam govde lideri (leader trunk)
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -1.35), (0.02, -0.02, 0.50), (-0.02, 0.01, 2.40), (0.0, 0.0, 4.35)],
-        radii=[0.24, 0.18, 0.11, 0.035],
-        cols_u8=[PAL["bark_dark"], PAL["bark_ridge"], PAL["bark_dark"]],
-        segs=8,
+        points=[(0.0, 0.0, -1.35), (0.02, -0.02, 1.30), (0.0, 0.0, 4.25)],
+        radii=[0.24, 0.14, 0.04],
+        cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
+        segs=5,
     )
 
     # 6 katmanli (whorl) altin-aci kaydirmali sarkik cam dallari ve igne yaprak salkimlari
     whorls = [
-        (-0.95, 6, 2.38, 1.05, 0.52),
-        (-0.05, 6, 2.08, 0.96, 0.46),
-        (0.88, 6, 1.72, 0.84, 0.38),
-        (1.78, 5, 1.36, 0.70, 0.30),
-        (2.62, 5, 0.98, 0.54, 0.22),
-        (3.38, 4, 0.62, 0.38, 0.15),
+        (-0.85, 5, 2.38, 1.24, 0.44),
+        (-0.02, 5, 2.04, 1.12, 0.38),
+        (0.82, 4, 1.68, 0.96, 0.32),
+        (1.66, 4, 1.30, 0.80, 0.26),
+        (2.48, 3, 0.94, 0.62, 0.20),
+        (3.25, 3, 0.60, 0.44, 0.14),
     ]
     seed = 1
     for w_idx, (wz, count, b_len, b_width, droop) in enumerate(whorls):
@@ -1213,64 +1358,55 @@ def _build_pine_canopy_common(name, snowy, mat):
             dy = math.sin(ang)
             len_var = b_len * (0.90 + 0.18 * ((seed * 37 % 11) / 11.0))
 
-            # Gercek ahsap ic dal iskeleti
-            p0 = (dx * 0.10, dy * 0.10, wz + 0.05)
-            p1 = (dx * len_var * 0.48, dy * len_var * 0.48, wz - droop * 0.35)
-            p2 = (dx * len_var * 0.82, dy * len_var * 0.82, wz - droop * 0.72)
-            mb.add_tapered_tube(
-                points=[p0, p1, p2],
-                radii=[0.065, 0.042, 0.018],
-                cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
-                segs=5,
-                cap_ends=False,
-            )
+            # Alt 2 katmanda gorunur ahsap ic dal iskeleti
+            if w_idx <= 1:
+                p0 = (dx * 0.08, dy * 0.08, wz + 0.04)
+                p2 = (dx * len_var * 0.78, dy * len_var * 0.78, wz - droop * 0.56)
+                mb.add_tapered_tube(
+                    points=[p0, p2],
+                    radii=[0.062, 0.022],
+                    cols_u8=[PAL["bark_dark"]],
+                    segs=4,
+                    cap_ends=False,
+                )
 
-            # Ana sarkik igne yaprak salkimi + 2 yan alt-dal (sub-frond) salkimi
+            # Ana sarkik igne yaprak salkimi (kok govde icinde gizli -> cap_root=False)
             mb.add_pine_bough_cluster(
-                origin=(dx * 0.18, dy * 0.18, wz + 0.06),
+                origin=(dx * 0.02, dy * 0.02, wz + 0.04),
                 dir_xy=(dx, dy),
                 length=len_var,
                 width=b_width,
                 droop=droop,
                 seed_val=seed,
                 snowy=snowy,
+                low_poly=True,
+                cap_root=False,
             )
-            if w_idx <= 3:
-                for side_s in (-1.0, 1.0):
-                    sub_ang = ang + side_s * 0.46
-                    sdx, sdy = math.cos(sub_ang), math.sin(sub_ang)
-                    mb.add_pine_bough_cluster(
-                        origin=(dx * len_var * 0.36, dy * len_var * 0.36, wz - droop * 0.22),
-                        dir_xy=(sdx, sdy),
-                        length=len_var * 0.58,
-                        width=b_width * 0.68,
-                        droop=droop * 0.65,
-                        seed_val=seed + 19 + int(side_s * 3),
-                        snowy=snowy,
-                    )
             seed += 1
 
-    # Konik tepe surgunu (apical spire, Z = 3.65..4.68m, asla kutu degil!)
-    for spire_ang in (0.0, 1.57, 3.14, 4.71):
+    # Konik tepe surgunu (apical spire, Z = 3.60..4.70m, asla kutu degil!)
+    for spire_ang in (0.0, 2.094, 4.189):
         mb.add_pine_bough_cluster(
-            origin=(0.0, 0.0, 4.15),
+            origin=(0.0, 0.0, 3.82),
             dir_xy=(math.cos(spire_ang), math.sin(spire_ang)),
-            length=0.42,
-            width=0.28,
-            droop=0.38,
+            length=0.48,
+            width=0.36,
+            droop=0.26,
             seed_val=seed + int(spire_ang * 10),
             snowy=snowy,
+            low_poly=True,
+            cap_root=False,
         )
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, 3.95), (0.0, 0.0, 4.35), (0.0, 0.0, 4.70)],
-        radii=[0.22, 0.11, 0.015],
+        points=[(0.0, 0.0, 3.60), (0.0, 0.0, 4.22), (0.0, 0.0, 4.70)],
+        radii=[0.20, 0.10, 0.015],
         cols_u8=[
             PAL["snow_bright"] if snowy else PAL["pine_sun"],
             PAL["snow_shade"] if snowy else PAL["pine_tip"],
         ],
-        segs=7,
+        segs=5,
     )
-    return mb.finalize_object(mat, smooth_shading=False)
+    return mb.finalize_object(mat, smooth_shading=False, preserve_face_smooth=True)
 
 
 def build_flora_nordic_pine_canopy(mat):
@@ -1284,83 +1420,81 @@ def build_flora_snow_pine_canopy(mat):
 def build_flora_ancient_oak_canopy(mat):
     """
     Organik cok-kumeli, alttan gorunur catalli dalli kadim mese taci (asla kup veya tek kure degil!).
-    Pivot (0,0,0) = CrownBaseY; kalin catalli mese kollari Z=-1.15m'den disa/yukari ayrilir,
+    Pivot (0,0,0) = CrownBaseY; kalin catalli mese kollari Z=-1.20m'den disa/yukari ayrilir,
     ayrik katmanli yaprak bulutlari Z=+1.05m .. +4.15m arasinda genis semsiye taci kurar.
     """
     mb = SculptedMeshBuilder("Flora_Ancient_Oak_Canopy")
     oak_pal = (PAL["oak_deep"], PAL["oak_mid"], PAL["oak_sun"], PAL["oak_warm_tip"])
 
-    # Kalin bogumlu ust mese govdesi (alt dallarin ayrildigi ana catal)
+    # Kalin bogumlu ust mese govdesi (alt dallarin ayrildigi ana catal -> ust tepeye kesintisiz uzanir)
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -1.20), (0.04, -0.03, -0.15), (-0.03, 0.04, 0.95), (0.02, 0.0, 2.25)],
-        radii=[0.38, 0.33, 0.24, 0.12],
+        points=[(0.0, 0.0, -1.20), (0.04, -0.03, -0.10), (-0.02, 0.02, 1.15), (0.0, 0.0, 2.55)],
+        radii=[0.38, 0.32, 0.22, 0.10],
         cols_u8=[PAL["bark_dark"], PAL["bark_ridge"], PAL["bark_dark"]],
-        segs=9,
+        segs=5,
     )
 
-    # 5 ana kivrimli dis mese dali + ikincil yan catallar + ayrik bulutsu yaprak kumeleri
+    # 5 ana kivrimli dis mese dali + ikincil yan catallar + organik bulutsu yaprak kumeleri (subdivs=2)
     bough_specs = [
-        (0.12, 2.55, 1.52, (1.02, 0.96, 0.52)),
-        (1.36, 2.42, 1.85, (0.98, 1.04, 0.54)),
-        (2.64, 2.62, 1.44, (1.06, 0.94, 0.50)),
-        (3.90, 2.38, 1.78, (0.96, 1.02, 0.54)),
-        (5.14, 2.50, 1.60, (1.02, 0.98, 0.52)),
+        (0.12, 2.55, 1.52, (1.14, 1.06, 0.58), True),
+        (1.36, 2.42, 1.85, (1.08, 1.14, 0.60), False),
+        (2.64, 2.62, 1.44, (1.16, 1.04, 0.56), True),
+        (3.90, 2.38, 1.78, (1.06, 1.12, 0.60), False),
+        (5.14, 2.50, 1.60, (1.12, 1.08, 0.58), False),
     ]
-    for idx, (ang, reach, top_z, lobe_rad) in enumerate(bough_specs):
+    for idx, (ang, reach, top_z, lobe_rad, add_sub) in enumerate(bough_specs):
         dx = math.cos(ang)
         dy = math.sin(ang)
-        p0 = (dx * 0.16, dy * 0.16, -0.65 + (idx % 2) * 0.18)
+        p0 = (dx * 0.14, dy * 0.14, -0.65 + (idx % 2) * 0.18)
         p1 = (dx * reach * 0.46 + dy * 0.18, dy * reach * 0.46 - dx * 0.18, top_z * 0.36)
         p2 = (dx * reach * 0.86, dy * reach * 0.86, top_z)
         mb.add_tapered_tube(
             points=[p0, p1, p2],
             radii=[0.20, 0.13, 0.065],
             cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
-            segs=7,
+            segs=4,
+            cap_ends=False,
         )
-        # Dis dal ucu yassi yaprak bulutu
+        # Dis dal ucu yassi yaprak bulutu (subdivs=2, paylasilan yumusak vertex)
         mb.add_organic_foliage_lobe(
-            center=(dx * reach * 0.96, dy * reach * 0.96, top_z + 0.26),
+            center=(dx * reach * 0.94, dy * reach * 0.94, top_z + 0.22),
             radii=lobe_rad,
             seed_val=idx * 7 + 3,
             palette_quad=oak_pal,
-            subdivs=3,
+            subdivs=2,
+            smooth_shared=True,
         )
-        # Yan alt-catal dal + bagimsiz orta katman yaprak obegi
-        sub_ang = ang + 0.64
-        sdx, sdy = math.cos(sub_ang), math.sin(sub_ang)
-        sub_end = (sdx * reach * 0.74, sdy * reach * 0.74, top_z * 0.82 + 0.55)
-        mb.add_tapered_tube(
-            points=[p1, sub_end],
-            radii=[0.105, 0.050],
-            cols_u8=[PAL["bark_ridge"]],
-            segs=6,
-        )
-        mb.add_organic_foliage_lobe(
-            center=(sub_end[0] * 1.06, sub_end[1] * 1.06, sub_end[2] + 0.24),
-            radii=(0.82, 0.78, 0.46),
-            seed_val=idx * 11 + 5,
-            palette_quad=oak_pal,
-            subdivs=3,
-        )
+        if add_sub:
+            sub_ang = ang + 0.64
+            sdx, sdy = math.cos(sub_ang), math.sin(sub_ang)
+            sub_end = (sdx * reach * 0.72, sdy * reach * 0.72, top_z * 0.82 + 0.55)
+            mb.add_tapered_tube(
+                points=[p1, sub_end],
+                radii=[0.105, 0.050],
+                cols_u8=[PAL["bark_ridge"]],
+                segs=4,
+                cap_ends=False,
+            )
 
-    # Ust tepe 4 ayrik taç kubbesi (katmanli mese silueti)
+    # Ust tepe ve ara katman 4 bagli tac kubbesi (govde ve dallarla kesintisiz ortusur, havada kalmaz!)
     crown_caps = [
-        ((-0.85, 0.55, 2.75), (1.06, 0.98, 0.58), 41),
-        ((0.82, -0.58, 2.85), (1.04, 1.02, 0.58), 47),
-        ((0.12, 0.88, 3.05), (0.96, 0.92, 0.54), 53),
-        ((0.0, -0.05, 3.48), (1.18, 1.12, 0.62), 59),
+        ((-0.88, 0.56, 2.52), (1.14, 1.06, 0.60), 41),
+        ((0.86, -0.58, 2.58), (1.12, 1.08, 0.60), 47),
+        ((0.12, 0.92, 2.68), (1.06, 1.02, 0.56), 53),
+        ((0.0, -0.05, 3.08), (1.42, 1.36, 0.72), 59),
     ]
-    for ctr, rads, sd in crown_caps:
-        mb.add_tapered_tube(
-            points=[(0.0, 0.0, 1.45), (ctr[0] * 0.75, ctr[1] * 0.75, ctr[2] - 0.25)],
-            radii=[0.11, 0.05],
-            cols_u8=[PAL["bark_dark"]],
-            segs=5,
-        )
-        mb.add_organic_foliage_lobe(ctr, rads, sd, oak_pal, subdivs=3)
+    for c_idx, (ctr, rads, sd) in enumerate(crown_caps):
+        if c_idx < 3:
+            mb.add_tapered_tube(
+                points=[(0.0, 0.0, 1.45), (ctr[0] * 0.75, ctr[1] * 0.75, ctr[2] - 0.18)],
+                radii=[0.11, 0.05],
+                cols_u8=[PAL["bark_dark"]],
+                segs=4,
+                cap_ends=False,
+            )
+        mb.add_organic_foliage_lobe(ctr, rads, sd, oak_pal, subdivs=2, smooth_shared=True)
 
-    return mb.finalize_object(mat, smooth_shading=False)
+    return mb.finalize_object(mat, smooth_shading=False, preserve_face_smooth=True)
 
 
 def build_flora_tree_root_buttress(mat):
@@ -1370,31 +1504,30 @@ def build_flora_tree_root_buttress(mat):
     Egimli arazide bosluk kalmamasi icin Z = -0.68m topragin altina iner, +1.18m govdeye sarilir.
     """
     mb = SculptedMeshBuilder("Flora_Tree_Root_Buttress")
-    # Yosunlu alt govde kukasi
+    # Yosunlu alt govde kukasi (3 nokta, segs=6)
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -0.65), (0.0, 0.0, 0.15), (0.0, 0.0, 0.72), (0.0, 0.0, 1.18)],
-        radii=[0.56, 0.50, 0.42, 0.36],
-        cols_u8=[PAL["bark_moss"], PAL["bark_dark"], PAL["bark_ridge"]],
-        segs=10,
+        points=[(0.0, 0.0, -0.65), (0.0, 0.0, 0.26), (0.0, 0.0, 1.18)],
+        radii=[0.56, 0.48, 0.36],
+        cols_u8=[PAL["bark_moss"], PAL["bark_dark"]],
+        segs=6,
     )
 
-    # 6 adet kivrimli kok mahmuzu (root spurs)
-    for r_i in range(6):
-        ang = (2.0 * math.pi * r_i) / 6.0 + 0.18 * math.sin(r_i * 2.7)
+    # 4 adet kivrimli kok mahmuzu (root spurs: 3 nokta, segs=4)
+    for r_i in range(4):
+        ang = (2.0 * math.pi * r_i) / 4.0 + 0.18 * math.sin(r_i * 2.7)
         dx = math.cos(ang)
         dy = math.sin(ang)
         perp_x, perp_y = -dy * 0.12, dx * 0.12
         pts = [
             (dx * 0.24, dy * 0.24, 0.92),
-            (dx * 0.58 + perp_x, dy * 0.58 + perp_y, 0.36),
-            (dx * 0.98 - perp_x * 0.5, dy * 0.98 - perp_y * 0.5, -0.06),
+            (dx * 0.72 + perp_x, dy * 0.72 + perp_y, 0.18),
             (dx * 1.32, dy * 1.32, -0.62),
         ]
         mb.add_tapered_tube(
             points=pts,
-            radii=[0.17, 0.21, 0.16, 0.07],
-            cols_u8=[PAL["bark_ridge"], PAL["bark_dark"], PAL["bark_moss"]],
-            segs=7,
+            radii=[0.18, 0.20, 0.07],
+            cols_u8=[PAL["bark_ridge"], PAL["bark_moss"]],
+            segs=4,
         )
     return mb.finalize_object(mat, smooth_shading=False)
 
@@ -1531,6 +1664,7 @@ def render_4_angle_sheet(scene, cam_obj, cam_data, target_obj, all_objs, asset_i
 
 def main():
     skip_previews = "--no-previews" in sys.argv
+    flora_only = "--flora-only" in sys.argv
     clear_scene()
     mat = create_preview_vertex_color_material()
 
@@ -1558,14 +1692,15 @@ def main():
     ]
 
     built_all = []
-    for asset_id, builder_fn in modular_specs:
-        obj = builder_fn(mat)
-        out_glb = os.path.join(OUT_MODULAR_DIR, f"{asset_id}.glb")
-        export_single_piece_glb(obj, out_glb)
-        tris = len(obj.data.polygons)
-        size_kb = os.path.getsize(out_glb) / 1024.0
-        print(f"[CC0WorldFloraPipeline] Modular {asset_id}.glb ({tris} tris, {size_kb:.1f} KB)")
-        built_all.append((asset_id, obj))
+    if not flora_only:
+        for asset_id, builder_fn in modular_specs:
+            obj = builder_fn(mat)
+            out_glb = os.path.join(OUT_MODULAR_DIR, f"{asset_id}.glb")
+            export_single_piece_glb(obj, out_glb)
+            tris = len(obj.data.polygons)
+            size_kb = os.path.getsize(out_glb) / 1024.0
+            print(f"[CC0WorldFloraPipeline] Modular {asset_id}.glb ({tris} tris, {size_kb:.1f} KB)")
+            built_all.append((asset_id, obj))
 
     for asset_id, builder_fn in flora_specs:
         obj = builder_fn(mat)

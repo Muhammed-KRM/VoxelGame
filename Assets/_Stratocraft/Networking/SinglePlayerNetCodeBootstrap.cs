@@ -4,6 +4,7 @@ using System;
 using Unity.Entities;
 using Unity.NetCode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.Scripting;
 
 namespace Stratocraft.Networking
@@ -25,6 +26,12 @@ namespace Stratocraft.Networking
         /// </summary>
         public static bool EnableMultiplayerNetCodeWorlds { get; set; }
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticStateForDomainReloadDisabled()
+        {
+            EnableMultiplayerNetCodeWorlds = false;
+        }
+
         public override bool Initialize(string defaultWorldName)
         {
             if (ShouldUseNetCodeClientServerWorlds())
@@ -38,12 +45,24 @@ namespace Stratocraft.Networking
             return true;
         }
 
-        private static bool ShouldUseNetCodeClientServerWorlds()
+        public static bool ShouldUseNetCodeClientServerWorlds()
+        {
+            return SinglePlayerNetCodePolicy.ShouldUseNetCodeClientServerWorlds();
+        }
+    }
+
+    /// <summary>
+    /// Assembly-boundary-safe helper for querying whether NetCode Client/Server worlds should be active
+    /// without requiring callers (such as <c>Stratocraft.Character</c>) to reference <c>Unity.NetCode</c>.
+    /// </summary>
+    public static class SinglePlayerNetCodePolicy
+    {
+        public static bool ShouldUseNetCodeClientServerWorlds()
         {
 #if UNITY_SERVER
             return true;
 #else
-            if (EnableMultiplayerNetCodeWorlds)
+            if (SinglePlayerNetCodeBootstrap.EnableMultiplayerNetCodeWorlds)
             {
                 return true;
             }
@@ -65,18 +84,53 @@ namespace Stratocraft.Networking
                 }
             }
 
-            // If NUnit is actively executing a test context (EditMode/PlayMode test runner),
-            // preserve standard NetCode bootstrap behavior for any NetCode-dependent tests.
+            // If Unity Test Runner / NUnit is actively executing a test (real InitTestScene /
+            // ActiveController or active TestExecutionContext.CurrentTest — ignoring orphan DontSave
+            // runner GameObjects and stale TestContext.CurrentContext when Reload Domain is disabled),
+            // preserve NetCode worlds.
             try
             {
-                Type? testContextType = Type.GetType("NUnit.Framework.TestContext, nunit.framework");
-                if (testContextType != null)
+                if (SceneManager.GetActiveScene().name.StartsWith("InitTestScene", StringComparison.OrdinalIgnoreCase))
                 {
-                    object? currentContext = testContextType.GetProperty("CurrentContext")?.GetValue(null);
-                    object? currentTest = currentContext?.GetType().GetProperty("Test")?.GetValue(currentContext);
-                    string? testFullName = currentTest?.GetType().GetProperty("FullName")?.GetValue(currentTest) as string;
-                    if (!string.IsNullOrEmpty(testFullName) &&
-                        !string.Equals(testFullName, "AdhocContext", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                }
+
+                int loadedScenes = SceneManager.sceneCount;
+                for (int i = 0; i < loadedScenes; i++)
+                {
+                    if (SceneManager.GetSceneAt(i).name.StartsWith("InitTestScene", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+
+                Type? ptcType = Type.GetType("UnityEngine.TestTools.TestRunner.PlaymodeTestsController, UnityEngine.TestRunner");
+                object? activeCtrl = ptcType?.GetProperty("ActiveController")?.GetValue(null);
+                if (activeCtrl is Component ctrlComp)
+                {
+                    string runnerSceneName = ctrlComp.gameObject.scene.name;
+                    if (!string.IsNullOrEmpty(runnerSceneName) &&
+                        runnerSceneName.StartsWith("InitTestScene", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+
+                    object? settingsObj = activeCtrl.GetType().GetField("settings")?.GetValue(activeCtrl)
+                        ?? activeCtrl.GetType().GetProperty("settings")?.GetValue(activeCtrl);
+                    string? bootstrapScene = settingsObj?.GetType().GetField("bootstrapScene")?.GetValue(settingsObj) as string
+                        ?? settingsObj?.GetType().GetProperty("bootstrapScene")?.GetValue(settingsObj) as string;
+                    if (!string.IsNullOrEmpty(bootstrapScene))
+                    {
+                        return true;
+                    }
+                }
+
+                Type? execCtxType = Type.GetType("NUnit.Framework.Internal.TestExecutionContext, nunit.framework");
+                if (execCtxType != null)
+                {
+                    object? execCtx = execCtxType.GetProperty("CurrentContext")?.GetValue(null);
+                    object? currentTest = execCtx?.GetType().GetProperty("CurrentTest")?.GetValue(execCtx);
+                    if (currentTest != null)
                     {
                         return true;
                     }

@@ -272,3 +272,20 @@ Oyunu bir sonraki PlayTest'te bambaşka bir kalite seviyesine çıkarmak için s
 
 ### Dalga C — P2 Büyük Anayasa Fazları (Faz 3 -> Faz 9)
 - Dalga A ve B ile çekirdek dünya, savaş, hayatta kalma ve görsel kalite sağlamlaştıktan sonra sırasıyla **Anayasa Faz 3 (Klanlar/3B Çit BFS)** -> **Faz 4 (15 Parça Zırh + Balistik + Ölüm Modları)** -> **Faz 5 (Zindanlar + 75 Batarya + Tuzaklar)** -> **Faz 6–9** fazlarına geçilir.
+
+---
+
+## 6. Devir #080 Sonrası Kullanıcı PlayTest Tespitleri ve Faz 3 Öncesi Yeni Öncelikler (`PT-01 .. PT-10`)
+
+*Kullanıcının `2026-11-23` tarihli PlayTest oturumu ve paylaştığı **Çok-Biyomlu Sanat Anayasası ve 6 Bölge Renk Paleti** dokümanı doğrultusunda Faz 3 (Klanlar) öncesine eklenen yeni iş kalemleri (`DURUM_VE_DEVIR.md` Bölüm 3.4 ile senkronize):*
+
+1. **PT-01 — Ağaç Dalları, Basılabilirlik & Bükülme/Kırılma Fiziği:** Dalların gövdeyle uyuşmazlığını çöz; ince/kalın dallar, üste basabilme, ağırlık altında eğilme/bükülme ve aşırı yükte dal kırılması + türlere göre dal çeşitliliği ekle.
+2. **PT-02 — Gerçekçi 3 Katmanlı Yerleşimler (`Köy`, `Kasaba`, `Şehir`):** Her yerde rastgele doğan tekil evleri kaldır; seyrek ama düzenli 3 kategori yerleşim (**Köy / Kasaba / Şehir**) + tarihsel araştırmaya dayalı tam donanım (kuyu, meydan, hizalı sıralı evler, yollar, tarlalar, çiftlikler, pazar, demirci, değirmen vb.) üret.
+3. **PT-03 — *Sons of the Forest* Tarzı Kütük İnşa & `[T]`/`[B]` Yerleştirme / Elde Kalma Hatası:** Görünüm Valheim estetiğinde ama mekanik olarak gerçek kütükleri üst üste dizme; önizlemesiz/hayaletsiz doğrudan içinden geçilen obje konması ve `[T]`/`[B]` inşa taslağının elde sıkışıp bırakılamaması hatalarını çöz.
+4. **PT-04 — Tuş Çakışmaları Denetimi:** `[B]`, `[Alt]` ve tüm kontrol kısayollarındaki çakışmaları tamamen temizle.
+5. **PT-05 — Evlerin İçinden Geçme Sorunu (Katı Çarpışma & Gerçek Parçalı İnşa):** Evlere tam katı collider/voksel çarpışması ekle ve binaları statik süs objesi yerine gerçekten parçalı/dizilebilir yapısal sistemle kur.
+6. **PT-06 — FPS Kamerada Eller, Eşya Kadrajı & Yumruk Pozisyonu:** FPS'te ellerin, ele alınan tüm eşyaların ve yumruk animasyonunun ön kamera kadrajında görünür olmasını sağla.
+7. **PT-07 — Eşya 3B Modellerinin Kalite Yenilemesi:** Kılıç/kazma dışındaki diğer tüm eşya/alet/malzeme 3B modellerini (`Tools/AutonomousAssetFactory`) aynı üst kalite düzeyine yenile.
+8. **PT-08 — Enlem-İrtifa Biyom Mantığı & Devasa Dağ / Derin Mağara Ölçeği:** Buz-lav yan yana karışmasını bitir; kuzeye doğru soğuyan, güneye doğru ısınan enlem + irtifa iklimi, yüzlerce/binlerce metrelik tırmanması günler süren gerçekçi dağlar ve çok daha derin mağara katmanları kur.
+9. **PT-09 — Atmosfer/Bulut Sistemi Doğrulaması, Bulutlara Uçabilme & Kare-Kare Gökyüzü Tamiri:** Buharlaşma/nem/basınç/bulut/ENSO yıl-arası sıcaklık döngüsünü görünür biçimde doğrula, bulut seviyesine uçup içine girilebilmesini sağla ve gökyüzündeki kare-kare (`banding`/grid) artefaktını gider.
+10. **PT-10 — Yeni 6 Bölge Biyomları & Çok-Biyomlu Sanat / Renk Paleti:** Mevcut biyomları koruyarak 6 bölge paletini (*1. Zümrüt Güneşi Ormanı `#1EA855/#74D944`, 2. Altın & Alacakaranlık `#FFB81C/#0096B4`, 3. Safir Lagün `#00B4A2/#0284C7`, 4. Kızıl Kor & Ametist Kanyon `#D9383A/#F4C469`, 5. Güneşli Buzul Zirveleri `#FFFFFF/#7DD3FC`, 6. Obsidyen Hiçlik Kıyısı `#1E1B4B/#D99B26`*) `BiomeVisualProfile` (6 parametre + 40–80m gürültülü karışım + renkli gölge + biyom neon çifti) olarak uyarla ve genel renk paletini iyileştir.

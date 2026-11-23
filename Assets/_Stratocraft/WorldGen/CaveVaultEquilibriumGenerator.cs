@@ -22,7 +22,7 @@ namespace Stratocraft.WorldGen
     /// </summary>
     public static class CaveVaultEquilibriumGenerator
     {
-        public const int MaxPreSettlePasses = 8;
+        public const int MaxPreSettlePasses = 3;
         public const int CaveOverburdenMarginBlocks = 6;
         private const int MaxPillarHeightBlocks = 28;
         private const int ChunkSizeXZ = 16;

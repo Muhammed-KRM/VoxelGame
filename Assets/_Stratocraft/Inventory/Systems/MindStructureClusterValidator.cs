@@ -2345,6 +2345,111 @@ namespace Stratocraft.Inventory.Systems
         }
 
         /// <summary>
+        /// Pencere-tabanli maden tahkimati on-elemesi ve tek seferlik yerel maske rasterizasyonu (0 B GC):
+        /// Solve penceresiyle kesisen hicbir tasiyici moduler parca yoksa outMask'a dokunmadan hemen false doner;
+        /// kesisen parcalar varsa yalnizca o parcalarin 1.65m tahkimat etki hacmini outMask'a yazar ve true doner.
+        /// </summary>
+        public static bool TryRasterizeGroundedTimberSupportInWindow(
+            ReadOnlySpan<ModularPlacedPieceNode> nodes,
+            int originX,
+            int originY,
+            int originZ,
+            int sizeX,
+            int sizeY,
+            int sizeZ,
+            Span<byte> outMask,
+            bool isZMajorLocal)
+        {
+            if (nodes.Length == 0 || sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return false;
+            int requiredLen = sizeX * sizeY * sizeZ;
+            if (outMask.Length < requiredLen) return false;
+
+            const float horizShoringReach = 1.65f;
+            const float reachSq = horizShoringReach * horizShoringReach;
+            float winMinX = originX;
+            float winMaxX = originX + sizeX;
+            float winMinY = originY;
+            float winMaxY = originY + sizeY;
+            float winMinZ = originZ;
+            float winMaxZ = originZ + sizeZ;
+
+            bool anyWritten = false;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode n = ref nodes[i];
+                if (n.IsBroken || n.IsFalling || n.Stability01 < CollapseStabilityThreshold) continue;
+
+                bool isShoringSupport =
+                    n.Kind == ModularBuildPieceKind.LogPillar3m ||
+                    n.Kind == ModularBuildPieceKind.LogBeam2m ||
+                    n.Kind == ModularBuildPieceKind.DiagonalBrace2m ||
+                    n.Kind == ModularBuildPieceKind.StoneArchPillar3m ||
+                    n.Kind == ModularBuildPieceKind.StoneFoundation2x2m;
+                if (!isShoringSupport) continue;
+
+                // Hizli merkez kaba elemesi (tum parcalar <= 3.5m yaricaptadir; pencereden uzaktaki yuzlerce parcada ComputeWorldAabb atlanir)
+                if (n.Position.X + 4.5f < winMinX || n.Position.X - 4.5f > winMaxX ||
+                    n.Position.Z + 4.5f < winMinZ || n.Position.Z - 4.5f > winMaxZ ||
+                    n.Position.Y + 6.0f < winMinY || n.Position.Y - 4.0f > winMaxY)
+                {
+                    continue;
+                }
+
+                ComputeWorldAabb(n.Kind, n.Position, n.Rotation, out Vector3 bMin, out Vector3 bMax);
+                if (bMax.X + horizShoringReach < winMinX || bMin.X - horizShoringReach > winMaxX ||
+                    bMax.Z + horizShoringReach < winMinZ || bMin.Z - horizShoringReach > winMaxZ ||
+                    bMax.Y + 2.50f < winMinY || bMin.Y - 0.65f > winMaxY)
+                {
+                    continue;
+                }
+
+                int minLx = Math.Max(0, (int)MathF.Floor(bMin.X - horizShoringReach - 0.5f) - originX);
+                int maxLx = Math.Min(sizeX - 1, (int)MathF.Ceiling(bMax.X + horizShoringReach - 0.5f) - originX);
+                int minLy = Math.Max(0, (int)MathF.Floor(bMin.Y - 0.65f - 0.5f) - originY);
+                int maxLy = Math.Min(sizeY - 1, (int)MathF.Ceiling(bMax.Y + 2.50f) - originY);
+                int minLz = Math.Max(0, (int)MathF.Floor(bMin.Z - horizShoringReach - 0.5f) - originZ);
+                int maxLz = Math.Min(sizeZ - 1, (int)MathF.Ceiling(bMax.Z + horizShoringReach - 0.5f) - originZ);
+
+                if (minLx > maxLx || minLy > maxLy || minLz > maxLz) continue;
+
+                for (int lz = minLz; lz <= maxLz; lz++)
+                {
+                    float vz = originZ + lz + 0.5f;
+                    float dz = MathF.Max(0.0f, MathF.Max(bMin.Z - vz, vz - bMax.Z));
+                    float dzSq = dz * dz;
+                    if (dzSq > reachSq) continue;
+
+                    for (int lx = minLx; lx <= maxLx; lx++)
+                    {
+                        float vx = originX + lx + 0.5f;
+                        float dx = MathF.Max(0.0f, MathF.Max(bMin.X - vx, vx - bMax.X));
+                        if ((dx * dx + dzSq) > reachSq) continue;
+
+                        for (int ly = minLy; ly <= maxLy; ly++)
+                        {
+                            int wy = originY + ly;
+                            float vy = wy + 0.5f;
+                            if (vy < bMin.Y - 0.65f || wy > bMax.Y + 2.50f) continue;
+
+                            if (!anyWritten)
+                            {
+                                outMask.Slice(0, requiredLen).Clear();
+                                anyWritten = true;
+                            }
+
+                            int idx = isZMajorLocal
+                                ? (lx + sizeX * (ly + sizeY * lz))
+                                : (((ly * sizeZ) + lz) * sizeX + lx);
+                            outMask[idx] = 1;
+                        }
+                    }
+                }
+            }
+
+            return anyWritten;
+        }
+
+        /// <summary>
         /// Prosedurel moduler yerleske (0=NordicTimberCabin, 1=MeadHallWatchtower, 2=CarvedMarbleShrine, 3=CollapsedTimberStoneRuin)
         /// parcalarini %100 kapali, sizdirmaz, on/arka GableWall45Deg2m alinlikli ve derin tas subasmanli olarak kurar (0 B GC).
         /// </summary>

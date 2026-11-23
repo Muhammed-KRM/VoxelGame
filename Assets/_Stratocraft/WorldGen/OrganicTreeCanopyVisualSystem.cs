@@ -549,6 +549,9 @@ namespace Stratocraft.WorldGen
         private static readonly Mesh?[] CachedFloraMeshes = new Mesh?[FloraAssetCount];
         private static readonly bool[] AttemptedFloraLoads = new bool[FloraAssetCount];
         private static Material? _sharedOrganicFoliageMaterial;
+        private static bool _sharedOrganicFoliageMaterialConfigured;
+        private static Material? _sharedOrganicFoliageLastFallback;
+        private const int MaxVisualPoolCapacity = 512;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticCachesOnSubsystemRegistration()
@@ -556,6 +559,8 @@ namespace Stratocraft.WorldGen
             Array.Clear(CachedFloraMeshes, 0, CachedFloraMeshes.Length);
             Array.Clear(AttemptedFloraLoads, 0, AttemptedFloraLoads.Length);
             _sharedOrganicFoliageMaterial = null;
+            _sharedOrganicFoliageMaterialConfigured = false;
+            _sharedOrganicFoliageLastFallback = null;
         }
 
         private ActiveOrganicTreeNode[] _activeTrees = new ActiveOrganicTreeNode[256];
@@ -594,8 +599,17 @@ namespace Stratocraft.WorldGen
                 {
                     name = "M_Stratocraft_OrganicTreeFoliage_Matte"
                 };
+                _sharedOrganicFoliageMaterial.enableInstancing = true;
+                _sharedOrganicFoliageMaterialConfigured = false;
+                _sharedOrganicFoliageLastFallback = null;
             }
 
+            if (_sharedOrganicFoliageMaterialConfigured && ReferenceEquals(_sharedOrganicFoliageLastFallback, fallbackSharedMat))
+            {
+                return _sharedOrganicFoliageMaterial;
+            }
+
+            _sharedOrganicFoliageMaterial.enableInstancing = true;
             if (fallbackSharedMat != null)
             {
                 if (fallbackSharedMat.HasProperty("_MicroDetailArray"))
@@ -616,7 +630,65 @@ namespace Stratocraft.WorldGen
             _sharedOrganicFoliageMaterial.SetFloat("_MicroDetailStrength", 0.35f);
             _sharedOrganicFoliageMaterial.SetFloat("_SmoothFacetBlend", 0.38f);
             _sharedOrganicFoliageMaterial.SetFloat("_AmbientStrength", 0.68f);
+            _sharedOrganicFoliageLastFallback = fallbackSharedMat;
+            _sharedOrganicFoliageMaterialConfigured = true;
             return _sharedOrganicFoliageMaterial;
+        }
+
+        /// <summary>
+        /// Kamera yeraltindayken veya uzak chunklardayken agac tac/kok cizimini ve golge dokumunu budar (0 B GC).
+        /// </summary>
+        public void UpdateTreeVisibilityAndShadowCulling(
+            Vector3 cameraWorldPos,
+            bool isCameraUnderground,
+            float maxCanopyDist = 144f,
+            float maxCanopyShadowDist = 48f,
+            float maxRootDist = 56f,
+            float maxRootShadowDist = 28f)
+        {
+            float maxCanopySq = maxCanopyDist * maxCanopyDist;
+            float maxCanopyShadowSq = maxCanopyShadowDist * maxCanopyShadowDist;
+            float maxRootSq = maxRootDist * maxRootDist;
+            float maxRootShadowSq = maxRootShadowDist * maxRootShadowDist;
+
+            for (int i = 0; i < _activeTreeCount; i++)
+            {
+                ref readonly ActiveOrganicTreeNode node = ref _activeTrees[i];
+                ref PooledTreeVisualSlot vis = ref _activeVisuals[i];
+
+                if (isCameraUnderground)
+                {
+                    if (vis.CanopyMr != null && vis.CanopyMr.enabled) vis.CanopyMr.enabled = false;
+                    if (vis.RootMr != null && vis.RootMr.enabled) vis.RootMr.enabled = false;
+                    continue;
+                }
+
+                float dx = node.WorldX - cameraWorldPos.x;
+                float dz = node.WorldZ - cameraWorldPos.z;
+                float distSq = dx * dx + dz * dz;
+
+                if (vis.CanopyMr != null)
+                {
+                    bool showCanopy = node.IsCanopyActive && distSq <= maxCanopySq;
+                    if (vis.CanopyMr.enabled != showCanopy) vis.CanopyMr.enabled = showCanopy;
+                    if (showCanopy)
+                    {
+                        ShadowCastingMode cm = distSq <= maxCanopyShadowSq ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                        if (vis.CanopyMr.shadowCastingMode != cm) vis.CanopyMr.shadowCastingMode = cm;
+                    }
+                }
+
+                if (vis.RootMr != null)
+                {
+                    bool showRoot = node.IsRootActive && distSq <= maxRootSq;
+                    if (vis.RootMr.enabled != showRoot) vis.RootMr.enabled = showRoot;
+                    if (showRoot)
+                    {
+                        ShadowCastingMode rm = distSq <= maxRootShadowSq ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                        if (vis.RootMr.shadowCastingMode != rm) vis.RootMr.shadowCastingMode = rm;
+                    }
+                }
+            }
         }
 
         public static Mesh? LoadFloraMeshCached(OrganicFloraKind kind)
@@ -832,6 +904,13 @@ namespace Stratocraft.WorldGen
             if (existing == null)
             {
                 existing = new GameObject("07_OrganicTreeFloraRoot");
+            }
+            else if (Application.isPlaying)
+            {
+                for (int i = existing.transform.childCount - 1; i >= 0; i--)
+                {
+                    UnityEngine.Object.Destroy(existing.transform.GetChild(i).gameObject);
+                }
             }
             _floraRootTransform = existing.transform;
         }
@@ -1087,7 +1166,15 @@ namespace Stratocraft.WorldGen
             if (slot.RootGo != null) slot.RootGo.SetActive(false);
             if (slot.CanopyGo != null || slot.RootGo != null)
             {
-                _visualPool.Push(slot);
+                if (_visualPool.Count < MaxVisualPoolCapacity)
+                {
+                    _visualPool.Push(slot);
+                }
+                else
+                {
+                    if (slot.CanopyGo != null) UnityEngine.Object.Destroy(slot.CanopyGo);
+                    if (slot.RootGo != null) UnityEngine.Object.Destroy(slot.RootGo);
+                }
             }
             slot = default;
         }
