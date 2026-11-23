@@ -1115,6 +1115,11 @@ namespace Stratocraft.Inventory.Systems
     {
         public int InstanceId;
         public ModularBuildPieceKind Kind;
+        public BuildStructuralMaterialKind MaterialKind;
+        public BuildSectionThickness ThicknessKind;
+        public bool ExplicitMaterialAssigned;
+        public byte CompletedCourses;
+        public byte RequiredCourses;
         public Vector3 Position;
         public Quaternion Rotation;
         public float GroundFloorY;
@@ -1122,6 +1127,8 @@ namespace Stratocraft.Inventory.Systems
         public float MaxHealth;
         public float Stability01;
         public ValheimStabilityBand StabilityBand;
+        public float AccumulatedAxialLoadKn;
+        public float CompressionCapacityKn;
         public bool IsGrounded;
         public bool IsFalling;
         public bool IsBroken;
@@ -1782,7 +1789,10 @@ namespace Stratocraft.Inventory.Systems
             out bool snappedToPiece,
             out bool isGrounded,
             out float previewStability01,
-            out ValheimStabilityBand previewBand)
+            out ValheimStabilityBand previewBand,
+            BuildStructuralMaterialKind candidateMaterial = BuildStructuralMaterialKind.PineTimber,
+            BuildSectionThickness candidateThickness = BuildSectionThickness.Standard,
+            bool explicitMaterial = false)
         {
             snappedToPiece = false;
             float snappedYawDeg = MathF.Round(userYawDeg / 45.0f) * 45.0f;
@@ -1802,6 +1812,12 @@ namespace Stratocraft.Inventory.Systems
                 int sCount = PopulateCompatibleSnapSockets(host.Kind, candidateKind, sockets);
                 for (int s = 0; s < sCount; s++)
                 {
+                    // Tamamlanmamis yarim duvarlarin ust soketlerini erken acma (once duvar katmanlari dizilmeli!)
+                    if (!SotfStructuralBuildMechanics.IsPieceFullyConstructed(in host) && sockets[s].LocalOffset.Y > 0.55f)
+                    {
+                        continue;
+                    }
+
                     Vector3 worldSock = host.Position + Vector3.Transform(sockets[s].LocalOffset, host.Rotation);
                     float dSq = Vector3.DistanceSquared(worldSock, aimPoint);
                     if (dSq < bestDistSq)
@@ -1817,8 +1833,67 @@ namespace Stratocraft.Inventory.Systems
             ComputeWorldAabb(candidateKind, finalPosition, finalRotation, out Vector3 candMin, out Vector3 candMax);
             isGrounded = candMin.Y <= groundSurfaceY + 0.22f;
             previewStability01 = EvaluateCandidateStability(
-                candidateKind, finalPosition, finalRotation, candMin, candMax, isGrounded, existingNodes);
+                candidateKind, finalPosition, finalRotation, candMin, candMax, isGrounded, existingNodes,
+                candidateMaterial, candidateThickness, explicitMaterial);
             previewBand = ClassifyStabilityBand(previewStability01);
+        }
+
+        /// <summary>
+        /// Nisan noktasinin yakininda henuz tum kutuk/tas katmanlari dizilmemis (CompletedCourses &lt; RequiredCourses)
+        /// bir moduler yapi elemani varsa indeksini doner (-1 = yok).
+        /// </summary>
+        public static int FindAimedUnfinishedCourseNodeIndex(
+            ReadOnlySpan<ModularPlacedPieceNode> nodes,
+            Vector3 aimPoint,
+            float maxCaptureDist = 1.45f)
+        {
+            int bestIdx = -1;
+            float bestDist = maxCaptureDist;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode n = ref nodes[i];
+                if (n.IsBroken || n.IsFalling) continue;
+                if (SotfStructuralBuildMechanics.IsPieceFullyConstructed(in n)) continue;
+
+                ComputeWorldAabb(n.Kind, n.Position, n.Rotation, out Vector3 bMin, out Vector3 bMax);
+                float d = DistancePointToAabb(aimPoint, bMin, bMax);
+                if (d <= bestDist)
+                {
+                    bestDist = d;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx;
+        }
+
+        public static BuildStructuralMaterialKind ResolveEffectiveNodeMaterial(in ModularPlacedPieceNode node)
+        {
+            if (!node.ExplicitMaterialAssigned &&
+                node.MaterialKind == BuildStructuralMaterialKind.PineTimber &&
+                (node.Kind == ModularBuildPieceKind.StoneFoundation2x2m || node.Kind == ModularBuildPieceKind.StoneArchPillar3m))
+            {
+                return BuildStructuralMaterialKind.RubbleStone;
+            }
+            return node.MaterialKind;
+        }
+
+        public static float ComputePieceMaxHealth(
+            ModularBuildPieceKind kind,
+            BuildStructuralMaterialKind matKind,
+            BuildSectionThickness thickness)
+        {
+            float baseHp = GetPieceDefaultMaxHealth(kind);
+            StructuralMaterialProfile prof = SotfStructuralBuildMechanics.GetMaterialProfile(matKind);
+            float matRatio = (kind == ModularBuildPieceKind.StoneFoundation2x2m || kind == ModularBuildPieceKind.StoneArchPillar3m)
+                ? (prof.BaseMaxHealth / 240.0f)
+                : (prof.BaseMaxHealth / 110.0f);
+            float thickMult = thickness switch
+            {
+                BuildSectionThickness.Slender => 0.68f,
+                BuildSectionThickness.HeavyBearing => 1.65f,
+                _ => 1.00f
+            };
+            return MathF.Max(30.0f, baseHp * MathF.Max(0.55f, matRatio) * thickMult);
         }
 
         public static float EvaluateCandidateStability(
@@ -1828,10 +1903,18 @@ namespace Stratocraft.Inventory.Systems
             Vector3 candMin,
             Vector3 candMax,
             bool isGrounded,
-            ReadOnlySpan<ModularPlacedPieceNode> existingNodes)
+            ReadOnlySpan<ModularPlacedPieceNode> existingNodes,
+            BuildStructuralMaterialKind candidateMaterial = BuildStructuralMaterialKind.PineTimber,
+            BuildSectionThickness candidateThickness = BuildSectionThickness.Standard,
+            bool explicitMaterial = false)
         {
             _ = candPos;
             _ = candRot;
+            BuildStructuralMaterialKind effCandMat = (!explicitMaterial && candidateMaterial == BuildStructuralMaterialKind.PineTimber &&
+                (candidateKind == ModularBuildPieceKind.StoneFoundation2x2m || candidateKind == ModularBuildPieceKind.StoneArchPillar3m))
+                ? BuildStructuralMaterialKind.RubbleStone
+                : candidateMaterial;
+
             if (isGrounded)
             {
                 return 1.0f;
@@ -1841,11 +1924,19 @@ namespace Stratocraft.Inventory.Systems
             float bestStability = 0.0f;
             bool bracedByActiveStrut = false;
             float bestBraceSupport = 0.0f;
+            float candWeightKn = SotfStructuralBuildMechanics.ComputePieceSelfWeightKn(candidateKind, effCandMat, candidateThickness);
 
             for (int i = 0; i < existingNodes.Length; i++)
             {
                 ref readonly ModularPlacedPieceNode sup = ref existingNodes[i];
                 if (sup.IsBroken || sup.IsFalling || sup.Stability01 <= 0.01f) continue;
+
+                // Tamamlanmamis yarim duvarlarin (< %100 katman) ustune tavan/cati/ust duvar oturtulamaz (once duvar kutukleri tamamlanmali!)
+                if (!SotfStructuralBuildMechanics.IsPieceFullyConstructed(in sup) &&
+                    candMin.Y >= sup.Position.Y + 0.50f)
+                {
+                    continue;
+                }
 
                 ComputeWorldAabb(sup.Kind, sup.Position, sup.Rotation, out Vector3 supMin, out Vector3 supMax);
                 if (!DoAabbsTouch(supMin, supMax, candMin, candMax, JointOverlapToleranceMeters))
@@ -1853,8 +1944,24 @@ namespace Stratocraft.Inventory.Systems
                     continue;
                 }
 
+                BuildStructuralMaterialKind supMat = ResolveEffectiveNodeMaterial(in sup);
                 Vector3 supCenter = 0.5f * (supMin + supMax);
-                float edgeLoss = ComputeDirectionalStabilityLoss(sup.Kind, candidateKind, supCenter, candCenter, sup.IsGrounded);
+                float edgeLoss = ComputeDirectionalStabilityLoss(
+                    sup.Kind, candidateKind, supCenter, candCenter, sup.IsGrounded,
+                    supMat, sup.ThicknessKind, effCandMat, candidateThickness);
+
+                // Ince/zayif destege cok agir tas/mermer ust katman koyulursa basinc asimi uyarisi:
+                float supCapKn = SotfStructuralBuildMechanics.ComputePieceCompressionCapacityKn(sup.Kind, supMat, sup.ThicknessKind);
+                float projectedLoadKn = sup.AccumulatedAxialLoadKn + candWeightKn;
+                if (projectedLoadKn > supCapKn)
+                {
+                    edgeLoss += 0.95f;
+                }
+                else if (projectedLoadKn > supCapKn * 0.75f)
+                {
+                    edgeLoss += ((projectedLoadKn / supCapKn) - 0.75f) * 1.25f;
+                }
+
                 float candidateVal = Math.Clamp(sup.Stability01 - edgeLoss, 0.0f, 1.0f);
                 if (candidateVal > bestStability)
                 {
@@ -1881,7 +1988,11 @@ namespace Stratocraft.Inventory.Systems
             ModularBuildPieceKind targetKind,
             Vector3 supportCenter,
             Vector3 targetCenter,
-            bool supportIsGrounded)
+            bool supportIsGrounded,
+            BuildStructuralMaterialKind supportMat = BuildStructuralMaterialKind.PineTimber,
+            BuildSectionThickness supportThickness = BuildSectionThickness.Standard,
+            BuildStructuralMaterialKind targetMat = BuildStructuralMaterialKind.PineTimber,
+            BuildSectionThickness targetThickness = BuildSectionThickness.Standard)
         {
             float dy = targetCenter.Y - supportCenter.Y;
             float dx = targetCenter.X - supportCenter.X;
@@ -1909,8 +2020,52 @@ namespace Stratocraft.Inventory.Systems
                 ModularBuildPieceKind.RoofRafter26Deg2x2m => 0.21f,
                 ModularBuildPieceKind.RoofRafter45Deg2x2m => 0.21f,
                 ModularBuildPieceKind.RoofRidge2m => 0.18f,
-                _ => 0.24f // PlankFloor2x2m / PlankWall2x2m: 1.00 -> 0.76 -> 0.52 -> 0.28 -> 0.04 (<0.12 coker!)
+                _ => 0.24f // PlankFloor2x2m / PlankWall2x2m: Standart Cam Ahsapta 1.00 -> 0.76 -> 0.52 -> 0.28 -> 0.04 (<0.12 coker!)
             };
+
+            // Malzeme ve kesit kalinligi gercekci mukavemet olceklemesi:
+            float vertMatScale = targetMat switch
+            {
+                BuildStructuralMaterialKind.IronwoodHeavy => 0.68f,
+                BuildStructuralMaterialKind.RubbleStone => 0.52f,
+                BuildStructuralMaterialKind.CutBasalt => 0.42f,
+                BuildStructuralMaterialKind.CarvedMarble => 0.36f,
+                BuildStructuralMaterialKind.ReinforcedSteelObsidian => 0.24f,
+                _ => 1.00f
+            };
+
+            float horizMatScale = targetMat switch
+            {
+                BuildStructuralMaterialKind.IronwoodHeavy => 0.68f,
+                // Tas/kagir basinca cok dayaniklidir ama kolonsuz/kirissiz boslukta yatay konsol aciklik gecemez (cekmeye zayif):
+                BuildStructuralMaterialKind.RubbleStone => targetKind == ModularBuildPieceKind.StoneFoundation2x2m ? 1.00f : 1.48f,
+                BuildStructuralMaterialKind.CutBasalt => targetKind == ModularBuildPieceKind.StoneFoundation2x2m ? 0.90f : 1.22f,
+                BuildStructuralMaterialKind.CarvedMarble => 0.96f,
+                BuildStructuralMaterialKind.ReinforcedSteelObsidian => 0.44f,
+                _ => 1.00f
+            };
+
+            float targetThickScale = targetThickness switch
+            {
+                BuildSectionThickness.Slender => 1.46f,      // Ince kesit cabuk egilir / burkulur!
+                BuildSectionThickness.HeavyBearing => 0.62f, // Kalin kiris/kolon cok daha genis aciklik gecer!
+                _ => 1.00f
+            };
+
+            float supportThickBoost = supportThickness == BuildSectionThickness.HeavyBearing ? 0.88f :
+                                      (supportThickness == BuildSectionThickness.Slender ? 1.16f : 1.00f);
+
+            verticalLoss *= vertMatScale * targetThickScale * supportThickBoost;
+            horizontalLoss *= horizMatScale * targetThickScale * supportThickBoost;
+
+            // Ana Tasiyici Kiris (LogBeam2m) uzerine oturan doseme ve catilar yuku kirise aktararak daha genis aciklik gecer!
+            if (supportKind == ModularBuildPieceKind.LogBeam2m &&
+                (targetKind == ModularBuildPieceKind.PlankFloor2x2m ||
+                 targetKind == ModularBuildPieceKind.RoofRafter26Deg2x2m ||
+                 targetKind == ModularBuildPieceKind.RoofRafter45Deg2x2m))
+            {
+                horizontalLoss *= 0.72f;
+            }
 
             float loss;
             if (dy >= 0.28f && horizDist <= 1.35f)
@@ -1926,12 +2081,17 @@ namespace Stratocraft.Inventory.Systems
                 loss = horizontalLoss;
             }
 
-            // StoneFoundation & StoneArchPillar kagir kaide takviyesi (Valheim tas temel etkisi!)
-            if (supportKind == ModularBuildPieceKind.StoneFoundation2x2m ||
-                supportKind == ModularBuildPieceKind.StoneArchPillar3m)
+            // Kagir temel / kolon / celik-demir agaci kaide takviyesi:
+            bool strongMasonryOrColumnSupport =
+                supportKind == ModularBuildPieceKind.StoneFoundation2x2m ||
+                supportKind == ModularBuildPieceKind.StoneArchPillar3m ||
+                supportMat == BuildStructuralMaterialKind.CarvedMarble ||
+                supportMat == BuildStructuralMaterialKind.CutBasalt ||
+                supportMat == BuildStructuralMaterialKind.ReinforcedSteelObsidian;
+            if (strongMasonryOrColumnSupport)
             {
                 float stoneBoost = supportIsGrounded ? 0.11f : 0.07f;
-                loss = MathF.Max(0.04f, loss - stoneBoost);
+                loss = MathF.Max(0.03f, loss - stoneBoost);
             }
 
             return loss;
@@ -1955,6 +2115,9 @@ namespace Stratocraft.Inventory.Systems
             Span<Vector3> maxBuf = count <= 192 ? stackalloc Vector3[count] : new Vector3[count];
             Span<Vector3> centerBuf = count <= 192 ? stackalloc Vector3[count] : new Vector3[count];
             Span<float> stabBuf = count <= 192 ? stackalloc float[count] : new float[count];
+            Span<float> axialLoadBuf = count <= 192 ? stackalloc float[count] : new float[count];
+            Span<float> compCapBuf = count <= 192 ? stackalloc float[count] : new float[count];
+            Span<int> heightOrder = count <= 192 ? stackalloc int[count] : new int[count];
 
             for (int i = 0; i < count; i++)
             {
@@ -1972,17 +2135,27 @@ namespace Stratocraft.Inventory.Systems
 
                 for (int i = 0; i < count; i++)
                 {
+                    heightOrder[i] = i;
                     if (nodes[i].IsBroken || nodes[i].IsFalling)
                     {
                         stabBuf[i] = 0.0f;
+                        axialLoadBuf[i] = 0.0f;
+                        compCapBuf[i] = 1.0f;
                         continue;
                     }
                     bool grounded = nodes[i].IsGrounded || minBuf[i].Y <= nodes[i].GroundFloorY + 0.22f;
                     nodes[i].IsGrounded = grounded;
                     stabBuf[i] = grounded ? 1.0f : 0.0f;
+
+                    BuildStructuralMaterialKind effMat = ResolveEffectiveNodeMaterial(in nodes[i]);
+                    float compRatio = SotfStructuralBuildMechanics.GetCompletionRatio01(in nodes[i]);
+                    axialLoadBuf[i] = SotfStructuralBuildMechanics.ComputePieceSelfWeightKn(
+                        nodes[i].Kind, effMat, nodes[i].ThicknessKind, compRatio);
+                    compCapBuf[i] = SotfStructuralBuildMechanics.ComputePieceCompressionCapacityKn(
+                        nodes[i].Kind, effMat, nodes[i].ThicknessKind);
                 }
 
-                // 1) Zemin temasindan yukariya/yana Bellman-Ford yapisal yuk gevsetmesi
+                // 1) Zemin temasindan yukariya/yana Bellman-Ford yapisal yuk/aciklik gevsetmesi (malzeme + kalinlik duyarli)
                 for (int pass = 0; pass < count; pass++)
                 {
                     bool anyImproved = false;
@@ -1991,14 +2164,17 @@ namespace Stratocraft.Inventory.Systems
                         float sU = stabBuf[u];
                         if (sU <= CollapseStabilityThreshold) continue;
                         if (nodes[u].IsBroken || nodes[u].IsFalling) continue;
+                        BuildStructuralMaterialKind matU = ResolveEffectiveNodeMaterial(in nodes[u]);
 
                         for (int v = 0; v < count; v++)
                         {
                             if (u == v || nodes[v].IsBroken || nodes[v].IsFalling || nodes[v].IsGrounded) continue;
                             if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[v], maxBuf[v], JointOverlapToleranceMeters)) continue;
 
+                            BuildStructuralMaterialKind matV = ResolveEffectiveNodeMaterial(in nodes[v]);
                             float loss = ComputeDirectionalStabilityLoss(
-                                nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded);
+                                nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded,
+                                matU, nodes[u].ThicknessKind, matV, nodes[v].ThicknessKind);
                             float cand = sU - loss;
                             if (cand > stabBuf[v] + 1e-4f)
                             {
@@ -2019,7 +2195,6 @@ namespace Stratocraft.Inventory.Systems
                     if (nodes[b].Kind != ModularBuildPieceKind.DiagonalBrace2m) continue;
                     if (stabBuf[b] < 0.20f) continue;
 
-                    // Payandanin tutundugu en saglam ana tasiyiciyi bul
                     float bestAnchorStab = 0.0f;
                     int bestAnchorIdx = -1;
                     for (int a = 0; a < count; a++)
@@ -2059,13 +2234,16 @@ namespace Stratocraft.Inventory.Systems
                         {
                             float sU = stabBuf[u];
                             if (sU <= CollapseStabilityThreshold || nodes[u].IsBroken || nodes[u].IsFalling) continue;
+                            BuildStructuralMaterialKind matU = ResolveEffectiveNodeMaterial(in nodes[u]);
                             for (int v = 0; v < count; v++)
                             {
                                 if (u == v || nodes[v].IsBroken || nodes[v].IsFalling || nodes[v].IsGrounded) continue;
                                 if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[v], maxBuf[v], JointOverlapToleranceMeters)) continue;
 
+                                BuildStructuralMaterialKind matV = ResolveEffectiveNodeMaterial(in nodes[v]);
                                 float loss = ComputeDirectionalStabilityLoss(
-                                    nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded);
+                                    nodes[u].Kind, nodes[v].Kind, centerBuf[u], centerBuf[v], nodes[u].IsGrounded,
+                                    matU, nodes[u].ThicknessKind, matV, nodes[v].ThicknessKind);
                                 float cand = sU - loss;
                                 if (cand > stabBuf[v] + 1e-4f)
                                 {
@@ -2078,7 +2256,81 @@ namespace Stratocraft.Inventory.Systems
                     }
                 }
 
-                // 3) Stabilitesi < 0.12f (veya kopuk = 0.0f) olan parcalari koparip SOTF 3B tork ile dusur!
+                // 2.5) Gercekci Yukaridan-Asagiya Tributary Yuk Aktarimi (ust kat/cati/tas agirliginin alt kolon ve duvarlara binmesi):
+                //      Ince/zayif malzeme uzerine cok katli veya agir kagir yuk bindiginde alt tasiyici ezilip kirilir!
+                for (int i = 1; i < count; i++)
+                {
+                    int key = heightOrder[i];
+                    float keyY = centerBuf[key].Y;
+                    int j = i - 1;
+                    while (j >= 0 && centerBuf[heightOrder[j]].Y < keyY)
+                    {
+                        heightOrder[j + 1] = heightOrder[j];
+                        j--;
+                    }
+                    heightOrder[j + 1] = key;
+                }
+
+                for (int ord = 0; ord < count; ord++)
+                {
+                    int u = heightOrder[ord];
+                    if (nodes[u].IsBroken || nodes[u].IsFalling || nodes[u].IsGrounded) continue;
+                    if (stabBuf[u] < CollapseStabilityThreshold) continue;
+
+                    float weightToTransfer = axialLoadBuf[u];
+                    float totalShare = 0.0f;
+
+                    for (int s = 0; s < count; s++)
+                    {
+                        if (s == u || nodes[s].IsBroken || nodes[s].IsFalling || stabBuf[s] <= 0.01f) continue;
+                        if (centerBuf[s].Y > centerBuf[u].Y + 0.12f) continue;
+                        if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[s], maxBuf[s], JointOverlapToleranceMeters)) continue;
+
+                        bool isBelow = centerBuf[s].Y < centerBuf[u].Y - 0.15f;
+                        bool isColumn = SotfStructuralBuildMechanics.IsDedicatedColumnOrFoundation(nodes[s].Kind);
+                        float share = isBelow ? (isColumn ? 3.2f : 2.0f) : (stabBuf[s] > stabBuf[u] ? 0.85f : 0.0f);
+                        totalShare += share;
+                    }
+
+                    if (totalShare > 1e-4f)
+                    {
+                        for (int s = 0; s < count; s++)
+                        {
+                            if (s == u || nodes[s].IsBroken || nodes[s].IsFalling || stabBuf[s] <= 0.01f) continue;
+                            if (centerBuf[s].Y > centerBuf[u].Y + 0.12f) continue;
+                            if (!DoAabbsTouch(minBuf[u], maxBuf[u], minBuf[s], maxBuf[s], JointOverlapToleranceMeters)) continue;
+
+                            bool isBelow = centerBuf[s].Y < centerBuf[u].Y - 0.15f;
+                            bool isColumn = SotfStructuralBuildMechanics.IsDedicatedColumnOrFoundation(nodes[s].Kind);
+                            float share = isBelow ? (isColumn ? 3.2f : 2.0f) : (stabBuf[s] > stabBuf[u] ? 0.85f : 0.0f);
+                            if (share > 0.0f)
+                            {
+                                axialLoadBuf[s] += weightToTransfer * (share / totalShare);
+                            }
+                        }
+                    }
+                }
+
+                // Basinc kapasitesi asilan (AccumulatedAxialLoadKn > CompressionCapacityKn) alt kolon/duvarlar ezilerek coker!
+                for (int i = 0; i < count; i++)
+                {
+                    if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
+                    nodes[i].AccumulatedAxialLoadKn = axialLoadBuf[i];
+                    nodes[i].CompressionCapacityKn = compCapBuf[i];
+
+                    float util = axialLoadBuf[i] / MathF.Max(1.0f, compCapBuf[i]);
+                    if (util > 1.00f)
+                    {
+                        stabBuf[i] = 0.0f;
+                    }
+                    else if (util > 0.72f)
+                    {
+                        float overloadPenalty = ((util - 0.72f) / 0.28f) * 0.65f;
+                        stabBuf[i] = MathF.Max(0.0f, stabBuf[i] - overloadPenalty);
+                    }
+                }
+
+                // 3) Stabilitesi < 0.12f (veya kopuk/ezilmis = 0.0f) olan parcalari koparip SOTF 3B tork ile dusur!
                 for (int i = 0; i < count; i++)
                 {
                     if (nodes[i].IsBroken || nodes[i].IsFalling) continue;
