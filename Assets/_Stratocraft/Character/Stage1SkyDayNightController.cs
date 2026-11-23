@@ -23,6 +23,12 @@ namespace Stratocraft.Character
         private static readonly int GroundColorId = Shader.PropertyToID("_GroundColor");
         private static readonly int ExposureId = Shader.PropertyToID("_Exposure");
         private static readonly int NightDimId = Shader.PropertyToID("_StratoNightDim01");
+        private static readonly int HorizonTintId = Shader.PropertyToID("_HorizonTint");
+        private static readonly int ZenithTintId = Shader.PropertyToID("_ZenithTint");
+        private static readonly int BiomeSkyTintId = Shader.PropertyToID("_BiomeSkyTint");
+        private static readonly int NightFactorId = Shader.PropertyToID("_NightFactor");
+        private static readonly int CloudOvercastId = Shader.PropertyToID("_CloudOvercast");
+        private static readonly int AuroraStrengthId = Shader.PropertyToID("_AuroraStrength");
 
         private static readonly Color DayAmbientSky = new(0.54f, 0.68f, 0.88f);
         private static readonly Color DayAmbientEquator = new(0.40f, 0.44f, 0.50f);
@@ -43,6 +49,9 @@ namespace Stratocraft.Character
         private Material? _skyMaterial;
         private Material? _originalSkybox;
         private bool _skyMaterialFailed;
+        private bool _isSmoothCustomSky;
+        private bool _hasCapturedBaseFogDensity;
+        private float _baseFogDensity = 0.0022f;
 
         public float DayFactor01 { get; private set; } = 1.0f;
         public bool IsMoonLit { get; private set; }
@@ -68,13 +77,16 @@ namespace Stratocraft.Character
             float cloudCover01,
             float storm01,
             float lightningFlash01,
-            bool allowFogColorWrite)
+            bool allowFogColorWrite,
+            BiomeVisualProfile? biomeProfile = null,
+            float cloudImmersion01 = 0.0f)
         {
             float sunY = ephem.SunDirY;
             float day = ComputeDayFactor01(sunY);
             float twilight = ComputeTwilightFactor01(sunY);
             float cloud = Mathf.Clamp01(cloudCover01);
             float storm = Mathf.Clamp01(storm01);
+            float immersion = Mathf.Clamp01(cloudImmersion01);
             DayFactor01 = day;
 
             // 1) Yonlu isik: Gunes (ufkun ustu) / Ay (ufkun alti). Gecis anindaki siddet ~0 oldugu icin pop olmaz.
@@ -138,18 +150,57 @@ namespace Stratocraft.Character
                 _skyMaterial.SetFloat(SunSizeId, IsMoonLit ? 0.030f : Mathf.Lerp(0.045f, 0.020f, cloud));
                 _skyMaterial.SetFloat(SunSizeConvergenceId, IsMoonLit ? 9.0f : 5.0f);
 
+                if (_isSmoothCustomSky)
+                {
+                    Color dayZenith = new Color(0.18f, 0.44f, 0.84f, 1.0f);
+                    Color nightZenith = new Color(0.025f, 0.040f, 0.095f, 1.0f);
+                    Color horizonBase = Color.Lerp(new Color(0.05f, 0.065f, 0.13f, 1.0f), new Color(0.76f, 0.86f, 0.96f, 1.0f), day);
+                    horizonBase = Color.Lerp(horizonBase, new Color(rayleighTint.R, rayleighTint.G, rayleighTint.B, 1.0f), twilight * 0.62f * Mathf.Max(day, 0.35f));
+
+                    _skyMaterial.SetColor(ZenithTintId, Color.Lerp(nightZenith, dayZenith, day));
+                    _skyMaterial.SetColor(HorizonTintId, horizonBase);
+                    _skyMaterial.SetFloat(NightFactorId, 1.0f - day);
+                    _skyMaterial.SetFloat(CloudOvercastId, Mathf.Clamp01(cloud * 0.72f + storm * 0.45f));
+
+                    if (biomeProfile.HasValue)
+                    {
+                        BiomeVisualProfile bp = biomeProfile.Value;
+                        _skyMaterial.SetColor(BiomeSkyTintId, bp.FogAndSkyTint.ToUnityColor(day * 0.85f));
+                        float aurora = (bp.RegionId == BiomePaletteRegionId.SunlitGlacialPeaks ||
+                                        bp.RegionId == BiomePaletteRegionId.ObsidianVoidCoast) ? 0.90f : 0.0f;
+                        _skyMaterial.SetFloat(AuroraStrengthId, aurora);
+                    }
+                    else
+                    {
+                        _skyMaterial.SetColor(BiomeSkyTintId, new Color(0.54f, 0.82f, 0.92f, 0.0f));
+                        _skyMaterial.SetFloat(AuroraStrengthId, 0.0f);
+                    }
+                }
+
                 if (cam != null && cam.clearFlags != CameraClearFlags.Skybox)
                 {
                     cam.clearFlags = CameraClearFlags.Skybox;
                 }
             }
 
-            // 3) Trilight ortam isigi
+            // 3) Trilight ortam isigi + PT-10 biyom renkli golge harmanlamasi
             Color ambSky = Color.Lerp(NightAmbientSky, DayAmbientSky, day);
             ambSky = Color.Lerp(ambSky, SunsetAmbientSky, twilight * 0.45f * day);
             ambSky = Color.Lerp(ambSky, OvercastAmbientSky * Mathf.Lerp(0.18f, 1.0f, day), cloud * 0.55f);
             Color ambEq = Color.Lerp(NightAmbientEquator, DayAmbientEquator, day);
             Color ambGround = Color.Lerp(NightAmbientGround, DayAmbientGround, day);
+
+            if (biomeProfile.HasValue)
+            {
+                BiomeVisualProfile bp = biomeProfile.Value;
+                Color shadowCol = bp.ColoredShadowTint.ToUnityColor(1.0f);
+                Color fogSkyCol = bp.FogAndSkyTint.ToUnityColor(1.0f);
+                float dayBlend = Mathf.Lerp(0.22f, 0.55f, day);
+                ambSky = Color.Lerp(ambSky, fogSkyCol * Mathf.Lerp(0.24f, 0.82f, day), dayBlend * 0.55f);
+                ambEq = Color.Lerp(ambEq, shadowCol * Mathf.Lerp(0.32f, 0.95f, day), dayBlend * 0.65f);
+                ambGround = Color.Lerp(ambGround, shadowCol * Mathf.Lerp(0.18f, 0.58f, day), dayBlend * 0.75f);
+            }
+
             float stormAmbientDim = 1.0f - 0.30f * storm;
 
             if (RenderSettings.ambientMode != AmbientMode.Trilight)
@@ -162,13 +213,39 @@ namespace Stratocraft.Character
             // Uber shader'daki sabit yari-kure ortam tabanini gece/firtinada karart
             Shader.SetGlobalFloat(NightDimId, Mathf.Clamp01((1.0f - day) + storm * 0.25f * day));
 
-            // 4) Sis rengi (su altindayken UnderwaterCameraEffect yonetir)
+            // 4) Sis rengi + PT-10 Biyom sis harmani + PT-09 Bulut ici yumusak sis hissiyati
             if (allowFogColorWrite)
             {
+                if (!_hasCapturedBaseFogDensity)
+                {
+                    _baseFogDensity = RenderSettings.fogDensity > 0.0001f ? RenderSettings.fogDensity : 0.0022f;
+                    _hasCapturedBaseFogDensity = true;
+                }
+
                 Color fog = Color.Lerp(NightFogColor, DayFogColor, day);
+                if (biomeProfile.HasValue)
+                {
+                    Color biomeFog = biomeProfile.Value.FogAndSkyTint.ToUnityColor(1.0f) * Mathf.Lerp(0.16f, 0.94f, day);
+                    fog = Color.Lerp(fog, biomeFog, 0.48f);
+                }
                 fog = Color.Lerp(fog, SunsetFogColor, twilight * 0.55f * Mathf.Max(day, 0.35f));
                 fog = Color.Lerp(fog, OvercastFogColor * Mathf.Lerp(0.15f, 1.0f, day), cloud * 0.6f);
                 fog *= 1.0f - 0.25f * storm;
+
+                // PT-09: Bulut katmaninin icine ucunca yumusak aydinlik bulut sisi; ustune cikinca kristal berrak gokyuzu!
+                if (immersion > 0.005f)
+                {
+                    Color cloudMistDay = Color.Lerp(new Color(0.93f, 0.96f, 0.99f, 1.0f), new Color(0.58f, 0.63f, 0.70f, 1.0f), storm * 0.75f);
+                    Color cloudMistNight = new Color(0.12f, 0.15f, 0.22f, 1.0f);
+                    Color cloudMist = Color.Lerp(cloudMistNight, cloudMistDay, day);
+                    fog = Color.Lerp(fog, cloudMist, immersion * 0.88f);
+                    RenderSettings.fogDensity = Mathf.Lerp(_baseFogDensity, 0.0185f, immersion);
+                }
+                else
+                {
+                    RenderSettings.fogDensity = _baseFogDensity;
+                }
+
                 fog.a = 1.0f;
                 RenderSettings.fogColor = fog;
                 if (cam != null)
@@ -184,6 +261,20 @@ namespace Stratocraft.Character
 
             Material? source = RenderSettings.skybox;
             _originalSkybox = source;
+
+            // PT-09: Kare-kare / 8-bit banding artefaktini kokunden gideren per-pixel IGN-dithered ozel gokyuzu shader'i
+            Shader? smoothShader = Shader.Find("Stratocraft/SmoothProceduralSky");
+            if (smoothShader != null)
+            {
+                _skyMaterial = new Material(smoothShader)
+                {
+                    name = "StratocraftSmoothSky_Runtime",
+                    hideFlags = HideFlags.DontSave
+                };
+                _isSmoothCustomSky = true;
+                return;
+            }
+
             Shader? shader = source != null && source.shader != null && source.shader.name == "Skybox/Procedural"
                 ? source.shader
                 : Shader.Find("Skybox/Procedural");
@@ -191,7 +282,7 @@ namespace Stratocraft.Character
             if (shader == null)
             {
                 _skyMaterialFailed = true;
-                Debug.LogWarning("[Stratocraft] Skybox/Procedural shader bulunamadi; gokyuzu duz renkte kalacak.");
+                Debug.LogWarning("[Stratocraft] Skybox shader bulunamadi; gokyuzu duz renkte kalacak.");
                 return;
             }
 
@@ -203,11 +294,16 @@ namespace Stratocraft.Character
             _skyMaterial.EnableKeyword("_SUNDISK_HIGH_QUALITY");
             _skyMaterial.DisableKeyword("_SUNDISK_NONE");
             _skyMaterial.DisableKeyword("_SUNDISK_SIMPLE");
+            _isSmoothCustomSky = false;
         }
 
         public void Dispose()
         {
             Shader.SetGlobalFloat(NightDimId, 0.0f);
+            if (_hasCapturedBaseFogDensity)
+            {
+                RenderSettings.fogDensity = _baseFogDensity;
+            }
             if (_skyMaterial != null)
             {
                 if (RenderSettings.skybox == _skyMaterial)

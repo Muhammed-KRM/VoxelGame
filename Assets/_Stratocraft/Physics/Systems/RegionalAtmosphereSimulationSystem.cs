@@ -43,6 +43,7 @@ namespace Stratocraft.Physics.Systems
         private float[] _biomeTempOffsetCelsius = new float[TotalCells];
         private float[] _biomeTempOffsetBack = new float[TotalCells];
         private readonly float[] _seaLevelPressureAnomHpa = new float[TotalCells];
+        private readonly float[] _evaporationRateMmPerHour = new float[TotalCells];
         private AtmosphereTerrainSamplerDelegate? _terrainSampler;
         private float _lastBaseSynopticLandTempC = 17.5f;
 
@@ -781,23 +782,48 @@ namespace Stratocraft.Physics.Systems
 
                     float nextAirTempC = ClampFinite(parcelAirTemp + (alphaAirTemp * (eqLocalAirT - parcelAirTemp)), -60.0f, 60.0f);
 
-                    // Dalton acik su / okyanus buharlasmasi (La Nina Te < 0 iken denizel nem artar, El Nino Te > 0 iken azalir)
+                    // Dalton acik su / okyanus buharlasmasi + kara bitki-toprak evapotranspirasyonu
+                    // (La Nina Te < 0 iken denizel nem artar, El Nino Te > 0 iken sicak ve kurak egilim artar)
                     float windSpeed = MathF.Sqrt((u * u) + (v * v));
                     float ea = advVaporHpa;
                     float qc = advCloudKgM2;
+                    float evapAddedHpa = 0.0f;
+
+                    float esSurf = ComputeTetensSaturationVaporHpa(cur.SurfaceTempCelsius);
+                    float ensoMoistureMod = Math.Clamp(1.0f - (0.085f * ensoTe), 0.68f, 1.28f);
 
                     if (sea > 0.001f)
                     {
-                        float esSurf = ComputeTetensSaturationVaporHpa(cur.SurfaceTempCelsius);
-                        float ensoMoistureMod = Math.Clamp(1.0f - (0.065f * ensoTe), 0.72f, 1.25f);
                         float marineTargetEa = Math.Min(esSurf * 0.96f, esSurf * 0.86f * ensoMoistureMod);
                         if (marineTargetEa > ea)
                         {
                             float evapArg = dt * sea * (1.0f + (0.20f * windSpeed)) * (1.0f / 420.0f);
                             float alphaEvap = FastOneMinusExpNeg(evapArg);
-                            ea += alphaEvap * (marineTargetEa - ea);
+                            float dEa = alphaEvap * (marineTargetEa - ea);
+                            ea += dEa;
+                            evapAddedHpa += dEa;
                         }
                     }
+
+                    // PT-09: Kara yuzeyinde gunes isinimi ve nemli toprak/orman uzerinden fiziksel evapotranspirasyon
+                    if (sea < 0.999f && clearSkyWm2 > 25.0f && cur.SurfaceTempCelsius > 1.0f && wOrographic >= -0.06f)
+                    {
+                        float landFrac = 1.0f - sea;
+                        float solarFactor01 = Math.Clamp(clearSkyWm2 / 850.0f, 0.0f, 1.0f);
+                        // Albedo dusukse (orman/toprak) daha nemli, yuksekse (col/buz) daha kuru
+                        float vegWetness01 = Math.Clamp(1.18f - (_surfaceAlbedo01[idx] * 2.2f), 0.08f, 0.78f);
+                        float landTargetEa = Math.Min(esSurf * 0.78f, esSurf * (0.48f + 0.24f * vegWetness01) * ensoMoistureMod);
+                        if (landTargetEa > ea)
+                        {
+                            float evapArg = dt * landFrac * solarFactor01 * vegWetness01 * (1.0f + (0.12f * windSpeed)) * (1.0f / 2600.0f);
+                            float alphaLandEvap = FastOneMinusExpNeg(evapArg);
+                            float dEa = alphaLandEvap * (landTargetEa - ea);
+                            ea += dEa;
+                            evapAddedHpa += dEa;
+                        }
+                    }
+
+                    _evaporationRateMmPerHour[idx] = ClampFinite((evapAddedHpa * VaporKgPerM2PerHpa / MathF.Max(0.05f, dt)) * 3600.0f, 0.0f, 25.0f);
 
                     // Birlesik fiziksel dikey yukselme hizi: Orografi + Termal Konveksiyon + Alcak Basinc Yakinsamasi
                     float dUdx = (_cellsFront[(cz * GridSideCells) + xNext].WindVelX - _cellsFront[(cz * GridSideCells) + xPrev].WindVelX) * invSpanX;
@@ -923,6 +949,49 @@ namespace Stratocraft.Physics.Systems
             }
 
             (_cellsFront, _cellsBack) = (_cellsBack, _cellsFront);
+        }
+
+        /// <summary>
+        /// PT-09: Aktif ENSO sicak/soguk yil fazini Turkce etiket olarak dondurur (0 B GC sabit string).
+        /// </summary>
+        public static string GetEnsoPhaseLabelTurkish(float teAnomalyK)
+        {
+            if (teAnomalyK >= 0.50f) return "El Nino (Sicak/Kurak)";
+            if (teAnomalyK <= -0.50f) return "La Nina (Serin/Yagisli)";
+            return "Notr";
+        }
+
+        /// <summary>
+        /// PT-09: Verilen dunya (X, Z) konumundaki son fiziksel buharlasma hizini (mm/saat) dondurur.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float SampleEvaporationRateMmPerHourAtWorldXZ(float worldX, float worldZ)
+        {
+            WorldToCellCoords(worldX, worldZ, out int cx, out int cz);
+            return _evaporationRateMmPerHour[(cz * GridSideCells) + cx];
+        }
+
+        /// <summary>
+        /// PT-09: Buharlasma -> Nem -> Basinc -> Bulut Ortusu -> Yagis ve ENSO dongusunun tek bakista
+        /// HUD ve birim test dogrulamasi icin 0-GC ozetini dondurur.
+        /// </summary>
+        public AtmosphereCycleTelemetry SampleCycleTelemetryAtWorldXZ(float worldX, float worldZ)
+        {
+            AtmosphereCellState cell = SampleBilinearAtWorldXZ(worldX, worldZ);
+            float evapMmHr = SampleEvaporationRateMmPerHourAtWorldXZ(worldX, worldZ);
+            float cloudCover01 = Math.Clamp(cell.CloudWaterKgPerM2 / 1.6f, 0.0f, 1.0f);
+            return new AtmosphereCycleTelemetry(
+                evapMmHr,
+                cell.RelativeHumidity01,
+                cell.DewPointCelsius,
+                cell.StationPressureHpa,
+                cell.CloudWaterKgPerM2,
+                cloudCover01,
+                cell.SurfacePrecipMmPerHour,
+                _ensoState.TeAnomalyK,
+                cell.CloudBaseWorldY,
+                cell.CloudTopWorldY,
+                cell.ActiveKind);
         }
 
         private void SampleAdvectedFields(
@@ -1182,6 +1251,52 @@ namespace Stratocraft.Physics.Systems
             }
 
             return Math.Clamp(value, min, max);
+        }
+    }
+
+    /// <summary>
+    /// PT-09: Buharlasma -> Nem -> Basinc -> Bulut Ortusu -> Yagis &amp; ENSO ozet telemetrisi (0-GC).
+    /// </summary>
+    public readonly struct AtmosphereCycleTelemetry
+    {
+        public readonly float EvaporationMmPerHour;
+        public readonly float RelativeHumidity01;
+        public readonly float DewPointCelsius;
+        public readonly float StationPressureHpa;
+        public readonly float CloudWaterKgPerM2;
+        public readonly float CloudCover01;
+        public readonly float SurfacePrecipMmPerHour;
+        public readonly float EnsoTeAnomalyK;
+        public readonly ushort CloudBaseWorldY;
+        public readonly ushort CloudTopWorldY;
+        public readonly PrecipitationKind ActiveKind;
+
+        public string EnsoPhaseLabel => RegionalAtmosphereSimulationSystem.GetEnsoPhaseLabelTurkish(EnsoTeAnomalyK);
+
+        public AtmosphereCycleTelemetry(
+            float evaporationMmPerHour,
+            float relativeHumidity01,
+            float dewPointCelsius,
+            float stationPressureHpa,
+            float cloudWaterKgPerM2,
+            float cloudCover01,
+            float surfacePrecipMmPerHour,
+            float ensoTeAnomalyK,
+            ushort cloudBaseWorldY,
+            ushort cloudTopWorldY,
+            PrecipitationKind activeKind)
+        {
+            EvaporationMmPerHour = evaporationMmPerHour;
+            RelativeHumidity01 = relativeHumidity01;
+            DewPointCelsius = dewPointCelsius;
+            StationPressureHpa = stationPressureHpa;
+            CloudWaterKgPerM2 = cloudWaterKgPerM2;
+            CloudCover01 = cloudCover01;
+            SurfacePrecipMmPerHour = surfacePrecipMmPerHour;
+            EnsoTeAnomalyK = ensoTeAnomalyK;
+            CloudBaseWorldY = cloudBaseWorldY;
+            CloudTopWorldY = cloudTopWorldY;
+            ActiveKind = activeKind;
         }
     }
 }

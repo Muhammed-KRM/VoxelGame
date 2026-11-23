@@ -89,8 +89,14 @@ Shader "Stratocraft/ProceduralClouds"
             };
 
             // ------------------------------------------------------------------
-            // Ucuz ALU gurultusu
+            // PT-09: Puruzsuz, 0-izgara, 0-kareleme (C2 quintic + dondurulmus FBM + IGN dithering)
             // ------------------------------------------------------------------
+            float InterleavedGradientNoise(float2 screenPx)
+            {
+                float3 magic = float3(0.06711056, 0.00583715, 52.9829189);
+                return frac(magic.z * frac(dot(screenPx, magic.xy)));
+            }
+
             float Hash31(float3 p)
             {
                 p = frac(p * float3(443.8975, 397.2973, 491.1871));
@@ -102,7 +108,8 @@ Shader "Stratocraft/ProceduralClouds"
             {
                 float3 i = floor(p);
                 float3 f = frac(p);
-                float3 u = f * f * (3.0 - 2.0 * f);
+                // C2 surekli besinci derece (quintic) Hermite -> eksen hizali kare/kose izlerini %100 giderir
+                float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
 
                 float n000 = Hash31(i);
                 float n100 = Hash31(i + float3(1, 0, 0));
@@ -119,11 +126,25 @@ Shader "Stratocraft/ProceduralClouds"
                     u.z);
             }
 
+            float3 RotateOctave(float3 p)
+            {
+                // Eksen hizali izgara desenlerini tamamen kiran ortonormal 3B oktav donusu
+                const float3x3 m = float3x3(
+                     0.00,  0.80,  0.60,
+                    -0.80,  0.36, -0.48,
+                    -0.60, -0.48,  0.64);
+                return mul(m, p);
+            }
+
             float CloudFbm(float3 p)
             {
-                float v = ValueNoise3D(p) * 0.56;
-                v += ValueNoise3D(p * 2.13 + 17.3) * 0.28;
-                v += ValueNoise3D(p * 4.71 + 41.7) * 0.16;
+                float v = ValueNoise3D(p) * 0.52;
+                p = RotateOctave(p * 2.04) + float3(17.3, 9.1, 23.7);
+                v += ValueNoise3D(p) * 0.27;
+                p = RotateOctave(p * 2.08) + float3(41.7, 13.4, 7.9);
+                v += ValueNoise3D(p) * 0.14;
+                p = RotateOctave(p * 2.11) + float3(11.2, 29.5, 37.1);
+                v += ValueNoise3D(p) * 0.07;
                 return v;
             }
 
@@ -137,21 +158,41 @@ Shader "Stratocraft/ProceduralClouds"
 
             float SampleWaterGrid(float2 xz)
             {
-                float2 g = (xz - _CloudGridOrigin.xy) / _CloudGridOrigin.z - 0.5;
+                // Organik alan carpitmasi + C2 quintic enterpolasyon + AOI sinir disi yumusak ufuk harmani (0 kare-izgara!)
+                float2 warp = float2(
+                    sin(xz.y * 0.011 + cos(xz.x * 0.009) * 1.3),
+                    cos(xz.x * 0.011 - sin(xz.y * 0.009) * 1.3)) * 24.0;
+                float2 warpedXZ = xz + warp;
+
+                float cellSize = max(_CloudGridOrigin.z, 1.0);
+                float side = max(_CloudGridOrigin.w, 1.0);
+                float2 g = (warpedXZ - _CloudGridOrigin.xy) / cellSize - 0.5;
                 int2 i0 = (int2)floor(g);
-                float2 t = saturate(g - (float2)i0);
+                float2 f = saturate(g - (float2)i0);
+                float2 t = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
                 float a = _CloudWater81[GridIndex(i0.x, i0.y)];
                 float b = _CloudWater81[GridIndex(i0.x + 1, i0.y)];
                 float c = _CloudWater81[GridIndex(i0.x, i0.y + 1)];
                 float d = _CloudWater81[GridIndex(i0.x + 1, i0.y + 1)];
-                return lerp(lerp(a, b, t.x), lerp(c, d, t.x), t.y);
+                float gridWater = lerp(lerp(a, b, t.x), lerp(c, d, t.x), t.y);
+
+                // 9x9 AOI penceresinin disinda kenar hucrelerini serit gibi uzatmak yerine kuresel ortalama bulut suyuna yumusak gec
+                float2 gridCenter = _CloudGridOrigin.xy + (0.5 * side * cellSize);
+                float distFromCenter = length(xz - gridCenter);
+                float outerBlend = smoothstep(side * cellSize * 0.36, side * cellSize * 0.56, distFromCenter);
+                float ambientWater = max(_GlobalCloudGridParams.x, _CloudSlabParams.w * 1.2);
+                return lerp(gridWater, ambientWater, outerBlend);
             }
 
             float SamplePrecipGrid(float2 xz)
             {
-                float2 g = (xz - _CloudGridOrigin.xy) / _CloudGridOrigin.z - 0.5;
+                float2 warp = float2(sin(xz.y * 0.013), cos(xz.x * 0.013)) * 12.0;
+                float cellSize = max(_CloudGridOrigin.z, 1.0);
+                float2 g = ((xz + warp) - _CloudGridOrigin.xy) / cellSize - 0.5;
                 int2 i0 = (int2)floor(g);
-                float2 t = saturate(g - (float2)i0);
+                float2 f = saturate(g - (float2)i0);
+                float2 t = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
                 float a = _CloudPrecip81[GridIndex(i0.x, i0.y)];
                 float b = _CloudPrecip81[GridIndex(i0.x + 1, i0.y)];
                 float c = _CloudPrecip81[GridIndex(i0.x, i0.y + 1)];
@@ -226,7 +267,8 @@ Shader "Stratocraft/ProceduralClouds"
                 float blizzard01 = saturate(_GlobalBlizzardFactor01);
                 bool isSnow = (precipKind == 2);
                 bool isHail = (precipKind == 3);
-                float jitter = Hash31(float3(input.positionCS.xy, _Time.y * 13.0));
+                // IGN ekran-uzayi jitter -> bulut raymarch dilimlenmesi / kare-kare banding'i sifirlar
+                float jitter = InterleavedGradientNoise(input.positionCS.xy + frac(_Time.y * 7.0) * 64.0);
 
                 // ==============================================================
                 // YAGIS HACMI (COLOR.r >= 0.5): Yagmur (1), Kar / Tipi (2), Dolu (3)
@@ -295,14 +337,15 @@ Shader "Stratocraft/ProceduralClouds"
                 }
 
                 // ==============================================================
-                // BULUT SLAB HACMI (COLOR.r < 0.5)
+                // BULUT SLAB HACMI (COLOR.r < 0.5) — PT-09: 20 adim, yumusak ic-bulut ucus hissiyati & ufuk egriligi
                 // ==============================================================
                 float baseY = _CloudSlabParams.x;
-                float topY = max(_CloudSlabParams.y, baseY + 8.0);
+                float topY = max(_CloudSlabParams.y, baseY + 12.0);
                 float thickness = topY - baseY;
+                bool cameraInsideClouds = (tNear <= 0.0);
 
-                tExit = min(tExit, tEnter + 900.0);
-                const int STEPS = 12;
+                tExit = min(tExit, tEnter + 1050.0);
+                const int STEPS = 20;
                 float stepLen = (tExit - tEnter) / STEPS;
                 float transmittance = 1.0;
                 float3 scattered = 0.0;
@@ -317,18 +360,28 @@ Shader "Stratocraft/ProceduralClouds"
                 {
                     float tt = tEnter + stepLen * (i + jitter);
                     float3 p = ro + rd * tt;
-                    float h01 = saturate((p.y - baseY) / thickness);
-                    float heightProfile = smoothstep(0.0, 0.12, h01) * smoothstep(1.0, 0.45, h01);
+                    // Gezegen ufuk egriligi: uzak bulutlar duz kutu kesigi yerine ufka dogal egilir
+                    float2 horizDelta = p.xz - ro.xz;
+                    float horizDistSq = dot(horizDelta, horizDelta);
+                    float curvedY = p.y + (horizDistSq * 0.0000085);
+                    float h01 = saturate((curvedY - baseY) / thickness);
+                    float heightProfile = smoothstep(0.0, 0.16, h01) * smoothstep(1.0, 0.36, h01);
                     float water = SampleWaterGrid(p.xz);
                     float coverage = saturate(water / 1.8);
-                    if (water < 0.06 || heightProfile < 0.01)
+                    if (water < 0.05 || heightProfile < 0.01)
                     {
                         continue;
                     }
 
                     float n = CloudFbm((p - windOffset) * noiseScale);
-                    float threshold = lerp(0.66, 0.34, coverage);
-                    float density = saturate((n - threshold) * 4.0) * heightProfile;
+                    float threshold = lerp(0.64, 0.32, coverage);
+                    float density = saturate((n - threshold) * 3.6) * heightProfile;
+                    if (cameraInsideClouds)
+                    {
+                        // Kamera bulut icine girdiginde sert yakin-duzlem kesigi yerine ipeksi sisli hacim gecisi
+                        float nearSoft = smoothstep(0.0, 12.0, tt);
+                        density = max(density * nearSoft, coverage * heightProfile * 0.22 * nearSoft);
+                    }
                     if (density < 0.002)
                     {
                         continue;
@@ -355,8 +408,8 @@ Shader "Stratocraft/ProceduralClouds"
                 }
 
                 float alphaC = 1.0 - transmittance;
-                // Uzak ufukta sise karis
-                float fade = saturate(1.0 - (tEnter - 1400.0) / 1200.0);
+                // Uzak ufukta puruzsuz sise karis (sert kutu kenarini tamamen gizler)
+                float fade = saturate(1.0 - (tEnter - 950.0) / 1100.0);
                 alphaC *= fade;
                 if (alphaC <= 0.003)
                 {

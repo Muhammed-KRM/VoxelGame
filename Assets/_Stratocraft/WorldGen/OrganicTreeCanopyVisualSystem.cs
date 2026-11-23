@@ -326,7 +326,7 @@ namespace Stratocraft.WorldGen
 
         public static OrganicFloraKind SelectCanopyKindForTree(int biomeId, bool isPine, float crownBaseY)
         {
-            bool snowy = biomeId == 4 || biomeId == 11 || crownBaseY >= 110.0f;
+            bool snowy = biomeId == 4 || biomeId == 11 || crownBaseY >= 168.0f;
             if (snowy)
             {
                 return OrganicFloraKind.SnowPineCanopy;
@@ -349,7 +349,7 @@ namespace Stratocraft.WorldGen
             int worldX = 0,
             int worldZ = 0)
         {
-            if (biomeId == 4 || biomeId == 11 || crownBaseY >= 110.0f)
+            if (biomeId == 4 || biomeId == 11 || crownBaseY >= 168.0f)
             {
                 return OrganicTreeSpeciesKind.SnowPine;
             }
