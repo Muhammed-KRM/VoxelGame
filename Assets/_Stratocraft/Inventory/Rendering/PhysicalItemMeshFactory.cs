@@ -1066,20 +1066,30 @@ namespace Stratocraft.Inventory.Rendering
 
             SysVec3 tipF = new SysVec3((Rand01(ref seed) - 0.5f) * 0.02f, -0.005f, len);
             SysVec3 buttB = new SysVec3(0f, 0f, -len * 0.85f);
-            SysVec3 ridgeTop = new SysVec3((Rand01(ref seed) - 0.5f) * 0.018f, hgt, 0.01f);
-            SysVec3 keelBot = new SysVec3(0f, -hgt * 0.65f, -0.01f);
-            SysVec3 edgeL = new SysVec3(-wid, -0.004f, 0.015f);
-            SysVec3 edgeR = new SysVec3(wid, -0.004f, -0.010f);
+            SysVec3 ridgeBack = new SysVec3((Rand01(ref seed) - 0.5f) * 0.014f, hgt * 0.82f, -len * 0.32f);
+            SysVec3 ridgeFront = new SysVec3((Rand01(ref seed) - 0.5f) * 0.016f, hgt, len * 0.22f);
+            SysVec3 keelBack = new SysVec3(0f, -hgt * 0.58f, -len * 0.30f);
+            SysVec3 keelFront = new SysVec3(0f, -hgt * 0.65f, len * 0.20f);
+            SysVec3 edgeBL = new SysVec3(-wid * 0.84f, -0.003f, -len * 0.28f);
+            SysVec3 edgeFL = new SysVec3(-wid, -0.004f, len * 0.24f);
+            SysVec3 edgeBR = new SysVec3(wid * 0.84f, -0.003f, -len * 0.28f);
+            SysVec3 edgeFR = new SysVec3(wid, -0.004f, len * 0.24f);
 
-            AddTri(buttB, edgeL, ridgeTop, matId, temp, 225, outTris);
-            AddTri(edgeL, tipF, ridgeTop, matId, temp, 235, outTris);
-            AddTri(buttB, ridgeTop, edgeR, matId, temp, 195, outTris);
-            AddTri(ridgeTop, tipF, edgeR, matId, temp, 205, outTris);
+            // Ust konkoidal fasetler
+            AddTri(buttB, edgeBL, ridgeBack, matId, temp, 222, outTris);
+            AddQuad(edgeBL, edgeFL, ridgeFront, ridgeBack, matId, temp, 232, outTris);
+            AddTri(edgeFL, tipF, ridgeFront, matId, temp, 240, outTris);
+            AddTri(buttB, ridgeBack, edgeBR, matId, temp, 194, outTris);
+            AddQuad(ridgeBack, ridgeFront, edgeFR, edgeBR, matId, temp, 204, outTris);
+            AddTri(ridgeFront, tipF, edgeFR, matId, temp, 212, outTris);
 
-            AddTri(buttB, keelBot, edgeL, matId, temp, 145, outTris);
-            AddTri(edgeL, keelBot, tipF, matId, temp, 150, outTris);
-            AddTri(buttB, edgeR, keelBot, matId, temp, 145, outTris);
-            AddTri(keelBot, edgeR, tipF, matId, temp, 150, outTris);
+            // Alt konkoidal fasetler
+            AddTri(buttB, keelBack, edgeBL, matId, temp, 144, outTris);
+            AddQuad(keelBack, keelFront, edgeFL, edgeBL, matId, temp, 150, outTris);
+            AddTri(edgeFL, keelFront, tipF, matId, temp, 156, outTris);
+            AddTri(buttB, edgeBR, keelBack, matId, temp, 142, outTris);
+            AddQuad(edgeBR, edgeFR, keelFront, keelBack, matId, temp, 148, outTris);
+            AddTri(keelFront, edgeFR, tipF, matId, temp, 154, outTris);
         }
 
         private static void EmitQuartzPrismCluster(uint seed, byte matId, byte temp, List<FacetedVoxelTriangle> outTris)

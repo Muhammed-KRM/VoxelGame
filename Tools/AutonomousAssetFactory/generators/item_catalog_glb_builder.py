@@ -1,10 +1,10 @@
-"""Stratocraft Otonom 3B Fabrika — PT-07 Yuksek Detayli 3B Esya, Alet ve Malzeme Katalogu Ureticisi (Blender 4.2).
+"""Stratocraft Otonom 3B Fabrika — PT-07 Yuksek Detayli 3B Esya ve Alet Katalogu Ureticisi (Blender 4.2).
 
 Kullanim (Headless Blender 4.2 ile, 0 gomulu doku, %100 UV-Free COLOR_0 Color32):
-    blender --background --factory-startup --python Tools/AutonomousAssetFactory/generators/item_catalog_glb_builder.py
+    blender --background --python Tools/AutonomousAssetFactory/generators/item_catalog_glb_builder.py
 
 Uretilen 24 Yuksek Detayli 3B Model (Assets/Art/Generated/Items/*.glb + Weapons_Modular/tool_axe_iron.glb):
-    1. item_tool_axe_iron.glb        (+ Weapons_Modular/tool_axe_iron.glb) — Sakalli Celik Oduncu/Savas Baltasi
+    1. item_tool_axe_iron.glb        (+ tool_axe_iron.glb) — Sakalli Celik Oduncu/Savas Baltasi
     2. item_tool_primitive_axe.glb   — Lif Sargili Yontulmus Cakmaktasi Ilkel Balta
     3. item_tool_stone_hammer.glb    — Bogumlu Sapli & Lif Sargili Agir Tas/Demir Cekic
     4. item_tool_primitive_knife.glb — Kemik/Ahsap Kabzali Yontulmus Cakmaktasi Av Bicagi
@@ -36,7 +36,6 @@ import json
 import math
 import shutil
 import struct
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -325,7 +324,8 @@ def _sculpt_tool_axe_iron(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Sakalli Celik Oduncu/Savas Baltasi (0.36 x 0.68 x 0.07m)."""
     # Ergonomik disbudak sap + alt topuz + deri kavrama sargisi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.026, 0.019), 0.0),
             ((0.0, 0.05, 0.0), (0.019, 0.014), 0.0),
@@ -334,85 +334,119 @@ def _sculpt_tool_axe_iron(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.0, 0.54, 0.0), (0.024, 0.018), 0.0),
             ((0.0, 0.68, 0.0), (0.027, 0.020), 0.0),
         ],
-        sides=10, rgba=(MAT_OAK_WOOD, 0, 172, 242),
+        sides=10,
+        rgba=(MAT_OAK_WOOD, 0, 172, 242),
     )
     # Alt ve orta deri kavrama halkalari
     for y_grip in (0.13, 0.16, 0.28, 0.31):
         _add_lofted_tube(
-            bm, layer,
+            bm,
+            layer,
             [((0.0, y_grip, 0.0), (0.023, 0.018), 0.0), ((0.0, y_grip + 0.022, 0.0), (0.023, 0.018), 0.0)],
-            sides=8, rgba=(MAT_LEATHER, 0, 138, 232),
+            sides=8,
+            rgba=(MAT_LEATHER, 0, 138, 232),
         )
     # Celik goz bilezigi (eye collar) + arka denge cekici (poll)
-    _add_chamfered_box(bm, layer, (-0.015, 0.565, 0.0), (0.095, 0.095, 0.052), (MAT_STEEL, 0, 228, 246), bevel_amt=0.18)
-    _add_chamfered_box(bm, layer, (-0.072, 0.565, 0.0), (0.048, 0.074, 0.044), (MAT_STEEL, 0, 215, 240), bevel_amt=0.20)
+    _add_chamfered_box(
+        bm, layer, (-0.015, 0.565, 0.0), (0.095, 0.095, 0.052), (MAT_STEEL, 0, 228, 246), bevel_amt=0.18
+    )
+    _add_chamfered_box(
+        bm, layer, (-0.072, 0.565, 0.0), (0.048, 0.074, 0.044), (MAT_STEEL, 0, 215, 240), bevel_amt=0.20
+    )
     # Genisleyen sakalli (bearded) balta yanagi
-    _add_chamfered_box(bm, layer, (0.075, 0.555, 0.0), (0.130, 0.145, 0.030), (MAT_STEEL, 0, 238, 250), bevel_amt=0.16)
-    _add_chamfered_box(bm, layer, (0.115, 0.495, 0.0), (0.085, 0.095, 0.022), (MAT_STEEL, 0, 242, 250), bevel_amt=0.16)
+    _add_chamfered_box(
+        bm, layer, (0.075, 0.555, 0.0), (0.130, 0.145, 0.030), (MAT_STEEL, 0, 238, 250), bevel_amt=0.16
+    )
+    _add_chamfered_box(
+        bm, layer, (0.115, 0.495, 0.0), (0.085, 0.095, 0.022), (MAT_STEEL, 0, 242, 250), bevel_amt=0.16
+    )
     # Jilet keskinliginde parlak kavisli celik agiz (bevel edge - yanakla tam birlesik!)
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.128, 0.640, 0.0), 0.014, 0.015),
             ((0.152, 0.585, 0.0), 0.016, 0.016),
             ((0.156, 0.515, 0.0), 0.016, 0.016),
             ((0.138, 0.448, 0.0), 0.012, 0.014),
         ],
-        sides=6, rgba=(MAT_DAMASCUS_STEEL, 0, 254, 255),
+        sides=6,
+        rgba=(MAT_DAMASCUS_STEEL, 0, 254, 255),
     )
 
 
 def _sculpt_tool_primitive_axe(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Lif Sargili Yontulmus Cakmaktasi Ilkel Balta (0.30 x 0.60 x 0.07m)."""
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.00, 0.00, 0.00), 0.024, 0.020),
             ((0.01, 0.18, 0.00), 0.021, 0.019),
             ((-0.01, 0.38, 0.00), 0.023, 0.020),
             ((0.00, 0.60, 0.00), 0.026, 0.022),
         ],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 162, 238),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 162, 238),
     )
     # Capraz bitki lifi sargi dugumu
     for pitch in (-0.38, 0.38):
         _add_chamfered_box(
-            bm, layer, (0.01, 0.49, 0.0), (0.072, 0.078, 0.064),
-            (MAT_GLOWING_MOSS, 0, 148, 228), bevel_amt=0.22, rot_euler=(0.0, 0.0, pitch),
+            bm,
+            layer,
+            (0.01, 0.49, 0.0),
+            (0.072, 0.078, 0.064),
+            (MAT_GLOWING_MOSS, 0, 148, 228),
+            bevel_amt=0.22,
+            rot_euler=(0.0, 0.0, pitch),
         )
     # Yontulmus fasetli cakmaktasi balta basi
-    _add_chamfered_box(bm, layer, (0.065, 0.49, 0.0), (0.135, 0.105, 0.038), (MAT_BASALT, 0, 225, 245), bevel_amt=0.24)
+    _add_chamfered_box(
+        bm, layer, (0.065, 0.49, 0.0), (0.135, 0.105, 0.038), (MAT_BASALT, 0, 225, 245), bevel_amt=0.24
+    )
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.125, 0.555, 0.0), 0.007, 0.012),
             ((0.145, 0.490, 0.0), 0.009, 0.015),
             ((0.120, 0.425, 0.0), 0.007, 0.012),
         ],
-        sides=5, rgba=(MAT_NATURAL_OBSIDIAN, 0, 248, 252),
+        sides=5,
+        rgba=(MAT_NATURAL_OBSIDIAN, 0, 248, 252),
     )
 
 
 def _sculpt_tool_stone_hammer(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Bogumlu Sapli & Lif Sargili Agir Tas/Demir Cekic (0.24 x 0.56 x 0.12m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.025, 0.021), 0.0),
             ((0.0, 0.08, 0.0), (0.019, 0.017), 0.0),
             ((0.0, 0.38, 0.0), (0.022, 0.019), 0.0),
             ((0.0, 0.56, 0.0), (0.026, 0.022), 0.0),
         ],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 168, 240),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 168, 240),
     )
     # Capraz lif/deri baglama kusagi
-    _add_chamfered_box(bm, layer, (0.0, 0.46, 0.0), (0.075, 0.085, 0.075), (MAT_GLOWING_MOSS, 0, 152, 232), bevel_amt=0.22)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.46, 0.0), (0.075, 0.085, 0.075), (MAT_GLOWING_MOSS, 0, 152, 232), bevel_amt=0.22
+    )
     # Sekizgen pahli agir tas tokmak basi + iki yan vurus yuzeyi
-    _add_chamfered_box(bm, layer, (0.0, 0.46, 0.0), (0.20, 0.105, 0.105), (MAT_COBBLESTONE, 0, 210, 244), bevel_amt=0.22)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.46, 0.0), (0.20, 0.105, 0.105), (MAT_COBBLESTONE, 0, 210, 244), bevel_amt=0.22
+    )
     for sign in (-1.0, 1.0):
         _add_chamfered_box(
-            bm, layer, (sign * 0.105, 0.46, 0.0), (0.032, 0.088, 0.088),
-            (MAT_STONE, 0, 232, 250), bevel_amt=0.20,
+            bm,
+            layer,
+            (sign * 0.105, 0.46, 0.0),
+            (0.032, 0.088, 0.088),
+            (MAT_STONE, 0, 232, 250),
+            bevel_amt=0.20,
         )
 
 
@@ -420,31 +454,37 @@ def _sculpt_tool_primitive_knife(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Kemik/Ahsap Kabzali Yontulmus Cakmaktasi Av Bicagi (0.08 x 0.36 x 0.04m)."""
     # Ergonomik kemik/ahsap kabza (y = 0.00 .. 0.14)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.018, 0.014), 0.0),
             ((0.0, 0.03, 0.0), (0.015, 0.012), 0.0),
             ((0.0, 0.09, 0.0), (0.018, 0.014), 0.0),
             ((0.0, 0.14, 0.0), (0.020, 0.015), 0.0),
         ],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 168, 240),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 168, 240),
     )
     # Bitki lifi bogum bilezigi (y = 0.125 .. 0.165)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.125, 0.0), (0.024, 0.019), 0.0), ((0.0, 0.165, 0.0), (0.023, 0.018), 0.0)],
-        sides=8, rgba=(MAT_GLOWING_MOSS, 0, 150, 232),
+        sides=8,
+        rgba=(MAT_GLOWING_MOSS, 0, 150, 232),
     )
     # Yontulmus fasetli cakmaktasi/obsidyen namlu (y = 0.155 .. 0.360)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.000, 0.155, 0.0), (0.026, 0.008), 0.0),
             ((0.004, 0.235, 0.0), (0.028, 0.007), 0.0),
             ((0.002, 0.305, 0.0), (0.019, 0.005), 0.0),
             ((-0.004, 0.360, 0.0), (0.002, 0.002), 0.0),
         ],
-        sides=6, rgba=(MAT_BASALT, 0, 238, 250),
+        sides=6,
+        rgba=(MAT_BASALT, 0, 238, 250),
     )
 
 
@@ -452,63 +492,77 @@ def _sculpt_tool_micro_chisel(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Pirinc Yuksuklu & Jilet Pahli 4x4x4 Mimari Mikro-Keski (0.06 x 0.30 x 0.06m)."""
     # Ust darbe halkasi + sekizgen demiragaci sap + alt pirinc yuksuk
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.018, 0.018), 0.0),
             ((0.0, 0.02, 0.0), (0.022, 0.022), 0.0),
             ((0.0, 0.11, 0.0), (0.024, 0.024), 0.0),
             ((0.0, 0.15, 0.0), (0.018, 0.018), 0.0),
         ],
-        sides=8, rgba=(MAT_IRONWOOD, 0, 175, 242),
+        sides=8,
+        rgba=(MAT_IRONWOOD, 0, 175, 242),
     )
     for y_ring in (0.00, 0.135):
         _add_lofted_tube(
-            bm, layer,
+            bm,
+            layer,
             [((0.0, y_ring, 0.0), (0.023, 0.023), 0.0), ((0.0, y_ring + 0.020, 0.0), (0.023, 0.023), 0.0)],
-            sides=8, rgba=(MAT_BRONZE, 0, 230, 248),
+            sides=8,
+            rgba=(MAT_BRONZE, 0, 230, 248),
         )
     # Celik keski boynu ve genisleyen pahli yontma agzi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.155, 0.0), (0.012, 0.012), 0.0),
             ((0.0, 0.235, 0.0), (0.016, 0.008), 0.0),
             ((0.0, 0.285, 0.0), (0.026, 0.005), 0.0),
             ((0.0, 0.300, 0.0), (0.028, 0.0015), 0.0),
         ],
-        sides=6, rgba=(MAT_DAMASCUS_STEEL, 0, 250, 255),
+        sides=6,
+        rgba=(MAT_DAMASCUS_STEEL, 0, 250, 255),
     )
 
 
 def _sculpt_tool_shovel_spade(bm: bmesh.types.BMesh, layer: Any) -> None:
     """T-Kabzali & Perçinli Celik Kurek (0.24 x 0.78 x 0.07m)."""
     # Ust T-kabza
-    _add_chamfered_box(bm, layer, (0.0, 0.025, 0.0), (0.13, 0.036, 0.036), (MAT_OAK_WOOD, 0, 172, 242), bevel_amt=0.22)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.025, 0.0), (0.13, 0.036, 0.036), (MAT_OAK_WOOD, 0, 172, 242), bevel_amt=0.22
+    )
     # Ana ahsap sap + celik bogaz soketi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.03, 0.0), (0.018, 0.018), 0.0),
             ((0.0, 0.46, 0.0), (0.020, 0.020), 0.0),
             ((0.0, 0.56, 0.0), (0.023, 0.022), 0.0),
         ],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 168, 240),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 168, 240),
     )
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.48, 0.0), (0.024, 0.024), 0.0), ((0.0, 0.58, 0.0), (0.026, 0.022), 0.0)],
-        sides=8, rgba=(MAT_STEEL, 0, 225, 246),
+        sides=8,
+        rgba=(MAT_STEEL, 0, 225, 246),
     )
     # Sivri uclu celik kurek kepcesi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.56, 0.00), (0.115, 0.018), 0.0),
             ((0.0, 0.68, 0.01), (0.108, 0.016), 0.0),
             ((0.0, 0.75, 0.00), (0.065, 0.010), 0.0),
             ((0.0, 0.78, 0.00), (0.008, 0.003), 0.0),
         ],
-        sides=6, rgba=(MAT_DAMASCUS_STEEL, 0, 244, 252),
+        sides=6,
+        rgba=(MAT_DAMASCUS_STEEL, 0, 244, 252),
     )
 
 
@@ -516,35 +570,44 @@ def _sculpt_torch_campfire(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Recineli Bez Sargili & T^4 Kor Alevli Mesale / Kamp Atesi (0.16 x 0.48 x 0.16m)."""
     # Budakli demiragaci mesale govdesi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.018, 0.018), 0.0),
             ((0.0, 0.14, 0.0), (0.022, 0.022), 0.0),
             ((0.0, 0.30, 0.0), (0.028, 0.028), 0.0),
             ((0.0, 0.36, 0.0), (0.035, 0.035), 0.0),
         ],
-        sides=8, rgba=(MAT_IRONWOOD, 0, 165, 238),
+        sides=8,
+        rgba=(MAT_IRONWOOD, 0, 165, 238),
     )
     # Demir kafes tutucu halka + recineli bez sargi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.28, 0.0), (0.038, 0.038), 0.0), ((0.0, 0.31, 0.0), (0.042, 0.042), 0.0)],
-        sides=8, rgba=(MAT_STEEL, 0, 228, 246),
+        sides=8,
+        rgba=(MAT_STEEL, 0, 228, 246),
     )
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.31, 0.0), (0.045, 0.045), 0.0), ((0.0, 0.39, 0.0), (0.048, 0.048), 0.0)],
-        sides=8, rgba=(MAT_TACTICAL_CLOTH, 45, 160, 235),
+        sides=8,
+        rgba=(MAT_TACTICAL_CLOTH, 45, 160, 235),
     )
     # T^4 Stefan-Boltzmann Kor + Alev Tac Basligi (G=238 yuksek sicaklik!)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.37, 0.0), (0.052, 0.052), 0.0),
             ((0.0, 0.43, 0.0), (0.038, 0.038), 0.0),
             ((0.0, 0.48, 0.0), (0.006, 0.006), 0.0),
         ],
-        sides=7, rgba=(MAT_MAGMA, 238, 245, 255), twist_rad=0.45,
+        sides=7,
+        rgba=(MAT_MAGMA, 238, 245, 255),
+        twist_rad=0.45,
     )
 
 
@@ -552,7 +615,8 @@ def _sculpt_fluid_flask(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Deri Askili, Pirinc Boyunlu & Mantar Tipali Sivi Matarasi (0.16 x 0.24 x 0.11m)."""
     # Siskin yassi matara govdesi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.048, 0.032), 0.0),
             ((0.0, 0.04, 0.0), (0.075, 0.048), 0.0),
@@ -560,24 +624,31 @@ def _sculpt_fluid_flask(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.0, 0.16, 0.0), (0.055, 0.036), 0.0),
             ((0.0, 0.185, 0.0), (0.024, 0.024), 0.0),
         ],
-        sides=10, rgba=(MAT_ASTRAL_ORE, 0, 225, 246),
+        sides=10,
+        rgba=(MAT_ASTRAL_ORE, 0, 225, 246),
     )
     # Bel deri kusagi + capraz aski kayisi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.065, 0.0), (0.081, 0.053), 0.0), ((0.0, 0.115, 0.0), (0.081, 0.053), 0.0)],
-        sides=10, rgba=(MAT_LEATHER, 0, 152, 236),
+        sides=10,
+        rgba=(MAT_LEATHER, 0, 152, 236),
     )
     # Pirinc boyun bilezigi + mantar tipa
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.182, 0.0), (0.027, 0.027), 0.0), ((0.0, 0.212, 0.0), (0.025, 0.025), 0.0)],
-        sides=8, rgba=(MAT_BRONZE, 0, 235, 250),
+        sides=8,
+        rgba=(MAT_BRONZE, 0, 235, 250),
     )
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.210, 0.0), (0.020, 0.020), 0.0), ((0.0, 0.240, 0.0), (0.023, 0.023), 0.0)],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 165, 240),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 165, 240),
     )
 
 
@@ -585,30 +656,43 @@ def _sculpt_fluid_bucket(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Cift Demir Cemberli & Kavisli Kulplu Ahsap Fici Kova (0.28 x 0.30 x 0.28m)."""
     # Dis fici govdesi (ust kapaksiz, ic sivi gorunur!)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.102, 0.102), 0.0),
             ((0.0, 0.11, 0.0), (0.118, 0.118), 0.0),
             ((0.0, 0.22, 0.0), (0.132, 0.132), 0.0),
         ],
-        sides=10, rgba=(MAT_OAK_WOOD, 0, 172, 242), cap_top=False,
+        sides=10,
+        rgba=(MAT_OAK_WOOD, 0, 172, 242),
+        cap_top=False,
     )
     # Alt ve ust dovme demir cemberler (dis yuzeyden +5mm disa cikintili)
     for y_hoop, r_hoop in ((0.035, 0.115), (0.172, 0.136)):
         _add_lofted_tube(
-            bm, layer,
-            [((0.0, y_hoop, 0.0), (r_hoop, r_hoop), 0.0), ((0.0, y_hoop + 0.024, 0.0), (r_hoop + 0.003, r_hoop + 0.003), 0.0)],
-            sides=10, rgba=(MAT_STEEL, 0, 232, 248), cap_bottom=False, cap_top=False,
+            bm,
+            layer,
+            [
+                ((0.0, y_hoop, 0.0), (r_hoop, r_hoop), 0.0),
+                ((0.0, y_hoop + 0.024, 0.0), (r_hoop + 0.003, r_hoop + 0.003), 0.0),
+            ],
+            sides=10,
+            rgba=(MAT_STEEL, 0, 232, 248),
+            cap_bottom=False,
+            cap_top=False,
         )
     # Ic sivi yuzeyi (yalnizca ust agizda, yan duvarlardan asla tasmaz!)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.185, 0.0), (0.104, 0.104), 0.0), ((0.0, 0.205, 0.0), (0.112, 0.112), 0.0)],
-        sides=10, rgba=(MAT_ASTRAL_ORE, 0, 240, 252),
+        sides=10,
+        rgba=(MAT_ASTRAL_ORE, 0, 240, 252),
     )
     # Kavisli demir tasima kulpu (handle arch)
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((-0.132, 0.21, 0.0), 0.010, 0.010),
             ((-0.110, 0.27, 0.0), 0.009, 0.009),
@@ -616,7 +700,8 @@ def _sculpt_fluid_bucket(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.110, 0.27, 0.0), 0.009, 0.009),
             ((0.132, 0.21, 0.0), 0.010, 0.010),
         ],
-        sides=6, rgba=(MAT_STEEL, 0, 238, 250),
+        sides=6,
+        rgba=(MAT_STEEL, 0, 238, 250),
     )
 
 
@@ -627,16 +712,19 @@ def _sculpt_fluid_cauldron(bm: bmesh.types.BMesh, layer: Any) -> None:
         ang = i * (2.0 * math.pi / 3.0)
         ca, sa = math.cos(ang), math.sin(ang)
         _add_spine_limb(
-            bm, layer,
+            bm,
+            layer,
             [
                 ((ca * 0.11, 0.06, sa * 0.11), 0.024, 0.024),
                 ((ca * 0.14, 0.00, sa * 0.14), 0.016, 0.016),
             ],
-            sides=6, rgba=(MAT_BRONZE, 0, 220, 242),
+            sides=6,
+            rgba=(MAT_BRONZE, 0, 220, 242),
         )
     # Siskin kazan govdesi + disa kivrik agiz (rolled rim)
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.03, 0.0), (0.095, 0.095), 0.0),
             ((0.0, 0.11, 0.0), (0.168, 0.168), 0.0),
@@ -645,25 +733,29 @@ def _sculpt_fluid_cauldron(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.0, 0.285, 0.0), (0.165, 0.165), 0.0),
             ((0.0, 0.300, 0.0), (0.155, 0.155), 0.0),
         ],
-        sides=12, rgba=(MAT_BRONZE, 0, 232, 248),
+        sides=12,
+        rgba=(MAT_BRONZE, 0, 232, 248),
     )
     # Yan tasima kulplari
     for sign in (-1.0, 1.0):
         _add_spine_limb(
-            bm, layer,
+            bm,
+            layer,
             [
                 ((sign * 0.155, 0.24, -0.035), 0.011, 0.011),
                 ((sign * 0.180, 0.21, 0.000), 0.011, 0.011),
                 ((sign * 0.155, 0.24, 0.035), 0.011, 0.011),
             ],
-            sides=6, rgba=(MAT_STEEL, 0, 238, 250),
+            sides=6,
+            rgba=(MAT_STEEL, 0, 238, 250),
         )
 
 
 def _sculpt_flint_stone(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Konkoidal Kirikli & Keskin Sirtli Cakmaktasi Cekirdegi (0.15 x 0.09 x 0.20m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.00, 0.00, -0.085), (0.032, 0.018), 0.15),
             ((0.01, 0.03, -0.035), (0.068, 0.038), 0.05),
@@ -671,37 +763,58 @@ def _sculpt_flint_stone(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.00, 0.04, 0.075), (0.042, 0.024), -0.12),
             ((0.00, 0.02, 0.100), (0.005, 0.004), 0.0),
         ],
-        sides=6, rgba=(MAT_BASALT, 0, 238, 248),
+        sides=6,
+        rgba=(MAT_BASALT, 0, 238, 248),
     )
     # Ust keskin konkoidal sirt faseti
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.00, 0.045, -0.075), 0.014, 0.010),
             ((0.00, 0.082, 0.000), 0.026, 0.018),
             ((0.00, 0.045, 0.085), 0.008, 0.006),
         ],
-        sides=5, rgba=(MAT_NATURAL_OBSIDIAN, 0, 250, 254),
+        sides=5,
+        rgba=(MAT_NATURAL_OBSIDIAN, 0, 250, 254),
     )
 
 
 def _sculpt_rough_stone(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Cok Yuzeyli Dogal Nehir/Kaya Tasi (0.24 x 0.16 x 0.22m)."""
     _add_deformed_rock_blob(
-        bm, layer, (0.0, 0.075, 0.0), (0.115, 0.078, 0.105),
-        (MAT_STONE, 0, 195, 242), seed=4099, flatten_bottom=0.65, subdivisions=1,
+        bm,
+        layer,
+        (0.0, 0.075, 0.0),
+        (0.115, 0.078, 0.105),
+        (MAT_STONE, 0, 195, 242),
+        seed=4099,
+        flatten_bottom=0.65,
+        subdivisions=1,
     )
     _add_deformed_rock_blob(
-        bm, layer, (0.035, 0.095, -0.020), (0.068, 0.055, 0.062),
-        (MAT_COBBLESTONE, 0, 212, 246), seed=7123, flatten_bottom=0.35, subdivisions=1,
+        bm,
+        layer,
+        (0.035, 0.095, -0.020),
+        (0.068, 0.055, 0.062),
+        (MAT_COBBLESTONE, 0, 212, 246),
+        seed=7123,
+        flatten_bottom=0.35,
+        subdivisions=1,
     )
 
 
 def _sculpt_ore_chunk(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Kristal/Metalik Damarli Zengin Cevher Kayasi (0.25 x 0.18 x 0.23m)."""
     _add_deformed_rock_blob(
-        bm, layer, (0.0, 0.08, 0.0), (0.115, 0.080, 0.105),
-        (MAT_STONE, 0, 185, 238), seed=8821, flatten_bottom=0.65, subdivisions=1,
+        bm,
+        layer,
+        (0.0, 0.08, 0.0),
+        (0.115, 0.080, 0.105),
+        (MAT_STONE, 0, 185, 238),
+        seed=8821,
+        flatten_bottom=0.65,
+        subdivisions=1,
     )
     # Ana kayadan disari fiskiran 6 adet fasetli metalik cevher yumrusu
     vein_offsets = [
@@ -714,8 +827,12 @@ def _sculpt_ore_chunk(bm: bmesh.types.BMesh, layer: Any) -> None:
     ]
     for idx, (vx, vy, vz, vr) in enumerate(vein_offsets):
         _add_chamfered_box(
-            bm, layer, (vx, vy, vz), (vr[0] * 1.7, vr[1] * 1.7, vr[2] * 1.7),
-            (MAT_COPPER_ORE, 0, 242, 252), bevel_amt=0.26,
+            bm,
+            layer,
+            (vx, vy, vz),
+            (vr[0] * 1.7, vr[1] * 1.7, vr[2] * 1.7),
+            (MAT_COPPER_ORE, 0, 242, 252),
+            bevel_amt=0.26,
             rot_euler=(idx * 0.45, idx * 0.72, idx * 0.33),
         )
 
@@ -723,8 +840,14 @@ def _sculpt_ore_chunk(bm: bmesh.types.BMesh, layer: Any) -> None:
 def _sculpt_quartz_cluster(bm: bmesh.types.BMesh, layer: Any) -> None:
     """5'li Altigen Prizmatik Kuvars / Rezonans Kristali Salkimi (0.20 x 0.24 x 0.20m)."""
     _add_deformed_rock_blob(
-        bm, layer, (0.0, 0.03, 0.0), (0.082, 0.034, 0.078),
-        (MAT_STONE, 0, 180, 235), seed=5501, flatten_bottom=0.80, subdivisions=1,
+        bm,
+        layer,
+        (0.0, 0.03, 0.0),
+        (0.082, 0.034, 0.078),
+        (MAT_STONE, 0, 180, 235),
+        seed=5501,
+        flatten_bottom=0.80,
+        subdivisions=1,
     )
     spires = [
         ((0.00, 0.02, 0.00), (0.00, 0.24, 0.00), 0.036),
@@ -740,77 +863,105 @@ def _sculpt_quartz_cluster(bm: bmesh.types.BMesh, layer: Any) -> None:
             p_base[2] + (p_tip[2] - p_base[2]) * 0.74,
         )
         _add_spine_limb(
-            bm, layer,
+            bm,
+            layer,
             [(p_base, rad, rad), (mid, rad * 0.90, rad * 0.90), (p_tip, 0.002, 0.002)],
-            sides=6, rgba=(MAT_QUARTZ_GEM, 25, 250, 255),
+            sides=6,
+            rgba=(MAT_QUARTZ_GEM, 25, 250, 255),
         )
 
 
 def _sculpt_metal_ingot(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Pahli Trapez Dokum Metal Kulce (0.11 x 0.06 x 0.26m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.055, 0.130), 0.0),
             ((0.0, 0.048, 0.0), (0.042, 0.112), 0.0),
             ((0.0, 0.058, 0.0), (0.035, 0.102), 0.0),
         ],
-        sides=4, rgba=(MAT_STEEL, 0, 238, 250), twist_rad=math.pi * 0.25,
+        sides=4,
+        rgba=(MAT_STEEL, 0, 238, 250),
+        twist_rad=math.pi * 0.25,
     )
-    _add_chamfered_box(bm, layer, (0.0, 0.030, 0.0), (0.095, 0.052, 0.235), (MAT_STEEL, 0, 245, 252), bevel_amt=0.24)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.030, 0.0), (0.095, 0.052, 0.235), (MAT_STEEL, 0, 245, 252), bevel_amt=0.24
+    )
 
 
 def _sculpt_natural_stick(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Bogumlu & Yan Surgunlu Dogal Kivrimli Kuru Dal (0.14 x 0.08 x 0.52m)."""
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((-0.015, 0.030, -0.25), 0.025, 0.023),
             ((0.022, 0.042, -0.08), 0.022, 0.021),
             ((-0.014, 0.035, 0.10), 0.019, 0.018),
             ((0.012, 0.028, 0.25), 0.014, 0.014),
         ],
-        sides=7, rgba=(MAT_OAK_WOOD, 0, 168, 240),
+        sides=7,
+        rgba=(MAT_OAK_WOOD, 0, 168, 240),
     )
     # Yan budak surgunu
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.018, 0.040, -0.04), 0.014, 0.014),
             ((0.065, 0.058, 0.08), 0.007, 0.007),
         ],
-        sides=6, rgba=(MAT_IRONWOOD, 0, 158, 235),
+        sides=6,
+        rgba=(MAT_IRONWOOD, 0, 158, 235),
     )
 
 
 def _sculpt_split_firewood(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Disi Kabuklu, Ici Lifli Kama Yarma Odun / Kutuk (0.18 x 0.14 x 0.44m)."""
     # Alt dis kabuk sirti
-    _add_chamfered_box(bm, layer, (0.0, 0.035, 0.0), (0.165, 0.055, 0.43), (MAT_OAK_WOOD, 0, 155, 235), bevel_amt=0.18)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.035, 0.0), (0.165, 0.055, 0.43), (MAT_OAK_WOOD, 0, 155, 235), bevel_amt=0.18
+    )
     # Ust yarilmis ucgen oz odun kama sirti
     _add_chamfered_box(
-        bm, layer, (0.0, 0.082, 0.0), (0.115, 0.075, 0.42),
-        (MAT_WOOD_PLANK, 0, 195, 246), bevel_amt=0.22, rot_euler=(0.0, 0.0, math.pi * 0.25),
+        bm,
+        layer,
+        (0.0, 0.082, 0.0),
+        (0.115, 0.075, 0.42),
+        (MAT_WOOD_PLANK, 0, 195, 246),
+        bevel_amt=0.22,
+        rot_euler=(0.0, 0.0, math.pi * 0.25),
     )
 
 
 def _sculpt_meat_cut(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Fildisi Kaburga Kemikli & Yag Seritli Kalin Et Pirzolasi (0.22 x 0.08 x 0.17m)."""
     _add_deformed_rock_blob(
-        bm, layer, (-0.015, 0.04, 0.0), (0.088, 0.038, 0.072),
-        (MAT_RUBY_GEM, 0, 185, 242), seed=3109, flatten_bottom=0.55, subdivisions=1,
+        bm,
+        layer,
+        (-0.015, 0.04, 0.0),
+        (0.088, 0.038, 0.072),
+        (MAT_RUBY_GEM, 0, 185, 242),
+        seed=3109,
+        flatten_bottom=0.55,
+        subdivisions=1,
     )
     # Dis yag kemeri
-    _add_chamfered_box(bm, layer, (-0.045, 0.042, 0.0), (0.095, 0.052, 0.115), (MAT_RUBY_GEM, 0, 192, 244), bevel_amt=0.26)
+    _add_chamfered_box(
+        bm, layer, (-0.045, 0.042, 0.0), (0.095, 0.052, 0.115), (MAT_RUBY_GEM, 0, 192, 244), bevel_amt=0.26
+    )
     # Fildisi kaburga/but kemigi
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.02, 0.042, 0.00), 0.017, 0.015),
             ((0.095, 0.046, 0.01), 0.014, 0.013),
             ((0.115, 0.048, 0.015), 0.021, 0.018),
         ],
-        sides=6, rgba=(MAT_BONE_IVORY, 0, 228, 250),
+        sides=6,
+        rgba=(MAT_BONE_IVORY, 0, 228, 250),
     )
 
 
@@ -819,8 +970,13 @@ def _sculpt_wild_berries(bm: bmesh.types.BMesh, layer: Any) -> None:
     # Yaprak tabani
     for yaw in (-0.45, 0.55):
         _add_chamfered_box(
-            bm, layer, (0.0, 0.015, 0.0), (0.125, 0.018, 0.085),
-            (MAT_GRASS, 0, 175, 238), bevel_amt=0.25, rot_euler=(0.0, yaw, 0.0),
+            bm,
+            layer,
+            (0.0, 0.015, 0.0),
+            (0.125, 0.018, 0.085),
+            (MAT_GRASS, 0, 175, 238),
+            bevel_amt=0.25,
+            rot_euler=(0.0, yaw, 0.0),
         )
     berry_pts = [
         (0.00, 0.068, 0.00, 0.026),
@@ -832,15 +988,22 @@ def _sculpt_wild_berries(bm: bmesh.types.BMesh, layer: Any) -> None:
     ]
     for idx, (bx, by, bz, br) in enumerate(berry_pts):
         _add_deformed_rock_blob(
-            bm, layer, (bx, by, bz), (br, br * 0.95, br),
-            (MAT_RED_DIAMOND, 15, 238, 250), seed=900 + idx, flatten_bottom=0.15, subdivisions=1,
+            bm,
+            layer,
+            (bx, by, bz),
+            (br, br * 0.95, br),
+            (MAT_RED_DIAMOND, 15, 238, 250),
+            seed=900 + idx,
+            flatten_bottom=0.15,
+            subdivisions=1,
         )
 
 
 def _sculpt_potion_bottle(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Sekizgen Kristal Govdeli & Mantar Tipali Iksir Sisesi (0.12 x 0.20 x 0.12m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.038, 0.038), 0.0),
             ((0.0, 0.04, 0.0), (0.058, 0.058), 0.0),
@@ -848,109 +1011,143 @@ def _sculpt_potion_bottle(bm: bmesh.types.BMesh, layer: Any) -> None:
             ((0.0, 0.14, 0.0), (0.022, 0.022), 0.0),
             ((0.0, 0.17, 0.0), (0.024, 0.024), 0.0),
         ],
-        sides=8, rgba=(MAT_RUBY_GEM, 35, 242, 252),
+        sides=8,
+        rgba=(MAT_RUBY_GEM, 35, 242, 252),
     )
     # Altin boyun bilezigi + mantar tipa
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.155, 0.0), (0.027, 0.027), 0.0), ((0.0, 0.175, 0.0), (0.028, 0.028), 0.0)],
-        sides=8, rgba=(MAT_GOLD_ORE, 0, 245, 252),
+        sides=8,
+        rgba=(MAT_GOLD_ORE, 0, 245, 252),
     )
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.172, 0.0), (0.019, 0.019), 0.0), ((0.0, 0.200, 0.0), (0.022, 0.022), 0.0)],
-        sides=8, rgba=(MAT_OAK_WOOD, 0, 170, 240),
+        sides=8,
+        rgba=(MAT_OAK_WOOD, 0, 170, 240),
     )
 
 
 def _sculpt_medical_bandage(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Kirmizi Sifaci Muhurlu Keten Sargi Bezi Rulosu (0.13 x 0.09 x 0.13m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.056, 0.056), 0.0),
             ((0.0, 0.045, 0.0), (0.060, 0.060), 0.0),
             ((0.0, 0.090, 0.0), (0.056, 0.056), 0.0),
         ],
-        sides=10, rgba=(MAT_TACTICAL_CLOTH, 0, 195, 246),
+        sides=10,
+        rgba=(MAT_TACTICAL_CLOTH, 0, 195, 246),
     )
     # Kirmizi sifaci kusagi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.032, 0.0), (0.062, 0.062), 0.0), ((0.0, 0.058, 0.0), (0.062, 0.062), 0.0)],
-        sides=10, rgba=(MAT_RUBY_GEM, 0, 225, 250),
+        sides=10,
+        rgba=(MAT_RUBY_GEM, 0, 225, 250),
     )
 
 
 def _sculpt_leather_bellows(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Akordeon Deri Koruk & Bronz Ufleme Burnu (0.20 x 0.12 x 0.36m)."""
     # Alt ve ust ahsap kanatlar + tutamaklar
-    _add_chamfered_box(bm, layer, (0.0, 0.022, -0.03), (0.17, 0.020, 0.24), (MAT_OAK_WOOD, 0, 172, 242), bevel_amt=0.20)
     _add_chamfered_box(
-        bm, layer, (0.0, 0.082, -0.03), (0.17, 0.020, 0.24),
-        (MAT_OAK_WOOD, 0, 178, 244), bevel_amt=0.20, rot_euler=(0.16, 0.0, 0.0),
+        bm, layer, (0.0, 0.022, -0.03), (0.17, 0.020, 0.24), (MAT_OAK_WOOD, 0, 172, 242), bevel_amt=0.20
+    )
+    _add_chamfered_box(
+        bm,
+        layer,
+        (0.0, 0.082, -0.03),
+        (0.17, 0.020, 0.24),
+        (MAT_OAK_WOOD, 0, 178, 244),
+        bevel_amt=0.20,
+        rot_euler=(0.16, 0.0, 0.0),
     )
     # Akordeon deri hazne
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.050, -0.13), 0.072, 0.032),
             ((0.0, 0.052, -0.04), 0.080, 0.038),
             ((0.0, 0.048, 0.06), 0.048, 0.024),
         ],
-        sides=8, rgba=(MAT_LEATHER, 0, 150, 236),
+        sides=8,
+        rgba=(MAT_LEATHER, 0, 150, 236),
     )
     # Konik bronz ufleme nozulu
     _add_spine_limb(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.044, 0.07), 0.025, 0.025), ((0.0, 0.040, 0.18), 0.011, 0.011)],
-        sides=8, rgba=(MAT_BRONZE, 0, 238, 250),
+        sides=8,
+        rgba=(MAT_BRONZE, 0, 238, 250),
     )
 
 
 def _sculpt_clay_crucible(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Dokum Gagali & Yan Kulplu Refrakter Seramik Pota (0.22 x 0.20 x 0.22m)."""
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [
             ((0.0, 0.00, 0.0), (0.065, 0.065), 0.0),
             ((0.0, 0.08, 0.0), (0.102, 0.102), 0.0),
             ((0.0, 0.17, 0.0), (0.098, 0.105), 0.0),
             ((0.0, 0.20, 0.0), (0.088, 0.096), 0.0),
         ],
-        sides=10, rgba=(MAT_CLAY, 0, 178, 242),
+        sides=10,
+        rgba=(MAT_CLAY, 0, 178, 242),
     )
     # On dokum gagasi (pouring spout)
-    _add_chamfered_box(bm, layer, (0.0, 0.185, 0.095), (0.045, 0.030, 0.045), (MAT_CLAY, 0, 188, 245), bevel_amt=0.22)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.185, 0.095), (0.045, 0.030, 0.045), (MAT_CLAY, 0, 188, 245), bevel_amt=0.22
+    )
 
 
 def _sculpt_martial_scroll(bm: bmesh.types.BMesh, layer: Any) -> None:
     """Altin Topuzlu & Mum Muhurlu Dojo Dovus Parsomeni (0.14 x 0.42 x 0.14m)."""
     # Rulo parsomen govdesi
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.05, 0.0), (0.052, 0.052), 0.0), ((0.0, 0.37, 0.0), (0.052, 0.052), 0.0)],
-        sides=10, rgba=(MAT_SAND, 0, 175, 244),
+        sides=10,
+        rgba=(MAT_SAND, 0, 175, 244),
     )
     # Alt ve ust ahsap/altin makara uclari
     for y_end, y_tip in ((0.02, 0.00), (0.37, 0.40)):
         _add_lofted_tube(
-            bm, layer,
+            bm,
+            layer,
             [((0.0, y_end, 0.0), (0.062, 0.062), 0.0), ((0.0, y_end + 0.028, 0.0), (0.062, 0.062), 0.0)],
-            sides=10, rgba=(MAT_OAK_WOOD, 0, 180, 244),
+            sides=10,
+            rgba=(MAT_OAK_WOOD, 0, 180, 244),
         )
         _add_lofted_tube(
-            bm, layer,
+            bm,
+            layer,
             [((0.0, y_tip, 0.0), (0.026, 0.026), 0.0), ((0.0, y_tip + 0.022, 0.0), (0.026, 0.026), 0.0)],
-            sides=8, rgba=(MAT_GOLD_ORE, 0, 245, 252),
+            sides=8,
+            rgba=(MAT_GOLD_ORE, 0, 245, 252),
         )
     # Orta ipek kusak + kirmizi mum muhur
     _add_lofted_tube(
-        bm, layer,
+        bm,
+        layer,
         [((0.0, 0.185, 0.0), (0.056, 0.056), 0.0), ((0.0, 0.235, 0.0), (0.056, 0.056), 0.0)],
-        sides=10, rgba=(MAT_RUBY_GEM, 0, 232, 250),
+        sides=10,
+        rgba=(MAT_RUBY_GEM, 0, 232, 250),
     )
-    _add_chamfered_box(bm, layer, (0.0, 0.21, 0.058), (0.044, 0.044, 0.018), (MAT_RUBY_GEM, 20, 248, 254), bevel_amt=0.25)
+    _add_chamfered_box(
+        bm, layer, (0.0, 0.21, 0.058), (0.044, 0.044, 0.018), (MAT_RUBY_GEM, 20, 248, 254), bevel_amt=0.25
+    )
 
 
 ITEM_CATALOG_SPECS: list[dict[str, Any]] = [
