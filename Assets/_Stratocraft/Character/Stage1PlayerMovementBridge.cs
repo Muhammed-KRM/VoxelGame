@@ -5,6 +5,7 @@ using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
+using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
@@ -519,13 +520,14 @@ namespace Stratocraft.Character
             float capsuleHeightMeters = 1.8f,
             float capsuleRadiusMeters = 0.34f)
         {
-            if (worldChunks == null || worldChunks.Count == 0) return false;
-
             float r = Math.Clamp(capsuleRadiusMeters, 0.20f, 0.34f);
+            bool movedAny = SotfStructureCollisionRegistry.ResolveHorizontalDepenetration(
+                ref posX, posY, ref posZ, capsuleHeightMeters, r, 1.08f);
+            if (worldChunks == null || worldChunks.Count == 0) return movedAny;
+
             float rSq = r * r;
             float waistY = posY + Math.Clamp(capsuleHeightMeters * 0.42f, 0.30f, 0.72f);
             float headY = posY + Math.Clamp(capsuleHeightMeters - 0.16f, 0.42f, 1.56f);
-            bool movedAny = false;
 
             ReadOnlySpan<float> probeYs = stackalloc float[2] { waistY, headY };
 
@@ -628,6 +630,12 @@ namespace Stratocraft.Character
                 }
             }
 
+            if (SotfStructureCollisionRegistry.ResolveHorizontalDepenetration(
+                    ref posX, posY, ref posZ, capsuleHeightMeters, r, 1.08f))
+            {
+                movedAny = true;
+            }
+
             return movedAny;
         }
 
@@ -645,13 +653,23 @@ namespace Stratocraft.Character
             float candidateFeetY,
             float footRadiusMeters = 0.20f)
         {
-            if (worldChunks == null || worldChunks.Count == 0 || candidateFeetY > prevFeetY + 0.001f)
+            if (candidateFeetY > prevFeetY + 0.001f)
             {
                 return candidateFeetY;
             }
 
             float minAllowedY = candidateFeetY;
             float r = Math.Clamp(footRadiusMeters, 0.12f, 0.26f);
+            float structStopY = SotfStructureCollisionRegistry.SampleWalkableTopY(posX, prevFeetY, posZ, r, 1.08f);
+            if (structStopY > -900f && prevFeetY >= structStopY - 0.30f && structStopY > minAllowedY)
+            {
+                minAllowedY = structStopY;
+            }
+
+            if (worldChunks == null || worldChunks.Count == 0)
+            {
+                return minAllowedY;
+            }
             ReadOnlySpan<float> ox = stackalloc float[5] { 0f, r, -r, 0f, 0f };
             ReadOnlySpan<float> oz = stackalloc float[5] { 0f, 0f, 0f, r, -r };
 
@@ -980,7 +998,8 @@ namespace Stratocraft.Character
             HashSet<(int cx, int cz)>? activeFluidChunks = null,
             bool isCreativeMode = false,
             bool ascendFlyHeld = false,
-            bool descendFlyHeld = false)
+            bool descendFlyHeld = false,
+            bool suppressAltDodge = false)
         {
             statusFeedback = string.Empty;
             _movementState.EquippedMassKg = equippedMassKg;
@@ -1212,9 +1231,21 @@ namespace Stratocraft.Character
                 statusFeedback = "Kayma (Slide) Basladi (-15 EP -> 3.58m)";
 
             // Fiziksel Yan-Adim / Dodge Kacisi (LeftAlt veya Mouse3/Mouse4: 18 EP, 0.26sn 6.8 m/s patlama, i-frame yok!)
+            // PT-04: [C] Madde Kristali (Alt = 3x6 Palet / Alt+Tekerlek) veya aktif insa sirasinda Alt tusu Dodge tetiklemez!
             float effectiveDodgeCost = DodgeStaminaCostEp * staminaDrainMult;
-            bool dodgeTriggered = Input.GetKeyDown(Stage1GameSettings.KeyDodge) ||
-                                  Input.GetKeyDown(KeyCode.LeftAlt) ||
+            bool allowAltDodge = Stage1InputConflictPolicy.CanTriggerCombatDodgeOnAlt(
+                isCrystalActive: suppressAltDodge,
+                isModularBuildActive: false,
+                isCarryingShoulderLog: false,
+                externalModalBlocked: isBackpackOpen);
+            bool customDodgePressed = Stage1GameSettings.KeyDodge != KeyCode.LeftAlt &&
+                                      Stage1GameSettings.KeyDodge != KeyCode.RightAlt &&
+                                      Input.GetKeyDown(Stage1GameSettings.KeyDodge);
+            bool altDodgePressed = allowAltDodge &&
+                                   (Input.GetKeyDown(KeyCode.LeftAlt) ||
+                                    (Stage1GameSettings.KeyDodge == KeyCode.LeftAlt && Input.GetKeyDown(Stage1GameSettings.KeyDodge)));
+            bool dodgeTriggered = customDodgePressed ||
+                                  altDodgePressed ||
                                   Input.GetKeyDown(KeyCode.Mouse3) ||
                                   Input.GetKeyDown(KeyCode.Mouse4);
             if (dodgeTriggered &&
@@ -2125,6 +2156,16 @@ namespace Stratocraft.Character
             if (step2D.sqrMagnitude < 1e-7f) return false;
 
             float r = Mathf.Clamp(capsuleRadiusMeters, 0.20f, 0.34f);
+            if (SotfStructureCollisionRegistry.IsCapsuleStepBlocked(
+                    new System.Numerics.Vector3(cur.x, cur.y, cur.z),
+                    new System.Numerics.Vector3(next.x, next.y, next.z),
+                    capsuleHeightMeters,
+                    r,
+                    MaxKneeStepUpMeters))
+            {
+                return true;
+            }
+
             const float diag = 0.70710678f;
             float d = r * diag;
 
@@ -2395,10 +2436,11 @@ namespace Stratocraft.Character
 
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
         {
+            float structTopY = SotfStructureCollisionRegistry.SampleWalkableTopY(pos.x, pos.y, pos.z, 0.22f, MaxKneeStepUpMeters);
             float smoothVoxelY = SampleBilinearVoxelGroundHeight(worldChunks, pos.x, pos.z, pos.y);
             if (smoothVoxelY > -20f)
             {
-                return smoothVoxelY;
+                return structTopY > -900f ? Mathf.Max(smoothVoxelY, structTopY) : smoothVoxelY;
             }
 
             // Merkez nokta 1cm duvar sutununa (aboveRaw kati) denk gelip -30f donduyse ayak diskinin 4 acik kenarini tara:
@@ -2421,7 +2463,11 @@ namespace Stratocraft.Character
             }
             if (bestFootY > -20f)
             {
-                return bestFootY;
+                return structTopY > -900f ? Mathf.Max(bestFootY, structTopY) : bestFootY;
+            }
+            if (structTopY > -900f)
+            {
+                return structTopY;
             }
 
             int terrainMask = LayerMask.GetMask("VoxelTerrain");

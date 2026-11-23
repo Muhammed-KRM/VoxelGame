@@ -57,6 +57,8 @@ namespace Stratocraft.Character
         private GUIStyle? _toastTextStyle;
 
         public bool IsMindMenuOpen { get; private set; }
+        public bool ConsumedEscapeThisFrame { get; private set; }
+        public bool ConsumedKeyGThisFrame { get; private set; }
         public bool ForcePlayerCrouch => _finishingCrouchTimer > 0.001f;
         public IReadOnlyList<RegisteredMindStationInfo> RegisteredNonCampfireStations => _registeredNonCampfireStations;
 
@@ -74,6 +76,9 @@ namespace Stratocraft.Character
             Stage1WheelbarrowController? wheelbarrowCtrl = null,
             Stage1WindmillController? windmillCtrl = null)
         {
+            ConsumedEscapeThisFrame = false;
+            ConsumedKeyGThisFrame = false;
+
             if (_finishingCrouchTimer > 0f)
             {
                 _finishingCrouchTimer = Mathf.Max(0f, _finishingCrouchTimer - dt);
@@ -94,8 +99,14 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // Madde Kristali KAPALIYKEN [T] tusu Zihin Insa Menusunu acar/kapatir!
-            if (!miningCtrl.IsCrystalActive && Input.GetKeyDown(KeyCode.T))
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+
+            // [T] (yalın): Zihin İnşa ve SOTF Çok-Malzemeli Modüler Yapı Menüsünü açar/kapatır ([Shift+T] Kristal fırça içindir!)
+            if (Input.GetKeyDown(KeyCode.T) &&
+                Stage1InputConflictPolicy.ResolveKeyT(shiftHeld, ctrlHeld, altHeld, miningCtrl.IsCrystalActive, externalUiBlocked) ==
+                Stage1InputConflictPolicy.KeyTAction.ToggleMindBuildMenu)
             {
                 if (IsMindMenuOpen)
                 {
@@ -103,6 +114,10 @@ namespace Stratocraft.Character
                 }
                 else
                 {
+                    if (miningCtrl.IsCrystalActive)
+                    {
+                        miningCtrl.IsCrystalActive = false;
+                    }
                     OpenMindMenu();
                 }
                 return;
@@ -112,6 +127,7 @@ namespace Stratocraft.Character
 
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                ConsumedEscapeThisFrame = true;
                 CloseMindMenu(restoreCursorLock: true);
                 return;
             }
@@ -165,6 +181,7 @@ namespace Stratocraft.Character
 
             if (Input.GetKeyDown(KeyCode.G))
             {
+                ConsumedKeyGThisFrame = true;
                 MindStructureBlueprintId bp = (MindStructureBlueprintId)Mathf.Clamp(_hoveredBlueprintIndex, 0, MindStructureClusterValidator.BlueprintCount - 1);
                 SpawnThoughtSilhouetteHint(bp, cam, playerTransform, miningCtrl, worldChunks, sharedVoxelMat);
                 CloseMindMenu(restoreCursorLock: true);
@@ -200,8 +217,8 @@ namespace Stratocraft.Character
 
             if (!IsMindMenuOpen) return;
 
-            float panelW = Mathf.Min(940f, Screen.width - 32f);
-            float panelH = Mathf.Min(656f, Screen.height - 24f);
+            float panelW = Mathf.Min(948f, Screen.width - 28f);
+            float panelH = Mathf.Min(676f, Screen.height - 20f);
             float px = (Screen.width - panelW) * 0.5f;
             float py = (Screen.height - panelH) * 0.5f;
 
@@ -210,15 +227,15 @@ namespace Stratocraft.Character
             GUI.Box(new Rect(px, py, panelW, panelH), GUIContent.none, _panelStyle!);
             GUI.color = prevColor;
 
-            GUI.Label(new Rect(px + 18f, py + 12f, panelW - 36f, 26f),
-                "🧠 ZİHİN İNŞA FİKİRLERİ  ([T] / [ESC] Kapat)", _titleStyle!);
-            GUI.Label(new Rect(px + 18f, py + 38f, panelW - 36f, 22f),
-                "Önce malzemeleri veya 2m kütükleri yere [Sağ Tık] ile dizin -> Ardından [Sol Tık / 1..9] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
+            GUI.Label(new Rect(px + 18f, py + 10f, panelW - 36f, 24f),
+                "🧠 ZİHİN İNŞA & SOTF ÇOK-MALZEMELİ YAPI MENÜSÜ  ([T] / [ESC] Kapat)", _titleStyle!);
+            GUI.Label(new Rect(px + 18f, py + 34f, panelW - 36f, 20f),
+                "Malzemeleri veya 2m kütükleri [Sol Tık] ile dizin -> [Sol Tık / 1..9] ile kümenizi doğrulayın!  |  [Sağ Tık / G]: 2.8 sn Zihin Silüeti İpucu",
                 _subTitleStyle!);
 
-            float cardStartY = py + 68f;
-            float cardH = 74f;
-            float cardGap = 8f;
+            float cardStartY = py + 58f;
+            float cardH = 68f;
+            float cardGap = 6f;
             float colGap = 14f;
             float colW = (panelW - 36f - colGap) * 0.5f;
             Vector2 mousePos = Event.current.mousePosition;
@@ -256,10 +273,10 @@ namespace Stratocraft.Character
                 string header = $"[{i + 1}] {icon} {MindStructureClusterValidator.GetDisplayName(bp)}";
                 string desc = MindStructureClusterValidator.GetShortDescription(bp);
 
-                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 6f, cardRect.width - 155f, 22f), header, _cardTitleStyle!);
-                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 28f, cardRect.width - 24f, 42f), desc, _cardDescStyle!);
+                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 4f, cardRect.width - 155f, 20f), header, _cardTitleStyle!);
+                GUI.Label(new Rect(cardRect.x + 12f, cardRect.y + 24f, cardRect.width - 24f, 40f), desc, _cardDescStyle!);
 
-                GUI.Label(new Rect(cardRect.xMax - 148f, cardRect.y + 6f, 140f, 20f),
+                GUI.Label(new Rect(cardRect.xMax - 148f, cardRect.y + 4f, 140f, 20f),
                     hovered ? "[Sol] Doğrula | [Sağ] İpucu" : $"[{i + 1}] Seç",
                     _subTitleStyle!);
 
@@ -281,29 +298,107 @@ namespace Stratocraft.Character
                 }
             }
 
-            // Valheim & SOTF 12 Parcali Gercek 3B Moduler Yapi Kiti Secici Bolumu
-            float modHeaderY = cardStartY + 5f * (cardH + cardGap) + 6f;
+            // SOTF & Valheim Çok-Malzemeli + Statik Taşıyıcılı 3B Modüler Yapı Seti
+            float modHeaderY = cardStartY + 5f * (cardH + cardGap) + 4f;
             GUI.Label(
-                new Rect(px + 18f, modHeaderY, panelW - 190f, 22f),
-                "🏗️ VALHEIM & SOTF MODÜLER 3B YAPI SETİ  ([Sol Tık] Parça Seç | [R] 90° Döndür | [B] Sonraki)",
+                new Rect(px + 18f, modHeaderY, panelW - 205f, 22f),
+                "🏗️ SOTF & VALHEIM YAPI SETİ  ([Sol Tık] Katman Diz | [V] Parça | [G] Malzeme | [R] Döndür | [Shift+R] Kalınlık | [Sağ Tık/ESC/Q] İptal)",
                 _titleStyle!);
 
             if (looseBuildSystem.IsModularBuildModeActive)
             {
-                Rect stopRect = new Rect(px + panelW - 172f, modHeaderY, 154f, 22f);
-                if (GUI.Button(stopRect, "Modüler Modu Kapat"))
+                Rect stopRect = new Rect(px + panelW - 186f, modHeaderY, 168f, 22f);
+                if (GUI.Button(stopRect, "İnşa Modunu Bırak [Q]"))
                 {
-                    looseBuildSystem.SetModularBuildModeActive(false);
+                    looseBuildSystem.CancelActiveBuildPlacement(
+                        miningCtrl: miningCtrl,
+                        emptyHotbarSelectionIfHammer: false,
+                        customFeedback: "🔨 İnşa modu kapatıldı — el boşaltıldı.");
                     CloseMindMenu(restoreCursorLock: true);
                     return;
                 }
             }
 
-            float modGridY = modHeaderY + 26f;
+            // 1) 6 Yapı Malzemesi Seçici Satırı (Ahşap Kütük -> Demir Ağacı -> Örme Taş -> Bazalt -> Mermer -> Çelik)
+            float matRowY = modHeaderY + 25f;
+            float matGap = 6f;
+            float matBtnW = (panelW - 36f - matGap * (SotfStructuralBuildMechanics.MaterialCount - 1)) / SotfStructuralBuildMechanics.MaterialCount;
+            float matBtnH = 28f;
+            BuildStructuralMaterialKind activeMat = looseBuildSystem.ActiveStructuralMaterial;
+
+            for (int mi = 0; mi < SotfStructuralBuildMechanics.MaterialCount; mi++)
+            {
+                BuildStructuralMaterialKind matKind = (BuildStructuralMaterialKind)mi;
+                Rect matRect = new Rect(px + 18f + mi * (matBtnW + matGap), matRowY, matBtnW, matBtnH);
+                bool matHov = matRect.Contains(mousePos);
+                bool matSel = activeMat == matKind;
+
+                GUI.color = matSel
+                    ? new Color(0.20f, 0.46f, 0.30f, 0.96f)
+                    : (matHov ? new Color(0.24f, 0.34f, 0.46f, 0.96f) : new Color(0.12f, 0.16f, 0.22f, 0.92f));
+                GUI.Box(matRect, GUIContent.none, _panelStyle!);
+                GUI.color = prevColor;
+
+                StructuralMaterialProfile mp = SotfStructuralBuildMechanics.GetMaterialProfile(matKind);
+                GUI.Label(
+                    new Rect(matRect.x + 6f, matRect.y + 4f, matRect.width - 12f, 20f),
+                    $"{SotfStructuralBuildMechanics.GetMaterialShortBadge(matKind)} ({mp.MaxUnsupportedSpanMeters:0.#}m)",
+                    _cardDescStyle!);
+
+                if (matHov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    Event.current.Use();
+                    looseBuildSystem.SelectStructuralMaterial(matKind);
+                    return;
+                }
+            }
+
+            // 2) 3 Kesit Kalınlığı Seçici Satırı + Seçili Malzeme Mühendislik Özeti
+            float thickRowY = matRowY + matBtnH + 5f;
+            float thickBtnW = 196f;
+            float thickBtnH = 26f;
+            BuildSectionThickness activeThick = looseBuildSystem.ActiveSectionThickness;
+
+            for (int ti = 0; ti < 3; ti++)
+            {
+                BuildSectionThickness tKind = (BuildSectionThickness)ti;
+                Rect tRect = new Rect(px + 18f + ti * (thickBtnW + 6f), thickRowY, thickBtnW, thickBtnH);
+                bool tHov = tRect.Contains(mousePos);
+                bool tSel = activeThick == tKind;
+
+                GUI.color = tSel
+                    ? new Color(0.26f, 0.42f, 0.18f, 0.96f)
+                    : (tHov ? new Color(0.22f, 0.32f, 0.44f, 0.96f) : new Color(0.11f, 0.15f, 0.20f, 0.92f));
+                GUI.Box(tRect, GUIContent.none, _panelStyle!);
+                GUI.color = prevColor;
+
+                GUI.Label(
+                    new Rect(tRect.x + 8f, tRect.y + 3f, tRect.width - 16f, 20f),
+                    SotfStructuralBuildMechanics.GetThicknessTurkishName(tKind),
+                    _cardDescStyle!);
+
+                if (tHov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
+                {
+                    Event.current.Use();
+                    looseBuildSystem.SelectSectionThickness(tKind);
+                    return;
+                }
+            }
+
+            float statInfoX = px + 18f + 3f * (thickBtnW + 6f) + 6f;
+            float effSpan = SotfStructuralBuildMechanics.ComputeEffectiveMaxUnsupportedSpanMeters(activeMat, activeThick);
+            float effCapKn = SotfStructuralBuildMechanics.ComputeElementCompressionCapacityKn(ModularBuildPieceKind.LogPillar2m, activeMat, activeThick);
+            GUI.Label(
+                new Rect(statInfoX, thickRowY + 3f, px + panelW - 18f - statInfoX, 20f),
+                $"Açıklık: {effSpan:0.1}m | Kolon Kapasite: {effCapKn:0} kN",
+                _subTitleStyle!);
+
+            // 3) 12 Modüler Yapı Parçası Izgarası
+            float modGridY = thickRowY + thickBtnH + 6f;
             float modGapX = 8f;
-            float modGapY = 6f;
+            float modGapY = 5f;
             float modBtnW = (panelW - 36f - modGapX * 3f) / 4f;
-            float modBtnH = 38f;
+            float modBtnH = 36f;
 
             for (int m = 0; m < ValheimSotfModularGraphSolver.ModularPieceCount; m++)
             {
@@ -324,9 +419,11 @@ namespace Stratocraft.Character
                 GUI.Box(mRect, GUIContent.none, _panelStyle!);
                 GUI.color = prevColor;
 
+                int reqCourses = SotfStructuralBuildMechanics.GetRequiredCoursesForPiece(mKind);
+                string courseTag = reqCourses > 1 ? $" ({reqCourses} Sıra)" : string.Empty;
                 GUI.Label(
-                    new Rect(mRect.x + 8f, mRect.y + 4f, mRect.width - 16f, mRect.height - 6f),
-                    ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(mKind),
+                    new Rect(mRect.x + 8f, mRect.y + 3f, mRect.width - 16f, mRect.height - 6f),
+                    ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(mKind) + courseTag,
                     _cardDescStyle!);
 
                 if (mHov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
@@ -334,7 +431,8 @@ namespace Stratocraft.Character
                     Event.current.Use();
                     looseBuildSystem.SelectModularPieceForPlacement(mKind, enableModularMode: true);
                     string chosen = ValheimSotfModularGraphSolver.GetPieceTurkishDisplayName(mKind);
-                    string msg = $"🏗️ {chosen} seçildi! ([Sağ Tık] Mıknatıslı Yerleştir | [R] 90° Döndür | [B] Parça Değiştir)";
+                    string matLabel = SotfStructuralBuildMechanics.GetMaterialTurkishName(looseBuildSystem.ActiveStructuralMaterial);
+                    string msg = $"🏗️ {chosen} [{matLabel}] seçildi! ([Sol Tık] Katman Diz | [V] Parça | [G] Malzeme | [R] Döndür | [Sağ Tık/ESC/Q] Bırak)";
                     miningCtrl.LastFeedbackText = msg;
                     ShowToast(msg, isSuccess: true, durationSec: 3.2f);
                     CloseMindMenu(restoreCursorLock: true);
