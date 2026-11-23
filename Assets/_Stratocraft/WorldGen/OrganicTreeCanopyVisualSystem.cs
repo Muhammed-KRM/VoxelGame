@@ -375,15 +375,12 @@ namespace Stratocraft.WorldGen
             lx = Math.Clamp(lx, 3, 12);
             lz = Math.Clamp(lz, 3, 12);
 
-            if (StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modSite) &&
-                Math.Abs(lx - modSite.LocalCenterX) <= modSite.TerraceHalfExtentBlocks &&
-                Math.Abs(lz - modSite.LocalCenterZ) <= modSite.TerraceHalfExtentBlocks)
+            int wx = chunkX * 16 + lx;
+            int wz = chunkZ * 16 + lz;
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz))
             {
                 return;
             }
-
-            int wx = chunkX * 16 + lx;
-            int wz = chunkZ * 16 + lz;
             int biomeId = StratocraftFloatingIslandWorldGen.GetBiomeId(wx, wz);
             bool isCoreChunk = chunkX >= -1 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 0;
             if (!isCoreChunk && (biomeId == 2 || biomeId == 6 || biomeId == 7 || biomeId == 8 || biomeId == 9 || biomeId == 11))

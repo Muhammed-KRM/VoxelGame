@@ -2461,6 +2461,13 @@ namespace Stratocraft.Inventory.Systems
             Span<ModularPlacedPieceNode> outPieces,
             int startingInstanceId = 1)
         {
+            if (siteKindIndex >= SettlementBuildingBlueprints.KindVillageWell &&
+                siteKindIndex < SettlementBuildingBlueprints.TotalSiteKindCount)
+            {
+                return SettlementBuildingBlueprints.BuildExtendedSitePieces(
+                    siteKindIndex, worldOrigin, siteYawDegrees, chunkOwnerKey, outPieces, startingInstanceId);
+            }
+
             var em = new SitePieceEmitter
             {
                 OutPieces = outPieces,

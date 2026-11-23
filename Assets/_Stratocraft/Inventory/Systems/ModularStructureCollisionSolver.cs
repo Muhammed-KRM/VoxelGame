@@ -105,18 +105,18 @@ namespace Stratocraft.Inventory.Systems
                     return 1;
 
                 case ModularBuildPieceKind.DiagonalBrace2m:
-                    // 45 deg capraz payanda: (+0.68, 0.06) -> (-0.68, 1.36) boyunca 3 siki kademe
+                    // 45 deg capraz payanda (Unity yerel uzayi): (-0.70, 0.00) -> (+0.70, +1.40) boyunca 3 siki kademe
                     outBoxes[0] = new LocalSolidBox(
-                        new Vector3(0.22f, 0.00f, -0.10f),
-                        new Vector3(0.76f, 0.52f, 0.10f),
+                        new Vector3(-0.76f, 0.00f, -0.10f),
+                        new Vector3(-0.22f, 0.52f, 0.10f),
                         isWalkableTop: false);
                     outBoxes[1] = new LocalSolidBox(
-                        new Vector3(-0.24f, 0.46f, -0.10f),
-                        new Vector3(0.28f, 0.96f, 0.10f),
+                        new Vector3(-0.28f, 0.46f, -0.10f),
+                        new Vector3(0.24f, 0.96f, 0.10f),
                         isWalkableTop: false);
                     outBoxes[2] = new LocalSolidBox(
-                        new Vector3(-0.76f, 0.92f, -0.10f),
-                        new Vector3(-0.20f, 1.44f, 0.10f),
+                        new Vector3(0.20f, 0.92f, -0.10f),
+                        new Vector3(0.76f, 1.44f, 0.10f),
                         isWalkableTop: false);
                     return 3;
 
@@ -221,8 +221,10 @@ namespace Stratocraft.Inventory.Systems
             float r = Math.Clamp(capsuleRadiusMeters, 0.20f, 0.36f);
             float h = Math.Clamp(capsuleHeightMeters, 0.45f, 1.90f);
 
-            // Hizli kosu/dodge esnasinda ince duvarlardan tunelleme onlemi (0.12m uzeri adimlarda orta nokta da kontrol edilir)
-            int subSteps = stepDistSq > (0.12f * 0.12f) ? 2 : 1;
+            // Hizli kosu/dodge esnasinda ince duvarlardan tunelleme onlemi (her <= 0.14m adimda ornekler)
+            int subSteps = stepDistSq > (0.14f * 0.14f)
+                ? Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(stepDistSq) / 0.14f), 2, 16)
+                : 1;
             for (int s = 1; s <= subSteps; s++)
             {
                 float frac = s / (float)subSteps;

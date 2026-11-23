@@ -1469,7 +1469,7 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Chunk yuklendiginde deterministik moduler yapi yerleskesi varsa 0-GC havuzdan .glb parcalariyla kurar.
+        /// Chunk yuklendiginde o chunk'a ait tum yerlesim binalarini (Koy/Kasaba/Sehir) 0-GC havuzdan .glb parcalariyla kurar.
         /// </summary>
         public int SpawnOrSyncChunkModularStructureSite(
             int chunkX,
@@ -1477,11 +1477,64 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            if (!StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec site))
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
+            if (siteCount <= 0)
             {
                 return 0;
             }
-            return SpawnOrSyncChunkModularStructureSite(in site, sharedVoxelMat, worldChunks);
+            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount), sharedVoxelMat, worldChunks);
+        }
+
+        public int SpawnOrSyncChunkModularStructureSites(
+            int chunkX,
+            int chunkZ,
+            ReadOnlySpan<ProceduralModularSiteSpec> sites,
+            Material? sharedVoxelMat = null,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
+        {
+            if (sites.Length == 0) return 0;
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
+            if (!_spawnedChunkSiteKeys.Add(chunkKey))
+            {
+                int existingCount = 0;
+                for (int i = 0; i < _modularNodeCount; i++)
+                {
+                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
+                }
+                return existingCount;
+            }
+
+            int totalPieces = 0;
+            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
+            {
+                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
+                float exactGroundY = site.WorldBaseY;
+                if (worldChunks != null &&
+                    VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                        site.WorldCenterX, site.WorldCenterZ, site.WorldBaseY + 1.2f, 3.2f, worldChunks, out float sampledY, out _))
+                {
+                    exactGroundY = sampledY;
+                }
+
+                SysVec3 origin = new SysVec3(site.WorldCenterX, exactGroundY, site.WorldCenterZ);
+                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
+                    (byte)site.Kind,
+                    origin,
+                    site.YawDegrees,
+                    chunkKey,
+                    _siteSpawnScratch,
+                    _nextModularInstanceId + 1);
+
+                _nextModularInstanceId += pieceCount + 1;
+                for (int i = 0; i < pieceCount; i++)
+                {
+                    AppendActiveModularNode(_siteSpawnScratch[i], sharedVoxelMat);
+                }
+                totalPieces += pieceCount;
+            }
+
+            return totalPieces;
         }
 
         /// <summary>
@@ -1493,41 +1546,9 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            int chunkKey = PackChunkSiteKey(site.ChunkX, site.ChunkZ);
-            if (!_spawnedChunkSiteKeys.Add(chunkKey))
-            {
-                int existingCount = 0;
-                for (int i = 0; i < _modularNodeCount; i++)
-                {
-                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
-                }
-                return existingCount;
-            }
-
-            float exactGroundY = site.WorldBaseY;
-            if (worldChunks != null &&
-                VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
-                    site.WorldCenterX, site.WorldCenterZ, site.WorldBaseY + 1.2f, 3.2f, worldChunks, out float sampledY, out _))
-            {
-                exactGroundY = sampledY;
-            }
-
-            SysVec3 origin = new SysVec3(site.WorldCenterX, exactGroundY, site.WorldCenterZ);
-            int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                (byte)site.Kind,
-                origin,
-                site.YawDegrees,
-                chunkKey,
-                _siteSpawnScratch,
-                _nextModularInstanceId + 1);
-
-            _nextModularInstanceId += pieceCount + 1;
-            for (int i = 0; i < pieceCount; i++)
-            {
-                AppendActiveModularNode(_siteSpawnScratch[i], sharedVoxelMat);
-            }
-
-            return pieceCount;
+            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
+            single[0] = site;
+            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single, sharedVoxelMat, worldChunks);
         }
 
         /// <summary>
@@ -2021,16 +2042,19 @@ namespace Stratocraft.Character
 
         public int SpawnOrSyncChunkModularStructureSite(int chunkX, int chunkZ)
         {
-            if (!StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec site))
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
+            if (siteCount <= 0)
             {
                 return 0;
             }
-            return SpawnOrSyncChunkModularStructureSite(in site);
+            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount));
         }
 
-        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
+        public int SpawnOrSyncChunkModularStructureSites(int chunkX, int chunkZ, ReadOnlySpan<ProceduralModularSiteSpec> sites)
         {
-            int chunkKey = PackChunkSiteKey(site.ChunkX, site.ChunkZ);
+            if (sites.Length == 0) return 0;
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
                 int existingCount = 0;
@@ -2041,16 +2065,29 @@ namespace Stratocraft.Character
                 return existingCount;
             }
 
-            Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
-            int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
-
-            _nextModularInstanceId += pieceCount + 1;
-            for (int i = 0; i < pieceCount; i++)
+            int totalPieces = 0;
+            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
             {
-                AppendNode(_siteSpawnScratch[i]);
+                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
+                Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
+                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
+                    (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
+
+                _nextModularInstanceId += pieceCount + 1;
+                for (int i = 0; i < pieceCount; i++)
+                {
+                    AppendNode(_siteSpawnScratch[i]);
+                }
+                totalPieces += pieceCount;
             }
-            return pieceCount;
+            return totalPieces;
+        }
+
+        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
+        {
+            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
+            single[0] = site;
+            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single);
         }
 
         public int ReleaseChunkModularStructureSite(int chunkX, int chunkZ)
