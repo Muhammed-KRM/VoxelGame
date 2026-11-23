@@ -1400,12 +1400,18 @@ namespace Stratocraft.WorldGen
             if (updatedTarget.IsBroken)
             {
                 targetBranchBroke = true;
-                // En son eklenen kirilma olayini kopyala (kuyruktan silmeden)
-                if (_brokenDropCount > 0)
-                {
-                    int lastIdx = (_brokenDropWriteIndex - 1 + MaxBrokenDropRingCapacity) % MaxBrokenDropRingCapacity;
-                    brokenDropEvent = _brokenBranchDrops[lastIdx];
-                }
+                brokenDropEvent = new BrokenTreeBranchDropEvent(
+                    treeInstanceId: updatedTarget.TreeInstanceId,
+                    branchId: updatedTarget.BranchId,
+                    species: updatedTarget.Species,
+                    tier: updatedTarget.Tier,
+                    woodMaterialId: updatedTarget.WoodMaterialId,
+                    droppedWoodCount: Math.Max((byte)1, updatedTarget.DroppedWoodUnits),
+                    worldX: 0.5f * (updatedTarget.AnchorWorldX + updatedTarget.CurrentTipWorldX),
+                    worldY: 0.5f * (updatedTarget.AnchorWorldY + updatedTarget.CurrentTipWorldY),
+                    worldZ: 0.5f * (updatedTarget.AnchorWorldZ + updatedTarget.CurrentTipWorldZ),
+                    branchLengthMeters: updatedTarget.LengthMeters,
+                    branchRadiusMeters: updatedTarget.StartRadiusMeters);
                 return true;
             }
 
@@ -1531,6 +1537,10 @@ namespace Stratocraft.WorldGen
                     br.CurrentTipWorldX = br.RestTipWorldX - (horizUx / horizMag) * foreshorten;
                     br.CurrentTipWorldY = br.RestTipWorldY - clampedDeflect;
                     br.CurrentTipWorldZ = br.RestTipWorldZ - (horizUz / horizMag) * foreshorten;
+
+                    // Bu fizik adiminda tuketilen gecici yuku sifirla; oyuncu daldan ayrildiginda bir sonraki adimda dal geri yaylanir!
+                    br.CurrentAppliedLoadKg = 0f;
+                    br.CurrentLoadPosition01 = 0f;
                 }
 
 #if UNITY_5_3_OR_NEWER
