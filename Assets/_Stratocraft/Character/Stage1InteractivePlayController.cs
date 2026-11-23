@@ -390,6 +390,12 @@ namespace Stratocraft.Character
         private double _totalSimulatedGameSeconds = 8.5 * 3600.0;
         private SolarEphemState _currentSolarEphem;
         private AtmosphereCellState _currentPlayerAtmosphereCell;
+        private AtmosphereCycleTelemetry _currentAtmosphereTelemetry;
+        private BiomeVisualProfile _smoothedBiomeProfile = BiomeVisualPaletteCatalog.EmeraldSunForestProfile;
+        private bool _hasInitializedBiomeProfile;
+        private float _lastCloudVisualBaseY = Stage1AtmosphereCloudAndRainRenderer.DefaultCloudBaseWorldY;
+        private float _lastCloudVisualTopY = Stage1AtmosphereCloudAndRainRenderer.DefaultCloudTopWorldY;
+        private float _currentCloudImmersion01;
         private Light? _directionalSunLight;
         private readonly Stage1SkyDayNightController _skyDayNightCtrl = new Stage1SkyDayNightController();
         private readonly Stage1RecipeBookPreviewRenderer _recipeBookPreviewRenderer = new Stage1RecipeBookPreviewRenderer();
@@ -1229,6 +1235,7 @@ namespace Stratocraft.Character
             _underwaterCameraEffect.Dispose();
             _cloudAndRainRenderer.Dispose();
             _skyDayNightCtrl.Dispose();
+            BiomeVisualPaletteCatalog.ResetGlobalBiomePaletteUniforms();
             _recipeBookPreviewRenderer.Dispose();
             _organicTreeCanopySystem.ClearAllTrees();
             Shader.SetGlobalVector(ShaderSwimmerPosId, Vector4.zero);
@@ -7982,6 +7989,7 @@ namespace Stratocraft.Character
                         $"{biomeLabel} | Hava: {_ambientTempCelsius:0.0}°C | WindChill: {_thermalSystem.EffectiveWindChillCelsius:0.0}°C (Vucut: {vt.CoreBodyTempCelsius:0.0}°C)\n" +
                         $"Giysi: {_thermalSystem.TotalEffectiveClo:0.00} clo | Kopru: -{_thermalSystem.ThermalBridgePenaltyWatts:0}W | Islak: %{gear.AverageWetness01 * 100f:0} | Tok: %{vt.HungerKcal / 25f:0} | Su: %{vt.ThirstHydration:0}\n" +
                         $"{_cachedCalendarHudLine} | Basinc: {_currentPlayerAtmosphereCell.StationPressureHpa:0.0} hPa | Faz: {hudPrecipKind} ({_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour:0.0} mm/s)\n" +
+                        $"Atmosfer: Buhar {_currentAtmosphereTelemetry.EvaporationMmPerHour:0.00} mm/s | Nem %{_currentAtmosphereTelemetry.RelativeHumidity01 * 100f:0} | Bulut %{_currentAtmosphereTelemetry.CloudCover01 * 100f:0} (Y:{_lastCloudVisualBaseY:0}-{_lastCloudVisualTopY:0}m) | ENSO: {_currentAtmosphereTelemetry.EnsoPhaseLabel} ({_currentAtmosphereTelemetry.EnsoTeAnomalyK:+0.00;-0.00;0.00}K)\n" +
                         $"Ruzgar 3B: {_currentPlayerLocalWind3D.SpeedMps:0.0} m/s (Bft {_currentWindBeaufortScale}, Siper: %{(1f - _currentPlayerLocalWind3D.UpwindExposure01) * 100f:0}, Bora: +{_currentPlayerLocalWind3D.InstantGustBonusMps:0.0})\n" +
                         $"Kar SWE: {_lastPlayerSnowColumnSweMm:0} mm ({_snowSystem.ActiveSnowChunkCount} chunk) | Degirmen: {windmillSummary} | Su a={_fluidSubTickAlpha01:0.00} ({_fluidKinematicsPool.LeasedCount}/{ActiveChunkFluidKinematicsPool.HardMaxSlices})\n" +
                         $"Chunk: {VisibleChunkCount}/{_worldChunks.Count} (Menzil: {ActiveChunkRadius}) | Hareket: {st.Stance} ({st.CurrentSpeedMetersPerSec:0.0} m/s)";
@@ -8787,15 +8795,41 @@ namespace Stratocraft.Character
 
             float playerCloudCover01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.CloudWaterKgPerM2 / 1.6f);
             float playerStorm01 = Mathf.Clamp01(_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour / 12.0f);
+            _currentAtmosphereTelemetry = _regionalAtmosphereSystem.SampleCycleTelemetryAtWorldXZ(playerPos.x, playerPos.z);
+
+            // PT-10: 6 Bolge renk paleti 40-80m gurultulu harman + 3 saniyelik yumusak atmosfer/golge gecisi
+            BiomeVisualProfile targetBiomeProfile = BiomeVisualPaletteCatalog.SampleBlendedBiomeVisualProfile(playerPos.x, playerPos.z);
+            if (!_hasInitializedBiomeProfile)
+            {
+                _smoothedBiomeProfile = targetBiomeProfile;
+                _hasInitializedBiomeProfile = true;
+            }
+            else
+            {
+                _smoothedBiomeProfile = BiomeVisualProfile.SmoothTransitionStep(in _smoothedBiomeProfile, in targetBiomeProfile, dt, 3.0f);
+            }
+            BiomeVisualPaletteCatalog.ApplyGlobalBiomePaletteUniforms(in _smoothedBiomeProfile, 1.0f);
+
+            // PT-09: Bulut katmaninin icinde ucus/zirve sis hissiyati (kamera Y vs gorsel bulut katmani)
+            UnityEngine.Camera? activeSkyCam = PlayerCamera != null ? PlayerCamera : UnityEngine.Camera.main;
+            float camWorldY = activeSkyCam != null ? activeSkyCam.transform.position.y : (playerPos.y + 1.5f);
+            _currentCloudImmersion01 = Stage1AtmosphereCloudAndRainRenderer.ComputeCloudImmersionFactor01(
+                camWorldY,
+                _lastCloudVisualBaseY,
+                _lastCloudVisualTopY,
+                _currentPlayerAtmosphereCell.CloudWaterKgPerM2);
+
             _skyDayNightCtrl.Apply(
-                PlayerCamera != null ? PlayerCamera : UnityEngine.Camera.main,
+                activeSkyCam,
                 _directionalSunLight,
                 in _currentSolarEphem,
                 rayleighTint,
                 playerCloudCover01,
                 playerStorm01,
                 _lightningSkyFlashIntensity01,
-                allowFogColorWrite: _underwaterCameraEffect.CurrentBlend01 <= 0.001f);
+                allowFogColorWrite: _underwaterCameraEffect.CurrentBlend01 <= 0.001f,
+                biomeProfile: _smoothedBiomeProfile,
+                cloudImmersion01: _currentCloudImmersion01);
 
             // 3) 9x9 Atmosfer AOI Penceresi, 1 Hz Delta Senkron Paketi (AtmosphereAoiSyncPacket) ve 3B Bulut/Yagmur/Kar Cizici
             _regionalAtmosphereSystem.ExtractAoiWindow9x9(
@@ -8853,10 +8887,10 @@ namespace Stratocraft.Character
                     float cellCenterZ = _regionalAtmosphereSystem.OriginWorldZ + (centerCellZ + dz + 0.5f) * RegionalAtmosphereSimulationSystem.CellSizeMeters;
                     float physBaseY = sample.CloudBase16m * 16.0f;
                     float physThickness = sample.CloudThickness32m * 32.0f;
-                    float baseY = 150.0f + Mathf.Clamp01(physBaseY / 3200.0f) * 90.0f;
-                    float thickness = Mathf.Clamp(physThickness * 0.035f, 34.0f, 85.0f);
+                    Stage1AtmosphereCloudAndRainRenderer.ComputeVisualCloudLayerBounds(
+                        physBaseY, physThickness, out float baseY, out float topY);
                     visualBaseSum += baseY;
-                    visualTopSum += baseY + thickness;
+                    visualTopSum += topY;
                     visualCount++;
 
                     _cloudRenderSamplesScratch[cloudCount++] = new CloudCellRenderSample(
@@ -8864,7 +8898,7 @@ namespace Stratocraft.Character
                         cellCenterZ,
                         cloudWater,
                         baseY,
-                        baseY + thickness,
+                        topY,
                         precip,
                         sample.WindXCentiMps * 0.01f,
                         sample.WindZCentiMps * 0.01f,
@@ -8884,8 +8918,10 @@ namespace Stratocraft.Character
                 activePrecipKindOverride: precipOverride,
                 blizzardFactor01Override: blizzardOverride);
 
-            float avgVisualBase = visualCount > 0 ? visualBaseSum / visualCount : 180.0f;
-            float avgVisualTop = visualCount > 0 ? visualTopSum / visualCount : 230.0f;
+            float avgVisualBase = visualCount > 0 ? visualBaseSum / visualCount : Stage1AtmosphereCloudAndRainRenderer.DefaultCloudBaseWorldY;
+            float avgVisualTop = visualCount > 0 ? visualTopSum / visualCount : Stage1AtmosphereCloudAndRainRenderer.DefaultCloudTopWorldY;
+            _lastCloudVisualBaseY = avgVisualBase;
+            _lastCloudVisualTopY = avgVisualTop;
             _cloudAndRainRenderer.SetAoiRenderGrid(
                 _regionalAtmosphereSystem.OriginWorldX + (centerCellX - 4) * RegionalAtmosphereSimulationSystem.CellSizeMeters,
                 _regionalAtmosphereSystem.OriginWorldZ + (centerCellZ - 4) * RegionalAtmosphereSimulationSystem.CellSizeMeters,

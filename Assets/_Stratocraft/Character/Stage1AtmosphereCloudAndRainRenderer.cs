@@ -160,9 +160,62 @@ namespace Stratocraft.Character
         public const float MinVisibleCloudWaterKgPerM2 = 0.05f;
         public const float MinCloudShadowAttenuation = 0.25f;
         public const float MaxCloudShadowAttenuation = 1.00f;
-        public const float DefaultCloudBaseWorldY = 180.0f;
-        public const float DefaultCloudTopWorldY = 236.0f;
+        public const float DefaultCloudBaseWorldY = 228.0f;
+        public const float DefaultCloudTopWorldY = 296.0f;
         public const int MaxActiveCloudCells = 81; // 9x9 AOI penceresi (576m x 576m)
+
+        /// <summary>
+        /// PT-09: Fiziksel LCL bulut tabani ve kalinligini, hem en yuksek dag zirvelerinin (Y~225-240m) hem de
+        /// yaratici ucusun (Y<=460m) icine girip ustune cikabilecegi gorsel bulut katmanina [220..390m] haritalar.
+        /// </summary>
+        public static void ComputeVisualCloudLayerBounds(
+            float physicalLclBaseY,
+            float physicalThicknessMeters,
+            out float visualBaseY,
+            out float visualTopY)
+        {
+            float baseNorm = Clamp01(physicalLclBaseY / 2800.0f);
+            visualBaseY = 220.0f + baseNorm * 75.0f;
+            float thick = ClampFloat(physicalThicknessMeters * 0.042f, 44.0f, 92.0f);
+            visualTopY = visualBaseY + thick;
+        }
+
+        /// <summary>
+        /// PT-09: Oyuncu/kamera bulut katmaninin icine girdiginde [0..1] yumusak bulut ici sis/hacim dalma
+        /// katsayisini hesaplar. Katmanin altinda veya ustunde 0.0, ortasinda bulut suyuna gore 0.45..0.95 doner.
+        /// </summary>
+        public static float ComputeCloudImmersionFactor01(
+            float cameraWorldY,
+            float cloudBaseY,
+            float cloudTopY,
+            float cloudWaterKgPerM2)
+        {
+            if (float.IsNaN(cameraWorldY) || float.IsNaN(cloudWaterKgPerM2) || cloudWaterKgPerM2 <= 0.06f)
+            {
+                return 0.0f;
+            }
+
+            float safeBase = cloudBaseY > 1.0f ? cloudBaseY : DefaultCloudBaseWorldY;
+            float safeTop = cloudTopY > safeBase + 8.0f ? cloudTopY : safeBase + 56.0f;
+            const float transitionBand = 14.0f;
+
+            if (cameraWorldY <= safeBase - transitionBand || cameraWorldY >= safeTop + transitionBand)
+            {
+                return 0.0f;
+            }
+
+            float enterT = Clamp01((cameraWorldY - (safeBase - transitionBand)) / (transitionBand * 1.6f));
+            float exitT = Clamp01(((safeTop + transitionBand) - cameraWorldY) / (transitionBand * 1.6f));
+            float verticalBell = SmoothStep01(enterT) * SmoothStep01(exitT);
+            float waterWeight = Clamp01((cloudWaterKgPerM2 - 0.05f) / 1.35f);
+            return Clamp01(verticalBell * (0.35f + 0.60f * waterWeight));
+        }
+
+        private static float SmoothStep01(float t)
+        {
+            float c = Clamp01(t);
+            return c * c * (3.0f - 2.0f * c);
+        }
 
         private readonly CloudCellRenderSample[] _activeCells = new CloudCellRenderSample[MaxActiveCloudCells];
         private int _activeCellCount;
@@ -729,10 +782,17 @@ namespace Stratocraft.Character
             float centerX = _aoiOriginX + gridSpan * 0.5f;
             float centerZ = _aoiOriginZ + gridSpan * 0.5f;
 
+            float avgCover = 0.0f;
+            for (int i = 0; i < 81; i++)
+            {
+                avgCover += _aoiWater81[i];
+            }
+            avgCover = Mathf.Clamp01((avgCover / 81.0f) / 1.6f);
+
             Shader.SetGlobalFloatArray(s_cloudWater81Id, _aoiWater81);
             Shader.SetGlobalFloatArray(s_cloudPrecip81Id, _aoiPrecip81);
             Shader.SetGlobalVector(s_cloudGridOriginId, new Vector4(_aoiOriginX, _aoiOriginZ, AtmosphereCellSizeMeters, 9.0f));
-            Shader.SetGlobalVector(s_cloudSlabParamsId, new Vector4(_aoiBaseY, _aoiTopY, defaultGroundOccluderY - 6.0f, 0.0f));
+            Shader.SetGlobalVector(s_cloudSlabParamsId, new Vector4(_aoiBaseY, _aoiTopY, defaultGroundOccluderY - 6.0f, avgCover));
 
             if (_aoiHasAnyCloud)
             {

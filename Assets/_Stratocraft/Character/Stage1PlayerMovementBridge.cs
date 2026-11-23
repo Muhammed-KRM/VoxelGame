@@ -939,6 +939,8 @@ namespace Stratocraft.Character
         public bool IsDodging => _dodgeRemainingSec > 0f;
         /// <summary>[F4] Yaratici Modda cift Space ile acilan Minecraft tarzi ucus modu aktif mi?</summary>
         public bool IsCreativeFlying { get; set; }
+        /// <summary>PT-09: Yaratici ucusta bulut katmanina (Y=220..390m) girip ustune cikilabilmesi icin tavan kotu (m).</summary>
+        public const float CreativeFlightMaxAltitudeY = 460.0f;
 
         private float _creativeFlightClockSec;
         private float _lastCreativeSpaceTapTime = -10f;
@@ -1357,7 +1359,7 @@ namespace Stratocraft.Character
                 pos.z = hz;
             }
 
-            pos.y = Mathf.Clamp(pos.y + _verticalVelocity * deltaTime, 1.5f, Stage1InteractivePlayController.MaxEditableVoxelY - 3.0f);
+            pos.y = Mathf.Clamp(pos.y + _verticalVelocity * deltaTime, 1.5f, CreativeFlightMaxAltitudeY);
             if (_verticalVelocity > 0f && TryResolveCeilingHeadBonk(worldChunks, ref pos, capHeight, capRadius))
             {
                 _verticalVelocity = 0f;
