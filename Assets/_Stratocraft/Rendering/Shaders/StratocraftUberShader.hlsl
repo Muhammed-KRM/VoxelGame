@@ -309,6 +309,16 @@ float4 _GlobalWindVector;
 // Sabit gokyuzu/zemin yari-kure ortam tabanini geceleri karartir (aksi halde gece de arazi gunduz kadar aydinlik kalir).
 float _StratoNightDim01;
 
+// PT-10: 6 Bolge Cok-Biyomlu Sanat Anayasasi kuresel renk paleti (0.0 MB VRAM, SRP-Batcher uyumlu)
+// _StratoBiomeGrassPrimary.w = harman aktifligi (0 = devre disi, 1 = aktif)
+float4 _StratoBiomeGrassPrimary;
+float4 _StratoBiomeGrassSecondary;
+float4 _StratoBiomeCliffStone;
+float4 _StratoBiomeShadowTint;
+float4 _StratoBiomeFogTint;
+float4 _StratoBiomeNeonA;
+float4 _StratoBiomeNeonB;
+
 /// Paket 4A Faz 4A.3: Gunes vektoru yonunde dunya-uzayi 3B bulut katmani izdusumu ile
 /// zemin uzerine yumusak dinamik bulut golgesi [0.25 .. 1.0] dusurur.
 /// Globaller set edilmediginde (_GlobalCloudGridParams.w <= 0.001 veya x <= 0.005) %100 1.0 doner!
@@ -480,6 +490,26 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
 
         albedo = ApplyProceduralSolidPattern(albedo, input.positionOS, procMode);
 
+        // PT-10: 6 Bolge Cok-Biyomlu Sanat Paleti (GrassPrimary/Secondary, CliffStoneColor, Biome NeonPair)
+        float biomeBlend01 = saturate(_StratoBiomeGrassPrimary.w);
+        if (biomeBlend01 > 0.01)
+        {
+            if (safeMatId == 3u) // Grass / Bitki Ortusu -> GrassPrimary & GrassSecondary organik harmani
+            {
+                float2 bp = input.positionWS.xz * 0.055;
+                float grassPatch01 = saturate(0.5 + 0.32 * sin(bp.x + cos(bp.y * 1.25)) + 0.18 * cos(bp.y * 1.7 - sin(bp.x * 0.9)));
+                float3 biomeGrassSrgb = lerp(_StratoBiomeGrassPrimary.rgb, _StratoBiomeGrassSecondary.rgb, grassPatch01);
+                float3 biomeGrassLin = ConvertLutSrgbToActiveColorSpace(biomeGrassSrgb) * facetContrast;
+                albedo = lerp(albedo, biomeGrassLin, biomeBlend01 * 0.78);
+            }
+            else if (safeMatId == 1u || safeMatId == 8u || safeMatId == 14u) // Yontulmus Kaya / Falez -> CliffStoneColor
+            {
+                float cliffWeight = lerp(0.32, 0.68, saturate(1.0 - abs(normalWS.y)));
+                float3 cliffLin = ConvertLutSrgbToActiveColorSpace(_StratoBiomeCliffStone.rgb) * facetContrast;
+                albedo = lerp(albedo, cliffLin, biomeBlend01 * cliffWeight);
+            }
+        }
+
         if (_MicroDetailStrength > 0.01)
         {
             float4 microSample = SampleBiplanarMicroDetail(input.positionWS, normalWS, microLayer, input.positionCS.xy);
@@ -568,11 +598,19 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float specStrength = lerp(0.10, 0.75, 1.0 - roughness);
     float specTerm = pow(saturate(dot(normalWS, halfDir)), specPow) * specStrength * mainLight.shadowAttenuation;
 
-    // Kuresel SH + Gemi/Gokyuzu-Zemin yari-kure ortam aydinlatmasi
+    // Kuresel SH + Gokyuzu-Zemin yari-kure ortam aydinlatmasi + PT-10 Renkli Golge (Safir/Murdum/Ametist/Kobalt)
     float3 shAmbient = SampleSH(normalWS);
     float upFactor = normalWS.y * 0.5 + 0.5;
     float3 skyHemi = float3(0.46, 0.56, 0.74);
     float3 groundHemi = float3(0.18, 0.15, 0.14);
+    float biomeShadowActive = saturate(_StratoBiomeGrassPrimary.w);
+    if (biomeShadowActive > 0.01)
+    {
+        float3 coloredShadowLin = ConvertLutSrgbToActiveColorSpace(_StratoBiomeShadowTint.rgb);
+        float3 fogSkyLin = ConvertLutSrgbToActiveColorSpace(_StratoBiomeFogTint.rgb);
+        skyHemi = lerp(skyHemi, lerp(fogSkyLin * 0.68, coloredShadowLin * 1.15, 0.35), biomeShadowActive * 0.62);
+        groundHemi = lerp(groundHemi, coloredShadowLin * 0.72 + float3(0.03, 0.03, 0.04), biomeShadowActive * 0.78);
+    }
     float hemiScale = 1.0 - 0.86 * saturate(_StratoNightDim01);
     skyHemi *= hemiScale;
     groundHemi *= hemiScale;
@@ -582,6 +620,23 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float3 totalDiffuse = albedo * (ambientTerm + directDiffuse);
     float3 totalSpecular = mainLight.color * specTerm;
     float3 additionalLightIrradiance = float3(0.0, 0.0, 0.0);
+
+    // PT-10: Biyoma Ozgu Canli Neon Cifti (Kristal/Mucevher Damarlari ve Parlayan Yosun)
+    float3 biomeNeonEmission = float3(0.0, 0.0, 0.0);
+    if (useLutMode && biomeShadowActive > 0.01)
+    {
+        bool isBiolumCrystalMat = (input.matId == 165u || input.matId == 41u || input.matId == 48u ||
+                                   (input.matId >= 47u && input.matId <= 49u) ||
+                                   (input.matId >= 53u && input.matId <= 59u));
+        if (isBiolumCrystalMat)
+        {
+            float neonMix = smoothstep(-0.25, 0.25, sin(input.positionWS.x * 0.21 + input.positionWS.z * 0.17 + input.positionWS.y * 0.13));
+            float3 neonColLin = ConvertLutSrgbToActiveColorSpace(lerp(_StratoBiomeNeonA.rgb, _StratoBiomeNeonB.rgb, neonMix));
+            float neonMask = (input.matId == 165u) ? 0.62 : max(0.38, veinMask01);
+            float neonPulse = 0.86 + 0.14 * sin(_Time.y * 2.2 + dot(input.positionWS.xz, 0.35));
+            biomeNeonEmission = neonColLin * (neonMask * biomeShadowActive * neonPulse * 0.72);
+        }
+    }
 
     float3 glintMicroNormalWS = normalWS;
     if (veinMask01 > 0.35)
@@ -654,7 +709,7 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     }
 
     float fresnelRim = pow(1.0 - saturate(dot(normalWS, viewDirWS)), 3.2) * _RimLightStrength * combinedIndirectAo;
-    float3 finalRgb = litRgb + totalSpecular * cavityAo + fresnelRim * float3(0.62, 0.74, 0.95);
+    float3 finalRgb = litRgb + totalSpecular * cavityAo + fresnelRim * float3(0.62, 0.74, 0.95) + biomeNeonEmission;
 
     // Stefan-Boltzmann T^4 Kara Cisim (MagmaBlock Catlak Kor Isinimi / Lav / Demirci Orsu) Emisyonu
     float effectiveHeatNorm = (input.matId == 11u)

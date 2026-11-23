@@ -702,25 +702,12 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             byte matId = ResolveBiomeSurfaceMaterialId(worldX, topH, worldZ, r, biomeId);
-
-            return biomeId switch
-            {
-                0 => (0.12f, 0.66f, 0.33f, matId), // Bolge 1: Zumrut Gunesi Ormani (#1EA855)
-                1 => (0.18f, 0.58f, 0.30f, matId), // Demir Agaci & Zumrut Orman
-                2 => (0.92f, 0.91f, 0.86f, matId), // Karstik Kirectasi Falez
-                3 => (0.30f, 0.45f, 0.22f, matId), // Turba Batakligi
-                4 => (0.92f, 0.96f, 1.00f, matId), // Bolge 5: Gunesli Buzul Zirveleri (#FFFFFF/#7DD3FC)
-                5 => (0.76f, 0.66f, 0.88f, matId), // Kristal Kanyon
-                6 => (0.85f, 0.22f, 0.23f, matId), // Bolge 4: Kizil Kor ve Ametist Kanyonu (#D9383A)
-                7 => (0.24f, 0.22f, 0.38f, matId), // Bazalt Platosu
-                8 => (0.48f, 0.16f, 0.14f, matId), // Volkanik Kaldera
-                9 => (0.50f, 0.38f, 0.36f, matId), // Kullu Corak
-                10 => (0.28f, 0.74f, 0.58f, matId), // Gokyuzu Adalari
-                11 => (0.12f, 0.11f, 0.29f, matId), // Bolge 6: Obsidyen Hiclik Kiyisi (#1E1B4B)
-                12 => (1.00f, 0.72f, 0.11f, matId), // Bolge 2: Altin ve Alacakaranlik Yaylasi (#FFB81C)
-                13 => (0.00f, 0.71f, 0.64f, matId), // Bolge 3: Safir Lagun ve Prusya Kiyilari (#00B4A2)
-                _ => (0.12f, 0.66f, 0.33f, matId)
-            };
+            BiomeVisualProfile blended = BiomeVisualPaletteCatalog.SampleBlendedBiomeVisualProfile(worldX, worldZ);
+            float patchMix = 0.5f + 0.5f * MathF.Sin(worldX * 0.045f + MathF.Cos(worldZ * 0.041f));
+            RgbColor surfaceCol = (matId == MaterialIdCatalog.Stone || matId == MaterialIdCatalog.Cobblestone || matId == MaterialIdCatalog.Marble)
+                ? blended.CliffStoneColor
+                : RgbColor.Lerp(blended.GrassPrimary, blended.GrassSecondary, patchMix * 0.45f);
+            return (surfaceCol.R, surfaceCol.G, surfaceCol.B, matId);
         }
 
         public static float SampleIslandUnderbellyY(float worldX, float worldZ)
