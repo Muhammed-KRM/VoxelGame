@@ -1237,80 +1237,90 @@ Kullanıcının talimatı üzerine `STRATOCRAFT_ EVRENSEL OYUN TASARIM VE MANTIK
 
 ---
 
-### 3.4. Kullanıcı Canlı PlayTest Tespitleri & Tamamlanan İş Paketleri (`Devir #081` — `PT-01..PT-10 ✅`)
+### 3.4. Devir #081 Ayrıntılı Canlı PlayTest Rehberi (`PT-01..PT-10` — Adım Adım Doğrulama)
 
 #### A. Son PlayTest Log & Telemetri Denetimi (`2026-11-23 15:29–15:39+03:00`)
 - **`function_error_logs`:** `0` çalışma zamanı hatası / exception.
 - **`Editor.log` & Unity Console:** `0 Error / 0 Warning` (`0` adet `Server Tick Batching`).
-- **`simulation_pipeline_logs` (`Stage1InteractivePlayController.Update`, `n = 487` kare):** `p50 = 2.89 ms`, **`p95 = 32.08 ms`**. Yalnızca `15:29:26` sahne ilk açılış karesi (`1206.31 ms`) ile `15:38:22` anında tek bir izole `129.49 ms` spike kaydedilmiş; geri kalan ~10 dakikalık gerçek oyunda olağandışı bir hata veya sürekli donma döngüsü yoktur.
+- **`simulation_pipeline_logs` (`Stage1InteractivePlayController.Update`, `n = 487` kare):** `p50 = 2.89 ms`, **`p95 = 32.08 ms`**. İlk sahne açılış karesi (`1206.31 ms`) hariç ~10 dakikalık gerçek oyunda yalnızca tek bir izole `129.49 ms` spike kaydedilmiştir.
 
-#### B. Tamamlanan PlayTest İş Paketleri (`Devir #081` — `PT-01..PT-10 ✅`)
-1. ✅ **PT-01 — Ağaç Dalları, Basılabilirlik & Bükülme/Kırılma Fiziği** *(Tamamlandı — `feat/pt-01-trees-branches`)*
-2. ✅ **PT-02 — Gerçekçi 3 Katmanlı Yerleşimler (`Köy`, `Kasaba`, `Şehir`)** *(Tamamlandı — `feat/pt-02-05-settlements-real-buildings`)*
-3. ✅ **PT-03 — *Sons of the Forest* Tarzı Kütük İnşa & `[T]`/`[B]` Yerleştirme / Elde Kalma Hatası** *(Tamamlandı — `feat/pt-03-04-sotf-build-and-keys`)*
-4. ✅ **PT-04 — Tuş Çakışmaları Denetimi (`[B]`, `[Alt]` vb.)** *(Tamamlandı — `feat/pt-03-04-sotf-build-and-keys`)*
-5. ✅ **PT-05 — Evlerin İçinden Geçme Sorunu (Katı Çarpışma & Gerçek Parçalı İnşa)** *(Tamamlandı — `feat/pt-02-05-settlements-real-buildings`)*
-6. ✅ **PT-06 — FPS Kamerada Eller, Elde Tutulan Eşya Görünürlüğü & Yumruk Pozisyonu** *(Tamamlandı — `feat/pt-06-07-fps-hands-and-items`)*
-7. ✅ **PT-07 — Eşya 3B Modellerinin Kalite Yenilemesi (24 Blender 4.2 `.glb`)** *(Tamamlandı — `feat/pt-06-07-fps-hands-and-items`)*
-8. ✅ **PT-08 — Enlem-İrtifa Biyom Mantığı & `256m` Dağ / `160m` Derin Mağara Ölçeği** *(Tamamlandı — `feat/pt-08-09-10-world-biomes-sky`)*
-9. ✅ **PT-09 — Atmosfer/Bulut Sistemi, `460m` Bulutlara Uçabilme & Kare-Kare Gökyüzü Tamiri** *(Tamamlandı — `feat/pt-08-09-10-world-biomes-sky`)*
-10. ✅ **PT-10 — Yeni 6 Bölge Biyomları & Çok-Biyomlu Sanat / Renk Paleti Entegrasyonu** *(Tamamlandı — `feat/pt-08-09-10-world-biomes-sky`)*
-    - *(İleride `ChunkSnappedFloatingOriginSystem`'in yeniden açılması ve kalan `13/21` organik canlı `.glb` üretimi de teknik borç listesinde tutulmaya devam eder.)*
+#### B. Sahne İçinde `PT-01..PT-10` Nasıl Test Edilir? (Adım Adım Kontrol Listesi)
+
+1. 🧪 **PT-06 & PT-07 — FPS Eller, Yumruk Hamlesi & 24 Yeni Blender 4.2 Eşya Modeli:**
+   - **`[F5]`** ile **FPS** kamera kipine geçin ve **`[0]` (Boş El)** yuvasını seçin: sağ ve sol elinizin ekranın alt-ön kadrajında nefes/adım salınımıyla hazır gardda net göründüğünü doğrulayın.
+   - Boş elle **`Sol Tık`** yapın: sağ direkt ve sol kroşe yumrukların nişangâh merkezine doğru ön kadraja fırladığını görün (kılıç/kazma FPS tutuşu korunmuştur).
+   - **`[F4]` -> `[Tab]`** ile çakmaktaşı, dal, taş/cevher parçaları, balta, çekiç, kürek, bıçak, meşale, kova/matara, et, iksir/bandaj gibi eşyaları alıp sırayla **`[1..9]`** yuvalarına koyun: hiçbir eşyanın ekranın altında kaybolmadığını, sağ el avuç içi ve sol destek eliyle net kadrajda yeni 3B `.glb` kalitesiyle durduğunu kontrol edin.
+
+2. 🧪 **PT-01 — Ağaç Gövde-Dal Uyumu, 7 Tür, Basılabilirlik & Euler-Bernoulli Eğilme/Kırılma:**
+   - Başlangıç vadisi ve dış biyomlardaki 7 ağaç türünü (`Meşe`, `Nordik Çam`, `Kar Çamı`, `Demir Odunu Devi`, `Salkım Söğüt`, `Gümüş Huş`, `Kıyı Palmiyesi`) inceleyin: voksel gövde (`r = 0.38m`) ile taç/dal bilezikleri arasında boşluk veya kopukluk olmamalıdır.
+   - **`[F4]`** -> çift **`Space`** ile havalanıp büyük bir ağacın **kalın taşıyıcı ana dalı** üzerine inin: dalların üzerinde fiziksel olarak yürüyebildiğinizi ve ağırlığınızla dalın hafifçe aşağı esneyip inince geri yaylandığını gözlemleyin.
+   - Uçtaki **ince dala** doğru yürüyün veya yükü zorlayın: kırılma eşiği aşıldığında dalın fiziksel olarak kırıldığını, desteğin kesilip aşağı düştüğünüzü ve kırılan dalın yere toplanabilir **odun parçası** olarak düştüğünü doğrulayın.
+
+3. 🧪 **PT-02 & PT-05 — 3 Katmanlı Köy / Kasaba / Şehir & Katı Parçalı Bina Çarpışması:**
+   - **`[F4]`** uçuşuyla yükselip adayı tarayın: artık her yere rastgele saçılmış tekil ev spam'ı olmamalıdır; `24×24` chunk makro ızgara üzerinde seyrek ama düzenli **Köy (`3×3` chunk)**, **Kasaba (`5×5` chunk)** ve **Şehir (`9×9` chunk)** yerleşimlerini görün.
+   - Yerleşimlerin içinde **kuyular/çeşme, merkez meydan, taş/toprak yollar, hizalı sıralı evler, sulamalı çitli tarlalar, ahırlar, pazar tezgâhları, demirci/marangoz atölyeleri, yel değirmenleri ve şehirde sur/geçilebilir kapı/köşe kuleleri** bulunduğunu doğrulayın.
+   - Bir binanın duvarına yürüyün/koşun: **duvarların içinden asla geçemediğinizi**, yalnızca **kapı boşluğundan** içeri girip çok katlı döşemede yürüyebildiğinizi ve çatıya kafanızın çarptığını test edin.
+   - Kazma/balta ile yerleşimdeki bir duvar parçasını kırın: yapının gerçek modüler parçalardan oluştuğunu ve kırılan duvar boşluğundan geçilebildiğini doğrulayın.
+
+4. 🧪 **PT-03 & PT-04 — SOTF Katmanlı İnşa, 6 Malzeme/3 Kesit Statiği, Hologram Önizleme, İptal & Çakışmasız Tuşlar:**
+   - Madde Kristali kapalıyken **`[T]`** ile Zihin/SOTF İnşa Menüsünü açın, **`[V]` / `[Shift+V]`** ile yapı parçası veya malzeme/kesit (`Çam`, `Demir Odunu`, `Kırma Taş`, `Kesme Bazalt`, `Yontma Mermer`, `Takviyeli Çelik-Obsidyen`; `İnce / Standart / Ağır`) seçin ve **`[R]`** ile döndürün.
+   - Önünüzde yalnızca **yarı-şeffaf hologram önizleme** göründüğünü, **`Sol Tık`** yaptığınızda katman katman (`1/N -> N/N`) inşa edildiğini ve yerleşen parçaların **%100 katı (içinden geçilemez)** olduğunu doğrulayın.
+   - Geniş (`> 4m`) veya yüksek yapılarda alttaki taşıyıcı kolonu kırdığınızda yük aktarımına bağlı zincirleme çökmeyi test edin.
+   - Elinde inşa parçası/taslağı varken **`[ESC]`**, **`[Q]`**, **`Sağ Tık`** veya **`[0..9]` / tekerlek** yapın: parçanın elde takılı kalmadan anında iptal olduğunu doğrulayın.
+   - **Çakışmasız Tuş Testi:** **`[B]`** sadece Zanaat Kitabını açmalıdır; **`[C]`** Kristal açıkken **`[Shift+B]`** malzeme seçmeli, **`[Alt]`** basılıyken Dodge yapmadan sağ kenarda `3×6` tam paleti açmalı ve tıklama imleci vermeli, **`[Shift+T]`** fırça yarıçapını değiştirmelidir. Kılıç eldeyken **`[X]`** kılıcı yere atmadan Yarı-Kılıç (`Halbschwert`) açmalıdır.
+
+5. 🧪 **PT-08, PT-09 & PT-10 — Enlem İklimi, `256m` Dağlar, `160m` Mağaralar, Pürüzsüz Gökyüzü/Bulut Uçuşu & 6 Bölge Paleti:**
+   - **`[F3]`** açıp **`+Z` (Kuzey)** yönüne uçun: sıcaklık düzenli düşmeli ve soğuk/buzul zirvelere geçmelisiniz; **`-Z` (Güney)** yönüne uçun: sıcaklık artıp sıcak/kanyon/volkanik bölgelere geçmelisiniz (**Buz ile Lav asla yan yana olmamalıdır**).
+   - Büyük bir dağa (`Y <= 256m`) ve derin mağaralara (`MaxCaveNetworkY = 160m`) inip çıkın: küçük tümseklerde hemen kar başlamamalı (`Y >= 168m` dinamik kar sınırı), dağ tırmanışı uzun ve görkemli ölçekte olmalıdır.
+   - **`[F4]`** uçuşuyla **`Y = 220..460 m`** arasına yükselip bulutların içine girin: gökyüzünde kare-kare (`banding`) olmadan pürüzsüz gradyanı, katı ada artefaktı olmadan yumuşak bulut içi sis hissini ve **`[F3]`** ekranında buharlaşma hızı + **`ENSO` (`El Nino` / `La Nina` / `Nötr`)** telemetri satırını doğrulayın.
+   - 6 Bölge Sanat Anayasası biyomlarını (`Zümrüt Güneşi Ormanı`, `Altın & Alacakaranlık Yaylası`, `Safir Lagün`, `Kızıl Kor & Ametist Kanyon`, `Güneşli Buzul Zirveleri`, `Obsidyen Hiçlik Kıyısı`) gezip sınırlardaki `40–80m` doğal gürültülü renk geçişlerini, renkli gölgeleri ve biyom neon kristallerini kontrol edin.
+
+*(İleride `ChunkSnappedFloatingOriginSystem`'in yeniden açılması ve kalan `13/21` organik canlı `.glb` üretimi Faz 3 öncesi opsiyonel teknik borç listesinde tutulmaktadır.)*
 
 ---
 
-## 4. Güncel Sahne ve Oynanış Tuş Kontrolleri
+## 4. Güncel Sahne ve Oynanış Tuş Kontrolleri (Çakışmasız PT-04 Haritası)
 
 | Tuş / Eylem | Fonksiyon | Durum |
 | :--- | :--- | :--- |
-| **`[X]` Tuşu (Kılıç Eldeyken)** | **Yarı-Kılıç (`Halbschwert`) Tutuşu:** Sol eli orta namluya (`+0.28m`) kaydırarak menzili `~0.60m` dar alana çeker ve zırh delmeyi `1.35x` yükseltir | ✅ Devir #077 (Aktif) |
-| **`[T] -> [6..9]` / Omuzda Kütük `[R]` + `Sağ Tık`** | **Kesilen Ağaç Kütükleriyle İnşa:** Omuzlanan 2m kütüğü `[R]` (Yatay Duvar / Dikey Çit / Üst Kiriş) ile döndürüp `Sağ Tık` ile dizerek `[T]->[6..9]` (`LogWall`, `LogPalisade`, `LogBeam`, `LogCabin`) mühürler | ✅ Devir #077 (Aktif) |
-| **`[U]` Tuşu** | **Menüsüz Canlı 3B Beden İnceleme & Zırh Çıkarma/Takma:** Kamera karakterin önüne geçer; `Sağ Tık Sürükle` ile 360° dönülür, doğrudan 3B Kask/Göğüslük/Kolçak/Dizlik üzerine `Sol Tık` ile zırh çıkarılır veya takılır (`[U]`/`[ESC]` çıkış) | ✅ Devir #075 (Aktif) |
-| **`[Insert]` Tuşu** | **Derin Akışkan Teşhis Kaydı (`FluidDeepDiagnosticProbe`):** Açıkken `Logs/fluid_deep_probe_*.jsonl` dosyasına fizik/mesher/hidroloji telemetrisi yazar; kapalıyken `0 B` GC | ✅ Devir #070 (Aktif) |
-| **`[T] -> [5]` / `[Sağ Tık]` / `[E]` / `[Shift+E]` (Yel Değirmeni)** | **Fiziksel Betz Yel Değirmeni:** `4` Taş + `4` Ahşap + `4` Yelken Kanadı kümesini `[T]->[5]` ile kurar; `[Sağ Tık]` tahıl/cevher yükler veya yıpranmış yelkeni onarır, `[E]` un/cevher tozu toplar, `[Shift+E]` fırtına mekanik şerit frenini kilitler/açar | ✅ Devir #063 (Aktif) |
-| **`[Sol Ctrl]` (Fırtına / Tipi Sürüklemesi)** | **Çömelme Rüzgâr Direnci:** Fırtına ve borada oyuncu aerodinamik sürükleme kuvvetini `>= %68` azaltır; taş duvar arkası (`S_wind <= 0.20`) rüzgâr soğuğunu keser | ✅ Devir #063 (Aktif) |
-| **`[Shift+F11]` Tuşu** | **Test Hava Durumu Döngüsü (6 Kip):** `0: Otomatik -> 1: Yağmur (14 mm/sa) -> 2: Sağanak Fırtına (28 mm/sa, CAPE 1400) -> 3: Kar Yağışı (-3°C) -> 4: Tipi / Bora (-9°C, ~21 m/s, Thundersnow CAPE 520) -> 5: Açık Güneşli Hava` | ✅ Devir #063 (Aktif) |
-| **`[` / `]` / `Backspace` (veya `ESC -> Ayarlar`)** | **Dinamik Zaman Ölçeği (`1x–600x`):** `[` azaltır, `]` artırır (`1, 2, 5, 10, 30, 60, 150, 300, 600x`), `Backspace` `1x`'e sıfırlar (`0 NaN/Inf` kararlı) | ✅ Devir #059 (Aktif) |
-| **`[B]` Tuşu (`!Shift`) -> `[5]`** | **Rehber Kitabı [5] Hava & Denizci Tahmini:** Açık deri kitapta 5. sekme; Zambretti tablosu, Beaufort skalası, Stull formülleri, bulut rehberi | ✅ Devir #059 (Aktif) |
-| **Barometre / Termometre / Higrometre / Anemometre / Yağmur Ölçer** | **5 Denizci Hava Aleti:** Elde tutulduğunda ekranda hPa basınç, Zambretti A..Z tahmini, rüzgâr yönü/şiddeti ve yağış mm değerini gösterir | ✅ Devir #059 (Aktif) |
-| **Metal Paratoner** | **Yıldırım Koruma & Topraklama:** $24\text{m}$ yarıçapta yıldırım düşmelerini yakalayarak güvenli şekilde toprağa aktarır | ✅ Devir #059 (Aktif) |
-| **`[B]` Tuşu (`!Shift`)** | **Fiziksel İki Sayfalı Zanaat ve Malzeme Rehber Kitabı:** Dikişli açık deri cilt, pirinç köşebentler, kâğıt yığını, kırmızı ipek ayraç, 3B öğe/yapı önizlemeleri, `"Gerekenler:"` malzeme ikon şeridi, `[A/D]` veya fare tekerleğiyle yaprak çevirme (`CursorLockMode.None`, `0 B/kare` GC; `ESC` ile kapatır) | ✅ Devir #060 (Aktif) |
-| **`[C]` + `Fare Tekerleği` / `[Shift+B]` / `[Alt]` (Basılı)** | **Madde Kristali 7'li Kayar Şerit & Sağ Kenar Tam Paleti:** `[C]` açıkken hotbar üstünde ekran ortasını `%100` açık bırakan tek satır 7'li kayar şerit (`Fare Tekerleği` veya `[Shift+B]` ile döner); `[Alt]` basılı tutulduğunda sağ kenarda (F3 sağ paneli altında) 17 bloğun tamamını gösteren `3×6` tam palet açılır | ✅ Devir #080 (Aktif) |
-| **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme (`Extinguish`):** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür (Yağmurda açık gökyüzünde kendiliğinden söner) | ✅ Devir #059 (Aktif) |
-| **`[V]` / `[Shift+V]` Tuşu** | **Doğal Arazi Saçılım Fırçası (`ShapeId = 0`):** `[V]` anlık geçiş yapar; `[Shift+V]` mimari şekilleri (`1..7, 63`) tarar | ✅ Devir #057 (Aktif) |
-| **`[F12]` Tuşu** | **Mağara Katmanları Hızlı Test Teleportu:** Katman 1 (`Y=75m`), Katman 2 (`Y=54m`), Katman 4 (`Y=12.2m`) arasında döner | ✅ Devir #057 (Aktif) |
-| **Sağ Tık / Sol Tık / `[E]` (Bloomery / Kömür Ocağı / Örs)** | **Metalürji Etkileşimi:** Çakmaktaşıyla yakma, çoklu cevher yükleme (Toz, Kavrulmuş, Ham), kil pişirme (`12 sn`), çekiçle sıcak dövme (`>=720°C`, `8` vuruş -> `WroughtIronBar`), körük pompalama (`1230–1315°C`), kil tıkaç kırma/sıvama | ✅ Devir #057 (Aktif) |
-| **`[E]` / `[ESC]` / `Sağ Tık` (Ahşap El Arabası)** | **Fiziksel El Arabası:** Arka saplardan `[E]` ile tutar (`[WASD]` sürer, `[E]`/`[ESC]` park eder); kasa üstünde `Sağ Tık` (`Shift+Sağ Tık` 5'li) eşya yükler (`36` yuva), `[E]` ile LIFO geri alır | ✅ Onaylandı |
-| **`Sağ Tık` (Elde Doğal Eşya Varken)** | **Serbest 3B Fiziksel Dizilim (`WorldLooseBuild`):** Yaprak, lif, dal (kav yanında dizde kırılıp `42°` çadır eğimi alır), taş ve kil topaklarını `ShapeDna` koruyarak zemine/üst üste dizer (`[R]` döndürür, `[E]` geri alır) | ✅ Onaylandı |
-| **`[T]` Tuşu (Madde Kristali Kapalıyken)** | **Zihin İnşa Menüsü (`Mind Building`):** `[1..4]` / `Sol Tık` ile öndeki fiziksel malzeme kümesini doğrulayıp istasyona etiketler; `Sağ Tık` / `[G]` ile `2.8sn` düşünce silüeti gösterir | ✅ Onaylandı |
-| **Çakmaktaşı + Tık / Çiğ Et + `Sağ Tık`** | **Kamp Ateşi Yakma & 3B Et Pişirme:** Sönük ateşe `3` kez kıvılcım çakarak yakar; yanan ateşe `Çiğ Et` koyar (`12sn` Pişmiş -> `[E]` Al, `>26sn` Yanmış) ve `Dal/Odun` ile besler | ✅ Onaylandı |
-| **`[R]` Tuşu (Yerdeki Taşa Bakarken)** | **Fiziksel 3B Taş Yontma (`Stone Knapping`):** Çakmaktaşını otomatik ele alır -> `1..4` kalıp seçtirir -> taşın başına çömelip hayalet çizgi çizer -> `Sol Tık` ile kenarları kırar -> `[E]` ile yontulmuş başlığı alır | ✅ Onaylandı |
-| **`[I]` Tuşu** | **Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkez 3B Craft:** Eşyaları gerçek 3B modelleriyle örtü üstünde gösterir; merkeze konan malzemeleri `[R]` / `Sol Tık` ile iple bağlayarak alet üretir | ✅ Onaylandı |
-| **`[E]` Tuşu (Tek Basış — Eşya/Çalı)** | Yerdeki tüm doğal eşyaları (`<= 3.15m`) anında toplar; çalıları kırıp dal/yaprak/lif/böğürtlen düşürür | ✅ Onaylandı |
-| **`[E]` Tuşu (`0.60sn` Basılı — Çömelip Yere Bakarken)** | Boş elle yumuşak Toprak / Kum / Kil zemininden avuçla gerçek 3B öbek kazar | ✅ Onaylandı |
-| **`[C]` veya `Sağ Tık` (Elde Kuvars / Rezonans Kristali)** | `Tier 0 -> Tier 1` için Kuvars yedirir (`3/3`); `Tier 2..5` için canavarlardan düşen Rezonans Kristali ile kademe yükseltir | ✅ Devir #057 (Aktif) |
-| **`[Q]` / `[Ctrl+Q]`** | Seçili slottan `1` adet (`[Q]`) veya tüm yığını (`[Ctrl+Q]`) büyütülmüş gerçek 3B şekliyle (`ShapeDna`) yere bırakır | ✅ Aktif |
-| **`[0]` Boş El + `Sol Tık`** | Çıplak el sağ/sol yumruk hamlesi (yalnızca canlı yaratıklara isabet ettiğinde enerji ve el geri tepmesi harcar; araziye boşa enerji harcamaz) | ✅ Onaylandı |
-| **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El) | ✅ Aktif |
-| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu & 6-Sekmeli Eşya Kataloğu (`32..49` arası tüm doğal eşyalar, yontulmuş taş başlıklar, yel değirmeni kanadı/kış giysileri ve `🌦️ Hava Aletleri (6)` sekmesi dahil) | ✅ Devir #063 (Aktif) |
-| **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD (3B rüzgâr, kar SWE, yel değirmeni, `clo`/Wind Chill dahil) \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Devir #063 (Aktif) |
+| **`[ESC]` / `[Q]` / `Sağ Tık` / `[0..9]`** | **Aktif İnşa / Taslak İptali (`CancelActiveBuildPlacement`):** `[T]` veya elde kütük/yapı parçası yerleştirme kipindeyken anında bırakır; parça elde kilitli kalmaz | ✅ Devir #081 (Aktif) |
+| **`[T]` (Kristal Kapalıyken)** | **Zihin / SOTF Katmanlı İnşa Menüsü:** Parça/istasyon seçer (`[V]`/`[Shift+V]` parça/malzeme, `[R]` döndür, `Sol Tık` hayalet önizlemeden katmanlı yerleştir, `[G]` silüet ipucu) | ✅ Devir #081 (Aktif) |
+| **`[B]` (`!Shift && !Alt && !Ctrl`)** | **Fiziksel İki Sayfalı Zanaat & Hava Rehber Kitabı (`5` Sekme):** `[A/D]` veya tekerlekle sayfa çevirir; `ESC` ile kapatır (Artık Kristal veya İnşa ile çakışmaz) | ✅ Devir #081 (Aktif) |
+| **`[C]` + `Tekerlek` / `[Shift+B]` / `[Shift+T]` / `[Alt]`** | **Madde Kristali Kontrolleri:** `[C]` açar/kapatır; hotbar üstünde `7`'li kayar şerit (`Tekerlek` / `[Shift+B]` malzeme); **`[Alt]` basılıyken** Dodge yapmadan sağ kenar `3×6` tam paletini imleçle açar; **`[Shift+T]`** vakum yarıçapını değiştirir; `[V]`/`[Shift+V]` şekil seçer | ✅ Devir #081 (Aktif) |
+| **`[X]` Tuşu (Kılıç Eldeyken)** | **Yarı-Kılıç (`Halbschwert`) Tutuşu:** Kılıç eldeyken eşyayı yere atmaz, yalnızca yarı-kılıç zırh delme tutuşunu açar/kapatır | ✅ Devir #081 (Aktif) |
+| **`[R]` Tuşu (Bağlama Öncelikli)** | **Çakışmasız Öncelik Sırası:** `Kristal > Omuz Kütüğü Döndür/Yatay-Dikey > Modüler İnşa Döndür > Yerdeki Taşı Yontma (8x8)` | ✅ Devir #081 (Aktif) |
+| **`[U]` Tuşu** | **Menüsüz Canlı 3B Beden İnceleme & Zırh Çıkarma/Takma:** Kamera karakterin önüne geçer; `Sağ Tık Sürükle` ile 360° dönülür, doğrudan 3B zırh parçasına `Sol Tık` ile çıkarılır/takılır (`[U]`/`[ESC]` çıkış) | ✅ Devir #075 (Aktif) |
+| **`[Insert]` Tuşu** | **Derin Akışkan Teşhis Kaydı (`FluidDeepDiagnosticProbe`):** Açıkken `Logs/fluid_deep_probe_*.jsonl` dosyasına telemetri yazar; kapalıyken `0 B` GC | ✅ Devir #070 (Aktif) |
+| **`[T] -> [5]` / `[Sağ Tık]` / `[E]` / `[Shift+E]` (Yel Değirmeni)** | **Fiziksel Betz Yel Değirmeni:** `4` Taş + `4` Ahşap + `4` Yelken Kanadı kümesini `[T]->[5]` ile kurar; `[Sağ Tık]` yükler/onarır, `[E]` ürün toplar, `[Shift+E]` mekanik şerit frenini kilitler | ✅ Devir #063 (Aktif) |
+| **`[Sol Ctrl]` (Fırtına / Tipi Sürüklemesi)** | **Çömelme Rüzgâr Direnci:** Fırtına ve borada oyuncu sürükleme kuvvetini `>= %68` azaltır; taş duvar arkası rüzgâr soğuğunu keser | ✅ Devir #063 (Aktif) |
+| **`[Shift+F11]` Tuşu** | **Test Hava Durumu Döngüsü (6 Kip):** `0: Otomatik -> 1: Yağmur -> 2: Sağanak Fırtına -> 3: Kar -> 4: Tipi / Bora -> 5: Açık Hava` | ✅ Devir #063 (Aktif) |
+| **`[` / `]` / `Backspace` (veya `ESC -> Ayarlar`)** | **Dinamik Zaman Ölçeği (`1x–600x`):** `[` azaltır, `]` artırır, `Backspace` `1x`'e sıfırlar | ✅ Devir #059 (Aktif) |
+| **Barometre / Termometre / Higrometre / Anemometre / Yağmur Ölçer / Paratoner** | **Denizci Hava Aletleri & Yıldırım Koruması:** Elde tutulduğunda hPa basınç, Zambretti tahmini, rüzgâr ve yağışı gösterir; Paratoner $24\text{m}$ yarıçapta yıldırım yakalar | ✅ Devir #059 (Aktif) |
+| **`[Shift+E]` / Su Kabı ile `Sağ Tık`** | **Ateş & Fırın Söndürme:** Kamp Ateşi ve Bloomery fırınını yakıt/ilerleme koruyarak söndürür | ✅ Devir #059 (Aktif) |
+| **`[F12]` Tuşu** | **Mağara Katmanları Hızlı Test Teleportu:** Sığ (`Y=75m`), Orta (`Y=54m`) ve Derin Magma (`Y=12.2m`) katmanları arasında döner | ✅ Devir #057 (Aktif) |
+| **Sağ Tık / Sol Tık / `[E]` (Bloomery / Kömür Ocağı / Örs / El Arabası)** | **Metalürji & Taşıma:** Çakmaktaşı kıvılcımı, çoklu cevher yükleme, `1230–1315°C` körük, örste sıcak dövme ve 36 yuvalı El Arabası | ✅ Onaylandı |
+| **`[I]` Tuşu** | **Karesiz *The Forest* 3B Kumaş Çanta Bezi & Merkez 3B Craft:** Eşyaları gerçek 3B modelleriyle örtü üstünde gösterir ve merkezde birleştirir | ✅ Onaylandı |
+| **`[E]` / `[Q]` / `[Ctrl+Q]` / `[0]` Sol Tık** | `[E]` eşya toplar / çalı kırar / (`0.60sn` basılı) avuçla kazar; `[Q]` / `[Ctrl+Q]` yere bırakır; `[0]` Sol Tık sağ/sol FPS yumruk atar | ✅ Devir #081 (Aktif) |
+| **`[1..9]` veya `Fare Tekerleği`** | 9'lu Kemer Hızlı Erişim Yuvaları (`0`: Boş El; inşayı da güvenli şekilde iptal eder) | ✅ Devir #081 (Aktif) |
+| **`[F4]` -> `[Tab]`** | Yaratıcı Test Modu (çift `Space` `Y=460m`'ye kadar bulut içi uçuş) & 6-Sekmeli Eşya Kataloğu | ✅ Devir #081 (Aktif) |
+| **`[F3]` / `[F5]` / `[F6]` / `[F10]`** | `F3`: Debug HUD (ENSO/buharlaşma/rüzgâr/SWE dahil) \| `F5`: FPS/TPS Kamera \| `F6`: `.sregion` Kaydet \| `F10`: Düellocu NPC Çağır | ✅ Devir #081 (Aktif) |
 
 ---
 
-## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Ayrıntılı Başlangıç Kılavuzu)
+## 5. Sıradaki İlk İş (Yeni Oturum / Diğer Bilgisayar İçin Başlangıç Kılavuzu)
 
 1. **Git ve Devir Teyidi (Zorunlu İlk Adım):**
-   - Yeni oturuma başlar başlamaz `git status -s` ve `git log -5 --oneline --date=iso` çalıştırarak reponun **`Devir #081`** son durumuyla eşleştiğini doğrula (`git pull` veya çalışma ağacı commit onayı gerekiyorsa kullanıcıya sor).
-2. **Devir #081 (`PT-01..PT-10`) Doğrulandı — Kullanıcı Canlı PlayTest Kontrol Listesi:**
-   - `Devir #081` kapsamında `PT-01..PT-10` özelliklerinin tamamı (`5` feature branch `main`'e birleştirildi), `Unity 6 Recompile + Canlı PlayMode (0 Error / 0 Warning, 0 Server Tick Batching)` ve `quality-gate.ps1 -Phase 4` (`313/313` `.NET 10`, `6/6` `ctest`, `9/9` `pytest`, `4.14 MB / 16.000 MB` VRAM) **%100 PASS** ile doğrulandı.
-   - Kullanıcı kendi PlayTest oturumunda şu yenilikleri doğrudan sahnede gözden geçirebilir:
-     1. `[0]` boş el yumruk + tüm elde tutulan eşyaların FPS kadrajı ve 24 yeni Blender 4.2 `.glb` modeli (`PT-06`, `PT-07`).
-     2. 7 tür ağacın gövde-dal uyumu, dalların üstünde yürüme, ağırlık altında eğilme ve aşırı yükte kırılıp odun düşürmesi (`PT-01`).
-     3. Dağınık ev spam'ı yerine seyrek Köy / Kasaba / Şehir yerleşimleri ve katı çarpışmalı parçalı binalar (`PT-02`, `PT-05`).
-     4. `[T]`/`[V]`/`[R]`/Sol Tık SOTF katmanlı inşa, 6 malzeme/3 kesit, yarı-şeffaf hologram, `[ESC]`/`[Q]`/`RMB`/slot iptali ve çakışmasız `[B]`/`[Shift+B]`/`[Alt]` tuş haritası (`PT-03`, `PT-04`).
-     5. Kuzeye soğuyan / güneye ısınan biyomlar, `256m` dağlar, `160m` mağaralar, pürüzsüz gökyüzü, `[F4]` uçuşla `460m` bulut içi geçiş, ENSO HUD ve 6 bölge renk paleti (`PT-08`, `PT-09`, `PT-10`).
-3. **Dondurulmuş Sıvı Sistemi (Paket 4B.4 — Dokunulmayacak):**
-   - Paket 4B.4 (`FluidSurfaceSkirtMesher.cs`, `FluidCellularAutomataJob.cs`, `StratocraftFluidSurface.shader`, `FluidSimulationSystem.cs`) kullanıcı kararıyla donduruldu; kullanıcı özellikle istemedikçe sıvı dosyalarına dokunma.
-4. **Sonraki Büyük Aşama — Dalga C (`Anayasa Büyük Fazları Faz 3 -> Faz 9`):**
-   - Yukarıdaki canlı PlayMode görsel doğrulaması ve ince ayarları onaylandıktan sonra kalan büyük fazlar sırayla açılacaktır ([`docs/STRATOCRAFT_EKSIKLER_VE_DENETIM_DOKUMANI.md`](docs/STRATOCRAFT_EKSIKLER_VE_DENETIM_DOKUMANI.md)):
-     - Anayasa Faz 3 (Klanlar / 3B Çit BFS / KGP / Kristal HP / `IsSiegeable`) -> Faz 4 (Menzilli Yay/Arbalet Balistiği / 3 Ölüm Modu / Offline Sleeper) -> Faz 5 (75 Batarya / 25 Mayın / 6 Tuzak) -> Faz 6 (Kalan 12 Boss / 12 Felaket / Gece Dalgaları) -> Faz 7 (`16×32×4` Örs / Harmonizer / 29 Atölye / 24 Yapı) -> Faz 8 (NPK Tarım / Genetik / Maillard / 2B Simya / GOAP) -> Faz 9 (Kuşatma DFA / Ekonomi / Lua Mod SDK / Listen-Server Co-op).
+   - Yeni oturuma başlar başlamaz `git status -s` ve `git log -5 --oneline --date=iso` çalıştırıp reponun **`Devir #081`** ile birebir eşleştiğini doğrula (`git pull` veya bekleyen kullanıcı geri bildirimi olup olmadığını sor).
+2. **Şimdi Sıradaki İlk İş — Kullanıcı Canlı PlayTest Onayı (`Bölüm 3.4`):**
+   - Kullanıcının Bölüm 3.4'teki `PT-01..PT-10` canlı PlayTest adımlarını (`FPS eller/yumruk/24 eşya .glb`, `7 ağaç türü & bükülen/kırılan dallar`, `Köy/Kasaba/Şehir & katı ev duvarları`, `SOTF katmanlı inşa & iptal/çakışmasız tuşlar`, `enlem iklimi/256m dağ/160m mağara/bulut uçuşu/6 bölge paleti`) sahnede test edip geri bildirim vermesi bekleniyor. Varsa küçük görsel/oynanış ince ayarları önceliklendirilir.
+3. **Faz 3 Öncesi Kalan Opsiyonel 2 Teknik Borç (Kullanıcı İsterse):**
+   - `ChunkSnappedFloatingOriginSystem` (`±4096 m` merkez kaydırma jitter korumasını yeniden aktifleştirme).
+   - Kalan `13 / 21` organik canlı `.glb` modellerinin (`Tools/AutonomousAssetFactory`) tamamlanması.
+4. **Dondurulmuş Sıvı Sistemi (Paket 4B.4 — Dokunulmayacak):**
+   - Paket 4B.4 (`FluidSurfaceSkirtMesher.cs`, `FluidCellularAutomataJob.cs`, `StratocraftFluidSurface.shader`, `FluidSimulationSystem.cs`) kullanıcı kararıyla donduruldu; kullanıcı özellikle istemedikçe bu 4 dosyaya dokunma.
+5. **Sonraki Büyük Aşama — Dalga C (`Anayasa Büyük Fazları Faz 3 -> Faz 9`):**
+   - Canlı PlayTest onayı alındıktan sonra [`docs/STRATOCRAFT_EKSIKLER_VE_DENETIM_DOKUMANI.md`](docs/STRATOCRAFT_EKSIKLER_VE_DENETIM_DOKUMANI.md) sırasıyla büyük fazlar açılacaktır:
+     - **Anayasa Faz 3:** Klanlar (`3B Çit BFS` kapalı alan, `KGP`, Klan Kristali HP, 3 yönlü `IsSiegeable`, 6 Klan Ritüeli, Hayalet Hologram)
+     - **Anayasa Faz 4:** Menzilli Balistik (Yay / Arbalet / Pilum), 15 Parça Zırh tam entegrasyon, 3 Ölüm Modu, Offline Sleeper
+     - **Anayasa Faz 5:** 5 Antik Zindan dünya üretimi bağlantısı, 75 Fiziksel Batarya, 25 Mayın, 6 Tuzak Çekirdeği
+     - **Anayasa Faz 6–9:** Kalan 12 Boss & 12 Küresel Felaket, `16×32×4` Örs + Harmonizer + 29 Atölye, Liebig NPK Tarım / Genetik / 2B Simya / GOAP, 5 Aşamalı DFA Kuşatma / Ekonomi / `JSON+MoonSharp Lua` Mod SDK / Listen-Server Co-op.
