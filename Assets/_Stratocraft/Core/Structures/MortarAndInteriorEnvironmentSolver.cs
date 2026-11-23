@@ -358,6 +358,15 @@ namespace Stratocraft.Core.Structures
                     continue;
                 }
 
+                if (node.Mortar == MortarType.None)
+                {
+                    node.CureRatio01 = 1.0f;
+                    if (clampedRain <= 0f || node.Anchor == AnchorType.NoneFloating)
+                    {
+                        continue;
+                    }
+                }
+
                 bool sheltered = clampedRain <= 0f || HasOverheadRoofNode(nodes, i);
                 if (!sheltered && clampedRain > 0f && deltaTimeSeconds > 0f)
                 {
@@ -372,7 +381,6 @@ namespace Stratocraft.Core.Structures
 
                 if (node.Mortar == MortarType.None)
                 {
-                    node.CureRatio01 = 1.0f;
                     continue;
                 }
 
@@ -594,7 +602,9 @@ namespace Stratocraft.Core.Structures
             for (int i = 0; i < nodes.Length; i++)
             {
                 ref readonly StructuralNode64 node = ref nodes[i];
-                if (IsNodeFailed(in node))
+                if (MathF.Abs(node.PosX - probePosition.X) > 16.0f ||
+                    MathF.Abs(node.PosZ - probePosition.Z) > 16.0f ||
+                    IsNodeFailed(in node))
                 {
                     continue;
                 }
@@ -842,7 +852,9 @@ namespace Stratocraft.Core.Structures
             for (int i = 0; i < nodes.Length; i++)
             {
                 ref readonly StructuralNode64 node = ref nodes[i];
-                if (IsNodeFailed(in node))
+                if (MathF.Abs(node.PosX - hearthWorldPos.X) > 16.0f ||
+                    MathF.Abs(node.PosZ - hearthWorldPos.Z) > 16.0f ||
+                    IsNodeFailed(in node))
                 {
                     continue;
                 }

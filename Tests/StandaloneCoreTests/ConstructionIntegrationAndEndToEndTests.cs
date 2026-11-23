@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Numerics;
 using System.Text;
@@ -162,14 +163,14 @@ namespace Stratocraft.StandaloneCoreTests
             var worldChunks = new Dictionary<(int cx, int cz), uint[]> { [(0, 0)] = new uint[65536] };
             var dirtyChunks = new HashSet<(int cx, int cz)>();
 
-            int damageHits = buildSys.UnifiedBridge.DamageAtWorldPoint(
+            int damageHits = buildSys.DamageModularSupportAt(
                 new Vector3(8f, 40f, 8f),
                 radius: 3.0f,
                 damage: 4500.0f,
-                simSeconds: 25.0,
-                collapseBridge: collapseBridge,
                 out int brokenCount,
-                out _);
+                out _,
+                collapseBridge: collapseBridge,
+                simSeconds: 25.0);
 
             Assert.That(damageHits, Is.GreaterThan(0));
             Assert.That(brokenCount + collapseBridge.LastSiegeBreachImpactResult.DamagedNodeCount, Is.GreaterThan(0));
@@ -178,11 +179,63 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(afterSlot.CurrentLod, Is.EqualTo(CityChunkLodTier.Lod0FullDetail),
                 "AK-21: Kusatma/hasar alan uzak yerlesim chunk'i aninda LOD0'a yukselmelidir.");
 
-            // Kopan dugumun enkaz adimini kos ve moloz rampasi uretimini dogrula
+            // Tekil bagimsiz kopuk dugum (d_geo == 65535 -> GraphSolver tarafindan DetachedInstantFall):
+            // Bridge'in ilk Step'te bunu yutmadan enkaz + klan ihlali + moloz urettigini dogrula!
+            var detachedWall = StructuralNode64.Create(
+                104u, 10f, 44f, 10f,
+                ArchitecturalSchool.StoneMasonry,
+                StructuralElementRole.AshlarMasonryWall,
+                MaterialIdCatalog.Basalt,
+                AnchorType.NoneFloating,
+                MortarType.Lime,
+                ownerClanOrPlayerId: 5u,
+                instantCure: true);
+            buildSys.UnifiedGraphSolver.AddOrUpdateNode(in detachedWall);
+            buildSys.UnifiedGraphSolver.SolveDirty();
+            Assert.That(buildSys.UnifiedGraphSolver.TryGetNode(104u, out StructuralNode64 preStepDetached), Is.True);
+            Assert.That(preStepDetached.CollapseState, Is.EqualTo(StructureCollapseState.DetachedInstantFall));
+
+            // Asiri yuklu (eta_max >= 1.0, d_geo < 65535) dugum -> 1.5s tekil zamanlayici kontrolu
+            var lintelLeft = StructuralNode64.Create(
+                105u, 28f, 40f, 28f,
+                ArchitecturalSchool.StoneMasonry,
+                StructuralElementRole.AshlarMasonryWall,
+                MaterialIdCatalog.Stone,
+                AnchorType.IntactHardRock,
+                MortarType.None,
+                instantCure: true);
+            var lintelRight = StructuralNode64.Create(
+                106u, 31.2f, 40f, 28f,
+                ArchitecturalSchool.StoneMasonry,
+                StructuralElementRole.AshlarMasonryWall,
+                MaterialIdCatalog.Stone,
+                AnchorType.IntactHardRock,
+                MortarType.None,
+                instantCure: true);
+            var overloadedSpan = StructuralNode64.Create(
+                107u, 29.6f, 41f, 28f,
+                ArchitecturalSchool.StoneMasonry,
+                StructuralElementRole.RubbleMasonryCourse,
+                MaterialIdCatalog.Stone,
+                AnchorType.NoneFloating,
+                MortarType.None,
+                ownerClanOrPlayerId: 5u,
+                instantCure: true);
+            buildSys.UnifiedGraphSolver.AddOrUpdateNode(in lintelLeft);
+            buildSys.UnifiedGraphSolver.AddOrUpdateNode(in lintelRight);
+            buildSys.UnifiedGraphSolver.AddOrUpdateNode(in overloadedSpan);
+            buildSys.UnifiedGraphSolver.ConnectNodes(105u, 107u, JointConnectionKind.DryStoneInterlock);
+            buildSys.UnifiedGraphSolver.ConnectNodes(106u, 107u, JointConnectionKind.DryStoneInterlock);
+            buildSys.UnifiedGraphSolver.SolveDirty();
+            Assert.That(buildSys.UnifiedGraphSolver.TryGetNode(107u, out StructuralNode64 preWarn), Is.True);
+            Assert.That(preWarn.CollapseState, Is.EqualTo(StructureCollapseState.Warning1500ms));
+
+            // Adim 1 (dt = 0.8s): Kopuk dugum (104) ANINDA enkaz + moloz rampasi uretmeli;
+            // overloadedSpan (107) ise 0.8s'de HALA Warning1500ms (~0.7s kalan) icinde kalmali (2x hizlanma YOK)!
             buildSys.StepUnifiedStructuresAndEnvironment(
-                dt: 0.05f,
-                viewerPos: new Vector3(8f, 40f, 8f),
-                simSeconds: 25.1,
+                dt: 0.80f,
+                viewerPos: new Vector3(10f, 40f, 10f),
+                simSeconds: 25.8,
                 ambientTempCelsius: 15f,
                 rainIntensity01: 0f,
                 isCreativeMode: false,
@@ -190,11 +243,149 @@ namespace Stratocraft.StandaloneCoreTests
                 worldChunks: worldChunks,
                 dirtyChunks: dirtyChunks);
 
-            Assert.That(
-                dirtyChunks.Contains((0, 0)) ||
-                (collapseBridge.LastUnifiedNodeCollapseSummary.InstantDetachedCount +
-                 collapseBridge.LastUnifiedNodeCollapseSummary.OverloadCollapsedCount) >= 0,
-                Is.True);
+            Assert.That(collapseBridge.LastUnifiedNodeCollapseSummary.InstantDetachedCount, Is.GreaterThan(0),
+                "Karar A1: GraphSolver'dan gelen DetachedInstantFall dugumu yutulmadan enkaz uretmelidir.");
+            Assert.That(collapseBridge.LastUnifiedNodeCollapseSummary.SpawnedDebrisEventCount, Is.GreaterThan(0));
+            Assert.That(dirtyChunks.Contains((0, 0)), Is.True, "Kopan dugum moloz rampasi dirtyChunks'a yazilmalidir.");
+            Assert.That(buildSys.UnifiedGraphSolver.TryGetNode(107u, out StructuralNode64 midWarn), Is.True);
+            Assert.That(midWarn.CollapseState, Is.EqualTo(StructureCollapseState.Warning1500ms),
+                "Karar A1: 0.8s sonunda 1.5s uyari sayaci erken cokmemelidir (cift decrement hatasi yok).");
+            Assert.That(midWarn.CollapseWarningTimerSec, Is.EqualTo(0.70f).Within(0.02f));
+
+            // Adim 2 (dt = 0.75s -> toplam 1.55s >= 1.5s): Asiri yuklu dugum tam 1.5s sonunda cokmeli
+            buildSys.StepUnifiedStructuresAndEnvironment(
+                dt: 0.75f,
+                viewerPos: new Vector3(10f, 40f, 10f),
+                simSeconds: 26.55,
+                ambientTempCelsius: 15f,
+                rainIntensity01: 0f,
+                isCreativeMode: false,
+                collapseBridge: collapseBridge,
+                worldChunks: worldChunks,
+                dirtyChunks: dirtyChunks);
+
+            Assert.That(collapseBridge.LastUnifiedNodeCollapseSummary.OverloadCollapsedCount, Is.EqualTo(1));
+            Assert.That(buildSys.UnifiedGraphSolver.TryGetNode(107u, out StructuralNode64 finalSpan), Is.True);
+            Assert.That(finalSpan.CollapseState, Is.EqualTo(StructureCollapseState.Collapsed));
+
+            // 1x Kusatma Hasari Dogrulamasi (2x-3x mukerrer hasar yok):
+            var siegeCheckNode = StructuralNode64.Create(
+                108u, 50f, 40f, 50f,
+                ArchitecturalSchool.StoneMasonry,
+                StructuralElementRole.AshlarMasonryWall,
+                MaterialIdCatalog.Basalt,
+                AnchorType.CompactedGravelOrTrench,
+                MortarType.Horasan,
+                thickness: StructureThicknessProfile.HeavyBearing,
+                instantCure: true);
+            buildSys.UnifiedGraphSolver.AddOrUpdateNode(in siegeCheckNode);
+            buildSys.UnifiedGraphSolver.SolveDirty();
+
+            // Referans tekil ApplySiegeBreachImpact sonucuyla birebir 1.000x eslesme kontrolu
+            StructuralNode64[] refNodes = { siegeCheckNode };
+            var refBridge = new Stage1StructuralCollapseBridge();
+            var refDebris = new StructuralNodeDebrisEvent[4];
+            var refBreaches = new ClanBoundaryBreachNotification[4];
+            float refImpactKj = 40.0f * 2.5f;
+            var refReq = new SiegeImpactRequest
+            {
+                ImpactWorldX = 50f,
+                ImpactWorldY = 40f,
+                ImpactWorldZ = 50f,
+                DirectionX = 0f,
+                DirectionY = 0f,
+                DirectionZ = 1f,
+                ProjectileMassKg = 120f,
+                ProjectileSpeedMps = MathF.Sqrt((refImpactKj * 2000f) / 120f),
+                BlastRadiusMeters = 2.0f,
+                AttackerClanOrPlayerId = 0u,
+                IsSiegeBreachWindowActive = true
+            };
+            refBridge.ApplySiegeBreachImpact(refNodes, in refReq, refDebris, out _, refBreaches, out _);
+
+            int sHits = buildSys.DamageModularSupportAt(
+                new Vector3(50f, 40f, 50f), 2.0f, 40.0f, out _, out _, collapseBridge, simSeconds: 27.0);
+            Assert.That(sHits, Is.EqualTo(1));
+            Assert.That(buildSys.UnifiedGraphSolver.TryGetNode(108u, out StructuralNode64 after1x), Is.True);
+            Assert.That(after1x.Integrity01, Is.EqualTo(refNodes[0].Integrity01).Within(1e-4f),
+                "AK-13: DamageModularSupportAt tekil 1x kusatma hasari uygulamalidir (2x-3x mukerrer yok).");
+            Assert.That(after1x.Integrity01, Is.GreaterThan(0.55f));
+        }
+
+        [Test]
+        public void T21_CityScale9x9_IdleFrameZeroMs_AndSingleNodeBreakUnder2Ms()
+        {
+            SpatialHashedStructureCollisionSolver.ResetSharedSolverOnSubsystemRegistration();
+            Assert.That(SettlementLayoutSystem.TryGetSettlementInMacroRegion(0, -1, out SettlementDescriptor city), Is.True,
+                "Makro bolgede Sehir (9x9) uretilmelidir.");
+            Assert.That(city.Tier, Is.EqualTo(SettlementTier.City));
+
+            var buildSys = new WorldLooseBuildSystem();
+            var collapseBridge = new Stage1StructuralCollapseBridge();
+
+            int r = city.FootprintRadiusChunks;
+            for (int dz = -r; dz <= r; dz++)
+            {
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    buildSys.UnifiedBridge.SpawnChunkSettlementUnifiedGraph(
+                        city.CenterChunkX + dx,
+                        city.CenterChunkZ + dz,
+                        city.CenterChunkX * 16f + 8f,
+                        city.CenterChunkZ * 16f + 8f);
+                }
+            }
+
+            Assert.That(buildSys.UnifiedGraphSolver.ActiveNodeCount, Is.GreaterThanOrEqualTo(3000),
+                $"9x9 Sehir en az 3000 dugum icermeli (mevcut: {buildSys.UnifiedGraphSolver.ActiveNodeCount}).");
+
+            // Ilk yerlesim cozumu + warmup (16 kare ile LOD gecisleri + TLS scratch tam otursun)
+            buildSys.UnifiedGraphSolver.SolveAll();
+            var viewerPos = new Vector3(city.CenterChunkX * 16f + 8f, 40f, city.CenterChunkZ * 16f + 8f);
+            for (int w = 0; w < 16; w++)
+            {
+                buildSys.StepUnifiedStructuresAndEnvironment(
+                    0.016f, viewerPos, 10.0 + w * 0.016, 18f, 0f, false, collapseBridge);
+            }
+
+            // Durgun kare olcumu: LastSolveMilliseconds == 0.0 ms, toplam Step < 1.0 ms ve 0 B GC!
+            double maxIdleSolveMs = 0.0;
+            long allocBefore = GC.GetAllocatedBytesForCurrentThread();
+            long t0 = Stopwatch.GetTimestamp();
+            for (int f = 0; f < 30; f++)
+            {
+                buildSys.StepUnifiedStructuresAndEnvironment(
+                    0.016f, viewerPos, 12.0 + f * 0.016, 18f, 0f, false, collapseBridge);
+                if (buildSys.UnifiedGraphSolver.LastSolveMilliseconds > maxIdleSolveMs)
+                {
+                    maxIdleSolveMs = buildSys.UnifiedGraphSolver.LastSolveMilliseconds;
+                }
+            }
+            double avgStepMs = ((double)(Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency) / 30.0;
+            long allocDelta = GC.GetAllocatedBytesForCurrentThread() - allocBefore;
+
+            Assert.That(maxIdleSolveMs, Is.EqualTo(0.0),
+                "Durgun sehir karesinde olay-gudumlu cozucu 0.0 ms harcamalidir.");
+            Assert.That(avgStepMs, Is.LessThan(1.0),
+                $"9x9 sehir durgun Step suresi < 1.0 ms olmali (olculen: {avgStepMs:0.3} ms).");
+            Assert.That(allocDelta, Is.EqualTo(0L),
+                $"9x9 sehir durgun kare 0 B GC alloc uretmelidir (olculen: {allocDelta} B).");
+
+            // Tek parca kirildiginda yerel ada cozumu < 2.0 ms (O(N^2) temizligi dogrulamasi)
+            uint targetId = 0u;
+            ReadOnlySpan<StructuralNode64> nodes = buildSys.UnifiedGraphSolver.NodesSpan;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (nodes[i].NodeId != 0u && nodes[i].CollapseState == StructureCollapseState.Stable)
+                {
+                    targetId = nodes[i].NodeId;
+                    break;
+                }
+            }
+            Assert.That(targetId, Is.Not.EqualTo(0u));
+            StructureSolveSummary localBreakSummary = buildSys.UnifiedGraphSolver.BreakNodeAndSolve(targetId);
+            Assert.That(localBreakSummary.ElapsedMilliseconds, Is.LessThan(2.0),
+                $"3000+ dugumlu sehirde tek parca kirimi < 2.0 ms olmalidir (olculen: {localBreakSummary.ElapsedMilliseconds:0.3} ms).");
         }
 
         [Test]

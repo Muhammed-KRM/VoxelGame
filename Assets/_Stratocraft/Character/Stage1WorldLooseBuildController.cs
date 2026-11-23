@@ -2144,12 +2144,14 @@ namespace Stratocraft.Character
             float radius,
             float damage,
             out int brokenSupportCount,
-            out int collapsedPieceCount)
+            out int collapsedPieceCount,
+            Stage1StructuralCollapseBridge? collapseBridge = null,
+            double simSeconds = 0.0)
         {
             brokenSupportCount = 0;
             collapsedPieceCount = 0;
             SysVec3 hitPt = new SysVec3(worldPoint.x, worldPoint.y, worldPoint.z);
-            int unifiedHits = _unifiedBridge.DamageAtWorldPoint(hitPt, radius, damage, simSeconds: 0.0, collapseBridge: null, out int uBroken, out int uCollapsed);
+            int unifiedHits = _unifiedBridge.DamageAtWorldPoint(hitPt, radius, damage, simSeconds, collapseBridge, out int uBroken, out int uCollapsed);
             brokenSupportCount += uBroken;
             collapsedPieceCount += uCollapsed;
 
@@ -3307,11 +3309,13 @@ namespace Stratocraft.Character
             float radius,
             float damage,
             out int brokenSupportCount,
-            out int collapsedPieceCount)
+            out int collapsedPieceCount,
+            Stage1StructuralCollapseBridge? collapseBridge = null,
+            double simSeconds = 0.0)
         {
             brokenSupportCount = 0;
             collapsedPieceCount = 0;
-            int unifiedHits = _unifiedBridge.DamageAtWorldPoint(worldPoint, radius, damage, simSeconds: 0.0, collapseBridge: null, out int uBroken, out int uCollapsed);
+            int unifiedHits = _unifiedBridge.DamageAtWorldPoint(worldPoint, radius, damage, simSeconds, collapseBridge, out int uBroken, out int uCollapsed);
             brokenSupportCount += uBroken;
             collapsedPieceCount += uCollapsed;
 
@@ -3833,11 +3837,16 @@ namespace Stratocraft.Character
         private readonly Stratocraft.Physics.Systems.ClanBoundaryBreachNotification[] _clanBreachScratch = new Stratocraft.Physics.Systems.ClanBoundaryBreachNotification[16];
         private readonly uint[] _removeIdsScratch = new uint[1024];
         private readonly Stratocraft.Core.Structures.StructuralNode64[] _exportNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[1024];
+        private readonly Stratocraft.Core.Structures.StructuralNode64[] _localEnvNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[256];
         private readonly System.Collections.Generic.HashSet<int> _spawnedUnifiedChunkKeys = new();
         private readonly System.Collections.Generic.HashSet<long> _dirtyStructureChunks = new();
 
         private uint _nextUnifiedNodeId = 100000u;
         private bool _spatialCollisionDirty;
+        private bool _envEvalDirty = true;
+        private double _lastEnvEvalSimSec = double.MinValue;
+        private System.Numerics.Vector3 _lastEnvViewerPos;
+        private int _lastFormattedWarningCount;
 
         public Stratocraft.Core.Structures.InteriorEnvironmentEvaluation LastInteriorEval { get; private set; }
         public Stratocraft.Core.Structures.HearthAndChimneyEvaluation LastHearthEval { get; private set; }
@@ -3855,11 +3864,15 @@ namespace Stratocraft.Character
             Stratocraft.Inventory.Systems.SpatialHashedStructureCollisionSolver.Shared.Clear();
             _nextUnifiedNodeId = 100000u;
             _spatialCollisionDirty = false;
+            _envEvalDirty = true;
+            _lastEnvEvalSimSec = double.MinValue;
+            _lastEnvViewerPos = default;
             LastInteriorEval = default;
             LastHearthEval = default;
             LastCollapseWarningCount = 0;
             LastInstantFallCount = 0;
             LastCollapseWarningText = string.Empty;
+            _lastFormattedWarningCount = 0;
             MortarCureTick = 0UL;
         }
 
@@ -4032,26 +4045,46 @@ namespace Stratocraft.Character
                 totalHits += impactRes.DamagedNodeCount;
                 if (impactRes.DamagedNodeCount > 0 || impactRes.DestroyedNodeCount > 0)
                 {
-                    Stratocraft.Core.Structures.StructureSolveSummary cascade = GraphSolver.SolveAll();
+                    // Kırılan düğümlerin kenarlarını kopar ve bağlantılı adayı bir kez çöz (mükerrer 2x hasar YOK!)
+                    System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> span = GraphSolver.NodesSpan;
+                    int brokenToDisconnect = 0;
+                    for (int i = 0; i < span.Length && brokenToDisconnect < _removeIdsScratch.Length; i++)
+                    {
+                        if (span[i].NodeId != 0u &&
+                            (span[i].CollapseState == Stratocraft.Core.Structures.StructureCollapseState.DetachedInstantFall ||
+                             span[i].Integrity01 <= 0f))
+                        {
+                            _removeIdsScratch[brokenToDisconnect++] = span[i].NodeId;
+                        }
+                    }
+                    for (int i = 0; i < brokenToDisconnect; i++)
+                    {
+                        GraphSolver.DisconnectCollapsedNode(_removeIdsScratch[i], notifyClanBreach: false);
+                    }
+                    Stratocraft.Core.Structures.StructureSolveSummary cascade = GraphSolver.SolveDirty(
+                        Stratocraft.Core.Structures.UnifiedStructureGraphSolver.HardCeilingBudgetMs);
                     collapsedCount += cascade.DetachedInstantCount;
                 }
             }
+            else
+            {
+                Stratocraft.Core.Structures.SiegeBreachResult res = GraphSolver.ApplySiegeBreachDamageAt(
+                    worldPoint,
+                    impactKj,
+                    System.Math.Max(0.5f, radius),
+                    isMatterCrystalAttack: false);
 
-            Stratocraft.Core.Structures.SiegeBreachResult res = GraphSolver.ApplySiegeBreachDamageAt(
-                worldPoint,
-                impactKj,
-                System.Math.Max(0.5f, radius),
-                isMatterCrystalAttack: false);
-
-            brokenCount += res.FracturedNodeCount;
-            collapsedCount += res.CascadeDetachedCount;
-            totalHits += res.DamagedNodeCount + res.FracturedNodeCount;
+                brokenCount += res.FracturedNodeCount;
+                collapsedCount += res.CascadeDetachedCount;
+                totalHits += res.DamagedNodeCount + res.FracturedNodeCount;
+            }
 
             if (totalHits > 0 || brokenCount > 0)
             {
                 CityLodRenderer.NotifyDamageAtWorldPos(worldPoint.X, worldPoint.Z, radius, simSeconds);
                 MarkChunkStructureDirty(FloorDiv16(worldPoint.X), FloorDiv16(worldPoint.Z));
                 _spatialCollisionDirty = true;
+                _envEvalDirty = true;
             }
 
             return totalHits;
@@ -4072,6 +4105,7 @@ namespace Stratocraft.Character
             System.Numerics.Vector3 hearthWorldPos = default)
         {
             MortarCureTick++;
+            bool anyDebrisThisStep = false;
 
             if (GraphSolver.ActiveNodeCount > 0)
             {
@@ -4082,39 +4116,54 @@ namespace Stratocraft.Character
                     ambientTempCelsius,
                     isCreativeMode);
 
-                GraphSolver.StepCollapseTimers(dt);
-
-                if (GraphSolver.HasDirtyWork)
+                // collapseBridge varsa 1.5s geri sayımını TEK noktadan o yürütür (2x çift düşüş yok!)
+                if (collapseBridge == null)
                 {
-                    Stratocraft.Core.Structures.StructureSolveSummary solve = GraphSolver.SolveDirty();
-                    LastCollapseWarningCount = solve.OverloadWarningCount;
-                    LastInstantFallCount = solve.DetachedInstantCount;
-                    LastCollapseWarningText = solve.OverloadWarningCount > 0
-                        ? $"⚠️ ÇATIRDAYAN YAPI ({solve.OverloadWarningCount} düğüm aşırı yükte — 1.5s içinde çökebilir!)"
-                        : string.Empty;
+                    GraphSolver.StepCollapseTimers(dt);
                 }
+
+                Stratocraft.Core.Structures.StructureSolveSummary solve = GraphSolver.SolveDirty();
+                int activeWarnCount = solve.OverloadWarningCount;
+                LastInstantFallCount = solve.DetachedInstantCount;
 
                 if (collapseBridge != null && GraphSolver.NodeSlotCount > 0)
                 {
-                    collapseBridge.StepUnifiedStructureNodesCollapse(
-                        GraphSolver.NodesSpan,
-                        dt,
-                        viewerPos,
-                        _debrisScratch,
-                        out int debrisCount,
-                        _clanBreachScratch,
-                        out _);
+                    Stratocraft.Physics.Systems.StructuralNodeCollapseStepSummary collapseSum =
+                        collapseBridge.StepUnifiedStructureNodesCollapse(
+                            GraphSolver.NodesSpan,
+                            dt,
+                            viewerPos,
+                            _debrisScratch,
+                            out int debrisCount,
+                            _clanBreachScratch,
+                            out _);
+
+                    if (collapseSum.WarningActiveCount > activeWarnCount)
+                    {
+                        activeWarnCount = collapseSum.WarningActiveCount;
+                    }
 
                     if (debrisCount > 0)
                     {
+                        anyDebrisThisStep = true;
                         for (int i = 0; i < debrisCount; i++)
                         {
+                            ref readonly Stratocraft.Physics.Systems.StructuralNodeDebrisEvent ev = ref _debrisScratch[i];
+                            if (ev.TriggerState == Stratocraft.Core.Structures.StructureCollapseState.Collapsed)
+                            {
+                                GraphSolver.DisconnectCollapsedNode(ev.NodeId, notifyClanBreach: false);
+                            }
                             CityLodRenderer.NotifyDamageAtWorldPos(
-                                _debrisScratch[i].PosX,
-                                _debrisScratch[i].PosZ,
+                                ev.PosX,
+                                ev.PosZ,
                                 2.0f,
                                 simSeconds);
-                            MarkChunkStructureDirty(FloorDiv16(_debrisScratch[i].PosX), FloorDiv16(_debrisScratch[i].PosZ));
+                            MarkChunkStructureDirty(FloorDiv16(ev.PosX), FloorDiv16(ev.PosZ));
+                        }
+
+                        if (GraphSolver.HasDirtyWork)
+                        {
+                            GraphSolver.SolveDirty();
                         }
 
                         if (worldChunks != null && dirtyChunks != null)
@@ -4134,28 +4183,62 @@ namespace Stratocraft.Character
 #endif
                         }
                         _spatialCollisionDirty = true;
+                        _envEvalDirty = true;
                     }
+                }
+
+                LastCollapseWarningCount = activeWarnCount;
+                if (activeWarnCount == 0)
+                {
+                    if (_lastFormattedWarningCount != 0)
+                    {
+                        _lastFormattedWarningCount = 0;
+                        LastCollapseWarningText = string.Empty;
+                    }
+                }
+                else if (activeWarnCount != _lastFormattedWarningCount)
+                {
+                    _lastFormattedWarningCount = activeWarnCount;
+                    LastCollapseWarningText =
+                        $"⚠️ ÇATIRDAYAN YAPI ({activeWarnCount} düğüm aşırı yükte — 1.5s içinde çökebilir!)";
                 }
             }
 
             CityLodRenderer.StepStreaming(viewerPos.X, viewerPos.Z, simSeconds);
 
-            LastInteriorEval = Stratocraft.Core.Structures.MortarAndInteriorEnvironmentSolver.EvaluateInteriorEnvironment(
-                GraphSolver.NodesSpan,
-                new System.Numerics.Vector3(viewerPos.X, viewerPos.Y + 1.0f, viewerPos.Z),
-                ambientTempCelsius);
+            bool shouldRefreshEnv = _envEvalDirty ||
+                                    anyDebrisThisStep ||
+                                    _spatialCollisionDirty ||
+                                    (simSeconds - _lastEnvEvalSimSec) >= 0.15 ||
+                                    System.Numerics.Vector3.DistanceSquared(viewerPos, _lastEnvViewerPos) >= 0.0625f;
 
-            if (isFireplaceLit && GraphSolver.ActiveNodeCount > 0)
+            if (shouldRefreshEnv)
             {
-                LastHearthEval = Stratocraft.Core.Structures.MortarAndInteriorEnvironmentSolver.EvaluateHearthAndChimney(
-                    GraphSolver.NodesSpan,
-                    hearthWorldPos,
-                    isFireLit: true,
-                    ambientTempCelsius: ambientTempCelsius);
-            }
-            else
-            {
-                LastHearthEval = default;
+                _envEvalDirty = false;
+                _lastEnvEvalSimSec = simSeconds;
+                _lastEnvViewerPos = viewerPos;
+
+                int localCount = GatherLocalActiveNodes(viewerPos, 16.0f, _localEnvNodesScratch);
+                System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> localSpan =
+                    _localEnvNodesScratch.AsSpan(0, localCount);
+
+                LastInteriorEval = Stratocraft.Core.Structures.MortarAndInteriorEnvironmentSolver.EvaluateInteriorEnvironment(
+                    localSpan,
+                    new System.Numerics.Vector3(viewerPos.X, viewerPos.Y + 1.0f, viewerPos.Z),
+                    ambientTempCelsius);
+
+                if (isFireplaceLit && localCount > 0)
+                {
+                    LastHearthEval = Stratocraft.Core.Structures.MortarAndInteriorEnvironmentSolver.EvaluateHearthAndChimney(
+                        localSpan,
+                        hearthWorldPos,
+                        isFireLit: true,
+                        ambientTempCelsius: ambientTempCelsius);
+                }
+                else
+                {
+                    LastHearthEval = default;
+                }
             }
 
             if (_spatialCollisionDirty)
@@ -4163,6 +4246,35 @@ namespace Stratocraft.Character
                 Stratocraft.Inventory.Systems.SpatialHashedStructureCollisionSolver.Shared.Rebuild(GraphSolver.NodesSpan);
                 _spatialCollisionDirty = false;
             }
+        }
+
+        private int GatherLocalActiveNodes(
+            System.Numerics.Vector3 center,
+            float halfExtentXZ,
+            Stratocraft.Core.Structures.StructuralNode64[] dst)
+        {
+            System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> nodes = GraphSolver.NodesSpan;
+            int count = 0;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                ref readonly Stratocraft.Core.Structures.StructuralNode64 n = ref nodes[i];
+                if (n.NodeId == 0u ||
+                    n.CollapseState == Stratocraft.Core.Structures.StructureCollapseState.Collapsed ||
+                    n.CollapseState == Stratocraft.Core.Structures.StructureCollapseState.DetachedInstantFall ||
+                    n.Integrity01 <= 0f)
+                {
+                    continue;
+                }
+                if (System.MathF.Abs(n.PosX - center.X) <= halfExtentXZ &&
+                    System.MathF.Abs(n.PosZ - center.Z) <= halfExtentXZ)
+                {
+                    if (count < dst.Length)
+                    {
+                        dst[count++] = n;
+                    }
+                }
+            }
+            return count;
         }
 
         public Stratocraft.Core.Persistence.StructureGraphSection? ExportChunkStructureGraphSection(int chunkX, int chunkZ)
