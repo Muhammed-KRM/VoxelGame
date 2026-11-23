@@ -987,14 +987,14 @@ namespace Stratocraft.Core.Structures
                     maxStress = islandMaxStress;
                 }
 
-                double elapsedSoFar = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+                double elapsedSoFar = ElapsedMillisecondsSince(startTicks);
                 if (elapsedSoFar >= effectiveBudgetMs && _dirtyCount > 0)
                 {
                     break;
                 }
             }
 
-            double totalMs = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            double totalMs = ElapsedMillisecondsSince(startTicks);
             LastSolveMilliseconds = totalMs;
             var summary = new StructureSolveSummary(
                 totalEvaluated,
@@ -1078,7 +1078,7 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            double totalMs = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            double totalMs = ElapsedMillisecondsSince(startTicks);
             LastSolveMilliseconds = totalMs;
             var summary = new StructureSolveSummary(
                 totalEvaluated,
@@ -1194,7 +1194,7 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            double elapsedMs = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            double elapsedMs = ElapsedMillisecondsSince(startTicks);
             LastSolveMilliseconds = elapsedMs;
 
             return new SiegeBreachResult(
@@ -3227,6 +3227,10 @@ namespace Stratocraft.Core.Structures
             x ^= x >> 16;
             return x;
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double ElapsedMillisecondsSince(long startTicks) =>
+            (double)(Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int NextPowerOfTwo(int v)
