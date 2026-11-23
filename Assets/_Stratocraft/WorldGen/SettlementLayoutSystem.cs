@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Physics.Data;
 using Stratocraft.Voxel.Data;
 
@@ -356,6 +357,190 @@ namespace Stratocraft.WorldGen.Generators
 
             return count;
         }
+
+        /// <summary>
+        /// DOK6 Birlesik Yerlesim Hatayi: Verilen chunk'a ait binalari biyom + kademe + anitsal + harabe
+        /// arketipleriyle (Saray, Kubbeli Tapinak/Cami, Revakli Han, Sur/Kapi, Harabe) 0-GC olarak doldurur.
+        /// </summary>
+        public static int PopulateUnifiedChunkSites(
+            int chunkX,
+            int chunkZ,
+            Span<UnifiedSettlementSiteSpec> outSites)
+        {
+            if (outSites.Length == 0 || !TryGetSettlementCoveringChunk(chunkX, chunkZ, out SettlementDescriptor s))
+            {
+                return 0;
+            }
+
+            int dx = chunkX - s.CenterChunkX;
+            int dz = chunkZ - s.CenterChunkZ;
+
+            Span<ProceduralModularSiteSpec> legacySites = stackalloc ProceduralModularSiteSpec[MaxSitesPerChunk];
+            int legacyCount = PopulateChunkSettlementSites(chunkX, chunkZ, legacySites);
+            int writeCount = 0;
+
+            for (int i = 0; i < legacyCount && writeCount < outSites.Length; i++)
+            {
+                ref readonly ProceduralModularSiteSpec ls = ref legacySites[i];
+                UnifiedSettlementArchetype arch = UnifiedSettlementBuilder.MapLegacySiteKindToArchetype(ls.Kind);
+                bool isRuin = ls.Kind == ProceduralModularSiteKind.CollapsedTimberStoneRuin;
+
+                // Sehir (9x9) ve Kasaba (5x5) icinde DOK6 §2.2 anitsal & revakli yapilari esle:
+                if (s.Tier == SettlementTier.City)
+                {
+                    if (dx == 1 && dz == 1) arch = UnifiedSettlementArchetype.DomedMosqueTemple;
+                    else if (dx == -2 && dz == 2) arch = UnifiedSettlementArchetype.CityPalace;
+                    else if (dx == 2 && dz == 2) arch = UnifiedSettlementArchetype.ArcadedInn;
+                }
+                else if (s.Tier == SettlementTier.Town)
+                {
+                    if (dx == -1 && dz == 1) arch = UnifiedSettlementArchetype.ArcadedInn;
+                }
+
+                float halfX = arch switch
+                {
+                    UnifiedSettlementArchetype.CityPalace => 5.0f,
+                    UnifiedSettlementArchetype.DomedMosqueTemple => 4.0f,
+                    UnifiedSettlementArchetype.ArcadedInn => 4.0f,
+                    UnifiedSettlementArchetype.CityGatehouse => 3.2f,
+                    UnifiedSettlementArchetype.CityWallSegment => 3.0f,
+                    UnifiedSettlementArchetype.TownHouseTwoStory => 3.0f,
+                    UnifiedSettlementArchetype.BlacksmithForge => 3.0f,
+                    UnifiedSettlementArchetype.CarpenterWorkshop => 3.0f,
+                    UnifiedSettlementArchetype.WarehouseHall => 3.0f,
+                    UnifiedSettlementArchetype.BarnStable => 3.0f,
+                    _ => Math.Max(2.0f, (float)ls.TerraceHalfExtentBlocks)
+                };
+                float halfZ = arch switch
+                {
+                    UnifiedSettlementArchetype.CityPalace => 4.0f,
+                    UnifiedSettlementArchetype.DomedMosqueTemple => 4.0f,
+                    UnifiedSettlementArchetype.ArcadedInn => 3.0f,
+                    UnifiedSettlementArchetype.CityWallSegment => 1.0f,
+                    _ => Math.Max(2.0f, (float)ls.TerraceHalfExtentBlocks)
+                };
+
+                outSites[writeCount++] = new UnifiedSettlementSiteSpec(
+                    ls.ChunkX,
+                    ls.ChunkZ,
+                    arch,
+                    s.Tier,
+                    ls.BiomeId,
+                    ls.WorldCenterX,
+                    ls.WorldBaseY,
+                    ls.WorldCenterZ,
+                    ls.YawDegrees,
+                    halfX,
+                    halfZ,
+                    ls.DeterministicSeed,
+                    isRuin);
+            }
+
+            // Kasaba (5x5) icin 2 Katli Revakli Han / Taverna parseli (-1, 1)
+            if (writeCount < outSites.Length && s.Tier == SettlementTier.Town && dx == -1 && dz == 1)
+            {
+                int wx = chunkX * 16 + 8;
+                int wz = chunkZ * 16 + 8;
+                int baseY = ResolveSettlementColumnSurfaceY(in s, wx, wz);
+                int biomeId = StratocraftFloatingIslandWorldGen.GetBiomeId(wx, wz);
+                uint seed = HashU32(wx, 0x494E4E32, wz, StratocraftFloatingIslandWorldGen.ActiveWorldSeed);
+
+                outSites[writeCount++] = new UnifiedSettlementSiteSpec(
+                    chunkX,
+                    chunkZ,
+                    UnifiedSettlementArchetype.ArcadedInn,
+                    s.Tier,
+                    biomeId,
+                    wx + 0.5f,
+                    baseY + 0.5f,
+                    wz + 0.5f,
+                    180f,
+                    4.0f,
+                    3.0f,
+                    seed,
+                    isRuin: false);
+            }
+
+            // Dis cevre deterministik Harabe (AK-20) parselleri (Sehir/Kasaba dis kusagi, mevcut test parsel sayilarini bozmadan)
+            if (writeCount < outSites.Length &&
+                ((s.Tier == SettlementTier.City && dx == -4 && dz == 3) ||
+                 (s.Tier == SettlementTier.Town && dx == 2 && dz == 2)))
+            {
+                int wx = chunkX * 16 + 8;
+                int wz = chunkZ * 16 + 8;
+                int baseY = ResolveSettlementColumnSurfaceY(in s, wx, wz);
+                int biomeId = StratocraftFloatingIslandWorldGen.GetBiomeId(wx, wz);
+                uint seed = HashU32(wx, 0x5255494E, wz, StratocraftFloatingIslandWorldGen.ActiveWorldSeed);
+
+                outSites[writeCount++] = new UnifiedSettlementSiteSpec(
+                    chunkX,
+                    chunkZ,
+                    UnifiedSettlementArchetype.ProceduralRuin,
+                    s.Tier,
+                    biomeId,
+                    wx + 0.5f,
+                    baseY + 0.5f,
+                    wz + 0.5f,
+                    0f,
+                    2.5f,
+                    2.5f,
+                    seed,
+                    isRuin: true);
+            }
+
+            return writeCount;
+        }
+
+        /// <summary>
+        /// Verilen chunk icindeki tum yerlesim binalarini dogrudan %100 oyuncu insaatiyla ortak
+        /// <see cref="StructuralNode64"/> + <see cref="StructuralJointEdge32"/> grafina donusturur (0-GC).
+        /// </summary>
+        public static bool BuildChunkUnifiedStructureGraph(
+            int chunkX,
+            int chunkZ,
+            Span<StructuralNode64> outNodes,
+            Span<StructuralJointEdge32> outEdges,
+            out int totalNodes,
+            out int totalEdges,
+            uint startingNodeId = 1u,
+            Func<float, float, float>? terrainHeightSampler = null)
+        {
+            totalNodes = 0;
+            totalEdges = 0;
+
+            Span<UnifiedSettlementSiteSpec> sites = stackalloc UnifiedSettlementSiteSpec[MaxSitesPerChunk];
+            int count = PopulateUnifiedChunkSites(chunkX, chunkZ, sites);
+            if (count <= 0) return false;
+
+            uint nextId = startingNodeId;
+            for (int i = 0; i < count; i++)
+            {
+                Span<StructuralNode64> remNodes = outNodes.Slice(totalNodes);
+                Span<StructuralJointEdge32> remEdges = outEdges.Slice(totalEdges);
+                if (remNodes.Length == 0) break;
+
+                if (UnifiedSettlementBuilder.BuildSiteGraph(
+                        in sites[i],
+                        remNodes,
+                        remEdges,
+                        out int nCount,
+                        out int eCount,
+                        nextId,
+                        terrainHeightSampler ?? DefaultWorldTerrainSampler))
+                {
+                    totalNodes += nCount;
+                    totalEdges += eCount;
+                    nextId += (uint)nCount;
+                }
+            }
+
+            return totalNodes > 0;
+        }
+
+        private static readonly Func<float, float, float> DefaultWorldTerrainSampler = SampleDefaultWorldSurfaceY;
+
+        private static float SampleDefaultWorldSurfaceY(float wx, float wz) =>
+            StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
 
         private static void EmitPlot(
             in SettlementDescriptor s,
