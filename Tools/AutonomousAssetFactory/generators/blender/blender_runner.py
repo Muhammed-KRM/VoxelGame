@@ -30,6 +30,24 @@ def resolve_blender_executable() -> Path | None:
     if portable.is_file():
         return portable
 
+    try:
+        git_common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(_repo_root()),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if git_common.returncode == 0 and git_common.stdout.strip():
+            common_dir = (_repo_root() / git_common.stdout.strip()).resolve()
+            main_root = common_dir.parent
+            shared_portable = main_root / "Tools" / "bin" / "blender-4.2" / "blender.exe"
+            if shared_portable.is_file():
+                return shared_portable
+    except OSError:
+        pass
+
     which_bl = shutil.which("blender")
     if which_bl:
         return Path(which_bl)

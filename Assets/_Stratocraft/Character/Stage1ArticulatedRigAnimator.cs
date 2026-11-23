@@ -484,10 +484,19 @@ namespace Stratocraft.Character
                     continue;
                 }
 
-                // Gercek eller ve onkollar kameranin onunde her zaman gorunur kalir; yalnizca lensin (< 11cm) icine girerse gizlenir
+                // Gercek eller ve onkollar kameranin onunde her zaman gorunur kalir (asla ShadowsOnly ile gizlenmez!)
                 bool isArmOrHand = (_rightArmShoulderPivot != null && rt.IsChildOf(_rightArmShoulderPivot)) ||
                                    (_leftArmShoulderPivot != null && rt.IsChildOf(_leftArmShoulderPivot));
-                float threshSq = isArmOrHand ? minSafeArmDistSq : minSafeTorsoDistSq;
+                if (isArmOrHand)
+                {
+                    if (rend.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.On)
+                    {
+                        rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                    }
+                    continue;
+                }
+
+                float threshSq = minSafeTorsoDistSq;
                 Vector3 closest = rend.bounds.ClosestPoint(cameraWorldPos);
                 float distSq = (closest - cameraWorldPos).sqrMagnitude;
                 var desiredMode = distSq < threshSq
@@ -861,38 +870,80 @@ namespace Stratocraft.Character
                 return;
             }
 
+            // [C] Madde Kristali, Elde Tutulan Esya (Slot >= 4) ve Bos El / Yumruk (Slot == 0) durumlarinda:
+            // FPS kamerada omuz eklemlerini kamera-bagil alt-yan omuz konumuna hizala ki yukari/asagi bakarken
+            // veya yumruk/esya tutarken eller ve esya ASLA ekranin altinda kalip kaybolmasin!
+            bool useFpsCameraFrame = isFirstPersonMode && playerCamera != null;
+            Transform? camTr = playerCamera != null ? playerCamera.transform : null;
+            if (useFpsCameraFrame && camTr != null)
+            {
+                _rightArmShoulderPivot.position = camTr.TransformPoint(new Vector3(0.21f, -0.22f, -0.02f));
+                if (_leftArmShoulderPivot != null)
+                {
+                    _leftArmShoulderPivot.position = camTr.TransformPoint(new Vector3(-0.21f, -0.22f, -0.02f));
+                }
+            }
+
             // [C] Madde Kristali aktifse sol kolu on-sol gorus alanina dogal olarak kaldir (kristal sol bilege baglidir!)
             if (isCrystalActive && !PlayerLeftArmSevered && _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null)
             {
-                Vector3 shL = _leftArmShoulderPivot.position;
-                float pulse = Mathf.Sin(Time.time * 3.5f) * 0.012f;
-                Vector3 crystalPalmL = shL + viewRight * 0.02f - viewUp * (0.08f - pulse) + viewFwd * 0.36f;
+                float pulse = Mathf.Sin(Time.time * 3.5f) * 0.010f;
+                Vector3 crystalPalmL = useFpsCameraFrame && camTr != null
+                    ? camTr.TransformPoint(new Vector3(-0.19f, -0.14f + pulse, 0.39f))
+                    : (_leftArmShoulderPivot.position + viewRight * 0.02f - viewUp * (0.08f - pulse) + viewFwd * 0.36f);
                 Vector3 crystalAxisL = (viewUp * 0.72f - viewRight * 0.68f).normalized;
                 ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, crystalPalmL, leftPole, crystalAxisL, isRightHand: false);
             }
 
             // 3) BLOK / KUTUK / TAS / SOPA / MATARA / BANDAJ / YEMEK / ZIRH ESYASI (Slot >= 4):
-            //    Gercek sag el esyayi avuc icinde tasir; bosta kalan sol kol kalca yaninda dogal dinlenir!
+            //    Gercek sag el esyayi FPS/TPS gorus kadrajinda avuc icinde netce tasir; sol el dogal FPS kadrajinda destek/denge verir!
             bool hasExternalHeldBlock = activeHeldTransform != null &&
                                         activeHeldTransform.gameObject.activeInHierarchy &&
                                         activeHolsterSlot >= 4;
             if (hasExternalHeldBlock && activeHeldTransform != null)
             {
                 SetSocketFallbackItemActive(false);
-                Vector3 shR = _rightArmShoulderPivot.position;
-                float sway = Mathf.Sin(Time.time * 2.2f) * 0.005f;
-                Vector3 desiredPalm = shR + viewRight * 0.04f - viewUp * (0.13f + sway - rightFistPunch01 * 0.08f) + viewFwd * (0.37f + rightFistPunch01 * 0.12f);
-                Vector3 cradleAxis = (viewUp * 0.65f + viewFwd * 0.76f).normalized;
-                ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, desiredPalm, rightPole, cradleAxis, isRightHand: true);
+                float sway = Mathf.Sin(Time.time * 2.4f) * 0.005f;
+                ComputeHeldItemFpsFramingAndGrip(
+                    in activeHotbarSlot,
+                    activeHolsterSlot,
+                    useFpsCameraFrame,
+                    camTr,
+                    _rightArmShoulderPivot.position,
+                    viewRight,
+                    viewUp,
+                    viewFwd,
+                    sway,
+                    rightFistPunch01,
+                    out Vector3 desiredPalmR,
+                    out Vector3 cradleAxisR,
+                    out bool useOffhandSupport,
+                    out Vector3 desiredPalmL,
+                    out Vector3 cradleAxisL,
+                    out Vector3 localSocketPosOffset,
+                    out Quaternion localSocketRotOffset);
+
+                ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, desiredPalmR, rightPole, cradleAxisR, isRightHand: true);
+
+                if (!isCrystalActive && !PlayerLeftArmSevered && _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null)
+                {
+                    if (useFpsCameraFrame || useOffhandSupport || leftFistPunch01 > 0.01f)
+                    {
+                        Vector3 effPalmL = leftFistPunch01 > 0.01f && useFpsCameraFrame && camTr != null
+                            ? Vector3.Lerp(desiredPalmL, camTr.TransformPoint(new Vector3(-0.04f, -0.07f, 0.54f)), leftFistPunch01)
+                            : desiredPalmL;
+                        ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, effPalmL, leftPole, cradleAxisL, isRightHand: false);
+                    }
+                }
 
                 if (_rightHandItemSocket != null)
                 {
-                    activeHeldTransform.position = _rightHandItemSocket.position;
-                    activeHeldTransform.rotation = _rightHandItemSocket.rotation * Quaternion.Euler(0f, 90f, 0f);
+                    activeHeldTransform.position = _rightHandItemSocket.TransformPoint(localSocketPosOffset);
+                    activeHeldTransform.rotation = _rightHandItemSocket.rotation * localSocketRotOffset;
                 }
                 else
                 {
-                    activeHeldTransform.position = desiredPalm;
+                    activeHeldTransform.position = desiredPalmR;
                     activeHeldTransform.rotation = Quaternion.LookRotation(viewFwd, viewUp);
                 }
                 return;
@@ -900,29 +951,230 @@ namespace Stratocraft.Character
 
             if (!activeHotbarSlot.IsEmpty && activeHolsterSlot != 0)
             {
-                Vector3 shR = _rightArmShoulderPivot.position;
-                float sway = Mathf.Sin(Time.time * 2.2f) * 0.005f;
-                Vector3 desiredPalm = shR + viewRight * 0.04f - viewUp * (0.13f + sway - rightFistPunch01 * 0.08f) + viewFwd * (0.37f + rightFistPunch01 * 0.12f);
-                Vector3 cradleAxis = (viewUp * 0.65f + viewFwd * 0.76f).normalized;
-                ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, desiredPalm, rightPole, cradleAxis, isRightHand: true);
-                UpdateFallbackHeldItemInRightHandSocket(in activeHotbarSlot, sharedVoxelMat);
+                float sway = Mathf.Sin(Time.time * 2.4f) * 0.005f;
+                ComputeHeldItemFpsFramingAndGrip(
+                    in activeHotbarSlot,
+                    activeHolsterSlot,
+                    useFpsCameraFrame,
+                    camTr,
+                    _rightArmShoulderPivot.position,
+                    viewRight,
+                    viewUp,
+                    viewFwd,
+                    sway,
+                    rightFistPunch01,
+                    out Vector3 desiredPalmR,
+                    out Vector3 cradleAxisR,
+                    out bool useOffhandSupport,
+                    out Vector3 desiredPalmL,
+                    out Vector3 cradleAxisL,
+                    out Vector3 localSocketPosOffset,
+                    out Quaternion localSocketRotOffset);
+
+                ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, desiredPalmR, rightPole, cradleAxisR, isRightHand: true);
+                if (!isCrystalActive && !PlayerLeftArmSevered && _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null &&
+                    (useFpsCameraFrame || useOffhandSupport))
+                {
+                    ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, desiredPalmL, leftPole, cradleAxisL, isRightHand: false);
+                }
+                UpdateFallbackHeldItemInRightHandSocket(in activeHotbarSlot, sharedVoxelMat, localSocketPosOffset, localSocketRotOffset);
                 return;
             }
 
-            // 4) CIPLAK EL (Slot 0): Bosta yururken kollar asagida dogal sallanir; yumruk atildiginda (LMB) gercek yumruk firlar!
+            // 4) CIPLAK EL (Slot 0):
+            //    - FPS modunda: Bos elle dururken sag/sol eller kamera on kadrajinda canli hazir gard durusunda netce gorunur;
+            //      yumruk atildiginda (LMB) sag direkt / sol krose ekranin on-merkez nisangah hizasina gucluce firlar!
+            //    - TPS modunda: Bosta yururken kollar dogal sallanir, yumruk atildiginda ileri firlar.
             SetSocketFallbackItemActive(false);
+            if (useFpsCameraFrame && camTr != null)
+            {
+                float breathSway = Mathf.Sin(Time.time * 2.6f) * 0.0045f;
+                float walkBob = Mathf.Sin(_locomotionCyclePhase) * 0.008f;
+
+                // Sag El FPS Hazir Gard -> Yumruk Hamlesi
+                Vector3 idleRightLocal = new Vector3(0.20f, -0.175f + breathSway + walkBob, 0.37f);
+                Vector3 punchRightLocal = new Vector3(0.035f, -0.065f, 0.54f);
+                float rPunchCurve = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(rightFistPunch01));
+                float rArcLift = Mathf.Sin(Mathf.Clamp01(rightFistPunch01) * Mathf.PI) * 0.028f;
+                Vector3 targetRWorld = camTr.TransformPoint(Vector3.Lerp(idleRightLocal, punchRightLocal, rPunchCurve) + new Vector3(0f, rArcLift, 0f));
+                Vector3 idleRightAxis = (viewUp * 0.80f + viewFwd * 0.48f - viewRight * 0.35f).normalized;
+                Vector3 punchRightAxis = (-viewRight * 0.78f + viewUp * 0.58f + viewFwd * 0.22f).normalized;
+                Vector3 effRightAxis = Vector3.Slerp(idleRightAxis, punchRightAxis, rPunchCurve).normalized;
+                Vector3 effRightPole = Vector3.Slerp(rightPole, (viewRight * 0.82f - viewUp * 0.52f - viewFwd * 0.22f).normalized, rPunchCurve).normalized;
+                ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, targetRWorld, effRightPole, effRightAxis, isRightHand: true);
+
+                // Sol El FPS Hazir Gard -> Yumruk Hamlesi
+                if (!isCrystalActive && !PlayerLeftArmSevered &&
+                    _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null)
+                {
+                    Vector3 idleLeftLocal = new Vector3(-0.20f, -0.185f - breathSway - walkBob, 0.35f);
+                    Vector3 punchLeftLocal = new Vector3(-0.035f, -0.065f, 0.54f);
+                    float lPunchCurve = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(leftFistPunch01));
+                    float lArcLift = Mathf.Sin(Mathf.Clamp01(leftFistPunch01) * Mathf.PI) * 0.028f;
+                    Vector3 targetLWorld = camTr.TransformPoint(Vector3.Lerp(idleLeftLocal, punchLeftLocal, lPunchCurve) + new Vector3(0f, lArcLift, 0f));
+                    Vector3 idleLeftAxis = (viewUp * 0.80f + viewFwd * 0.48f + viewRight * 0.35f).normalized;
+                    Vector3 punchLeftAxis = (viewRight * 0.78f + viewUp * 0.58f + viewFwd * 0.22f).normalized;
+                    Vector3 effLeftAxis = Vector3.Slerp(idleLeftAxis, punchLeftAxis, lPunchCurve).normalized;
+                    Vector3 effLeftPole = Vector3.Slerp(leftPole, (-viewRight * 0.82f - viewUp * 0.52f - viewFwd * 0.22f).normalized, lPunchCurve).normalized;
+                    ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, targetLWorld, effLeftPole, effLeftAxis, isRightHand: false);
+                }
+                return;
+            }
+
             if (rightFistPunch01 > 0.01f)
             {
                 Vector3 shR = _rightArmShoulderPivot.position;
-                Vector3 targetR = shR + viewRight * (0.06f - rightFistPunch01 * 0.16f) - viewUp * (0.18f - rightFistPunch01 * 0.16f) + viewFwd * (0.30f + rightFistPunch01 * 0.24f);
+                Vector3 targetR = shR + viewRight * (0.05f - rightFistPunch01 * 0.16f) - viewUp * (0.08f - rightFistPunch01 * 0.14f) + viewFwd * (0.34f + rightFistPunch01 * 0.22f);
                 ApplyTwoBoneArmChain(_rightArmShoulderPivot, _rightElbowPivot, _rightWristPivot, targetR, rightPole, viewUp, isRightHand: true);
             }
             if (!isCrystalActive && leftFistPunch01 > 0.01f && !PlayerLeftArmSevered &&
                 _leftArmShoulderPivot != null && _leftElbowPivot != null && _leftWristPivot != null)
             {
                 Vector3 shL = _leftArmShoulderPivot.position;
-                Vector3 targetL = shL - viewRight * (0.06f - leftFistPunch01 * 0.16f) - viewUp * (0.18f - leftFistPunch01 * 0.16f) + viewFwd * (0.30f + leftFistPunch01 * 0.24f);
+                Vector3 targetL = shL - viewRight * (0.05f - leftFistPunch01 * 0.16f) - viewUp * (0.08f - leftFistPunch01 * 0.14f) + viewFwd * (0.34f + leftFistPunch01 * 0.22f);
                 ApplyTwoBoneArmChain(_leftArmShoulderPivot, _leftElbowPivot, _leftWristPivot, targetL, leftPole, viewUp, isRightHand: false);
+            }
+        }
+
+        /// <summary>
+        /// PT-06 — Elde tutulan her esya (tas, dal, cakmaktasi, mesale, kova, kazan, matara, kutuk, iksir, yiyecek, cekic, keski, blok vb.)
+        /// icin FPS kamera on kadrajindaki sag/sol el IK hedef konumlarini ve avuc ici soket ofsetini hesaplar.
+        /// </summary>
+        public static void ComputeHeldItemFpsFramingAndGrip(
+            in VisualInventorySlot slot,
+            int activeHolsterSlot,
+            bool useFpsCameraFrame,
+            Transform? camTr,
+            Vector3 rightShoulderWorld,
+            Vector3 viewRight,
+            Vector3 viewUp,
+            Vector3 viewFwd,
+            float sway,
+            float rightAction01,
+            out Vector3 desiredPalmR,
+            out Vector3 cradleAxisR,
+            out bool useOffhandSupport,
+            out Vector3 desiredPalmL,
+            out Vector3 cradleAxisL,
+            out Vector3 localSocketPosOffset,
+            out Quaternion localSocketRotOffset)
+        {
+            InventoryItemKind kind = slot.Kind;
+            bool isShaftedToolOrStick =
+                activeHolsterSlot == 5 ||
+                kind == InventoryItemKind.ToolMicroChisel ||
+                kind == InventoryItemKind.ToolStoneHammer ||
+                kind == InventoryItemKind.Stick ||
+                kind == InventoryItemKind.ClayTuyerePipe ||
+                kind == InventoryItemKind.ResonanceCrystal;
+
+            bool isTwoHandHeavyContainerOrBlock =
+                kind == InventoryItemKind.ToolFluidBucket ||
+                kind == InventoryItemKind.ToolFluidCauldron ||
+                kind == InventoryItemKind.PlaceableCampfire ||
+                kind == InventoryItemKind.PlaceableStoneKiln ||
+                kind == InventoryItemKind.SplitFirewood ||
+                kind == InventoryItemKind.WoodenWheel ||
+                kind == InventoryItemKind.LeatherBellows ||
+                kind == InventoryItemKind.ClayCruciblePot ||
+                kind == InventoryItemKind.ScrollMartialStance;
+
+            bool isUprightVesselOrConsumable =
+                activeHolsterSlot == 6 ||
+                kind == InventoryItemKind.ToolFluidFlask ||
+                kind == InventoryItemKind.PotionHealth ||
+                kind == InventoryItemKind.PotionStamina ||
+                kind == InventoryItemKind.FoodCleanWater ||
+                kind == InventoryItemKind.MedicalBandage ||
+                kind == InventoryItemKind.FoodCookedMeat ||
+                kind == InventoryItemKind.FoodRawMeat ||
+                kind == InventoryItemKind.FoodBurntMeat ||
+                kind == InventoryItemKind.FoodWildBerries;
+
+            useOffhandSupport = isTwoHandHeavyContainerOrBlock;
+            float act = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(rightAction01));
+
+            if (useFpsCameraFrame && camTr != null)
+            {
+                Vector3 baseRightLocal;
+                Vector3 actRightDelta;
+                if (isShaftedToolOrStick)
+                {
+                    baseRightLocal = new Vector3(0.22f, -0.155f + sway, 0.43f);
+                    actRightDelta = new Vector3(-0.08f, 0.035f, 0.11f);
+                    cradleAxisR = (viewUp * 0.88f + viewFwd * 0.36f - viewRight * 0.28f).normalized;
+                }
+                else if (isTwoHandHeavyContainerOrBlock)
+                {
+                    baseRightLocal = new Vector3(0.18f, -0.165f + sway, 0.45f);
+                    actRightDelta = new Vector3(-0.04f, 0.045f, 0.08f);
+                    cradleAxisR = (viewUp * 0.62f + viewFwd * 0.72f - viewRight * 0.30f).normalized;
+                }
+                else if (isUprightVesselOrConsumable)
+                {
+                    baseRightLocal = new Vector3(0.21f, -0.150f + sway, 0.42f);
+                    actRightDelta = new Vector3(-0.07f, 0.055f, 0.08f);
+                    cradleAxisR = (viewUp * 0.82f + viewFwd * 0.48f - viewRight * 0.30f).normalized;
+                }
+                else
+                {
+                    // Tas, cakmaktasi, cevher, kulce, yontulmus baslik, blok vb. — avuc icinde net FPS kadrajinda!
+                    baseRightLocal = new Vector3(0.21f, -0.155f + sway, 0.43f);
+                    actRightDelta = new Vector3(-0.08f, 0.050f, 0.10f);
+                    cradleAxisR = (viewUp * 0.68f + viewFwd * 0.68f - viewRight * 0.26f).normalized;
+                }
+
+                desiredPalmR = camTr.TransformPoint(baseRightLocal + actRightDelta * act);
+
+                Vector3 baseLeftLocal = isTwoHandHeavyContainerOrBlock
+                    ? new Vector3(-0.06f, -0.170f + sway, 0.44f)
+                    : new Vector3(-0.20f, -0.190f - sway, 0.35f);
+                desiredPalmL = camTr.TransformPoint(baseLeftLocal);
+                cradleAxisL = isTwoHandHeavyContainerOrBlock
+                    ? (viewUp * 0.62f + viewFwd * 0.72f + viewRight * 0.30f).normalized
+                    : (viewUp * 0.80f + viewFwd * 0.48f + viewRight * 0.35f).normalized;
+            }
+            else
+            {
+                desiredPalmR = rightShoulderWorld
+                               + viewRight * (0.04f - act * 0.08f)
+                               - viewUp * (0.08f + sway - act * 0.08f)
+                               + viewFwd * (0.37f + act * 0.12f);
+                cradleAxisR = isShaftedToolOrStick
+                    ? (viewUp * 0.86f + viewFwd * 0.50f).normalized
+                    : (viewUp * 0.65f + viewFwd * 0.76f).normalized;
+                desiredPalmL = rightShoulderWorld - viewRight * 0.28f - viewUp * 0.10f + viewFwd * 0.34f;
+                cradleAxisL = (viewUp * 0.65f + viewFwd * 0.76f).normalized;
+            }
+
+            // Avuc ici soketine (_rightHandItemSocket) gore esya ofset ve yonelimi:
+            // ApplyTwoBoneArmChain icinde sag elin C-tuneli (basparmak +X = cradleAxisR, parmak ici +Z) hizalanir.
+            if (isShaftedToolOrStick)
+            {
+                // Sapli esyalar (cekic, dal, keski, boru): sap (+Y) elin C-tuneli (+X) boyunca uzanir, bas kismi yukari/ileri bakar!
+                localSocketPosOffset = new Vector3(0.045f, 0.008f, 0.015f);
+                localSocketRotOffset = Quaternion.Euler(0f, 0f, -90f) * Quaternion.Euler(15f, 0f, 0f);
+            }
+            else if (kind == InventoryItemKind.ScrollMartialStance)
+            {
+                localSocketPosOffset = new Vector3(-0.04f, 0.025f, 0.035f);
+                localSocketRotOffset = Quaternion.Euler(15f, 75f, -35f);
+            }
+            else if (isTwoHandHeavyContainerOrBlock)
+            {
+                localSocketPosOffset = new Vector3(-0.055f, 0.030f, 0.045f);
+                localSocketRotOffset = Quaternion.Euler(-15f, 105f, -55f);
+            }
+            else if (isUprightVesselOrConsumable)
+            {
+                localSocketPosOffset = new Vector3(0.025f, 0.015f, 0.025f);
+                localSocketRotOffset = Quaternion.Euler(0f, 90f, -75f);
+            }
+            else
+            {
+                // Tas, cakmaktasi, cevher, kulce, blok vb.: avuc ustunde netce gorunecek sekilde
+                localSocketPosOffset = new Vector3(0.020f, 0.018f, 0.032f);
+                localSocketRotOffset = Quaternion.Euler(12f, 105f, -62f);
             }
         }
 
@@ -1180,21 +1432,70 @@ namespace Stratocraft.Character
             }
         }
 
-        private void UpdateFallbackHeldItemInRightHandSocket(in VisualInventorySlot slot, Material? sharedVoxelMat)
+        private void UpdateFallbackHeldItemInRightHandSocket(
+            in VisualInventorySlot slot,
+            Material? sharedVoxelMat,
+            Vector3 localSocketPosOffset = default,
+            Quaternion localSocketRotOffset = default)
         {
             if (_rightHandItemSocket == null) return;
             if (_socketHeldItemGo == null)
             {
                 _socketHeldItemGo = new GameObject("HeldItem_InRealRightHand");
                 _socketHeldItemGo.transform.SetParent(_rightHandItemSocket, false);
-                _socketHeldItemGo.transform.localPosition = Vector3.zero;
-                _socketHeldItemGo.transform.localRotation = Quaternion.identity;
                 _socketHeldItemGo.AddComponent<MeshFilter>();
                 MeshRenderer mr = _socketHeldItemGo.AddComponent<MeshRenderer>();
-                mr.sharedMaterial = ResolveHumanVertexColorMaterial(sharedVoxelMat);
+                mr.sharedMaterial = sharedVoxelMat != null ? sharedVoxelMat : ResolveHumanVertexColorMaterial(sharedVoxelMat);
                 mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             }
+            _socketHeldItemGo.transform.localPosition = localSocketPosOffset;
+            _socketHeldItemGo.transform.localRotation =
+                (localSocketRotOffset.x == 0f && localSocketRotOffset.y == 0f && localSocketRotOffset.z == 0f && localSocketRotOffset.w == 0f)
+                    ? Quaternion.identity
+                    : localSocketRotOffset;
             SetSocketFallbackItemActive(true);
+
+            Stratocraft.Inventory.Data.PhysicalItemArchetype physArch = slot.MapToPhysicalArchetype();
+            if (physArch != Stratocraft.Inventory.Data.PhysicalItemArchetype.None &&
+                physArch != Stratocraft.Inventory.Data.PhysicalItemArchetype.ArchitecturalBlock)
+            {
+                Stratocraft.Inventory.Data.PhysicalItemShapeDna dna = slot.GetEffectiveShapeDna();
+                int dnaSig = ((int)slot.Kind * 397) ^ (slot.SubId * 31) ^ (int)dna.EffectiveSeed;
+                if (_lastSocketItemSignature != dnaSig)
+                {
+                    _lastSocketItemSignature = dnaSig;
+                    MeshFilter? physMf = _socketHeldItemGo.GetComponent<MeshFilter>();
+                    if (physMf != null)
+                    {
+                        Mesh physMesh = Stratocraft.Inventory.Rendering.PhysicalItemMeshFactory.GetOrCreateMesh(
+                            physArch, slot.SubId, in dna, out Vector3 natScale);
+                        physMf.sharedMesh = physMesh;
+                        Vector3 handScale = natScale;
+                        if (physMesh != null)
+                        {
+                            Vector3 worldSz = Vector3.Scale(physMesh.bounds.size, handScale);
+                            float maxDim = Mathf.Max(0.01f, Mathf.Max(worldSz.x, Mathf.Max(worldSz.y, worldSz.z)));
+                            bool isLong = physArch == Stratocraft.Inventory.Data.PhysicalItemArchetype.NaturalStick ||
+                                          physArch == Stratocraft.Inventory.Data.PhysicalItemArchetype.ToolPrimitiveHammer ||
+                                          physArch == Stratocraft.Inventory.Data.PhysicalItemArchetype.ClayTuyerePipe;
+                            float maxHandMeters = isLong ? 0.34f : 0.21f;
+                            if (maxDim > maxHandMeters) handScale *= (maxHandMeters / maxDim);
+                        }
+                        _socketHeldItemGo.transform.localScale = handScale;
+                    }
+                    if (_socketHeldItemGo.TryGetComponent<MeshRenderer>(out MeshRenderer physMr) && sharedVoxelMat != null)
+                    {
+                        physMr.sharedMaterial = sharedVoxelMat;
+                    }
+                }
+                return;
+            }
+
+            _socketHeldItemGo.transform.localScale = Vector3.one;
+            if (_socketHeldItemGo.TryGetComponent<MeshRenderer>(out MeshRenderer fallbackMr))
+            {
+                fallbackMr.sharedMaterial = ResolveHumanVertexColorMaterial(sharedVoxelMat);
+            }
 
             int sig = ((int)slot.Kind * 397) ^ (slot.SubId * 31);
             if (_lastSocketItemSignature == sig) return;
