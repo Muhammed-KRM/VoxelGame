@@ -236,7 +236,34 @@ namespace Stratocraft.Inventory.Systems
                 title: "Bakır, Kalay, Demir, Altın, Gümüş, Titanyum ve Mithril Cevherleri",
                 ingredientsOrSource: "Yüzeydeki mostra (Outcrop) kaya izlerinin altında ve yeraltı mağara katmanlarındaki 3B rölyefli parıltılı damarlarda bulunur.",
                 toolOrKeybind: "T1 Taş Kazma -> Bakır/Kalay/Demir | T2 Demir Kazma -> Derin Bazalt & Altın/Gümüş | T3+ -> Doğal Obsidyen & Titanyum/Mithril",
-                stepByStepGuide: "Cevher damarları Madde Kristali ile vakumlanamaz; uygun kademedeki kazma ile [Sol Tık] savrularak kırılır: T1 Taş Kazma ile Bakır, Kalay ve ilk Demir Cevheri çıkarılır; Demir Cevheri 1250 °C Bloomery İzabe Fırınında eritilip T2 Demir Kazma yapılarak Derin Bazalt ile Altın, Gümüş ve Ametist damarlarına inilir; T3+ kazma ile Doğal Obsidyen, Titanyum, Mithril, Elmas ve Kızıl Elmas kazılır.")
+                stepByStepGuide: "Cevher damarları Madde Kristali ile vakumlanamaz; uygun kademedeki kazma ile [Sol Tık] savrularak kırılır: T1 Taş Kazma ile Bakır, Kalay ve ilk Demir Cevheri çıkarılır; Demir Cevheri 1250 °C Bloomery İzabe Fırınında eritilip T2 Demir Kazma yapılarak Derin Bazalt ile Altın, Gümüş ve Ametist damarlarına inilir; T3+ kazma ile Doğal Obsidyen, Titanyum, Mithril, Elmas ve Kızıl Elmas kazılır."),
+
+            new(
+                id: "mat_limestone_and_lime_chain",
+                tab: SurvivalRecipeBookTab.MaterialsAndResources,
+                categoryBadge: "Kireç & Harç Zinciri (Karar A2)",
+                title: "Kireçtaşı (Limestone ID=20) -> Sönmemiş Kireç -> Sönmüş Kireç -> Kireç Harcı (240s / 600s)",
+                ingredientsOrSource: "Doğal Kireçtaşı (Limestone ID=20): Karstik Kireçtaşı Düdenleri (Biyom 2), sığ kanyon yamaçları ve Katman 1 mağaralar (T1-T2 Kazma veya T2 Kristal).",
+                toolOrKeybind: "Kireç Fırını (900 °C, 35 sn) -> Söndürme Teknesi (+Su, 6 sn) -> Harç Teknesi (+3x Kum + Su) -> Mala [Sol Tık]",
+                stepByStepGuide: "4 adımlı gerçekçi harç zinciri: 1) 6x Kireçtaşı (ID=20) + 4x Odun Kömürü Kireç Fırınında 900 °C'de 35 sn yakılarak 4x Sönmemiş Kireç Tozuna (CaO — voksel blok değil, yağmurdan korunmalı!) dönüşür. 2) Söndürme Teknesinde 4x Sönmemiş Kireç + 1x Su Kovası 6 sn buharla 4x Sönmüş Kireç Macunu (Ca(OH)2) olur. 3) 1x Sönmüş Kireç + 3x Kum + Su -> 8x Kireç Harcı (+1x Tuğla Tozu eklenirse suya dayanıklı Horasan Harcı!). 4) Karar A2 Kürlenme Süresi: Survival'da taze kireç harcı 240 sn (4 gerçek dk) içinde yük taşıma eşiğine (CureRatio >= 0.45) ulaşır, 600 sn (10 gerçek dk) sonunda %100 sertleşir (Kil harcı 120 sn / 300 sn; [F4] Yaratıcı Modda harç anında 1.0 kürlenir)."),
+
+            new(
+                id: "mat_wattle_adobe_chinking",
+                tab: SurvivalRecipeBookTab.MaterialsAndResources,
+                categoryBadge: "Yalıtım & Dolgu (Ekol 1-2)",
+                title: "Dal Örgü + Çamur Sıva (Wattle & Daub), Kerpiç (Adobe) ve Yosun/Kil Derz Dolgusu (Chinking)",
+                ingredientsOrSource: "Çalı/Kuru Dal + Kıyı Kili (<= 4m su) + Toprak + Saman/Bitki Lifi + Orman/Mağara Yosunu.",
+                toolOrKeybind: "[I] Çanta Bezi veya Harç Teknesi -> Kütük/Karkas Duvara [Sol Tık] Uygulama",
+                stepByStepGuide: "1) Yosun/Kil Derz Dolgusu (Chinking, ID=133): Ham kütük duvarların arasından rüzgâr sızar (SealFactor = 0.0, ısı yalıtımı 0 °C). 2x Yosun + 1x Kil + 1x Kum ile derzler mühürlendiğinde kapalı sıcak iç mekân (IsEnclosedInterior = true, SealFactor >= 0.70) açılır. 2) Dal Örgü + Çamur Sıva (ID=131): 4x Dal + 2x Kil + 1x Lif ile Ekol 2 ahşap karkas arası hafif rüzgâr/ısı dolgusu yapılır. 3) Kerpiç Tuğla (ID=130): 2x Kil + 2x Toprak + 1x Tahıl/Saman kalıba basılıp kurutulur; yağmurdan geniş çatı saçağıyla korunmalıdır."),
+
+            new(
+                id: "mat_ashlar_brick_tile_glass",
+                tab: SurvivalRecipeBookTab.MaterialsAndResources,
+                categoryBadge: "İşlenmiş Mimari (126..136, A3)",
+                title: "Kesme Taş, Mermer, Pişmiş Tuğla, Terracotta Kiremit, Demir Gergi, Cam & Ahşap Zona",
+                ingredientsOrSource: "Bıçkı Sehpası, Kireç/Tuğla Fırını (950 °C), Taşçı Tezgâhı, Örs (>= 720 °C) ve Cam Ocağı (1150 °C) ürünleri (ID 126..136).",
+                toolOrKeybind: "Gerçek Aletler & İstasyonlar ([C] Kristal işlenmiş blok üretemez ve vakumlayamaz!)",
+                stepByStepGuide: "Karar A3 Anayasası: Kesme Taş (126), İşlenmiş Mermer (127), Pişmiş Tuğla (128), Terracotta Kiremit (129), Kerpiç (130), Wattle & Daub (131), Kireç Harçlı Taş Duvar (132), Derzli Kütük (133), Demir Gergi Kirişi (134), Kurşunlu Mimari Cam (135) ve Ahşap Zona (136) bloklarının tamamı gerçek zanaat tezgâh/fırınlarında üretilir; [C] Madde Kristali bu blokları ASLA üretemez ve vakumlayamaz (%100 CrystalImmune — yalnızca gerçek aletler veya kuşatma silahlarıyla kırılabilir).")
         };
 
         // =====================================================================
@@ -377,7 +404,25 @@ namespace Stratocraft.Inventory.Systems
                 title: "5 İleri İnşa Bloğu: Güçlendirilmiş Çelik, Obsidyen Tuğla, Demir Mazgal, Şam Çeliği & Floatstone",
                 ingredientsOrSource: "Güçlendirilmiş Çelik (2 Demir + 2 Taş + 1 Akı) | Obsidyen Tuğla (2 Cüruf + 2 Taş + 1 Kil) | Demir Mazgal (2 Demir + 1 Dal + 1 Lif) | Şam Çeliği (3 Demir + 1 Akı + 1 Cüruf) | Floatstone (2 Kuvars + 2 Taş + 1 Akı).",
                 toolOrKeybind: "[I] Çanta Bezi 3'lü Birleştirme Alanı -> [R / İple Bağla] (4x Voksel Yapı Bloğu)",
-                stepByStepGuide: "Yüksek dayanımlı mimari ve gökyüzü adası inşası için 5 ileri yapı bloğu doğrudan [I] çanta bezinde üretilebilir: Güçlendirilmiş Çelik (12.000 basınç dayanımı), Obsidyen Tuğla (25.000 dayanım), oksijen/sıvı geçirgen Demir Havalandırma Mazgalı, 3B prosedürel Şam Çeliği (DamascusSteel) ve yerçekiminden bağımsız Gökyüzü Adası Uçan Taşı (Floatstone).")
+                stepByStepGuide: "Yüksek dayanımlı mimari ve gökyüzü adası inşası için 5 ileri yapı bloğu doğrudan [I] çanta bezinde üretilebilir: Güçlendirilmiş Çelik (12.000 basınç dayanımı), Obsidyen Tuğla (25.000 dayanım), oksijen/sıvı geçirgen Demir Havalandırma Mazgalı, 3B prosedürel Şam Çeliği (DamascusSteel) ve yerçekiminden bağımsız Gökyüzü Adası Uçan Taşı (Floatstone)."),
+
+            new(
+                id: "craft_construction_hand_tools",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "[I] İnşaat El Aletleri",
+                title: "Kireç İpi, Taşçı Malası, El Testeresi, Keser, Taşçı Keskisi & Halat/Makara",
+                ingredientsOrSource: "Kireç İpi (2 Dal + 2 Lif + 1 Kireçtaşı) | Mala (1 Dövme Demir + 1 Odun + 1 Lif) | El Testeresi (2 Demir + 1 Kalas + 1 Lif) | Taşçı Keskisi (1 Demir + 1 Taş + 1 Odun) | Keser (1 Bakır + 1 Odun + 1 Lif) | Makara Çarkı (2 Kalas + 4 Lif + 1 Demir).",
+                toolOrKeybind: "[I] Çanta Bezi 3'lü Birleştirme Alanı -> [R / İple Bağla]",
+                stepByStepGuide: "4 Mimari Ekolün uzman el aletleri: Kireç İpi 90° gönye ve su terazisi hattı çeker (kazığa [E] ile 0 kayıpla toplanır). El Testeresi & Keser Bıçkı Sehpasında 2 darbede kalas/kiriş/zona biçer. Taşçı Malası şantiye yığınından (8 m; vinçle 14 m) sürüklemeli şaşırtmalı harç sırası örer. Taşçı Keskisi Taşçı Tezgâhında Kesme Taş/Mermer/Kemer Taşı yontar."),
+
+            new(
+                id: "craft_doors_windows_stairs_interior",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "[I] / Örs İç Mekân Kitleri",
+                title: "Kapı (Menteşeli/Sürgülü/Çift Kanat), Pencere (Kepenk/Cam), Merdiven, Şömine, İskele & Vinç",
+                ingredientsOrSource: "İskele (4 Dal + 2 Kalas + 2 Lif) | Vinç (4 Soyulmuş Kütük + 2 Kalas + 2 Demir Donanım) | Menteşeli Kapı (4 Kalas + 2 Donanım) | Sürgülü Kapı (6 Kalas + 2 Donanım + 1 Kütük) | Çift Kale Kapısı (8 Kalas + 4 Donanım + 2 Demir) | Pencere (2 Kalas + 2 Cam + 1 Donanım) | Merdiven (6 Kalas + 2 Kütük + 1 Donanım) | Şömine/Baca (6 Tuğla + 2 Harç + 2 Taş).",
+                toolOrKeybind: "[I] Çanta / Bıçkı / Örs -> [E] Kapı/Kepenk Aç-Kapa | [Shift+E] Sürgü Kilitle / İskele %100 İadeyle Sök",
+                stepByStepGuide: "Demir kenet, menteşe, çivi ve kilitler Örste (>= 720 °C) Dövme Demir'den dövülür (1 Demir -> 12 Çivi / 2 Menteşe / 4 Kenet; 2 Demir -> Ağır Kilit; 3 Demir -> Anıtsal Demir Gergi Çubuğu ID=134). Kapalı kapı kapsülü ve yaratıkları bloke eder, [E] ile açılınca geçit açılır, [Shift+E] iç sürgü kilitliyken dışarıdan açılamaz. Pencere boşluğu oyuncu kapsülünü tutarken açıkken ok ve görüş hattını geçirir.")
         };
 
         // =====================================================================
@@ -433,20 +478,47 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "mind_timber_log_structures",
                 tab: SurvivalRecipeBookTab.MindBuildingStructures,
-                categoryBadge: "[T] -> [6..9] SOTF Kütük Dizme",
-                title: "[T]->[6..9] Sons of the Forest Tarzı Gerçek Kütük Dizme: Direk, Katmanlı Duvar ve Kiriş",
-                ingredientsOrSource: "Devrilmiş 2m Ağaç Kütükleri (FallenTreeLog) — [E] ile omuzda taşınır, yarı-şeffaf önizleme ile uç uca ve üst üste kilitlenir.",
-                toolOrKeybind: "Kütüğü [E] Omuzla -> [R] Yön (Yatay Sıra / Dikey Direk / Üst Kiriş) -> [Sol veya Sağ Tık] Katı Yerleştir -> [T]->[6..9] Mühürle",
-                stepByStepGuide: "Baltayla kestiğin 2m kütüğü [E] ile omuzlayıp inşa alanına taşı: ekranda yarı-şeffaf mavi kütük silüeti belirir. [R] tuşu Yatay Kütük Sırası, Dikey Taşıyıcı Direk (2m açıklık kilidi) ve Üst Kiriş yönleri arasında döner; kütükler otomatik olarak dikili direklerin arasına ve alt kütük sıralarının tam üstüne kilitlenir. Yerleştirilen her kütük %100 katı çarpışmalıdır ([E] ile geri sökülebilir)."),
+                categoryBadge: "[T] -> [6..9] Ekol 1 Kütük İnşa",
+                title: "[T]->[6..9] Ekol 1 Kertikli Kütük Yığma: 1:1 Hacimli Önizleme, Semer/Kırlangıç Kertik ve Chinking",
+                ingredientsOrSource: "Devrilmiş 2m Ağaç Kütükleri (FallenTreeLog) — [E] ile omuzda taşınır (+32 kg) veya Şantiye Yığınından (r <= 8m) otomatik beslenir.",
+                toolOrKeybind: "Kütüğü [E] Omuzla -> [R] Yön | [Shift+R] Kertik/Kalınlık | [Sol Tık] 1-2 Vuruşla Kilitle | [ESC/Q/RMB] Anında İptal",
+                stepByStepGuide: "Baltayla kestiğin 2m kütükler 1:1 gerçek çapta (%70 doğal ahşap rengi + 4 kademeli Yeşil/Sarı/Turuncu/Kırmızı stres halkası; incecik mavi çubuk yok!) önizlenir. Havada desteksiz veya köşe kertiği (Semer/Kırlangıç) olmadan kütük duramaz; köşede dik açılı 1-2 balta darbesiyle kilitlenir. Sıcak kapalı iç mekân (SealFactor >= 0.70) için kütük aralıkları Yosun/Kil Derz Dolgusu (Chinking) ile mühürlenmelidir."),
 
             new(
                 id: "mind_sotf_multimaterial_statics",
                 tab: SurvivalRecipeBookTab.MindBuildingStructures,
-                categoryBadge: "[T] Çok-Malzemeli Statik",
-                title: "[T] Çok-Malzemeli Katmanlı İnşa (Kütük, Taş, Mermer, Çelik) ve Gerçekçi Kolon-Kiriş Statiği",
-                ingredientsOrSource: "6 Yapı Malzemesi (Ahşap Kütük, Demir Ağacı, Örme Taş, Kesme Bazalt, Kadim Mermer, Takviyeli Çelik) + 3 Kesit Kalınlığı (İnce 0.65x, Standart 1.0x, Kalın Ana Taşıyıcı 1.45x).",
-                toolOrKeybind: "[T] Parça Seç -> [Sol Tık] Sıra Sıra Diz (1/5..5/5) | [V] Parça | [G] Malzeme | [R] Döndür | [Shift+R] Kalınlık | [Sağ Tık / ESC / Q / 0..9] Bırak",
-                stepByStepGuide: "1) Yarı-Şeffaf Hayalet & Katmanlı Dizilim: [T]'den seçilen her duvar/döşeme/çatı önce yarı-şeffaf hologram önizleme gösterir; [Sol Tık] ile her basışta kütük veya taş sıraları alttan üste katman katman dizilir (1/5 -> 5/5) ve tam katı çarpışma kazanır. [Sağ Tık], [ESC], [Q] veya [0..9] tuşları inşa modundan anında çıkıp eli boşaltır. 2) Küçük vs Büyük Bina Statiği: <= 4m açıklıklı tek katlı küçük kulübeler iç kolonsuz yalnızca duvarlarıyla güvenle ayakta durur; geniş salonlar (> 4m açıklık) veya çok katlı ağır taş/mermer yapılar ise Kalın Kolon + Ana Kiriş + Çapraz Payanda veya daha sağlam malzeme (Demir Ağacı / Taş / Mermer / Çelik) kullanılmazsa kendi eksenel yükü (kN) altında ezilerek çöker! 3) Yıkım Fiziği: Çok sağlam bir binada dahi alttaki taşıyıcı kolon veya duvar balta/kazmayla kırıldığında üstteki kiriş, döşeme ve çatı elemanları anında yeniden hesaplanarak 3B yerçekimi ve torkla zincirleme çöker!")
+                categoryBadge: "[T] 4 Ekol & Statik Graf",
+                title: "[T] 4 Mimari Ekol (Kütük, Karkas, Taş Yığma, Anıtsal Kemer/Kubbe) ve Gerçek Yapısal Fizik",
+                ingredientsOrSource: "Ekol 1 (Kütük/Dal <= 4m) | Ekol 2 (Ahşap Karkas + 45° Payanda <= 6.5m) | Ekol 3 (Taş Yığma + Kireç Harcı <= 8m kemer) | Ekol 4 (Kesme Taş/Mermer + Kemer/Tonoz/Kubbe + Demir Gergi <= 18m).",
+                toolOrKeybind: "[T] Menü | [V]/[Shift+V] Parça | [G] Malzeme | [R]/[Shift+R] Döndür & Kalınlık | [Alt+Tekerlek] 15° İnce Açı | [ESC/Q/RMB] İptal",
+                stepByStepGuide: "1) Ekol 1-4 Kuralları: Ekol 1'de köşe kertiği; Ekol 2'de Ahşap Kolon-Kiriş + 45° çapraz rüzgâr payandası (yoksa fırtınada devrilir); Ekol 3'te temel hendeği + kireç harcı (Karar A2: 240s yük taşıma / 600s tam kür, Cure < 0.45 ıslakken ağır kat binerse kayar) + >2.2m açıklıkta lento/tahfif kemeri; Ekol 4'te kemer kalıbı + Kilit Taşı (Keystone) + dış payanda veya Demir Gergi Çubuğu (IronTieRod) zorunludur. 2) Karar A1 Yıkım: Temelden tamamen kopuk (d_geo=65535) parça 0.0 sn'de anında düşer; aşırı yüklü (eta >= 1.0) yapı 1.5 sn çatırdama uyarısı sonrası 3B torkla çöker!"),
+
+            new(
+                id: "mind_building_stations_kilns",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] İnşaat İstasyonları",
+                title: "4 İnşaat Tezgâhı & Fırını: Bıçkı Sehpası, Kireç/Tuğla Fırını, Harç Teknesi, Taşçı Tezgâhı & Cam Ocağı",
+                ingredientsOrSource: "Bıçkı Sehpası (2 Kütük + 4 Dal + 2 Lif) | Kireç/Tuğla Fırını (12 Taş + 8 Kil + 2 Kum) | Harç Teknesi (4 Kalas + 2 Lif/Çivi) | Taşçı Tezgâhı (2 Kütük + 2 Düz Kaya) | Cam Ocağı (10 Pişmiş Tuğla + 1 Pota + 1 Körük).",
+                toolOrKeybind: "Malzemeyi Yere [Sağ Tık] Diz -> [T] Zihin İnşası -> İstasyon Mühürle | İşlem: [V] Profil Seç -> 2 Vuruş / Fırın Pişirme",
+                stepByStepGuide: "Tüm işlenmiş Ekol 1..4 malzemeleri bu gerçek istasyonlarda üretilir: Bıçkı Sehpasında kalas/kiriş/mertek/zona biçilir; Kireç & Tuğla Fırınında Kireçtaşı (900 °C, 35 sn -> Sönmemiş Kireç) ve Tuğla/Kiremit (950 °C, 30 sn) pişirilir; Harç Teknesinde Sönmüş Kireç (6 sn) + Kireç/Horasan Harcı karılır; Taşçı Tezgâhında Kesme Taş/Mermer/Kemer Taşı yontulur; Cam Ocağında (1150 °C, 25 sn) Mimari/Vitray Cam dökülür."),
+
+            new(
+                id: "mind_site_logistics_scaffold_crane",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] Şantiye Lojistiği",
+                title: "Kireç İpi, Şantiye Yığını (8m / 14m), Yürünebilir İskele, Makaralı Vinç ve Kağnı",
+                ingredientsOrSource: "Şantiye Yığını (r <= 8.0 m otomatik besleme; Döner Vinç/Palanga aktifken r <= 14.0 m) | İskele (2×2×2 m modül) | Kağnı (72 yuva / 8 ağır kütük veya kesme taş).",
+                toolOrKeybind: "Kireç İpi [Sol Tık] Çak / [E] Topla | İskele [Shift+E] %100 İadeyle Sök | Vinç [E] Yakala, [W/S/A/D] Kaldır-Döndür | El Arabası [Shift+E] Yığına Boşalt",
+                stepByStepGuide: "1) Kireç İpi temel hendek ve duvar hattını 90° gönye ve su terazisiyle hizalar. 2) El Arabası (36 yuva) veya Kağnı (72 yuva / 8 kütük) ile taşınan malzeme Şantiye Yığınına [Shift+E] ile boşaltılır; 8.0 m (Vinçle 14.0 m) yarıçapta duvar örerken malzemeler yığından otomatik çekilir. 3) Ahşap İskele (ModularScaffolding) üstünde yürünür kalas platform, entegre iç merdiven ve 0.95 m güvenlik korkuluğu içerir; iş bitince [Shift+E] ile %100 iadeyle toplanır."),
+
+            new(
+                id: "mind_interior_fireplace_workshops",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "İç Mekân & Atölye (1.20 m)",
+                title: "Merdiven Boşluğu (>= 1.95 m), Şömine/Baca Çekişi ve Bina İçi Atölye Yangın Kuralları (1.20 m)",
+                ingredientsOrSource: "StairwellTrimmerOpening (>= 1.95 m kafa boşluğu) | Taş/Tuğla Şömine + Baca Şaftı + Çatı Şapkası (>= 0.60 m) | Yatak (>= 2.0 m tavan).",
+                toolOrKeybind: "Kapı/Kepenk: [E] Aç/Kapa, [Shift+E] Sürgü Kilitle | Yatak: [E] SpawnPoint | Fırın/Ateş: [Shift+E] Söndür",
+                stepByStepGuide: "1) Çok Katlı Merdiven: Üst döşemede StairwellTrimmerOpening açıldığında Header/Trimmer kirişleri yükü taşır ve >= 1.95 m net kafa açıklığı sağlanır. 2) Şömine & Baca: Bacalı şömine kapalı odayı +18..+26 °C ısıtır ve CO üretmez; bacasız açık ateş kapalı odada duman ve 3.0x O2 tüketimi yaratır. 3) Atölye Bina İçi Kuralları: Kömür Ocağı kapalı odada kesinlikle yasaktır (açık/sundurma gerekir). Bloomery (1250 °C), Kireç/Tuğla Fırını ve Cam Ocağı bina içinde yalnızca taş/kaya zeminde, üstte baca/menfez varken ve yanıcı ahşap duvardan >= 1.20 m uzakta kurulabilir (arada taş yangın duvarı veya yanmaz yaka varsa 0 m!).")
         };
 
         // =====================================================================
@@ -529,11 +601,11 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "guide_crystal_and_scatter",
                 tab: SurvivalRecipeBookTab.SmithingCookingAndCrystal,
-                categoryBadge: "[C] Kristal & [Shift+T] Fırça",
-                title: "9. [C] Kristal Seviye Yükseltme (T0->T5), [V] Doğal Arazi Fırçası, [Shift+B / Alt] Malzeme ve [Shift+T] Vakum Alanı",
-                ingredientsOrSource: "3x Doğal Kuvars (T0 -> T1) | T2..T5 Rezonans Kristali (T1 -> T2..T5).",
-                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal <-> Mimari | [Shift+V / Alt+Tekerlek] Şekil | [Shift+B / Alt] Malzeme | [Shift+T / Shift+Tekerlek] Vakum Çapı",
-                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; kristal aktifken envanterdeki T2..T5 Rezonans Kristalini [C] ile yedirerek kademesini yükselt. [V] tuşu ShapeId = 0 (Doğal Arazi Saçılım Fırçası) ile mimari blok şekli arasında geçiş yapar; [Shift+B] veya fare tekerleği malzemeyi değiştirir, [Alt] basılı tutulduğunda ise imleç serbest kalarak sağ kenardaki 17'li tam paletten doğrudan fareyle malzeme seçilir (Dodge tetiklenmez). Vakum/kazı çapı [Shift+T] veya [Shift+Tekerlek] ile büyütülür; yalın [T] tuşu ise her zaman Zihin İnşa Menüsünü açar."),
+                categoryBadge: "[C] Kristal & Karar A3 Sınırı",
+                title: "9. [C] Kristal Evrimi (T0->T5), Doğal Arazi Fırçası ve Karar A3 İşlenmiş Blok Sınırı",
+                ingredientsOrSource: "3x Doğal Kuvars (T0 -> T1) | T2..T5 Rezonans Kristali (T1 -> T2..T5) | Yalnızca ham doğal arazi (Toprak, Taş, Kireçtaşı ID=20).",
+                toolOrKeybind: "[C] Kristal Aç/Yükselt | [V] Doğal <-> Mimari | [Shift+V / Alt+Tekerlek] Şekil | [Shift+B / Alt] Malzeme | [Shift+T] Vakum Çapı",
+                stepByStepGuide: "3x Kuvarsı [C] ile yedirerek kristali T1'e uyandır; T2..T5 Rezonans Kristali ile kapasiteyi yükselt. [V] Doğal Arazi Fırçası <-> Mimari Blok geçişi yapar, [Shift+B] veya [Alt] sağ paletten malzeme seçer (Dodge tetiklemez), [Shift+T] vakum çapını değiştirir. KARAR A3 SINIRI: [C] Madde Kristali YALNIZCA ham doğal maddeleri (toprak, kum, ham taş, Kireçtaşı ID=20) vakumlayıp şekillendirebilir; asla tuğla, harçlı duvar, kertikli kütük veya işlenmiş blok (126..136) üretemez! Kristalle yapılan ham doğal barınaklar (Ekol 0) 0.45x zayıftır ve düşmanlar tarafından [C] ile vakumlanabilir; gerçek Ekol 1..4 yapıları ise [C] Kristal vakumuna %100 bağışıktır."),
 
             new(
                 id: "guide_martial_stance_scrolls_and_posture",

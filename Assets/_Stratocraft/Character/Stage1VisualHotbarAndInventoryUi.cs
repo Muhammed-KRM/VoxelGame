@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Data;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Voxel.Data;
@@ -77,7 +78,39 @@ namespace Stratocraft.Character
         WeaponKatana = 59,
         WeaponGreatsword = 60,
         WeaponRapier = 61,
-        ScrollMartialStance = 62
+        ScrollMartialStance = 62,
+
+        // --- DOK5 Insaat Hammaddeleri, Baglayicilar, Aletler ve Ic Mekan Kitleri (63..92) ---
+        LogDebarked = 63,
+        TimberPlank = 64,
+        TimberBeam = 65,
+        WattlePanel = 66,
+        AdobeBrick = 67,
+        ChinkingMossClay = 68,
+        LimestoneChunk = 69,
+        QuicklimePowder = 70,
+        SlakedLimePaste = 71,
+        MortarBucket = 72,
+        AshlarBlock = 73,
+        FiredBrick = 74,
+        RoofTile = 75,
+        IronHardware = 76,
+        GlassPane = 77,
+        ThatchBundle = 78,
+        WoodShingle = 79,
+        ToolTrowel = 80,
+        ToolChalkLine = 81,
+        ToolHandSaw = 82,
+        ToolMasonChisel = 83,
+        ToolAdze = 84,
+        RopeAndPulley = 85,
+        ModularScaffoldingKit = 86,
+        PulleyCraneKit = 87,
+        DoorKit = 88,
+        WindowKit = 89,
+        StairKit = 90,
+        FireplaceChimneyKit = 91,
+        InteriorFurnitureKit = 92
     }
 
     /// <summary>
@@ -159,6 +192,16 @@ namespace Stratocraft.Character
             InventoryItemKind.OiledLeatherWindbreaker => PhysicalItemArchetype.OiledLeatherWindbreaker,
             InventoryItemKind.HeavyFurWinterParka => PhysicalItemArchetype.HeavyFurWinterParka,
             InventoryItemKind.FurLinedWinterBoots => PhysicalItemArchetype.FurLinedWinterBoots,
+            InventoryItemKind.LogDebarked or InventoryItemKind.TimberPlank or InventoryItemKind.TimberBeam or InventoryItemKind.WoodShingle => PhysicalItemArchetype.SplitFirewood,
+            InventoryItemKind.WattlePanel or InventoryItemKind.ThatchBundle => PhysicalItemArchetype.PlantFiber,
+            InventoryItemKind.AdobeBrick or InventoryItemKind.AshlarBlock or InventoryItemKind.FiredBrick or InventoryItemKind.RoofTile or InventoryItemKind.GlassPane => PhysicalItemArchetype.ArchitecturalBlock,
+            InventoryItemKind.ChinkingMossClay or InventoryItemKind.MortarBucket or InventoryItemKind.SlakedLimePaste => PhysicalItemArchetype.ClayLump,
+            InventoryItemKind.LimestoneChunk => PhysicalItemArchetype.RoughStone,
+            InventoryItemKind.QuicklimePowder => PhysicalItemArchetype.CrushedFluxPowder,
+            InventoryItemKind.IronHardware => PhysicalItemArchetype.WroughtIronBar,
+            InventoryItemKind.ToolTrowel or InventoryItemKind.ToolChalkLine or InventoryItemKind.ToolHandSaw or InventoryItemKind.ToolMasonChisel or InventoryItemKind.ToolAdze => PhysicalItemArchetype.ToolPrimitiveHammer,
+            InventoryItemKind.RopeAndPulley => PhysicalItemArchetype.WoodenWheel,
+            InventoryItemKind.ModularScaffoldingKit or InventoryItemKind.PulleyCraneKit or InventoryItemKind.DoorKit or InventoryItemKind.WindowKit or InventoryItemKind.StairKit or InventoryItemKind.FireplaceChimneyKit or InventoryItemKind.InteriorFurnitureKit => PhysicalItemArchetype.ArchitecturalBlock,
             _ => PhysicalItemArchetype.None
         };
 
@@ -208,7 +251,32 @@ namespace Stratocraft.Character
                    Kind == InventoryItemKind.WildGrainBundle ||
                    Kind == InventoryItemKind.MilledFlour ||
                    Kind == InventoryItemKind.CrushedFluxPowder ||
-                   Kind == InventoryItemKind.ScrollMartialStance;
+                   Kind == InventoryItemKind.ScrollMartialStance ||
+                   Kind == InventoryItemKind.LogDebarked ||
+                   Kind == InventoryItemKind.TimberPlank ||
+                   Kind == InventoryItemKind.TimberBeam ||
+                   Kind == InventoryItemKind.WattlePanel ||
+                   Kind == InventoryItemKind.AdobeBrick ||
+                   Kind == InventoryItemKind.ChinkingMossClay ||
+                   Kind == InventoryItemKind.LimestoneChunk ||
+                   Kind == InventoryItemKind.QuicklimePowder ||
+                   Kind == InventoryItemKind.SlakedLimePaste ||
+                   Kind == InventoryItemKind.MortarBucket ||
+                   Kind == InventoryItemKind.AshlarBlock ||
+                   Kind == InventoryItemKind.FiredBrick ||
+                   Kind == InventoryItemKind.RoofTile ||
+                   Kind == InventoryItemKind.IronHardware ||
+                   Kind == InventoryItemKind.GlassPane ||
+                   Kind == InventoryItemKind.ThatchBundle ||
+                   Kind == InventoryItemKind.WoodShingle ||
+                   Kind == InventoryItemKind.RopeAndPulley ||
+                   Kind == InventoryItemKind.ModularScaffoldingKit ||
+                   Kind == InventoryItemKind.PulleyCraneKit ||
+                   Kind == InventoryItemKind.DoorKit ||
+                   Kind == InventoryItemKind.WindowKit ||
+                   Kind == InventoryItemKind.StairKit ||
+                   Kind == InventoryItemKind.FireplaceChimneyKit ||
+                   Kind == InventoryItemKind.InteriorFurnitureKit;
         }
     }
 
@@ -394,13 +462,13 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Stone,
             MaterialIdCatalog.Dirt,
             MaterialIdCatalog.Sand,
+            MaterialIdCatalog.Limestone,
             MaterialIdCatalog.Basalt,
             MaterialIdCatalog.NaturalObsidian,
             MaterialIdCatalog.Cobblestone,
             MaterialIdCatalog.OakWood,
             MaterialIdCatalog.Ironwood,
             MaterialIdCatalog.Marble,
-            MaterialIdCatalog.StoneBrick,
             MaterialIdCatalog.LooseRubble
         };
 
@@ -454,6 +522,31 @@ namespace Stratocraft.Character
             InventoryItemKind.MilledFlour => 12,
             InventoryItemKind.CrushedFluxPowder => 12,
             InventoryItemKind.ScrollMartialStance => 4,
+            InventoryItemKind.LogDebarked => 6,
+            InventoryItemKind.TimberPlank => 16,
+            InventoryItemKind.TimberBeam => 8,
+            InventoryItemKind.WattlePanel => 12,
+            InventoryItemKind.AdobeBrick => 16,
+            InventoryItemKind.ChinkingMossClay => 16,
+            InventoryItemKind.LimestoneChunk => 12,
+            InventoryItemKind.QuicklimePowder => 16,
+            InventoryItemKind.SlakedLimePaste => 12,
+            InventoryItemKind.MortarBucket => 8,
+            InventoryItemKind.AshlarBlock => 12,
+            InventoryItemKind.FiredBrick => 16,
+            InventoryItemKind.RoofTile => 16,
+            InventoryItemKind.IronHardware => 16,
+            InventoryItemKind.GlassPane => 12,
+            InventoryItemKind.ThatchBundle => 16,
+            InventoryItemKind.WoodShingle => 16,
+            InventoryItemKind.RopeAndPulley => 4,
+            InventoryItemKind.ModularScaffoldingKit => 8,
+            InventoryItemKind.PulleyCraneKit => 2,
+            InventoryItemKind.DoorKit => 4,
+            InventoryItemKind.WindowKit => 4,
+            InventoryItemKind.StairKit => 4,
+            InventoryItemKind.FireplaceChimneyKit => 4,
+            InventoryItemKind.InteriorFurnitureKit => 4,
             _ => 1
         };
 
@@ -1436,16 +1529,36 @@ namespace Stratocraft.Character
                 InventoryItemKind.RoughStoneChunk => CraftIngredientToken.RoughStoneChunk,
                 InventoryItemKind.LooseDirtClod => CraftIngredientToken.LooseDirtClod,
                 InventoryItemKind.ClayLump => CraftIngredientToken.ClayLump,
+                InventoryItemKind.SandPile => CraftIngredientToken.SandPile,
                 InventoryItemKind.SlagShard => CraftIngredientToken.SlagGlassShard,
                 InventoryItemKind.WroughtIronBar => CraftIngredientToken.WroughtIronBar,
                 InventoryItemKind.RawHide => CraftIngredientToken.LeatherPadding,
                 InventoryItemKind.WildGrainBundle => CraftIngredientToken.WildGrainBundle,
                 InventoryItemKind.MilledFlour => CraftIngredientToken.MilledFlour,
                 InventoryItemKind.CrushedFluxPowder => CraftIngredientToken.CrushedFluxPowder,
+                InventoryItemKind.LimestoneChunk => CraftIngredientToken.LimestoneChunk,
+                InventoryItemKind.QuicklimePowder => CraftIngredientToken.QuicklimePowder,
+                InventoryItemKind.SlakedLimePaste => CraftIngredientToken.SlakedLimePaste,
+                InventoryItemKind.MortarBucket => CraftIngredientToken.LimeMortarBucket,
+                InventoryItemKind.LogDebarked => CraftIngredientToken.DebarkedLog,
+                InventoryItemKind.TimberPlank => CraftIngredientToken.WoodPlank,
+                InventoryItemKind.FiredBrick => CraftIngredientToken.FiredClayBrick,
+                InventoryItemKind.IronHardware => CraftIngredientToken.IronHardware,
+                InventoryItemKind.GlassPane => CraftIngredientToken.GlassPane,
+                InventoryItemKind.AshlarBlock => CraftIngredientToken.CutAshlarBlock,
+                InventoryItemKind.ToolFluidBucket when slot.SubId == 1 => CraftIngredientToken.WaterBucket,
                 InventoryItemKind.MetalIngot when slot.SubId == 1 => CraftIngredientToken.CopperIngot,
                 InventoryItemKind.MetalIngot when slot.SubId == 2 => CraftIngredientToken.WroughtIronBar,
                 InventoryItemKind.OreChunk when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Limestone => CraftIngredientToken.LimestoneChunk,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Sand => CraftIngredientToken.SandPile,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.GlowingMoss => CraftIngredientToken.MossClump,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.WoodPlank => CraftIngredientToken.WoodPlank,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.FiredClayBrick => CraftIngredientToken.FiredClayBrick,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.LeadedGlassPane => CraftIngredientToken.GlassPane,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.CutAshlarStone => CraftIngredientToken.CutAshlarBlock,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Marble => CraftIngredientToken.MarbleChunk,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.TacticalCloth => CraftIngredientToken.TacticalCloth,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.LeatherPadding => CraftIngredientToken.LeatherPadding,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.CreatureFurAsh => CraftIngredientToken.CreatureFurAsh,
@@ -1481,6 +1594,24 @@ namespace Stratocraft.Character
                 PrimitiveCraftOutputId.OiledLeatherWindbreaker => new VisualInventorySlot { Kind = InventoryItemKind.OiledLeatherWindbreaker, SubId = MaterialIdCatalog.LeatherPadding, Count = 1, Durability01 = 1.0f },
                 PrimitiveCraftOutputId.HeavyFurWinterParka => new VisualInventorySlot { Kind = InventoryItemKind.HeavyFurWinterParka, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
                 PrimitiveCraftOutputId.FurLinedWinterBoots => new VisualInventorySlot { Kind = InventoryItemKind.FurLinedWinterBoots, SubId = MaterialIdCatalog.CreatureFurAsh, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ToolChalkLineAndStakes => new VisualInventorySlot { Kind = InventoryItemKind.ToolChalkLine, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ToolMasonTrowel => new VisualInventorySlot { Kind = InventoryItemKind.ToolTrowel, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ToolHandSaw => new VisualInventorySlot { Kind = InventoryItemKind.ToolHandSaw, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ToolMasonChisel => new VisualInventorySlot { Kind = InventoryItemKind.ToolMasonChisel, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ToolAdze => new VisualInventorySlot { Kind = InventoryItemKind.ToolAdze, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.RopeAndPulleyWheel => new VisualInventorySlot { Kind = InventoryItemKind.RopeAndPulley, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.QuicklimePowder => new VisualInventorySlot { Kind = InventoryItemKind.QuicklimePowder, SubId = 0, Count = 4, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.SlakedLimePaste => new VisualInventorySlot { Kind = InventoryItemKind.SlakedLimePaste, SubId = 0, Count = 4, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.IronHingeAndLockSet => new VisualInventorySlot { Kind = InventoryItemKind.IronHardware, SubId = 0, Count = 2, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ModularScaffoldingKit => new VisualInventorySlot { Kind = InventoryItemKind.ModularScaffoldingKit, SubId = 0, Count = 2, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.PulleyCraneKit => new VisualInventorySlot { Kind = InventoryItemKind.PulleyCraneKit, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.HingedDoorKit => new VisualInventorySlot { Kind = InventoryItemKind.DoorKit, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.SlidingDoorKit => new VisualInventorySlot { Kind = InventoryItemKind.DoorKit, SubId = 1, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.DoubleGateKit => new VisualInventorySlot { Kind = InventoryItemKind.DoorKit, SubId = 2, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.ShutteredWindowKit => new VisualInventorySlot { Kind = InventoryItemKind.WindowKit, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.StairFlightKit => new VisualInventorySlot { Kind = InventoryItemKind.StairKit, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.StoneFireplaceHearthKit => new VisualInventorySlot { Kind = InventoryItemKind.FireplaceChimneyKit, SubId = 0, Count = 1, Durability01 = 1.0f },
+                PrimitiveCraftOutputId.InteriorFurnitureKit => new VisualInventorySlot { Kind = InventoryItemKind.InteriorFurnitureKit, SubId = 0, Count = 1, Durability01 = 1.0f },
                 _ => default
             };
         }
@@ -3080,6 +3211,36 @@ namespace Stratocraft.Character
             InventoryItemKind.OiledLeatherWindbreaker => "Rüzgârlk",
             InventoryItemKind.HeavyFurWinterParka => "KürkPrk",
             InventoryItemKind.FurLinedWinterBoots => "KürkÇzm",
+            InventoryItemKind.LogDebarked => "KertKtk",
+            InventoryItemKind.TimberPlank => "Kalas",
+            InventoryItemKind.TimberBeam => "Kiriş",
+            InventoryItemKind.WattlePanel => "DalÖrgü",
+            InventoryItemKind.AdobeBrick => "Kerpiç",
+            InventoryItemKind.ChinkingMossClay => "DerzMhr",
+            InventoryItemKind.LimestoneChunk => "KireçTş",
+            InventoryItemKind.QuicklimePowder => "SönmKrc",
+            InventoryItemKind.SlakedLimePaste => "SönmşKr",
+            InventoryItemKind.MortarBucket => "HarçKov",
+            InventoryItemKind.AshlarBlock => "KesmTaş",
+            InventoryItemKind.FiredBrick => "PişTuğl",
+            InventoryItemKind.RoofTile => "Kiremit",
+            InventoryItemKind.IronHardware => "DmrKnt",
+            InventoryItemKind.GlassPane => "CamLvh",
+            InventoryItemKind.ThatchBundle => "SazDmt",
+            InventoryItemKind.WoodShingle => "AhşZona",
+            InventoryItemKind.ToolTrowel => "Mala",
+            InventoryItemKind.ToolChalkLine => "Kireçİp",
+            InventoryItemKind.ToolHandSaw => "Testere",
+            InventoryItemKind.ToolMasonChisel => "TaşKsk",
+            InventoryItemKind.ToolAdze => "Keser",
+            InventoryItemKind.RopeAndPulley => "Makara",
+            InventoryItemKind.ModularScaffoldingKit => "İskele",
+            InventoryItemKind.PulleyCraneKit => "Vinç",
+            InventoryItemKind.DoorKit => slot.SubId == 2 ? "KaleKp" : (slot.SubId == 1 ? "SrgKapı" : "EvKapı"),
+            InventoryItemKind.WindowKit => slot.SubId == 1 ? "CamPnc" : "KepPnc",
+            InventoryItemKind.StairKit => slot.SubId == 2 ? "SrmMrd" : (slot.SubId == 1 ? "L-Mrdvn" : "DüzMrd"),
+            InventoryItemKind.FireplaceChimneyKit => "Şömine",
+            InventoryItemKind.InteriorFurnitureKit => "Mobilya",
             _ => "Eşya"
         };
 
@@ -3095,12 +3256,28 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Basalt => "Bazalt",
             MaterialIdCatalog.NaturalObsidian => "Obsid",
             MaterialIdCatalog.Cobblestone => "Kırıktaş",
+            MaterialIdCatalog.Limestone => "Kireçtaşı",
             MaterialIdCatalog.OakWood => "Meşe",
             MaterialIdCatalog.Ironwood => "D.Ağaç",
             MaterialIdCatalog.Marble => "Mermer",
-            MaterialIdCatalog.StoneBrick => "Tuğla",
+            MaterialIdCatalog.StoneBrick => "TaşTuğ",
             MaterialIdCatalog.LooseRubble => "Moloz",
             MaterialIdCatalog.WoodPlank => "Kalas",
+            MaterialIdCatalog.CutAshlarStone => "KesmeTaş",
+            MaterialIdCatalog.DressedMarbleBlock => "İşlMerm",
+            MaterialIdCatalog.FiredClayBrick => "PişTuğla",
+            MaterialIdCatalog.RoofClayTile => "Kiremit",
+            MaterialIdCatalog.AdobeBrickBlock => "Kerpiç",
+            MaterialIdCatalog.WattleDaubPanelBlock => "DalÖrgü",
+            MaterialIdCatalog.LimeMortarStoneWall => "HarçDuv",
+            MaterialIdCatalog.ChinkedLogBlock => "DerzKtk",
+            MaterialIdCatalog.IronTieBeamBlock => "DmrGrg",
+            MaterialIdCatalog.LeadedGlassPane => "CamPnc",
+            MaterialIdCatalog.TimberShingleRoof => "AhşZona",
+            MaterialIdCatalog.ReinforcedSteelBlock => "ÇelikKr",
+            MaterialIdCatalog.IronGrating => "Mazgal",
+            MaterialIdCatalog.DamascusSteel => "ŞamÇlk",
+            MaterialIdCatalog.Floatstone => "UçanTaş",
             MaterialIdCatalog.BedBlock => "Yatak",
             MaterialIdCatalog.GlowingMoss => "Yosun",
             MaterialIdCatalog.StarCore => "YıldızÇ",
@@ -3798,6 +3975,48 @@ namespace Stratocraft.Character
             InventoryItemKind.OiledLeatherWindbreaker => "Yağlı Deri Rüzgârlık Pelerin (0.80 clo — %88 Rüzgâr & Yağmur Kesici)",
             InventoryItemKind.HeavyFurWinterParka => "Ağır Kürk Kış Parkası (1.45 clo — Tipi ve Hipotermi Kalkanı)",
             InventoryItemKind.FurLinedWinterBoots => "Kürk Astarlı Kış Çizmesi (1.45 clo — Derin Kar & Donma Direnci)",
+            InventoryItemKind.LogDebarked => "Soyulmuş & Kertikli Kütük (Ekol 1 — %100 Vakum Bağışık)",
+            InventoryItemKind.TimberPlank => "Biçilmiş Ahşap Kalas (Ekol 2 — Bıçkı Sehpası Ürünü)",
+            InventoryItemKind.TimberBeam => "Taşıyıcı Ana Kiriş / Dikme (20×20 cm — Ekol 2)",
+            InventoryItemKind.WattlePanel => "Dal Örgü & Çamur Sıva Paneli (Wattle & Daub — Ekol 2 Dolgu)",
+            InventoryItemKind.AdobeBrick => "Güneşte Kurutulmuş Kerpiç Tuğla (Adobe — Ekol 1-2)",
+            InventoryItemKind.ChinkingMossClay => "Yosun & Kil Derz Dolgusu (Chinking — Seal >= 0.70)",
+            InventoryItemKind.LimestoneChunk => "Doğal Kireçtaşı Parçası (Limestone ID=20 — Kireç Fırını Hammaddesi)",
+            InventoryItemKind.QuicklimePowder => "Sönmemiş Kireç Tozu (CaO — 900 °C Kireç Fırını Ürünü)",
+            InventoryItemKind.SlakedLimePaste => "Sönmüş Kireç Macunu (Ca(OH)2 — Söndürme Teknesi Ürünü)",
+            InventoryItemKind.MortarBucket => "Kireç Harcı Kovası (Karar A2: 240s Yük / 600s Tam Kür)",
+            InventoryItemKind.AshlarBlock => "Gönyeli Kesme Taş Bloğu (Ashlar — Ekol 3-4)",
+            InventoryItemKind.FiredBrick => "Pişmiş Kırmızı Kil Tuğla (950 °C — Tonoz/Kubbe/Baca)",
+            InventoryItemKind.RoofTile => "Terracotta Çatı Kiremiti (%100 Su Geçirmez & Yanmaz)",
+            InventoryItemKind.IronHardware => "Demir Kenet, Menteşe, Çivi & Kilit Seti (Örs Ürünü)",
+            InventoryItemKind.GlassPane => "Kurşunlu Mimari Pencere Camı (1150 °C — %88 Işık / %100 Isı)",
+            InventoryItemKind.ThatchBundle => "Saz / Saman Çatı Demeti (Ekol 1 İlk Gece Örtüsü)",
+            InventoryItemKind.WoodShingle => "Yarma Ahşap Zona / Pedavra (Ekol 1-2 Kar Kaydırıcı Çatı)",
+            InventoryItemKind.ToolTrowel => "Demir Taşçı Malası (Sürüklemeli Şaşırtmalı Harç Örme)",
+            InventoryItemKind.ToolChalkLine => "Kireç İpi & Kazık Seti (90° Gönye & Su Terazisi)",
+            InventoryItemKind.ToolHandSaw => "Marangoz El Testeresi (Bıçkı Sehpası Kereste Kesimi)",
+            InventoryItemKind.ToolMasonChisel => "Taşçı Keskisi & Gönye (Kesme Taş & Mermer Yontma)",
+            InventoryItemKind.ToolAdze => "Marangoz Keseri (Kütük Soyma, Kırlangıç Kertik & Zona)",
+            InventoryItemKind.RopeAndPulley => "Halat & Ahşap Makara Çarkı (Palanga / Vinç Mekanizması)",
+            InventoryItemKind.ModularScaffoldingKit => "Yürünebilir Ahşap İskele Modülü (2×2×2m + İç Merdiven + Korkuluk)",
+            InventoryItemKind.PulleyCraneKit => "Makaralı Şantiye Vinci / Palanga (14.0 m Yığın Besleme)",
+            InventoryItemKind.DoorKit => slot.SubId switch
+            {
+                1 => "Sürgülü Ahır / Atölye Kapısı Kiti (0 Süpürme Alanı)",
+                2 => "Çift Kanatlı Kale / Saray Kapısı Kiti (2.4 m Geçit + Travers Sürgü)",
+                _ => "Menteşeli Ev Kapısı & İç Sürgü Kiti ([E] Aç/Kapa, [Shift+E] Kilitle)"
+            },
+            InventoryItemKind.WindowKit => slot.SubId == 1
+                ? "Kurşunlu Camlı Pencere Kiti (%88 Işık, %100 Rüzgâr Yalıtımı)"
+                : "Ahşap Kepenkli Pencere Kiti (Açıkken Ok/Görüş Geçirir, Kapsülü Tutar)",
+            InventoryItemKind.StairKit => slot.SubId switch
+            {
+                1 => "L-Dönüşlü Sahanlıklı Merdiven Kiti (2×2m Kompakt Kat Çıkışı)",
+                2 => "Taş Sarmal Merdiven Kiti (Merkez Sütunlu 360° Kule Merdiveni)",
+                _ => "Düz Ahşap Merdiven & Tırabzan Kiti (Zıplamadan 2. Kat Çıkışı)"
+            },
+            InventoryItemKind.FireplaceChimneyKit => "Taş/Tuğla Şömine Ocağı & Baca Şaftı Kiti (Yanmaz Taban + %100 Çekiş)",
+            InventoryItemKind.InteriorFurnitureKit => "İç Mekân Mobilya Kiti (Masa, Bank, Sandık, Raf & Meşale Askısı)",
             _ => "Boş Yuva"
             };
         }
@@ -3884,6 +4103,29 @@ namespace Stratocraft.Character
             InventoryItemKind.OiledLeatherWindbreaker => "[Sağ Tık] Rüzgârlık Yuvasına Kuşan (0.80 clo | %88 Wind Chill Kesici & %80 Su İtici)",
             InventoryItemKind.HeavyFurWinterParka => "[Sağ Tık] Gövde Yuvasına Kuşan (1.45 clo | Tipi ve Dondurucu Soğukta Normotermi Kalkanı)",
             InventoryItemKind.FurLinedWinterBoots => "[Sağ Tık] Çizme Yuvasına Kuşan (1.45 clo | Derin Kar ve Buz Tutma Direnci)",
+            InventoryItemKind.LogDebarked or InventoryItemKind.TimberPlank or InventoryItemKind.TimberBeam => "[T] Ekol 1-2 İnşa veya Bıçkı Sehpası / Şantiye Yığını ([C] Kristal kullanmaz!)",
+            InventoryItemKind.WattlePanel or InventoryItemKind.AdobeBrick => "[T] Ekol 1-2 Dolgu Duvarı (Rüzgâr & Isı Kalkanı — Çatı Saçağıyla Koruyun)",
+            InventoryItemKind.ChinkingMossClay => "[Sol Tık] Kütük Duvar Aralıklarına Sür -> Kapalı Sıcak Oda (Seal >= 0.70)",
+            InventoryItemKind.LimestoneChunk => "Kireç Fırınında 900 °C'de 35 sn Yak -> Sönmemiş Kireç (CaO)",
+            InventoryItemKind.QuicklimePowder => "Söndürme Teknesinde +Su Kovası (6 sn) -> Sönmüş Kireç (Yağmurdan Koruyun!)",
+            InventoryItemKind.SlakedLimePaste => "Harç Teknesinde +3x Kum + Su -> 8x Kireç Harcı (+Tuğla Tozu = Horasan)",
+            InventoryItemKind.MortarBucket => "Mala ile Taş/Tuğla Sırasına Sür (Karar A2: 240s Yük Taşıma / 600s Tam Sertleşme)",
+            InventoryItemKind.AshlarBlock or InventoryItemKind.FiredBrick or InventoryItemKind.RoofTile or InventoryItemKind.GlassPane => "[T] Ekol 3-4 Gerçek İnşa (%100 Vakum Bağışık — [C] Kristal Üretemez!)",
+            InventoryItemKind.IronHardware => "Kapı/Kepenk Menteşesi, Kilit, Taş Keneti ve İskele/Vinç Montajı",
+            InventoryItemKind.ThatchBundle or InventoryItemKind.WoodShingle => "[T] Ekol 1-2 Eğimli Çatı Kaplaması",
+            InventoryItemKind.ToolTrowel => "[Sol Tık Basılı Tut] Şantiye Yığınından Sürüklemeli Şaşırtmalı Harç Duvarı Ör",
+            InventoryItemKind.ToolChalkLine => "[Sol Tık] İki Köşe Kazığı Çakarak 90° Gönye & Su Terazisi Kılavuzu Çek ([E] Topla)",
+            InventoryItemKind.ToolHandSaw => "Bıçkı Sehpasında 2 Darbede Kalas, Ana Kiriş & Mertek Biç",
+            InventoryItemKind.ToolMasonChisel => "Taşçı Tezgâhında 2 Darbede Kesme Taş, Mermer & Kemer Taşı Yont",
+            InventoryItemKind.ToolAdze => "Ham Kütük Kabuğu Soy, Kırlangıç Kertik Aç & Ahşap Zona Yar",
+            InventoryItemKind.RopeAndPulley => "Ahşap İskele Tepesine Palanga veya Döner Şantiye Vinci Kur",
+            InventoryItemKind.ModularScaffoldingKit => "[T] Dış Cepheye Kur (Platform + İç Merdiven + 0.95m Korkuluk | [Shift+E] %100 İade)",
+            InventoryItemKind.PulleyCraneKit => "[T] Şantiye Vinci Kur (14.0 m Otomatik Yığın Besleme & 250 kg Taş/Mermer Kaldırma)",
+            InventoryItemKind.DoorKit => "[T] Kapı Kasasına Tak | [E] Aç/Kapa | [Shift+E] İç Sürgüyü Kilitle",
+            InventoryItemKind.WindowKit => "[T] Pencere Kasasına Tak | [E] Kepenk/Kanat Aç-Kapa (Kapsülü Tutar, Açıkken Ok Geçirir)",
+            InventoryItemKind.StairKit => "[T] Katlar Arası Merdiven Kur (Üst Döşemede >= 1.95m StairwellTrimmerOpening Açın)",
+            InventoryItemKind.FireplaceChimneyKit => "[T] Taş/Toprak Zemine Kur (Yanıcı Ahşaptan >= 1.20 m veya Taş Yangın Duvarı!)",
+            InventoryItemKind.InteriorFurnitureKit => "[T] İç Mekân Masa, Bank, 16-Yuva Sandık, Raf & Duvar Meşale Askısı Yerleştir",
             _ => string.Empty
         };
 
@@ -4344,6 +4586,36 @@ namespace Stratocraft.Character
                 case InventoryItemKind.OiledLeatherWindbreaker: DrawHelmetIcon(tex, 1); break;
                 case InventoryItemKind.HeavyFurWinterParka: DrawChestplateIcon(tex, 2); break;
                 case InventoryItemKind.FurLinedWinterBoots: DrawGreavesIcon(tex, 1); break;
+                case InventoryItemKind.LogDebarked: DrawFirewoodIcon(tex, MaterialIdCatalog.OakWood); break;
+                case InventoryItemKind.TimberPlank: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WoodPlank); break;
+                case InventoryItemKind.TimberBeam: DrawFirewoodIcon(tex, MaterialIdCatalog.Ironwood); break;
+                case InventoryItemKind.WattlePanel: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WattleDaubPanelBlock); break;
+                case InventoryItemKind.AdobeBrick: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.AdobeBrickBlock); break;
+                case InventoryItemKind.ChinkingMossClay: DrawSoilMoundIcon(tex, new Color(0.32f, 0.48f, 0.24f, 1f), new Color(0.56f, 0.44f, 0.30f, 1f)); break;
+                case InventoryItemKind.LimestoneChunk: DrawRoughStoneIcon(tex, MaterialIdCatalog.Limestone); break;
+                case InventoryItemKind.QuicklimePowder: DrawSoilMoundIcon(tex, new Color(0.88f, 0.87f, 0.82f, 1f), new Color(0.97f, 0.96f, 0.92f, 1f)); break;
+                case InventoryItemKind.SlakedLimePaste: DrawSoilMoundIcon(tex, new Color(0.82f, 0.84f, 0.80f, 1f), new Color(0.94f, 0.96f, 0.94f, 1f)); break;
+                case InventoryItemKind.MortarBucket: DrawFluidBucketIcon(tex, 0); break;
+                case InventoryItemKind.AshlarBlock: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.CutAshlarStone); break;
+                case InventoryItemKind.FiredBrick: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.FiredClayBrick); break;
+                case InventoryItemKind.RoofTile: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.RoofClayTile); break;
+                case InventoryItemKind.IronHardware: DrawIngotIcon(tex, 2); break;
+                case InventoryItemKind.GlassPane: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.LeadedGlassPane); break;
+                case InventoryItemKind.ThatchBundle: DrawPlantFiberIcon(tex); break;
+                case InventoryItemKind.WoodShingle: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.TimberShingleRoof); break;
+                case InventoryItemKind.ToolTrowel: DrawChiselIcon(tex); break;
+                case InventoryItemKind.ToolChalkLine: DrawBandageIcon(tex); break;
+                case InventoryItemKind.ToolHandSaw: DrawAxeIcon(tex, false); break;
+                case InventoryItemKind.ToolMasonChisel: DrawChiselIcon(tex); break;
+                case InventoryItemKind.ToolAdze: DrawAxeIcon(tex, false); break;
+                case InventoryItemKind.RopeAndPulley: DrawWoodenWheelIcon(tex); break;
+                case InventoryItemKind.ModularScaffoldingKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WoodPlank); break;
+                case InventoryItemKind.PulleyCraneKit: DrawWoodenWheelIcon(tex); break;
+                case InventoryItemKind.DoorKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.ChinkedLogBlock); break;
+                case InventoryItemKind.WindowKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.LeadedGlassPane); break;
+                case InventoryItemKind.StairKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.StoneBrick); break;
+                case InventoryItemKind.FireplaceChimneyKit: DrawStoneKilnIcon(tex); break;
+                case InventoryItemKind.InteriorFurnitureKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WoodPlank); break;
             }
 
             tex.Apply(false, false);
@@ -4942,11 +5214,25 @@ namespace Stratocraft.Character
             MaterialIdCatalog.Basalt => new Color(0.26f, 0.28f, 0.32f, 1f),
             MaterialIdCatalog.NaturalObsidian => new Color(0.24f, 0.14f, 0.38f, 1f),
             MaterialIdCatalog.Cobblestone => new Color(0.48f, 0.50f, 0.52f, 1f),
+            MaterialIdCatalog.Limestone => new Color(0.84f, 0.82f, 0.74f, 1f),
             MaterialIdCatalog.StoneBrick => new Color(0.64f, 0.66f, 0.70f, 1f),
             MaterialIdCatalog.Marble => new Color(0.92f, 0.92f, 0.95f, 1f),
             MaterialIdCatalog.OakWood => new Color(0.60f, 0.40f, 0.22f, 1f),
             MaterialIdCatalog.Ironwood => new Color(0.38f, 0.30f, 0.26f, 1f),
             MaterialIdCatalog.WoodPlank => new Color(0.72f, 0.52f, 0.30f, 1f),
+            MaterialIdCatalog.ThatchTile => new Color(0.82f, 0.70f, 0.36f, 1f),
+            MaterialIdCatalog.IronGrating => new Color(0.36f, 0.40f, 0.44f, 1f),
+            MaterialIdCatalog.CutAshlarStone => new Color(0.74f, 0.73f, 0.70f, 1f),
+            MaterialIdCatalog.DressedMarbleBlock => new Color(0.95f, 0.94f, 0.97f, 1f),
+            MaterialIdCatalog.FiredClayBrick => new Color(0.74f, 0.30f, 0.20f, 1f),
+            MaterialIdCatalog.RoofClayTile => new Color(0.80f, 0.36f, 0.18f, 1f),
+            MaterialIdCatalog.AdobeBrickBlock => new Color(0.78f, 0.62f, 0.44f, 1f),
+            MaterialIdCatalog.WattleDaubPanelBlock => new Color(0.80f, 0.74f, 0.58f, 1f),
+            MaterialIdCatalog.LimeMortarStoneWall => new Color(0.70f, 0.70f, 0.68f, 1f),
+            MaterialIdCatalog.ChinkedLogBlock => new Color(0.54f, 0.38f, 0.22f, 1f),
+            MaterialIdCatalog.IronTieBeamBlock => new Color(0.30f, 0.32f, 0.36f, 1f),
+            MaterialIdCatalog.LeadedGlassPane => new Color(0.66f, 0.86f, 0.94f, 0.92f),
+            MaterialIdCatalog.TimberShingleRoof => new Color(0.46f, 0.30f, 0.18f, 1f),
             MaterialIdCatalog.BedBlock => new Color(0.76f, 0.24f, 0.24f, 1f),
             MaterialIdCatalog.LooseRubble => new Color(0.50f, 0.46f, 0.40f, 1f),
             MaterialIdCatalog.GlowingMoss => new Color(0.32f, 0.92f, 0.54f, 1f),
@@ -5184,15 +5470,17 @@ namespace Stratocraft.Character
 
         private static readonly string[] CreativeCategoryNames =
         {
-            "🧱 Bloklar (25)",
+            "🧱 Bloklar (26)",
             "⚔️ Silah & Aletler (24)",
             "🛡️ Zırh & Kış Giysi (17)",
             "📜 İksir & Parşömen (7)",
-            "🌿 Doğa, Değirmen & Metalurji (42)",
-            "🌦️ Hava Aletleri (6)"
+            "🌿 Doğa & Metalurji (42)",
+            "🌦️ Hava Aletleri (6)",
+            "🏛️ Ekol 1-4 & İç Mekân (38)"
         };
 
         public const int CreativeWeatherCategoryIndex = 5;
+        public const int CreativeArchitectureCategoryIndex = 6;
 
         /// <summary>
         /// Paket 4A: Yaratıcı katalogdan seçilen meteoroloji aleti / paratoner, elde yerleştirilmeye hazır
@@ -5216,6 +5504,7 @@ namespace Stratocraft.Character
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Dirt),
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Grass),
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Sand),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Limestone),
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Basalt),
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.NaturalObsidian),
             (InventoryItemKind.VoxelBlock, MaterialIdCatalog.Cobblestone),
@@ -5345,6 +5634,60 @@ namespace Stratocraft.Character
             (InventoryItemKind.FoodWildBerries, 0)
         };
 
+        /// <summary>
+        /// DOK5 §4 &amp; Karar A3: [F4]+[Tab] Yaratıcı Test Kataloğu — Ekol 1..4 işlenmiş mimari bloklar (126..136),
+        /// Kireç Harcı zinciri, inşaat el aletleri, iskele/vinç ve iç mekân kitleri (tamamı fiziksel envantere verilir,
+        /// [C] Madde Kristaline ASLA yüklenmez!).
+        /// </summary>
+        private static readonly (InventoryItemKind kind, byte subId)[] CreativeArchitectureAndInteriors =
+        {
+            // Ekol 1..4 İşlenmiş Mimari Bloklar (126..136 — %100 CrystalImmune)
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.ChinkedLogBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.WoodPlank),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.ThatchTile),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.TimberShingleRoof),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.WattleDaubPanelBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.AdobeBrickBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.LimeMortarStoneWall),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CutAshlarStone),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.DressedMarbleBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.FiredClayBrick),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.RoofClayTile),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.IronTieBeamBlock),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.LeadedGlassPane),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.IronGrating),
+
+            // Kireç Zinciri & Yapı Bağlayıcıları
+            (InventoryItemKind.LimestoneChunk, MaterialIdCatalog.Limestone),
+            (InventoryItemKind.QuicklimePowder, 0),
+            (InventoryItemKind.SlakedLimePaste, 0),
+            (InventoryItemKind.MortarBucket, 0),
+            (InventoryItemKind.ChinkingMossClay, 0),
+            (InventoryItemKind.IronHardware, 0),
+
+            // İnşaat El Aletleri & Şantiye Lojistiği
+            (InventoryItemKind.ToolChalkLine, 0),
+            (InventoryItemKind.ToolTrowel, 0),
+            (InventoryItemKind.ToolHandSaw, 0),
+            (InventoryItemKind.ToolMasonChisel, 0),
+            (InventoryItemKind.ToolAdze, 0),
+            (InventoryItemKind.RopeAndPulley, 0),
+            (InventoryItemKind.ModularScaffoldingKit, 0),
+            (InventoryItemKind.PulleyCraneKit, 0),
+
+            // İç Mekân Elemanları (Kapılar, Pencereler, Merdivenler, Şömine, Mobilya)
+            (InventoryItemKind.DoorKit, 0), // Menteşeli Ev Kapısı
+            (InventoryItemKind.DoorKit, 1), // Sürgülü Atölye/Ahır Kapısı
+            (InventoryItemKind.DoorKit, 2), // Çift Kanatlı Kale/Saray Kapısı
+            (InventoryItemKind.WindowKit, 0), // Kepenkli Pencere
+            (InventoryItemKind.WindowKit, 1), // Kurşunlu Camlı Pencere
+            (InventoryItemKind.StairKit, 0), // Düz Merdiven
+            (InventoryItemKind.StairKit, 1), // L-Dönüşlü Sahanlıklı Merdiven
+            (InventoryItemKind.StairKit, 2), // Taş Sarmal Merdiven
+            (InventoryItemKind.FireplaceChimneyKit, 0),
+            (InventoryItemKind.InteriorFurnitureKit, 0)
+        };
+
         private uint _creativeSeedCounter = 0x51A70C01u;
         private Vector2 _creativeScrollPos;
 
@@ -5412,6 +5755,7 @@ namespace Stratocraft.Character
                 1 => CreativeTools,
                 2 => CreativeArmors,
                 3 => CreativePotions,
+                CreativeArchitectureCategoryIndex => CreativeArchitectureAndInteriors,
                 _ => CreativeSurvival
             };
 
@@ -5461,8 +5805,12 @@ namespace Stratocraft.Character
 
                 if (GUI.Button(cellRect, GUIContent.none, GUIStyle.none))
                 {
-                    // Blok sekmesindeki (CreativeCategoryIndex == 0) bloklar kemer envanterine DEGIL, dogrudan [C] Madde Kristali deposuna yuklenir ve secilir!
-                    if (CreativeCategoryIndex == 0 && entry.kind == InventoryItemKind.VoxelBlock)
+                    // Karar A3: Yalnızca ham doğal arazi maddeleri ([C] Kristal ile şekillendirilebilir, IsCraftedItemBlockMaterial == false)
+                    // [C] Madde Kristali deposuna yüklenir; işlenmiş mimari bloklar (120..199, 126..136) ASLA [C] Kristale yüklenmez,
+                    // doğrudan fiziksel envantere eklenir!
+                    if (CreativeCategoryIndex == 0 &&
+                        entry.kind == InventoryItemKind.VoxelBlock &&
+                        StructureMaterialCatalog.CanExtractOrShapeWithMatterCrystal(entry.subId))
                     {
                         if (miningCtrl.CurrentCrystalTier < 5) miningCtrl.AwakenOrUpgradeCrystalToTier(5);
                         miningCtrl.CrystalStorage.TryDepositMassQ24_8(
@@ -5471,7 +5819,7 @@ namespace Stratocraft.Character
                         miningCtrl.SelectMaterial(entry.subId);
                         miningCtrl.IsCrystalActive = true;
                         miningCtrl.LastFeedbackText =
-                            $"💎 KRİSTAL MALZEMESİ SEÇİLDİ: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(entry.subId)} (∞) -> [C] Kristal Aktif, [Sağ Tık] ile Doğal/Mimari Koy!";
+                            $"💎 KRİSTAL HAM DOĞAL MALZEMESİ SEÇİLDİ: {Stage1MatterCrystalAndMiningController.GetMaterialDisplayName(entry.subId)} (∞) -> [C] Kristal Aktif (Karar A3: Yalnızca Doğal Kütle)!";
                     }
                     else if (TryAddOrMergeItem(entry.kind, entry.subId, grantCount, miningCtrl))
                     {
