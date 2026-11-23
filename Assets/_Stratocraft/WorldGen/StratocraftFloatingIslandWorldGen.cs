@@ -87,10 +87,12 @@ namespace Stratocraft.WorldGen.Generators
     /// </summary>
     public static class StratocraftFloatingIslandWorldGen
     {
-        public const int MaxEditableVoxelY = 160;
+        public const int MaxEditableVoxelY = 256;
         public const int DefaultSurfaceBaseY = 96;
         public const int SeaLevelY = 90;
         public const int DeepMantleFloorY = 4;
+        public const int MaxCaveNetworkY = 160;
+        public const int TotalBiomeCount = 14;
         public const int ChunkMin = -2;
         public const int ChunkMax = 1;
         public const int ContinentChunkMin = -9375;
@@ -163,9 +165,9 @@ namespace Stratocraft.WorldGen.Generators
         public static int GetBiomeId(int wx, int wz) => GetBiomeId((float)wx, (float)wz);
 
         /// <summary>
-        /// Minecraft tarzı Çoklu-Frekanslı Tohumlu İklim, Kıtasallık (Deniz/Ada), Volkanik Sıcak Nokta ve Sıradağ Gürültü Alanları.
-        /// Biyomlar merkezden dışarı doğru pasta dilimi (radyal) şeklinde DEĞİL; tohum (ActiveWorldSeed) ile rastgele,
-        /// ne çok büyük ne çok küçük orta ölçekli organik iklim bölgeleri halinde dağılır.
+        /// PT-08: Kuzeye (+Z) gittikce soguyan, guneye (-Z) gittikce isinan makro enlem sicakligi + makro nem +
+        /// kitasallik + sicak-guney volkanik tektonik alan + devasa makro siradag gurultu alanlari.
+        /// Buz (Biyom 4) ve Lav (Biyom 8) arasinda genis iliman gecis kusaklari zorunlu kilinir.
         /// </summary>
         public static void SampleClimateAndTectonicFields(
             float worldX, float worldZ,
@@ -177,37 +179,67 @@ namespace Stratocraft.WorldGen.Generators
             out float mountainRidge)
         {
             float s1 = SeedPhaseOffset(11), s2 = SeedPhaseOffset(12), s3 = SeedPhaseOffset(13), s4 = SeedPhaseOffset(17);
-            float wx = worldX + MathF.Sin(worldZ * 0.019f + s1) * 28.0f + MathF.Cos(worldX * 0.013f - s2) * 24.0f;
-            float wz = worldZ + MathF.Cos(worldX * 0.019f + s2) * 28.0f + MathF.Sin(worldZ * 0.013f + s1) * 24.0f;
 
-            // Orta ölçekli (~95m-175m çaplı) organik yamalar için döndürülmüş çok-oktavlı dalga alanı
-            float u1 = wx * 0.0145f + wz * 0.0085f;
-            float v1 = wz * 0.0145f - wx * 0.0085f;
-            float u2 = wx * 0.0068f - wz * 0.0112f;
-            float v2 = wz * 0.0068f + wx * 0.0112f;
+            // Makro organik kita bukulmesi (~650-1000m dalga boyu): cetvel gibi duz yatay seritler yerine dogal kivrımli kusaklar
+            float warpX = MathF.Sin(worldZ * 0.0042f + s1) * 145.0f + MathF.Cos(worldX * 0.0029f - s2) * 110.0f;
+            float warpZ = MathF.Cos(worldX * 0.0042f + s2) * 145.0f + MathF.Sin(worldZ * 0.0029f + s1) * 110.0f;
+            float wx = worldX + warpX;
+            float wz = worldZ + warpZ;
 
-            temperature = 0.58f * MathF.Sin(u1 + s1) * MathF.Cos(v1 - s2)
-                        + 0.42f * MathF.Sin(u2 * 1.35f - s3) * MathF.Cos(v2 * 1.25f + s1);
-            humidity = 0.56f * MathF.Cos(u1 * 1.12f - s2) * MathF.Sin(v1 * 1.08f + s3)
-                     + 0.44f * MathF.Cos(u2 * 1.45f + s4) * MathF.Sin(v2 * 1.30f - s1);
+            // 1) Makro Enlem Sicakligi: +Z (Kuzey) -> soguk (-0.82), -Z (Guney) -> sicak (+0.82), Z=0 -> iliman (0.0)
+            float latitudeTemp = -MathF.Tanh(wz / 920.0f) * 0.82f;
+            float regionalTemp = 0.15f * MathF.Sin(wx * 0.0048f + wz * 0.0031f + s1)
+                               + 0.08f * MathF.Cos(wx * 0.0086f - wz * 0.0068f - s3);
+            temperature = Math.Clamp(latitudeTemp + regionalTemp, -1.0f, 1.0f);
 
-            // Kıtasallık: Negatif bölgeler Denizler ve Okyanus Havzaları (SeaLevelY = 90 altı), pozitif bölgeler Ana Kıta
-            continentalness = 0.60f * MathF.Sin(wx * 0.0125f + s3) * MathF.Cos(wz * 0.0125f - s4)
-                            + 0.40f * MathF.Cos((wx + wz) * 0.0075f + s1);
+            // 2) Makro Nem (Okyanus, yagmur ormani, kurak plato ve kanyon ayrimi)
+            float hu1 = wx * 0.0056f - wz * 0.0036f;
+            float hv1 = wz * 0.0056f + wx * 0.0036f;
+            humidity = Math.Clamp(
+                0.60f * MathF.Cos(hu1 - s2) * MathF.Sin(hv1 + s3)
+              + 0.40f * MathF.Sin(wx * 0.0031f + wz * 0.0027f + s4),
+                -1.0f, 1.0f);
 
-            // Deniz içinde yükselen ufak adalar (Small Islands in Sea Basins)
-            float islWave = MathF.Sin(wx * 0.052f + s4) * MathF.Cos(wz * 0.052f - s2);
-            smallIslandPeak = islWave > 0.48f ? (islWave - 0.48f) / 0.52f : 0f;
+            // 3) Kitasallik: Negatif bolgeler Denizler / Safir Lagun Havzalari (SeaLevelY = 90 alti), pozitif bolgeler Ana Kita
+            continentalness = 0.58f * MathF.Sin(wx * 0.0072f + s3) * MathF.Cos(wz * 0.0072f - s4)
+                            + 0.42f * MathF.Cos((wx + wz) * 0.0044f + s1);
 
-            // Volkanik Kaldera ve Lavlı Bölgeler için tektonik sıcak nokta (Volcanic Hotspot)
-            float volcA = MathF.Sin(wx * 0.0165f - s2) * MathF.Cos(wz * 0.0165f + s4);
-            float volcB = MathF.Sin((wx - wz) * 0.021f + s1);
-            volcanicHotspot = Math.Clamp(volcA * 0.72f + volcB * 0.28f, -1f, 1f);
+            // Deniz icinde yukselen ufak kiyi adalari
+            float islWave = MathF.Sin(wx * 0.036f + s4) * MathF.Cos(wz * 0.036f - s2);
+            smallIslandPeak = islWave > 0.42f ? (islWave - 0.42f) / 0.58f : 0f;
 
-            // Yüksek Sıradağlar (Yüksek yerler daha soğuk ve buzullu olur)
-            float ridgeA = 1.0f - MathF.Abs(MathF.Sin(wx * 0.0135f + wz * 0.0095f + s2));
-            float ridgeB = 0.5f + 0.5f * MathF.Cos(wx * 0.0095f - wz * 0.0135f + s3);
-            mountainRidge = ridgeA * ridgeA * ridgeB;
+            // 4) Volkanik Sicak Nokta: YALNIZCA sicak guney kusaginda (temperature > +0.16) aktiflesir; soguk kuzeyde bastirilir!
+            float volcRaw = 0.66f * MathF.Sin(wx * 0.0068f - s2) * MathF.Cos(wz * 0.0068f + s4)
+                          + 0.34f * MathF.Sin((wx - wz) * 0.0094f + s1);
+            float southWarmGate = Clamp01((temperature - 0.14f) / 0.36f);
+            volcanicHotspot = Math.Clamp(volcRaw * (0.18f + 0.82f * southWarmGate), -1.0f, 1.0f);
+
+            // 5) Devasa Makro Siradaglar (~750-1100m genis etekli, uzun tirmanisli alpin dag sirtlari)
+            float ridgePrimary = 1.0f - MathF.Abs(MathF.Sin(wx * 0.0035f + wz * 0.0023f + s2 + 0.42f));
+            float ridgeEnvelope = 0.5f + 0.5f * MathF.Cos(wx * 0.0021f - wz * 0.0032f + s3);
+            float ridgeSub = 0.5f + 0.5f * MathF.Sin(wx * 0.0078f - wz * 0.0062f + s1);
+            mountainRidge = Clamp01(ridgePrimary * ridgePrimary * (0.70f * ridgeEnvelope + 0.30f * ridgeSub));
+        }
+
+        /// <summary>
+        /// PT-08: Enlem/iklim sicakligina bagli dinamik kar/buzul siniri kotunu (metre) hesaplar.
+        /// Kucuk 10-30m tepelerde aninda kar tetiklenmez; iliman kusakta yalnizca yuksek alpin zirvelerde (Y >= 168m),
+        /// soguk kuzeyde kademeli olarak daha alcak sirtlarda, kutup kusaginda deniz seviyesine kadar kar olusur.
+        /// </summary>
+        public static float ComputeSnowlineAltitudeY(float climateTemperature)
+        {
+            if (climateTemperature <= -0.60f) return SeaLevelY + 2.0f;
+            float norm = Clamp01((climateTemperature + 0.60f) / 1.30f); // -0.60 -> 0, +0.70 -> 1
+            return Lerp(128.0f, 222.0f, norm);
+        }
+
+        /// <summary>
+        /// PT-08: Verilen (worldX, worldZ) noktasindaki makro enlem-iklim sicakligini [-1..+1] dondurur.
+        /// </summary>
+        public static float SampleMacroLatitudeTemperature(float worldX, float worldZ)
+        {
+            SampleClimateAndTectonicFields(worldX, worldZ, out float temp, out _, out _, out _, out _, out _);
+            return temp;
         }
 
         private static int ClassifyBiomeFromClimateFields(
@@ -219,51 +251,59 @@ namespace Stratocraft.WorldGen.Generators
             float smallIsland,
             float mountainRidge)
         {
-            // 1) Volkanik Sıcak Nokta -> Volkanik Kaldera ve Lavlı Bölge (8) veya Bazalt Platosu (7) (Başlangıç vadisinden uzakta, r > 240m)
-            if (r > 240.0f && volcanic > 0.46f) return 8;
-            if (r > 200.0f && volcanic > 0.30f && temp > 0.05f) return 7;
+            // 1) Sicak Guney Volkanik Kaldera (8) ve Bazalt Platosu (7):
+            // KESIN BUZ-LAV KOMSULUK YASAGI: Biyom 8 yalnizca temp >= +0.34f sicak guney ikliminde olusur!
+            if (r > 240.0f && temp >= 0.34f && volcanic > 0.30f) return 8;
+            if (r > 200.0f && temp >= 0.20f && volcanic > 0.20f) return 7;
 
-            // 2) Yüksek İrtifa Soğuması (Yüksek yerler daha soğuk olur -> Buzul Sıradağları 4)
-            if (mountainRidge > 0.56f || (temp - mountainRidge * 0.55f) < -0.65f)
-            {
-                return 4; // Kuzey Buzul Sıradağları / Karlı Zirveler (-26°C)
-            }
-
-            // 3) Anti-Gravite Floatstone Anomalisi ve Deniz Havzası Takımadaları -> Gökyüzü Adaları (10)
-            if (r > 350.0f && volcanic < -0.42f && cont < 0.0f)
+            // 2) Anti-Gravite Gokyuzu Adalari Takimadasi (10): Dis deniz/okyanus havzalarinda anomali bolgeleri
+            if (r > 350.0f && cont < -0.14f && (volcanic < -0.10f || smallIsland > 0.24f))
             {
                 return 10;
             }
-            if (cont < -0.24f)
+
+            // 3) Kuzey Buzul Zirveleri ve Yuksek Alpin Karli Daglar (4):
+            // Yalnizca soguk kuzey enlemi (temp <= -0.36) VEYA cok yuksek iliman/soguk zirveler (mountainRidge > 0.68 && temp <= 0.12)
+            // Sicak guneyde (temp > 0.12) veya volkanik bolgede ASLA buzul olusmaz!
+            if (temp <= -0.36f || (mountainRidge > 0.68f && temp <= 0.12f && volcanic < 0.16f))
             {
-                if (smallIsland > 0.25f) return hum > 0f ? 10 : 2;
-                return hum > 0.15f ? 10 : 5;
+                return 4; // Gunesli Buzul Zirveleri / Kuzey Siradaglari
             }
 
-            // 4) Soğuk Jeotermal Kristal Fayı -> Kristal Kanyon ve Kuvars Vadisi (5)
-            if (temp < -0.38f && volcanic > 0.34f)
+            // 4) Safir Lagun ve Prusya Kiyilari (13) ile Karstik Kiyi Havzalari (2)
+            if (cont < -0.20f)
             {
-                return 5;
+                if (hum < -0.24f) return 2; // Karstik Kirectasi Dudenleri ve Beyaz Falezler
+                return 13;                  // Safir Lagun ve Prusya Kiyilari (Bolge 3)
             }
 
-            // 5) Sıcaklık x Nem İklim Matrisi (Orta ölçekli organik biyom yamaları)
-            if (temp > 0.22f)
+            // 5) Yuksek Irtifa Altin ve Alacakaranlik Yaylasi (12 - Bolge 2): Ormana komsu aydinlik orta-yuksek platolar
+            if (mountainRidge > 0.34f && temp > -0.24f && temp < 0.32f)
             {
-                if (mountainRidge > 0.42f && hum > -0.25f) return 9; // Yüksek Küllü Çorak Sırtlar
-                if (hum < -0.15f) return 6; // Kızıl Kumtaşı Kanyonu (+44°C)
-                if (hum > 0.22f) return 3;  // Zehirli Turba Bataklığı ve Asit Gölleri
-                return 9;                   // Küllü Çorak Topraklar
+                return 12;
             }
 
+            // 6) Sicak Guney Kusagi (temp >= +0.20): Kizil Kor & Ametist Kanyonu (6), Turba Batakligi (3), Kullu Corak (9)
+            if (temp >= 0.20f)
+            {
+                if (hum < 0.08f) return 6;  // Kizil Kor ve Ametist Kanyonlari (Bolge 4)
+                if (hum > 0.28f) return 3;  // Zehirli Turba Batakligi ve Asit Golleri
+                return 9;                   // Kullu Corak Topraklar
+            }
+
+            // 7) Serin Kuzey-Gecis Kusagi (temp in (-0.36 .. -0.12]): Demir Agaci Ormani (1) ve Kristal Kanyon (5)
             if (temp < -0.12f)
             {
-                if (hum > 0.12f) return 1;  // Demir Ağacı ve Sisli Orman
+                if (hum >= 0.0f) return 1;  // Demir Agaci ve Sisli Orman
                 return 5;                   // Kristal Kanyon ve Kuvars Vadisi
             }
 
-            if (hum > 0.24f) return 1;
-            if (hum < -0.22f) return 2;     // Karstik Kireçtaşı Düdenleri
-            return 0;                       // Zümrüt Vadi ve Çayırlar
+            // 8) Iliman Merkez Kusak (temp in [-0.12 .. +0.20)):
+            if (hum > 0.26f) return 1;      // Demir Agaci ve Sisli Orman
+            if (hum < -0.26f) return 2;     // Karstik Kirectasi Dudenleri
+            if (temp > 0.07f && hum < 0.04f) return 12; // Altin ve Alacakaranlik Yaylasi (Bolge 2)
+            if (cont < 0.04f && hum > 0.04f) return 13; // Safir Lagun ve Prusya Kiyilari (Bolge 3)
+            return 0;                       // Zumrut Gunesi Baslangic Vadisi (Bolge 1)
         }
 
         private static bool TryResolveFixedBiomeId(float worldX, float worldZ, float r, out int fixedBiomeId)
@@ -304,25 +344,27 @@ namespace Stratocraft.WorldGen.Generators
 
         public static string GetBiomeNameTurkish(int biomeId) => biomeId switch
         {
-            0 => "Zümrüt Başlangıç Vadisi",
+            0 => "Zümrüt Güneşi Başlangıç Vadisi",
             1 => "Demir Ağacı ve Sisli Orman",
             2 => "Karstik Kireçtaşı Düdenleri",
             3 => "Zehirli Turba Bataklığı ve Asit Gölleri",
-            4 => "Kuzey Buzul Sıradağları (-26°C)",
+            4 => "Güneşli Buzul Zirveleri ve Kuzey Sıradağları (-26°C)",
             5 => "Kristal Kanyon ve Kuvars Vadisi",
-            6 => "Kızıl Kumtaşı Kanyonu (+44°C)",
+            6 => "Kızıl Kor ve Ametist Kanyonları (+44°C)",
             7 => "Bazalt Sütunları ve Dev Kaya Platosu",
             8 => "Volkanik Kaldera ve Lav Nehirleri (+68°C)",
             9 => "Küllü Çorak Topraklar",
             10 => "Gökyüzü Adaları Takımadası",
-            11 => "Hiçlik Uçurumu ve Astral Kıyı (-35°C)",
-            _ => "Zümrüt Başlangıç Vadisi"
+            11 => "Obsidyen Hiçlik Kıyısı ve Astral Uçurum (-35°C)",
+            12 => "Altın ve Alacakaranlık Yaylası",
+            13 => "Safir Lagün ve Prusya Kıyıları",
+            _ => "Zümrüt Güneşi Başlangıç Vadisi"
         };
 
         public static int GetBiomeRingIndex(float worldX, float worldZ) => GetBiomeId(worldX, worldZ) switch
         {
             0 => 0,
-            1 or 2 => 1,
+            1 or 2 or 12 or 13 => 1,
             4 or 5 => 2,
             3 or 6 or 7 => 3,
             8 or 9 or 10 => 4,
@@ -338,13 +380,19 @@ namespace Stratocraft.WorldGen.Generators
 
         public static float SampleSurfaceBiomeBaseTemperatureCelsius(float worldX, float worldZ)
         {
-            return GetBiomeId(worldX, worldZ) switch
+            SampleClimateAndTectonicFields(worldX, worldZ, out float climateTemp, out _, out _, out _, out _, out _);
+            float latitudeCelsius = 18.0f + (climateTemp * 26.0f); // Kuzey (-1) -> -8°C, Ekvator (0) -> +18°C, Guney (+1) -> +44°C
+            int biomeId = GetBiomeId(worldX, worldZ);
+            float biomeTarget = biomeId switch
             {
-                0 => 20.0f, 1 => 14.0f, 2 => 16.0f, 3 => 25.0f,
-                4 => -26.0f, 5 => 11.0f, 6 => 44.0f, 7 => 27.0f,
-                8 => 68.0f, 9 => 46.0f, 10 => 6.0f, 11 => -35.0f,
+                0 => 20.0f, 1 => 14.0f, 2 => 17.0f, 3 => 25.0f,
+                4 => -22.0f, 5 => 11.0f, 6 => 42.0f, 7 => 29.0f,
+                8 => 64.0f, 9 => 44.0f, 10 => 8.0f, 11 => -32.0f,
+                12 => 18.5f, 13 => 21.5f,
                 _ => 20.0f
             };
+            // Enlem sicakligi ile biyom karakterini yumusak harmanla (ani sert sicaklik atlamalarini onle)
+            return (biomeTarget * 0.58f) + (latitudeCelsius * 0.42f);
         }
 
         /// <summary>
@@ -425,15 +473,16 @@ namespace Stratocraft.WorldGen.Generators
                 imperviousFraction01: imperviousCount * 0.2f,
                 basinConcavity01: concavity01,
                 meanTopSurfaceWorldY: avgY,
-                dominantBiomeId: (byte)Math.Clamp(centerBiome, 0, 11));
+                dominantBiomeId: (byte)Math.Clamp(centerBiome, 0, TotalBiomeCount - 1));
         }
 
         public static float SampleBiomeAmbientTemperatureCelsius(float worldX, float worldY, float worldZ)
         {
             float baseTemp = SampleSurfaceBiomeBaseTemperatureCelsius(worldX, worldZ);
 
+            // PT-08: Kucuk tepeciklerde (relAlt <= 28m) ani soguma tetiklenmez; gercekci alpin daglarda kademeli soguma!
             float relAlt = worldY - DefaultSurfaceBaseY;
-            if (relAlt > 10.0f) baseTemp -= (relAlt - 10.0f) * 0.45f;
+            if (relAlt > 28.0f) baseTemp -= (relAlt - 28.0f) * 0.22f;
             else if (relAlt < -28.0f) baseTemp += (-28.0f - relAlt) * 0.65f;
 
             if (worldY <= 24.0f)
@@ -457,38 +506,40 @@ namespace Stratocraft.WorldGen.Generators
         {
             float relief = 0f;
 
-            // 1) Deniz Havzaları ve Denizde Ufak Adalar (SeaLevelY = 90m altı suyla dolar!)
+            // 1) Deniz / Safir Lagun Havzalari ve Kiyi Adalari (SeaLevelY = 90m alti suyla dolar!)
             if (cont < -0.18f)
             {
                 float seaDepthFactor = Clamp01((-0.18f - cont) / 0.55f);
-                float seaFloorDrop = -13.5f * seaDepthFactor;
-                // Deniz içinde yükselen ufak adalar (+14m..+19m yükselerek su yüzeyinin üstüne çıkar!)
-                float islandLift = smallIsland * 18.5f;
+                float seaFloorDrop = -19.5f * seaDepthFactor;
+                // Deniz icinde yukselen kiyi adalari (+22m yukselerek su yuzeyinin ustune cikar!)
+                float islandLift = smallIsland * 23.0f;
                 relief += seaFloorDrop + islandLift;
             }
 
-            // 2) Yüksek Soğuk Sıradağlar (Yüksek yerler daha soğuk olur -> y >= 110m karlı zirveler)
-            if (mountainRidge > 0.38f && cont >= -0.15f)
+            // 2) PT-08: Devasa Makro Siradaglar (uzun etek + yuksek alpin tirmanis: Y = 96m -> Y = 236m'ye kadar +140m!)
+            if (mountainRidge > 0.22f && cont >= -0.15f)
             {
-                float peakFactor = (mountainRidge - 0.38f) / 0.62f;
-                relief += peakFactor * peakFactor * 26.0f;
+                float foothillT = Clamp01((mountainRidge - 0.22f) / 0.78f);
+                float foothillLift = foothillT * 34.0f;
+                float alpineT = Clamp01((mountainRidge - 0.44f) / 0.56f);
+                float alpineLift = alpineT * alpineT * 106.0f;
+                relief += foothillLift + alpineLift;
             }
 
-            // 3) Volkanlar ve Lav Kalderaları (Volcanic Cones with central Lava Caldera)
-            if (volcanic > 0.34f && cont >= -0.10f)
+            // 3) Sicak Guney Volkanlari ve Lav Kalderalari (soguk kuzeyde ASLA volkan konisi uretilmez)
+            if (temp >= 0.24f && volcanic > 0.30f && cont >= -0.10f)
             {
-                float vNorm = (volcanic - 0.34f) / 0.66f;
-                // Volkan konisi yükselir, tam merkezinde (vNorm > 0.68) lav krateri çukuru açılır
+                float vNorm = Clamp01((volcanic - 0.30f) / 0.70f);
                 float coneLift = vNorm < 0.68f
-                    ? (vNorm / 0.68f) * 16.5f
-                    : 16.5f - ((vNorm - 0.68f) / 0.32f) * 21.0f;
+                    ? (vNorm / 0.68f) * 44.0f
+                    : 44.0f - ((vNorm - 0.68f) / 0.32f) * 52.0f;
                 relief += coneLift;
             }
 
-            // 4) Bataklık çukurları ve kanyon terasları
+            // 4) Bataklik cukurlari ve sicak kanyon teraslari
             if (temp > 0.20f && hum > 0.20f && cont >= -0.18f)
             {
-                relief -= 4.5f * Clamp01((hum - 0.20f) * 2.0f);
+                relief -= 4.8f * Clamp01((hum - 0.20f) * 2.0f);
             }
 
             return baseH + relief * deepContinentWeight;
@@ -548,7 +599,7 @@ namespace Stratocraft.WorldGen.Generators
                 if (r > coastR - 24.0f) baseH -= Clamp01((r - (coastR - 24.0f)) / 24.0f) * 12.0f;
             }
 
-            topH = Math.Clamp(baseH, 74.0f, 146.0f);
+            topH = Math.Clamp(baseH, 68.0f, 240.0f);
         }
 
         public static float SampleIslandTopSurfaceY(float worldX, float worldZ)
@@ -590,12 +641,14 @@ namespace Stratocraft.WorldGen.Generators
                 float coastR = ComputeIslandCoastRadius(worldX, worldZ);
                 if (r > coastR - 24.0f) baseH -= Clamp01((r - (coastR - 24.0f)) / 24.0f) * 12.0f;
             }
-            return Math.Clamp(baseH, 74.0f, 146.0f);
+            return Math.Clamp(baseH, 68.0f, 240.0f);
         }
 
         private static byte ResolveBiomeSurfaceMaterialId(float worldX, float topH, float worldZ, float r, int biomeId)
         {
-            if (topH >= 109.5f)
+            float climateTemp = SampleMacroLatitudeTemperature(worldX, worldZ);
+            float snowlineY = ComputeSnowlineAltitudeY(climateTemp);
+            if (biomeId != 8 && biomeId != 7 && topH >= snowlineY)
             {
                 return MaterialIdCatalog.PackedIce;
             }
@@ -611,7 +664,7 @@ namespace Stratocraft.WorldGen.Generators
                 1 => strataWave > 1.25f ? MaterialIdCatalog.GlowingMoss : MaterialIdCatalog.Grass,
                 2 => strataWave > 0.35f ? MaterialIdCatalog.Grass : (strataWave > -0.45f ? MaterialIdCatalog.Stone : MaterialIdCatalog.Marble),
                 3 => strataWave > 0.45f ? MaterialIdCatalog.Dirt : MaterialIdCatalog.Grass,
-                4 => topH > 112.0f || strataWave > -0.15f ? MaterialIdCatalog.PackedIce : MaterialIdCatalog.Stone,
+                4 => topH >= snowlineY - 12.0f || strataWave > -0.15f ? MaterialIdCatalog.PackedIce : MaterialIdCatalog.Stone,
                 5 => strataWave > 1.05f ? MaterialIdCatalog.QuartzGem : (strataWave > -0.2f ? MaterialIdCatalog.Sand : MaterialIdCatalog.Grass),
                 6 => strataWave > 0.45f ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Sand,
                 7 => strataWave > 0.15f ? MaterialIdCatalog.Stone : (strataWave > -0.65f ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Dirt),
@@ -619,45 +672,54 @@ namespace Stratocraft.WorldGen.Generators
                 9 => strataWave > 0.25f ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.Dirt,
                 10 => strataWave > 1.05f ? MaterialIdCatalog.Floatstone : MaterialIdCatalog.Grass,
                 11 => strataWave > 0.85f ? MaterialIdCatalog.AstralOre : MaterialIdCatalog.NaturalObsidian,
+                12 => strataWave > 1.10f ? MaterialIdCatalog.Marble : (strataWave > -0.65f ? MaterialIdCatalog.Grass : MaterialIdCatalog.Stone),
+                13 => strataWave > 0.95f ? MaterialIdCatalog.Marble : (topH <= SeaLevelY + 3.5f ? MaterialIdCatalog.Sand : MaterialIdCatalog.Grass),
                 _ => MaterialIdCatalog.Grass
             };
         }
 
         /// <summary>
         /// Uzak Ufuk (HorizonClipmapRingMesh) icin dunya koordinatindaki yuzey biyom malzeme kimligini ve RGB rengini ornekler.
+        /// PT-08 &amp; PT-10: Enlem-irtifa dinamik kar siniri ve 6 bolge renk paleti uyumludur.
         /// </summary>
         public static (float r, float g, float b, byte matId) SampleBiomeColor(float worldX, float topH, float worldZ)
         {
-            // Yüksek yerler (topH >= 109.5m) otomatik olarak karlı/buzullu zirveye (PackedIce) dönüşür!
-            if (topH >= 109.5f)
+            int biomeId = GetBiomeId(worldX, worldZ);
+            float climateTemp = SampleMacroLatitudeTemperature(worldX, worldZ);
+            float snowlineY = ComputeSnowlineAltitudeY(climateTemp);
+
+            if (biomeId != 8 && biomeId != 7 && topH >= snowlineY)
             {
-                return (0.82f, 0.90f, 0.97f, MaterialIdCatalog.PackedIce);
+                return (0.94f, 0.97f, 1.00f, MaterialIdCatalog.PackedIce);
             }
             float r = MathF.Sqrt(worldX * worldX + worldZ * worldZ);
             // Deniz seviyesi kıyıları ve sualtı tabanı (topH <= SeaLevelY + 1.2m) doğal kumsal (Sand) olur!
             if (topH <= SeaLevelY + 1.15f && r > 36.0f)
             {
-                return (0.82f, 0.74f, 0.50f, MaterialIdCatalog.Sand);
+                return biomeId == 13
+                    ? (0.91f, 0.93f, 0.90f, MaterialIdCatalog.Sand)
+                    : (0.86f, 0.78f, 0.52f, MaterialIdCatalog.Sand);
             }
 
-            int biomeId = GetBiomeId(worldX, worldZ);
             byte matId = ResolveBiomeSurfaceMaterialId(worldX, topH, worldZ, r, biomeId);
 
             return biomeId switch
             {
-                0 => (0.24f, 0.56f, 0.22f, matId),
-                1 => (0.16f, 0.44f, 0.25f, matId),
-                2 => (0.76f, 0.75f, 0.70f, matId),
-                3 => (0.32f, 0.42f, 0.18f, matId),
-                4 => (0.78f, 0.88f, 0.95f, matId),
-                5 => (0.72f, 0.66f, 0.82f, matId),
-                6 => (0.76f, 0.43f, 0.26f, matId),
-                7 => (0.28f, 0.29f, 0.32f, matId),
-                8 => (0.36f, 0.18f, 0.14f, matId),
-                9 => (0.42f, 0.39f, 0.36f, matId),
-                10 => (0.38f, 0.66f, 0.54f, matId),
-                11 => (0.18f, 0.15f, 0.28f, matId),
-                _ => (0.24f, 0.56f, 0.22f, matId)
+                0 => (0.12f, 0.66f, 0.33f, matId), // Bolge 1: Zumrut Gunesi Ormani (#1EA855)
+                1 => (0.18f, 0.58f, 0.30f, matId), // Demir Agaci & Zumrut Orman
+                2 => (0.92f, 0.91f, 0.86f, matId), // Karstik Kirectasi Falez
+                3 => (0.30f, 0.45f, 0.22f, matId), // Turba Batakligi
+                4 => (0.92f, 0.96f, 1.00f, matId), // Bolge 5: Gunesli Buzul Zirveleri (#FFFFFF/#7DD3FC)
+                5 => (0.76f, 0.66f, 0.88f, matId), // Kristal Kanyon
+                6 => (0.85f, 0.22f, 0.23f, matId), // Bolge 4: Kizil Kor ve Ametist Kanyonu (#D9383A)
+                7 => (0.24f, 0.22f, 0.38f, matId), // Bazalt Platosu
+                8 => (0.48f, 0.16f, 0.14f, matId), // Volkanik Kaldera
+                9 => (0.50f, 0.38f, 0.36f, matId), // Kullu Corak
+                10 => (0.28f, 0.74f, 0.58f, matId), // Gokyuzu Adalari
+                11 => (0.12f, 0.11f, 0.29f, matId), // Bolge 6: Obsidyen Hiclik Kiyisi (#1E1B4B)
+                12 => (1.00f, 0.72f, 0.11f, matId), // Bolge 2: Altin ve Alacakaranlik Yaylasi (#FFB81C)
+                13 => (0.00f, 0.71f, 0.64f, matId), // Bolge 3: Safir Lagun ve Prusya Kiyilari (#00B4A2)
+                _ => (0.12f, 0.66f, 0.33f, matId)
             };
         }
 
@@ -1354,7 +1416,7 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            if (y <= DeepMantleFloorY + 2 || y > topH - 16.0f || y > SeaLevelY - 10)
+            if (y <= DeepMantleFloorY + 2 || y > topH - 16.0f || (topH < 118.0f && y > SeaLevelY - 10))
             {
                 return;
             }
@@ -1410,7 +1472,8 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            if (y > 75 || y > topH - 18.0f)
+            int dynamicCaveCapY = topH >= 118.0f ? Math.Min(MaxCaveNetworkY - 4, (int)MathF.Floor(topH - 18.0f)) : 75;
+            if (y > dynamicCaveCapY || y > topH - 18.0f)
             {
                 return;
             }
@@ -1418,7 +1481,7 @@ namespace Stratocraft.WorldGen.Generators
             float provinceNoise = entranceJunctionBoost01 > 0f
                 ? MathF.Max(col.BaseProvinceNoise, 0.45f + entranceJunctionBoost01 * 0.42f)
                 : col.BaseProvinceNoise;
-            if (provinceNoise < 0.27f && y > 18)
+            if (provinceNoise < 0.27f && y > 21)
             {
                 return;
             }
@@ -1430,11 +1493,12 @@ namespace Stratocraft.WorldGen.Generators
             float qy = y + col.ColWarpY;
             float qz = cwz + warpZ;
 
-            if (y >= 9 && y <= 19)
+            // Katman 4 (y = 7..21): Daha derin ve katmanli Magma Denizi + Obsidyen/Bazalt kubbeler
+            if (y >= 7 && y <= 21)
             {
-                float archY = (y - 13.8f) / 5.2f;
-                float magmaWave = FastSin(qx * 0.068f + p2) * FastCos(qz * 0.068f + p1) - archY * archY * 0.55f;
-                if (y >= 10 && magmaWave > 0.18f)
+                float archY = (y - 13.6f) / 6.2f;
+                float magmaWave = FastSin(qx * 0.062f + p2) * FastCos(qz * 0.062f + p1) - archY * archY * 0.52f;
+                if (y >= 8 && magmaWave > 0.14f)
                 {
                     float colWave = FastSin(cwx * 0.45f + p1) * FastCos(cwz * 0.45f - p2);
                     if (colWave > 0.90f)
@@ -1443,7 +1507,7 @@ namespace Stratocraft.WorldGen.Generators
                         return;
                     }
                     inCaveVoid = true;
-                    if (y <= 11)
+                    if (y <= 10)
                     {
                         caveFluidType = (byte)FluidType.Lava;
                     }
@@ -1715,7 +1779,8 @@ namespace Stratocraft.WorldGen.Generators
 
             byte[] chunkCapsuleOreLut = PrepopulateChunkCapsuleOreLut(chunkX, chunkZ, Math.Min(MaxEditableVoxelY - 1, maxChunkSolidFloorY + 3));
             bool isF12RoomChunk = chunkX >= -1 && chunkX <= 0 && chunkZ >= 0 && chunkZ <= 1;
-            Span<float> rowWarpX = stackalloc float[76];
+            int maxRowWarpY = Math.Min(MaxCaveNetworkY, Math.Max(75, maxChunkSolidFloorY - 16));
+            Span<float> rowWarpX = stackalloc float[MaxCaveNetworkY + 1];
 
             for (int lz = 0; lz < 16; lz++)
             {
@@ -1723,7 +1788,7 @@ namespace Stratocraft.WorldGen.Generators
                 int cwz = (wz & 15) == 0 ? (wz - 1) : wz;
                 float rowCosProvinceZ = FastCos(cwz * 0.011f - caveP2);
                 float rowCosGalleryZ = FastCos(cwz * 0.037f - caveP2);
-                for (int ry = DeepMantleFloorY + 3; ry <= 75; ry++)
+                for (int ry = DeepMantleFloorY + 3; ry <= maxRowWarpY; ry++)
                 {
                     rowWarpX[ry] = FastSin(cwz * 0.031f + ry * 0.042f + caveP1) * 6.8f;
                 }
@@ -1780,7 +1845,9 @@ namespace Stratocraft.WorldGen.Generators
                         (FastSin(cwx * 0.42f + cwz * 0.16f + caveP1) * FastCos(cwz * 0.42f - cwx * 0.16f - caveP2)) > 0.90f;
 
                     bool fastCaveFilter = !colEntrance.IsNearEntrance && !isF12RoomChunk;
-                    int maxCaveY = Math.Min(75, (int)MathF.Floor(topH - 18.0f));
+                    int maxCaveY = Math.Min(
+                        topH >= 118.0f ? (MaxCaveNetworkY - 4) : 75,
+                        (int)MathF.Floor(topH - 18.0f));
                     bool lowProvinceColumn = colProvinceNoise < 0.27f;
                     bool anyCaveVoidInColumn = false;
                     var colCave = new ColumnCavePrecomp(
@@ -1850,9 +1917,9 @@ namespace Stratocraft.WorldGen.Generators
                         byte dungeonOverrideMat = 0;
                         bool isEntranceStoneRim = false;
 
-                        if (!fastCaveFilter || (y >= DeepMantleFloorY + 3 && y <= maxCaveY && (!lowProvinceColumn || y <= 18)))
+                        if (!fastCaveFilter || (y >= DeepMantleFloorY + 3 && y <= maxCaveY && (!lowProvinceColumn || y <= 21)))
                         {
-                            float warpX = (uint)y <= 75u ? rowWarpX[y] : 0f;
+                            float warpX = (uint)y <= (uint)maxRowWarpY ? rowWarpX[y] : 0f;
                             EvaluateUndergroundCaveNetwork(
                                 in colCave, y, warpX,
                                 out inCaveVoid, out isStalagnatePillar, out isCrystalCaveWall,
@@ -2673,19 +2740,14 @@ namespace Stratocraft.WorldGen.Generators
             int centerWx = chunkX * 16 + 8;
             int centerWz = chunkZ * 16 + 8;
             int biomeId = cachedBiomes.Length == 256 ? cachedBiomes[(8 << 4) | 8] : GetBiomeId(centerWx, centerWz);
-            bool isSkyArchipelago = biomeId == 10 ||
-                                    (chunkX == -2 && chunkZ == 1) ||
-                                    (chunkX == 1 && chunkZ == 2) ||
-                                    (chunkX == -7 && chunkZ == 6) ||
-                                    (chunkX == 6 && chunkZ == -5) ||
-                                    (chunkX == -6 && chunkZ == -6) ||
-                                    (chunkX == 7 && chunkZ == 5);
-            if (!isSkyArchipelago) return;
+            // PT-09: Yalnizca gercek Biyom 10 (Gokyuzu Adalari Takimadasi) icinde uretilir;
+            // baslangic vadisi gokyuzune rastgele kati ada artefakti basmaz!
+            if (biomeId != 10) return;
 
             int hash = Math.Abs((chunkX * 73856093) ^ (chunkZ * 19349663) ^ ActiveWorldSeed);
-            if (biomeId == 10 && (hash & 1) != 0) return;
+            if ((hash % 3) != 0) return;
 
-            int baseSkyY = Math.Clamp(132 + (hash % 12), 126, MaxEditableVoxelY - 12);
+            int baseSkyY = Math.Clamp(164 + (hash % 20), 156, MaxEditableVoxelY - 18);
             const float skyCenterLx = 7.5f, skyCenterLz = 7.5f, skyRadius = 5.6f;
 
             for (int lz = 1; lz < 15; lz++)
@@ -3846,13 +3908,13 @@ namespace Stratocraft.WorldGen.Generators
         /// </summary>
         public static bool IsVegetatedBushBiome(int biomeId)
         {
-            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 6 || biomeId == 10;
+            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 6 || biomeId == 10 || biomeId == 12 || biomeId == 13;
         }
 
         /// <summary>Yesil yaprak yigini ve sık dal yalnizca agacli/sulak biyomlarda bulunur.</summary>
         public static bool IsLushLeafBiome(int biomeId)
         {
-            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 10;
+            return biomeId == 0 || biomeId == 1 || biomeId == 3 || biomeId == 10 || biomeId == 12 || biomeId == 13;
         }
 
         /// <summary>
@@ -3897,6 +3959,8 @@ namespace Stratocraft.WorldGen.Generators
                 case 0:  // Zumrut Baslangic Vadisi
                 case 1:  // Demir Agaci Ormani
                 case 10: // Gokyuzu Adalari
+                case 12: // Altin ve Alacakaranlik Yaylasi
+                case 13: // Safir Lagun ve Prusya Kiyilari
                     if (nearWaterShore && slotIndex == 3)
                     {
                         dropKind = BiomeForageDropKind.ClayLump;

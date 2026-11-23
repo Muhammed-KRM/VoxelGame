@@ -127,7 +127,7 @@ namespace Stratocraft.Voxel.Systems
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static byte ResolveBiomeSurfaceMaterial(byte biomeIdOrRing, float surfaceY, float radialDist = 0f)
         {
-            if (surfaceY >= 109.5f)
+            if (biomeIdOrRing != 8 && biomeIdOrRing != 7 && surfaceY >= 168.0f)
             {
                 return MaterialIdCatalog.PackedIce;
             }
@@ -150,6 +150,8 @@ namespace Stratocraft.Voxel.Systems
                 9 => MaterialIdCatalog.Cobblestone,
                 10 => MaterialIdCatalog.Grass,
                 11 => MaterialIdCatalog.NaturalObsidian,
+                12 => MaterialIdCatalog.Grass,
+                13 => MaterialIdCatalog.Sand,
                 _ => MaterialIdCatalog.Grass
             };
         }

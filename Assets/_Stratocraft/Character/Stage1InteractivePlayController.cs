@@ -118,10 +118,10 @@ namespace Stratocraft.Character
             }
         }
 
-        public const int SubChunkCountY = 10; // 10 x 16m = 160m dikey (16x16x16 Kubik Alt-Chunk)
-        public const ushort AllSubChunksMask = 0x03FF; // 10 bit (0..9)
-        public const ushort SurfaceAndUpperCaveSubChunksMask = 0x03F0; // subY = 4..9 (Y = 64m..160m)
-        public const ushort NearCaveEntranceSubChunksMask = 0x03F8;    // subY = 3..9 (Y = 48m..160m)
+        public const int SubChunkCountY = 16; // 16 x 16m = 256m dikey (PT-08 devasa daglar & derin magaralar)
+        public const ushort AllSubChunksMask = 0xFFFF; // 16 bit (0..15)
+        public const ushort SurfaceAndUpperCaveSubChunksMask = 0xFFF0; // subY = 4..15 (Y = 64m..256m)
+        public const ushort NearCaveEntranceSubChunksMask = 0xFFF8;    // subY = 3..15 (Y = 48m..256m)
 
         private static Stage1InteractivePlayController? _activeInstance;
 
