@@ -3,6 +3,8 @@ using System;
 using System.IO;
 using System.Numerics;
 using System.Text;
+using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Inventory.Data;
 
 namespace Stratocraft.Inventory.Systems
@@ -2948,6 +2950,216 @@ namespace Stratocraft.Inventory.Systems
             float deg = MathF.Atan2(fwd.X, fwd.Z) * (180.0f / MathF.PI);
             if (deg < 0.0f) deg += 360.0f;
             return deg;
+        }
+
+        /// <summary>
+        /// <see cref="ModularPlacedPieceNode"/> dugumunu 0-GC ile birlesik <see cref="StructuralNode64"/> graf dugumune donusturur.
+        /// </summary>
+        public static StructuralNode64 ConvertModularPieceToStructuralNode64(
+            in ModularPlacedPieceNode piece,
+            uint overrideNodeId = 0u,
+            MortarType mortar = MortarType.None,
+            bool instantCure = true,
+            uint ownerClanOrPlayerId = 0u)
+        {
+            BuildStructuralMaterialKind effMat = ResolveEffectiveNodeMaterial(in piece);
+            byte materialId = SotfStructuralBuildMechanics.GetMaterialProfile(effMat).VoxelMaterialId;
+            if (materialId == 0) materialId = MaterialIdCatalog.OakWood;
+
+            ArchitecturalSchool school = effMat switch
+            {
+                BuildStructuralMaterialKind.CarvedMarble or
+                BuildStructuralMaterialKind.ReinforcedSteelObsidian => ArchitecturalSchool.MonumentalArchDome,
+                BuildStructuralMaterialKind.RubbleStone or
+                BuildStructuralMaterialKind.CutBasalt => ArchitecturalSchool.StoneMasonry,
+                _ => ArchitecturalSchool.LogCabin
+            };
+
+            StructuralElementRole role = piece.Kind switch
+            {
+                ModularBuildPieceKind.StoneFoundation2x2m => StructuralElementRole.StonePlinthFoundation,
+                ModularBuildPieceKind.LogPillar3m => StructuralElementRole.TimberPost,
+                ModularBuildPieceKind.StoneArchPillar3m => StructuralElementRole.MonolithicColumnShaft,
+                ModularBuildPieceKind.LogBeam2m => StructuralElementRole.TimberMainGirder,
+                ModularBuildPieceKind.PlankFloor2x2m => StructuralElementRole.FloorJoistDeck,
+                ModularBuildPieceKind.PlankDoorway2x2m => StructuralElementRole.DoorFrameOpening,
+                ModularBuildPieceKind.PlankWindow2x2m => StructuralElementRole.WindowFrameOpening,
+                ModularBuildPieceKind.RoofRafter26Deg2x2m or ModularBuildPieceKind.RoofRafter45Deg2x2m => StructuralElementRole.InclinedRoofRafter,
+                ModularBuildPieceKind.RoofRidge2m => StructuralElementRole.RoofRidgeBeam,
+                ModularBuildPieceKind.DiagonalBrace2m => StructuralElementRole.DiagonalWindBrace,
+                ModularBuildPieceKind.GableWall45Deg2m => StructuralElementRole.InfillPanelWattleAdobe,
+                _ => school == ArchitecturalSchool.StoneMasonry
+                    ? StructuralElementRole.AshlarMasonryWall
+                    : StructuralElementRole.NotchedWallLog
+            };
+
+            MortarType resolvedMortar = mortar != MortarType.None
+                ? mortar
+                : (school == ArchitecturalSchool.StoneMasonry && role != StructuralElementRole.StonePlinthFoundation
+                    ? MortarType.Lime
+                    : MortarType.None);
+
+            AnchorType anchor = piece.IsGrounded
+                ? (role == StructuralElementRole.StonePlinthFoundation || school == ArchitecturalSchool.StoneMasonry
+                    ? AnchorType.CompactedGravelOrTrench
+                    : AnchorType.FirmDrySoilOrClay)
+                : AnchorType.NoneFloating;
+
+            StructureThicknessProfile thickness = piece.ThicknessKind switch
+            {
+                BuildSectionThickness.Slender => StructureThicknessProfile.Slender,
+                BuildSectionThickness.HeavyBearing => StructureThicknessProfile.HeavyBearing,
+                _ => StructureThicknessProfile.Standard
+            };
+
+            float yawDeg = ExtractYawDegrees(piece.Rotation);
+            byte yawQuarter = (byte)(((int)MathF.Round(yawDeg / 90f) % 4 + 4) & 0x03);
+            uint id = overrideNodeId != 0u ? overrideNodeId : (uint)Math.Max(1, piece.InstanceId);
+
+            StructuralNode64 node = StructuralNode64.Create(
+                nodeId: id,
+                posX: piece.Position.X,
+                posY: piece.Position.Y,
+                posZ: piece.Position.Z,
+                school: school,
+                role: role,
+                materialId: materialId,
+                anchor: anchor,
+                mortar: resolvedMortar,
+                yawQuarterTurns: yawQuarter,
+                thickness: thickness,
+                ownerClanOrPlayerId: ownerClanOrPlayerId,
+                instantCure: instantCure);
+
+            float maxHp = piece.MaxHealth > 0.01f ? piece.MaxHealth : ComputePieceMaxHealth(piece.Kind, effMat, piece.ThicknessKind);
+            node.Integrity01 = piece.IsBroken ? 0f : Math.Clamp(piece.Health / maxHp, 0f, 1f);
+            node.GeoSupportDist = piece.IsGrounded
+                ? (ushort)0
+                : (piece.IsFalling || piece.IsBroken ? MortarConstants.DetachedGeodesicDistance : (ushort)1);
+            node.CollapseState = piece.IsBroken
+                ? StructureCollapseState.Collapsed
+                : (piece.IsFalling ? StructureCollapseState.DetachedInstantFall : StructureCollapseState.Stable);
+            node.CompletedCourses = SotfStructuralBuildMechanics.GetEffectiveCompletedCourses(in piece);
+            node.Chinking = school == ArchitecturalSchool.LogCabin || school == ArchitecturalSchool.TimberFrame
+                ? ChinkingFlags.ClayDaubed | ChinkingFlags.WeatherSealed
+                : ChinkingFlags.LimePlastered | ChinkingFlags.WeatherSealed;
+            return node;
+        }
+
+        /// <summary>
+        /// <see cref="StructuralNode64"/> dugumunu moduler yerlestirme eslenigine donusturur (0-GC).
+        /// </summary>
+        public static ModularPlacedPieceNode ConvertStructuralNode64ToModularPiece(
+            in StructuralNode64 node,
+            int chunkOwnerKey = 0)
+        {
+            ModularBuildPieceKind kind = node.Role switch
+            {
+                StructuralElementRole.StonePlinthFoundation or StructuralElementRole.TrenchRubbleFooting => ModularBuildPieceKind.StoneFoundation2x2m,
+                StructuralElementRole.TimberPost => ModularBuildPieceKind.LogPillar3m,
+                StructuralElementRole.MonolithicColumnShaft => ModularBuildPieceKind.StoneArchPillar3m,
+                StructuralElementRole.TimberMainGirder => ModularBuildPieceKind.LogBeam2m,
+                StructuralElementRole.FloorJoistDeck => ModularBuildPieceKind.PlankFloor2x2m,
+                StructuralElementRole.DoorFrameOpening => ModularBuildPieceKind.PlankDoorway2x2m,
+                StructuralElementRole.WindowFrameOpening => ModularBuildPieceKind.PlankWindow2x2m,
+                StructuralElementRole.InclinedRoofRafter or StructuralElementRole.RoofCoveringCourse => ModularBuildPieceKind.RoofRafter45Deg2x2m,
+                StructuralElementRole.RoofRidgeBeam => ModularBuildPieceKind.RoofRidge2m,
+                StructuralElementRole.DiagonalWindBrace => ModularBuildPieceKind.DiagonalBrace2m,
+                _ => ModularBuildPieceKind.PlankWall2x2m
+            };
+
+            BuildStructuralMaterialKind mat = node.School == ArchitecturalSchool.MonumentalArchDome
+                ? BuildStructuralMaterialKind.CarvedMarble
+                : (node.School == ArchitecturalSchool.StoneMasonry
+                    ? BuildStructuralMaterialKind.RubbleStone
+                    : BuildStructuralMaterialKind.PineTimber);
+
+            BuildSectionThickness thick = (StructureThicknessProfile)node.ThicknessProfile switch
+            {
+                StructureThicknessProfile.Slender => BuildSectionThickness.Slender,
+                StructureThicknessProfile.HeavyBearing => BuildSectionThickness.HeavyBearing,
+                _ => BuildSectionThickness.Standard
+            };
+
+            bool isCollapsedOrDetached = node.CollapseState == StructureCollapseState.Collapsed ||
+                                         node.CollapseState == StructureCollapseState.DetachedInstantFall;
+            float maxHp = GetPieceDefaultMaxHealth(kind);
+            return new ModularPlacedPieceNode
+            {
+                InstanceId = (int)node.NodeId,
+                Kind = kind,
+                MaterialKind = mat,
+                ThicknessKind = thick,
+                ExplicitMaterialAssigned = true,
+                CompletedCourses = node.CompletedCourses == 0 ? (byte)1 : node.CompletedCourses,
+                RequiredCourses = 1,
+                Position = new Vector3(node.PosX, node.PosY, node.PosZ),
+                Rotation = CreateYawQuaternion((node.YawQuarterTurns & 3) * 90f),
+                GroundFloorY = node.PosY,
+                Health = maxHp * Math.Clamp(node.Integrity01, 0f, 1f),
+                MaxHealth = maxHp,
+                Stability01 = isCollapsedOrDetached ? 0f : Math.Clamp(1.0f - node.StressRatio * 0.5f, 0.15f, 1.0f),
+                StabilityBand = isCollapsedOrDetached ? ValheimStabilityBand.Red : ValheimStabilityBand.Green,
+                IsGrounded = node.Anchor != AnchorType.NoneFloating || node.GeoSupportDist == 0,
+                IsFalling = node.CollapseState == StructureCollapseState.DetachedInstantFall,
+                IsBroken = node.CollapseState == StructureCollapseState.Collapsed,
+                ChunkOwnerKey = chunkOwnerKey
+            };
+        }
+
+        /// <summary>
+        /// Aktif <see cref="ModularPlacedPieceNode"/> dugumlerini komsu baglantilariyla birlikte
+        /// <see cref="UnifiedStructureGraphSolver"/> icine esitler (0-GC).
+        /// </summary>
+        public static int SyncModularNodesToUnifiedSolver(
+            ReadOnlySpan<ModularPlacedPieceNode> pieces,
+            UnifiedStructureGraphSolver solver,
+            uint nodeIdBaseOffset = 2000000u,
+            float connectRadiusMeters = 2.65f,
+            MortarType defaultMasonryMortar = MortarType.Lime,
+            bool instantCure = true)
+        {
+            if (solver == null || pieces.IsEmpty) return 0;
+
+            float maxDistSq = connectRadiusMeters * connectRadiusMeters;
+            int synced = 0;
+
+            for (int i = 0; i < pieces.Length; i++)
+            {
+                ref readonly ModularPlacedPieceNode p = ref pieces[i];
+                if (p.IsBroken || p.InstanceId <= 0) continue;
+
+                uint nid = nodeIdBaseOffset + (uint)p.InstanceId;
+                StructuralNode64 node = ConvertModularPieceToStructuralNode64(
+                    in p,
+                    overrideNodeId: nid,
+                    mortar: defaultMasonryMortar,
+                    instantCure: instantCure);
+                solver.AddOrUpdateNode(in node);
+                synced++;
+
+                for (int j = 0; j < i; j++)
+                {
+                    ref readonly ModularPlacedPieceNode other = ref pieces[j];
+                    if (other.IsBroken || other.InstanceId <= 0) continue;
+
+                    float dx = p.Position.X - other.Position.X;
+                    float dy = p.Position.Y - other.Position.Y;
+                    float dz = p.Position.Z - other.Position.Z;
+                    float distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq > maxDistSq || distSq < 0.01f) continue;
+
+                    JointConnectionKind jKind = node.School == ArchitecturalSchool.StoneMasonry
+                        ? (defaultMasonryMortar == MortarType.None ? JointConnectionKind.DryStoneInterlock : JointConnectionKind.LimeMortar)
+                        : (node.School == ArchitecturalSchool.TimberFrame ? JointConnectionKind.MortiseTenonPeg : JointConnectionKind.SaddleNotch);
+
+                    uint otherNid = nodeIdBaseOffset + (uint)other.InstanceId;
+                    float cure01 = instantCure || node.Mortar == MortarType.None ? 1.0f : node.CureRatio01;
+                    solver.ConnectNodes(nid, otherNid, jKind, cureRatio01: cure01);
+                }
+            }
+
+            return synced;
         }
     }
 }

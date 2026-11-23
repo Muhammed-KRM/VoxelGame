@@ -9,6 +9,7 @@ using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
 using Stratocraft.Core.Persistence;
+using Stratocraft.Core.Structures;
 using Stratocraft.Core.Weather;
 using Stratocraft.CreaturesAI.OffScreen;
 using Stratocraft.Inventory.Data;
@@ -341,6 +342,8 @@ namespace Stratocraft.Character
         private readonly Stage1HolsterAndBackpackController _holsterCtrl = new();
         private readonly Stage1StoneKnappingController _stoneKnappingCtrl = new();
         private readonly WorldLooseBuildSystem _looseBuildSystem = new();
+        private readonly BuildingSiteLogisticsController _siteLogisticsCtrl = new();
+        private ClanBoundaryBreachCallback? _clanBreachCallbackCached;
         private readonly OrganicTreeCanopyVisualSystem _organicTreeCanopySystem = new();
         private Func<int, int, int, bool>? _hasGroundedTimberSupportDelegateCached;
         private Func<int, int, int, int, int, int, byte[], bool, bool>? _rasterizeTimberSupportDelegateCached;
@@ -965,11 +968,15 @@ namespace Stratocraft.Character
             _creatureBridge.OnSiegeStructureImpact ??= HandleSiegeModularStructureImpact;
             EnsureCreaturesInitialized();
             _collapseBridge.MiningControllerForItemDrops = _miningCtrl;
+            _clanBreachCallbackCached ??= HandleClanBoundaryBreach;
+            _collapseBridge.OnClanBoundaryBreach ??= _clanBreachCallbackCached;
             _hasGroundedTimberSupportDelegateCached ??= _looseBuildSystem.HasGroundedTimberSupportAtVoxel;
             _collapseBridge.ExternalTimberSupportLookup = _hasGroundedTimberSupportDelegateCached;
             _rasterizeTimberSupportDelegateCached ??= _looseBuildSystem.TryRasterizeGroundedTimberSupportInWindow;
             _collapseBridge.ExternalTimberSupportWindowRasterizer = _rasterizeTimberSupportDelegateCached;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
+            _looseBuildSystem.SiteLogistics = _siteLogisticsCtrl.Core;
+            _siteLogisticsCtrl.BindToLooseBuildSystem(_looseBuildSystem);
             _movementBridge.BoundLooseBuildSystem = _looseBuildSystem;
             _movementBridge.SetSafeSpawnPosition(transform.position);
             // Anayasa Bolum 3.1: Ana kameramiz varsayilan olarak FPS'tir ([F5] ile Omuz Ustu TPS'e gecilir).
@@ -1310,6 +1317,7 @@ namespace Stratocraft.Character
                 _organicTreeCanopySystem.UpdateTreeVisibilityAndShadowCulling(cullCamPos, camUnderground);
                 _looseBuildSystem.UpdateModularVisibilityAndShadowCulling(cullCamPos, camUnderground);
             }
+            _looseBuildSystem.CityLodRenderer.RenderVisibleCityBatches(SharedVoxelMaterial);
             RebuildAllDirtyChunks(forceImmediateAll: false);
             if (spanId >= 0L) _telemetryLogger?.LogPipelineEnd(spanId, "OK");
         }
@@ -1323,9 +1331,14 @@ namespace Stratocraft.Character
             _fluidChunks.TryGetValue(key, out ushort[]? flArr);
 
             const ChunkDirtyFlags PersistentUserOrSimMask =
-                ChunkDirtyFlags.Terrain | ChunkDirtyFlags.MicroPool | ChunkDirtyFlags.PlayerFluid;
-            bool hasStructuralOrPlayerEdits = _chunkDirtyFlags.TryGetValue(key, out ChunkDirtyFlags dirtyFlags) &&
-                                              (dirtyFlags & PersistentUserOrSimMask) != 0;
+                ChunkDirtyFlags.Terrain | ChunkDirtyFlags.MicroPool | ChunkDirtyFlags.PlayerFluid | ChunkDirtyFlags.Structures;
+            StructureGraphSection? structGraph = _looseBuildSystem.ExportChunkStructureGraphSection(key.cx, key.cz);
+            _chunkDirtyFlags.TryGetValue(key, out ChunkDirtyFlags dirtyFlags);
+            if (_looseBuildSystem.HasChunkStructureEdits(key.cx, key.cz) || (structGraph != null && !structGraph.IsEmpty))
+            {
+                dirtyFlags |= ChunkDirtyFlags.Structures;
+            }
+            bool hasStructuralOrPlayerEdits = (dirtyFlags & PersistentUserOrSimMask) != 0;
 
             // 1) Paket 4C-3: Yalnizca blok/yapi degisikligi olan chunk'larda 32k voksel NavSpan taramasi yap;
             // temiz chunk'larda OffScreenNavSpanCache zaten O(1) deterministik WorldGen yuzeyini kullanir!
@@ -1347,7 +1360,8 @@ namespace Stratocraft.Character
             // Dogal yagmur nemi/kar/golet zaten 0.6 MB WorldHydrologyLedger icinde tutuldugu icin 500+ temiz chunk bosuna sikistirilmaz!
             if (persistIfDirty && hasStructuralOrPlayerEdits && _persistencePipeline != null && voxArr != null)
             {
-                bool hasPlayerStruct = (dirtyFlags & ChunkDirtyFlags.Terrain) != 0 && ChunkContainsPlayerPlacedBlocks(voxArr);
+                bool hasPlayerStruct = ((dirtyFlags & ChunkDirtyFlags.Terrain) != 0 && ChunkContainsPlayerPlacedBlocks(voxArr)) ||
+                                       (structGraph != null && !structGraph.IsEmpty);
                 (ushort FlatIndex, byte Moisture)[] sparseMoist = _soilMoistureSystem.ExportSparseMoisture(key.cx, key.cz);
                 byte[]? snowSwe256 = _snowSystem.ExportSweUnits256OrNull(key.cx, key.cz);
                 ulong[]? salinityBits = (dirtyFlags & (ChunkDirtyFlags.Fluid | ChunkDirtyFlags.PlayerFluid)) != 0
@@ -1366,7 +1380,8 @@ namespace Stratocraft.Character
                     hasActiveStructures: hasPlayerStruct,
                     sparseSoilMoisture: sparseMoist,
                     snowSwe256: snowSwe256,
-                    salinityBits1024: salinityBits);
+                    salinityBits1024: salinityBits,
+                    structureGraph: structGraph);
             }
 
             // 3) Unity Mesh/GameObject havuzlama (tavan MaxPooledChunkSlots = 128 -> sonsuz bellek sismesi yok)
@@ -2016,6 +2031,11 @@ namespace Stratocraft.Character
                 if (auxRestore.DirtyFlags != ChunkDirtyFlags.None)
                 {
                     _chunkDirtyFlags[key] = auxRestore.DirtyFlags;
+                }
+                if (auxRestore.StructureGraph != null && !auxRestore.StructureGraph.IsEmpty)
+                {
+                    float offlineSec = (float)Math.Max(0.0, _totalSimulatedGameSeconds - auxRestore.LastSimulatedGameSeconds);
+                    _looseBuildSystem.ImportChunkStructureGraphSection(cx, cz, auxRestore.StructureGraph, offlineSec, _holsterCtrl.IsCreativeMode);
                 }
 
                 // Ekran-disi biriken iklim catch-up damgasi varsa kisa/hizli yakalama uygula
@@ -3539,6 +3559,10 @@ namespace Stratocraft.Character
                 {
                     consumedEarlyInteract = true;
                 }
+                else if (TryToggleAimedStructureDoorOrWindow(shiftHeld))
+                {
+                    consumedEarlyInteract = true;
+                }
                 else if (_miningCtrl.FindBestAimedDroppedWorldItemIndex(PlayerCamera, transform.position, 2.95f) < 0)
                 {
                     consumedEarlyInteract = TryHarvestAimedWorldBush();
@@ -3612,10 +3636,33 @@ namespace Stratocraft.Character
                                       _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform) ||
                                       _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
                                       FindAimedWeatherInstrumentIndex(3.6f) >= 0;
+            _siteLogisticsCtrl.Step(dt);
             _looseBuildSystem.Step(
                 dt, PlayerCamera, transform, uiBlocked,
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
                 rightClickConsumedExternally: suppressLooseBuild);
+            bool anyLitHearthNearPlayer = _campfireCtrl.EvaluateThermalBonusAndDrying(
+                transform.position + Vector3.up * 0.8f, 0f, false, ref _movementBridge.Vitals.Wetness01) > 0.1f;
+            float rainNorm01 = _currentPlayerAtmosphereCell.ActiveKind == PrecipitationKind.Rain
+                ? Mathf.Clamp01(_currentPlayerAtmosphereCell.SurfacePrecipMmPerHour / 15.0f)
+                : 0f;
+            _looseBuildSystem.StepUnifiedStructuresAndEnvironment(
+                dt,
+                transform.position,
+                _totalSimulatedGameSeconds,
+                _ambientTempCelsius,
+                rainNorm01,
+                _holsterCtrl.IsCreativeMode,
+                _collapseBridge,
+                _worldChunks,
+                _dirtyChunks,
+                MaxEditableVoxelY,
+                isFireplaceLit: anyLitHearthNearPlayer,
+                hearthWorldPos: transform.position + Vector3.up * 0.5f);
+            if (!string.IsNullOrEmpty(_looseBuildSystem.LastUnifiedCollapseWarningText))
+            {
+                _miningCtrl.LastFeedbackText = _looseBuildSystem.LastUnifiedCollapseWarningText;
+            }
             bool looseConsumedClick = _looseBuildSystem.ConsumedRightClickCancelThisFrame ||
                                       (!suppressLooseBuild && _looseBuildSystem.IsModularBuildModeActive && Input.GetMouseButton(0)) ||
                                       (!suppressLooseBuild && Input.GetMouseButtonDown(1) && _looseBuildSystem.HasValidGhostPlacement);
@@ -4509,9 +4556,12 @@ namespace Stratocraft.Character
             foreach (var kv in _worldChunks)
             {
                 ushort[] fluids = _fluidChunks.TryGetValue(kv.Key, out ushort[]? f) && f != null ? f : new ushort[65536];
-                bool hasPlayerStruct = ChunkContainsPlayerPlacedBlocks(kv.Value);
+                StructureGraphSection? structGraph = _looseBuildSystem.ExportChunkStructureGraphSection(kv.Key.cx, kv.Key.cz);
+                bool hasPlayerStruct = ChunkContainsPlayerPlacedBlocks(kv.Value) ||
+                                       (structGraph != null && !structGraph.IsEmpty);
                 _chunkDirtyFlags.TryGetValue(kv.Key, out ChunkDirtyFlags dFlags);
                 if (dFlags == ChunkDirtyFlags.None) dFlags = ChunkDirtyFlags.Terrain;
+                if (structGraph != null && !structGraph.IsEmpty) dFlags |= ChunkDirtyFlags.Structures;
                 var sparseMoist = _soilMoistureSystem.ExportSparseMoisture(kv.Key.cx, kv.Key.cz);
                 byte[]? snowSwe = _snowSystem.ExportSweUnits256OrNull(kv.Key.cx, kv.Key.cz);
                 ulong[]? salBits = _salinityBitset.ExportChunkBitsCopyOrNull(kv.Key.cx, kv.Key.cz);
@@ -4527,7 +4577,8 @@ namespace Stratocraft.Character
                     dirtyFlags: dFlags,
                     sparseSoilMoisture: sparseMoist,
                     snowSwe256: snowSwe,
-                    salinityBits1024: salBits));
+                    salinityBits1024: salBits,
+                    structureGraph: structGraph));
             }
             _regionStore.SaveDirtyChunksBatchAsync(batch.ToArray()).GetAwaiter().GetResult();
             for (int i = 0; i < batch.Count; i++)
@@ -4589,6 +4640,16 @@ namespace Stratocraft.Character
                     if (snap.DirtyFlags != ChunkDirtyFlags.None)
                     {
                         _chunkDirtyFlags[key] = snap.DirtyFlags;
+                    }
+                    if (snap.StructureGraph != null && !snap.StructureGraph.IsEmpty)
+                    {
+                        float offlineSec = (float)Math.Max(0.0, _totalSimulatedGameSeconds - snap.LastSimulatedGameSeconds);
+                        _looseBuildSystem.ImportChunkStructureGraphSection(
+                            key.cx,
+                            key.cz,
+                            snap.StructureGraph,
+                            offlineSec,
+                            _holsterCtrl.IsCreativeMode);
                     }
                     loadedCount++;
                 }
@@ -4798,7 +4859,26 @@ namespace Stratocraft.Character
                     absoluteWorldY: transform.position.y);
             }
 
+            InteriorEnvironmentEvaluation interiorEval = _looseBuildSystem.LastPlayerInteriorEval;
+            HearthAndChimneyEvaluation hearthEval = _looseBuildSystem.LastPlayerHearthEval;
+            if (interiorEval.IsEnclosedInterior)
+            {
+                _ambientTempCelsius += interiorEval.ThermalInsulationBonusCelsius;
+            }
+            if (hearthEval.HasValidChimneyFlue && hearthEval.EffectiveRoomTempCelsius > _ambientTempCelsius)
+            {
+                _ambientTempCelsius = Mathf.Max(_ambientTempCelsius, hearthEval.EffectiveRoomTempCelsius);
+            }
+            if (hearthEval.HasSmokeCoHazard && !_holsterCtrl.IsCreativeMode)
+            {
+                float coPenalty = dt * (4.5f * Mathf.Max(1.0f, hearthEval.CoDangerRatio01));
+                _movementBridge.Vitals.LungOxygenPercent = Mathf.Max(0f, _movementBridge.Vitals.LungOxygenPercent - coPenalty);
+                _miningCtrl.LastFeedbackText =
+                    $"⚠️ BACA TIKANIK / DUMAN ZEHİRLENMESİ ({hearthEval.CoConcentrationPpm:0} ppm CO)! Çatı üstü baca şaftı kurun!";
+            }
+
             bool hasOpenSkyAbovePlayer = !isEnclosedCave &&
+                                         !interiorEval.IsRainSheltered &&
                                          _lastConnectedAirVoxels >= EnclosedOxygenFloodFillSystem.OpenAtmosphereThresholdVoxels;
             bool underLocalPrecipCloud = hasOpenSkyAbovePlayer &&
                                          (_cloudAndRainRenderer.IsWorldPointUnderActiveRain(
@@ -4811,6 +4891,10 @@ namespace Stratocraft.Character
             float localWindForThermal = isEnclosedCave
                 ? 0.0f
                 : (_thermalTestMode == 1 ? Mathf.Max(18.0f, _currentPlayerLocalWind3D.SpeedMps) : _currentPlayerLocalWind3D.SpeedMps);
+            if (interiorEval.IsEnclosedInterior)
+            {
+                localWindForThermal *= (1.0f - Mathf.Clamp01(interiorEval.IndoorWindAttenuation01));
+            }
             float nearbyFireRadiantFluxKwM2 = heatBonus * 0.35f;
 
             PlayerThermalGearSummary gearSummary = _holsterCtrl.InventoryUi.StepEquippedClothingThermalState(
@@ -7107,11 +7191,71 @@ namespace Stratocraft.Character
         private void HandleSiegeModularStructureImpact(Vector3 worldPoint, float radius, float damage)
         {
             int hits = _looseBuildSystem.DamageModularSupportAt(worldPoint, radius, damage, out int brokenSupports, out int collapsedPieces);
-            if (hits > 0 && (brokenSupports > 0 || collapsedPieces > 0))
+            int uHits = _looseBuildSystem.UnifiedBridge.DamageAtWorldPoint(
+                new System.Numerics.Vector3(worldPoint.x, worldPoint.y, worldPoint.z),
+                radius,
+                damage,
+                _totalSimulatedGameSeconds,
+                _collapseBridge,
+                out int uBroken,
+                out int uCollapsed);
+            int totalBroken = brokenSupports + uBroken;
+            int totalCollapsed = collapsedPieces + uCollapsed;
+            if ((hits > 0 || uHits > 0) && (totalBroken > 0 || totalCollapsed > 0))
             {
                 _miningCtrl.LastFeedbackText =
-                    $"💥 KUŞATMA DARBESİ! {brokenSupports} modüler taşıyıcı kırıldı, {collapsedPieces} üst parça yıkılıyor!";
+                    $"💥 KUŞATMA DARBESİ! {totalBroken} modüler taşıyıcı kırıldı, {totalCollapsed} üst parça yıkılıyor!";
             }
+        }
+
+        private void HandleClanBoundaryBreach(in ClanBoundaryBreachNotification breach)
+        {
+            _looseBuildSystem.CityLodRenderer.NotifyDamageAtWorldPos(
+                breach.WorldX,
+                breach.WorldZ,
+                breach.BreachRadiusMeters,
+                _totalSimulatedGameSeconds);
+            _miningCtrl.LastFeedbackText =
+                $"🛡️ KLAN SINIRI GEDİĞİ (Klan #{breach.OwnerClanId}): {breach.BreachRadiusMeters:0.0}m gedik açıldı!";
+        }
+
+        private bool TryToggleAimedStructureDoorOrWindow(bool shiftHeld)
+        {
+            if (PlayerCamera == null || SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount == 0)
+            {
+                return false;
+            }
+
+            Ray ray = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+            var origin = new System.Numerics.Vector3(ray.origin.x, ray.origin.y, ray.origin.z);
+            var end = new System.Numerics.Vector3(
+                ray.origin.x + ray.direction.x * 3.25f,
+                ray.origin.y + ray.direction.y * 3.25f,
+                ray.origin.z + ray.direction.z * 3.25f);
+
+            if (!SpatialHashedStructureCollisionSolver.Shared.Raycast(origin, end, out StructureRayHit hit, StructureRayMask.SolidAll))
+            {
+                return false;
+            }
+
+            bool toggled = shiftHeld
+                ? SpatialHashedStructureCollisionSolver.Shared.TryToggleDoorOrWindowLock(hit.NodeId, canOperateInteriorBolt: true)
+                : SpatialHashedStructureCollisionSolver.Shared.TryInteractToggleDoorOrWindow(hit.NodeId, isAuthorized: true);
+
+            if (!toggled) return false;
+
+            if (SpatialHashedStructureCollisionSolver.Shared.TryGetUnifiedNode(hit.NodeId, out StructuralNode64 updatedNode))
+            {
+                _looseBuildSystem.UnifiedGraphSolver.AddOrUpdateNode(in updatedNode);
+                int cx = Mathf.FloorToInt(updatedNode.PosX) >> 4;
+                int cz = Mathf.FloorToInt(updatedNode.PosZ) >> 4;
+                _looseBuildSystem.UnifiedBridge.MarkChunkStructureDirty(cx, cz);
+                MarkChunkDirtyFlag((cx, cz), ChunkDirtyFlags.Structures);
+                _miningCtrl.LastFeedbackText = updatedNode.IsLocked
+                    ? "🔒 Kapı/Kepenk kilitlendi."
+                    : (updatedNode.IsDoorOrWindowOpen ? "🚪 Kapı/Kepenk açıldı." : "🚪 Kapı/Kepenk kapatıldı.");
+            }
+            return true;
         }
 
         private void OnCaveAmbushTelegraphTriggered(
