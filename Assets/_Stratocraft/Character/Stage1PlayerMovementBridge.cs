@@ -9,6 +9,7 @@ using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
+using Stratocraft.WorldGen;
 #if UNITY_5_3_OR_NEWER
 using UnityEngine;
 #endif
@@ -708,7 +709,224 @@ namespace Stratocraft.Character
                 }
             }
 
+            // 3) Saglam (!IsBroken) 3B agac dallari uzerine iniste veya yururken dalin icinden asagi dusmeyi onle:
+            OrganicTreeCanopyVisualSystem? treeSys = OrganicTreeCanopyVisualSystem.ActiveInstance;
+            if (treeSys != null &&
+                treeSys.TrySampleWalkableBranchSurfaceAt(
+                    posX,
+                    posZ,
+                    prevFeetY,
+                    r,
+                    maxStepUpMeters: 0.45f,
+                    out float branchTopY,
+                    out _,
+                    out _,
+                    out _,
+                    out _))
+            {
+                if (prevFeetY >= branchTopY - 0.32f && branchTopY > minAllowedY)
+                {
+                    minAllowedY = branchTopY;
+                }
+            }
+
             return minAllowedY;
+        }
+
+        /// <summary>
+        /// Saf C# (.NET 10 ve Unity 6) zemin + 3B agac dali yurunebilir yuzey yuksekligi ornekleyicisi (0 B GC).
+        /// Hem voksel araziyi hem de <see cref="OrganicTreeCanopyVisualSystem"/> icindeki saglam (!IsBroken)
+        /// kalin/ince agac dallarini tarayarak oyuncunun basabilecegi en yuksek yuzeyi doner.
+        /// </summary>
+        public static float SampleWalkableGroundOrBranchHeightPure(
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            OrganicTreeCanopyVisualSystem? treeSystem,
+            float worldX,
+            float worldZ,
+            float refFeetY,
+            float footRadiusMeters,
+            float maxStepUpMeters,
+            out bool isOnTreeBranch,
+            out int supportingTreeInstanceId,
+            out int supportingBranchId,
+            out float branchNormalizedT01,
+            out OrganicTreeBranchTier supportingBranchTier)
+        {
+            isOnTreeBranch = false;
+            supportingTreeInstanceId = 0;
+            supportingBranchId = 0;
+            branchNormalizedT01 = 0f;
+            supportingBranchTier = OrganicTreeBranchTier.ThickPrimaryCarrier;
+
+            float terrainTopY = -30f;
+            if (worldChunks != null && worldChunks.Count > 0)
+            {
+                int wx = (int)MathF.Floor(worldX);
+                int wz = (int)MathF.Floor(worldZ);
+                int scanTopWy = Math.Clamp((int)MathF.Floor(refFeetY + Math.Max(0.45f, maxStepUpMeters)), 1, 253);
+                for (int wy = scanTopWy; wy >= 1; wy--)
+                {
+                    uint raw = ReadWorldVoxelRaw(worldChunks, wx, wy, wz);
+                    if (!IsHardCollisionVoxelPure(raw)) continue;
+                    uint aboveRaw = ReadWorldVoxelRaw(worldChunks, wx, wy + 1, wz);
+                    if (IsHardCollisionVoxelPure(aboveRaw)) continue;
+                    terrainTopY = GetVoxelWalkableTopYPure(raw, aboveRaw, wy);
+                    break;
+                }
+            }
+
+            OrganicTreeCanopyVisualSystem? activeTrees = treeSystem ?? OrganicTreeCanopyVisualSystem.ActiveInstance;
+            if (activeTrees != null &&
+                activeTrees.TrySampleWalkableBranchSurfaceAt(
+                    worldX,
+                    worldZ,
+                    refFeetY,
+                    footRadiusMeters,
+                    maxStepUpMeters,
+                    out float branchTopY,
+                    out int hitTreeId,
+                    out int hitBranchId,
+                    out float hitNormT,
+                    out OrganicTreeBranchTier hitTier))
+            {
+                if (branchTopY >= terrainTopY - 0.02f)
+                {
+                    isOnTreeBranch = true;
+                    supportingTreeInstanceId = hitTreeId;
+                    supportingBranchId = hitBranchId;
+                    branchNormalizedT01 = hitNormT;
+                    supportingBranchTier = hitTier;
+                    return branchTopY;
+                }
+            }
+
+            return terrainTopY;
+        }
+
+        /// <summary>
+        /// Saf C# (.NET 10 ve Unity 6) oyuncu-dal etkilesim adimi:
+        /// Oyuncu bir agac dalinin uzerine bastiginda oyuncunun toplam kutlesini (totalPlayerMassKg) ve inis darbesini
+        /// o dala uygular; dal kalinligina/agirliga gore esner (deflection) ve oyuncu dal ile birlikte alcalir.
+        /// Eger ince dalda veya asiri yukte kirilma esigi asilirsa dal fiziksel olarak kirilir, odun parcasi duser
+        /// (<paramref name="brokenBranchDrop"/>) ve oyuncu destegini kaybederek asagi duser!
+        /// </summary>
+        public static bool StepPlayerOnTreeBranchPhysicsPure(
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            OrganicTreeCanopyVisualSystem treeSystem,
+            float playerX,
+            ref float playerFeetY,
+            float playerZ,
+            ref float verticalVelocity,
+            ref byte isGrounded,
+            float totalPlayerMassKg,
+            float dt,
+            out int activeBranchId,
+            out float branchDeflectionMeters,
+            out bool branchBrokeThisStep,
+            out BrokenTreeBranchDropEvent brokenBranchDrop,
+            float footRadiusMeters = 0.22f)
+        {
+            activeBranchId = 0;
+            branchDeflectionMeters = 0f;
+            branchBrokeThisStep = false;
+            brokenBranchDrop = default;
+
+            if (treeSystem == null || dt <= 0f)
+            {
+                return false;
+            }
+
+            float supportY = SampleWalkableGroundOrBranchHeightPure(
+                worldChunks,
+                treeSystem,
+                playerX,
+                playerZ,
+                playerFeetY,
+                footRadiusMeters,
+                maxStepUpMeters: 1.08f,
+                out bool onBranch,
+                out _,
+                out int hitBranchId,
+                out float hitNormT01,
+                out _);
+
+            float snapTol = isGrounded != 0 ? 0.65f : 0.28f;
+            bool touchingSupport = supportY > -20f && playerFeetY <= supportY + snapTol && verticalVelocity <= 0.25f;
+
+            if (onBranch && touchingSupport && hitBranchId > 0)
+            {
+                float impactSpeed = MathF.Max(0f, -verticalVelocity);
+                treeSystem.ApplyLoadAndStepBranchPhysics(
+                    hitBranchId,
+                    MathF.Max(0f, totalPlayerMassKg),
+                    hitNormT01,
+                    dt,
+                    out float tipDeflection,
+                    out float deflectedSurfaceY,
+                    out bool broke,
+                    out BrokenTreeBranchDropEvent dropEvt,
+                    impactSpeed);
+
+                activeBranchId = hitBranchId;
+                branchDeflectionMeters = tipDeflection;
+
+                if (broke)
+                {
+                    branchBrokeThisStep = true;
+                    brokenBranchDrop = dropEvt;
+                    isGrounded = 0;
+                    verticalVelocity = MathF.Min(verticalVelocity, -1.35f) - StratocraftConstants.GravityAcceleration * dt;
+                    playerFeetY += verticalVelocity * dt;
+
+                    // Altta daha alcak bir dal veya arazi zemini varsa onun altina gecme:
+                    float lowerFloorY = SampleWalkableGroundOrBranchHeightPure(
+                        worldChunks, treeSystem, playerX, playerZ, playerFeetY, footRadiusMeters, 0.45f,
+                        out _, out _, out _, out _, out _);
+                    if (lowerFloorY > -20f && playerFeetY <= lowerFloorY)
+                    {
+                        playerFeetY = lowerFloorY;
+                        verticalVelocity = 0f;
+                        isGrounded = 1;
+                    }
+                    return true;
+                }
+
+                // Dal kirilmadi, elastik olarak esnedi: Oyuncu ayagi bukulmus dal yuzeyini takip eder!
+                if (deflectedSurfaceY > -20f)
+                {
+                    playerFeetY = deflectedSurfaceY;
+                }
+                else
+                {
+                    playerFeetY = supportY;
+                }
+                verticalVelocity = 0f;
+                isGrounded = 1;
+                return true;
+            }
+
+            // Oyuncu dal ustunde degil: Yuku kalkmis dallarin elastik geri yaylanmasini ilerlet ve normal yercekimi uygula
+            treeSystem.StepAllTreeBranchesPhysics(dt);
+            if (touchingSupport && supportY > -20f)
+            {
+                playerFeetY = supportY;
+                verticalVelocity = 0f;
+                isGrounded = 1;
+            }
+            else
+            {
+                isGrounded = 0;
+                verticalVelocity -= StratocraftConstants.GravityAcceleration * dt;
+                playerFeetY += verticalVelocity * dt;
+                if (supportY > -20f && playerFeetY <= supportY)
+                {
+                    playerFeetY = supportY;
+                    verticalVelocity = 0f;
+                    isGrounded = 1;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>Dunya (wx, wy, wz) koordinatindaki 32-bit vokseli okur.</summary>
@@ -1271,6 +1489,7 @@ namespace Stratocraft.Character
             }
 
             IntegrateHorizontalAndVerticalMotion(playerTransform, worldChunks, _dodgeRemainingSec > 0f ? _dodgeDirectionWorld : wishDir, deltaTime);
+            StepActiveTreeBranchLoadAndBreakage(playerTransform, worldChunks, equippedMassKg, deltaTime, ref statusFeedback);
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
             EvaluatePlayerHeadSuffocationInSolidBlock(playerTransform, worldChunks, deltaTime, ref statusFeedback, isCreativeMode);
             if (isCreativeMode)
@@ -1280,6 +1499,102 @@ namespace Stratocraft.Character
                 _vitals.LungOxygenPercent = 100f;
                 _movementState.IsExhaustedStaminaLock = 0;
             }
+        }
+
+        /// <summary>Oyuncunun su anda uzerinde durdugu 3B agac dalinin kimligi (dal ustunde degilse 0).</summary>
+        public int CurrentSupportingTreeBranchId { get; private set; }
+
+        /// <summary>Oyuncunun uzerinde durdugu agac dalinin anlik uc esneme/bukulme miktari (metre).</summary>
+        public float CurrentTreeBranchDeflectionMeters { get; private set; }
+
+        /// <summary>Oyuncunun uzerinde durdugu agac dalinin katmani (ThickPrimaryCarrier veya ThinOuterTerminal).</summary>
+        public OrganicTreeBranchTier CurrentSupportingBranchTier { get; private set; }
+
+        /// <summary>Son fizik adiminda oyuncunun bastigi agac dali asiri yukten/incelikten dolayi kirildi mi?</summary>
+        public bool DidTreeBranchBreakLastStep { get; private set; }
+
+        private void StepActiveTreeBranchLoadAndBreakage(
+            Transform playerTransform,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            float equippedMassKg,
+            float deltaTime,
+            ref string statusFeedback)
+        {
+            DidTreeBranchBreakLastStep = false;
+            OrganicTreeCanopyVisualSystem? treeSys = OrganicTreeCanopyVisualSystem.ActiveInstance;
+            if (treeSys == null || treeSys.ActiveTreeCount <= 0)
+            {
+                CurrentSupportingTreeBranchId = 0;
+                CurrentTreeBranchDeflectionMeters = 0f;
+                return;
+            }
+
+            Vector3 pos = playerTransform.position;
+            float footR = Mathf.Clamp(_movementState.CapsuleRadiusMeters * 0.68f, 0.16f, 0.26f);
+
+            if (_jumpLaunchTimer <= 0.001f &&
+                _verticalVelocity <= 0.25f &&
+                treeSys.TrySampleWalkableBranchSurfaceAt(
+                    pos.x,
+                    pos.z,
+                    pos.y,
+                    footR,
+                    MaxKneeStepUpMeters,
+                    out float branchTopY,
+                    out _,
+                    out int hitBranchId,
+                    out float normT01,
+                    out OrganicTreeBranchTier hitTier))
+            {
+                float terrainY = SampleBilinearVoxelGroundHeight(worldChunks, pos.x, pos.z, pos.y);
+                bool onBranchAboveTerrain = branchTopY >= terrainY - 0.04f && Mathf.Abs(pos.y - branchTopY) <= 0.48f;
+                if (onBranchAboveTerrain)
+                {
+                    float totalMassKg = BaseBodyMassKg + Mathf.Max(0f, equippedMassKg);
+                    float landingSpeed = Mathf.Max(0f, -_verticalVelocity);
+                    treeSys.ApplyLoadAndStepBranchPhysics(
+                        hitBranchId,
+                        totalMassKg,
+                        normT01,
+                        deltaTime,
+                        out float tipDeflection,
+                        out float deflectedSurfaceY,
+                        out bool branchBroke,
+                        out BrokenTreeBranchDropEvent brokenDrop,
+                        landingSpeed);
+
+                    if (branchBroke)
+                    {
+                        CurrentSupportingTreeBranchId = 0;
+                        CurrentTreeBranchDeflectionMeters = 0f;
+                        DidTreeBranchBreakLastStep = true;
+                        _movementState.IsGrounded = 0;
+                        _coyoteGroundedTimer = 0f;
+                        _verticalVelocity = Mathf.Min(_verticalVelocity, -1.65f);
+                        pos.y += _verticalVelocity * deltaTime;
+                        playerTransform.position = pos;
+                        statusFeedback =
+                            $"💥 AĞAÇ DALI KIRILDI! ({brokenDrop.Species} {brokenDrop.Tier} dalı {totalMassKg:F0} kg yüke dayanamadı -> +{brokenDrop.DroppedWoodCount} Odun düştü!)";
+                        return;
+                    }
+
+                    CurrentSupportingTreeBranchId = hitBranchId;
+                    CurrentTreeBranchDeflectionMeters = tipDeflection;
+                    CurrentSupportingBranchTier = hitTier;
+                    if (deflectedSurfaceY > -20f && Mathf.Abs(deflectedSurfaceY - pos.y) <= 0.45f)
+                    {
+                        pos.y = Mathf.MoveTowards(pos.y, deflectedSurfaceY, deltaTime * 22f);
+                        playerTransform.position = pos;
+                    }
+                    _movementState.IsGrounded = 1;
+                    _coyoteGroundedTimer = 0.16f;
+                    return;
+                }
+            }
+
+            CurrentSupportingTreeBranchId = 0;
+            CurrentTreeBranchDeflectionMeters = 0f;
+            treeSys.StepAllTreeBranchesPhysics(deltaTime);
         }
 
         private void StepCreativeFlightPhysics(
@@ -2286,6 +2601,29 @@ namespace Stratocraft.Character
                     }
                     break;
                 }
+
+                // Ayni ileri mesafede [1.10m .. 2.25m] yukseklikte saglam bir kalin tasiyici agac dali varsa ona da tirmanilabilir (Mantle)!
+                OrganicTreeCanopyVisualSystem? treeSys = OrganicTreeCanopyVisualSystem.ActiveInstance;
+                if (treeSys != null &&
+                    treeSys.TrySampleWalkableBranchSurfaceAt(
+                        probe.x,
+                        probe.z,
+                        pos.y + 1.15f,
+                        footRadiusMeters: 0.26f,
+                        maxStepUpMeters: 1.15f,
+                        out float branchLedgeY,
+                        out _,
+                        out _,
+                        out _,
+                        out _))
+                {
+                    float branchHeightDiff = branchLedgeY - pos.y;
+                    if (branchHeightDiff >= 1.10f && branchHeightDiff <= 2.25f)
+                    {
+                        ledgeTopY = branchLedgeY;
+                        return true;
+                    }
+                }
             }
 
             return false;
@@ -2395,33 +2733,58 @@ namespace Stratocraft.Character
 
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
         {
-            float smoothVoxelY = SampleBilinearVoxelGroundHeight(worldChunks, pos.x, pos.z, pos.y);
-            if (smoothVoxelY > -20f)
-            {
-                return smoothVoxelY;
-            }
+            float bestTerrainY = SampleBilinearVoxelGroundHeight(worldChunks, pos.x, pos.z, pos.y);
 
-            // Merkez nokta 1cm duvar sutununa (aboveRaw kati) denk gelip -30f donduyse ayak diskinin 4 acik kenarini tara:
-            const float footR = 0.22f;
-            int startWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + MaxKneeStepUpMeters), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
-            ReadOnlySpan<float> ox = stackalloc float[4] { footR, -footR, 0f, 0f };
-            ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, footR, -footR };
-            float bestFootY = -30f;
-            for (int i = 0; i < 4; i++)
+            if (bestTerrainY <= -20f)
             {
-                float py = SampleSingleColumnGroundY(
-                    worldChunks,
-                    Mathf.FloorToInt(pos.x + ox[i]),
-                    Mathf.FloorToInt(pos.z + oz[i]),
-                    startWy);
-                if (py > bestFootY && py <= pos.y + MaxKneeStepUpMeters)
+                // Merkez nokta 1cm duvar sutununa (aboveRaw kati) denk gelip -30f donduyse ayak diskinin 4 acik kenarini tara:
+                const float footR = 0.22f;
+                int startWy = Mathf.Clamp(Mathf.FloorToInt(pos.y + MaxKneeStepUpMeters), 1, Stage1InteractivePlayController.MaxEditableVoxelY - 3);
+                ReadOnlySpan<float> ox = stackalloc float[4] { footR, -footR, 0f, 0f };
+                ReadOnlySpan<float> oz = stackalloc float[4] { 0f, 0f, footR, -footR };
+                float bestFootY = -30f;
+                for (int i = 0; i < 4; i++)
                 {
-                    bestFootY = py;
+                    float py = SampleSingleColumnGroundY(
+                        worldChunks,
+                        Mathf.FloorToInt(pos.x + ox[i]),
+                        Mathf.FloorToInt(pos.z + oz[i]),
+                        startWy);
+                    if (py > bestFootY && py <= pos.y + MaxKneeStepUpMeters)
+                    {
+                        bestFootY = py;
+                    }
+                }
+                if (bestFootY > -20f)
+                {
+                    bestTerrainY = bestFootY;
                 }
             }
-            if (bestFootY > -20f)
+
+            // 3B Organik Agac Dallari uzerinde yurume/basma destegi:
+            OrganicTreeCanopyVisualSystem? treeSys = OrganicTreeCanopyVisualSystem.ActiveInstance;
+            if (treeSys != null &&
+                treeSys.TrySampleWalkableBranchSurfaceAt(
+                    pos.x,
+                    pos.z,
+                    pos.y,
+                    footRadiusMeters: 0.22f,
+                    maxStepUpMeters: MaxKneeStepUpMeters,
+                    out float branchTopY,
+                    out _,
+                    out _,
+                    out _,
+                    out _))
             {
-                return bestFootY;
+                if (branchTopY > bestTerrainY)
+                {
+                    return branchTopY;
+                }
+            }
+
+            if (bestTerrainY > -20f)
+            {
+                return bestTerrainY;
             }
 
             int terrainMask = LayerMask.GetMask("VoxelTerrain");
@@ -2432,7 +2795,7 @@ namespace Stratocraft.Character
             {
                 return hit.point.y;
             }
-            return smoothVoxelY;
+            return bestTerrainY;
         }
 
         private void RescueFromVoid(Transform playerTransform, Dictionary<(int cx, int cz), uint[]> worldChunks)
