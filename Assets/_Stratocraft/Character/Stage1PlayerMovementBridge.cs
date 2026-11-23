@@ -637,6 +637,13 @@ namespace Stratocraft.Character
                 movedAny = true;
             }
 
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0 &&
+                SpatialHashedStructureCollisionSolver.Shared.ResolveHorizontalDepenetrationFromStructures(
+                    ref posX, posY, ref posZ, capsuleHeightMeters, r, 1.08f))
+            {
+                movedAny = true;
+            }
+
             return movedAny;
         }
 
@@ -711,6 +718,15 @@ namespace Stratocraft.Character
             if (structStopY > -900f && prevFeetY >= structStopY - 0.30f && structStopY > minAllowedY)
             {
                 minAllowedY = structStopY;
+            }
+
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0)
+            {
+                float spatialStopY = SpatialHashedStructureCollisionSolver.Shared.SampleWalkableStructureTopY(posX, prevFeetY, posZ, r, 1.08f);
+                if (spatialStopY > -900f && prevFeetY >= spatialStopY - 0.30f && spatialStopY > minAllowedY)
+                {
+                    minAllowedY = spatialStopY;
+                }
             }
 
             if (worldChunks == null || worldChunks.Count == 0)
@@ -2838,6 +2854,17 @@ namespace Stratocraft.Character
                 return true;
             }
 
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0 &&
+                SpatialHashedStructureCollisionSolver.Shared.IsCapsuleStepBlockedByStructures(
+                    new System.Numerics.Vector3(cur.x, cur.y, cur.z),
+                    new System.Numerics.Vector3(next.x, next.y, next.z),
+                    capsuleHeightMeters,
+                    capsuleRadiusMeters,
+                    MaxKneeStepUpMeters))
+            {
+                return true;
+            }
+
             ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
             if (pieces.Length == 0) return false;
 
@@ -2853,6 +2880,12 @@ namespace Stratocraft.Character
         private float SampleSupportGroundHeightWithModular(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
         {
             float voxelY = SampleSupportGroundHeight(worldChunks, pos);
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0)
+            {
+                float spatialY = SpatialHashedStructureCollisionSolver.Shared.SampleWalkableStructureTopY(
+                    pos.x, pos.y, pos.z, footRadius: 0.24f, MaxKneeStepUpMeters);
+                if (spatialY > voxelY) voxelY = spatialY;
+            }
             ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
             if (pieces.Length == 0) return voxelY;
 
@@ -2868,8 +2901,16 @@ namespace Stratocraft.Character
             float capsuleRadiusMeters)
         {
             bool voxelBonk = TryResolveCeilingHeadBonk(worldChunks, ref pos, capsuleHeightMeters, capsuleRadiusMeters);
+            bool spatialBonk = false;
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0)
+            {
+                System.Numerics.Vector3 spNum = new System.Numerics.Vector3(pos.x, pos.y, pos.z);
+                spatialBonk = SpatialHashedStructureCollisionSolver.Shared.TryResolveCeilingHeadBonk(
+                    ref spNum, capsuleHeightMeters, capsuleRadiusMeters);
+                if (spatialBonk) pos.y = spNum.Y;
+            }
             ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
-            if (pieces.Length == 0) return voxelBonk;
+            if (pieces.Length == 0) return voxelBonk || spatialBonk;
 
             System.Numerics.Vector3 pNum = new System.Numerics.Vector3(pos.x, pos.y, pos.z);
             bool modBonk = ModularStructureCollisionSolver.TryResolveCeilingHeadBonk(
@@ -2878,7 +2919,7 @@ namespace Stratocraft.Character
             {
                 pos.y = pNum.Y;
             }
-            return voxelBonk || modBonk;
+            return voxelBonk || spatialBonk || modBonk;
         }
 
         private void MeasureHeadroomClearanceWithModular(
@@ -2889,10 +2930,27 @@ namespace Stratocraft.Character
             out bool canStand180)
         {
             MeasureHeadroomClearance(worldChunks, feetPos, supportGroundY, out canCrouch115, out canStand180);
+            float refY = supportGroundY > -20f ? Mathf.Max(feetPos.y, supportGroundY) : feetPos.y;
+            if (SpatialHashedStructureCollisionSolver.Shared.UnifiedNodeCount > 0)
+            {
+                System.Numerics.Vector3 probe115 = new System.Numerics.Vector3(feetPos.x, refY, feetPos.z);
+                if (SpatialHashedStructureCollisionSolver.Shared.TryResolveCeilingHeadBonk(ref probe115, 1.15f, 0.30f))
+                {
+                    canCrouch115 = false;
+                    canStand180 = false;
+                }
+                else
+                {
+                    System.Numerics.Vector3 probe180 = new System.Numerics.Vector3(feetPos.x, refY, feetPos.z);
+                    if (SpatialHashedStructureCollisionSolver.Shared.TryResolveCeilingHeadBonk(ref probe180, 1.80f, 0.30f))
+                    {
+                        canStand180 = false;
+                    }
+                }
+            }
             ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
             if (pieces.Length == 0) return;
 
-            float refY = supportGroundY > -20f ? Mathf.Max(feetPos.y, supportGroundY) : feetPos.y;
             ModularStructureCollisionSolver.EvaluateHeadroomClearance(
                 pieces,
                 new System.Numerics.Vector3(feetPos.x, refY, feetPos.z),

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
 using Stratocraft.Core.NativeBridge;
+using Stratocraft.Core.Structures;
 
 namespace Stratocraft.Core.Persistence
 {
@@ -119,6 +120,12 @@ namespace Stratocraft.Core.Persistence
             for (int i = 0; i < span.Length; i++)
             {
                 ChunkSerializationSnapshot snap = span[i];
+                if (snap.HasPersistentStructureGraph)
+                {
+                    snap.HasActiveStructures = true;
+                    snap.DirtyFlags |= ChunkDirtyFlags.Structures;
+                }
+
                 var key = (snap.ChunkX, snap.ChunkZ);
                 _chunkCache[key] = snap;
                 _knownStoredCoords[key] = 1;
@@ -242,7 +249,7 @@ namespace Stratocraft.Core.Persistence
             foreach (KeyValuePair<(int ChunkX, int ChunkZ), ChunkSerializationSnapshot> kvp in _chunkCache)
             {
                 ChunkSerializationSnapshot snap = kvp.Value;
-                if (snap.IsInsideClan || snap.HasActiveStructures)
+                if (snap.IsInsideClan || snap.HasActiveStructures || snap.HasPersistentStructureGraph)
                 {
                     continue;
                 }
@@ -281,7 +288,7 @@ namespace Stratocraft.Core.Persistence
             foreach (KeyValuePair<(int ChunkX, int ChunkZ), ChunkSerializationSnapshot> kvp in _chunkCache)
             {
                 ChunkSerializationSnapshot snap = kvp.Value;
-                if (snap.IsInsideClan || snap.HasActiveStructures || snap.LastVisitedUtcMinutes == 0u)
+                if (snap.IsInsideClan || snap.HasActiveStructures || snap.HasPersistentStructureGraph || snap.LastVisitedUtcMinutes == 0u)
                 {
                     continue;
                 }
@@ -513,12 +520,18 @@ namespace Stratocraft.Core.Persistence
 
             foreach (ChunkSerializationSnapshot c in chunks)
             {
+                bool hasStructureSection = c.StructureGraph != null && !c.StructureGraph.IsEmpty;
+                bool effectiveHasActiveStructures = c.HasActiveStructures || hasStructureSection;
+                ChunkDirtyFlags effectiveDirtyFlags = hasStructureSection
+                    ? (c.DirtyFlags | ChunkDirtyFlags.Structures)
+                    : (c.DirtyFlags & ~ChunkDirtyFlags.Structures);
+
                 bw.Write(c.ChunkX);
                 bw.Write(c.ChunkZ);
                 bw.Write(c.LastVisitedGameDay);
                 bw.Write(c.LastVisitedUtcMinutes);
                 bw.Write(c.IsInsideClan);
-                bw.Write(c.HasActiveStructures);
+                bw.Write(effectiveHasActiveStructures);
 
                 bool useSeedDelta = worldSeed.HasValue
                     && c.VoxelCells.Length == StratocraftConstants.VoxelsPerChunk
@@ -546,9 +559,9 @@ namespace Stratocraft.Core.Persistence
                     bw.Write(micro[i].Mask64);
                 }
 
-                // V3 Hidroloji, Kar, Tuzluluk ve Ekran-Disi Yakalama Ust-Verisi
+                // V3 Hidroloji, Kar, Tuzluluk, Yapi Grafi ve Ekran-Disi Yakalama Ust-Verisi
                 bw.Write(c.LastSimulatedGameSeconds);
-                bw.Write((byte)c.DirtyFlags);
+                bw.Write((byte)effectiveDirtyFlags);
 
                 var moist = c.SparseSoilMoisture;
                 bw.Write(moist.Length);
@@ -570,6 +583,13 @@ namespace Stratocraft.Core.Persistence
                 if (hasSalinity)
                 {
                     WriteRleUInt64(bw, c.SalinityBits1024!);
+                }
+
+                // Opsiyonel V3 StructureGraphSection (ChunkDirtyFlags.Structures = 1 << 7).
+                // Dokunulmamis prosedurel yerlesim chunk'larinda bu bayrak 0 kalir -> diskte 0 B ek yer!
+                if (hasStructureSection)
+                {
+                    WriteStructureGraphSection(bw, c.StructureGraph!);
                 }
             }
 
@@ -638,13 +658,35 @@ namespace Stratocraft.Core.Persistence
                 byte[]? snow256 = br.ReadBoolean() ? br.ReadBytes(256) : null;
                 ulong[]? salinity1024 = br.ReadBoolean() ? ReadRleUInt64(br, 1024) : null;
 
+                StructureGraphSection? structureGraph = null;
+                if ((dirtyFlags & ChunkDirtyFlags.Structures) != 0 && ms.Position < ms.Length)
+                {
+                    structureGraph = ReadStructureGraphSectionSafe(br, ms);
+                }
+
+                var snap = new ChunkSerializationSnapshot(
+                    cx, cz, voxels, fluids, lastDay, inClan, hasStruct, lastUtcMin, micro,
+                    lastSimSec, dirtyFlags, moist, snow256, salinity1024, structureGraph);
+
+                // Erken V3 geriye donuk otomatik migrasyon: HasActiveStructures == true ancak StructureGraphSection yok
+                if (snap.HasActiveStructures && snap.StructureGraph == null)
+                {
+                    StructureGraphSection? migrated = LegacyPieceToUnifiedMigrator.TryMigrateLegacyVoxelSnapshot(snap);
+                    if (migrated != null)
+                    {
+                        snap.StructureGraph = migrated;
+                        if (!migrated.IsEmpty)
+                        {
+                            snap.DirtyFlags |= ChunkDirtyFlags.Structures;
+                        }
+                    }
+                }
+
                 var key = (cx, cz);
                 _knownStoredCoords[key] = 1;
                 if (overwriteExisting || !_chunkCache.ContainsKey(key))
                 {
-                    _chunkCache[key] = new ChunkSerializationSnapshot(
-                        cx, cz, voxels, fluids, lastDay, inClan, hasStruct, lastUtcMin, micro,
-                        lastSimSec, dirtyFlags, moist, snow256, salinity1024);
+                    _chunkCache[key] = snap;
                     _cacheOrder.Enqueue(key);
                 }
             }
@@ -696,12 +738,28 @@ namespace Stratocraft.Core.Persistence
                     micro[m] = (subY, slot12, mask64);
                 }
 
+                var snap = new ChunkSerializationSnapshot(
+                    cx, cz, voxels, fluids, lastDay, inClan, hasStruct, lastUtcMin, micro);
+
+                // V2 -> V3 otomatik yapi migrasyonu (0 kayit cokmesi)
+                if (snap.HasActiveStructures)
+                {
+                    StructureGraphSection? migrated = LegacyPieceToUnifiedMigrator.TryMigrateLegacyVoxelSnapshot(snap);
+                    if (migrated != null)
+                    {
+                        snap.StructureGraph = migrated;
+                        if (!migrated.IsEmpty)
+                        {
+                            snap.DirtyFlags |= ChunkDirtyFlags.Structures;
+                        }
+                    }
+                }
+
                 var key = (cx, cz);
                 _knownStoredCoords[key] = 1;
                 if (overwriteExisting || !_chunkCache.ContainsKey(key))
                 {
-                    _chunkCache[key] = new ChunkSerializationSnapshot(
-                        cx, cz, voxels, fluids, lastDay, inClan, hasStruct, lastUtcMin, micro);
+                    _chunkCache[key] = snap;
                     _cacheOrder.Enqueue(key);
                 }
             }
@@ -730,15 +788,335 @@ namespace Stratocraft.Core.Persistence
                 ushort[] fluids = new ushort[fluidLen];
                 Buffer.BlockCopy(fluidBytes, 0, fluids, 0, fluidBytes.Length);
 
+                var snap = new ChunkSerializationSnapshot(
+                    cx, cz, voxels, fluids, lastDay, inClan, hasStruct);
+
+                if (snap.HasActiveStructures)
+                {
+                    StructureGraphSection? migrated = LegacyPieceToUnifiedMigrator.TryMigrateLegacyVoxelSnapshot(snap);
+                    if (migrated != null)
+                    {
+                        snap.StructureGraph = migrated;
+                        if (!migrated.IsEmpty)
+                        {
+                            snap.DirtyFlags |= ChunkDirtyFlags.Structures;
+                        }
+                    }
+                }
+
                 var key = (cx, cz);
                 _knownStoredCoords[key] = 1;
                 if (overwriteExisting || !_chunkCache.ContainsKey(key))
                 {
-                    _chunkCache[key] = new ChunkSerializationSnapshot(
-                        cx, cz, voxels, fluids, lastDay, inClan, hasStruct);
+                    _chunkCache[key] = snap;
                     _cacheOrder.Enqueue(key);
                 }
             }
+        }
+
+        /// <summary>
+        /// StructureGraphSection verisini Zstd + XXH64 korumali .sregion V3 akimina yazar.
+        /// </summary>
+        public static byte[] SerializeStructureGraphSectionToBytes(StructureGraphSection section)
+        {
+            if (section == null || section.IsEmpty)
+            {
+                return Array.Empty<byte>();
+            }
+
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+            WriteStructureGraphSection(bw, section);
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// StructureGraphSection bayt bloklarini (hem guncel V3 hem eski inline surum 0) cokmeden okur ve gerekirse migre eder.
+        /// </summary>
+        public static StructureGraphSection DeserializeStructureGraphSectionFromBytes(ReadOnlySpan<byte> data)
+        {
+            if (data.IsEmpty)
+            {
+                return new StructureGraphSection();
+            }
+
+            using var ms = new MemoryStream(data.ToArray());
+            using var br = new BinaryReader(ms);
+            return ReadStructureGraphSectionSafe(br, ms);
+        }
+
+        private static void WriteStructureGraphSection(BinaryWriter bw, StructureGraphSection section)
+        {
+            bw.Write(StructureGraphSection.CurrentSectionFormatVersion);
+            bw.Write(section.MortarCureTick);
+            bw.Write(section.SettlementBaselineSeedHash);
+
+            SerializedStructuralNode24[] nodes = section.Nodes;
+            bw.Write(nodes.Length);
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                WriteSerializedNode24(bw, in nodes[i]);
+            }
+
+            DoorShutterStateRecord[] doors = section.DoorShutterStates;
+            bw.Write(doors.Length);
+            for (int i = 0; i < doors.Length; i++)
+            {
+                bw.Write(doors[i].NodeId);
+                bw.Write((byte)doors[i].StateFlags);
+                bw.Write(doors[i].Reserved0);
+                bw.Write(doors[i].OwnerClanOrPlayerId16);
+            }
+
+            ulong[] destMask = section.SettlementDestructionMaskWords;
+            bw.Write(destMask.Length);
+            if (destMask.Length > 0)
+            {
+                WriteRleUInt64(bw, destMask);
+            }
+
+            ulong[] repMask = section.SettlementRepairMaskWords;
+            bw.Write(repMask.Length);
+            if (repMask.Length > 0)
+            {
+                WriteRleUInt64(bw, repMask);
+            }
+
+            SettlementSeedDeltaRecord[] deltas = section.SettlementSeedDeltas;
+            bw.Write(deltas.Length);
+            for (int i = 0; i < deltas.Length; i++)
+            {
+                bw.Write(deltas[i].BaselineNodeId);
+                bw.Write((byte)deltas[i].Kind);
+                bw.Write(deltas[i].IntegrityByte);
+                bw.Write(deltas[i].CureRatioByte);
+                bw.Write((byte)deltas[i].DoorStateFlags);
+                bw.Write(deltas[i].AddedOrReplacementNodeId);
+            }
+
+            StructureStationMetaRecord[] stations = section.StationsAndBeds;
+            bw.Write(stations.Length);
+            for (int i = 0; i < stations.Length; i++)
+            {
+                bw.Write(stations[i].StationId);
+                bw.Write((byte)stations[i].Kind);
+                bw.Write(stations[i].MaterialOrTier);
+                bw.Write((byte)stations[i].Flags);
+                bw.Write(stations[i].Reserved0);
+                bw.Write(stations[i].PosX);
+                bw.Write(stations[i].PosY);
+                bw.Write(stations[i].PosZ);
+                bw.Write(stations[i].OwnerClanOrPlayerId16);
+                bw.Write(stations[i].StoredUnits);
+            }
+        }
+
+        private static StructureGraphSection ReadStructureGraphSectionSafe(BinaryReader br, MemoryStream ms)
+        {
+            if (ms.Position >= ms.Length)
+            {
+                return new StructureGraphSection();
+            }
+
+            try
+            {
+                byte sectionVersion = br.ReadByte();
+                if (sectionVersion == StructureGraphSection.LegacyInlineSectionFormatVersion)
+                {
+                    return ReadAndMigrateLegacyInlineStructureSection(br);
+                }
+
+                if (sectionVersion != StructureGraphSection.CurrentSectionFormatVersion)
+                {
+                    return new StructureGraphSection(migratedFromLegacyFormat: true);
+                }
+
+                ulong mortarCureTick = br.ReadUInt64();
+                int settlementSeedHash = br.ReadInt32();
+
+                int nodeCount = br.ReadInt32();
+                SerializedStructuralNode24[] nodes = nodeCount > 0
+                    ? new SerializedStructuralNode24[nodeCount]
+                    : Array.Empty<SerializedStructuralNode24>();
+                for (int i = 0; i < nodeCount; i++)
+                {
+                    nodes[i] = ReadSerializedNode24(br);
+                }
+
+                int doorCount = br.ReadInt32();
+                DoorShutterStateRecord[] doors = doorCount > 0
+                    ? new DoorShutterStateRecord[doorCount]
+                    : Array.Empty<DoorShutterStateRecord>();
+                for (int i = 0; i < doorCount; i++)
+                {
+                    uint dNodeId = br.ReadUInt32();
+                    DoorShutterStateFlags dFlags = (DoorShutterStateFlags)br.ReadByte();
+                    byte reserved = br.ReadByte();
+                    ushort dOwner = br.ReadUInt16();
+                    doors[i] = new DoorShutterStateRecord
+                    {
+                        NodeId = dNodeId,
+                        StateFlags = dFlags,
+                        Reserved0 = reserved,
+                        OwnerClanOrPlayerId16 = dOwner
+                    };
+                }
+
+                int destWordLen = br.ReadInt32();
+                ulong[] destWords = destWordLen > 0 ? ReadRleUInt64(br, destWordLen) : Array.Empty<ulong>();
+
+                int repWordLen = br.ReadInt32();
+                ulong[] repWords = repWordLen > 0 ? ReadRleUInt64(br, repWordLen) : Array.Empty<ulong>();
+
+                int deltaCount = br.ReadInt32();
+                SettlementSeedDeltaRecord[] deltas = deltaCount > 0
+                    ? new SettlementSeedDeltaRecord[deltaCount]
+                    : Array.Empty<SettlementSeedDeltaRecord>();
+                for (int i = 0; i < deltaCount; i++)
+                {
+                    uint baseId = br.ReadUInt32();
+                    StructuralSeedDeltaKind kind = (StructuralSeedDeltaKind)br.ReadByte();
+                    byte integ = br.ReadByte();
+                    byte cure = br.ReadByte();
+                    DoorShutterStateFlags dFlags = (DoorShutterStateFlags)br.ReadByte();
+                    uint addedId = br.ReadUInt32();
+                    deltas[i] = new SettlementSeedDeltaRecord(baseId, kind, integ, cure, dFlags, addedId);
+                }
+
+                int stationCount = br.ReadInt32();
+                StructureStationMetaRecord[] stations = stationCount > 0
+                    ? new StructureStationMetaRecord[stationCount]
+                    : Array.Empty<StructureStationMetaRecord>();
+                for (int i = 0; i < stationCount; i++)
+                {
+                    uint sId = br.ReadUInt32();
+                    StructureStationKind sKind = (StructureStationKind)br.ReadByte();
+                    byte sMatTier = br.ReadByte();
+                    StructureStationFlags sFlags = (StructureStationFlags)br.ReadByte();
+                    byte sRes = br.ReadByte();
+                    float sX = br.ReadSingle();
+                    float sY = br.ReadSingle();
+                    float sZ = br.ReadSingle();
+                    ushort sOwner = br.ReadUInt16();
+                    ushort sUnits = br.ReadUInt16();
+                    stations[i] = new StructureStationMetaRecord
+                    {
+                        StationId = sId,
+                        Kind = sKind,
+                        MaterialOrTier = sMatTier,
+                        Flags = sFlags,
+                        Reserved0 = sRes,
+                        PosX = sX,
+                        PosY = sY,
+                        PosZ = sZ,
+                        OwnerClanOrPlayerId16 = sOwner,
+                        StoredUnits = sUnits
+                    };
+                }
+
+                return new StructureGraphSection(
+                    nodes: nodes,
+                    mortarCureTick: mortarCureTick,
+                    doorShutterStates: doors,
+                    settlementBaselineSeedHash: settlementSeedHash,
+                    settlementDestructionMaskWords: destWords,
+                    settlementRepairMaskWords: repWords,
+                    settlementSeedDeltas: deltas,
+                    stationsAndBeds: stations,
+                    migratedFromLegacyFormat: false);
+            }
+            catch (EndOfStreamException)
+            {
+                return new StructureGraphSection(migratedFromLegacyFormat: true);
+            }
+        }
+
+        private static StructureGraphSection ReadAndMigrateLegacyInlineStructureSection(BinaryReader br)
+        {
+            ulong mortarTick = br.ReadUInt64();
+            int legacyCount = br.ReadInt32();
+            if (legacyCount <= 0)
+            {
+                return new StructureGraphSection(mortarCureTick: mortarTick, migratedFromLegacyFormat: true);
+            }
+
+            var legacyRecords = new LegacyModularPieceRecord[legacyCount];
+            for (int i = 0; i < legacyCount; i++)
+            {
+                legacyRecords[i] = new LegacyModularPieceRecord
+                {
+                    InstanceId = br.ReadInt32(),
+                    PieceKindRaw = br.ReadByte(),
+                    MaterialKindRaw = br.ReadByte(),
+                    ThicknessKindRaw = br.ReadByte(),
+                    CompletedCourses = br.ReadByte(),
+                    RequiredCourses = br.ReadByte(),
+                    PosX = br.ReadSingle(),
+                    PosY = br.ReadSingle(),
+                    PosZ = br.ReadSingle(),
+                    YawDegrees = br.ReadSingle(),
+                    Health = br.ReadSingle(),
+                    MaxHealth = br.ReadSingle(),
+                    IsGrounded = br.ReadBoolean(),
+                    IsBroken = br.ReadBoolean(),
+                    IsDoorOrWindowOpen = br.ReadBoolean(),
+                    IsLocked = br.ReadBoolean(),
+                    OwnerClanOrPlayerId = br.ReadUInt32()
+                };
+            }
+
+            return LegacyPieceToUnifiedMigrator.MigrateBatchToSection(legacyRecords, mortarTick);
+        }
+
+        private static void WriteSerializedNode24(BinaryWriter bw, in SerializedStructuralNode24 n)
+        {
+            bw.Write(n.NodeId);
+            bw.Write(n.PosXQ0);
+            bw.Write(n.PosXQ1);
+            bw.Write(n.PosXQ2);
+            bw.Write(n.PosYQ0);
+            bw.Write(n.PosYQ1);
+            bw.Write(n.PosYQ2);
+            bw.Write(n.PosZQ0);
+            bw.Write(n.PosZQ1);
+            bw.Write(n.PosZQ2);
+            bw.Write(n.SchoolYawThicknessOpenPacked);
+            bw.Write(n.RoleRaw);
+            bw.Write(n.MaterialId);
+            bw.Write(n.AnchorMortarCollapseLockPacked);
+            bw.Write(n.ChinkingCrystalDetachedPacked);
+            bw.Write(n.CureRatioByte);
+            bw.Write(n.IntegrityByte);
+            bw.Write(n.CharAndCoursesPacked);
+            bw.Write(n.StressRatioCenti);
+            bw.Write(n.OwnerClanOrPlayerId16);
+        }
+
+        private static SerializedStructuralNode24 ReadSerializedNode24(BinaryReader br)
+        {
+            return new SerializedStructuralNode24
+            {
+                NodeId = br.ReadUInt32(),
+                PosXQ0 = br.ReadByte(),
+                PosXQ1 = br.ReadByte(),
+                PosXQ2 = br.ReadByte(),
+                PosYQ0 = br.ReadByte(),
+                PosYQ1 = br.ReadByte(),
+                PosYQ2 = br.ReadByte(),
+                PosZQ0 = br.ReadByte(),
+                PosZQ1 = br.ReadByte(),
+                PosZQ2 = br.ReadByte(),
+                SchoolYawThicknessOpenPacked = br.ReadByte(),
+                RoleRaw = br.ReadByte(),
+                MaterialId = br.ReadByte(),
+                AnchorMortarCollapseLockPacked = br.ReadByte(),
+                ChinkingCrystalDetachedPacked = br.ReadByte(),
+                CureRatioByte = br.ReadByte(),
+                IntegrityByte = br.ReadByte(),
+                CharAndCoursesPacked = br.ReadByte(),
+                StressRatioCenti = br.ReadByte(),
+                OwnerClanOrPlayerId16 = br.ReadUInt16()
+            };
         }
 
         private static void WriteRleUInt64(BinaryWriter bw, ulong[] values)

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using Stratocraft.Core.Constants;
+using Stratocraft.Core.Structures;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
 using Stratocraft.Physics.Systems;
@@ -27,6 +28,7 @@ namespace Stratocraft.Character
         public const int MaxRingBufferSlots = 64;
         public const int SurgeModeActiveClusterLimit = 16;
         public const float PreCollapseWarningDurationSeconds = 0.0f;
+        public const float UnifiedStructureOverloadWarningSeconds = MortarConstants.OverloadCollapseWarningSeconds;
         public const float LocalTerzaghiRadiusSqXZ = 64.0f; // 8.0m yatay yaricap
         public const int MinTerzaghiDomeThicknessBlocks = 2;
         public const int MaxTerzaghiDomeThicknessBlocks = 6;
@@ -144,6 +146,157 @@ namespace Stratocraft.Character
         }
 
         public double LastEvaluationMs => _collapseSystem.LastEvaluationMilliseconds;
+
+        /// <summary>Kare basina aktif 3B fiziksel enkaz dusus butcesi (Karar A1 &amp; Surge Mode).</summary>
+        public int MaxStructuralNodeDebrisBudgetPerFrame { get; set; } = SurgeModeActiveClusterLimit;
+
+        /// <summary>Faz 3 Klan 3D BFS sinir ihlali / 8m gedik bildirim kancasi (AK-13).</summary>
+        public ClanBoundaryBreachCallback? OnClanBoundaryBreach
+        {
+            get => _collapseSystem.OnClanBoundaryBreach;
+            set => _collapseSystem.OnClanBoundaryBreach = value;
+        }
+
+        /// <summary>Faz 9 Kusatma BreachWindow hasar iletim kancasi (TSA-05, AK-13).</summary>
+        public SiegeBreachDamageCallback? OnSiegeBreachImpact
+        {
+            get => _collapseSystem.OnSiegeBreachImpact;
+            set => _collapseSystem.OnSiegeBreachImpact = value;
+        }
+
+        public StructuralNodeCollapseStepSummary LastUnifiedNodeCollapseSummary { get; private set; }
+        public SiegeBreachImpactResult LastSiegeBreachImpactResult { get; private set; }
+        public int TotalClanBoundaryBreachesEmitted { get; private set; }
+
+        /// <summary>
+        /// Saf C# (.NET 10 &amp; Unity 6) Birlesik StructuralNode64 yikim/enkaz koprusu (0-GC):
+        /// Karar A1 uyarinca d_geo == 65535 dugumleri 0.0s aninda dusurur, eta_max &gt;= 1.0 dugumleri
+        /// 1.5s catirdama uyarisi sonrasinda 3B acisal torkla dusurur ve Faz 3 Klan 3D BFS ihlallerini bildirir.
+        /// </summary>
+        public StructuralNodeCollapseStepSummary StepUnifiedStructureNodesCollapse(
+            Span<StructuralNode64> nodes,
+            float deltaTimeSeconds,
+            System.Numerics.Vector3 fracturePivotWorld,
+            Span<StructuralNodeDebrisEvent> outDebrisEvents,
+            out int emittedDebrisCount,
+            Span<ClanBoundaryBreachNotification> outClanBreaches,
+            out int emittedClanBreachCount)
+        {
+            int effectiveBudget = Math.Max(0, MaxStructuralNodeDebrisBudgetPerFrame);
+            StructuralNodeCollapseStepSummary summary = _collapseSystem.StepStructuralNodeCollapseEvents(
+                nodes,
+                deltaTimeSeconds,
+                fracturePivotWorld,
+                outDebrisEvents,
+                out emittedDebrisCount,
+                outClanBreaches,
+                out emittedClanBreachCount,
+                maxDebrisBudgetPerStep: effectiveBudget);
+
+            LastUnifiedNodeCollapseSummary = summary;
+            TotalClanBoundaryBreachesEmitted += summary.ClanBoundaryBreachCount;
+            return summary;
+        }
+
+        /// <summary>
+        /// Saf C# (.NET 10 &amp; Unity 6) Faz 9 Kusatma BreachWindow hasar ve gedik iletim koprusu (TSA-05, AK-13).
+        /// </summary>
+        public SiegeBreachImpactResult ApplySiegeBreachImpact(
+            Span<StructuralNode64> nodes,
+            in SiegeImpactRequest impact,
+            Span<StructuralNodeDebrisEvent> outDebrisEvents,
+            out int emittedDebrisCount,
+            Span<ClanBoundaryBreachNotification> outClanBreaches,
+            out int emittedClanBreachCount)
+        {
+            int effectiveBudget = Math.Max(0, MaxStructuralNodeDebrisBudgetPerFrame);
+            SiegeBreachImpactResult result = _collapseSystem.ApplySiegeImpactToStructuralNodes(
+                nodes,
+                in impact,
+                outDebrisEvents,
+                out emittedDebrisCount,
+                outClanBreaches,
+                out emittedClanBreachCount,
+                maxDebrisBudgetPerStep: effectiveBudget);
+
+            LastSiegeBreachImpactResult = result;
+            TotalClanBoundaryBreachesEmitted += result.TriggeredClanBreachCount;
+            return result;
+        }
+
+        /// <summary>
+        /// StructuralNodeDebrisEvent dizisini mevcut FallingStructureClusterComponent dizisine 0-GC donusturur.
+        /// </summary>
+        public static int ConvertDebrisEventsToFallingClusters(
+            ReadOnlySpan<StructuralNodeDebrisEvent> debrisEvents,
+            Span<FallingStructureClusterComponent> outClusters)
+        {
+            int count = Math.Min(debrisEvents.Length, outClusters.Length);
+            for (int i = 0; i < count; i++)
+            {
+                outClusters[i] = StructuralCollapseSystem.BuildFallingClusterFromNodeDebris(in debrisEvents[i], i + 1);
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Yikilan yapi/sur dugumu enkazlarini hendek/duvar dibinde uzerinden yurulenebilir moloz rampasina
+        /// (Walkable Siege Breach Ramp — DOK4 §5.5.D) revoksellestirir ve etkilenen chunk'lari dirty isaretler.
+        /// </summary>
+        public static int DepositCollapsedNodeDebrisAsRubbleRamp(
+            ReadOnlySpan<StructuralNodeDebrisEvent> debrisEvents,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            float dropHeightMeters = 3.5f)
+        {
+            int totalDeposited = 0;
+            for (int i = 0; i < debrisEvents.Length; i++)
+            {
+                ref readonly StructuralNodeDebrisEvent ev = ref debrisEvents[i];
+                int wx = (int)MathF.Floor(ev.PosX);
+                int wy = (int)MathF.Floor(ev.PosY);
+                int wz = (int)MathF.Floor(ev.PosZ);
+                int cx = FloorDiv16(wx);
+                int cz = FloorDiv16(wz);
+                if (!worldChunks.TryGetValue((cx, cz), out uint[]? chunkVoxels) || chunkVoxels == null)
+                {
+                    continue;
+                }
+
+                int chunkMaxY = chunkVoxels.Length >> 8;
+                if (chunkMaxY < 4)
+                {
+                    continue;
+                }
+
+                int lx = Math.Clamp(wx - (cx << 4), 0, 15);
+                int lz = Math.Clamp(wz - (cz << 4), 0, 15);
+                int ly = Math.Clamp(wy, 2, chunkMaxY - 2);
+                int approxBlocks = Math.Clamp((int)MathF.Ceiling(ev.MassKg / 320f), 1, 6);
+                byte matId = ev.MaterialId == MaterialIdCatalog.Air ? MaterialIdCatalog.LooseRubble : ev.MaterialId;
+
+                int placed = StructuralCollapseSystem.RevoxelizeClusterToLooseRubble(
+                    chunkVoxels.AsSpan(0, 16 * chunkMaxY * 16),
+                    16,
+                    chunkMaxY,
+                    16,
+                    lx,
+                    ly,
+                    lz,
+                    approxBlocks,
+                    VoxelGridMemoryLayout.YMajorChunk,
+                    dropHeightMeters,
+                    matId);
+
+                if (placed > 0)
+                {
+                    totalDeposited += placed;
+                    dirtyChunks.Add((cx, cz));
+                }
+            }
+
+            return totalDeposited;
+        }
 
         internal static bool IsTreeTrunkMaterial(byte matId) =>
             matId == MaterialIdCatalog.OakWood ||
@@ -2864,6 +3017,45 @@ namespace Stratocraft.Character
                 clx, wy, clz, Math.Max(1, cluster.VoxelCount),
                 VoxelGridMemoryLayout.YMajorChunk, dropHeightMeters: 5.0f, cluster.DominantMaterialId);
             dirtyChunks.Add((cx, cz));
+        }
+
+        /// <summary>
+        /// Unity calisma zamaninda StructuralNode64 enkaz olaylarini Surge Mode butcesine gore
+        /// aktif halka tampon veya dogrudan yurulenebilir moloz rampasi olarak isler.
+        /// </summary>
+        public int EnqueueUnifiedNodeDebrisIntoWorld(
+            ReadOnlySpan<StructuralNodeDebrisEvent> debrisEvents,
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            HashSet<(int cx, int cz)> dirtyChunks,
+            int maxEditableY)
+        {
+            if (debrisEvents.IsEmpty)
+            {
+                return 0;
+            }
+
+            int remainingDynamicBudget = Mathf.Max(0, SurgeModeActiveClusterLimit - _activeClusterCount);
+            int directRubbleStart = Mathf.Min(debrisEvents.Length, remainingDynamicBudget);
+
+            int totalBaked = 0;
+            if (directRubbleStart < debrisEvents.Length)
+            {
+                totalBaked += DepositCollapsedNodeDebrisAsRubbleRamp(
+                    debrisEvents.Slice(directRubbleStart),
+                    worldChunks,
+                    dirtyChunks,
+                    dropHeightMeters: 4.5f);
+            }
+
+            for (int i = 0; i < directRubbleStart; i++)
+            {
+                FallingStructureClusterComponent cluster =
+                    StructuralCollapseSystem.BuildFallingClusterFromNodeDebris(in debrisEvents[i], i + 1);
+                BakeHaloClusterDirectlyInSurgeMode(in cluster, 0, 0, 0, worldChunks, dirtyChunks, maxEditableY);
+                totalBaked += Math.Max(1, cluster.VoxelCount);
+            }
+
+            return totalBaked;
         }
 
         private void ReleaseClusterSlot(ref ActiveFallingClusterSlot slot)

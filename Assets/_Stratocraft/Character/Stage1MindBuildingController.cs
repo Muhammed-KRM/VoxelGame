@@ -712,45 +712,47 @@ namespace Stratocraft.Character
             if (_silhouetteMeshes[idx] != null) return;
 
             _silhouetteTris.Clear();
-            byte chalkBlue = MaterialIdCatalog.AstralOre;
-            byte chalkGlow = MaterialIdCatalog.QuartzGem;
+            // DOK2 B3 & DOK5 §2.2: Mavi tebesir cizgisi yerine dogal kirectasi & zumrut yesili hacimli kilavuz silueti
+            byte guidePrimary = MaterialIdCatalog.EmeraldGem;
+            byte guideAccent = MaterialIdCatalog.Limestone;
+            byte logGuideMat = MaterialIdCatalog.OakWood;
 
             switch (blueprint)
             {
                 case MindStructureBlueprintId.Campfire:
                     // Alt kav halkasi + 5 konik dal cizgisi + dis tas cember noktalari
-                    EmitRingStrips(new SysVec3(0f, 0.02f, 0f), 0.16f, 8, 0.010f, chalkGlow, 35, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.02f, 0f), 0.16f, 8, 0.022f, guideAccent, 0, _silhouetteTris);
                     for (int s = 0; s < 5; s++)
                     {
                         float a = (s / 5f) * MathF.PI * 2f;
                         SysVec3 p0 = new SysVec3(MathF.Cos(a) * 0.24f, 0.02f, MathF.Sin(a) * 0.24f);
                         SysVec3 p1 = new SysVec3(MathF.Cos(a) * 0.03f, 0.34f, MathF.Sin(a) * 0.03f);
-                        EmitThinLineBar(p0, p1, 0.012f, chalkBlue, 20, _silhouetteTris);
+                        EmitThinLineBar(p0, p1, 0.024f, guidePrimary, 0, _silhouetteTris);
                     }
-                    EmitRingStrips(new SysVec3(0f, 0.04f, 0f), 0.42f, 8, 0.014f, chalkBlue, 15, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.04f, 0f), 0.42f, 8, 0.026f, guidePrimary, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.CharcoalPit:
                     // Ic odun yigini + dis kubbe toprak kaplama halkalari
-                    EmitRingStrips(new SysVec3(0f, 0.05f, 0f), 0.48f, 10, 0.014f, chalkBlue, 20, _silhouetteTris);
-                    EmitRingStrips(new SysVec3(0f, 0.24f, 0f), 0.38f, 8, 0.014f, chalkBlue, 20, _silhouetteTris);
-                    EmitRingStrips(new SysVec3(0f, 0.42f, 0f), 0.22f, 6, 0.014f, chalkGlow, 30, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.05f, 0f), 0.48f, 10, 0.026f, guidePrimary, 0, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.24f, 0f), 0.38f, 8, 0.026f, guidePrimary, 0, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.42f, 0f), 0.22f, 6, 0.026f, guideAccent, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.BloomeryFurnace:
                     // Silindirik 1m baca + alt yan tuyere hava borusu cizgisi
-                    EmitRingStrips(new SysVec3(0f, 0.06f, 0f), 0.38f, 10, 0.015f, chalkBlue, 20, _silhouetteTris);
-                    EmitRingStrips(new SysVec3(0f, 0.48f, 0f), 0.34f, 10, 0.015f, chalkBlue, 20, _silhouetteTris);
-                    EmitRingStrips(new SysVec3(0f, 0.92f, 0f), 0.29f, 10, 0.015f, chalkGlow, 35, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.06f, 0f), 0.38f, 10, 0.028f, guidePrimary, 0, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.48f, 0f), 0.34f, 10, 0.028f, guidePrimary, 0, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.92f, 0f), 0.29f, 10, 0.028f, guideAccent, 0, _silhouetteTris);
                     for (int v = 0; v < 4; v++)
                     {
                         float a = (v / 4f) * MathF.PI * 2f;
                         EmitThinLineBar(
                             new SysVec3(MathF.Cos(a) * 0.38f, 0.06f, MathF.Sin(a) * 0.38f),
                             new SysVec3(MathF.Cos(a) * 0.29f, 0.92f, MathF.Sin(a) * 0.29f),
-                            0.012f, chalkBlue, 20, _silhouetteTris);
+                            0.026f, guidePrimary, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(0.32f, 0.14f, 0f), new SysVec3(0.58f, 0.14f, 0f), 0.022f, chalkGlow, 45, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.32f, 0.14f, 0f), new SysVec3(0.58f, 0.14f, 0f), 0.036f, guideAccent, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.WoodenWheelbarrow:
@@ -762,40 +764,40 @@ namespace Stratocraft.Character
                         EmitThinLineBar(
                             new SysVec3(0f, 0.22f + MathF.Sin(a0) * 0.20f, 0.46f + MathF.Cos(a0) * 0.20f),
                             new SysVec3(0f, 0.22f + MathF.Sin(a1) * 0.20f, 0.46f + MathF.Cos(a1) * 0.20f),
-                            0.014f, chalkGlow, 35, _silhouetteTris);
+                            0.026f, guideAccent, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(-0.08f, 0.22f, 0.46f), new SysVec3(-0.30f, 0.46f, -0.55f), 0.014f, chalkBlue, 20, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(0.08f, 0.22f, 0.46f), new SysVec3(0.30f, 0.46f, -0.55f), 0.014f, chalkBlue, 20, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(-0.24f, 0.36f, 0.22f), new SysVec3(0.24f, 0.36f, 0.22f), 0.014f, chalkBlue, 20, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(-0.26f, 0.40f, -0.25f), new SysVec3(0.26f, 0.40f, -0.25f), 0.014f, chalkBlue, 20, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.08f, 0.22f, 0.46f), new SysVec3(-0.30f, 0.46f, -0.55f), 0.026f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.08f, 0.22f, 0.46f), new SysVec3(0.30f, 0.46f, -0.55f), 0.026f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.24f, 0.36f, 0.22f), new SysVec3(0.24f, 0.36f, 0.22f), 0.026f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.26f, 0.40f, -0.25f), new SysVec3(0.26f, 0.40f, -0.25f), 0.026f, guidePrimary, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.Windmill:
                     // Sekizgen tas kaide halkasi + 4 dikey kule diregi + ust 4 yelken kanat arti cizgisi
-                    EmitRingStrips(new SysVec3(0f, 0.08f, 0f), 0.88f, 8, 0.016f, chalkBlue, 20, _silhouetteTris);
-                    EmitRingStrips(new SysVec3(0f, 0.85f, 0f), 0.56f, 8, 0.014f, chalkGlow, 30, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.08f, 0f), 0.88f, 8, 0.030f, guidePrimary, 0, _silhouetteTris);
+                    EmitRingStrips(new SysVec3(0f, 0.85f, 0f), 0.56f, 8, 0.028f, guideAccent, 0, _silhouetteTris);
                     for (int p = 0; p < 4; p++)
                     {
                         float a = (p / 4f) * MathF.PI * 2f + (MathF.PI * 0.25f);
                         EmitThinLineBar(
                             new SysVec3(MathF.Cos(a) * 0.78f, 0.08f, MathF.Sin(a) * 0.78f),
                             new SysVec3(MathF.Cos(a) * 0.36f, 2.80f, MathF.Sin(a) * 0.36f),
-                            0.015f, chalkBlue, 22, _silhouetteTris);
+                            0.030f, guidePrimary, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(-1.65f, 2.85f, 0.42f), new SysVec3(1.65f, 2.85f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(0f, 1.20f, 0.42f), new SysVec3(0f, 4.50f, 0.42f), 0.018f, chalkGlow, 40, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.65f, 2.85f, 0.42f), new SysVec3(1.65f, 2.85f, 0.42f), 0.034f, guideAccent, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0f, 1.20f, 0.42f), new SysVec3(0f, 4.50f, 0.42f), 0.034f, guideAccent, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.LogWall:
-                    // 3 katmanli 2m yatay kutuk duvar silueti
+                    // 3 katmanli gercek hacimli 2m yatay kutuk duvar kilavuzu (0.42m sira adimi + iki ucta dikme)
                     for (int row = 0; row < 3; row++)
                     {
-                        float y = 0.20f + row * 0.38f;
-                        byte mat = row == 2 ? chalkGlow : chalkBlue;
-                        EmitThinLineBar(new SysVec3(-0.98f, y, 0f), new SysVec3(0.98f, y, 0f), 0.022f, mat, 30, _silhouetteTris);
+                        float y = 0.22f + row * SotfStructuralBuildMechanics.TimberLogCourseStepYMeters;
+                        byte mat = row == 2 ? guideAccent : logGuideMat;
+                        EmitThinLineBar(new SysVec3(-0.98f, y, 0f), new SysVec3(0.98f, y, 0f), 0.065f, mat, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(-0.98f, 0.05f, 0f), new SysVec3(-0.98f, 1.15f, 0f), 0.016f, chalkBlue, 22, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(0.98f, 0.05f, 0f), new SysVec3(0.98f, 1.15f, 0f), 0.016f, chalkBlue, 22, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.98f, 0.05f, 0f), new SysVec3(-0.98f, 1.45f, 0f), 0.055f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.98f, 0.05f, 0f), new SysVec3(0.98f, 1.45f, 0f), 0.055f, guidePrimary, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.LogPalisade:
@@ -803,31 +805,31 @@ namespace Stratocraft.Character
                     for (int s = 0; s < 4; s++)
                     {
                         float x = -0.60f + s * 0.40f;
-                        EmitThinLineBar(new SysVec3(x, 0.05f, 0f), new SysVec3(x, 1.95f, 0f), 0.020f, chalkBlue, 25, _silhouetteTris);
+                        EmitThinLineBar(new SysVec3(x, 0.05f, 0f), new SysVec3(x, 1.95f, 0f), 0.060f, logGuideMat, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(-0.72f, 1.45f, 0f), new SysVec3(0.72f, 1.45f, 0f), 0.016f, chalkGlow, 38, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.72f, 1.45f, 0f), new SysVec3(0.72f, 1.45f, 0f), 0.045f, guideAccent, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.LogBeam:
                     // 2 tasiyici dikme + ustte 2m yatay cati kirisi
-                    EmitThinLineBar(new SysVec3(-0.88f, 0.05f, 0f), new SysVec3(-0.88f, 1.88f, 0f), 0.018f, chalkBlue, 22, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(0.88f, 0.05f, 0f), new SysVec3(0.88f, 1.88f, 0f), 0.018f, chalkBlue, 22, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(-1.02f, 1.92f, 0f), new SysVec3(1.02f, 1.92f, 0f), 0.024f, chalkGlow, 40, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-0.88f, 0.05f, 0f), new SysVec3(-0.88f, 1.88f, 0f), 0.055f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0.88f, 0.05f, 0f), new SysVec3(0.88f, 1.88f, 0f), 0.055f, guidePrimary, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.02f, 1.92f, 0f), new SysVec3(1.02f, 1.92f, 0f), 0.065f, logGuideMat, 0, _silhouetteTris);
                     break;
 
                 case MindStructureBlueprintId.LogCabin:
-                    // 4 kose dikme + kutuk duvar cerceveleri + egimli beşik cati kirisleri
+                    // 4 kose dikme + kutuk duvar cerceveleri + egimli besik cati kirisleri
                     for (int c = 0; c < 4; c++)
                     {
                         float cx = (c & 1) == 0 ? -1.0f : 1.0f;
                         float cz = (c & 2) == 0 ? -1.0f : 1.0f;
-                        EmitThinLineBar(new SysVec3(cx, 0.05f, cz), new SysVec3(cx, 1.75f, cz), 0.018f, chalkBlue, 24, _silhouetteTris);
+                        EmitThinLineBar(new SysVec3(cx, 0.05f, cz), new SysVec3(cx, 1.75f, cz), 0.055f, guidePrimary, 0, _silhouetteTris);
                     }
-                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.018f, chalkGlow, 36, _silhouetteTris);
-                    EmitThinLineBar(new SysVec3(0f, 2.45f, -1.05f), new SysVec3(0f, 2.45f, 1.05f), 0.022f, chalkGlow, 42, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.050f, logGuideMat, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, -1.0f), new SysVec3(0f, 2.45f, -1.0f), 0.050f, logGuideMat, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(-1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.050f, logGuideMat, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(1.0f, 1.75f, 1.0f), new SysVec3(0f, 2.45f, 1.0f), 0.050f, logGuideMat, 0, _silhouetteTris);
+                    EmitThinLineBar(new SysVec3(0f, 2.45f, -1.05f), new SysVec3(0f, 2.45f, 1.05f), 0.060f, guideAccent, 0, _silhouetteTris);
                     break;
             }
 
