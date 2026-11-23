@@ -28,6 +28,8 @@ Shader "Stratocraft/GhostPreviewHologram"
             Cull Back
 
             HLSLPROGRAM
+            #pragma vertex Vert
+            #pragma fragment Frag
             #pragma target 3.5
             #pragma multi_compile_instancing
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
