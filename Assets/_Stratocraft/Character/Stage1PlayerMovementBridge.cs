@@ -1233,11 +1233,11 @@ namespace Stratocraft.Character
             // Fiziksel Yan-Adim / Dodge Kacisi (LeftAlt veya Mouse3/Mouse4: 18 EP, 0.26sn 6.8 m/s patlama, i-frame yok!)
             // PT-04: [C] Madde Kristali (Alt = 3x6 Palet / Alt+Tekerlek) veya aktif insa sirasinda Alt tusu Dodge tetiklemez!
             float effectiveDodgeCost = DodgeStaminaCostEp * staminaDrainMult;
-            bool allowAltDodge = Stage1InputConflictPolicy.CanTriggerCombatDodgeOnAlt(
-                isCrystalActive: suppressAltDodge,
-                isModularBuildActive: false,
-                isCarryingShoulderLog: false,
-                externalModalBlocked: isBackpackOpen);
+            bool allowAltDodge = Stage1InputConflictPolicy.CanTriggerCombatDodgeOnAlt(new GameplayInputContextSnapshot
+            {
+                IsCrystalActive = suppressAltDodge,
+                IsBackpackOpen = isBackpackOpen
+            });
             bool customDodgePressed = Stage1GameSettings.KeyDodge != KeyCode.LeftAlt &&
                                       Stage1GameSettings.KeyDodge != KeyCode.RightAlt &&
                                       Input.GetKeyDown(Stage1GameSettings.KeyDodge);

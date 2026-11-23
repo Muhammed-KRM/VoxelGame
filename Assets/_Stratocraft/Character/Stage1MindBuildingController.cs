@@ -105,8 +105,13 @@ namespace Stratocraft.Character
 
             // [T] (yalın): Zihin İnşa ve SOTF Çok-Malzemeli Modüler Yapı Menüsünü açar/kapatır ([Shift+T] Kristal fırça içindir!)
             if (Input.GetKeyDown(KeyCode.T) &&
-                Stage1InputConflictPolicy.ResolveKeyT(shiftHeld, ctrlHeld, altHeld, miningCtrl.IsCrystalActive, externalUiBlocked) ==
-                Stage1InputConflictPolicy.KeyTAction.ToggleMindBuildMenu)
+                Stage1InputConflictPolicy.ResolveKeyT(new GameplayInputContextSnapshot
+                {
+                    ShiftHeld = shiftHeld,
+                    CtrlHeld = ctrlHeld,
+                    AltHeld = altHeld,
+                    IsCrystalActive = miningCtrl.IsCrystalActive
+                }) == ResolvedGameplayKeyAction.OpenMindAndSotfBuildMenu)
             {
                 if (IsMindMenuOpen)
                 {
@@ -322,11 +327,11 @@ namespace Stratocraft.Character
             // 1) 6 Yapı Malzemesi Seçici Satırı (Ahşap Kütük -> Demir Ağacı -> Örme Taş -> Bazalt -> Mermer -> Çelik)
             float matRowY = modHeaderY + 25f;
             float matGap = 6f;
-            float matBtnW = (panelW - 36f - matGap * (SotfStructuralBuildMechanics.MaterialCount - 1)) / SotfStructuralBuildMechanics.MaterialCount;
+            float matBtnW = (panelW - 36f - matGap * (SotfStructuralBuildMechanics.MaterialKindCount - 1)) / SotfStructuralBuildMechanics.MaterialKindCount;
             float matBtnH = 28f;
             BuildStructuralMaterialKind activeMat = looseBuildSystem.ActiveStructuralMaterial;
 
-            for (int mi = 0; mi < SotfStructuralBuildMechanics.MaterialCount; mi++)
+            for (int mi = 0; mi < SotfStructuralBuildMechanics.MaterialKindCount; mi++)
             {
                 BuildStructuralMaterialKind matKind = (BuildStructuralMaterialKind)mi;
                 Rect matRect = new Rect(px + 18f + mi * (matBtnW + matGap), matRowY, matBtnW, matBtnH);
@@ -386,8 +391,10 @@ namespace Stratocraft.Character
             }
 
             float statInfoX = px + 18f + 3f * (thickBtnW + 6f) + 6f;
-            float effSpan = SotfStructuralBuildMechanics.ComputeEffectiveMaxUnsupportedSpanMeters(activeMat, activeThick);
-            float effCapKn = SotfStructuralBuildMechanics.ComputeElementCompressionCapacityKn(ModularBuildPieceKind.LogPillar2m, activeMat, activeThick);
+            float effSpan = SotfStructuralBuildMechanics.ComputeEffectiveMaxSpanMeters(
+                ModularBuildPieceKind.PlankFloor2x2m, activeMat, activeThick, hasBeamUnderneath: false, hasDiagonalBrace: false);
+            float effCapKn = SotfStructuralBuildMechanics.ComputePieceCompressionCapacityKn(
+                ModularBuildPieceKind.LogPillar3m, activeMat, activeThick);
             GUI.Label(
                 new Rect(statInfoX, thickRowY + 3f, px + panelW - 18f - statInfoX, 20f),
                 $"Açıklık: {effSpan:0.1}m | Kolon Kapasite: {effCapKn:0} kN",
@@ -419,7 +426,7 @@ namespace Stratocraft.Character
                 GUI.Box(mRect, GUIContent.none, _panelStyle!);
                 GUI.color = prevColor;
 
-                int reqCourses = SotfStructuralBuildMechanics.GetRequiredCoursesForPiece(mKind);
+                int reqCourses = SotfStructuralBuildMechanics.GetDefaultRequiredCourses(mKind);
                 string courseTag = reqCourses > 1 ? $" ({reqCourses} Sıra)" : string.Empty;
                 GUI.Label(
                     new Rect(mRect.x + 8f, mRect.y + 3f, mRect.width - 16f, mRect.height - 6f),

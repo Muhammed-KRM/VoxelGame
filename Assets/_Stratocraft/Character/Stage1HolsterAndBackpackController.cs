@@ -2589,14 +2589,15 @@ namespace Stratocraft.Character
             VisualInventorySlot activeSlotForX = InventoryUi.GetActiveHotbarSlot();
             bool isHoldingSwordNow = ActiveHolsterSlot == 1 ||
                                      (!activeSlotForX.IsEmpty && Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(activeSlotForX.Kind, out _));
-            Stage1InputConflictPolicy.KeyXAction xAction = Stage1InputConflictPolicy.ResolveKeyX(
-                shiftHeld,
-                ctrlHeld,
-                altHeld,
-                isCarryingShoulderLog: false,
-                isHoldingSwordInSlot1: isHoldingSwordNow,
-                externalModalBlocked: BackpackSystem.IsBackpackOpen);
-            bool xQuickDropAllowed = xAction == Stage1InputConflictPolicy.KeyXAction.QuickDropActiveItem &&
+            ResolvedGameplayKeyAction xAction = Stage1InputConflictPolicy.ResolveKeyX(new GameplayInputContextSnapshot
+            {
+                ShiftHeld = shiftHeld,
+                CtrlHeld = ctrlHeld,
+                AltHeld = altHeld,
+                IsHoldingSword = isHoldingSwordNow,
+                IsBackpackOpen = BackpackSystem.IsBackpackOpen
+            });
+            bool xQuickDropAllowed = xAction == ResolvedGameplayKeyAction.DropFullHotbarStack &&
                                      (Input.GetKeyDown(KeyCode.X) ||
                                       (Stage1GameSettings.KeyQuickDrop == KeyCode.X && Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop)));
             bool customNonXQuickDrop = Stage1GameSettings.KeyQuickDrop != KeyCode.X && Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop);

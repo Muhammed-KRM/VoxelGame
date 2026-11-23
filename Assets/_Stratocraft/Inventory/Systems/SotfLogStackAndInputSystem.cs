@@ -246,6 +246,17 @@ namespace Stratocraft.Inventory.Systems
             _ => "Meşe/Çam Kütüğü"
         };
 
+        public static string GetMaterialShortBadge(BuildStructuralMaterialKind kind) => kind switch
+        {
+            BuildStructuralMaterialKind.PineTimber => "🪵 Kütük",
+            BuildStructuralMaterialKind.IronwoodHeavy => "🌲 Demir Ağacı",
+            BuildStructuralMaterialKind.RubbleStone => "🪨 Örme Taş",
+            BuildStructuralMaterialKind.CutBasalt => "⛰️ Bazalt",
+            BuildStructuralMaterialKind.CarvedMarble => "🏛️ Mermer",
+            BuildStructuralMaterialKind.ReinforcedSteelObsidian => "⚙️ Çelik",
+            _ => "🪵 Kütük"
+        };
+
         public static string GetThicknessTurkishName(BuildSectionThickness thickness) => thickness switch
         {
             BuildSectionThickness.Slender => "İnce Kesit (0.65x)",
