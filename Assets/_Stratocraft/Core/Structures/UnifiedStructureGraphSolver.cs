@@ -231,6 +231,7 @@ namespace Stratocraft.Core.Structures
         private int _dirtyTail;
         private int _dirtyCount;
         private bool _allIslandsDirty;
+        private bool _hasAnyUncuredMortar;
 
         private float _globalLateralWindLoadKn;
         private byte _globalRoofSweUnits;
@@ -297,6 +298,7 @@ namespace Stratocraft.Core.Structures
             _dirtyTail = 0;
             _dirtyCount = 0;
             _allIslandsDirty = false;
+            _hasAnyUncuredMortar = false;
             _globalLateralWindLoadKn = 0f;
             _globalRoofSweUnits = 0;
             _hasActiveClanBreachWindow = false;
@@ -558,6 +560,10 @@ namespace Stratocraft.Core.Structures
             {
                 normalized.CureRatio01 = 1.0f;
             }
+            if (normalized.Mortar != MortarType.None && normalized.CureRatio01 < 0.9999f)
+            {
+                _hasAnyUncuredMortar = true;
+            }
 
             if (TryGetNodeSlot(normalized.NodeId, out int existingSlot))
             {
@@ -581,6 +587,10 @@ namespace Stratocraft.Core.Structures
             _nodeSnowLoadKn[slot] = 0f;
             _nodeDifferentialSettled[slot] = 0;
             _activeNodeCount++;
+            if (normalized.Mortar != MortarType.None && normalized.CureRatio01 < 0.9999f)
+            {
+                _hasAnyUncuredMortar = true;
+            }
 
             MapPut(normalized.NodeId, slot);
             EnqueueDirtySlot(slot);
@@ -625,6 +635,10 @@ namespace Stratocraft.Core.Structures
             }
 
             float resolvedCure = ResolveInitialEdgeCure(kind, cureRatio01, in _nodes[slotA], in _nodes[slotB]);
+            if (resolvedCure < 0.9999f)
+            {
+                _hasAnyUncuredMortar = true;
+            }
             StructuralJointFlags resolvedFlags = InferDefaultFlags(kind, flags);
 
             // Cift indeks hizalamasi (e ve e^1 ikiz kenar)
@@ -828,6 +842,10 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
+            if (clamped < 0.9999f)
+            {
+                _hasAnyUncuredMortar = true;
+            }
             EnqueueDirtySlot(slot);
         }
 
@@ -837,20 +855,170 @@ namespace Stratocraft.Core.Structures
             float ambientTempCelsius = 20f,
             bool isCreativeMode = false)
         {
-            if (_nodeSlotCount == 0)
+            if (_nodeSlotCount == 0 || deltaTimeSeconds <= 0f)
             {
                 return;
             }
 
-            MortarAndInteriorEnvironmentSolver.StepMortarCuring(
-                _nodes.AsSpan(0, _nodeSlotCount),
-                _edges.AsSpan(0, _edgeSlotCount),
-                deltaTimeSeconds,
-                rainIntensity01,
-                ambientTempCelsius,
-                isCreativeMode);
+            if (!_hasAnyUncuredMortar && rainIntensity01 <= 0f)
+            {
+                return;
+            }
 
-            _allIslandsDirty = true;
+            // Yalnızca gerçek değişim yaşayan/kürleşen düğümleri yerel olarak dirty işaretle (0.0 ms durgun şehir bütçesi)
+            bool anyUncuredRemaining = false;
+            float clampedRain = System.Math.Clamp(rainIntensity01, 0f, 1f);
+
+            for (int slot = 0; slot < _nodeSlotCount; slot++)
+            {
+                if (_nodePresent[slot] == 0) continue;
+                ref StructuralNode64 node = ref _nodes[slot];
+                if (node.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
+                    node.Integrity01 <= 0f)
+                {
+                    continue;
+                }
+
+                if (node.Mortar == MortarType.None)
+                {
+                    node.CureRatio01 = 1.0f;
+                    continue;
+                }
+
+                float prevCure = node.CureRatio01;
+                if (prevCure >= 0.9999f && clampedRain <= 0f)
+                {
+                    continue;
+                }
+
+                bool sheltered = clampedRain <= 0f || IsSlotRainSheltered(slot);
+                float nextCure = MortarAndInteriorEnvironmentSolver.StepMortarCuringDetailed(
+                    node.Mortar,
+                    prevCure,
+                    deltaTimeSeconds,
+                    clampedRain,
+                    sheltered,
+                    ambientTempCelsius,
+                    isCreativeMode,
+                    out bool rainWashed,
+                    out _);
+
+                node.CureRatio01 = nextCure;
+                if (rainWashed)
+                {
+                    node.Chinking |= ChinkingFlags.RainWashedDamaged;
+                }
+
+                if (nextCure < 0.9999f)
+                {
+                    anyUncuredRemaining = true;
+                }
+
+                bool crossedLoadThreshold = prevCure < MortarConstants.WetCureThreshold && nextCure >= MortarConstants.WetCureThreshold;
+                bool completedCure = prevCure < 0.9999f && nextCure >= 0.9999f;
+                bool significantStep = MathF.Abs(nextCure - prevCure) >= 0.05f;
+                if (crossedLoadThreshold || completedCure || significantStep || rainWashed)
+                {
+                    EnqueueDirtySlot(slot);
+                }
+            }
+
+            for (int e = 0; e < _edgeSlotCount; e++)
+            {
+                if (_edgeActive[e] == 0) continue;
+                ref StructuralJointEdge32 edge = ref _edges[e];
+                if (edge.Kind is JointConnectionKind.ClayMortar or JointConnectionKind.LimeMortar or JointConnectionKind.HorasanMortar)
+                {
+                    float cur01 = isCreativeMode ? 1.0f : (edge.MortarCureByte / 255f);
+                    if (cur01 >= 0.9999f && clampedRain <= 0f) continue;
+
+                    MortarType edgeMortar = edge.Kind switch
+                    {
+                        JointConnectionKind.ClayMortar => MortarType.Clay,
+                        JointConnectionKind.HorasanMortar => MortarType.Horasan,
+                        _ => MortarType.Lime
+                    };
+
+                    float next01 = MortarAndInteriorEnvironmentSolver.StepMortarCuringDetailed(
+                        edgeMortar,
+                        cur01,
+                        deltaTimeSeconds,
+                        clampedRain,
+                        isRainSheltered: clampedRain <= 0f,
+                        ambientTempCelsius: ambientTempCelsius,
+                        isCreativeMode: isCreativeMode,
+                        out bool washed,
+                        out _);
+
+                    edge.MortarCureByte = (byte)System.Math.Clamp((int)MathF.Round(next01 * 255f), 0, 255);
+                    edge.EffectiveStiffness01 = MortarConstants.EvaluateMortarStrengthFactor(edgeMortar, next01);
+                    if (washed)
+                    {
+                        edge.Flags |= StructuralJointFlags.RainWashedDegraded;
+                    }
+                    if (next01 < 0.9999f)
+                    {
+                        anyUncuredRemaining = true;
+                    }
+                }
+            }
+
+            _hasAnyUncuredMortar = anyUncuredRemaining;
+        }
+
+        private bool IsSlotRainSheltered(int targetSlot)
+        {
+            ref readonly StructuralNode64 target = ref _nodes[targetSlot];
+            if (target.Role is StructuralElementRole.RoofCoveringCourse
+                or StructuralElementRole.InclinedRoofRafter
+                or StructuralElementRole.RoofPurlin
+                or StructuralElementRole.RoofRidgeBeam
+                or StructuralElementRole.DomeRingCourse
+                or StructuralElementRole.DomeOculusCrown
+                or StructuralElementRole.BarrelOrCrossVault)
+            {
+                return true;
+            }
+
+            int islandId = _nodeIslandId[targetSlot];
+            for (int i = 0; i < _nodeSlotCount; i++)
+            {
+                if (_nodePresent[i] == 0 || i == targetSlot || _nodeIslandId[i] != islandId) continue;
+                ref readonly StructuralNode64 other = ref _nodes[i];
+                if (other.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
+                    other.Integrity01 <= 0f)
+                {
+                    continue;
+                }
+                if (other.Role is StructuralElementRole.RoofCoveringCourse
+                    or StructuralElementRole.InclinedRoofRafter
+                    or StructuralElementRole.RoofPurlin
+                    or StructuralElementRole.RoofRidgeBeam
+                    or StructuralElementRole.DomeRingCourse
+                    or StructuralElementRole.DomeOculusCrown
+                    or StructuralElementRole.BarrelOrCrossVault)
+                {
+                    float dy = other.PosY - target.PosY;
+                    if (dy >= 0.25f && dy <= 14.0f &&
+                        MathF.Abs(other.PosX - target.PosX) <= 3.2f &&
+                        MathF.Abs(other.PosZ - target.PosZ) <= 3.2f)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        public bool DisconnectCollapsedNode(uint nodeId, bool notifyClanBreach = true)
+        {
+            if (!TryGetNodeSlot(nodeId, out int slot) || _nodePresent[slot] == 0)
+            {
+                return false;
+            }
+
+            FractureSlotInternal(slot, notifyClanBreach);
+            return true;
         }
 
         /// <summary>
@@ -1684,6 +1852,8 @@ namespace Stratocraft.Core.Structures
                     coursesAbove,
                     incomingThrustKn,
                     springingHeightM,
+                    componentSlots,
+                    supportedCount,
                     out bool settled);
 
                 if (settled)
@@ -2103,6 +2273,8 @@ namespace Stratocraft.Core.Structures
             int[] coursesAbove,
             float[] incomingThrustKn,
             float[] springingHeightM,
+            int[] islandSlots,
+            int islandSlotCount,
             out bool differentialSettled)
         {
             differentialSettled = false;
@@ -2223,7 +2395,7 @@ namespace Stratocraft.Core.Structures
                         float archSpanEta = clearSpan / maxArchSpan;
                         etaMax = MathF.Max(etaMax, archSpanEta * archSpanEta);
                     }
-                    else if (!HasRelievingArchAboveOpening(slot, clearSpan))
+                    else if (!HasRelievingArchAboveOpening(slot, clearSpan, islandSlots, islandSlotCount))
                     {
                         float maxFlatSpan = prof.MaxUnreinforcedSpanMeters;
                         if (node.Mortar == MortarType.None &&
@@ -2612,14 +2784,15 @@ namespace Stratocraft.Core.Structures
             return count * 1.2f;
         }
 
-        private bool HasRelievingArchAboveOpening(int slot, float spanMeters)
+        private bool HasRelievingArchAboveOpening(int slot, float spanMeters, int[] islandSlots, int islandSlotCount)
         {
             ref readonly StructuralNode64 node = ref _nodes[slot];
             float halfSpan = MathF.Max(1.5f, spanMeters * 0.65f);
 
-            for (int otherSlot = 0; otherSlot < _nodeSlotCount; otherSlot++)
+            for (int idx = 0; idx < islandSlotCount; idx++)
             {
-                if (_nodePresent[otherSlot] == 0 || IsSlotFailed(otherSlot))
+                int otherSlot = islandSlots[idx];
+                if (otherSlot == slot || _nodePresent[otherSlot] == 0 || IsSlotFailed(otherSlot))
                 {
                     continue;
                 }

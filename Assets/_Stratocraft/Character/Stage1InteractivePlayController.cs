@@ -7190,18 +7190,15 @@ namespace Stratocraft.Character
 
         private void HandleSiegeModularStructureImpact(Vector3 worldPoint, float radius, float damage)
         {
-            int hits = _looseBuildSystem.DamageModularSupportAt(worldPoint, radius, damage, out int brokenSupports, out int collapsedPieces);
-            int uHits = _looseBuildSystem.UnifiedBridge.DamageAtWorldPoint(
-                new System.Numerics.Vector3(worldPoint.x, worldPoint.y, worldPoint.z),
+            int hits = _looseBuildSystem.DamageModularSupportAt(
+                worldPoint,
                 radius,
                 damage,
-                _totalSimulatedGameSeconds,
+                out int totalBroken,
+                out int totalCollapsed,
                 _collapseBridge,
-                out int uBroken,
-                out int uCollapsed);
-            int totalBroken = brokenSupports + uBroken;
-            int totalCollapsed = collapsedPieces + uCollapsed;
-            if ((hits > 0 || uHits > 0) && (totalBroken > 0 || totalCollapsed > 0))
+                _totalSimulatedGameSeconds);
+            if (hits > 0 && (totalBroken > 0 || totalCollapsed > 0))
             {
                 _miningCtrl.LastFeedbackText =
                     $"💥 KUŞATMA DARBESİ! {totalBroken} modüler taşıyıcı kırıldı, {totalCollapsed} üst parça yıkılıyor!";

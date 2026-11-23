@@ -154,6 +154,8 @@ namespace Stratocraft.Physics.Systems
         public int MaxEvaluationsPerFrame { get; private set; } = 4;
         public int LastDominoWaveCount { get; private set; }
 
+        private readonly System.Collections.Generic.HashSet<uint> _emittedDetachedNodeIds = new(64);
+
         /// <summary>Faz 3 Klan 3D BFS sinir ihlali / 8m gedik bildirimi kancasi (AK-13).</summary>
         public ClanBoundaryBreachCallback? OnClanBoundaryBreach { get; set; }
 
@@ -750,11 +752,15 @@ namespace Stratocraft.Physics.Systems
                     continue;
                 }
 
-                // Onceki adimda aninda dususe gecmis dugumleri cift tetiklemeden Collapsed durumuna sabitle
+                // Onceki adimda tarafimizca enkaz olayi uretilmis DetachedInstantFall dugumu Collapsed'a gecir
                 if (node.CollapseState == StructureCollapseState.DetachedInstantFall)
                 {
-                    node.CollapseState = StructureCollapseState.Collapsed;
-                    continue;
+                    if (node.NodeId != 0u && _emittedDetachedNodeIds.Remove(node.NodeId))
+                    {
+                        node.CollapseState = StructureCollapseState.Collapsed;
+                        continue;
+                    }
+                    // Aksi halde dugum harici cozucuden (orn. UnifiedStructureGraphSolver.SolveDirty) yeni kopuk geldi -> bu karede enkaz/ihlal uret!
                 }
 
                 bool isDetachedOrDestroyed =
@@ -766,6 +772,10 @@ namespace Stratocraft.Physics.Systems
                     node.GeoSupportDist = MortarConstants.DetachedGeodesicDistance;
                     node.CollapseState = StructureCollapseState.DetachedInstantFall;
                     node.CollapseWarningTimerSec = 0f;
+                    if (node.NodeId != 0u)
+                    {
+                        _emittedDetachedNodeIds.Add(node.NodeId);
+                    }
                     summary.InstantDetachedCount++;
 
                     EmitDebrisEventForNode(
@@ -952,6 +962,10 @@ namespace Stratocraft.Physics.Systems
                     node.GeoSupportDist = MortarConstants.DetachedGeodesicDistance;
                     node.CollapseState = StructureCollapseState.DetachedInstantFall;
                     node.CollapseWarningTimerSec = 0f;
+                    if (node.NodeId != 0u)
+                    {
+                        _emittedDetachedNodeIds.Add(node.NodeId);
+                    }
                     destroyedCount++;
 
                     Vector3 impulseVel = impactDir * MathF.Min(12.0f, MathF.Sqrt(MathF.Max(0f, localShearKn * 0.12f)));
