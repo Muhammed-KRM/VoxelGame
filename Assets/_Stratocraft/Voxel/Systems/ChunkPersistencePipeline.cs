@@ -10,7 +10,7 @@ using Stratocraft.Voxel.Data;
 namespace Stratocraft.Voxel.Systems
 {
     /// <summary>
-    /// Chunk yuklendiginde geri yuklenen yardimci hidroloji/kar/tuzluluk ve ekran-disi zaman damgasi verisi.
+    /// Chunk yuklendiginde geri yuklenen yardimci hidroloji/kar/tuzluluk, V3 yapi grafi ve ekran-disi zaman damgasi verisi.
     /// </summary>
     public readonly struct ChunkAuxRestoreData
     {
@@ -23,6 +23,7 @@ namespace Stratocraft.Voxel.Systems
         public readonly bool RestoredFromPersistence;
         public readonly int AppliedDeltaCount;
         public readonly bool AnyDeltaFluidMutated;
+        public readonly StructureGraphSection? StructureGraph;
 
         public ChunkAuxRestoreData(
             double lastSimulatedGameSeconds,
@@ -33,17 +34,19 @@ namespace Stratocraft.Voxel.Systems
             bool hasActiveStructures,
             bool restoredFromPersistence,
             int appliedDeltaCount,
-            bool anyDeltaFluidMutated)
+            bool anyDeltaFluidMutated,
+            StructureGraphSection? structureGraph = null)
         {
             LastSimulatedGameSeconds = lastSimulatedGameSeconds;
             DirtyFlags = dirtyFlags;
             SparseSoilMoisture = sparseSoilMoisture;
             SnowSwe256 = snowSwe256;
             SalinityBits1024 = salinityBits1024;
-            HasActiveStructures = hasActiveStructures;
+            HasActiveStructures = hasActiveStructures || (structureGraph != null && !structureGraph.IsEmpty);
             RestoredFromPersistence = restoredFromPersistence;
             AppliedDeltaCount = appliedDeltaCount;
             AnyDeltaFluidMutated = anyDeltaFluidMutated;
+            StructureGraph = structureGraph;
         }
     }
 
@@ -78,6 +81,7 @@ namespace Stratocraft.Voxel.Systems
             public (ushort FlatIndex, byte Moisture)[] SparseSoilMoisture = Array.Empty<(ushort, byte)>();
             public byte[]? SnowSwe256;
             public ulong[]? SalinityBits1024;
+            public StructureGraphSection? StructureGraph;
             public long LastTouchSeq;
             public bool PendingDiskFlush;
         }
@@ -139,7 +143,7 @@ namespace Stratocraft.Voxel.Systems
 
         /// <summary>
         /// Ana Is Parcaciginda chunk bosaltilirken disk I/O yapmadan (< 0.15ms) kompakt RLE goruntu alir.
-        /// Temiz (ChunkDirtyFlags.None) chunk'lar 0 kayit olusturur.
+        /// Temiz (ChunkDirtyFlags.None ve bos StructureGraph) chunk'lar 0 kayit olusturur.
         /// </summary>
         public bool EnqueueDirtyChunkOnUnload(
             int chunkX,
@@ -153,12 +157,20 @@ namespace Stratocraft.Voxel.Systems
             bool hasActiveStructures = false,
             (ushort FlatIndex, byte Moisture)[]? sparseSoilMoisture = null,
             byte[]? snowSwe256 = null,
-            ulong[]? salinityBits1024 = null)
+            ulong[]? salinityBits1024 = null,
+            StructureGraphSection? structureGraph = null)
         {
-            if (dirtyFlags == ChunkDirtyFlags.None)
+            bool hasStructureSection = structureGraph != null && !structureGraph.IsEmpty;
+            ChunkDirtyFlags effectiveDirtyFlags = hasStructureSection
+                ? (dirtyFlags | ChunkDirtyFlags.Structures)
+                : (dirtyFlags & ~ChunkDirtyFlags.Structures);
+
+            if (effectiveDirtyFlags == ChunkDirtyFlags.None)
             {
                 return false;
             }
+
+            bool effectiveHasActiveStructures = hasActiveStructures || hasStructureSection;
 
             lock (_lock)
             {
@@ -182,12 +194,13 @@ namespace Stratocraft.Voxel.Systems
                     LastSimulatedGameSeconds = currentSimGameSeconds,
                     LastVisitedGameDay = currentGameDay,
                     LastVisitedUtcMinutes = VoxelChunkComponent.GetCurrentUtcMinutes(),
-                    DirtyFlags = dirtyFlags,
+                    DirtyFlags = effectiveDirtyFlags,
                     IsInsideClan = isInsideClan,
-                    HasActiveStructures = hasActiveStructures,
+                    HasActiveStructures = effectiveHasActiveStructures,
                     SparseSoilMoisture = sparseSoilMoisture ?? Array.Empty<(ushort, byte)>(),
                     SnowSwe256 = snowSwe256,
                     SalinityBits1024 = salinityBits1024,
+                    StructureGraph = hasStructureSection ? structureGraph : null,
                     LastTouchSeq = ++_touchSeq,
                     PendingDiskFlush = true
                 };
@@ -312,7 +325,8 @@ namespace Stratocraft.Voxel.Systems
                     hot.HasActiveStructures,
                     restoredFromPersistence: true,
                     appliedDeltaCount: 0,
-                    anyDeltaFluidMutated: false);
+                    anyDeltaFluidMutated: false,
+                    structureGraph: hot.StructureGraph);
                 return true;
             }
 
@@ -337,7 +351,8 @@ namespace Stratocraft.Voxel.Systems
                     diskSnap.HasActiveStructures,
                     restoredFromPersistence: true,
                     appliedDeltaCount: 0,
-                    anyDeltaFluidMutated: false);
+                    anyDeltaFluidMutated: false,
+                    structureGraph: diskSnap.StructureGraph);
                 return true;
             }
 
@@ -425,7 +440,8 @@ namespace Stratocraft.Voxel.Systems
                     dirtyFlags: r.DirtyFlags,
                     sparseSoilMoisture: r.SparseSoilMoisture,
                     snowSwe256: r.SnowSwe256,
-                    salinityBits1024: r.SalinityBits1024);
+                    salinityBits1024: r.SalinityBits1024,
+                    structureGraph: r.StructureGraph);
             }
 
             storeRef.SaveDirtyChunksBatchAsync(snapshots).GetAwaiter().GetResult();
