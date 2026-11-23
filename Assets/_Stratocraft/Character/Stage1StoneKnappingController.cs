@@ -185,7 +185,8 @@ namespace Stratocraft.Character
             Stage1HolsterAndBackpackController holsterCtrl,
             Stage1DirectionalCombatBridge? combatBridge,
             Dictionary<(int cx, int cz), uint[]>? worldChunks = null,
-            HashSet<(int cx, int cz)>? dirtyChunks = null)
+            HashSet<(int cx, int cz)>? dirtyChunks = null,
+            bool isBuildPlacementActive = false)
         {
             if (worldChunks != null) _lastWorldChunks = worldChunks;
             if (dirtyChunks != null) _lastDirtyChunks = dirtyChunks;
@@ -202,7 +203,7 @@ namespace Stratocraft.Character
 
             if (Phase == KnappingSessionPhase.Idle)
             {
-                if (miningCtrl.IsCrystalActive || holsterCtrl.IsBackpackOpen)
+                if (miningCtrl.IsCrystalActive || holsterCtrl.IsBackpackOpen || holsterCtrl.IsCarryingShoulderLog || isBuildPlacementActive)
                 {
                     HasAimedGroundStone = false;
                     return;
@@ -226,7 +227,10 @@ namespace Stratocraft.Character
 
                 HasAimedGroundStone = aimedAtStone && (src != GroundStoneTargetSource.WorldStoneVoxel || holdingFlint);
 
-                if (Input.GetKeyDown(KeyCode.R))
+                bool modHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ||
+                               Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                               Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+                if (!modHeld && Input.GetKeyDown(KeyCode.R))
                 {
                     if (aimedAtStone)
                     {

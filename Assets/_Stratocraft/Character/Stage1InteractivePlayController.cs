@@ -3025,7 +3025,11 @@ namespace Stratocraft.Character
                 _fluidChunks, _soilMoistureSystem, _dirtyFluidChunks, _activeFluidChunks,
                 isCreativeMode: _holsterCtrl.IsCreativeMode,
                 ascendFlyHeld: flyAscendHeld,
-                descendFlyHeld: flyDescendHeld);
+                descendFlyHeld: flyDescendHeld,
+                suppressAltDodge: _miningCtrl.IsCrystalActive ||
+                                  _looseBuildSystem.IsModularBuildModeActive ||
+                                  _holsterCtrl.IsCarryingShoulderLog ||
+                                  _looseBuildSystem.HasValidGhostPlacement);
             if (_movementBridge.WaterSplashPulse01 >= 0.98f)
             {
                 WakeChunkAndNeighborsFluid((Mathf.FloorToInt(transform.position.x / 16f), Mathf.FloorToInt(transform.position.z / 16f)));
@@ -3528,7 +3532,7 @@ namespace Stratocraft.Character
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
                     swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
                     ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge, _collapseBridge,
-                    _worldChunks);
+                    _worldChunks, _looseBuildSystem);
             }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
             _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial, _holsterCtrl, _fluidChunks);
@@ -3592,7 +3596,9 @@ namespace Stratocraft.Character
                 dt, PlayerCamera, transform, uiBlocked,
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
                 rightClickConsumedExternally: suppressLooseBuild);
-            bool looseConsumedClick = !suppressLooseBuild && Input.GetMouseButtonDown(1) && _looseBuildSystem.HasValidGhostPlacement;
+            bool looseConsumedClick = _looseBuildSystem.ConsumedRightClickCancelThisFrame ||
+                                      (!suppressLooseBuild && _looseBuildSystem.IsModularBuildModeActive && Input.GetMouseButton(0)) ||
+                                      (!suppressLooseBuild && Input.GetMouseButtonDown(1) && _looseBuildSystem.HasValidGhostPlacement);
 
             _miningCtrl.ExecuteMiningOrBuilding(
                 dt, _holsterCtrl.ActiveHolsterSlot, uiBlocked, MaxEditableVoxelY,
@@ -3600,21 +3606,32 @@ namespace Stratocraft.Character
                 _worldChunks, _dirtyChunks, _collapseBridge, SharedVoxelMaterial,
                 _fluidChunks, _dirtyFluidChunks, LeftWristCrystalTransform, _combatBridge, _holsterCtrl,
                 externalMouseConsumed: stationConsumedClick || looseConsumedClick);
-            if (!uiBlocked && !stationConsumedClick && !looseConsumedClick && PlayerCamera != null &&
+            if (!uiBlocked && !stationConsumedClick && !looseConsumedClick &&
+                !_looseBuildSystem.IsModularBuildModeActive &&
+                PlayerCamera != null &&
                 (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.ActiveHolsterSlot == 2 || _holsterCtrl.ActiveHolsterSlot == 3) &&
                 Input.GetMouseButtonDown(0))
             {
                 Ray modRay = PlayerCamera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
                 if (UnityEngine.Physics.Raycast(modRay, out RaycastHit modHit, 5.2f) &&
                     modHit.collider != null &&
-                    modHit.collider.name.StartsWith("ModPiece_", StringComparison.Ordinal))
+                    (modHit.collider.name.StartsWith("ModPiece_", StringComparison.Ordinal) ||
+                     modHit.collider.name.StartsWith("ModularPiece3D_", StringComparison.Ordinal)))
                 {
                     float toolDmg = _holsterCtrl.ActiveHolsterSlot == 2 ? 125.0f : (_holsterCtrl.ActiveHolsterSlot == 3 ? 110.0f : 75.0f);
                     int modHits = _looseBuildSystem.DamageModularSupportAt(modHit.point, 1.45f, toolDmg, out int brokenSup, out int collapsedPcs);
-                    if (modHits > 0 && (brokenSup > 0 || collapsedPcs > 0))
+                    if (modHits > 0)
                     {
-                        _miningCtrl.LastFeedbackText =
-                            $"🧱 MODÜLER YAPI ÇÖKÜŞÜ! {brokenSup} destek kırıldı, {collapsedPcs} üst parça fiziksel yıkıldı!";
+                        if (brokenSup > 0 || collapsedPcs > 0)
+                        {
+                            _miningCtrl.LastFeedbackText =
+                                $"🧱 TAŞIYICI ÇÖKÜŞÜ! {brokenSup} destek kırıldı -> {collapsedPcs} üst yapı elemanı fiziksel yıkıldı!";
+                        }
+                        else
+                        {
+                            _miningCtrl.LastFeedbackText =
+                                $"🪓 Taşıyıcı yapı elemanına hasar verildi (-{toolDmg:0} HP). Kolon kırılırsa üst katmanlar çöker!";
+                        }
                     }
                 }
             }
@@ -3646,7 +3663,8 @@ namespace Stratocraft.Character
             }
 
             int slot = _holsterCtrl.ActiveHolsterSlot;
-            bool canCombat = !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
+            bool canCombat = !_miningCtrl.IsCrystalActive && !_looseBuildSystem.IsModularBuildModeActive &&
+                             !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
                              !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_holsterCtrl.IsCarryingShoulderLog &&
                              !_isBodyInspectMode &&
                              _holsterCtrl.HolsterTransitionRemaining <= 0.01f && (slot >= 1 && slot <= 3);
@@ -3655,8 +3673,30 @@ namespace Stratocraft.Character
             _combatBridge.IsPlayerExhaustedLock = _movementBridge.MovementState.IsExhaustedStaminaLock != 0;
             _combatBridge.IsPlayerHypothermic = Stage1GameSettings.EnableEnvironmentalEffects &&
                                                 _movementBridge.Vitals.CoreBodyTempCelsius < ThermalAndBiologySystem.HypothermiaThresholdCelsius;
-            bool lockCamForUi = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen || _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen || _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen || _recipeBookUi.IsOpen || _isBodyInspectMode;
-            if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_holsterCtrl.IsCarryingShoulderLog &&
+            bool crystalAltPaletteOpen = _miningCtrl.IsCrystalActive &&
+                                         (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt));
+            bool anyModalOpen = _holsterCtrl.IsBackpackOpen || _holsterCtrl.InventoryUi.IsChestWindowOpen ||
+                                _escapeMenuCtrl.IsMenuOpen || _holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
+                                _stoneKnappingCtrl.IsBusy || _mindBuildingCtrl.IsMindMenuOpen ||
+                                _recipeBookUi.IsOpen || _isBodyInspectMode;
+            if (crystalAltPaletteOpen && !anyModalOpen)
+            {
+                _wasCrystalAltPaletteCursorOpen = true;
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
+            else if (_wasCrystalAltPaletteCursorOpen)
+            {
+                _wasCrystalAltPaletteCursorOpen = false;
+                if (!anyModalOpen && !_isPlayerDeathScreenOpen)
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+            }
+            bool lockCamForUi = anyModalOpen || crystalAltPaletteOpen;
+            if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_looseBuildSystem.IsModularBuildModeActive &&
+                !_holsterCtrl.IsCarryingShoulderLog &&
                 _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
             {
                 if (slot == 0)
@@ -3913,9 +3953,13 @@ namespace Stratocraft.Character
                     camPosAfterRig.z);
             }
 
-            if (!_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_recipeBookUi.IsOpen)
+            if (!_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen &&
+                !_recipeBookUi.IsOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_isBodyInspectMode)
             {
-                _stoneKnappingCtrl.Step(dt, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, _dirtyChunks);
+                bool buildPlacementActive = _looseBuildSystem.IsModularBuildModeActive || _looseBuildSystem.HasValidGhostPlacement;
+                _stoneKnappingCtrl.Step(
+                    dt, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge,
+                    _worldChunks, _dirtyChunks, isBuildPlacementActive: buildPlacementActive);
                 float knapStam = _stoneKnappingCtrl.ConsumePendingStaminaDrain() * Stage1GameSettings.StaminaDrainMultiplier;
                 if (knapStam > 0f)
                 {
@@ -3947,19 +3991,52 @@ namespace Stratocraft.Character
             _rigAnimator.ApplyFirstPersonShadowPolicy(PlayerBodyRoot.transform, _isFirstPersonMode, isProne);
         }
 
+        private bool _wasCrystalAltPaletteCursorOpen;
+
         private void HandleCameraModeAndPersistenceHotkeys()
         {
             if (_stoneKnappingCtrl.IsBusy) return;
-            if (Input.GetKeyDown(KeyCode.Escape) && _recipeBookUi.IsOpen)
+            if (_mindBuildingCtrl.ConsumedEscapeThisFrame) return;
+
+            // PT-03 & PT-04: Tekil [ESC] oncelik merdiveni (Acik modal pencereler ve aktif insa modu once kapanir; ESC menusune sizmaz!)
+            if (Input.GetKeyDown(KeyCode.Escape))
             {
-                _recipeBookUi.Close(restoreCursorLock: true);
-                return;
+                if (_recipeBookUi.IsOpen)
+                {
+                    _recipeBookUi.Close(restoreCursorLock: true);
+                    return;
+                }
+                if (_holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
+                {
+                    _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = false;
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                    return;
+                }
+                if (_isBodyInspectMode)
+                {
+                    _isBodyInspectMode = false;
+                    _hoveredBodyArmorSlot = -1;
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                    return;
+                }
+                if (_wheelbarrowCtrl.IsPushingWheelbarrow)
+                {
+                    _wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge);
+                    return;
+                }
+                if (_looseBuildSystem.IsModularBuildModeActive)
+                {
+                    _looseBuildSystem.CancelActiveBuildPlacement(
+                        _holsterCtrl,
+                        _miningCtrl,
+                        emptyHotbarSelectionIfHammer: true,
+                        customFeedback: "🔨 İnşa modu kapatıldı — el boşaltıldı.");
+                    return;
+                }
             }
-            if (Input.GetKeyDown(KeyCode.Escape) && _wheelbarrowCtrl.IsPushingWheelbarrow)
-            {
-                _wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge);
-                return;
-            }
+
             bool isBagOpen = _holsterCtrl.IsBackpackOpen;
             _toggleBackpackMatCallbackCached ??= ToggleBackpackMatCallback;
             _escapeMenuCtrl.StepEscapeKeyAndRebind(
@@ -3973,10 +4050,12 @@ namespace Stratocraft.Character
                                                 _holsterCtrl.IsBackpackOpen ||
                                                 _holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
                                                 _stoneKnappingCtrl.IsBusy ||
-                                                _mindBuildingCtrl.IsMindMenuOpen;
+                                                _mindBuildingCtrl.IsMindMenuOpen ||
+                                                _isBodyInspectMode;
             _recipeBookUi.StepHotkeys(externalUiBlockingRecipeBook);
             if (_recipeBookUi.IsOpen)
             {
+                _looseBuildSystem.CancelActiveBuildPlacement(_holsterCtrl, _miningCtrl, emptyHotbarSelectionIfHammer: false);
                 Cursor.lockState = CursorLockMode.None;
                 Cursor.visible = true;
             }
@@ -3995,8 +4074,9 @@ namespace Stratocraft.Character
             {
                 _holsterCtrl.ToggleCreativeMode(_miningCtrl);
             }
-            if (Input.GetKeyDown(KeyCode.Tab) && !_escapeMenuCtrl.IsMenuOpen && !_recipeBookUi.IsOpen)
+            if (Input.GetKeyDown(KeyCode.Tab) && !_escapeMenuCtrl.IsMenuOpen && !_recipeBookUi.IsOpen && !_mindBuildingCtrl.IsMindMenuOpen)
             {
+                _looseBuildSystem.CancelActiveBuildPlacement(_holsterCtrl, _miningCtrl, emptyHotbarSelectionIfHammer: false);
                 if (_holsterCtrl.IsCreativeMode)
                 {
                     _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen;
@@ -4019,17 +4099,10 @@ namespace Stratocraft.Character
                         SharedVoxelMaterial, ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl);
                 }
             }
-            if (Input.GetKeyDown(KeyCode.Escape) && _isBodyInspectMode)
-            {
-                _isBodyInspectMode = false;
-                _hoveredBodyArmorSlot = -1;
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
-                return;
-            }
             if (Input.GetKeyDown(KeyCode.U) && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.IsBackpackOpen &&
                 !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_isPlayerDeathScreenOpen)
             {
+                _looseBuildSystem.CancelActiveBuildPlacement(_holsterCtrl, _miningCtrl, emptyHotbarSelectionIfHammer: false);
                 _isBodyInspectMode = !_isBodyInspectMode;
                 _hoveredBodyArmorSlot = -1;
                 if (_isBodyInspectMode)
@@ -4045,19 +4118,16 @@ namespace Stratocraft.Character
                     Cursor.visible = false;
                 }
             }
-            if (Input.GetKeyDown(KeyCode.Escape) && _holsterCtrl.InventoryUi.IsCreativeCatalogOpen)
-            {
-                _holsterCtrl.InventoryUi.IsCreativeCatalogOpen = false;
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
-                return;
-            }
             if (Input.GetKeyDown(Stage1GameSettings.KeyCameraToggle) || Input.GetKeyDown(KeyCode.F5))
             {
                 _isFirstPersonMode = !_isFirstPersonMode;
                 ApplyFirstPersonVisibility();
             }
-            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_recipeBookUi.IsOpen && !_isBodyInspectMode && Cursor.lockState != CursorLockMode.Locked)
+            bool crystalAltPaletteHeldNow = _miningCtrl.IsCrystalActive && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt));
+            if (Input.GetMouseButtonDown(0) && !_holsterCtrl.IsBackpackOpen && !_escapeMenuCtrl.IsMenuOpen &&
+                !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen && !_mindBuildingCtrl.IsMindMenuOpen &&
+                !_recipeBookUi.IsOpen && !_isBodyInspectMode && !crystalAltPaletteHeldNow &&
+                Cursor.lockState != CursorLockMode.Locked)
             {
                 Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false;
             }
@@ -4076,8 +4146,14 @@ namespace Stratocraft.Character
                 HandleTimeScaleHotkeyStep(0, resetToOne: true);
             }
 
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
             if ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
-                !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift))
+                !_mindBuildingCtrl.ConsumedKeyGThisFrame &&
+                !_looseBuildSystem.IsModularBuildModeActive &&
+                !shiftHeld && !ctrlHeld && !altHeld)
             {
                 if (_holsterCtrl.ActiveHolsterSlot == 1 || _holsterCtrl.TryDrawOwnedSwordFromHotbar(_miningCtrl))
                 {
@@ -4090,6 +4166,8 @@ namespace Stratocraft.Character
                 }
             }
             if (Input.GetKeyDown(KeyCode.X) &&
+                !_looseBuildSystem.IsModularBuildModeActive &&
+                !shiftHeld && !ctrlHeld && !altHeld &&
                 !_holsterCtrl.IsBackpackOpen &&
                 !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen &&
                 !_stoneKnappingCtrl.IsBusy &&

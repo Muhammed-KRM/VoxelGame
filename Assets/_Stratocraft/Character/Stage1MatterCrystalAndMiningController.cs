@@ -404,16 +404,20 @@ namespace Stratocraft.Character
             if (_actionCooldown > 0f) _actionCooldown = Mathf.Max(0f, _actionCooldown - dt);
             if (!backpackOpen)
             {
-                if (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C))
+                bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+                bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+                bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+                if (!ctrlHeld && !altHeld && (Input.GetKeyDown(Stage1GameSettings.KeyMatterCrystal) || Input.GetKeyDown(KeyCode.C)))
                 {
-                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    bool shift = shiftHeld;
                     bool isCreative = isCreativeModeNow;
                     if (isCreative)
                     {
                         if (CurrentCrystalTier < 5) AwakenOrUpgradeCrystalToTier(5);
                         IsCrystalActive = !IsCrystalActive;
                         LastFeedbackText = IsCrystalActive
-                            ? $"💎 [YARATICI KRİSTAL AKTİF — T5]: Her Şeyi Kırar ([Sol Tık]) | ∞ İnşa ([Sağ Tık]) | Seçili: {GetMaterialDisplayName(SelectedMaterialId)} | [Tekerlek/Shift+B] Malzeme | [V] Doğal/Mimari"
+                            ? $"💎 [YARATICI KRİSTAL AKTİF — T5]: Her Şeyi Kırar ([Sol Tık]) | ∞ İnşa ([Sağ Tık]) | Seçili: {GetMaterialDisplayName(SelectedMaterialId)} | [Shift+B] Malzeme | [Alt] 17'li Palet | [V] Doğal/Mimari | [Shift+T] Fırça"
                             : "💎 Madde Kristali kapatıldı ([C] ile tekrar açabilirsiniz).";
                     }
                     else if (CurrentCrystalTier <= 0)
@@ -482,14 +486,13 @@ namespace Stratocraft.Character
                                 ? $" | ✨ Çantada T{nextTier} Rezonans Kristali hazır: Evrim için tekrar [C]'ye basın!"
                                 : (CurrentCrystalTier < 5 ? $" | Evrim: T{nextTier} Rezonans Kristali" : " | Maksimum T5");
                             LastFeedbackText =
-                                $"💎 MADDE KRİSTALİ AKTİF (T{CurrentCrystalTier} | {CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity} Blok){upgradeNote} | [V] Doğal/Mimari | [Shift+B] Malzeme | [B] Tarif & Malzeme Kitabı";
+                                $"💎 MADDE KRİSTALİ AKTİF (T{CurrentCrystalTier} | {CrystalStorage.CurrentTotalBlocks}/{CrystalStorage.MaxTotalBlocksCapacity} Blok){upgradeNote} | [V] Doğal/Mimari | [Shift+B/Alt] Malzeme | [Shift+T] Fırça | [B] Kitap";
                         }
                     }
                 }
-                if (Input.GetKeyDown(KeyCode.V))
+                if (IsCrystalActive && !ctrlHeld && !altHeld && Input.GetKeyDown(KeyCode.V))
                 {
-                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                    if (shift)
+                    if (shiftHeld)
                     {
                         CycleArchitecturalShape(1);
                     }
@@ -498,9 +501,9 @@ namespace Stratocraft.Character
                         ToggleNaturalScatterAndArchitecturalShape();
                     }
                 }
-                if (Input.GetKeyDown(KeyCode.R) && IsCrystalActive)
+                if (IsCrystalActive && !ctrlHeld && !altHeld && Input.GetKeyDown(KeyCode.R))
                 {
-                    bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                    bool shift = shiftHeld;
                     _selectedRotation24 = shift
                         ? (byte)((_selectedRotation24 + 1) % 24)
                         : (byte)((_selectedRotation24 + 1) & 3);
@@ -512,14 +515,12 @@ namespace Stratocraft.Character
                         RecordArchShapeProbeEvent(shift ? "RotateSO3_24" : "RotateYaw90", 0, 0, 0, SelectedShapeId, _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
                     }
                 }
-                if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetKeyDown(KeyCode.B))
+                if (IsCrystalActive && shiftHeld && !ctrlHeld && !altHeld && Input.GetKeyDown(KeyCode.B))
                 {
                     CycleCrystalMaterial(1, isCreativeModeNow);
                 }
                 float scroll = Input.GetAxis("Mouse ScrollWheel");
-                bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-                bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                if (altHeld && Mathf.Abs(scroll) > 0.001f)
+                if (IsCrystalActive && altHeld && !ctrlHeld && Mathf.Abs(scroll) > 0.001f)
                 {
                     int delta = scroll > 0f ? 1 : -1;
                     _shapeIdx = (_shapeIdx + delta + ShapeWheelCycle.Length) % ShapeWheelCycle.Length;
@@ -533,15 +534,17 @@ namespace Stratocraft.Character
                         RecordArchShapeProbeEvent("WheelCycleShape", 0, 0, 0, SelectedShapeId, SelectedShapeId == 0 ? (byte)0 : _selectedRotation24, SelectedMaterialId, SelectedShapeId, SelectedShapeId);
                     }
                 }
-                else if (IsCrystalActive && (Input.GetKeyDown(KeyCode.T) || (shiftHeld && Mathf.Abs(scroll) > 0.001f)))
+                else if (IsCrystalActive &&
+                         ((shiftHeld && !ctrlHeld && !altHeld && Input.GetKeyDown(KeyCode.T)) ||
+                          (shiftHeld && !altHeld && Mathf.Abs(scroll) > 0.001f)))
                 {
                     int maxAllowedIdx = isCreativeModeNow ? (BrushRadiusSteps.Length - 1) : GetMaxBrushIndexForCrystalTier(Mathf.Max(1, CurrentCrystalTier));
                     int allowedCount = maxAllowedIdx + 1;
                     int delta = (shiftHeld && Mathf.Abs(scroll) > 0.001f) ? (scroll > 0f ? 1 : -1) : 1;
                     _brushRadiusIdx = (_brushRadiusIdx + delta + allowedCount) % allowedCount;
-                    LastFeedbackText = $"Kristal Vakum Alanı [T / Shift+Tekerlek]: {BrushAreaLabel} (Yarıçap: {BrushRadiusMeters:0.1}m | Kademe Sınırı: T{CurrentCrystalTier})";
+                    LastFeedbackText = $"Kristal Vakum Alanı [Shift+T / Shift+Tekerlek]: {BrushAreaLabel} (Yarıçap: {BrushRadiusMeters:0.1}m | Kademe Sınırı: T{CurrentCrystalTier})";
                 }
-                else if (IsCrystalActive && Mathf.Abs(scroll) > 0.001f)
+                else if (IsCrystalActive && !ctrlHeld && !altHeld && !shiftHeld && Mathf.Abs(scroll) > 0.001f)
                 {
                     CycleCrystalMaterial(scroll > 0f ? -1 : 1, isCreativeModeNow);
                 }
@@ -562,10 +565,11 @@ namespace Stratocraft.Character
             bool externalMouseConsumed = false)
         {
             if (sharedMat != null) _lastSharedVoxelMat = sharedMat;
-            bool lmb = !backpackOpen && !externalMouseConsumed && Input.GetMouseButton(0);
+            bool crystalAltPaletteHeld = IsCrystalActive && (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt));
+            bool lmb = !backpackOpen && !externalMouseConsumed && !crystalAltPaletteHeld && Input.GetMouseButton(0);
             UpdateVacuumBeamVisual(IsCrystalActive && lmb && HasAimHit && AimHit.distance <= 9.5f, wristCrystalTransform, sharedMat);
 
-            if (backpackOpen || externalMouseConsumed) return;
+            if (backpackOpen || externalMouseConsumed || crystalAltPaletteHeld) return;
 
             bool isHoldingMaterialBlock = !IsCrystalActive && activeHolsterSlot == 4;
             if (isHoldingMaterialBlock && holsterCtrl != null)

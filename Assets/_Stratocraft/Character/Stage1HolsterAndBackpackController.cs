@@ -251,7 +251,8 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge = null,
             Stage1StructuralCollapseBridge? collapseBridge = null,
-            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null,
+            WorldLooseBuildSystem? looseBuildSystem = null)
         {
             if (worldChunks != null) _lastWorldChunks = worldChunks;
             HolsterMachine.StepHolster(dt);
@@ -259,10 +260,14 @@ namespace Stratocraft.Character
             float lidAngle = ChestCasSystem.StepLidSpring(dt);
             if (chestLidTransform != null) chestLidTransform.localRotation = Quaternion.Euler(-lidAngle, 0f, 0f);
 
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+
             // Anayasa §3.1: Yalnizca [I] tusu (veya atanmis Canta tusu) 3B Kumas Canta Ortusunu acar/kapatir.
-            if (Input.GetKeyDown(Stage1GameSettings.KeyBackpack) || Input.GetKeyDown(KeyCode.I))
+            if (!ctrlHeld && !altHeld && (Input.GetKeyDown(Stage1GameSettings.KeyBackpack) || Input.GetKeyDown(KeyCode.I)))
             {
                 InventoryUi.IsChestWindowOpen = false;
+                looseBuildSystem?.CancelActiveBuildPlacement(this, miningCtrl, emptyHotbarSelectionIfHammer: false);
                 ToggleBackpackMat(
                     playerTransform, backpackMatRoot, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat,
                     ref movementState, ref cameraPitch, ref pitchBeforeBackpack, miningCtrl);
@@ -287,13 +292,13 @@ namespace Stratocraft.Character
             {
                 HoveredBackpackTooltip = string.Empty;
                 InventoryUi.HasHovered3DMatSlot = false;
-                HandleHotbarScrollWheel(miningCtrl, combatBridge);
+                HandleHotbarScrollWheel(miningCtrl, combatBridge, looseBuildSystem);
             }
 
-            HandleHolsterSlotHotkeys(miningCtrl, combatBridge, swordVisual != null ? swordVisual.transform : null);
+            HandleHolsterSlotHotkeys(miningCtrl, combatBridge, swordVisual != null ? swordVisual.transform : null, looseBuildSystem);
             HandleQuickDropAndInteractHotkeys(
                 playerTransform, playerBodyRoot, playerCamera, chestLidTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual,
-                sharedVoxelMat, miningCtrl, combatBridge, collapseBridge);
+                sharedVoxelMat, miningCtrl, combatBridge, collapseBridge, looseBuildSystem);
             StepDroppedWorldItemsPhysics(dt);
             SyncHandAndBodyHolsterVisuals(
                 playerBodyRoot, playerCamera, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat,
@@ -302,10 +307,17 @@ namespace Stratocraft.Character
 
         private void HandleHotbarScrollWheel(
             Stage1MatterCrystalAndMiningController miningCtrl,
-            Stage1DirectionalCombatBridge? combatBridge)
+            Stage1DirectionalCombatBridge? combatBridge,
+            WorldLooseBuildSystem? looseBuildSystem = null)
         {
             if (IsCarryingShoulderLog) return;
             if (miningCtrl.IsCrystalActive || (combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ)) return;
+            if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt) ||
+                Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ||
+                Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))
+            {
+                return;
+            }
             float scroll = Input.GetAxis("Mouse ScrollWheel");
             if (Mathf.Abs(scroll) <= 0.001f) return;
 
@@ -314,6 +326,8 @@ namespace Stratocraft.Character
             int next = (cur + dir + Stage1VisualHotbarAndInventoryUi.HotbarSlotCount) % Stage1VisualHotbarAndInventoryUi.HotbarSlotCount;
             InventoryUi.SelectHotbarSlot(next);
             ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+            VisualInventorySlot chosenSlot = InventoryUi.GetActiveHotbarSlot();
+            looseBuildSystem?.NotifyHotbarSlotChanged(!chosenSlot.IsEmpty && chosenSlot.Kind == InventoryItemKind.ToolStoneHammer);
         }
 
         /// <summary>Secilen Kilif/Hotbar slotuna (0..8) gore eldeki aktif alet/silah/blok durumunu gunceller.</summary>
@@ -2424,8 +2438,15 @@ namespace Stratocraft.Character
         private void HandleHolsterSlotHotkeys(
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge = null,
-            Transform? swordPivot = null)
+            Transform? swordPivot = null,
+            WorldLooseBuildSystem? looseBuildSystem = null)
         {
+            if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
+                Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
+            {
+                return;
+            }
+
             if (IsCarryingShoulderLog)
             {
                 if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Alpha2) ||
@@ -2441,6 +2462,7 @@ namespace Stratocraft.Character
 
             if (Input.GetKeyDown(KeyCode.Alpha0) || Input.GetKeyDown(KeyCode.H))
             {
+                looseBuildSystem?.CancelActiveBuildPlacement(this, miningCtrl, emptyHotbarSelectionIfHammer: false);
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
                 InventoryUi.SelectHotbarSlot(-1);
@@ -2467,6 +2489,7 @@ namespace Stratocraft.Character
             // dogrudan ilgili kemer yuvasini secer, zaten eldeyse silahi/aleti kilifina geri koyup Bos El'e (Slot 0) gecer!
             if (InventoryUi.SelectedHotbarIndex == pressedSlotIdx && ActiveHolsterSlot != 0)
             {
+                looseBuildSystem?.CancelActiveBuildPlacement(this, miningCtrl, emptyHotbarSelectionIfHammer: false);
                 float sheatheSec = HolsterMachine.RequestSheatheToEmptyHands();
                 ActiveHolsterSlot = 0;
                 InventoryUi.SelectHotbarSlot(-1);
@@ -2477,6 +2500,8 @@ namespace Stratocraft.Character
 
             InventoryUi.SelectHotbarSlot(pressedSlotIdx);
             ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+            VisualInventorySlot chosenSlot = InventoryUi.GetActiveHotbarSlot();
+            looseBuildSystem?.NotifyHotbarSlotChanged(!chosenSlot.IsEmpty && chosenSlot.Kind == InventoryItemKind.ToolStoneHammer);
         }
 
         /// <summary>
@@ -2521,7 +2546,8 @@ namespace Stratocraft.Character
             GameObject? pickaxeVisual, GameObject? axeVisual, Material? sharedVoxelMat,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge,
-            Stage1StructuralCollapseBridge? collapseBridge = null)
+            Stage1StructuralCollapseBridge? collapseBridge = null,
+            WorldLooseBuildSystem? looseBuildSystem = null)
         {
             bool dropLogPressed = Input.GetKeyDown(KeyCode.E) ||
                                   Input.GetKeyDown(Stage1GameSettings.KeyInteract) ||
@@ -2537,13 +2563,47 @@ namespace Stratocraft.Character
                 return;
             }
 
+            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+
+            // PT-03: Aktif insa yerlestirme modundayken [Q] veya [X] esyayi yere atmaz, aninda insa modundan cikar ve eli bosaltir!
+            if (!BackpackSystem.IsBackpackOpen &&
+                looseBuildSystem != null &&
+                looseBuildSystem.IsModularBuildModeActive &&
+                !altHeld &&
+                (Input.GetKeyDown(KeyCode.Q) || Input.GetKeyDown(KeyCode.X)))
+            {
+                looseBuildSystem.CancelActiveBuildPlacement(
+                    this,
+                    miningCtrl,
+                    emptyHotbarSelectionIfHammer: true,
+                    customFeedback: "🔨 İnşa yerleştirme iptal edildi — el boşaltıldı.");
+                return;
+            }
+
             bool combatConsumingQ = combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ;
-            bool qDropPressed = !BackpackSystem.IsBackpackOpen && !combatConsumingQ && Input.GetKeyDown(KeyCode.Q);
-            bool quickDropPressed = !BackpackSystem.IsBackpackOpen && (
-                                    Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop) ||
-                                    Input.GetKeyDown(KeyCode.X) ||
-                                    ((Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
-                                     (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))));
+            bool qDropPressed = !BackpackSystem.IsBackpackOpen && !combatConsumingQ && !altHeld && Input.GetKeyDown(KeyCode.Q);
+
+            // PT-04: Elde Kilic varken yalin [X] tusu Yari-Kilic (Halbschwert) tutusunu acar/kapatir; kilici yere atmaz!
+            VisualInventorySlot activeSlotForX = InventoryUi.GetActiveHotbarSlot();
+            bool isHoldingSwordNow = ActiveHolsterSlot == 1 ||
+                                     (!activeSlotForX.IsEmpty && Stage1VisualHotbarAndInventoryUi.TryMapSwordKindToArchetype(activeSlotForX.Kind, out _));
+            Stage1InputConflictPolicy.KeyXAction xAction = Stage1InputConflictPolicy.ResolveKeyX(
+                shiftHeld,
+                ctrlHeld,
+                altHeld,
+                isCarryingShoulderLog: false,
+                isHoldingSwordInSlot1: isHoldingSwordNow,
+                externalModalBlocked: BackpackSystem.IsBackpackOpen);
+            bool xQuickDropAllowed = xAction == Stage1InputConflictPolicy.KeyXAction.QuickDropActiveItem &&
+                                     (Input.GetKeyDown(KeyCode.X) ||
+                                      (Stage1GameSettings.KeyQuickDrop == KeyCode.X && Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop)));
+            bool customNonXQuickDrop = Stage1GameSettings.KeyQuickDrop != KeyCode.X && Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop);
+            bool shiftGQuickDrop = (Input.GetKeyDown(Stage1GameSettings.KeyMartialStance) || Input.GetKeyDown(KeyCode.G)) &&
+                                   shiftHeld && !ctrlHeld && !altHeld;
+            bool quickDropPressed = !BackpackSystem.IsBackpackOpen && !altHeld &&
+                                    (xQuickDropAllowed || customNonXQuickDrop || shiftGQuickDrop);
             if (qDropPressed || quickDropPressed)
             {
                 int selIdx = InventoryUi.SelectedHotbarIndex;
