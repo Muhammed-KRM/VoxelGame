@@ -3030,6 +3030,19 @@ namespace Stratocraft.Character
             {
                 WakeChunkAndNeighborsFluid((Mathf.FloorToInt(transform.position.x / 16f), Mathf.FloorToInt(transform.position.z / 16f)));
             }
+            while (_organicTreeCanopySystem.TryConsumeBrokenBranchDrop(out BrokenTreeBranchDropEvent branchDrop))
+            {
+                if (_miningCtrl.ActiveDroppedWorldItemCount < 220)
+                {
+                    _miningCtrl.SpawnDroppedWorldItem(
+                        new Vector3(branchDrop.WorldX, branchDrop.WorldY, branchDrop.WorldZ),
+                        branchDrop.WoodMaterialId != 0 ? branchDrop.WoodMaterialId : MaterialIdCatalog.OakWood,
+                        shape: 2,
+                        count: Math.Max(1, (int)branchDrop.DroppedWoodCount),
+                        SharedVoxelMaterial,
+                        "Kirilan Agac Dali");
+                }
+            }
             if (!string.IsNullOrEmpty(moveFeedback)) _miningCtrl.LastFeedbackText = moveFeedback;
 
             // Paket 4B (IP-6 / AK-10): Firtinada ([Sol Ctrl] comelme ve duvar siperi duyarli) aerodinamik oyuncu suruklemesi

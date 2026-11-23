@@ -1328,24 +1328,40 @@ def build_mod_gable_wall_45deg_2m(mat):
 
 def _build_pine_canopy_common(name, snowy, mat):
     """
-    Cok katmanli sarkik igne yaprak salkimli & dal iskeletli + konik tepeli gercek 3B Nordik cam taci.
+    Cok katmanli sarkik igne yaprak salkimli, ayri kalin tasiyici ana dal + ince uc dal iskeletli
+    ve voksel govde (r=0.38m, Z=+1.0m) ile %100 kesintisiz bilezik uyumlu gercek 3B Nordik cam taci.
     Pivot (0,0,0) = CrownBaseY; alt sarkik dallar Z = -1.25m'ye kadar iner, konik tepe Z = +4.65m'ye yukselir.
     """
     mb = SculptedMeshBuilder(name)
-    # Ust incelen cam govde lideri (leader trunk)
+    # Voksel OctagonalColumn (r=0.38m, Z <= +1.00m) ile kesintisiz birlesen 8-gen govde bilezigi + tepe lideri
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -1.35), (0.02, -0.02, 1.30), (0.0, 0.0, 4.25)],
-        radii=[0.24, 0.14, 0.04],
-        cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
-        segs=5,
+        points=[
+            (0.0, 0.0, -1.35),
+            (0.0, 0.0, -0.20),
+            (0.0, 0.0, 1.04),
+            (0.01, -0.01, 1.85),
+            (0.01, -0.01, 3.05),
+            (0.0, 0.0, 4.25),
+        ],
+        radii=[0.42, 0.41, 0.39, 0.25, 0.14, 0.04],
+        cols_u8=[
+            PAL["bark_dark"],
+            PAL["bark_ridge"],
+            PAL["bark_dark"],
+            PAL["bark_ridge"],
+            PAL["bark_dark"],
+        ],
+        segs=8,
     )
 
-    # 6 katmanli (whorl) altin-aci kaydirmali sarkik cam dallari ve igne yaprak salkimlari
+    # 6 katmanli (whorl) altin-aci kaydirmali sarkik cam dallari:
+    # Katman 1 (ThickPrimaryCarrier): Alt/orta halkalarda govde bileziginden cikan kalin tasiyici ana dallar
+    # Katman 2 (ThinOuterTerminal): Ana dallardan ikiye ayrilan ince yan/uc surgun dallar + ust ince halkalar
     whorls = [
-        (-0.85, 5, 2.38, 1.24, 0.44),
-        (-0.02, 5, 2.04, 1.12, 0.38),
-        (0.82, 4, 1.68, 0.96, 0.32),
-        (1.66, 4, 1.30, 0.80, 0.26),
+        (-0.85, 5, 2.42, 1.24, 0.44),
+        (-0.02, 5, 2.08, 1.12, 0.38),
+        (0.82, 4, 1.72, 0.96, 0.32),
+        (1.66, 4, 1.32, 0.80, 0.26),
         (2.48, 3, 0.94, 0.62, 0.20),
         (3.25, 3, 0.60, 0.44, 0.14),
     ]
@@ -1358,13 +1374,43 @@ def _build_pine_canopy_common(name, snowy, mat):
             dy = math.sin(ang)
             len_var = b_len * (0.90 + 0.18 * ((seed * 37 % 11) / 11.0))
 
-            # Alt 2 katmanda gorunur ahsap ic dal iskeleti
-            if w_idx <= 1:
-                p0 = (dx * 0.08, dy * 0.08, wz + 0.04)
-                p2 = (dx * len_var * 0.78, dy * len_var * 0.78, wz - droop * 0.56)
+            if w_idx <= 2:
+                # KATMAN 1: Kalin tasiyici ana dal (ThickPrimaryCarrier) - govde bilezigine tam kenetli
+                p0 = (dx * 0.24, dy * 0.24, wz + 0.06)
+                p1 = (dx * len_var * 0.46, dy * len_var * 0.46, wz - droop * 0.24)
+                p2 = (dx * len_var * 0.82, dy * len_var * 0.82, wz - droop * 0.58)
+                r_root = 0.155 if w_idx == 0 else (0.132 if w_idx == 1 else 0.108)
+                mb.add_tapered_tube(
+                    points=[p0, p1, p2],
+                    radii=[r_root, r_root * 0.72, r_root * 0.42],
+                    cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
+                    segs=6,
+                    cap_ends=False,
+                )
+                # KATMAN 2: Ana dal uzerinden ayrilan ince yan/uc dallar (ThinOuterTerminal)
+                for side_sign in (-1.0, 1.0):
+                    twig_ang = ang + side_sign * 0.48
+                    tdx, tdy = math.cos(twig_ang), math.sin(twig_ang)
+                    t_start = p1
+                    t_end = (
+                        p1[0] + tdx * len_var * 0.42,
+                        p1[1] + tdy * len_var * 0.42,
+                        p1[2] - droop * 0.34,
+                    )
+                    mb.add_tapered_tube(
+                        points=[t_start, t_end],
+                        radii=[0.056, 0.022],
+                        cols_u8=[PAL["bark_ridge"]],
+                        segs=4,
+                        cap_ends=False,
+                    )
+            else:
+                # KATMAN 2: Ust halka ince uc dallar (ThinOuterTerminal)
+                p0 = (dx * 0.12, dy * 0.12, wz + 0.04)
+                p2 = (dx * len_var * 0.76, dy * len_var * 0.76, wz - droop * 0.52)
                 mb.add_tapered_tube(
                     points=[p0, p2],
-                    radii=[0.062, 0.022],
+                    radii=[0.068, 0.024],
                     cols_u8=[PAL["bark_dark"]],
                     segs=4,
                     cap_ends=False,
@@ -1372,7 +1418,7 @@ def _build_pine_canopy_common(name, snowy, mat):
 
             # Ana sarkik igne yaprak salkimi (kok govde icinde gizli -> cap_root=False)
             mb.add_pine_bough_cluster(
-                origin=(dx * 0.02, dy * 0.02, wz + 0.04),
+                origin=(dx * 0.18, dy * 0.18, wz + 0.04),
                 dir_xy=(dx, dy),
                 length=len_var,
                 width=b_width,
@@ -1419,40 +1465,48 @@ def build_flora_snow_pine_canopy(mat):
 
 def build_flora_ancient_oak_canopy(mat):
     """
-    Organik cok-kumeli, alttan gorunur catalli dalli kadim mese taci (asla kup veya tek kure degil!).
-    Pivot (0,0,0) = CrownBaseY; kalin catalli mese kollari Z=-1.20m'den disa/yukari ayrilir,
-    ayrik katmanli yaprak bulutlari Z=+1.05m .. +4.15m arasinda genis semsiye taci kurar.
+    Organik cok-kumeli, 2 katmanli (kalin tasiyici ana kollar + ince catalli uc dallar) kadim mese taci.
+    Pivot (0,0,0) = CrownBaseY; voksel govde (r=0.38m, Z <= +1.00m) Z=-1.25m..+1.06m arasindaki
+    r=0.45m..0.40m 8-gen govde bilezigi tarafindan %100 kesintisiz sarilir.
     """
     mb = SculptedMeshBuilder("Flora_Ancient_Oak_Canopy")
     oak_pal = (PAL["oak_deep"], PAL["oak_mid"], PAL["oak_sun"], PAL["oak_warm_tip"])
 
-    # Kalin bogumlu ust mese govdesi (alt dallarin ayrildigi ana catal -> ust tepeye kesintisiz uzanir)
+    # Kalin bogumlu ust mese govdesi (voksel govdenin Z=+1.0m ust yuzunu saran r>=0.40m bilezik + ust catal)
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -1.20), (0.04, -0.03, -0.10), (-0.02, 0.02, 1.15), (0.0, 0.0, 2.55)],
-        radii=[0.38, 0.32, 0.22, 0.10],
-        cols_u8=[PAL["bark_dark"], PAL["bark_ridge"], PAL["bark_dark"]],
-        segs=5,
+        points=[
+            (0.0, 0.0, -1.25),
+            (0.02, -0.02, -0.15),
+            (0.01, 0.01, 1.05),
+            (-0.02, 0.02, 1.75),
+            (0.0, 0.0, 2.65),
+        ],
+        radii=[0.45, 0.42, 0.40, 0.25, 0.11],
+        cols_u8=[PAL["bark_dark"], PAL["bark_ridge"], PAL["bark_dark"], PAL["bark_ridge"]],
+        segs=8,
     )
 
-    # 5 ana kivrimli dis mese dali + ikincil yan catallar + organik bulutsu yaprak kumeleri (subdivs=2)
+    # KATMAN 1 (ThickPrimaryCarrier): 5 ana tasiyici kalin mese dali +
+    # KATMAN 2 (ThinOuterTerminal): Her ana daldan ayrilan ikincil/uc ince dallar ve yaprak kumeleri
     bough_specs = [
-        (0.12, 2.55, 1.52, (1.14, 1.06, 0.58), True),
-        (1.36, 2.42, 1.85, (1.08, 1.14, 0.60), False),
-        (2.64, 2.62, 1.44, (1.16, 1.04, 0.56), True),
-        (3.90, 2.38, 1.78, (1.06, 1.12, 0.60), False),
-        (5.14, 2.50, 1.60, (1.12, 1.08, 0.58), False),
+        (0.12, 2.62, 1.52, (1.14, 1.06, 0.58), True),
+        (1.36, 2.48, 1.85, (1.08, 1.14, 0.60), True),
+        (2.64, 2.68, 1.44, (1.16, 1.04, 0.56), True),
+        (3.90, 2.44, 1.78, (1.06, 1.12, 0.60), True),
+        (5.14, 2.56, 1.60, (1.12, 1.08, 0.58), True),
     ]
     for idx, (ang, reach, top_z, lobe_rad, add_sub) in enumerate(bough_specs):
         dx = math.cos(ang)
         dy = math.sin(ang)
-        p0 = (dx * 0.14, dy * 0.14, -0.65 + (idx % 2) * 0.18)
-        p1 = (dx * reach * 0.46 + dy * 0.18, dy * reach * 0.46 - dx * 0.18, top_z * 0.36)
+        p0 = (dx * 0.26, dy * 0.26, -0.45 + (idx % 2) * 0.28)
+        p1 = (dx * reach * 0.48 + dy * 0.16, dy * reach * 0.48 - dx * 0.16, top_z * 0.42)
         p2 = (dx * reach * 0.86, dy * reach * 0.86, top_z)
+        # Katman 1: Kalin tasiyici ana dal (segs=6, kalin tasiyici kesit)
         mb.add_tapered_tube(
             points=[p0, p1, p2],
-            radii=[0.20, 0.13, 0.065],
+            radii=[0.23, 0.165, 0.105],
             cols_u8=[PAL["bark_dark"], PAL["bark_ridge"]],
-            segs=4,
+            segs=6,
             cap_ends=False,
         )
         # Dis dal ucu yassi yaprak bulutu (subdivs=2, paylasilan yumusak vertex)
@@ -1465,16 +1519,27 @@ def build_flora_ancient_oak_canopy(mat):
             smooth_shared=True,
         )
         if add_sub:
-            sub_ang = ang + 0.64
-            sdx, sdy = math.cos(sub_ang), math.sin(sub_ang)
-            sub_end = (sdx * reach * 0.72, sdy * reach * 0.72, top_z * 0.82 + 0.55)
-            mb.add_tapered_tube(
-                points=[p1, sub_end],
-                radii=[0.105, 0.050],
-                cols_u8=[PAL["bark_ridge"]],
-                segs=4,
-                cap_ends=False,
-            )
+            # Katman 2: Ikincil ve uc ince dallar (ThinOuterTerminal)
+            for branch_side, spread in ((-1.0, 0.52), (1.0, 0.64)):
+                sub_ang = ang + branch_side * spread
+                sdx, sdy = math.cos(sub_ang), math.sin(sub_ang)
+                sub_mid = (
+                    p1[0] + sdx * reach * 0.24,
+                    p1[1] + sdy * reach * 0.24,
+                    top_z * 0.66 + 0.24,
+                )
+                sub_end = (
+                    p1[0] + sdx * reach * 0.54,
+                    p1[1] + sdy * reach * 0.54,
+                    top_z * 0.86 + 0.48,
+                )
+                mb.add_tapered_tube(
+                    points=[p1, sub_mid, sub_end],
+                    radii=[0.092, 0.056, 0.026],
+                    cols_u8=[PAL["bark_ridge"], PAL["bark_dark"]],
+                    segs=4,
+                    cap_ends=False,
+                )
 
     # Ust tepe ve ara katman 4 bagli tac kubbesi (govde ve dallarla kesintisiz ortusur, havada kalmaz!)
     crown_caps = [
@@ -1487,9 +1552,9 @@ def build_flora_ancient_oak_canopy(mat):
         if c_idx < 3:
             mb.add_tapered_tube(
                 points=[(0.0, 0.0, 1.45), (ctr[0] * 0.75, ctr[1] * 0.75, ctr[2] - 0.18)],
-                radii=[0.11, 0.05],
+                radii=[0.115, 0.048],
                 cols_u8=[PAL["bark_dark"]],
-                segs=4,
+                segs=5,
                 cap_ends=False,
             )
         mb.add_organic_foliage_lobe(ctr, rads, sd, oak_pal, subdivs=2, smooth_shared=True)
@@ -1501,33 +1566,35 @@ def build_flora_tree_root_buttress(mat):
     """
     Agac dibi organik kok mahmuzlari & yosunlu govde bilezigi:
     Pivot (0,0,0) = agac tabani (WorldX, BaseY, WorldZ).
-    Egimli arazide bosluk kalmamasi icin Z = -0.68m topragin altina iner, +1.18m govdeye sarilir.
+    Egimli arazide bosluk kalmamasi icin Z = -0.68m topragin altina iner, +1.22m govdeye sarilir.
     """
     mb = SculptedMeshBuilder("Flora_Tree_Root_Buttress")
-    # Yosunlu alt govde kukasi (3 nokta, segs=6)
+    # Yosunlu alt govde kukasi (voksel OctagonalColumn r=0.38m ile %100 uyumlu 8-gen bilezik)
     mb.add_tapered_tube(
-        points=[(0.0, 0.0, -0.65), (0.0, 0.0, 0.26), (0.0, 0.0, 1.18)],
-        radii=[0.56, 0.48, 0.36],
+        points=[(0.0, 0.0, -0.65), (0.0, 0.0, 0.28), (0.0, 0.0, 1.22)],
+        radii=[0.58, 0.48, 0.40],
         cols_u8=[PAL["bark_moss"], PAL["bark_dark"]],
-        segs=6,
+        segs=8,
     )
 
-    # 4 adet kivrimli kok mahmuzu (root spurs: 3 nokta, segs=4)
-    for r_i in range(4):
-        ang = (2.0 * math.pi * r_i) / 4.0 + 0.18 * math.sin(r_i * 2.7)
+    # 4 adet ana tasiyici kok mahmuzu + 2 adet ince yan kok uzantisi
+    for r_i in range(6):
+        is_primary = r_i < 4
+        ang = (2.0 * math.pi * r_i) / 6.0 + 0.14 * math.sin(r_i * 2.7)
         dx = math.cos(ang)
         dy = math.sin(ang)
-        perp_x, perp_y = -dy * 0.12, dx * 0.12
+        perp_x, perp_y = -dy * 0.10, dx * 0.10
+        reach = 1.34 if is_primary else 1.06
         pts = [
-            (dx * 0.24, dy * 0.24, 0.92),
-            (dx * 0.72 + perp_x, dy * 0.72 + perp_y, 0.18),
-            (dx * 1.32, dy * 1.32, -0.62),
+            (dx * 0.26, dy * 0.26, 0.94 if is_primary else 0.64),
+            (dx * (0.72 * reach / 1.34) + perp_x, dy * (0.72 * reach / 1.34) + perp_y, 0.18),
+            (dx * reach, dy * reach, -0.62),
         ]
         mb.add_tapered_tube(
             points=pts,
-            radii=[0.18, 0.20, 0.07],
+            radii=[0.19, 0.20, 0.075] if is_primary else [0.11, 0.10, 0.045],
             cols_u8=[PAL["bark_ridge"], PAL["bark_moss"]],
-            segs=4,
+            segs=5 if is_primary else 4,
         )
     return mb.finalize_object(mat, smooth_shading=False)
 
