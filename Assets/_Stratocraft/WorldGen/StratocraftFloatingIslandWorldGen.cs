@@ -19,7 +19,18 @@ namespace Stratocraft.WorldGen.Generators
         NordicTimberCabin = 0,
         MeadHallWatchtower = 1,
         CarvedMarbleShrine = 2,
-        CollapsedTimberStoneRuin = 3
+        CollapsedTimberStoneRuin = 3,
+        VillageWell = 4,
+        WindmillTower = 5,
+        TownHouseTwoStory = 6,
+        BlacksmithForge = 7,
+        MarketStall = 8,
+        BarnStable = 9,
+        CarpenterWorkshop = 10,
+        WarehouseHall = 11,
+        CityFountain = 12,
+        CityWallSegment = 13,
+        CityGatehouse = 14
     }
 
     /// <summary>
@@ -1960,7 +1971,7 @@ namespace Stratocraft.WorldGen.Generators
 
             // Biyom 10 (Gökyüzü Adaları Takımadası) ve Kesif Noktalari icin Bagimsiz Yuksek İrtifa Gökyüzü Adaları
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids, cachedBiomes);
-            PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels);
+            PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels, fluids);
             // Halka >= 1 kara chunk'larinda %5 deterministik 4-odali Kadim Zindan damgalamasi:
             float centerColTopH = cachedTopH.Length == 256 ? cachedTopH[(8 << 4) | 8] : SampleIslandTopSurfaceY((chunkX << 4) + 8, (chunkZ << 4) + 8);
             if (centerColTopH >= 85.0f)
@@ -3270,7 +3281,7 @@ namespace Stratocraft.WorldGen.Generators
             return ResolveUndergroundHostRockStrata(wx, y, wz, topH, inF12MagmaRoom);
         }
 
-        public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels)
+        public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels, ushort[]? fluids = null)
         {
             int chunkBiomeId = GetBiomeId(chunkX * 16 + 8, chunkZ * 16 + 8);
             if (chunkX == -1 && chunkZ == -1)
@@ -3317,199 +3328,75 @@ namespace Stratocraft.WorldGen.Generators
                 SetArchitecturalVoxel(voxels, 11, bY2, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
                 SetArchitecturalVoxel(voxels, 12, bY3, 7, MaterialIdCatalog.StarCore, shapeId: 7, rot: 1);
             }
-            else if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modularSite))
+            else
             {
-                // 1m³ kubik Minecraft ev/tapinak duvarlari damgalanmaz; biyoma uygun dogal teras/kaide duzlenir
-                // ve sahnede gercek 3B Structures_Modular/mod_*.glb parcalariyla (SOTF fiziksel yikim destekli) kurulur!
-                LevelNaturalModularSiteTerrace(voxels, in modularSite);
+                // PT-02: Dagınık tekil ev spam'ı kaldırıldı! Yalnizca 3 katmanli (Koy / Kasaba / Sehir)
+                // yerlesimlerin yol, meydan, sulamali tarla, kuyu/cesme havuzu ve moduler bina teraslari damgalanir!
+                SettlementLayoutSystem.StampSettlementTerrainFeaturesForChunk(chunkX, chunkZ, voxels, fluids);
             }
         }
 
         /// <summary>
-        /// Verilen chunk icinde 1m³ kubik bloklar yerine gercek 3B moduler .glb parcalariyla kurulacak
-        /// deterministik koy kulubesi, icki salonu gozetleme kulesi, mermer tapinak veya harabe yerleskesini cozer (0 B GC).
+        /// PT-02: Verilen chunk icindeki tum 3B moduler yerlesim binalarini (Koy / Kasaba / Sehir) 0-GC olarak doldurur.
+        /// Daginik tekil ev / cardak spami %100 kaldirilmistir.
+        /// </summary>
+        public static int TryGetChunkModularStructureSites(
+            int chunkX,
+            int chunkZ,
+            Span<ProceduralModularSiteSpec> outSites)
+        {
+            return SettlementLayoutSystem.PopulateChunkSettlementSites(chunkX, chunkZ, outSites);
+        }
+
+        /// <summary>
+        /// Geriye donuk uyumlu tekil sorgu: Verilen chunk bir 3 katmanli yerlesimin bina parseline denk geliyorsa
+        /// birincil moduler bina tanimini doner; rastgele bos chunk'larda daima false doner (0 B GC).
         /// </summary>
         public static bool TryGetChunkModularStructureSite(int chunkX, int chunkZ, out ProceduralModularSiteSpec site)
         {
-            site = default;
-
-            // Baslangic vadisi ve 02_Faz2_Workshop... objelerinin etrafi tamamen temiz tutulur;
-            // vadinin acik ve duzlestirilmis tek kenarinda (1, 2) YALNIZCA 1 adet tam kapali NordicTimberCabin yerlesir!
-            if (chunkX == 1 && chunkZ == 2)
+            Span<ProceduralModularSiteSpec> buf = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int count = SettlementLayoutSystem.PopulateChunkSettlementSites(chunkX, chunkZ, buf);
+            if (count > 0)
             {
-                site = BuildModularSiteSpec(
-                    chunkX, chunkZ, localCx: 8, localCz: 8, halfExtent: 3,
-                    ProceduralModularSiteKind.NordicTimberCabin, yawDeg: 180f, hasLootChest: true);
+                site = buf[0];
                 return true;
             }
-
-            if (!TryGetProceduralStructureTypeForChunk(chunkX, chunkZ, out int structType, out int structBaseY))
-            {
-                return false;
-            }
-
-            uint seed = HashChamberPcg(chunkX, structType + 11, chunkZ, ActiveWorldSeed ^ 0x4D6F6453);
-            ProceduralModularSiteKind kind;
-            float yawDeg;
-
-            if (chunkX == 2 && chunkZ == 0)
-            {
-                kind = ProceduralModularSiteKind.NordicTimberCabin;
-                yawDeg = 270f;
-            }
-            else if (chunkX == 0 && chunkZ == 3)
-            {
-                kind = ProceduralModularSiteKind.MeadHallWatchtower;
-                yawDeg = 180f;
-            }
-            else if ((chunkX == -2 && chunkZ == 2) || (chunkX == -3 && chunkZ == -3))
-            {
-                kind = ProceduralModularSiteKind.CarvedMarbleShrine;
-                yawDeg = 0f;
-            }
-            else if (chunkX == 2 && chunkZ == -2)
-            {
-                kind = ProceduralModularSiteKind.CollapsedTimberStoneRuin;
-                yawDeg = 180f;
-            }
-            else
-            {
-                kind = structType switch
-                {
-                    0 => ((seed & 1u) == 0u)
-                        ? ProceduralModularSiteKind.NordicTimberCabin
-                        : ProceduralModularSiteKind.MeadHallWatchtower,
-                    1 => ProceduralModularSiteKind.CarvedMarbleShrine,
-                    _ => ProceduralModularSiteKind.CollapsedTimberStoneRuin
-                };
-                yawDeg = ((seed >> 4) & 3u) * 90.0f;
-            }
-
-            int centerWx = chunkX * 16 + 8;
-            int centerWz = chunkZ * 16 + 8;
-            int biomeId = GetBiomeId(centerWx, centerWz);
-            byte terraceMat = ResolveBiomeFoundationMaterial(biomeId, structBaseY, isTopLayer: true);
-
-            site = new ProceduralModularSiteSpec(
-                chunkX: chunkX,
-                chunkZ: chunkZ,
-                kind: kind,
-                baseY: structBaseY,
-                biomeId: biomeId,
-                terraceMaterialId: terraceMat,
-                localCenterX: 8,
-                localCenterZ: 8,
-                terraceHalfExtentBlocks: 3,
-                worldCenterX: centerWx + 0.5f,
-                worldBaseY: structBaseY + 0.5f,
-                worldCenterZ: centerWz + 0.5f,
-                yawDegrees: yawDeg,
-                deterministicSeed: seed,
-                hasLootChest: true);
-            return true;
-        }
-
-        private static ProceduralModularSiteSpec BuildModularSiteSpec(
-            int chunkX,
-            int chunkZ,
-            byte localCx,
-            byte localCz,
-            byte halfExtent,
-            ProceduralModularSiteKind kind,
-            float yawDeg,
-            bool hasLootChest)
-        {
-            int wx = chunkX * 16 + localCx;
-            int wz = chunkZ * 16 + localCz;
-            int baseY = Math.Clamp(RoundToInt(SampleIslandTopSurfaceY(wx, wz)), SeaLevelY + 2, MaxEditableVoxelY - 16);
-            int biomeId = GetBiomeId(wx, wz);
-            byte terraceMat = ResolveBiomeFoundationMaterial(biomeId, baseY, isTopLayer: true);
-            uint seed = HashChamberPcg(chunkX, (int)kind + 3, chunkZ, ActiveWorldSeed ^ 0x4D6F6453);
-
-            return new ProceduralModularSiteSpec(
-                chunkX: chunkX,
-                chunkZ: chunkZ,
-                kind: kind,
-                baseY: baseY,
-                biomeId: biomeId,
-                terraceMaterialId: terraceMat,
-                localCenterX: localCx,
-                localCenterZ: localCz,
-                terraceHalfExtentBlocks: halfExtent,
-                worldCenterX: wx + 0.5f,
-                worldBaseY: baseY + 0.5f,
-                worldCenterZ: wz + 0.5f,
-                yawDegrees: yawDeg,
-                deterministicSeed: seed,
-                hasLootChest: hasLootChest);
-        }
-
-        private static void LevelNaturalModularSiteTerrace(uint[] voxels, in ProceduralModularSiteSpec site)
-        {
-            int minLx = Math.Max(1, site.LocalCenterX - site.TerraceHalfExtentBlocks);
-            int maxLx = Math.Min(14, site.LocalCenterX + site.TerraceHalfExtentBlocks);
-            int minLz = Math.Max(1, site.LocalCenterZ - site.TerraceHalfExtentBlocks);
-            int maxLz = Math.Min(14, site.LocalCenterZ + site.TerraceHalfExtentBlocks);
-            int baseY = site.BaseY;
-            byte topMat = ResolveBiomeFoundationMaterial(site.BiomeId, baseY, isTopLayer: true);
-            uint topCell = VoxelBitUtility.PackStandard(
-                topMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
-
-            int maxClearY = Math.Min(MaxEditableVoxelY - 2, baseY + 7);
-            for (int lz = minLz; lz <= maxLz; lz++)
-            {
-                for (int lx = minLx; lx <= maxLx; lx++)
-                {
-                    EnsureSolidFoundationUnder(voxels, lx, baseY, lz, site.BiomeId);
-                    voxels[(baseY << 8) | (lz << 4) | lx] = topCell;
-
-                    for (int clearY = baseY + 1; clearY <= maxClearY; clearY++)
-                    {
-                        voxels[(clearY << 8) | (lz << 4) | lx] = 0u;
-                    }
-                }
-            }
+            site = default;
+            return false;
         }
 
         /// <summary>
-        /// Dünya genelinde Köyler (0), Kadim Tapınaklar (1) ve Harabeler (2) ile içlerindeki Hazine Sandıklarının
-        /// deterministik konumlarını hesaplar. Oyuncu [E] tuşuyla bu sandıkları açıp içindeki eşyaları alabilir!
+        /// PT-02: Verilen chunk bir Koy (0), Kasaba (1) veya Sehir (2) yerlesimi icinde ganimet sandikli
+        /// bir bina iceriyorsa deterministik yapi turunu ve taban kotunu doner.
+        /// Rastgele her 5 chunk'ta 1 tekil ev spami tamamen kaldirilmistir!
         /// </summary>
         public static bool TryGetProceduralStructureTypeForChunk(
             int chunkX, int chunkZ, out int structureType, out int baseY)
         {
             structureType = 0;
             baseY = DefaultSurfaceBaseY;
-            if (chunkX >= -2 && chunkX <= 1 && chunkZ >= -1 && chunkZ <= 1) return false;
-            if (chunkX == -3 && chunkZ == -1) return false;
 
-            // Yakın çevrede garanti örnek yapılar + tüm dünyada her ~5 kara chunk'ında 1 yapı (Köy, Tapınak veya Harabe)
-            bool isGuaranteedLandmark =
-                (chunkX == 2 && chunkZ == 0) ||   // Doğu Köyü
-                (chunkX == -2 && chunkZ == 2) ||  // Kuzeybatı Tapınağı
-                (chunkX == 2 && chunkZ == -2) ||  // Güneydoğu Harabesi
-                (chunkX == 0 && chunkZ == 3) ||   // Kuzey Köyü
-                (chunkX == -3 && chunkZ == -3);   // Güneybatı Tapınağı
+            if (!SettlementLayoutSystem.TryGetSettlementCoveringChunk(chunkX, chunkZ, out SettlementDescriptor settlement))
+            {
+                return false;
+            }
 
-            int hash = Math.Abs((chunkX * 73856093) ^ (chunkZ * 19349663) ^ (ActiveWorldSeed * 83492791));
-            if (!isGuaranteedLandmark && (hash % 5) != 0) return false;
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int count = SettlementLayoutSystem.PopulateChunkSettlementSites(chunkX, chunkZ, sites);
+            for (int i = 0; i < count; i++)
+            {
+                if (!sites[i].HasLootChest) continue;
+                baseY = sites[i].BaseY;
+                structureType = settlement.Tier switch
+                {
+                    SettlementTier.Village => 0,
+                    SettlementTier.Town => 1,
+                    _ => 2
+                };
+                return true;
+            }
 
-            int centerWx = chunkX * 16 + 8;
-            int centerWz = chunkZ * 16 + 8;
-            if (IsNearNaturalCaveEntranceMouth(centerWx, centerWz, clearanceRadius: 15.0f)) return false;
-            float topH = SampleIslandTopSurfaceY(centerWx, centerWz);
-            if (topH < SeaLevelY + 1.2f || topH > MaxEditableVoxelY - 16) return false;
-
-            int biomeId = GetBiomeId(centerWx, centerWz);
-            EvaluateBasinState(centerWx, centerWz, biomeId, 64000f, out bool inWater, out bool inLava, out bool inAcid, out _, out bool inWall);
-            if (inWater || inLava || inAcid || inWall) return false;
-
-            baseY = RoundToInt(topH);
-            if (chunkX == 2 && chunkZ == 0) structureType = 0;      // Köy Evi & Kuyu
-            else if (chunkX == -2 && chunkZ == 2) structureType = 1; // Kadim Mermer Tapınak
-            else if (chunkX == 2 && chunkZ == -2) structureType = 2; // Antik Gözetleme Harabesi
-            else structureType = hash % 3;
-            return true;
+            return false;
         }
 
         public static bool TryGetStructureLootChestInChunk(
@@ -3518,16 +3405,23 @@ namespace Stratocraft.WorldGen.Generators
             chestWx = 0; chestWy = 0; chestWz = 0; structureName = string.Empty;
             if (!TryGetProceduralStructureTypeForChunk(chunkX, chunkZ, out int sType, out int baseY)) return false;
 
-            chestWx = chunkX * 16 + 8;
-            chestWy = baseY + 1;
-            chestWz = chunkZ * 16 + 8;
-            structureName = sType switch
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int count = SettlementLayoutSystem.PopulateChunkSettlementSites(chunkX, chunkZ, sites);
+            for (int i = 0; i < count; i++)
             {
-                0 => "Köy Evi Erzak ve Ekipman Sandığı",
-                1 => "Kadim Tapınak Kutsal Hazine Sandığı",
-                _ => "Antik Harabe Ganimet Sandığı"
-            };
-            return true;
+                if (!sites[i].HasLootChest) continue;
+                chestWx = chunkX * 16 + sites[i].LocalCenterX;
+                chestWy = sites[i].BaseY + 1;
+                chestWz = chunkZ * 16 + sites[i].LocalCenterZ;
+                structureName = sType switch
+                {
+                    0 => "Köy Evi Erzak ve Ekipman Sandığı",
+                    1 => "Kasaba Atölye ve Ticaret Sandığı",
+                    _ => "Şehir Lonca ve Hazine Sandığı"
+                };
+                return true;
+            }
+            return false;
         }
 
         public static void PopulateIslandTreesForChunk(int chunkX, int chunkZ, uint[] voxels)
@@ -3783,6 +3677,7 @@ namespace Stratocraft.WorldGen.Generators
             int wz = chunkZ * 16 + lz;
             float rSq = (float)wx * wx + (float)wz * wz;
             if (rSq < 144.0f) return false; // Baslangic Atolyesi ve Ors cevresini acik tut
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz)) return false;
             if (IsNearNaturalCaveEntranceMouth(wx, wz, clearanceRadius: 6.5f)) return false;
 
             float radialMargin;
@@ -3876,6 +3771,7 @@ namespace Stratocraft.WorldGen.Generators
 
             float rSq = wx * wx + wz * wz;
             if (rSq < 49.0f) return false; // Atolye gobeginin tam ustune koyma
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz)) return false;
 
             float r = MathF.Sqrt(rSq);
             float coastR = ComputeIslandCoastRadius(wx, wz);
@@ -3987,6 +3883,7 @@ namespace Stratocraft.WorldGen.Generators
 
             float rSq = wx * wx + wz * wz;
             if (rSq < 64.0f) return false; // Atolye meydanini acik birak
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz)) return false;
 
             float r = MathF.Sqrt(rSq);
             float coastR = ComputeIslandCoastRadius(wx, wz);
@@ -4074,9 +3971,7 @@ namespace Stratocraft.WorldGen.Generators
             woodMat = MaterialIdCatalog.OakWood;
             isPine = false;
 
-            if (TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec modSite) &&
-                Math.Abs(lx - modSite.LocalCenterX) <= modSite.TerraceHalfExtentBlocks &&
-                Math.Abs(lz - modSite.LocalCenterZ) <= modSite.TerraceHalfExtentBlocks)
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz))
             {
                 return false;
             }

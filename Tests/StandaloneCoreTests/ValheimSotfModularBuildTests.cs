@@ -622,28 +622,35 @@ namespace Stratocraft.StandaloneCoreTests
         [Test]
         public void WorldGen_Replaces1mCubeHousesWithBiomeTerraces_AndPooledSitesCollapseWhenSupportsBreak()
         {
-            // Baslangic vadisi / atolye cevresi cardak spami temiz olmalidir:
+            StratocraftFloatingIslandWorldGen.ActiveWorldSeed = 1453;
+            SettlementLayoutSystem.ClearThreadCacheForTests();
+
+            // PT-02: Baslangic vadisi ve yakin cevresi artik rastgele daginik tekil ev / cardak spaminden %100 temizdir!
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 0, out _), Is.False);
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-2, -1, out _), Is.False);
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-3, -1, out _), Is.False);
             Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(1, 1, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(1, 2, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, 0, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 3, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-2, 2, out _), Is.False);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, -2, out _), Is.False);
 
-            // Baslangic vadisi kenarinda yalnizca 1 adet tam kapali NordicTimberCabin:
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(1, 2, out ProceduralModularSiteSpec starterCabinSite), Is.True);
-            Assert.That(starterCabinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.NordicTimberCabin));
+            // Gercek 3 katmanli yerlesim sistemindeki Koy (0,0 makro bolge) ve Sehir (0,-1 makro bolge) yapilarini dogrula:
+            Assert.That(SettlementLayoutSystem.TryGetSettlementInMacroRegion(0, 0, out SettlementDescriptor village), Is.True);
+            Assert.That(village.Tier, Is.EqualTo(SettlementTier.Village));
 
-            // Dis POI yerleskeleri:
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, 0, out ProceduralModularSiteSpec cabinSite), Is.True);
+            int cabinCx = village.CenterChunkX;
+            int cabinCz = village.CenterChunkZ - 1;
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(cabinCx, cabinCz, out ProceduralModularSiteSpec cabinSite), Is.True);
             Assert.That(cabinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.NordicTimberCabin));
 
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(0, 3, out ProceduralModularSiteSpec towerSite), Is.True);
+            Assert.That(SettlementLayoutSystem.TryGetSettlementInMacroRegion(0, -1, out SettlementDescriptor city), Is.True);
+            Assert.That(city.Tier, Is.EqualTo(SettlementTier.City));
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(city.CenterChunkX + 3, city.CenterChunkZ + 3, out ProceduralModularSiteSpec towerSite), Is.True);
             Assert.That(towerSite.Kind, Is.EqualTo(ProceduralModularSiteKind.MeadHallWatchtower));
-
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(-2, 2, out ProceduralModularSiteSpec shrineSite), Is.True);
+            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(city.CenterChunkX + 1, city.CenterChunkZ + 1, out ProceduralModularSiteSpec shrineSite), Is.True);
             Assert.That(shrineSite.Kind, Is.EqualTo(ProceduralModularSiteKind.CarvedMarbleShrine));
-
-            Assert.That(StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(2, -2, out ProceduralModularSiteSpec ruinSite), Is.True);
-            Assert.That(ruinSite.Kind, Is.EqualTo(ProceduralModularSiteKind.CollapsedTimberStoneRuin));
 
             // Minecraft 1m3 kup yaprak vokselleri (shapeId == 1, Grass/GlowingMoss) kaldirilmis, dogal govde korunmustur:
             var (treeChunkVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(0, 0);
@@ -671,7 +678,7 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(cubeLeafCount, Is.EqualTo(0), "BuildVoxelTree must not stamp 1m3 green cube leaf voxels!");
             Assert.That(trunkVoxelCount, Is.GreaterThanOrEqualTo(6), "BuildVoxelTree must preserve natural voxel tree trunks for felling!");
 
-            var (cabinVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(2, 0);
+            var (cabinVoxels, _) = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(cabinCx, cabinCz);
             byte expectedTerraceMat = StratocraftFloatingIslandWorldGen.ResolveBiomeFoundationMaterial(
                 cabinSite.BiomeId, cabinSite.BaseY, isTopLayer: true);
 
@@ -680,9 +687,13 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(VoxelBitUtility.GetOriginState(cabinVoxels[centerCellAtBase]), Is.EqualTo(BlokKokenDurumu.DogalKutle));
 
             int blockyHouseWallVoxels = 0;
-            for (int lz = 5; lz <= 11; lz++)
+            int minLx = Math.Max(0, cabinSite.LocalCenterX - cabinSite.TerraceHalfExtentBlocks);
+            int maxLx = Math.Min(15, cabinSite.LocalCenterX + cabinSite.TerraceHalfExtentBlocks);
+            int minLz = Math.Max(0, cabinSite.LocalCenterZ - cabinSite.TerraceHalfExtentBlocks);
+            int maxLz = Math.Min(15, cabinSite.LocalCenterZ + cabinSite.TerraceHalfExtentBlocks);
+            for (int lz = minLz; lz <= maxLz; lz++)
             {
-                for (int lx = 5; lx <= 11; lx++)
+                for (int lx = minLx; lx <= maxLx; lx++)
                 {
                     for (int y = cabinSite.BaseY + 1; y <= cabinSite.BaseY + 6; y++)
                     {
@@ -701,12 +712,10 @@ namespace Stratocraft.StandaloneCoreTests
             int spawnedCabin = buildSys.SpawnOrSyncChunkModularStructureSite(in cabinSite);
             int spawnedTower = buildSys.SpawnOrSyncChunkModularStructureSite(in towerSite);
             int spawnedShrine = buildSys.SpawnOrSyncChunkModularStructureSite(in shrineSite);
-            int spawnedRuin = buildSys.SpawnOrSyncChunkModularStructureSite(in ruinSite);
 
             Assert.That(spawnedCabin, Is.GreaterThanOrEqualTo(24));
             Assert.That(spawnedTower, Is.GreaterThanOrEqualTo(24));
             Assert.That(spawnedShrine, Is.GreaterThanOrEqualTo(18));
-            Assert.That(spawnedRuin, Is.GreaterThanOrEqualTo(12));
 
             ReadOnlySpan<ModularPlacedPieceNode> allPieces = buildSys.ActiveModularPiecesSpan;
             for (int i = 0; i < allPieces.Length; i++)

@@ -596,10 +596,7 @@ namespace Stratocraft.Character
                 _fluidMeshFilters[key] = fluidMf;
                 if (fluidMf.TryGetComponent<MeshRenderer>(out var fmr)) _fluidMeshRenderers[key] = fmr;
             }
-            if (StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(key.x, key.y, out ProceduralModularSiteSpec modularSite))
-            {
-                _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in modularSite, SharedVoxelMaterial, _worldChunks);
-            }
+            _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(key.x, key.y, SharedVoxelMaterial, _worldChunks);
             _organicTreeCanopySystem.SpawnOrSyncChunkTrees(key.x, key.y, SharedVoxelMaterial, _worldChunks);
         }
 
@@ -967,6 +964,7 @@ namespace Stratocraft.Character
             _rasterizeTimberSupportDelegateCached ??= _looseBuildSystem.TryRasterizeGroundedTimberSupportInWindow;
             _collapseBridge.ExternalTimberSupportWindowRasterizer = _rasterizeTimberSupportDelegateCached;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
+            _movementBridge.BoundLooseBuildSystem = _looseBuildSystem;
             _movementBridge.SetSafeSpawnPosition(transform.position);
             // Anayasa Bolum 3.1: Ana kameramiz varsayilan olarak FPS'tir ([F5] ile Omuz Ustu TPS'e gecilir).
             _isFirstPersonMode = true;
@@ -4390,10 +4388,7 @@ namespace Stratocraft.Character
                 _fluidKinematicsPool.ReleaseChunk(k.cx, k.cz);
                 _fluidKinematicsViewMap.Remove(k);
                 _looseBuildSystem.ReleaseChunkModularStructureSite(k.cx, k.cz);
-                if (StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(k.cx, k.cz, out ProceduralModularSiteSpec refreshedSite))
-                {
-                    _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(in refreshedSite, SharedVoxelMaterial, _worldChunks);
-                }
+                _looseBuildSystem.SpawnOrSyncChunkModularStructureSite(k.cx, k.cz, SharedVoxelMaterial, _worldChunks);
                 _organicTreeCanopySystem.ReleaseChunkTrees(k.cx, k.cz);
                 _organicTreeCanopySystem.SpawnOrSyncChunkTrees(k.cx, k.cz, SharedVoxelMaterial, _worldChunks);
                 _dirtyChunks.Add(k);

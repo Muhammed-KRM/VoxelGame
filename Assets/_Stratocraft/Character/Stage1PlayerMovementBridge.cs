@@ -5,6 +5,7 @@ using Stratocraft.Character.Data;
 using Stratocraft.Character.Systems;
 using Stratocraft.Core.Constants;
 using Stratocraft.Core.Logging;
+using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
@@ -633,6 +634,52 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
+        /// PT-05: Voksel + 3B Moduler Yapi parcalari icin birlesik saf C# yatay kapsul depenetrasyonu (0 B GC).
+        /// </summary>
+        public static bool ResolveHorizontalSolidCapsuleDepenetrationPure(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            ReadOnlySpan<ModularPlacedPieceNode> modularPieces,
+            ref float posX,
+            float posY,
+            ref float posZ,
+            float capsuleHeightMeters = 1.8f,
+            float capsuleRadiusMeters = 0.34f)
+        {
+            bool movedVoxel = ResolveHorizontalSolidCapsuleDepenetrationPure(
+                worldChunks, ref posX, posY, ref posZ, capsuleHeightMeters, capsuleRadiusMeters);
+            bool movedModular = modularPieces.Length > 0 &&
+                ModularStructureCollisionSolver.ResolveHorizontalCapsuleDepenetration(
+                    modularPieces, ref posX, posY, ref posZ, capsuleHeightMeters, capsuleRadiusMeters, 1.08f);
+            return movedVoxel || movedModular;
+        }
+
+        /// <summary>
+        /// PT-05: Voksel + 3B Moduler Yapi tabanlari icin birlesik kirilmaz kati taban kilidi (0 B GC).
+        /// </summary>
+        public static float ComputeUnbreakableSolidFloorStopY(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            ReadOnlySpan<ModularPlacedPieceNode> modularPieces,
+            float posX,
+            float posZ,
+            float prevFeetY,
+            float candidateFeetY,
+            float footRadiusMeters = 0.20f)
+        {
+            float stopY = ComputeUnbreakableSolidFloorStopY(
+                worldChunks, posX, posZ, prevFeetY, candidateFeetY, footRadiusMeters);
+            if (modularPieces.Length > 0 && candidateFeetY <= prevFeetY + 0.001f)
+            {
+                float modTopY = ModularStructureCollisionSolver.SampleSupportGroundY(
+                    modularPieces, posX, posZ, prevFeetY, maxStepUpMeters: 0.32f, footRadiusMeters: MathF.Max(0.20f, footRadiusMeters));
+                if (modTopY > -20f && prevFeetY >= modTopY - 0.32f && modTopY > stopY)
+                {
+                    stopY = modTopY;
+                }
+            }
+            return stopY;
+        }
+
+        /// <summary>
         /// Kirilmaz Kati Taban Kilidi: Oyuncu bir duvar kosesine sikissa veya basindan asagi kum/toprak dokulup
         /// tamamen kati blok icine gomulse dahi (SampleSingleColumnGroundY -30f dondugu anlarda bile!)
         /// yercekiminin oyuncuyu altindaki kati vokselin icinden asagi dusurmesini %100 imkansiz kilar.
@@ -1161,6 +1208,12 @@ namespace Stratocraft.Character
         private float _creativeFlightClockSec;
         private float _lastCreativeSpaceTapTime = -10f;
         private float _creativeFlyTakeoffGraceSec;
+        /// <summary>PT-05: 3B Moduler yapilarla kati duvar/zemin/cati carpismasi icin bagli WorldLooseBuildSystem referansi.</summary>
+        public WorldLooseBuildSystem? BoundLooseBuildSystem { get; set; }
+
+        private ReadOnlySpan<ModularPlacedPieceNode> GetActiveModularPiecesSpan() =>
+            BoundLooseBuildSystem != null ? BoundLooseBuildSystem.ActiveModularPiecesSpan : ReadOnlySpan<ModularPlacedPieceNode>.Empty;
+
         /// <summary>Bosluga dusme durumunda geri isinlanilacak guvenli ada koordinatini ayarlar.</summary>
         public void SetSafeSpawnPosition(Vector3 safeWorldPosition) => _safeSpawnPosition = safeWorldPosition;
         /// <summary>Unity Vector3 tabanli kapsul-blok kesisim kontrolu.</summary>
@@ -1347,7 +1400,7 @@ namespace Stratocraft.Character
             ResolveVoxelAndColliderDepenetration(playerTransform, worldChunks);
             pos = playerTransform.position;
 
-            float groundY = SampleSupportGroundHeight(worldChunks, pos);
+            float groundY = SampleSupportGroundHeightWithModular(worldChunks, pos);
             float groundSnapTolerance = _movementState.IsGrounded != 0 ? 0.65f : 0.24f;
             bool grounded = _jumpLaunchTimer <= 0.001f && pos.y <= groundY + groundSnapTolerance && _verticalVelocity <= 0.25f;
             _coyoteGroundedTimer = grounded ? 0.16f : Mathf.Max(0f, _coyoteGroundedTimer - deltaTime);
@@ -1363,8 +1416,8 @@ namespace Stratocraft.Character
             if (!prevSliding && wantSprint && wantCrouch && wishDir.sqrMagnitude > 0.04f)
                 PhysicalCharacterControllerSystem.TryInitiateSlide(ref _movementState, ref _vitals, (wishDir.x, wishDir.z));
 
-            // Gercek voksel tavan yuksekligi (Headroom Clearance) kontrolu: egimli zemini tavan sanmamak icin acik hava boslugunu olc
-            MeasureHeadroomClearance(worldChunks, pos, groundY, out bool rawCanCrouch115, out bool rawCanStand180);
+            // Gercek voksel + 3B moduler tavan yuksekligi (Headroom Clearance) kontrolu: egimli zemini tavan sanmamak icin acik hava boslugunu olc
+            MeasureHeadroomClearanceWithModular(worldChunks, pos, groundY, out bool rawCanCrouch115, out bool rawCanStand180);
             bool alreadyLowStance = _movementState.Stance == CharacterStance.Crouching || _movementState.Stance == CharacterStance.ProneCrawling;
             if (!rawCanCrouch115 || !rawCanStand180)
             {
@@ -1646,7 +1699,7 @@ namespace Stratocraft.Character
 
             Vector3 stepDelta = curHorizVel * deltaTime;
             Vector3 candidatePos = new Vector3(pos.x + stepDelta.x, pos.y, pos.z + stepDelta.z);
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capHeight, capRadius))
+            if (!IsHorizontalStepBlockedWithModular(worldChunks, pos, candidatePos, capHeight, capRadius))
             {
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
@@ -1654,34 +1707,34 @@ namespace Stratocraft.Character
             else
             {
                 Vector3 candidateX = new Vector3(pos.x + stepDelta.x, pos.y, pos.z);
-                if (Mathf.Abs(stepDelta.x) > 0.0001f && !IsHorizontalStepBlocked(worldChunks, pos, candidateX, capHeight, capRadius))
+                if (Mathf.Abs(stepDelta.x) > 0.0001f && !IsHorizontalStepBlockedWithModular(worldChunks, pos, candidateX, capHeight, capRadius))
                 {
                     pos.x = candidateX.x;
                 }
                 Vector3 candidateZ = new Vector3(pos.x, pos.y, pos.z + stepDelta.z);
-                if (Mathf.Abs(stepDelta.z) > 0.0001f && !IsHorizontalStepBlocked(worldChunks, pos, candidateZ, capHeight, capRadius))
+                if (Mathf.Abs(stepDelta.z) > 0.0001f && !IsHorizontalStepBlockedWithModular(worldChunks, pos, candidateZ, capHeight, capRadius))
                 {
                     pos.z = candidateZ.z;
                 }
             }
 
             float hx = pos.x, hz = pos.z;
-            if (ResolveHorizontalSolidCapsuleDepenetrationPure(worldChunks, ref hx, pos.y, ref hz, capHeight, capRadius))
+            if (ResolveHorizontalSolidCapsuleDepenetrationPure(worldChunks, GetActiveModularPiecesSpan(), ref hx, pos.y, ref hz, capHeight, capRadius))
             {
                 pos.x = hx;
                 pos.z = hz;
             }
 
             pos.y = Mathf.Clamp(pos.y + _verticalVelocity * deltaTime, 1.5f, Stage1InteractivePlayController.MaxEditableVoxelY - 3.0f);
-            if (_verticalVelocity > 0f && TryResolveCeilingHeadBonk(worldChunks, ref pos, capHeight, capRadius))
+            if (_verticalVelocity > 0f && TryResolveCeilingHeadBonkWithModular(worldChunks, ref pos, capHeight, capRadius))
             {
                 _verticalVelocity = 0f;
             }
 
             if (_verticalVelocity <= 0f)
             {
-                float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
-                float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
+                float nextGroundY = SampleSupportGroundHeightWithModular(worldChunks, pos);
+                float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(worldChunks, GetActiveModularPiecesSpan(), pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
                 bool hitUnbreakableFloor = unbreakableFloorY > pos.y + 0.0001f;
                 bool hitSurfaceGround = nextGroundY > -20f && pos.y <= nextGroundY + 0.05f;
 
@@ -2105,7 +2158,7 @@ namespace Stratocraft.Character
             float capRadius = _movementState.CapsuleRadiusMeters;
             Vector3 stepDelta = horizVel * deltaTime;
             Vector3 candidatePos = new Vector3(pos.x + stepDelta.x, pos.y, pos.z + stepDelta.z);
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capHeight, capRadius))
+            if (!IsHorizontalStepBlockedWithModular(worldChunks, pos, candidatePos, capHeight, capRadius))
             {
                 pos.x = candidatePos.x;
                 pos.z = candidatePos.z;
@@ -2115,20 +2168,20 @@ namespace Stratocraft.Character
                 // Capraz duvar/agac temasinda oyuncunun tamamen takilip durmasini onlemek icin X ve Z eksenlerinde ayri kayma (Wall-Slide)
                 Vector3 candidateX = new Vector3(pos.x + stepDelta.x, pos.y, pos.z);
                 if (Mathf.Abs(stepDelta.x) > 0.0001f &&
-                    !IsHorizontalStepBlocked(worldChunks, pos, candidateX, capHeight, capRadius))
+                    !IsHorizontalStepBlockedWithModular(worldChunks, pos, candidateX, capHeight, capRadius))
                 {
                     pos.x = candidateX.x;
                 }
 
                 Vector3 candidateZ = new Vector3(pos.x, pos.y, pos.z + stepDelta.z);
                 if (Mathf.Abs(stepDelta.z) > 0.0001f &&
-                    !IsHorizontalStepBlocked(worldChunks, pos, candidateZ, capHeight, capRadius))
+                    !IsHorizontalStepBlockedWithModular(worldChunks, pos, candidateZ, capHeight, capRadius))
                 {
                     pos.z = candidateZ.z;
                 }
             }
 
-            float nextGroundY = SampleSupportGroundHeight(worldChunks, pos);
+            float nextGroundY = SampleSupportGroundHeightWithModular(worldChunks, pos);
             bool stickToSlope = _jumpLaunchTimer <= 0.001f &&
                                 (_movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f) &&
                                 _verticalVelocity <= 0.10f &&
@@ -2148,9 +2201,9 @@ namespace Stratocraft.Character
                 _verticalVelocity -= StratocraftConstants.GravityAcceleration * deltaTime;
                 pos.y += _verticalVelocity * deltaTime;
 
-                // Yukari ziplama esnasinda magara tavani veya agac dali carpismasi (Anti-Asansor Tavan Kenetlemesi)
+                // Yukari ziplama esnasinda magara tavani, agac dali veya moduler yapi tavan/cati carpismasi
                 if (_verticalVelocity > 0f &&
-                    TryResolveCeilingHeadBonk(worldChunks, ref pos, capHeight, capRadius))
+                    TryResolveCeilingHeadBonkWithModular(worldChunks, ref pos, capHeight, capRadius))
                 {
                     _verticalVelocity = 0f;
                     _jumpLaunchTimer = 0f;
@@ -2161,7 +2214,7 @@ namespace Stratocraft.Character
                 // NOT: ComputeUnbreakableSolidFloorStopY havada zemin bulamadiginda candidateFeetY (pos.y) doner;
                 // yalnizca gercek temas (unbreakableFloorY > pos.y + 0.0001f || hitSurfaceGround) aninda zemine oturt!
                 float unbreakableFloorY = ComputeUnbreakableSolidFloorStopY(
-                    worldChunks, pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
+                    worldChunks, GetActiveModularPiecesSpan(), pos.x, pos.z, prevFeetY, pos.y, capRadius * 0.62f);
                 bool hitUnbreakableFloor = unbreakableFloorY > pos.y + 0.0001f;
                 bool hitSurfaceGround = nextGroundY > -20f && pos.y <= nextGroundY;
 
@@ -2270,9 +2323,9 @@ namespace Stratocraft.Character
             Vector3 candidatePos = pos + worldHorizontalDelta;
             bool moved = false;
 
-            if (!IsHorizontalStepBlocked(worldChunks, pos, candidatePos, capH, capR))
+            if (!IsHorizontalStepBlockedWithModular(worldChunks, pos, candidatePos, capH, capR))
             {
-                float nextGroundY = SampleSupportGroundHeight(worldChunks, candidatePos);
+                float nextGroundY = SampleSupportGroundHeightWithModular(worldChunks, candidatePos);
                 if (nextGroundY - pos.y <= MaxKneeStepUpMeters)
                 {
                     pos.x = candidatePos.x;
@@ -2286,8 +2339,8 @@ namespace Stratocraft.Character
                 if (Mathf.Abs(worldHorizontalDelta.x) > 0.0001f)
                 {
                     Vector3 candX = new Vector3(pos.x + worldHorizontalDelta.x, pos.y, pos.z);
-                    if (!IsHorizontalStepBlocked(worldChunks, pos, candX, capH, capR) &&
-                        SampleSupportGroundHeight(worldChunks, candX) - pos.y <= MaxKneeStepUpMeters)
+                    if (!IsHorizontalStepBlockedWithModular(worldChunks, pos, candX, capH, capR) &&
+                        SampleSupportGroundHeightWithModular(worldChunks, candX) - pos.y <= MaxKneeStepUpMeters)
                     {
                         pos.x = candX.x;
                         moved = true;
@@ -2296,8 +2349,8 @@ namespace Stratocraft.Character
                 if (Mathf.Abs(worldHorizontalDelta.z) > 0.0001f)
                 {
                     Vector3 candZ = new Vector3(pos.x, pos.y, pos.z + worldHorizontalDelta.z);
-                    if (!IsHorizontalStepBlocked(worldChunks, pos, candZ, capH, capR) &&
-                        SampleSupportGroundHeight(worldChunks, candZ) - pos.y <= MaxKneeStepUpMeters)
+                    if (!IsHorizontalStepBlockedWithModular(worldChunks, pos, candZ, capH, capR) &&
+                        SampleSupportGroundHeightWithModular(worldChunks, candZ) - pos.y <= MaxKneeStepUpMeters)
                     {
                         pos.z = candZ.z;
                         moved = true;
@@ -2307,7 +2360,7 @@ namespace Stratocraft.Character
 
             if (moved)
             {
-                float finalGroundY = SampleSupportGroundHeight(worldChunks, pos);
+                float finalGroundY = SampleSupportGroundHeightWithModular(worldChunks, pos);
                 if (_jumpLaunchTimer <= 0.001f && _movementState.IsGrounded != 0 && _verticalVelocity <= 0.05f && finalGroundY > -20f)
                 {
                     float diff = finalGroundY - pos.y;
@@ -2330,10 +2383,10 @@ namespace Stratocraft.Character
         {
             Vector3 pos = playerTransform.position;
 
-            // 1) Gercek 3B Yatay Kati Kapsul Depenetrasyonu (iki fiziksel kati cismin yatayda ic ice girmesini engeller, Y'ye ASLA dokunmaz!)
+            // 1) Gercek 3B Yatay Kati Kapsul Depenetrasyonu (voksel + 3B moduler yapi duvarlari; Y'ye ASLA dokunmaz!)
             float hx = pos.x, hz = pos.z;
             if (ResolveHorizontalSolidCapsuleDepenetrationPure(
-                    worldChunks, ref hx, pos.y, ref hz, _movementState.CapsuleHeightMeters, _movementState.CapsuleRadiusMeters))
+                    worldChunks, GetActiveModularPiecesSpan(), ref hx, pos.y, ref hz, _movementState.CapsuleHeightMeters, _movementState.CapsuleRadiusMeters))
             {
                 pos.x = hx;
                 pos.z = hz;
@@ -2346,7 +2399,7 @@ namespace Stratocraft.Character
             bool wasGroundedOrCoyote = _movementState.IsGrounded != 0 || _coyoteGroundedTimer > 0.01f;
             if (wasGroundedOrCoyote)
             {
-                float supportY = SampleSupportGroundHeight(worldChunks, pos);
+                float supportY = SampleSupportGroundHeightWithModular(worldChunks, pos);
                 float maxSafeRecovery = supportY > -20f && !IsHardCollisionVoxel(ReadWorldVoxelRaw(
                         worldChunks, Mathf.FloorToInt(pos.x), Mathf.FloorToInt(supportY + 1.55f), Mathf.FloorToInt(pos.z)))
                     ? 1.72f
@@ -2729,6 +2782,83 @@ namespace Stratocraft.Character
             float t = Mathf.Clamp((refDensity - VoxelBitUtility.IsoDensity) / Mathf.Max(1f, (float)refDensity), 0.08f, 0.92f);
             flatPlaneY = refTopWy + Mathf.Round(t * 256f) * (1f / 256f);
             return true;
+        }
+
+        private bool IsHorizontalStepBlockedWithModular(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 cur,
+            Vector3 next,
+            float capsuleHeightMeters = 1.8f,
+            float capsuleRadiusMeters = 0.34f)
+        {
+            if (IsHorizontalStepBlocked(worldChunks, cur, next, capsuleHeightMeters, capsuleRadiusMeters))
+            {
+                return true;
+            }
+
+            ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
+            if (pieces.Length == 0) return false;
+
+            return ModularStructureCollisionSolver.IsHorizontalCapsuleStepBlocked(
+                pieces,
+                new System.Numerics.Vector3(cur.x, cur.y, cur.z),
+                new System.Numerics.Vector3(next.x, next.y, next.z),
+                capsuleHeightMeters,
+                capsuleRadiusMeters,
+                MaxKneeStepUpMeters);
+        }
+
+        private float SampleSupportGroundHeightWithModular(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)
+        {
+            float voxelY = SampleSupportGroundHeight(worldChunks, pos);
+            ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
+            if (pieces.Length == 0) return voxelY;
+
+            float modY = ModularStructureCollisionSolver.SampleSupportGroundY(
+                pieces, pos.x, pos.z, pos.y, MaxKneeStepUpMeters, footRadiusMeters: 0.24f);
+            return modY > voxelY ? modY : voxelY;
+        }
+
+        private bool TryResolveCeilingHeadBonkWithModular(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            ref Vector3 pos,
+            float capsuleHeightMeters,
+            float capsuleRadiusMeters)
+        {
+            bool voxelBonk = TryResolveCeilingHeadBonk(worldChunks, ref pos, capsuleHeightMeters, capsuleRadiusMeters);
+            ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
+            if (pieces.Length == 0) return voxelBonk;
+
+            System.Numerics.Vector3 pNum = new System.Numerics.Vector3(pos.x, pos.y, pos.z);
+            bool modBonk = ModularStructureCollisionSolver.TryResolveCeilingHeadBonk(
+                pieces, ref pNum, capsuleHeightMeters, capsuleRadiusMeters);
+            if (modBonk)
+            {
+                pos.y = pNum.Y;
+            }
+            return voxelBonk || modBonk;
+        }
+
+        private void MeasureHeadroomClearanceWithModular(
+            Dictionary<(int cx, int cz), uint[]> worldChunks,
+            Vector3 feetPos,
+            float supportGroundY,
+            out bool canCrouch115,
+            out bool canStand180)
+        {
+            MeasureHeadroomClearance(worldChunks, feetPos, supportGroundY, out canCrouch115, out canStand180);
+            ReadOnlySpan<ModularPlacedPieceNode> pieces = GetActiveModularPiecesSpan();
+            if (pieces.Length == 0) return;
+
+            float refY = supportGroundY > -20f ? Mathf.Max(feetPos.y, supportGroundY) : feetPos.y;
+            ModularStructureCollisionSolver.EvaluateHeadroomClearance(
+                pieces,
+                new System.Numerics.Vector3(feetPos.x, refY, feetPos.z),
+                out bool modCrouch,
+                out bool modStand);
+            canCrouch115 &= modCrouch;
+            canStand180 &= modStand;
+            if (!canCrouch115) canStand180 = false;
         }
 
         private static float SampleSupportGroundHeight(Dictionary<(int cx, int cz), uint[]> worldChunks, Vector3 pos)

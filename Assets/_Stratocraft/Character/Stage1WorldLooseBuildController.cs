@@ -49,6 +49,8 @@ namespace Stratocraft.Character
             public MeshFilter? MeshFilter;
             public MeshRenderer? MeshRenderer;
             public BoxCollider? BoxCollider;
+            public BoxCollider? AuxCollider1;
+            public BoxCollider? AuxCollider2;
             public ModularBuildPieceKind LastAssignedKind;
         }
 
@@ -65,7 +67,7 @@ namespace Stratocraft.Character
         private static Material? _sharedModularMatteMaterial;
         private static bool _sharedModularMatteMaterialConfigured;
         private static Material? _sharedModularMatteLastFallback;
-        private const int MaxModularVisualPoolCapacity = 256;
+        private const int MaxModularVisualPoolCapacity = 1536;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticCachesOnSubsystemRegistration()
@@ -1467,7 +1469,7 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Chunk yuklendiginde deterministik moduler yapi yerleskesi varsa 0-GC havuzdan .glb parcalariyla kurar.
+        /// Chunk yuklendiginde o chunk'a ait tum yerlesim binalarini (Koy/Kasaba/Sehir) 0-GC havuzdan .glb parcalariyla kurar.
         /// </summary>
         public int SpawnOrSyncChunkModularStructureSite(
             int chunkX,
@@ -1475,11 +1477,64 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            if (!StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec site))
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
+            if (siteCount <= 0)
             {
                 return 0;
             }
-            return SpawnOrSyncChunkModularStructureSite(in site, sharedVoxelMat, worldChunks);
+            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount), sharedVoxelMat, worldChunks);
+        }
+
+        public int SpawnOrSyncChunkModularStructureSites(
+            int chunkX,
+            int chunkZ,
+            ReadOnlySpan<ProceduralModularSiteSpec> sites,
+            Material? sharedVoxelMat = null,
+            IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
+        {
+            if (sites.Length == 0) return 0;
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
+            if (!_spawnedChunkSiteKeys.Add(chunkKey))
+            {
+                int existingCount = 0;
+                for (int i = 0; i < _modularNodeCount; i++)
+                {
+                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
+                }
+                return existingCount;
+            }
+
+            int totalPieces = 0;
+            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
+            {
+                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
+                float exactGroundY = site.WorldBaseY;
+                if (worldChunks != null &&
+                    VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
+                        site.WorldCenterX, site.WorldCenterZ, site.WorldBaseY + 1.2f, 3.2f, worldChunks, out float sampledY, out _))
+                {
+                    exactGroundY = sampledY;
+                }
+
+                SysVec3 origin = new SysVec3(site.WorldCenterX, exactGroundY, site.WorldCenterZ);
+                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
+                    (byte)site.Kind,
+                    origin,
+                    site.YawDegrees,
+                    chunkKey,
+                    _siteSpawnScratch,
+                    _nextModularInstanceId + 1);
+
+                _nextModularInstanceId += pieceCount + 1;
+                for (int i = 0; i < pieceCount; i++)
+                {
+                    AppendActiveModularNode(_siteSpawnScratch[i], sharedVoxelMat);
+                }
+                totalPieces += pieceCount;
+            }
+
+            return totalPieces;
         }
 
         /// <summary>
@@ -1491,41 +1546,9 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            int chunkKey = PackChunkSiteKey(site.ChunkX, site.ChunkZ);
-            if (!_spawnedChunkSiteKeys.Add(chunkKey))
-            {
-                int existingCount = 0;
-                for (int i = 0; i < _modularNodeCount; i++)
-                {
-                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
-                }
-                return existingCount;
-            }
-
-            float exactGroundY = site.WorldBaseY;
-            if (worldChunks != null &&
-                VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
-                    site.WorldCenterX, site.WorldCenterZ, site.WorldBaseY + 1.2f, 3.2f, worldChunks, out float sampledY, out _))
-            {
-                exactGroundY = sampledY;
-            }
-
-            SysVec3 origin = new SysVec3(site.WorldCenterX, exactGroundY, site.WorldCenterZ);
-            int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                (byte)site.Kind,
-                origin,
-                site.YawDegrees,
-                chunkKey,
-                _siteSpawnScratch,
-                _nextModularInstanceId + 1);
-
-            _nextModularInstanceId += pieceCount + 1;
-            for (int i = 0; i < pieceCount; i++)
-            {
-                AppendActiveModularNode(_siteSpawnScratch[i], sharedVoxelMat);
-            }
-
-            return pieceCount;
+            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
+            single[0] = site;
+            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single, sharedVoxelMat, worldChunks);
         }
 
         /// <summary>
@@ -1587,9 +1610,11 @@ namespace Stratocraft.Character
                         ReleaseModularVisualSlotToPool(ref _modularVisuals[i]);
                         RemoveModularEntrySwapBack(i);
                     }
-                    else if (_modularNodes[i].IsFalling && _modularVisuals[i].BoxCollider != null)
+                    else if (_modularNodes[i].IsFalling)
                     {
-                        _modularVisuals[i].BoxCollider!.enabled = false;
+                        if (_modularVisuals[i].BoxCollider != null) _modularVisuals[i].BoxCollider!.enabled = false;
+                        if (_modularVisuals[i].AuxCollider1 != null) _modularVisuals[i].AuxCollider1!.enabled = false;
+                        if (_modularVisuals[i].AuxCollider2 != null) _modularVisuals[i].AuxCollider2!.enabled = false;
                     }
                 }
             }
@@ -1693,6 +1718,8 @@ namespace Stratocraft.Character
                     MeshFilter = mf,
                     MeshRenderer = mr,
                     BoxCollider = bc,
+                    AuxCollider1 = null,
+                    AuxCollider2 = null,
                     LastAssignedKind = (ModularBuildPieceKind)255
                 };
             }
@@ -1710,38 +1737,81 @@ namespace Stratocraft.Character
                 {
                     slot.MeshFilter.sharedMesh = LoadModularPieceMeshCached(kind);
                 }
-                ConfigureModularBoxCollider(slot.BoxCollider, kind);
+                ConfigureModularBoxColliders(ref slot, kind);
             }
-            else if (slot.BoxCollider != null && !slot.BoxCollider.enabled)
+            else
             {
-                slot.BoxCollider.enabled = true;
+                ReEnableModularBoxColliders(in slot, kind);
             }
 
             return slot;
         }
 
-        private static void ConfigureModularBoxCollider(BoxCollider? bc, ModularBuildPieceKind kind)
+        private static void ApplyLocalSolidBoxToCollider(BoxCollider bc, in ModularStructureCollisionSolver.LocalSolidBox box)
         {
-            if (bc == null) return;
             bc.enabled = true;
+            bc.center = new Vector3(
+                (box.Min.X + box.Max.X) * 0.5f,
+                (box.Min.Y + box.Max.Y) * 0.5f,
+                (box.Min.Z + box.Max.Z) * 0.5f);
+            bc.size = new Vector3(
+                Mathf.Max(0.12f, box.Max.X - box.Min.X),
+                Mathf.Max(0.10f, box.Max.Y - box.Min.Y),
+                Mathf.Max(0.12f, box.Max.Z - box.Min.Z));
+        }
 
-            if (kind == ModularBuildPieceKind.PlankDoorway2x2m)
+        private static void ConfigureModularBoxColliders(ref ModularPieceVisualSlot slot, ModularBuildPieceKind kind)
+        {
+            if (slot.BoxCollider == null) return;
+
+            Span<ModularStructureCollisionSolver.LocalSolidBox> boxes = stackalloc ModularStructureCollisionSolver.LocalSolidBox[4];
+            int count = ModularStructureCollisionSolver.PopulateLocalSolidBoxes(kind, boxes);
+            if (count > 0)
             {
-                // Kapidan oyuncunun rahatca gecmesi icin ust lento carpistiricisi
-                bc.center = new Vector3(0.0f, 1.86f, 0.0f);
-                bc.size = new Vector3(2.00f, 0.28f, 0.14f);
+                ApplyLocalSolidBoxToCollider(slot.BoxCollider, in boxes[0]);
+                if (count >= 2 && slot.Go != null)
+                {
+                    slot.AuxCollider1 ??= slot.Go.AddComponent<BoxCollider>();
+                    ApplyLocalSolidBoxToCollider(slot.AuxCollider1, in boxes[1]);
+                }
+                else if (slot.AuxCollider1 != null)
+                {
+                    slot.AuxCollider1.enabled = false;
+                }
+
+                if (count >= 3 && slot.Go != null)
+                {
+                    slot.AuxCollider2 ??= slot.Go.AddComponent<BoxCollider>();
+                    ApplyLocalSolidBoxToCollider(slot.AuxCollider2, in boxes[2]);
+                }
+                else if (slot.AuxCollider2 != null)
+                {
+                    slot.AuxCollider2.enabled = false;
+                }
                 return;
             }
 
+            if (slot.AuxCollider1 != null) slot.AuxCollider1.enabled = false;
+            if (slot.AuxCollider2 != null) slot.AuxCollider2.enabled = false;
+
+            slot.BoxCollider.enabled = true;
             ValheimSotfModularGraphSolver.GetPieceLocalBounds(kind, out SysVec3 lMin, out SysVec3 lMax);
-            bc.center = new Vector3(
+            slot.BoxCollider.center = new Vector3(
                 (lMin.X + lMax.X) * 0.5f,
                 (lMin.Y + lMax.Y) * 0.5f,
                 (lMin.Z + lMax.Z) * 0.5f);
-            bc.size = new Vector3(
+            slot.BoxCollider.size = new Vector3(
                 Mathf.Max(0.12f, lMax.X - lMin.X),
                 Mathf.Max(0.10f, lMax.Y - lMin.Y),
                 Mathf.Max(0.12f, lMax.Z - lMin.Z));
+        }
+
+        private static void ReEnableModularBoxColliders(in ModularPieceVisualSlot slot, ModularBuildPieceKind kind)
+        {
+            if (slot.BoxCollider != null && !slot.BoxCollider.enabled) slot.BoxCollider.enabled = true;
+            bool multiBox = kind == ModularBuildPieceKind.PlankDoorway2x2m || kind == ModularBuildPieceKind.DiagonalBrace2m;
+            if (slot.AuxCollider1 != null) slot.AuxCollider1.enabled = multiBox;
+            if (slot.AuxCollider2 != null) slot.AuxCollider2.enabled = multiBox;
         }
 
         private void ReleaseModularVisualSlotToPool(ref ModularPieceVisualSlot slot)
@@ -1972,16 +2042,19 @@ namespace Stratocraft.Character
 
         public int SpawnOrSyncChunkModularStructureSite(int chunkX, int chunkZ)
         {
-            if (!StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSite(chunkX, chunkZ, out ProceduralModularSiteSpec site))
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
+            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
+            if (siteCount <= 0)
             {
                 return 0;
             }
-            return SpawnOrSyncChunkModularStructureSite(in site);
+            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount));
         }
 
-        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
+        public int SpawnOrSyncChunkModularStructureSites(int chunkX, int chunkZ, ReadOnlySpan<ProceduralModularSiteSpec> sites)
         {
-            int chunkKey = PackChunkSiteKey(site.ChunkX, site.ChunkZ);
+            if (sites.Length == 0) return 0;
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
                 int existingCount = 0;
@@ -1992,16 +2065,29 @@ namespace Stratocraft.Character
                 return existingCount;
             }
 
-            Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
-            int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
-
-            _nextModularInstanceId += pieceCount + 1;
-            for (int i = 0; i < pieceCount; i++)
+            int totalPieces = 0;
+            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
             {
-                AppendNode(_siteSpawnScratch[i]);
+                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
+                Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
+                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
+                    (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
+
+                _nextModularInstanceId += pieceCount + 1;
+                for (int i = 0; i < pieceCount; i++)
+                {
+                    AppendNode(_siteSpawnScratch[i]);
+                }
+                totalPieces += pieceCount;
             }
-            return pieceCount;
+            return totalPieces;
+        }
+
+        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
+        {
+            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
+            single[0] = site;
+            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single);
         }
 
         public int ReleaseChunkModularStructureSite(int chunkX, int chunkZ)
