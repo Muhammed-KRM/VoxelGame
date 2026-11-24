@@ -4823,7 +4823,7 @@ namespace Stratocraft.Character
                 case InventoryItemKind.FireplaceChimneyKit: DrawStoneKilnIcon(tex); break;
                 case InventoryItemKind.InteriorFurnitureKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WoodPlank); break;
                 case InventoryItemKind.ToolShovel: DrawPickaxeIcon(tex, slot.SubId == 1); break;
-                case InventoryItemKind.ToolEarthTamper: DrawStoneHammerIcon(tex, false); break;
+                case InventoryItemKind.ToolEarthTamper: DrawHammerIcon(tex, false); break;
                 case InventoryItemKind.ToolPlumbAndLevel: DrawChiselIcon(tex); break;
                 case InventoryItemKind.WoodenStake:
                 case InventoryItemKind.WoodenDowelPeg: DrawStickIcon(tex); break;

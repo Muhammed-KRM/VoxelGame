@@ -1743,7 +1743,7 @@ namespace Stratocraft.Character
         {
             InteriorEnvironmentEvaluation env = looseBuildSystem.LastPlayerInteriorEval;
             bool enclosed = env.IsEnclosedInterior;
-            bool hasChimney = looseBuildSystem.LastPlayerHearthEval.HasValidChimneyDraft || !enclosed;
+            bool hasChimney = looseBuildSystem.LastPlayerHearthEval.HasValidChimneyFlue || !enclosed;
 
             if (!holsterCtrl.IsCreativeMode && !TryConsumeStationBuildMaterials(stationType, holsterCtrl, miningCtrl, out string missingMsg))
             {
@@ -2279,50 +2279,97 @@ namespace Stratocraft.Character
         public uint FindAimedStationId(UnityEngine.Camera? cam, UnityEngine.Vector3 playerPos, float maxReach)
         {
             ReadOnlySpan<ArchitecturalStationRecord> span = Core.StationsSpan;
-            int idx = FindBestRayConeTargetIndex(cam, playerPos, maxReach, 1.15f, span.Length,
-                i => span[i].IsActive,
-                i => new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 0.65f, span[i].Position.Z));
-            return idx >= 0 ? span[idx].Id : 0u;
+            GetRayConeQueryBasis(cam, playerPos, out UnityEngine.Vector3 rayOrigin, out UnityEngine.Vector3 rayDir, out UnityEngine.Vector3 playerRef);
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!span[i].IsActive) continue;
+                var center = new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 0.65f, span[i].Position.Z);
+                if (TryScoreRayConeTarget(rayOrigin, rayDir, playerRef, center, maxReach, 1.15f, out float score) && score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx >= 0 ? span[bestIdx].Id : 0u;
         }
 
         public uint FindAimedSitePileId(UnityEngine.Camera? cam, UnityEngine.Vector3 playerPos, float maxReach)
         {
             ReadOnlySpan<SiteMaterialPileRecord> span = Core.SitePilesSpan;
-            int idx = FindBestRayConeTargetIndex(cam, playerPos, maxReach, 1.25f, span.Length,
-                i => span[i].IsActive,
-                i => new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 0.45f, span[i].Position.Z));
-            return idx >= 0 ? span[idx].Id : 0u;
+            GetRayConeQueryBasis(cam, playerPos, out UnityEngine.Vector3 rayOrigin, out UnityEngine.Vector3 rayDir, out UnityEngine.Vector3 playerRef);
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!span[i].IsActive) continue;
+                var center = new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 0.45f, span[i].Position.Z);
+                if (TryScoreRayConeTarget(rayOrigin, rayDir, playerRef, center, maxReach, 1.25f, out float score) && score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx >= 0 ? span[bestIdx].Id : 0u;
         }
 
         public uint FindAimedScaffoldId(UnityEngine.Camera? cam, UnityEngine.Vector3 playerPos, float maxReach)
         {
             ReadOnlySpan<ModularScaffoldingModule> span = Core.ScaffoldsSpan;
-            int idx = FindBestRayConeTargetIndex(cam, playerPos, maxReach, 1.35f, span.Length,
-                i => span[i].IsActive,
-                i => new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 1.0f, span[i].Position.Z));
-            return idx >= 0 ? span[idx].Id : 0u;
+            GetRayConeQueryBasis(cam, playerPos, out UnityEngine.Vector3 rayOrigin, out UnityEngine.Vector3 rayDir, out UnityEngine.Vector3 playerRef);
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!span[i].IsActive) continue;
+                var center = new UnityEngine.Vector3(span[i].Position.X, span[i].Position.Y + 1.0f, span[i].Position.Z);
+                if (TryScoreRayConeTarget(rayOrigin, rayDir, playerRef, center, maxReach, 1.35f, out float score) && score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx >= 0 ? span[bestIdx].Id : 0u;
         }
 
         public uint FindAimedChalkLineId(UnityEngine.Camera? cam, UnityEngine.Vector3 playerPos, float maxReach)
         {
             ReadOnlySpan<ChalkLineGuide> span = Core.ChalkLinesSpan;
-            int idx = FindBestRayConeTargetIndex(cam, playerPos, maxReach, 1.10f, span.Length,
-                i => span[i].IsActive,
-                i =>
+            GetRayConeQueryBasis(cam, playerPos, out UnityEngine.Vector3 rayOrigin, out UnityEngine.Vector3 rayDir, out UnityEngine.Vector3 playerRef);
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!span[i].IsActive) continue;
+                Vector3 mid = 0.5f * (span[i].StakeA + span[i].StakeB);
+                var center = new UnityEngine.Vector3(mid.X, mid.Y + 0.15f, mid.Z);
+                if (TryScoreRayConeTarget(rayOrigin, rayDir, playerRef, center, maxReach, 1.10f, out float score) && score < bestScore)
                 {
-                    Vector3 mid = 0.5f * (span[i].StakeA + span[i].StakeB);
-                    return new UnityEngine.Vector3(mid.X, mid.Y + 0.15f, mid.Z);
-                });
-            return idx >= 0 ? span[idx].Id : 0u;
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx >= 0 ? span[bestIdx].Id : 0u;
         }
 
         public uint FindAimedCraneId(UnityEngine.Camera? cam, UnityEngine.Vector3 playerPos, float maxReach)
         {
             ReadOnlySpan<PulleyCraneRecord> span = Core.CranesSpan;
-            int idx = FindBestRayConeTargetIndex(cam, playerPos, maxReach, 1.45f, span.Length,
-                i => span[i].IsActive,
-                i => new UnityEngine.Vector3(span[i].BasePosition.X, span[i].BasePosition.Y + 1.2f, span[i].BasePosition.Z));
-            return idx >= 0 ? span[idx].Id : 0u;
+            GetRayConeQueryBasis(cam, playerPos, out UnityEngine.Vector3 rayOrigin, out UnityEngine.Vector3 rayDir, out UnityEngine.Vector3 playerRef);
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            for (int i = 0; i < span.Length; i++)
+            {
+                if (!span[i].IsActive) continue;
+                var center = new UnityEngine.Vector3(span[i].BasePosition.X, span[i].BasePosition.Y + 1.2f, span[i].BasePosition.Z);
+                if (TryScoreRayConeTarget(rayOrigin, rayDir, playerRef, center, maxReach, 1.45f, out float score) && score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            return bestIdx >= 0 ? span[bestIdx].Id : 0u;
         }
 
         private static uint FindAimedTemporarySupportNodeId(
@@ -2367,41 +2414,38 @@ namespace Stratocraft.Character
             return bestId;
         }
 
-        private static int FindBestRayConeTargetIndex(
+        private static void GetRayConeQueryBasis(
             UnityEngine.Camera? cam,
             UnityEngine.Vector3 playerPos,
+            out UnityEngine.Vector3 rayOrigin,
+            out UnityEngine.Vector3 rayDir,
+            out UnityEngine.Vector3 playerRef)
+        {
+            rayOrigin = cam != null ? cam.transform.position : playerPos + new UnityEngine.Vector3(0f, 1.52f, 0f);
+            rayDir = cam != null && cam.transform.forward.sqrMagnitude > 0.001f ? cam.transform.forward.normalized : UnityEngine.Vector3.forward;
+            playerRef = playerPos + new UnityEngine.Vector3(0f, 0.9f, 0f);
+        }
+
+        private static bool TryScoreRayConeTarget(
+            UnityEngine.Vector3 rayOrigin,
+            UnityEngine.Vector3 rayDir,
+            UnityEngine.Vector3 playerRef,
+            UnityEngine.Vector3 center,
             float maxReach,
             float maxPerp,
-            int length,
-            Func<int, bool> isActive,
-            Func<int, UnityEngine.Vector3> getCenter)
+            out float score)
         {
-            UnityEngine.Vector3 rayOrigin = cam != null ? cam.transform.position : playerPos + new UnityEngine.Vector3(0f, 1.52f, 0f);
-            UnityEngine.Vector3 rayDir = cam != null && cam.transform.forward.sqrMagnitude > 0.001f ? cam.transform.forward.normalized : UnityEngine.Vector3.forward;
-            UnityEngine.Vector3 playerRef = playerPos + new UnityEngine.Vector3(0f, 0.9f, 0f);
+            score = float.MaxValue;
+            if (UnityEngine.Vector3.Distance(playerRef, center) > maxReach + 0.45f) return false;
 
-            int bestIdx = -1;
-            float bestScore = float.MaxValue;
-            for (int i = 0; i < length; i++)
-            {
-                if (!isActive(i)) continue;
-                UnityEngine.Vector3 center = getCenter(i);
-                if (UnityEngine.Vector3.Distance(playerRef, center) > maxReach + 0.45f) continue;
+            UnityEngine.Vector3 toC = center - rayOrigin;
+            float along = UnityEngine.Vector3.Dot(toC, rayDir);
+            if (along < -0.20f || along > maxReach + 0.75f) return false;
+            float perp = UnityEngine.Vector3.Distance(rayOrigin + rayDir * UnityEngine.Mathf.Max(0f, along), center);
+            if (perp > maxPerp) return false;
 
-                UnityEngine.Vector3 toC = center - rayOrigin;
-                float along = UnityEngine.Vector3.Dot(toC, rayDir);
-                if (along < -0.20f || along > maxReach + 0.75f) continue;
-                float perp = UnityEngine.Vector3.Distance(rayOrigin + rayDir * UnityEngine.Mathf.Max(0f, along), center);
-                if (perp > maxPerp) continue;
-
-                float score = perp * 2.0f + UnityEngine.Mathf.Max(0f, along) * 0.25f;
-                if (score < bestScore)
-                {
-                    bestScore = score;
-                    bestIdx = i;
-                }
-            }
-            return bestIdx;
+            score = perp * 2.0f + UnityEngine.Mathf.Max(0f, along) * 0.25f;
+            return true;
         }
 
         private void SyncSceneVisuals(UnityEngine.Material? sharedVoxelMat)
