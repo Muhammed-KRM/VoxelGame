@@ -1058,7 +1058,14 @@ namespace Stratocraft.Character
         {
             _holsterCtrl.ApplySelectedInventoryHotbarSlot(_miningCtrl, _combatBridge);
             VisualInventorySlot chosenSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
-            _looseBuildSystem.NotifyHotbarSlotChanged(!chosenSlot.IsEmpty && chosenSlot.Kind == InventoryItemKind.ToolStoneHammer);
+            bool keepBuildActive = !chosenSlot.IsEmpty &&
+                                   (chosenSlot.Kind == InventoryItemKind.ToolStoneHammer ||
+                                    WorldLooseBuildSystem.IsDirectHotbarBuildableKit(chosenSlot.Kind));
+            _looseBuildSystem.NotifyHotbarSlotChanged(keepBuildActive);
+            if (chosenSlot.IsEmpty || (chosenSlot.Kind != InventoryItemKind.ToolChalkLine && chosenSlot.Kind != InventoryItemKind.WoodenStake))
+            {
+                _siteLogisticsCtrl.CancelPendingChalkStake();
+            }
         }
 
         private void ToggleBackpackMatCallback()
@@ -1317,7 +1324,8 @@ namespace Stratocraft.Character
                 _organicTreeCanopySystem.UpdateTreeVisibilityAndShadowCulling(cullCamPos, camUnderground);
                 _looseBuildSystem.UpdateModularVisibilityAndShadowCulling(cullCamPos, camUnderground);
             }
-            _looseBuildSystem.CityLodRenderer.RenderVisibleCityBatches(SharedVoxelMaterial);
+            Material? cityModularMat = WorldLooseBuildSystem.ResolveModularVertexColorMaterial(SharedVoxelMaterial);
+            _looseBuildSystem.CityLodRenderer.RenderVisibleCityBatches(cityModularMat);
             RebuildAllDirtyChunks(forceImmediateAll: false);
             if (spanId >= 0L) _telemetryLogger?.LogPipelineEnd(spanId, "OK");
         }
@@ -3508,10 +3516,11 @@ namespace Stratocraft.Character
                                      _stoneKnappingCtrl.IsBusy ||
                                      _recipeBookUi.IsOpen;
 
+            _siteLogisticsCtrl.BindToLooseBuildSystem(_looseBuildSystem);
             _mindBuildingCtrl.Step(
                 dt, PlayerCamera, transform, externalUiBlocked,
                 _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
-                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl);
+                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl, _siteLogisticsCtrl, _holsterCtrl);
 
             bool uiBlocked = externalUiBlocked || _mindBuildingCtrl.IsMindMenuOpen;
             bool consumedEarlyInteract = false;
@@ -3519,6 +3528,11 @@ namespace Stratocraft.Character
             {
                 bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
                 if (TryHandleWeatherInstrumentInteractKeyE(shiftHeld))
+                {
+                    consumedEarlyInteract = true;
+                }
+                else if (shiftHeld && _siteLogisticsCtrl.TryHandleInteractKeyE(
+                             shiftHeld: true, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, _windmillCtrl, SharedVoxelMaterial))
                 {
                     consumedEarlyInteract = true;
                 }
@@ -3542,6 +3556,11 @@ namespace Stratocraft.Character
                         _miningCtrl.LastFeedbackText = "Kamp ateşi zaten sönük.";
                         consumedEarlyInteract = true;
                     }
+                }
+                else if (_siteLogisticsCtrl.TryHandleInteractKeyE(
+                             shiftHeld: false, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge, _looseBuildSystem, _windmillCtrl, SharedVoxelMaterial))
+                {
+                    consumedEarlyInteract = true;
                 }
                 else if (_wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge))
                 {
@@ -3627,16 +3646,62 @@ namespace Stratocraft.Character
                 Mathf.Clamp(Stage1GameSettings.TimeScaleMultiplier, 1.0f, 20.0f),
                 out bool windmillConsumedClick);
 
+            if (!uiBlocked && !_miningCtrl.IsCrystalActive &&
+                !_looseBuildSystem.IsModularBuildModeActive && !_looseBuildSystem.IsUnifiedBuildModeActive &&
+                Input.GetKeyDown(KeyCode.V))
+            {
+                bool vShift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+                _siteLogisticsCtrl.TryHandleStationCycleKeyV(vShift, PlayerCamera, transform.position, _miningCtrl);
+            }
+
+            float maxWindmillOmega = 0f;
+            ReadOnlySpan<WindmillInstanceState> wmSpan = _windmillCtrl.ActiveWindmillStates;
+            for (int wi = 0; wi < wmSpan.Length; wi++)
+            {
+                if (wmSpan[wi].AngularVelocityRadSec > maxWindmillOmega)
+                {
+                    maxWindmillOmega = wmSpan[wi].AngularVelocityRadSec;
+                }
+            }
+            _siteLogisticsCtrl.Step(dt, maxWindmillOmega, _holsterCtrl.IsCreativeMode, SharedVoxelMaterial);
+
+            bool altHeldForLogistics = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            bool logisticsConsumedClick = !uiBlocked &&
+                                          !_miningCtrl.IsCrystalActive &&
+                                          !_looseBuildSystem.IsModularBuildModeActive &&
+                                          !_looseBuildSystem.IsUnifiedBuildModeActive &&
+                                          _siteLogisticsCtrl.TryHandleMouseActions(
+                                              Input.GetMouseButtonDown(0),
+                                              Input.GetMouseButtonDown(1),
+                                              altHeldForLogistics,
+                                              PlayerCamera,
+                                              transform,
+                                              _miningCtrl,
+                                              _holsterCtrl,
+                                              _combatBridge,
+                                              _looseBuildSystem,
+                                              _windmillCtrl,
+                                              SharedVoxelMaterial);
+
+            bool shovelConsumedClick = !uiBlocked &&
+                                       !logisticsConsumedClick &&
+                                       !_miningCtrl.IsCrystalActive &&
+                                       !_looseBuildSystem.IsModularBuildModeActive &&
+                                       !_looseBuildSystem.IsUnifiedBuildModeActive &&
+                                       Input.GetMouseButtonDown(0) &&
+                                       TryExcavateFoundationSoilWithShovel();
+
             bool weatherInstConsumedClick = TryPlaceHeldWeatherInstrumentOnRightClick(uiBlocked);
-            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || windmillConsumedClick || weatherInstConsumedClick;
+            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || windmillConsumedClick || weatherInstConsumedClick || logisticsConsumedClick || shovelConsumedClick;
             bool suppressLooseBuild = stationConsumedClick ||
                                       _wheelbarrowCtrl.IsPushingWheelbarrow ||
                                       _wheelbarrowCtrl.HasAimedWheelbarrow(PlayerCamera, transform.position, out _, out _) ||
                                       _windmillCtrl.HasAimedWindmill(PlayerCamera, transform.position, out _) ||
                                       _bloomeryCtrl.HasAimedInteractiveTarget(PlayerCamera, transform.position, AnvilTransform) ||
                                       _campfireCtrl.FindAimedCampfireIndex(PlayerCamera, transform.position, 3.25f) >= 0 ||
+                                      _siteLogisticsCtrl.FindAimedStationId(PlayerCamera, transform.position, 3.85f) != 0u ||
+                                      _siteLogisticsCtrl.FindAimedSitePileId(PlayerCamera, transform.position, 3.85f) != 0u ||
                                       FindAimedWeatherInstrumentIndex(3.6f) >= 0;
-            _siteLogisticsCtrl.Step(dt);
             _looseBuildSystem.Step(
                 dt, PlayerCamera, transform, uiBlocked,
                 _miningCtrl, _holsterCtrl, _combatBridge, _worldChunks, SharedVoxelMaterial,
@@ -4093,7 +4158,13 @@ namespace Stratocraft.Character
                     _wheelbarrowCtrl.TryHandleInteractKeyE(PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge);
                     return;
                 }
-                if (_looseBuildSystem.IsModularBuildModeActive)
+                if (_siteLogisticsCtrl.HasPendingChalkStake || _siteLogisticsCtrl.ActiveOperatedCraneId != 0u)
+                {
+                    _siteLogisticsCtrl.CancelPendingChalkStake();
+                    _miningCtrl.LastFeedbackText = "📏 Şantiye kireç ipi / vinç kontrolü bırakıldı.";
+                    return;
+                }
+                if (_looseBuildSystem.IsModularBuildModeActive || _looseBuildSystem.IsUnifiedBuildModeActive)
                 {
                     _looseBuildSystem.CancelActiveBuildPlacement(
                         _holsterCtrl,
@@ -7244,14 +7315,58 @@ namespace Stratocraft.Character
             if (SpatialHashedStructureCollisionSolver.Shared.TryGetUnifiedNode(hit.NodeId, out StructuralNode64 updatedNode))
             {
                 _looseBuildSystem.UnifiedGraphSolver.AddOrUpdateNode(in updatedNode);
+                _looseBuildSystem.RefreshUnifiedChunkAfterEdit(updatedNode.PosX, updatedNode.PosZ);
                 int cx = Mathf.FloorToInt(updatedNode.PosX) >> 4;
                 int cz = Mathf.FloorToInt(updatedNode.PosZ) >> 4;
-                _looseBuildSystem.UnifiedBridge.MarkChunkStructureDirty(cx, cz);
                 MarkChunkDirtyFlag((cx, cz), ChunkDirtyFlags.Structures);
                 _miningCtrl.LastFeedbackText = updatedNode.IsLocked
                     ? "🔒 Kapı/Kepenk kilitlendi."
                     : (updatedNode.IsDoorOrWindowOpen ? "🚪 Kapı/Kepenk açıldı." : "🚪 Kapı/Kepenk kapatıldı.");
             }
+            return true;
+        }
+
+        private bool TryExcavateFoundationSoilWithShovel()
+        {
+            VisualInventorySlot active = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+            if (active.IsEmpty || active.Kind != InventoryItemKind.ToolShovel || !_miningCtrl.HasAimHit || _miningCtrl.AimHit.distance > 3.65f)
+            {
+                return false;
+            }
+
+            Vector3Int cell = _miningCtrl.AimVoxelCoord;
+            int wx = cell.x, wy = Mathf.Clamp(cell.y, 1, MaxEditableVoxelY), wz = cell.z;
+            int cx = wx >> 4, cz = wz >> 4;
+            int lx = wx - (cx << 4), lz = wz - (cz << 4);
+            if (!_worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
+
+            int idx = (wy << 8) | (lz << 4) | lx;
+            byte mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
+            if (mat == MaterialIdCatalog.Air && wy > 1)
+            {
+                wy -= 1;
+                idx = (wy << 8) | (lz << 4) | lx;
+                mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
+            }
+
+            if (mat != MaterialIdCatalog.Dirt && mat != MaterialIdCatalog.Grass && mat != MaterialIdCatalog.Sand && mat != MaterialIdCatalog.Clay)
+            {
+                return false;
+            }
+
+            voxels[idx] = 0u;
+            MarkChunkDirtyFlag((cx, cz), ChunkDirtyFlags.Terrain);
+            _dirtyChunks.Add((cx, cz));
+            if (lx == 0) _dirtyChunks.Add((cx - 1, cz));
+            if (lx == 15) _dirtyChunks.Add((cx + 1, cz));
+            if (lz == 0) _dirtyChunks.Add((cx, cz - 1));
+            if (lz == 15) _dirtyChunks.Add((cx, cz + 1));
+
+            InventoryItemKind harvestedKind = mat == MaterialIdCatalog.Clay
+                ? InventoryItemKind.ClayLump
+                : InventoryItemKind.LooseDirtClod;
+            _holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(harvestedKind, 0, 2, _miningCtrl);
+            _miningCtrl.LastFeedbackText = "🪏 Kürekle gevşek üst toprak sıyrıldı (+2 Toprak/Kil — sert temel zemini açığa çıkıyor)!";
             return true;
         }
 
@@ -8074,7 +8189,7 @@ namespace Stratocraft.Character
             DrawWeatherInstrumentCrosshairPromptGui(_showAllHud, hudInteractionBlocked);
             _mindBuildingCtrl.DrawGui(
                 _showAllHud, PlayerCamera, transform, _miningCtrl, _looseBuildSystem, _campfireCtrl, _worldChunks, SharedVoxelMaterial,
-                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl);
+                _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl, _siteLogisticsCtrl, _holsterCtrl);
             DrawTimeScaleBadgeAndCalendarHudGui(_showAllHud, hudInteractionBlocked, refreshPeriodicStrings);
 
             if (_showDebugHudText)

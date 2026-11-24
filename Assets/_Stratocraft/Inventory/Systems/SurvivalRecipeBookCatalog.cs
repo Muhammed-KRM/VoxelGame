@@ -263,7 +263,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "Kesme Taş, Mermer, Pişmiş Tuğla, Terracotta Kiremit, Demir Gergi, Cam & Ahşap Zona",
                 ingredientsOrSource: "Bıçkı Sehpası, Kireç/Tuğla Fırını (950 °C), Taşçı Tezgâhı, Örs (>= 720 °C) ve Cam Ocağı (1150 °C) ürünleri (ID 126..136).",
                 toolOrKeybind: "Gerçek Aletler & İstasyonlar ([C] Kristal işlenmiş blok üretemez ve vakumlayamaz!)",
-                stepByStepGuide: "Karar A3 Anayasası: Kesme Taş (126), İşlenmiş Mermer (127), Pişmiş Tuğla (128), Terracotta Kiremit (129), Kerpiç (130), Wattle & Daub (131), Kireç Harçlı Taş Duvar (132), Derzli Kütük (133), Demir Gergi Kirişi (134), Kurşunlu Mimari Cam (135) ve Ahşap Zona (136) bloklarının tamamı gerçek zanaat tezgâh/fırınlarında üretilir; [C] Madde Kristali bu blokları ASLA üretemez ve vakumlayamaz (%100 CrystalImmune — yalnızca gerçek aletler veya kuşatma silahlarıyla kırılabilir).")
+                stepByStepGuide: "Karar A3 Anayasası: Kesme Taş (126), İşlenmiş Mermer (127), Pişmiş Tuğla (128), Terracotta Kiremit (129), Kerpiç (130), Wattle & Daub (131), Kireç Harçlı Taş Duvar (132), Derzli Kütük (133), Demir Gergi Kirişi (134), Kurşunlu Mimari Cam (135) ve Ahşap Zona (136) bloklarının tamamı gerçek zanaat tezgâh/fırınlarında üretilir; [C] Madde Kristali bu blokları ASLA üretemez ve vakumlayamaz (%100 CrystalImmune — yalnızca gerçek aletler veya kuşatma silahlarıyla kırılabilir)."),
+
+            new(
+                id: "mat_9schools_concrete_earth_steel",
+                tab: SurvivalRecipeBookTab.MaterialsAndResources,
+                categoryBadge: "9 Ekol Malzemeleri (137..152)",
+                title: "İngiliz Bağı Tuğla, Cob, Sıkıştırılmış Toprak, OSB, 1450 °C Çimento/Betonarme & Çelik (ID 137..152)",
+                ingredientsOrSource: "6 İstasyon Zinciri: Bıçkı Sehpası, Harç/Beton Teknesi, Kireç/Tuğla/Çimento Fırını (900/950/1450 °C) + Yel Değirmeni, Taşçı, Cam Ocağı ve Çelik Hadde Tezgâhı.",
+                toolOrKeybind: "Tokmak (0 sn kalıp sökümü) | Vibratör + Teleskopik Dikme (%75 kür = 300 sn) | Tork Anahtarı ([C] Kristale %100 CrystalImmune)",
+                stepByStepGuide: "1) Toprak Ekolleri: Kalıpsız Kavisli Cob (ID=138, katman başına <= 45 cm, 90 sn yük taşıma / 180 sn kuruma) ve Sıkıştırılmış Toprak / Rammed Earth (ID=139..140, Kayar Kalıp içinde ToolEarthTamper ile %50 sıkıştırıldığı anda 0 sn beklemeden [Shift+E] kalıp sökülür!). 2) 1450 °C Portland Çimento & Betonarme (ID=145..147): Kireçtaşı + Kil + Cüruf Kireç/Çimento Fırınında körükle 1450 °C'de (45 sn) Klinker olur -> Yel Değirmeninde öğütülerek Portland Çimento Torbası üretilir -> Beton Teknesinde Kum + Agrega + Su ile Taze Beton yapılır. Kolon yan kalıbı 90 sn'de, kiriş/tabliye dikmeleri (TelescopicShoringProp) 300 sn (%75 kür) sonunda sökülür; erken sökülürse tavan çöker! 3) Çelik Karkas (ID=148..149): H-Profil Kolon/Kiriş, Geçici Çelik Halat, X-Çapraz ve dikmesiz Trapez Sac tabliye tamamı %100 CrystalImmune'dur.")
         };
 
         // =====================================================================
@@ -422,7 +431,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "Kapı (Menteşeli/Sürgülü/Çift Kanat), Pencere (Kepenk/Cam), Merdiven, Şömine, İskele & Vinç",
                 ingredientsOrSource: "İskele (4 Dal + 2 Kalas + 2 Lif) | Vinç (4 Soyulmuş Kütük + 2 Kalas + 2 Demir Donanım) | Menteşeli Kapı (4 Kalas + 2 Donanım) | Sürgülü Kapı (6 Kalas + 2 Donanım + 1 Kütük) | Çift Kale Kapısı (8 Kalas + 4 Donanım + 2 Demir) | Pencere (2 Kalas + 2 Cam + 1 Donanım) | Merdiven (6 Kalas + 2 Kütük + 1 Donanım) | Şömine/Baca (6 Tuğla + 2 Harç + 2 Taş).",
                 toolOrKeybind: "[I] Çanta / Bıçkı / Örs -> [E] Kapı/Kepenk Aç-Kapa | [Shift+E] Sürgü Kilitle / İskele %100 İadeyle Sök",
-                stepByStepGuide: "Demir kenet, menteşe, çivi ve kilitler Örste (>= 720 °C) Dövme Demir'den dövülür (1 Demir -> 12 Çivi / 2 Menteşe / 4 Kenet; 2 Demir -> Ağır Kilit; 3 Demir -> Anıtsal Demir Gergi Çubuğu ID=134). Kapalı kapı kapsülü ve yaratıkları bloke eder, [E] ile açılınca geçit açılır, [Shift+E] iç sürgü kilitliyken dışarıdan açılamaz. Pencere boşluğu oyuncu kapsülünü tutarken açıkken ok ve görüş hattını geçirir.")
+                stepByStepGuide: "Demir kenet, menteşe, çivi ve kilitler Örste (>= 720 °C) Dövme Demir'den dövülür (1 Demir -> 12 Çivi / 2 Menteşe / 4 Kenet; 2 Demir -> Ağır Kilit; 3 Demir -> Anıtsal Demir Gergi Çubuğu ID=134). Kapalı kapı kapsülü ve yaratıkları bloke eder, [E] ile açılınca geçit açılır, [Shift+E] iç sürgü kilitliyken dışarıdan açılamaz. Pencere boşluğu oyuncu kapsülünü tutarken açıkken ok ve görüş hattını geçirir."),
+
+            new(
+                id: "craft_9schools_tools_and_supports_93_115",
+                tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
+                categoryBadge: "Eşyalar 93..115 & Kalıplar",
+                title: "Kürek, Tokmak, Şakul, Kazık/Kavela, Geçici Destekler, Kemer/Toprak Kalıbı, Betonarme & Çelik Seti",
+                ingredientsOrSource: "Kürek (2 Çakmaktaşı + 1 Odun + 1 Lif) | Tokmak (1 Kütük + 2 Dal + 1 Lif) | Şakul (1 Taş + 1 Dal + 2 Lif) | Kazık (1 Kütük + 1 Çakmaktaşı) | Kavela (2 Dal + 1 Çakmaktaşı) | Geçici 45° Payanda (2 Kalas + 2 Kazık + 1 Lif) | Kemer Kalıbı (3 Kalas + 2 Donanım + 1 Kazık) | Kayar Kalıp (2 OSB + 2 Kiriş + 2 Donanım) | Teleskopik Dikme (2 Çelik + 2 OSB + 1 Donanım).",
+                toolOrKeybind: "[I] Çanta / 6 Yeni İstasyon | [Sol Tık Basılı Tut] Sürükleyerek Sıra Ör | [Shift+E] %100 Geçici Destek İadesi",
+                stepByStepGuide: "23 yeni uzman inşaat eşyası (ID 93..115): Kürek temel hendeği kazar; Toprak Tokmağı Rammed Earth kalıbını sıkıştırır; Şakul diklik/kot gösterir; Geçici 45° Payanda, Ahşap Kemer Kalıbı, Kayar Toprak Kalıbı, Teleskopik Dikme ve Geçici Çelik Halat inşaat anındaki anlık dengeyi sağlar ve kilit/kür tamamlandığında [Shift+E] ile %100 malzeme iadesiyle sökülür (erken sökülürse gerçekçi çöküş tetiklenir!).")
         };
 
         // =====================================================================
@@ -518,7 +536,16 @@ namespace Stratocraft.Inventory.Systems
                 title: "Merdiven Boşluğu (>= 1.95 m), Şömine/Baca Çekişi ve Bina İçi Atölye Yangın Kuralları (1.20 m)",
                 ingredientsOrSource: "StairwellTrimmerOpening (>= 1.95 m kafa boşluğu) | Taş/Tuğla Şömine + Baca Şaftı + Çatı Şapkası (>= 0.60 m) | Yatak (>= 2.0 m tavan).",
                 toolOrKeybind: "Kapı/Kepenk: [E] Aç/Kapa, [Shift+E] Sürgü Kilitle | Yatak: [E] SpawnPoint | Fırın/Ateş: [Shift+E] Söndür",
-                stepByStepGuide: "1) Çok Katlı Merdiven: Üst döşemede StairwellTrimmerOpening açıldığında Header/Trimmer kirişleri yükü taşır ve >= 1.95 m net kafa açıklığı sağlanır. 2) Şömine & Baca: Bacalı şömine kapalı odayı +18..+26 °C ısıtır ve CO üretmez; bacasız açık ateş kapalı odada duman ve 3.0x O2 tüketimi yaratır. 3) Atölye Bina İçi Kuralları: Kömür Ocağı kapalı odada kesinlikle yasaktır (açık/sundurma gerekir). Bloomery (1250 °C), Kireç/Tuğla Fırını ve Cam Ocağı bina içinde yalnızca taş/kaya zeminde, üstte baca/menfez varken ve yanıcı ahşap duvardan >= 1.20 m uzakta kurulabilir (arada taş yangın duvarı veya yanmaz yaka varsa 0 m!).")
+                stepByStepGuide: "1) Çok Katlı Merdiven: Üst döşemede StairwellTrimmerOpening açıldığında Header/Trimmer kirişleri yükü taşır ve >= 1.95 m net kafa açıklığı sağlanır. 2) Şömine & Baca: Bacalı şömine kapalı odayı +18..+26 °C ısıtır ve CO üretmez; bacasız açık ateş kapalı odada duman ve 3.0x O2 tüketimi yaratır. 3) Atölye Bina İçi Kuralları: Kömür Ocağı kapalı odada kesinlikle yasaktır (açık/sundurma gerekir). Bloomery (1250 °C), Kireç/Tuğla Fırını ve Cam Ocağı bina içinde yalnızca taş/kaya zeminde, üstte baca/menfez varken ve yanıcı ahşap duvardan >= 1.20 m uzakta kurulabilir (arada taş yangın duvarı veya yanmaz yaka varsa 0 m!)."),
+
+            new(
+                id: "mind_6tabs_9schools_and_load_redistribution",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] 6 Sekme & Yük Paylaşımı",
+                title: "6 Sekmeli [T] Menüsü, 9 Yapı Ekolü, Yük Yeniden Dağılımı & Ek Destekle Sütun Değiştirme",
+                ingredientsOrSource: "[1] İstasyonlar & Lojistik (6 Yeni Tezgâh/Fırın + Yığın) | [2] Şantiye & Geçici Destekler | [3] Kütük & Ahşap | [4] Toprak & Kerpiç | [5] Taş, Tuğla & Anıtsal | [6] Betonarme & Çelik.",
+                toolOrKeybind: "[T] 6-Sekmeli Menü | [V]/[Shift+V] Parça/Kalınlık | [R] 90° Döndür | [Sol Tık Sürükle] Sıra Ör | [Shift+E] Geçici Destek Sök",
+                stepByStepGuide: "1) Yük Yeniden Dağılımı (Redundant Load Path): Bir sütun kırıldığında bina körlemesine çökmez; yük komşu sağlam sütunlara ve ek desteklere (Reshoring) aktarılır. eta_max < 1.0 kalırsa bina ayakta kalır; sınır aşılırsa yalnızca aşırı yüklü yerel kanat 1.5 sn çatırdama uyarısıyla çöker! 2) Ek Destekle Sütun Değiştirme: Değiştirmek istediğin sütunun yanına önce geçici/ek dikme atıp ardından eski sütunu kırarak sıfır kayıpla tadilat yapabilirsin.")
         };
 
         // =====================================================================
