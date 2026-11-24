@@ -221,9 +221,11 @@ namespace Stratocraft.Core.Structures
         }
 
         /// <summary>
-        /// Karar A2 uyarinca tekil dugum/eklem harc kurlenmesini ilerletir:
-        /// Kirec 240s (0.45) / 600s (1.0), Kil 120s (0.45) / 300s (1.0), Horasan 180s (0.45) / 450s (1.0).
-        /// [F4] Yaratici modda aninda 1.0 doner; acik yagmur altinda taze harc yavaslar veya (kilde) yikanir.
+        /// Karar A2 ve Bolum 2.3 uyarinca tekil dugum/eklem harc/beton/toprak kurlenmesini ilerletir:
+        /// Kirec 240s (0.45) / 600s (1.0), Kil 120s (0.45) / 300s (1.0), Horasan 180s (0.45) / 450s (1.0),
+        /// Cob 90s (0.45) / 180s (1.0), RammedEarth 0s (tokmak sonrasi) / 240s (1.0),
+        /// PortlandConcrete 90s (yan kalip 0.225) / 300s (ana dikme 0.75) / 600s (1.0).
+        /// [F4] Yaratici modda aninda 1.0 doner; acik yagmur altinda taze kirec/kil/cob yavaslar/yikanir, Horasan ve Beton suya dayaniklidir.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static float StepMortarCuring(
@@ -274,9 +276,12 @@ namespace Stratocraft.Core.Structures
 
             float rain = isRainSheltered ? 0f : System.Math.Clamp(rainIntensity01, 0f, 1f);
 
-            // Don kontrolu (< -3 C taze islak harc)
+            // Don kontrolu (< -3 C taze islak harc/beton/camur)
+            float frostVulnerabilityThreshold = mortar == MortarType.PortlandConcrete
+                ? MortarConstants.WetCureThreshold
+                : MathF.Max(MortarConstants.WetCureThreshold, MortarConstants.GetLoadBearingCureThreshold(mortar));
             float tempMultiplier = 1.0f;
-            if (ambientTempCelsius < -3.0f && clampedCure < MortarConstants.WetCureThreshold)
+            if (ambientTempCelsius < -3.0f && clampedCure < frostVulnerabilityThreshold)
             {
                 frostCracked = mortar != MortarType.Horasan;
                 tempMultiplier = mortar == MortarType.Horasan ? 0.40f : 0.05f;
@@ -287,7 +292,7 @@ namespace Stratocraft.Core.Structures
                 tempMultiplier = t01;
             }
 
-            // Yagmur islanma yavaslatmasi ve taze kil harci yikanmasi
+            // Yagmur islanma yavaslatmasi ve taze kil/cob/kirec yikanmasi vs suya dayanikli Horasan/PortlandConcrete
             float rainMultiplier = 1.0f;
             float washoutLoss = 0f;
             if (rain > 0f)
@@ -303,12 +308,22 @@ namespace Stratocraft.Core.Structures
                         }
                         break;
 
+                    case MortarType.CobMud:
+                        rainMultiplier = System.Math.Clamp(1.0f - (0.92f * rain), 0.05f, 1.0f);
+                        if (rain >= 0.30f && clampedCure < 0.90f)
+                        {
+                            washoutLoss = 0.0020f * rain * deltaTimeSeconds;
+                            rainWashedDegraded = true;
+                        }
+                        break;
+
                     case MortarType.Lime:
                         if (clampedCure < MortarConstants.WetCureThreshold)
                         {
                             rainMultiplier = System.Math.Clamp(1.0f - (0.82f * rain), 0.10f, 1.0f);
-                            if (rain >= 0.70f && clampedCure < 0.20f)
+                            if (rain >= 0.55f && clampedCure < MortarConstants.WetCureThreshold)
                             {
+                                washoutLoss = rain >= 0.70f ? (0.0008f * rain * deltaTimeSeconds) : 0f;
                                 rainWashedDegraded = true;
                             }
                         }
@@ -318,8 +333,18 @@ namespace Stratocraft.Core.Structures
                         }
                         break;
 
+                    case MortarType.RammedEarthCompact:
+                        rainMultiplier = System.Math.Clamp(1.0f - (0.70f * rain), 0.15f, 1.0f);
+                        if (rain >= 0.65f && clampedCure < 0.50f)
+                        {
+                            washoutLoss = 0.0006f * rain * deltaTimeSeconds;
+                            rainWashedDegraded = true;
+                        }
+                        break;
+
                     case MortarType.Horasan:
-                        // Puzolanik / hidrolik harc yagmurda ve su altinda tam hizda sertlesir
+                    case MortarType.PortlandConcrete:
+                        // Puzolanik Horasan harci ve hidrolik Portland betonu yagmurda yikanmaz, tam hizda priz alir
                         rainMultiplier = 1.0f;
                         break;
                 }
@@ -396,6 +421,10 @@ namespace Stratocraft.Core.Structures
                     out _);
 
                 node.CureRatio01 = nextCure;
+                if (nextCure >= 0.9999f)
+                {
+                    node.IsCompactedOrCured = true;
+                }
                 if (rainWashed)
                 {
                     node.Chinking |= ChinkingFlags.RainWashedDamaged;
@@ -411,15 +440,8 @@ namespace Stratocraft.Core.Structures
             for (int e = 0; e < edges.Length; e++)
             {
                 ref StructuralJointEdge32 edge = ref edges[e];
-                if (edge.Kind is JointConnectionKind.ClayMortar or JointConnectionKind.LimeMortar or JointConnectionKind.HorasanMortar)
+                if (TryResolveJointMortarType(edge.Kind, out MortarType edgeMortar))
                 {
-                    MortarType edgeMortar = edge.Kind switch
-                    {
-                        JointConnectionKind.ClayMortar => MortarType.Clay,
-                        JointConnectionKind.HorasanMortar => MortarType.Horasan,
-                        _ => MortarType.Lime
-                    };
-
                     float cur01 = isCreativeMode ? 1.0f : (edge.MortarCureByte / 255f);
                     float next01 = StepMortarCuringDetailed(
                         edgeMortar,
@@ -446,6 +468,35 @@ namespace Stratocraft.Core.Structures
             }
 
             return uncuredCount;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool TryResolveJointMortarType(JointConnectionKind kind, out MortarType mortar)
+        {
+            switch (kind)
+            {
+                case JointConnectionKind.ClayMortar:
+                    mortar = MortarType.Clay;
+                    return true;
+                case JointConnectionKind.LimeMortar:
+                    mortar = MortarType.Lime;
+                    return true;
+                case JointConnectionKind.HorasanMortar:
+                    mortar = MortarType.Horasan;
+                    return true;
+                case JointConnectionKind.CobMudBond:
+                    mortar = MortarType.CobMud;
+                    return true;
+                case JointConnectionKind.CompactedEarthLift:
+                    mortar = MortarType.RammedEarthCompact;
+                    return true;
+                case JointConnectionKind.ConcreteMonolithicPour:
+                    mortar = MortarType.PortlandConcrete;
+                    return true;
+                default:
+                    mortar = MortarType.None;
+                    return false;
+            }
         }
 
         /// <summary>
@@ -1126,6 +1177,8 @@ namespace Stratocraft.Core.Structures
                 or StructuralElementRole.RoofPurlin
                 or StructuralElementRole.RoofRidgeBeam
                 or StructuralElementRole.FloorJoistDeck
+                or StructuralElementRole.SlabDeckFormwork
+                or StructuralElementRole.CorrugatedMetalDeck
                 or StructuralElementRole.BarrelOrCrossVault
                 or StructuralElementRole.DomeRingCourse
                 or StructuralElementRole.DomeOculusCrown;
@@ -1178,8 +1231,11 @@ namespace Stratocraft.Core.Structures
             {
                 case StructuralElementRole.NotchedWallLog:
                 case StructuralElementRole.SillBeamOrLog:
+                case StructuralElementRole.SaddleNotchedBaseLog:
+                case StructuralElementRole.HalfFlatStarterLog:
+                case StructuralElementRole.GroovedLogPost:
                 {
-                    bool hasChinking = node.MaterialId == MaterialIdCatalog.ChinkedLogBlock ||
+                    bool hasChinking = node.MaterialId is MaterialIdCatalog.ChinkedLogBlock or MaterialIdCatalog.GroovedLogTimber ||
                                        (node.Chinking & (ChinkingFlags.MossStuffed |
                                                          ChinkingFlags.ClayDaubed |
                                                          ChinkingFlags.LimePlastered |
@@ -1206,31 +1262,75 @@ namespace Stratocraft.Core.Structures
                     return true;
                 }
 
+                case StructuralElementRole.LogChinkingFill:
                 case StructuralElementRole.InfillPanelWattleAdobe:
+                case StructuralElementRole.PlywoodSheathingPanel:
                 {
+                    bool rainRuined = (node.Chinking & ChinkingFlags.RainWashedDamaged) != 0 &&
+                                      (node.Chinking & ChinkingFlags.WeatherSealed) == 0;
+                    if (rainRuined)
+                    {
+                        barrierKind = CellLeakyBarrier;
+                        sealFactor = 0.0f;
+                        thermalR = 0.0f;
+                        return true;
+                    }
+
                     barrierKind = CellSealedBarrier;
-                    sealFactor = node.MaterialId is MaterialIdCatalog.AdobeBrickBlock or MaterialIdCatalog.WattleDaubPanelBlock
-                        ? 0.88f
-                        : 0.80f;
+                    sealFactor = node.Role == StructuralElementRole.PlywoodSheathingPanel
+                        ? 0.92f
+                        : (node.MaterialId is MaterialIdCatalog.AdobeBrickBlock or MaterialIdCatalog.WattleDaubPanelBlock ? 0.88f : 0.82f);
                     thermalR = MathF.Max(thermalR, 1.55f);
+                    return true;
+                }
+
+                case StructuralElementRole.PlatformStudWall:
+                {
+                    if (node.MaterialId == MaterialIdCatalog.PlywoodOsbPanel ||
+                        (node.Chinking & (ChinkingFlags.ClayDaubed | ChinkingFlags.LimePlastered | ChinkingFlags.WeatherSealed)) != 0)
+                    {
+                        barrierKind = CellSealedBarrier;
+                        sealFactor = 0.90f;
+                        thermalR = MathF.Max(thermalR, 1.50f);
+                    }
+                    else
+                    {
+                        barrierKind = CellLeakyBarrier;
+                        sealFactor = 0.0f;
+                        thermalR = 0.0f;
+                    }
+
                     return true;
                 }
 
                 case StructuralElementRole.RubbleMasonryCourse:
                 case StructuralElementRole.AshlarMasonryWall:
+                case StructuralElementRole.EnglishBondBrickWall:
+                case StructuralElementRole.RammedEarthWall:
+                case StructuralElementRole.CobCurvedWall:
                 case StructuralElementRole.RetainingWallCourse:
                 case StructuralElementRole.ExteriorButtressPier:
                 case StructuralElementRole.MasonryHearthChimney:
                 case StructuralElementRole.RawCrystalMassSegment:
                 {
-                    bool sealedMasonry = node.Mortar != MortarType.None ||
-                                         node.MaterialId is MaterialIdCatalog.LimeMortarStoneWall
-                                             or MaterialIdCatalog.CutAshlarStone
-                                             or MaterialIdCatalog.DressedMarbleBlock
-                                             or MaterialIdCatalog.FiredClayBrick
-                                             or MaterialIdCatalog.StoneBrick
-                                             or MaterialIdCatalog.AdobeBrickBlock ||
-                                         (node.Chinking & (ChinkingFlags.ClayDaubed | ChinkingFlags.LimePlastered | ChinkingFlags.WeatherSealed)) != 0;
+                    bool rainRuinedEarth = node.Role is StructuralElementRole.CobCurvedWall or StructuralElementRole.RammedEarthWall &&
+                                           (node.Chinking & ChinkingFlags.RainWashedDamaged) != 0 &&
+                                           node.CureRatio01 < MortarConstants.WetCureThreshold;
+                    bool sealedMasonry = !rainRuinedEarth &&
+                                         (node.Mortar != MortarType.None ||
+                                          node.Role is StructuralElementRole.RammedEarthWall or StructuralElementRole.CobCurvedWall or StructuralElementRole.EnglishBondBrickWall ||
+                                          node.MaterialId is MaterialIdCatalog.LimeMortarStoneWall
+                                              or MaterialIdCatalog.CutAshlarStone
+                                              or MaterialIdCatalog.DressedMarbleBlock
+                                              or MaterialIdCatalog.FiredClayBrick
+                                              or MaterialIdCatalog.EnglishBondBrickMasonry
+                                              or MaterialIdCatalog.CobMudBrick
+                                              or MaterialIdCatalog.RammedEarthCompacted
+                                              or MaterialIdCatalog.DriedRammedEarth
+                                              or MaterialIdCatalog.CuredReinforcedConcrete
+                                              or MaterialIdCatalog.StoneBrick
+                                              or MaterialIdCatalog.AdobeBrickBlock ||
+                                          (node.Chinking & (ChinkingFlags.ClayDaubed | ChinkingFlags.LimePlastered | ChinkingFlags.WeatherSealed)) != 0);
 
                     if (sealedMasonry)
                     {
@@ -1240,7 +1340,7 @@ namespace Stratocraft.Core.Structures
                     }
                     else
                     {
-                        // Harcsiz kuru tas orgu ruzgar sizdirir
+                        // Harcsiz kuru tas orgu veya yagmurda erimis taze toprak ruzgar sizdirir
                         barrierKind = CellLeakyBarrier;
                         sealFactor = 0.0f;
                         thermalR = 0.0f;
@@ -1286,7 +1386,8 @@ namespace Stratocraft.Core.Structures
             {
                 StructuralElementRole.MasonryHearthChimney => 1.15f,
                 StructuralElementRole.RoofCoveringCourse or StructuralElementRole.InclinedRoofRafter or
-                StructuralElementRole.FloorJoistDeck or StructuralElementRole.BarrelOrCrossVault or
+                StructuralElementRole.FloorJoistDeck or StructuralElementRole.SlabDeckFormwork or
+                StructuralElementRole.CorrugatedMetalDeck or StructuralElementRole.BarrelOrCrossVault or
                 StructuralElementRole.DomeRingCourse or StructuralElementRole.DomeOculusCrown => 2.60f,
                 _ => 2.20f
             };
@@ -1294,7 +1395,8 @@ namespace Stratocraft.Core.Structures
             float thickNormal = node.Role switch
             {
                 StructuralElementRole.RoofCoveringCourse or StructuralElementRole.InclinedRoofRafter or
-                StructuralElementRole.FloorJoistDeck or StructuralElementRole.BarrelOrCrossVault or
+                StructuralElementRole.FloorJoistDeck or StructuralElementRole.SlabDeckFormwork or
+                StructuralElementRole.CorrugatedMetalDeck or StructuralElementRole.BarrelOrCrossVault or
                 StructuralElementRole.DomeRingCourse or StructuralElementRole.DomeOculusCrown => 2.60f,
                 _ => 0.70f
             };
@@ -1391,6 +1493,9 @@ namespace Stratocraft.Core.Structures
 
                 bool isFirewallCapable = candidate.Role is StructuralElementRole.RubbleMasonryCourse
                     or StructuralElementRole.AshlarMasonryWall
+                    or StructuralElementRole.EnglishBondBrickWall
+                    or StructuralElementRole.RammedEarthWall
+                    or StructuralElementRole.CobCurvedWall
                     or StructuralElementRole.MasonryHearthChimney
                     or StructuralElementRole.StonePlinthFoundation
                     or StructuralElementRole.ExteriorButtressPier
