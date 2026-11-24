@@ -1351,7 +1351,8 @@ namespace Stratocraft.Character
 
         private void RenderLod2HorizonSilhouettes(Material safeMat)
         {
-            // Ufukta (160-750m+) gorunen metropol chunk'larini (standart egimli catili blok vs kubbeli saray/tapinak) cizer
+            // Ufukta gorunen metropol chunk'larini YALNIZCA DistantHorizon arazi kabugu menzili icindeyken cizer (gokyuzunde asili nokta = %0!)
+            int maxGroundedHorizonCheb = Math.Max(30, ActiveVoxelTerrainRadiusChunks + 20);
             Mesh? gableSilhouette = null;
             Mesh? domedSilhouette = null;
 
@@ -1360,6 +1361,11 @@ namespace Stratocraft.Character
             {
                 ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
                 if (slot.CurrentLod != CityChunkLodTier.Lod2HorizonProxy || slot.HasDomedOrTowerSilhouette)
+                {
+                    continue;
+                }
+                int cheb = Math.Max(Math.Abs(slot.ChunkX - ActiveViewerChunkX), Math.Abs(slot.ChunkZ - ActiveViewerChunkZ));
+                if (cheb > maxGroundedHorizonCheb || slot.MinY <= 90.2f)
                 {
                     continue;
                 }
@@ -1395,6 +1401,11 @@ namespace Stratocraft.Character
             {
                 ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
                 if (slot.CurrentLod != CityChunkLodTier.Lod2HorizonProxy || !slot.HasDomedOrTowerSilhouette)
+                {
+                    continue;
+                }
+                int chebDome = Math.Max(Math.Abs(slot.ChunkX - ActiveViewerChunkX), Math.Abs(slot.ChunkZ - ActiveViewerChunkZ));
+                if (chebDome > maxGroundedHorizonCheb || slot.MinY <= 90.2f)
                 {
                     continue;
                 }
@@ -1438,25 +1449,14 @@ namespace Stratocraft.Character
                 return cached;
             }
 
-            MaterialIdCatalog.GetBaseColorRgb(
-                facadeMaterialId != 0 ? facadeMaterialId : MaterialIdCatalog.CutAshlarStone,
-                out byte fr, out byte fg, out byte fb);
-            MaterialIdCatalog.GetBaseColorRgb(
-                roofMaterialId != 0 ? roofMaterialId : MaterialIdCatalog.RoofClayTile,
-                out byte rr, out byte rg, out byte rb);
+            // StratocraftUberShader _UsePaletteLUT = 1 protokolu:
+            // COLOR_0 = (MaterialID, Temperature=0, FacetShade, PackedAoWear) — ham RGB DEGIL!
+            byte facMat = facadeMaterialId != 0 ? facadeMaterialId : MaterialIdCatalog.CutAshlarStone;
+            byte rfMat = roofMaterialId != 0 ? roofMaterialId : MaterialIdCatalog.RoofClayTile;
 
-            if (fr is 0 or 3 or 11) fr++;
-            if (rr is 0 or 3 or 11) rr++;
-
-            Color32 wallCol = new Color32(fr, fg, fb, 245);
-            Color32 wallShadeCol = new Color32(
-                (byte)Mathf.Max(6, fr * 84 / 100),
-                (byte)Mathf.Max(6, fg * 84 / 100),
-                (byte)Mathf.Max(6, fb * 84 / 100),
-                245);
-            if (wallShadeCol.r is 3 or 11) wallShadeCol.r++;
-
-            Color32 roofCol = new Color32(rr, rg, rb, 248);
+            Color32 wallCol = new Color32(facMat, 0, 218, 0xE0);
+            Color32 wallShadeCol = new Color32(facMat, 0, 182, 0xD0);
+            Color32 roofCol = new Color32(rfMat, 0, 226, 0xE0);
 
             var verts = new List<Vector3>(64);
             var norms = new List<Vector3>(64);

@@ -15,11 +15,12 @@ using System.Text.Json;
 namespace Stratocraft.Voxel.Jobs
 {
     /// <summary>
-    /// Devir #086: "Kit-Stamp Voxel Meshing" — ShapeID 21..62 arasindaki 42 adet 3B mimari ve ic mekan sekli icin
-    /// hem diskteki gercek UV-free COLOR_0 .glb modellerini (Assets/Art/Generated/Structures_Modular/*.glb) okuyan
-    /// hem de cok-malzemeli 3B silindirik kutuk, karkas, oluklu kiremit/mertek cati, pencereli kapi, genis merdiven ve
-    /// 3B mobilya (masa, sandalye, yatak, kitaplik, somine, tezgah, sandik, fici, taht, ors, silahlik, kuyu, cit)
-    /// geometrilerini bir kez CPU belleginde derleyip tekil voksel chunk mesh'ine 0 B GC ile gomen sablon bankasi.
+    /// Devir #087: Yuksek Performansli (60+ FPS) "Kit-Stamp Voxel Meshing" Sablon Bankasi.
+    /// - ShapeID 21..62 x 8 Alt-Varyant (rotationState = (yaw &amp; 3) | (variant &lt;&lt; 2)) mimari ve ic/dis mekan sekilleri.
+    /// - 6-yonlu komsu yuzey gizleme (CullFaceBit + O(1) InverseRotateFaceMaskYaw) ile bitisik duvar/doseme yuzeylerinde 0 ic ucgen.
+    /// - Yakin (LOD0 &lt;= 3 chunk) ve Uzak (LOD1 &gt;= 4 chunk, distantExteriorOnly) cift kademeli sablon ile ~35x ucgen azalmasi.
+    /// - Sifir bosluklu butunlesik 2.0x2.2m kapi, orta denizliksiz seffaf 1x2m pencere, 4-yon sacakli 45° cati,
+    ///   sicak sivali ic duvar yuzeyi, 3B altin bugday/ekin, sokak feneri, duvar apligi, cumba konsolu ve degirmen kanadi.
     /// </summary>
     public static class GlbVoxelKitTemplateBank
     {
@@ -31,6 +32,7 @@ namespace Stratocraft.Voxel.Jobs
             public readonly byte OverrideMaterialId; // 0 ise vokselin kendi MaterialId degeri kullanilir
             public readonly byte OverrideTemp;       // 0 ise materyalin varsayilan sicakligi kullanilir
             public readonly byte FacetShade;
+            public readonly byte CullFaceBit;        // Lokal uzayda hangi komsu yuz doluysa elenecegi (FacePosX..FaceNegZ)
             public readonly bool AllowSkirtDrop;
 
             public LocalKitTriangle(
@@ -40,7 +42,8 @@ namespace Stratocraft.Voxel.Jobs
                 byte overrideMaterialId,
                 byte facetShade,
                 byte overrideTemp = 0,
-                bool allowSkirtDrop = false)
+                bool allowSkirtDrop = false,
+                byte cullFaceBit = 0)
             {
                 A = a;
                 B = b;
@@ -49,15 +52,19 @@ namespace Stratocraft.Voxel.Jobs
                 OverrideTemp = overrideTemp;
                 FacetShade = facetShade;
                 AllowSkirtDrop = allowSkirtDrop;
+                CullFaceBit = cullFaceBit;
             }
         }
 
         private const int FirstKitShapeId = 21;
         private const int LastKitShapeId = 62;
         private const int KitCount = LastKitShapeId - FirstKitShapeId + 1;
+        private const int VariantsPerKit = 8;
+        private const int TotalSlots = KitCount * VariantsPerKit;
 
         private static readonly object SyncRoot = new();
-        private static LocalKitTriangle[][]? _templates;
+        private static LocalKitTriangle[][]? _nearTemplates;
+        private static LocalKitTriangle[][]? _distantTemplates;
 
 #if UNITY_5_3_OR_NEWER
         [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -65,7 +72,8 @@ namespace Stratocraft.Voxel.Jobs
         {
             lock (SyncRoot)
             {
-                _templates = null;
+                _nearTemplates = null;
+                _distantTemplates = null;
             }
         }
 #endif
@@ -78,35 +86,46 @@ namespace Stratocraft.Voxel.Jobs
             byte rotationState,
             byte baseAo,
             float skirtDrop,
-            List<FacetedVoxelTriangle> outTriangles)
+            List<FacetedVoxelTriangle> outTriangles,
+            byte occludedFaceMask = 0,
+            bool distantExteriorOnly = false)
         {
             if (shapeId < FirstKitShapeId || shapeId > LastKitShapeId)
             {
                 return false;
             }
 
-            // Shape 62 (KitWellAndFence): rot 4..7 kuyu cikrigi, rot 0..3 tarla/bahce citi
-            byte effectiveRot = rotationState;
-            LocalKitTriangle[] tris;
-            if (shapeId == ArchitecturalShapeCatalog.KitWellAndFence && (rotationState & 0x1F) >= 4 && (rotationState & 0x1F) < 8)
+            // Uzak (> 64m / >= 4 chunk) binalarin kapali ic mekan esyalari (49..61) 0 ucgen uretir!
+            if (distantExteriorOnly && ArchitecturalShapeCatalog.IsIndoorCulledDistantPropKit(shapeId))
             {
-                effectiveRot = (byte)(rotationState & 3);
-                tris = GetWellWindlassTemplate();
+                return true;
             }
-            else
-            {
-                LocalKitTriangle[][] bank = EnsureTemplatesInitialized();
-                tris = bank[shapeId - FirstKitShapeId];
-            }
+
+            int rawRot = rotationState & 0x1F;
+            byte effectiveYaw = (byte)(rawRot & 3);
+            int variant = (rawRot >> 2) & 7;
+
+            EnsureTemplatesInitialized(out LocalKitTriangle[][] nearBank, out LocalKitTriangle[][] distantBank);
+            int slotIndex = (shapeId - FirstKitShapeId) * VariantsPerKit + variant;
+            LocalKitTriangle[] tris = (distantExteriorOnly ? distantBank : nearBank)[slotIndex];
 
             if (tris.Length == 0)
             {
-                return false;
+                return true;
             }
+
+            byte localOccluded = occludedFaceMask != 0
+                ? InverseRotateFaceMaskYaw(occludedFaceMask, effectiveYaw)
+                : (byte)0;
 
             for (int i = 0; i < tris.Length; i++)
             {
                 ref readonly LocalKitTriangle t = ref tris[i];
+                if (localOccluded != 0 && (t.CullFaceBit & localOccluded) != 0)
+                {
+                    continue;
+                }
+
                 Vector3 la = t.A;
                 Vector3 lb = t.B;
                 Vector3 lc = t.C;
@@ -117,9 +136,9 @@ namespace Stratocraft.Voxel.Jobs
                     if (lc.Y <= -0.46f) lc.Y -= skirtDrop;
                 }
 
-                Vector3 wa = ArchitecturalShapeCatalog.TransformLocalPoint(la, cellCenter, effectiveRot);
-                Vector3 wb = ArchitecturalShapeCatalog.TransformLocalPoint(lb, cellCenter, effectiveRot);
-                Vector3 wc = ArchitecturalShapeCatalog.TransformLocalPoint(lc, cellCenter, effectiveRot);
+                Vector3 wa = ArchitecturalShapeCatalog.TransformLocalPoint(la, cellCenter, effectiveYaw);
+                Vector3 wb = ArchitecturalShapeCatalog.TransformLocalPoint(lb, cellCenter, effectiveYaw);
+                Vector3 wc = ArchitecturalShapeCatalog.TransformLocalPoint(lc, cellCenter, effectiveYaw);
 
                 byte resolvedMat = t.OverrideMaterialId != 0 ? t.OverrideMaterialId : voxelMatId;
                 if (t.OverrideTemp != 0)
@@ -137,61 +156,124 @@ namespace Stratocraft.Voxel.Jobs
             return true;
         }
 
-        private static LocalKitTriangle[]? _wellWindlassCached;
-        private static LocalKitTriangle[] GetWellWindlassTemplate()
+        /// <summary>Dunya uzayindaki 6-bit komsu dolu yuz maskesini O(1) olarak lokal kit uzayina cevirir.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte InverseRotateFaceMaskYaw(byte worldMask, byte yaw)
         {
-            if (_wellWindlassCached != null) return _wellWindlassCached;
-            var b = new List<LocalKitTriangle>(128);
-            BuildWellWindlass3D(b);
-            _wellWindlassCached = b.ToArray();
-            return _wellWindlassCached;
+            byte yBits = (byte)(worldMask & (ArchitecturalShapeCatalog.FacePosY | ArchitecturalShapeCatalog.FaceNegY));
+            return (yaw & 3) switch
+            {
+                0 => worldMask,
+                1 => (byte)(yBits
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegZ) != 0 ? ArchitecturalShapeCatalog.FacePosX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosZ) != 0 ? ArchitecturalShapeCatalog.FaceNegX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosX) != 0 ? ArchitecturalShapeCatalog.FacePosZ : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegX) != 0 ? ArchitecturalShapeCatalog.FaceNegZ : 0)),
+                2 => (byte)(yBits
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegX) != 0 ? ArchitecturalShapeCatalog.FacePosX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosX) != 0 ? ArchitecturalShapeCatalog.FaceNegX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegZ) != 0 ? ArchitecturalShapeCatalog.FacePosZ : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosZ) != 0 ? ArchitecturalShapeCatalog.FaceNegZ : 0)),
+                _ => (byte)(yBits
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosZ) != 0 ? ArchitecturalShapeCatalog.FacePosX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegZ) != 0 ? ArchitecturalShapeCatalog.FaceNegX : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FaceNegX) != 0 ? ArchitecturalShapeCatalog.FacePosZ : 0)
+                    | ((worldMask & ArchitecturalShapeCatalog.FacePosX) != 0 ? ArchitecturalShapeCatalog.FaceNegZ : 0)),
+            };
         }
 
-        private static LocalKitTriangle[][] EnsureTemplatesInitialized()
+        private static void EnsureTemplatesInitialized(
+            out LocalKitTriangle[][] nearBank,
+            out LocalKitTriangle[][] distantBank)
         {
-            LocalKitTriangle[][]? existing = _templates;
-            if (existing != null)
+            LocalKitTriangle[][]? n = _nearTemplates;
+            LocalKitTriangle[][]? d = _distantTemplates;
+            if (n != null && d != null)
             {
-                return existing;
+                nearBank = n;
+                distantBank = d;
+                return;
             }
 
             lock (SyncRoot)
             {
-                if (_templates != null)
+                if (_nearTemplates != null && _distantTemplates != null)
                 {
-                    return _templates;
+                    nearBank = _nearTemplates;
+                    distantBank = _distantTemplates;
+                    return;
                 }
 
                 string? glbDir = TryLocateModularGlbDirectory();
-                var built = new LocalKitTriangle[KitCount][];
-                var scratch = new List<LocalKitTriangle>(256);
+                var builtNear = new LocalKitTriangle[TotalSlots][];
+                var builtDist = new LocalKitTriangle[TotalSlots][];
+                var scratchNear = new List<LocalKitTriangle>(256);
+                var scratchDist = new List<LocalKitTriangle>(64);
 
-                for (int s = FirstKitShapeId; s <= LastKitShapeId; s++)
+                for (int i = 0; i < KitCount; i++)
                 {
-                    scratch.Clear();
-                    BuildShapeTemplate((byte)s, glbDir, scratch);
-                    built[s - FirstKitShapeId] = scratch.ToArray();
+                    byte shapeId = (byte)(FirstKitShapeId + i);
+                    int baseSlot = i * VariantsPerKit;
+
+                    if (!HasDistinctSubVariants(shapeId))
+                    {
+                        scratchNear.Clear();
+                        scratchDist.Clear();
+                        BuildShapeTemplate(shapeId, 0, glbDir, distantMode: false, scratchNear);
+                        BuildShapeTemplate(shapeId, 0, glbDir, distantMode: true, scratchDist);
+                        LocalKitTriangle[] arrN = scratchNear.ToArray();
+                        LocalKitTriangle[] arrD = scratchDist.ToArray();
+                        for (int v = 0; v < VariantsPerKit; v++)
+                        {
+                            builtNear[baseSlot + v] = arrN;
+                            builtDist[baseSlot + v] = arrD;
+                        }
+                    }
+                    else
+                    {
+                        for (int v = 0; v < VariantsPerKit; v++)
+                        {
+                            scratchNear.Clear();
+                            scratchDist.Clear();
+                            BuildShapeTemplate(shapeId, v, glbDir, distantMode: false, scratchNear);
+                            BuildShapeTemplate(shapeId, v, glbDir, distantMode: true, scratchDist);
+                            builtNear[baseSlot + v] = scratchNear.ToArray();
+                            builtDist[baseSlot + v] = scratchDist.ToArray();
+                        }
+                    }
                 }
 
-                _templates = built;
-                return built;
+                _distantTemplates = builtDist;
+                _nearTemplates = builtNear;
+                nearBank = builtNear;
+                distantBank = builtDist;
             }
         }
+
+        private static bool HasDistinctSubVariants(byte shapeId) => shapeId is
+            ArchitecturalShapeCatalog.KitTimberPostCorner or
+            ArchitecturalShapeCatalog.KitRusticatedStoneWall or
+            ArchitecturalShapeCatalog.KitBrickCourseWall or
+            ArchitecturalShapeCatalog.KitRoofEaveOverhang45 or
+            ArchitecturalShapeCatalog.KitGableWall45 or
+            ArchitecturalShapeCatalog.KitChimneyFlue or
+            ArchitecturalShapeCatalog.KitShutteredWindow or
+            ArchitecturalShapeCatalog.KitArchedStoneWindow or
+            ArchitecturalShapeCatalog.KitDoorFrameJamb or
+            ArchitecturalShapeCatalog.KitDoorArchLintel or
+            ArchitecturalShapeCatalog.KitHingedDoorClosed or
+            ArchitecturalShapeCatalog.KitHingedDoorOpen or
+            ArchitecturalShapeCatalog.KitWellAndFence;
 
         private static string? TryLocateModularGlbDirectory()
         {
 #if UNITY_5_3_OR_NEWER
-            string dataPath = UnityEngine.Application.dataPath;
-            if (!string.IsNullOrEmpty(dataPath))
+            string unityPath = Path.Combine(UnityEngine.Application.dataPath, "Art", "Generated", "Structures_Modular");
+            if (Directory.Exists(unityPath))
             {
-                string p = Path.Combine(dataPath, "Art", "Generated", "Structures_Modular");
-                if (Directory.Exists(p)) return p;
+                return unityPath;
             }
 #endif
-            string cwd = Directory.GetCurrentDirectory();
-            string rel = Path.Combine(cwd, "Assets", "Art", "Generated", "Structures_Modular");
-            if (Directory.Exists(rel)) return rel;
-
             string? probe = AppContext.BaseDirectory;
             for (int depth = 0; depth < 7 && !string.IsNullOrEmpty(probe); depth++)
             {
@@ -203,403 +285,788 @@ namespace Stratocraft.Voxel.Jobs
             return null;
         }
 
-        private static void BuildShapeTemplate(byte shapeId, string? glbDir, List<LocalKitTriangle> dst)
+        private static void BuildShapeTemplate(
+            byte shapeId,
+            int variant,
+            string? glbDir,
+            bool distantMode,
+            List<LocalKitTriangle> dst)
         {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+            const byte FPosZ = ArchitecturalShapeCatalog.FacePosZ;
+            const byte CullWallEndsXY = FPosX | FNegX | FPosY | FNegY;
+
             switch (shapeId)
             {
                 // =============================================================
                 // A) DUVAR, KUTUK, KARKAS, KESME TAS, TUGLA VE SUTUNLAR (21..33)
                 // =============================================================
                 case ArchitecturalShapeCatalog.KitChinkedLogWall:
-                    // Icerden/disardan sifir isik sizintisi icin ince derz cekirdegi + 2 kat yuvarlak silindirik kutuk!
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.18f, 0.18f, MaterialIdCatalog.StrawChinkingBundle, 168, skirt: true);
-                    if (!TryAppendFittedGlb(glbDir, "mod_chinked_log_course_2m.glb", dst, fitX: 1.00f, fitY: 1.00f, fitZ: 0.48f))
+                    // Gercek koyu kabuklu yuvarlak tomruk duvar: ince koyu yosun/derz cekirdegi + 2 adet belirgin disari tasan silindirik kutuk!
+                    if (distantMode)
                     {
-                        AddHorizontalCylinderX(dst, -0.50f, 0.50f, -0.25f, 0.0f, 0.24f, 10, 0, 212, capEnds: true);
-                        AddHorizontalCylinderX(dst, -0.50f, 0.50f,  0.25f, 0.0f, 0.24f, 10, 0, 220, capEnds: true);
+                        AddCullableBox(dst, -0.50f, 0.50f, -0.50f,  0.00f, -0.24f, 0.20f, 0, 206, CullWallEndsXY | FPosZ, skirt: true);
+                        AddCullableBox(dst, -0.50f, 0.50f,  0.00f,  0.50f, -0.25f, 0.20f, 0, 218, CullWallEndsXY | FPosZ);
                     }
                     else
                     {
-                        // Yuvarlak kutuk konturunu yan yuzlerde ekstra belirginlestir
-                        AddHorizontalCylinderX(dst, -0.50f, 0.50f, -0.25f, 0.0f, 0.245f, 10, 0, 214, capEnds: false);
-                        AddHorizontalCylinderX(dst, -0.50f, 0.50f,  0.25f, 0.0f, 0.245f, 10, 0, 222, capEnds: false);
+                        AddCullableBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.13f, 0.13f, MaterialIdCatalog.TreatedTimberBeam, 132, CullWallEndsXY, skirt: true);
+                        AddHorizontalCylinderX(dst, -0.50f, 0.50f, -0.25f, 0.0f, 0.255f, 8, 0, 212, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank, cullEndCapsX: true);
+                        AddHorizontalCylinderX(dst, -0.50f, 0.50f,  0.25f, 0.0f, 0.255f, 8, 0, 222, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank, cullEndCapsX: true);
                     }
                     break;
 
                 case ArchitecturalShapeCatalog.KitNotchedLogCorner:
-                    // Kesisen ve disari +8cm tasan gercek kertikli (saddle-notch) yuvarlak kose kutuk bogumu!
-                    AddBox(dst, -0.34f, 0.34f, -0.50f, 0.50f, -0.34f, 0.34f, MaterialIdCatalog.StrawChinkingBundle, 160, skirt: true);
-                    AddHorizontalCylinderX(dst, -0.58f, 0.58f, -0.25f, 0.0f, 0.24f, 10, 0, 214, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank);
-                    AddHorizontalCylinderZ(dst, -0.58f, 0.58f,  0.25f, 0.0f, 0.24f, 10, 0, 222, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank);
+                    // Kesisen ve koseden +10cm disari tasan gercek kertikli (saddle-notch) yuvarlak kose tomruk bogumu!
+                    if (distantMode)
+                    {
+                        AddCullableBox(dst, -0.56f, 0.56f, -0.50f, 0.50f, -0.56f, 0.56f, 0, 212, FPosY | FNegY, skirt: true);
+                    }
+                    else
+                    {
+                        AddCullableBox(dst, -0.28f, 0.28f, -0.50f, 0.50f, -0.28f, 0.28f, MaterialIdCatalog.TreatedTimberBeam, 140, FPosY | FNegY, skirt: true);
+                        AddHorizontalCylinderX(dst, -0.60f, 0.60f, -0.25f, 0.0f, 0.25f, 8, 0, 214, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank);
+                        AddHorizontalCylinderZ(dst, -0.60f, 0.60f,  0.25f, 0.0f, 0.25f, 8, 0, 222, capEnds: true, endCapMat: MaterialIdCatalog.WoodPlank);
+                    }
                     break;
 
                 case ArchitecturalShapeCatalog.KitTimberFrameWall:
-                    // Gercek Tudors/Ortacag ahsap karkas: Girintili krem siva + disari cikintili koyu mese dikme ve kusaklar!
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.20f, 0.20f, 0, 214, skirt: true);
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, -0.36f, -0.27f, 0.27f, MaterialIdCatalog.TreatedTimberBeam, 178, skirt: true);
-                    AddBox(dst, -0.50f, 0.50f,  0.36f,  0.50f, -0.27f, 0.27f, MaterialIdCatalog.TreatedTimberBeam, 184);
-                    AddBox(dst, -0.50f, -0.36f, -0.36f, 0.36f, -0.26f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 175);
-                    AddBox(dst,  0.36f,  0.50f, -0.36f, 0.36f, -0.26f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 175);
+                    // Tudor/Ortacag ahsap karkas: Dista siva + cikintili koyu mese dikme/kusak, icte (+Z) sicak krem siva + ahsap supurgelik!
+                    BuildPlasteredInteriorAndCoreWall(dst, 0, 216, distantMode, skirt: true);
+                    AddFrontReliefBox(dst, -0.50f, 0.50f, -0.50f, -0.36f, -0.28f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 178, CullWallEndsXY, skirt: true);
+                    AddFrontReliefBox(dst, -0.50f, 0.50f,  0.36f,  0.50f, -0.28f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 184, CullWallEndsXY);
+                    if (!distantMode)
+                    {
+                        AddFrontReliefBox(dst, -0.50f, -0.37f, -0.36f, 0.36f, -0.27f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 174, FNegX);
+                        AddFrontReliefBox(dst,  0.37f,  0.50f, -0.36f, 0.36f, -0.27f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 174, FPosX);
+                    }
                     break;
 
                 case ArchitecturalShapeCatalog.KitTimberBraceWall:
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.20f, 0.20f, 0, 214, skirt: true);
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, -0.36f, -0.27f, 0.27f, MaterialIdCatalog.TreatedTimberBeam, 178, skirt: true);
-                    AddBox(dst, -0.50f, 0.50f,  0.36f,  0.50f, -0.27f, 0.27f, MaterialIdCatalog.TreatedTimberBeam, 184);
-                    AddStrut(dst, new Vector3(-0.42f, -0.40f, 0f), new Vector3(0.42f, 0.40f, 0f), 0.08f, 0.27f, MaterialIdCatalog.TreatedTimberBeam, 172);
+                    BuildPlasteredInteriorAndCoreWall(dst, 0, 216, distantMode, skirt: true);
+                    AddFrontReliefBox(dst, -0.50f, 0.50f, -0.50f, -0.36f, -0.28f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 178, CullWallEndsXY, skirt: true);
+                    AddFrontReliefBox(dst, -0.50f, 0.50f,  0.36f,  0.50f, -0.28f, -0.21f, MaterialIdCatalog.TreatedTimberBeam, 184, CullWallEndsXY);
+                    AddStrut(dst, new Vector3(-0.42f, -0.38f, -0.24f), new Vector3(0.42f, 0.38f, -0.24f), 0.09f, 0.07f, MaterialIdCatalog.TreatedTimberBeam, 172);
                     break;
 
                 case ArchitecturalShapeCatalog.KitTimberPostCorner:
-                    AddBox(dst, -0.34f, 0.34f, -0.50f, 0.50f, -0.34f, 0.34f, MaterialIdCatalog.TreatedTimberBeam, 182, skirt: true);
-                    AddBox(dst, -0.40f, 0.40f,  0.34f, 0.50f, -0.40f, 0.40f, MaterialIdCatalog.GroovedLogTimber, 196);
-                    AddBox(dst, -0.38f, 0.38f, -0.08f, 0.08f, -0.38f, 0.38f, MaterialIdCatalog.IronTieBeamBlock, 152);
+                    if (variant == ArchitecturalShapeCatalog.TimberVarCeilingJoist)
+                    {
+                        // Tavan altinda gorunen sicak mese tasiyici tavan kirisi (2m aralikli, kafa mesafesi 3.74m!)
+                        if (!distantMode)
+                        {
+                            AddCullableBox(dst, -0.50f, 0.50f, 0.24f, 0.50f, -0.14f, 0.14f, MaterialIdCatalog.TreatedTimberBeam, 184, FNegX | FPosX | FPosY);
+                        }
+                    }
+                    else
+                    {
+                        AddCullableBox(dst, -0.33f, 0.33f, -0.50f, 0.50f, -0.33f, 0.33f, MaterialIdCatalog.TreatedTimberBeam, 184, FPosY | FNegY, skirt: true);
+                        if (!distantMode)
+                        {
+                            AddCullableBox(dst, -0.37f, 0.37f, -0.06f, 0.06f, -0.37f, 0.37f, MaterialIdCatalog.IronTieBeamBlock, 152, 0);
+                        }
+                    }
                     break;
 
                 case ArchitecturalShapeCatalog.KitAshlarQuoinBlock:
-                    AddBox(dst, -0.44f, 0.44f, -0.50f, 0.50f, -0.44f, 0.44f, MaterialIdCatalog.LimeMortarStoneWall, 165, skirt: true);
-                    AddBox(dst, -0.50f, 0.50f, -0.48f, -0.02f, -0.50f, 0.38f, 0, 218, skirt: true);
-                    AddBox(dst, -0.38f, 0.50f,  0.02f,  0.48f, -0.50f, 0.50f, 0, 226);
+                    // Uzun-kisa disli kesme kose tasi (ic yuzler komsu duvarla gizlenir -> 8-14 ucgen!)
+                    AddCullableBox(dst, -0.36f, 0.36f, -0.50f,  0.00f, -0.36f, 0.32f, 0, 222, FPosY | FNegY, skirt: true);
+                    AddCullableBox(dst, -0.32f, 0.36f,  0.00f,  0.50f, -0.36f, 0.36f, 0, 230, FPosY | FNegY);
                     break;
 
                 case ArchitecturalShapeCatalog.KitRusticatedStoneWall:
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.28f, 0.28f, MaterialIdCatalog.LimeMortarStoneWall, 160, skirt: true);
-                    // 2 sira kabartmali kesme/moloz tas bloklari
-                    AddBox(dst, -0.48f, -0.02f, -0.48f, -0.02f, -0.36f, 0.36f, 0, 212, skirt: true);
-                    AddBox(dst,  0.02f,  0.48f, -0.48f, -0.02f, -0.35f, 0.35f, 0, 204, skirt: true);
-                    AddBox(dst, -0.24f,  0.24f,  0.02f,  0.48f, -0.36f, 0.36f, 0, 220);
-                    AddBox(dst, -0.50f, -0.28f,  0.02f,  0.48f, -0.34f, 0.34f, 0, 198);
-                    AddBox(dst,  0.28f,  0.50f,  0.02f,  0.48f, -0.34f, 0.34f, 0, 208);
-                    break;
-
                 case ArchitecturalShapeCatalog.KitBrickCourseWall:
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.28f, 0.28f, MaterialIdCatalog.LimeMortarStoneWall, 168, skirt: true);
-                    for (int row = 0; row < 3; row++)
+                    // StratocraftUberShader zaten harc-tugla/tas derzlerini piksellerde urettigi icin
+                    // 84 ucgenlik mikro-tugla kutulari yerine:
+                    // - Dista (-Z) hafif silmeli gercek tugla/tas yuzeyi (2-6 ucgen!)
+                    // - Icte (+Z) sicak krem ic cephe sivasi + mese supurgelik (variant==1 ic bolme duvarinda cift yuz sivali!)
+                    if (variant == 1)
                     {
-                        float y0 = -0.48f + row * 0.33f;
-                        float y1 = y0 + 0.28f;
-                        float shift = (row & 1) == 0 ? 0f : 0.24f;
-                        AddBox(dst, -0.49f + shift * 0.2f, -0.02f + shift * 0.2f, y0, y1, -0.34f, 0.34f, 0, (byte)(206 + row * 6), skirt: row == 0);
-                        AddBox(dst,  0.02f - shift * 0.2f,  0.49f - shift * 0.2f, y0, y1, -0.34f, 0.34f, 0, (byte)(214 - row * 4), skirt: row == 0);
+                        if (!distantMode)
+                        {
+                            AddCullableBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.18f, 0.18f, MaterialIdCatalog.LimeWashPlaster, 226, CullWallEndsXY, skirt: true);
+                            AddCullableBox(dst, -0.50f, 0.50f, -0.50f, -0.36f, -0.21f, 0.21f, MaterialIdCatalog.TreatedTimberBeam, 176, CullWallEndsXY, skirt: true);
+                        }
+                    }
+                    else
+                    {
+                        BuildPlasteredInteriorAndCoreWall(dst, 0, 218, distantMode, skirt: true);
+                        if (!distantMode)
+                        {
+                            // Dista ince mimari tas/tugla damlalik kusagi (yalnizca on -Z yuzunde +4 ucgen)
+                            AddFrontReliefBox(dst, -0.50f, 0.50f, -0.50f, -0.38f, -0.28f, -0.24f, 0, 204, CullWallEndsXY, skirt: true);
+                        }
                     }
                     break;
 
                 case ArchitecturalShapeCatalog.KitAdobeCurvedWall:
-                    if (!TryAppendFittedGlb(glbDir, "mod_cob_curved_wall_2m.glb", dst, fitX: 1.00f, fitY: 1.00f, fitZ: 0.62f))
+                    BuildPlasteredInteriorAndCoreWall(dst, 0, 214, distantMode, skirt: true);
+                    if (!distantMode)
                     {
-                        AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.32f, 0.32f, 0, 212, skirt: true);
+                        AddHorizontalCylinderZ(dst, -0.42f, -0.20f, 0.30f, 0.0f, 0.085f, 6, MaterialIdCatalog.TreatedTimberBeam, 178, capEnds: true);
                     }
-                    // Disari uzanan Pueblo/Anadolu ahsap hatil (viga) uclari
-                    AddHorizontalCylinderZ(dst, -0.46f, 0.46f, 0.32f, 0.0f, 0.09f, 8, MaterialIdCatalog.TreatedTimberBeam, 178, capEnds: true);
                     break;
 
                 case ArchitecturalShapeCatalog.KitPlankFramedWall:
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.20f, 0.20f, MaterialIdCatalog.TreatedTimberBeam, 170, skirt: true);
-                    for (int s = 0; s < 4; s++)
+                    BuildPlasteredInteriorAndCoreWall(dst, 0, 212, distantMode, skirt: true);
+                    if (!distantMode)
                     {
-                        float y0 = -0.50f + s * 0.25f;
-                        float y1 = y0 + 0.27f;
-                        AddSlantedClapboard(dst, y0, y1, 0, (byte)(206 + (s & 1) * 12));
+                        AddFrontReliefBox(dst, -0.50f, 0.50f, -0.50f, -0.02f, -0.28f, -0.23f, 0, 206, CullWallEndsXY, skirt: true);
+                        AddFrontReliefBox(dst, -0.50f, 0.50f,  0.00f,  0.48f, -0.28f, -0.23f, 0, 218, CullWallEndsXY);
                     }
                     break;
 
                 case ArchitecturalShapeCatalog.KitClassicalColumnBase:
-                    if (!TryAppendFittedGlb(glbDir, "mod_classical_column_base.glb", dst, fitX: 0.92f, fitY: 1.00f, fitZ: 0.92f))
-                    {
-                        AddBox(dst, -0.46f, 0.46f, -0.50f, -0.22f, -0.46f, 0.46f, 0, 198, skirt: true);
-                        AddVerticalCylinderY(dst, -0.22f, 0.02f, 0f, 0f, 0.42f, 0.36f, 12, 0, 216);
-                        AddVerticalCylinderY(dst,  0.02f, 0.50f, 0f, 0f, 0.33f, 0.32f, 12, 0, 220);
-                    }
+                    AddCullableBox(dst, -0.44f, 0.44f, -0.50f, -0.22f, -0.44f, 0.44f, 0, 198, FNegY, skirt: true);
+                    AddVerticalCylinderY(dst, -0.22f, 0.50f, 0f, 0f, 0.38f, 0.31f, distantMode ? 6 : 10, 0, 220, cullCapsY: true);
                     break;
 
                 case ArchitecturalShapeCatalog.KitClassicalColumnShaft:
-                    if (!TryAppendFittedGlb(glbDir, "mod_classical_column_shaft_3m.glb", dst, fitX: 0.68f, fitY: 1.00f, fitZ: 0.68f))
-                    {
-                        AddVerticalCylinderY(dst, -0.50f, 0.50f, 0f, 0f, 0.32f, 0.31f, 14, 0, 222);
-                    }
+                    AddVerticalCylinderY(dst, -0.50f, 0.50f, 0f, 0f, 0.31f, 0.30f, distantMode ? 6 : 10, 0, 222, cullCapsY: true);
                     break;
 
                 case ArchitecturalShapeCatalog.KitClassicalColumnCap:
-                    if (!TryAppendFittedGlb(glbDir, "mod_classical_column_capital.glb", dst, fitX: 0.94f, fitY: 1.00f, fitZ: 0.94f))
-                    {
-                        AddVerticalCylinderY(dst, -0.50f, -0.05f, 0f, 0f, 0.31f, 0.42f, 12, 0, 216);
-                        AddBox(dst, -0.47f, 0.47f, -0.05f, 0.28f, -0.47f, 0.47f, 0, 228);
-                        AddBox(dst, -0.50f, 0.50f,  0.28f, 0.50f, -0.50f, 0.50f, 0, 232);
-                    }
+                    AddVerticalCylinderY(dst, -0.50f, 0.05f, 0f, 0f, 0.30f, 0.42f, distantMode ? 6 : 10, 0, 218, cullCapsY: true);
+                    AddCullableBox(dst, -0.48f, 0.48f, 0.05f, 0.50f, -0.48f, 0.48f, 0, 232, FPosY);
                     break;
 
                 // =============================================================
                 // B) 3B MERTEKLI, KIREMITLI / PEDAVRALI CATILAR & BACA (34..40)
                 // =============================================================
                 case ArchitecturalShapeCatalog.KitRoofClayTile45:
-                    BuildSculptedRoofSlope45(dst, isClayBarrelTile: true, hasOverhangTail: false);
+                    BuildSculptedRoofSlope45(dst, isClayBarrelTile: true, hasOverhangTail: false, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitRoofShingle45:
-                    BuildSculptedRoofSlope45(dst, isClayBarrelTile: false, hasOverhangTail: false);
+                    BuildSculptedRoofSlope45(dst, isClayBarrelTile: false, hasOverhangTail: false, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitRoofEaveOverhang45:
-                    BuildSculptedRoofSlope45(dst, isClayBarrelTile: true, hasOverhangTail: true);
+                    BuildSculptedRoofSlope45(
+                        dst,
+                        isClayBarrelTile: (variant & 1) == 0,
+                        hasOverhangTail: true,
+                        distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitRoofRidgeCrest:
-                    // Alt destek kirisi + A-bicimli cift yone egimli mahya kiremidi ve tepe sirigi!
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, -0.08f, -0.46f, 0.46f, MaterialIdCatalog.TreatedTimberBeam, 176);
-                    AddPitchedPrismX(dst, -0.50f, 0.50f, -0.10f, 0.38f, 0.52f, 0, 224);
-                    AddHorizontalCylinderX(dst, -0.50f, 0.50f, 0.38f, 0.0f, 0.13f, 8, 0, 236, capEnds: true);
+                    AddPitchedPrismX(dst, -0.50f, 0.50f, -0.46f, 0.36f, 0.52f, 0, 224, cullEndsX: true);
+                    if (!distantMode)
+                    {
+                        AddHorizontalCylinderX(dst, -0.50f, 0.50f, 0.36f, 0.0f, 0.12f, 6, 0, 236, capEnds: false, cullEndCapsX: true);
+                    }
                     break;
 
                 case ArchitecturalShapeCatalog.KitGableWall45:
-                    // 45° egimli ucgen kalkan duvar (-Z alcalan, +Z yukselen) + oymali ahsap alin kirisi (bargeboard)
-                    AddSlopedWedgeZ(dst, -0.30f, 0.30f, -0.50f, 0.50f, 0, 212);
-                    AddStrut(dst, new Vector3(0f, -0.48f, -0.50f), new Vector3(0f, 0.52f, 0.50f), 0.36f, 0.12f, MaterialIdCatalog.TreatedTimberBeam, 182);
+                    BuildSmoothGableAndBargeboard45(dst, variant, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitChimneyFlue:
-                    if (!TryAppendFittedGlb(glbDir, "mod_chimney_flue_2m.glb", dst, fitX: 0.84f, fitY: 1.00f, fitZ: 0.84f))
+                    // Seker cubugu beyaz seritler kaldirildi! Dogal isli tas/tugla baca govdesi (v=0) + yalnizca en tepede tas sapka (v=1)
+                    if (variant == ArchitecturalShapeCatalog.ChimneyVarCrownCap)
                     {
-                        AddBox(dst, -0.38f, 0.38f, -0.50f, 0.28f, -0.38f, 0.38f, MaterialIdCatalog.FiredClayBrick, 208, skirt: true);
-                        AddBox(dst, -0.46f, 0.46f,  0.28f, 0.44f, -0.46f, 0.46f, MaterialIdCatalog.CutAshlarStone, 224);
-                        AddBox(dst, -0.24f, 0.24f,  0.44f, 0.50f, -0.24f, 0.24f, MaterialIdCatalog.Basalt, 95);
+                        AddCullableBox(dst, -0.38f, 0.38f, -0.50f, 0.18f, -0.38f, 0.38f, 0, 186, FNegY, skirt: true);
+                        AddCullableBox(dst, -0.46f, 0.46f,  0.18f, 0.36f, -0.46f, 0.46f, MaterialIdCatalog.StoneBrick, 198, 0);
+                        AddCullableBox(dst, -0.24f, 0.24f,  0.36f, 0.50f, -0.24f, 0.24f, MaterialIdCatalog.Basalt, 110, 0);
+                    }
+                    else
+                    {
+                        AddCullableBox(dst, -0.37f, 0.37f, -0.50f, 0.50f, -0.37f, 0.37f, 0, 184, FPosY | FNegY, skirt: true);
+                        if (!distantMode)
+                        {
+                            AddCullableBox(dst, -0.40f, 0.40f, -0.06f, 0.04f, -0.40f, 0.40f, MaterialIdCatalog.StoneBrick, 168, 0);
+                        }
                     }
                     break;
 
                 case ArchitecturalShapeCatalog.KitDomeRibVault:
-                    AddSlopedWedgeZ(dst, -0.50f, 0.50f, -0.50f, 0.50f, 0, 220);
-                    AddStrut(dst, new Vector3(0f, -0.46f, -0.48f), new Vector3(0f, 0.52f, 0.48f), 0.18f, 0.14f, MaterialIdCatalog.DressedMarbleBlock, 240);
+                    AddSlopedWedgeZ(dst, -0.50f, 0.50f, -0.50f, 0.50f, 0, 222, cullSidesX: true);
+                    if (!distantMode)
+                    {
+                        AddStrut(dst, new Vector3(0f, -0.46f, -0.48f), new Vector3(0f, 0.52f, 0.48f), 0.16f, 0.12f, MaterialIdCatalog.DressedMarbleBlock, 238);
+                    }
                     break;
 
                 // =============================================================
-                // C) 3B PENCERELER, 2x3m GECILEBILIR KAPILAR VE GENIS MERDIVEN (41..48)
+                // C) SEFFAF HEMZEMIN 1x2m PENCERELER & BUTUNLESIK 2.0x2.2m KAPILAR (41..48)
                 // =============================================================
                 case ArchitecturalShapeCatalog.KitShutteredWindow:
-                    BuildShutteredWindow3D(dst);
+                    BuildCohesiveWindow3D(dst, variant, isArchedStone: false, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitArchedStoneWindow:
-                    BuildArchedStoneWindow3D(dst);
+                    BuildCohesiveWindow3D(dst, variant, isArchedStone: true, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitDoorFrameJamb:
-                    // Sol kenarda (-X: -0.50..-0.28) zarif oymali kapi sogesi -> ortadaki gecisi 100% acik birakir!
-                    AddBox(dst, -0.50f, -0.26f, -0.50f, 0.50f, -0.32f, 0.32f, 0, 198, skirt: true);
-                    AddBox(dst, -0.30f, -0.20f, -0.50f, 0.50f, -0.20f, 0.20f, MaterialIdCatalog.TreatedTimberBeam, 178, skirt: true);
+                    BuildFullWallWithDoorPilasterJamb(dst, isRightSide: (variant & 1) != 0, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitDoorArchLintel:
-                    // Kapi ustu kalin tas/ahsap lento + tahfif kemeri silmesi
-                    AddBox(dst, -0.50f, 0.50f, -0.50f, -0.18f, -0.34f, 0.34f, MaterialIdCatalog.TreatedTimberBeam, 182);
-                    AddBox(dst, -0.50f, 0.50f, -0.18f,  0.50f, -0.30f, 0.30f, 0, 218);
-                    AddBox(dst, -0.50f, 0.50f,  0.34f,  0.50f, -0.38f, 0.38f, MaterialIdCatalog.CutAshlarStone, 228);
+                    BuildArchedTransomDoorLintel(dst, isRightHalf: (variant & 1) != 0, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitHingedDoorClosed:
-                    BuildHingedDoorLeaf3D(dst, isOpen: false);
+                    BuildCohesiveDoorLeaf3D(dst, variant, isOpen: false, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitHingedDoorOpen:
-                    // 90° iceriye (-X kenarina: -0.50..-0.36) tam yaslanmis 3B acik kapi kanadi -> oyuncu takilmadan yurur!
-                    BuildHingedDoorLeaf3D(dst, isOpen: true);
+                    BuildCohesiveDoorLeaf3D(dst, variant, isOpen: true, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitWideTimberStair:
-                    BuildOpenRiserTimberStair3D(dst);
+                    BuildOpenRiserTimberStair3D(dst, distantMode);
                     break;
 
                 case ArchitecturalShapeCatalog.KitBalconyBalustrade:
-                    BuildBalustrade3D(dst);
+                    BuildBalustrade3D(dst, distantMode);
                     break;
 
                 // =============================================================
-                // D) %100 3B HEYKELLENMIS COK-MALZEMELI IC MEKAN ESYALARI (49..62)
+                // D) %100 3B HEYKELLENMIS COK-MALZEMELI IC & DIS MEKAN ESYALARI (49..62)
                 // =============================================================
                 case ArchitecturalShapeCatalog.KitDiningTable:
-                    BuildDiningTable3D(dst);
+                    if (!distantMode) BuildDiningTable3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitChairWithBack:
-                    BuildChair3D(dst);
+                    if (!distantMode) BuildChair3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitBedHeadboard:
-                    BuildBedHead3D(dst);
+                    if (!distantMode) BuildBedHead3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitBedFoot:
-                    BuildBedFoot3D(dst);
+                    if (!distantMode) BuildBedFoot3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitBookshelf:
-                    BuildBookshelf3D(dst);
+                    if (!distantMode) BuildBookshelf3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitFireplaceHearth:
-                    BuildFireplaceHearth3D(dst, glbDir);
+                    if (!distantMode) BuildFireplaceHearth3D(dst, glbDir);
                     break;
 
                 case ArchitecturalShapeCatalog.KitKitchenCounter:
-                    BuildKitchenCounter3D(dst);
+                    if (!distantMode) BuildKitchenCounter3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitStorageChest:
-                    BuildStorageChest3D(dst);
+                    if (!distantMode) BuildStorageChest3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitWoodenBarrel:
-                    BuildWoodenBarrel3D(dst);
+                    if (!distantMode) BuildWoodenBarrel3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitRoyalThrone:
-                    BuildRoyalThrone3D(dst);
+                    if (!distantMode) BuildRoyalThrone3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitAnvilOnStump:
-                    BuildAnvilOnStump3D(dst);
+                    if (!distantMode) BuildAnvilOnStump3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitSawhorseBench:
-                    BuildSawhorseBench3D(dst);
+                    if (!distantMode) BuildSawhorseBench3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitWeaponRack:
-                    BuildWeaponRack3D(dst);
+                    if (!distantMode) BuildWeaponRack3D(dst);
                     break;
 
                 case ArchitecturalShapeCatalog.KitWellAndFence:
-                    BuildSplitRailFence3D(dst);
+                    BuildUtilityPropVariant3D(dst, variant, distantMode);
                     break;
             }
         }
 
         // =====================================================================
-        // GERCEK 3B CATI, PENCERE, KAPI, MERDIVEN VE MOBILYA MODEL URETICILERI
+        // DUVAR, CATI, PENCERE, KAPI VE SEHIR/TARLA PROPLARI URETICILERI
         // =====================================================================
 
-        private static void BuildSculptedRoofSlope45(List<LocalKitTriangle> dst, bool isClayBarrelTile, bool hasOverhangTail)
+        /// <summary>
+        /// Dis yuzu (-Z) vokselin kendi cephe malzemesi (tugla/tas/siva), ic yuzu (+Z) ise sicak krem ic siva
+        /// ve koyu mese supurgelik olan Yuksek-FPS (komsu kenarlari %100 elenen!) ana duvar govdesi.
+        /// </summary>
+        private static void BuildPlasteredInteriorAndCoreWall(
+            List<LocalKitTriangle> dst,
+            byte frontMatOverride,
+            byte frontShade,
+            bool distantMode,
+            bool skirt)
         {
-            // 1) Altta egimli tasiyici ahsap mertekler (sol, orta, sag kiris) + kaplama tahtasi (ic tavandan bakinca gercek ahsap cati gorunur!)
-            float zMin = hasOverhangTail ? -0.64f : -0.50f;
-            float yMin = hasOverhangTail ? -0.64f : -0.50f;
-            AddStrut(dst, new Vector3(-0.38f, yMin + 0.06f, zMin), new Vector3(-0.38f, 0.44f, 0.50f), 0.11f, 0.12f, MaterialIdCatalog.TreatedTimberBeam, 168);
-            AddStrut(dst, new Vector3( 0.00f, yMin + 0.06f, zMin), new Vector3( 0.00f, 0.44f, 0.50f), 0.10f, 0.12f, MaterialIdCatalog.TreatedTimberBeam, 172);
-            AddStrut(dst, new Vector3( 0.38f, yMin + 0.06f, zMin), new Vector3( 0.38f, 0.44f, 0.50f), 0.11f, 0.12f, MaterialIdCatalog.TreatedTimberBeam, 168);
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+            const byte FPosZ = ArchitecturalShapeCatalog.FacePosZ;
+            const byte FNegZ = ArchitecturalShapeCatalog.FaceNegZ;
 
-            // Sizmazyalitim plakasi (egimli ince tahta alti)
-            AddSlopedSlab45(dst, -0.50f, 0.50f, -0.05f, 0.03f, MaterialIdCatalog.WoodPlank, 182);
+            float x0 = -0.50f, x1 = 0.50f;
+            float y0 = -0.50f, y1 = 0.50f;
+            float z0 = -0.24f, z1 = 0.24f;
+
+            Vector3 p000 = new(x0, y0, z0), p100 = new(x1, y0, z0), p101 = new(x1, y0, z1), p001 = new(x0, y0, z1);
+            Vector3 p010 = new(x0, y1, z0), p110 = new(x1, y1, z0), p111 = new(x1, y1, z1), p011 = new(x0, y1, z1);
+
+            // On dis cephe (-Z): her mesafede cizilir (yalnizca onunde tam dolu blok varsa gizlenir)
+            AddQuad(dst, p000, p010, p110, p100, frontMatOverride, frontShade, 0, skirt, FNegZ);
+
+            // Ust/Alt/Sol/Sag kenar kapaklari: komsu duvar veya doseme varsa 0 ucgen!
+            AddQuad(dst, p010, p011, p111, p110, frontMatOverride, (byte)Math.Min(245, frontShade + 12), 0, false, FPosY);
+            AddQuad(dst, p001, p000, p100, p101, frontMatOverride, (byte)Math.Max(115, frontShade - 44), 0, skirt, FNegY);
+            AddQuad(dst, p001, p011, p010, p000, frontMatOverride, (byte)Math.Max(125, frontShade - 10), 0, skirt, FNegX);
+            AddQuad(dst, p100, p110, p111, p101, frontMatOverride, (byte)Math.Max(125, frontShade - 10), 0, skirt, FPosX);
+
+            // Arka ic mekan yuzeyi (+Z): Uzak (> 64m) kapali binalarda hic cizilmez! Yakinda sicak krem siva + mese supurgelik!
+            if (!distantMode)
+            {
+                Vector3 m001 = new(x0, -0.35f, z1), m101 = new(x1, -0.35f, z1);
+                AddQuad(dst, p101, m101, m001, p001, MaterialIdCatalog.TreatedTimberBeam, 178, 0, skirt, FPosZ);
+                AddQuad(dst, m101, p111, p011, m001, MaterialIdCatalog.LimeWashPlaster, 232, 0, false, FPosZ);
+            }
+        }
+
+        private static void BuildSculptedRoofSlope45(
+            List<LocalKitTriangle> dst,
+            bool isClayBarrelTile,
+            bool hasOverhangTail,
+            bool distantMode)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+
+            float zMin = hasOverhangTail ? -0.62f : -0.50f;
+            float yMin = hasOverhangTail ? -0.62f : -0.50f;
+
+            // Ana 45° egimli sizdirmaz cati plakasi (Ust yuz: kiremit/pedavra, Alt yuz: sicak ahsap tavan kaplamasi!)
+            AddSlopedRoofDeck(dst, -0.50f, 0.50f, zMin, 0.50f, yMin, 0.50f, 0.10f, 0, MaterialIdCatalog.WoodPlank, 222, distantMode);
+
+            if (distantMode)
+            {
+                return;
+            }
+
+            // Yakin mesafede sacak altinda gorunen oymali mese mertek uclari
+            if (hasOverhangTail)
+            {
+                AddStrut(dst, new Vector3(-0.36f, yMin - 0.04f, zMin + 0.02f), new Vector3(-0.36f, 0.40f, 0.46f), 0.11f, 0.11f, MaterialIdCatalog.TreatedTimberBeam, 172);
+                AddStrut(dst, new Vector3( 0.36f, yMin - 0.04f, zMin + 0.02f), new Vector3( 0.36f, 0.40f, 0.46f), 0.11f, 0.11f, MaterialIdCatalog.TreatedTimberBeam, 172);
+            }
 
             if (isClayBarrelTile)
             {
-                // Ustte 4 sira yarim-silindirik oluklu Alaturka/Akdeniz kiremidi!
-                float[] xs = { -0.375f, -0.125f, 0.125f, 0.375f };
+                // 3 sira hafif oluklu Akdeniz/Alaturka kiremit sirti (yalnizca ust-yan gorunur yuzler!)
+                float[] xs = { -0.33f, 0.0f, 0.33f };
                 for (int i = 0; i < xs.Length; i++)
                 {
-                    AddStrut(
-                        dst,
-                        new Vector3(xs[i], -0.42f, -0.52f),
-                        new Vector3(xs[i],  0.56f,  0.50f),
-                        0.19f, 0.11f,
-                        0, (byte)(216 + (i & 1) * 14));
+                    AddRoofTileRidgeStrip(dst, xs[i], 0.16f, zMin, 0.50f, yMin + 0.10f, 0.60f, 0.07f, 0, (byte)(216 + (i & 1) * 14));
                 }
             }
             else
             {
-                // Ustte 3 basamakli bindirmeli (overlapping) yarma sedir zona / pedavra tahtalari!
-                for (int s = 0; s < 3; s++)
+                // 2 kademeli bindirmeli (overlapping) sedir pedavra / zona kademesi
+                for (int s = 0; s < 2; s++)
                 {
-                    float t0 = s / 3.0f;
-                    float t1 = (s + 1.08f) / 3.0f;
-                    float z0 = -0.52f + t0 * 1.02f;
-                    float z1 = -0.52f + t1 * 1.02f;
-                    float y0 = -0.44f + t0 * 1.00f;
-                    float y1 = -0.42f + t1 * 0.98f;
-                    AddStrut(dst, new Vector3(0f, y0, z0), new Vector3(0f, y1, z1), 1.00f, 0.08f, 0, (byte)(204 + s * 12));
+                    float t0 = s * 0.50f;
+                    float t1 = t0 + 0.54f;
+                    float z0 = zMin + t0 * (0.50f - zMin);
+                    float z1 = MathF.Min(0.50f, zMin + t1 * (0.50f - zMin));
+                    float y0 = yMin + 0.09f + t0 * (0.50f - yMin);
+                    float y1 = yMin + 0.12f + t1 * (0.50f - yMin);
+                    Vector3 a0 = new(-0.50f, y0 + 0.04f, z0), a1 = new(0.50f, y0 + 0.04f, z0);
+                    Vector3 b1 = new( 0.50f, y1, z1),          b0 = new(-0.50f, y1, z1);
+                    AddQuad(dst, a0, b0, b1, a1, 0, (byte)(208 + s * 14));
+                    Vector3 lip0 = new(-0.50f, y0 - 0.02f, z0), lip1 = new(0.50f, y0 - 0.02f, z0);
+                    AddQuad(dst, lip0, a0, a1, lip1, 0, 176);
+                }
+            }
+            _ = FPosX; _ = FNegX;
+        }
+
+        private static void BuildSmoothGableAndBargeboard45(List<LocalKitTriangle> dst, int variant, bool distantMode)
+        {
+            bool isShingle = (variant & 1) != 0;
+            bool isPureOverhang = variant >= ArchitecturalShapeCatalog.GableVarClayBargeOverhang;
+            byte roofMat = isShingle ? MaterialIdCatalog.TimberShingleRoof : MaterialIdCatalog.RoofClayTile;
+
+            if (!isPureOverhang)
+            {
+                // 1) Puruzsuz 45° egimli ucgen kalkan duvar kamasi (vokselin kendi duvar malzemesiyle: kutuk/tugla/tas!)
+                // Basamak goruntusu %100 sifirlanir!
+                AddSlopedWedgeZ(dst, -0.24f, 0.24f, -0.50f, 0.50f, 0, 214, cullSidesX: false);
+            }
+
+            // 2) Kalkan duvarin tam ustunu kapatan ve disari tasan 45° cati plakasi + oymali mese alin tahtasi (bargeboard)!
+            AddSlopedRoofDeck(dst, -0.50f, 0.50f, -0.54f, 0.50f, -0.50f, 0.50f, 0.11f, roofMat, MaterialIdCatalog.TreatedTimberBeam, 224, distantMode);
+            if (!distantMode)
+            {
+                // Alin tahtasi altinda yatay asik kirisi ucu
+                AddHorizontalCylinderX(dst, -0.52f, 0.52f, -0.06f, 0.02f, 0.09f, 6, MaterialIdCatalog.TreatedTimberBeam, 178, capEnds: true);
+            }
+        }
+
+        private static void BuildCohesiveWindow3D(
+            List<LocalKitTriangle> dst,
+            int variant,
+            bool isArchedStone,
+            bool distantMode)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+
+            bool isLower = variant == ArchitecturalShapeCatalog.WinVarLowerSill;
+            bool isUpper = variant == ArchitecturalShapeCatalog.WinVarUpperHead;
+            // variant >= 2: tek blokluk 1x1m tavan arasi / kalkan duvar penceresi (hem alt denizlik hem ust lento var)
+            bool hasSill = isLower || (!isLower && !isUpper);
+            bool hasHeader = isUpper || (!isLower && !isUpper);
+
+            byte frameMat = isArchedStone ? MaterialIdCatalog.DressedMarbleBlock : MaterialIdCatalog.TreatedTimberBeam;
+            byte sillMat = isArchedStone ? MaterialIdCatalog.DressedMarbleBlock : MaterialIdCatalog.CutAshlarStone;
+
+            // Uzak (> 64m) LOD1 modunda: 8 ucgenlik keskin dis cephe cercevesi + koyu yansimali cam silueti!
+            if (distantMode)
+            {
+                const byte FNegZ = ArchitecturalShapeCatalog.FaceNegZ;
+                float zF = -0.24f;
+                AddQuad(dst, new(-0.50f, -0.50f, zF), new(-0.50f, 0.50f, zF), new(-0.34f, 0.50f, zF), new(-0.34f, -0.50f, zF), 0, 214, 0, false, FNegZ);
+                AddQuad(dst, new( 0.34f, -0.50f, zF), new( 0.34f, 0.50f, zF), new( 0.50f, 0.50f, zF), new( 0.50f, -0.50f, zF), 0, 214, 0, false, FNegZ);
+                float oy0 = hasSill ? -0.34f : -0.50f;
+                float oy1 = hasHeader ? 0.30f : 0.50f;
+                if (hasSill)
+                {
+                    AddQuad(dst, new(-0.36f, -0.50f, zF - 0.04f), new(-0.36f, oy0, zF - 0.04f), new(0.36f, oy0, zF - 0.04f), new(0.36f, -0.50f, zF - 0.04f), sillMat, 226);
+                }
+                if (hasHeader)
+                {
+                    AddQuad(dst, new(-0.36f, oy1, zF - 0.02f), new(-0.36f, 0.50f, zF - 0.02f), new(0.36f, 0.50f, zF - 0.02f), new(0.36f, oy1, zF - 0.02f), frameMat, 222);
+                }
+                AddQuad(dst, new(-0.34f, oy0, zF + 0.04f), new(-0.34f, oy1, zF + 0.04f), new(0.34f, oy1, zF + 0.04f), new(0.34f, oy0, zF + 0.04f), MaterialIdCatalog.LeadedGlassPane, 140);
+                return;
+            }
+
+            // 1) Sol ve sag duvar yanaklari (z = -0.24..+0.24 -> ic duvarla %100 HEMZEMIN, sifir kaba ic cikinti!)
+            byte leftCheekCull = (byte)(FNegX | (hasHeader ? FPosY : 0) | (hasSill ? FNegY : 0));
+            byte rightCheekCull = (byte)(FPosX | (hasHeader ? FPosY : 0) | (hasSill ? FNegY : 0));
+            AddWallCheekBox(dst, -0.50f, -0.34f, -0.50f, 0.50f, 0, leftCheekCull, distantMode);
+            AddWallCheekBox(dst,  0.34f,  0.50f, -0.50f, 0.50f, 0, rightCheekCull, distantMode);
+
+            float openY0 = hasSill ? -0.36f : -0.50f;
+            float openY1 = hasHeader ? 0.30f : 0.50f;
+
+            // 2) Alt Denizlik (Yalnizca alt yarida! Orta denizlik %100 kaldirildi -> tek parca 1x2m pencere!)
+            if (hasSill)
+            {
+                AddCullableBox(dst, -0.36f, 0.36f, -0.50f, -0.36f, -0.32f, 0.24f, sillMat, 228, (byte)(FNegY | FNegX | FPosX));
+            }
+
+            // 3) Ust Lento veya Kilit Tasli Kemer (Yalnizca ust yarida!)
+            if (hasHeader)
+            {
+                AddCullableBox(dst, -0.36f, 0.36f, 0.30f, 0.50f, -0.27f, 0.24f, frameMat, 222, (byte)(FPosY | FNegX | FPosX));
+                if (isArchedStone && !distantMode)
+                {
+                    AddFrontReliefBox(dst, -0.10f, 0.10f, 0.26f, 0.50f, -0.32f, -0.26f, MaterialIdCatalog.DressedMarbleBlock, 238, FPosY);
+                }
+            }
+
+            if (!distantMode)
+            {
+                // 4) Ince kursun/mese arti (+) cam kayitlari (aralari %100 acik seffaf -> disarisi net gorunur, yalnizca 16 ucgen!)
+                byte muntinMat = isArchedStone ? MaterialIdCatalog.IronTieBeamBlock : MaterialIdCatalog.TreatedTimberBeam;
+                AddCullableBox(dst, -0.022f, 0.022f, openY0, openY1, -0.035f, 0.035f, muntinMat, 165, (byte)(FPosY | FNegY));
+                float crossY = isLower ? 0.08f : (isUpper ? -0.08f : 0.0f);
+                AddCullableBox(dst, -0.34f, 0.34f, crossY - 0.022f, crossY + 0.022f, -0.035f, 0.035f, muntinMat, 168, (byte)(FNegX | FPosX));
+            }
+
+            // 5) Disa acilmis 3B ahsap panjur kanatlari (yalnizca on cephede!)
+            if (!isArchedStone)
+            {
+                AddFrontReliefBox(dst, -0.49f, -0.34f, openY0 + 0.02f, openY1 - 0.02f, -0.31f, -0.24f, MaterialIdCatalog.WoodPlank, 202, 0);
+                AddFrontReliefBox(dst,  0.34f,  0.49f, openY0 + 0.02f, openY1 - 0.02f, -0.31f, -0.24f, MaterialIdCatalog.WoodPlank, 202, 0);
+            }
+        }
+
+        private static void BuildFullWallWithDoorPilasterJamb(
+            List<LocalKitTriangle> dst,
+            bool isRightSide,
+            bool distantMode)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+
+            // Tam genislikte (x = -0.50..+0.50) kati duvar + kapi acikligina bakan kenarda oymali sove pilasteri!
+            // Boylece sove ile kapi kanadi arasinda 0.00m bosluk kalir!
+            byte outerCull = (byte)((isRightSide ? FPosX : FNegX) | FPosY | FNegY);
+            BuildPlasteredInteriorAndCoreWall(dst, 0, 216, distantMode, skirt: true);
+            if (isRightSide)
+            {
+                // bx = +1: Kapi acikligi -X kenarindadir (-0.50)
+                AddCullableBox(dst, -0.50f, -0.32f, -0.50f, 0.50f, -0.31f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 182, FPosY | FNegY, skirt: true);
+            }
+            else
+            {
+                // bx = -2: Kapi acikligi +X kenarindadir (+0.50)
+                AddCullableBox(dst, 0.32f, 0.50f, -0.50f, 0.50f, -0.31f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 182, FPosY | FNegY, skirt: true);
+            }
+            _ = outerCull;
+        }
+
+        private static void BuildArchedTransomDoorLintel(
+            List<LocalKitTriangle> dst,
+            bool isRightHalf,
+            bool distantMode)
+        {
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            // dy = 3 kapi ustu: Altta kalin mese lento kirisi (2.16m net kapi yuksekligi), ortada acik vasistas isiklik, ustte tas kemer!
+            AddCullableBox(dst, -0.50f, 0.50f, -0.34f, -0.18f, -0.28f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 182, 0);
+            AddCullableBox(dst, -0.50f, 0.50f,  0.26f,  0.50f, -0.28f, 0.26f, 0, 222, FPosY);
+
+            if (isRightHalf)
+            {
+                AddCullableBox(dst, 0.32f, 0.50f, -0.18f, 0.26f, -0.26f, 0.24f, 0, 214, 0);
+                if (!distantMode)
+                {
+                    AddCullableBox(dst, -0.50f, -0.44f, -0.18f, 0.26f, -0.05f, 0.05f, MaterialIdCatalog.TreatedTimberBeam, 176, 0);
+                }
+            }
+            else
+            {
+                AddCullableBox(dst, -0.50f, -0.32f, -0.18f, 0.26f, -0.26f, 0.24f, 0, 214, 0);
+                if (!distantMode)
+                {
+                    AddCullableBox(dst, 0.44f, 0.50f, -0.18f, 0.26f, -0.05f, 0.05f, MaterialIdCatalog.TreatedTimberBeam, 176, 0);
                 }
             }
         }
 
-        private static void BuildShutteredWindow3D(List<LocalKitTriangle> dst)
+        private static void BuildCohesiveDoorLeaf3D(
+            List<LocalKitTriangle> dst,
+            int variant,
+            bool isOpen,
+            bool distantMode)
         {
-            // Tas denizlik + kalin ahsap cerceve + arti (+) orta kayit + yarim saydam mavi cam + iki yana acik 3B panjur kanatlari!
-            AddBox(dst, -0.50f, 0.50f, -0.50f, -0.34f, -0.34f, 0.34f, MaterialIdCatalog.CutAshlarStone, 224);
-            AddBox(dst, -0.50f, 0.50f,  0.36f,  0.50f, -0.28f, 0.28f, MaterialIdCatalog.TreatedTimberBeam, 188);
-            AddBox(dst, -0.50f, -0.36f, -0.34f, 0.36f, -0.26f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 182);
-            AddBox(dst,  0.36f,  0.50f, -0.34f, 0.36f, -0.26f, 0.26f, MaterialIdCatalog.TreatedTimberBeam, 182);
-            // Cam panel + arti kayit
-            AddBox(dst, -0.36f, 0.36f, -0.34f, 0.36f, -0.04f, 0.04f, MaterialIdCatalog.LeadedGlassPane, 238);
-            AddBox(dst, -0.04f, 0.04f, -0.34f, 0.36f, -0.09f, 0.09f, MaterialIdCatalog.TreatedTimberBeam, 176);
-            AddBox(dst, -0.36f, 0.36f, -0.03f, 0.05f, -0.09f, 0.09f, MaterialIdCatalog.TreatedTimberBeam, 176);
-            // Disa acilmis sol/sag panjurlar (-Z on cephede)
-            AddBox(dst, -0.54f, -0.35f, -0.32f, 0.34f, -0.36f, -0.24f, MaterialIdCatalog.WoodPlank, 198);
-            AddBox(dst,  0.35f,  0.54f, -0.32f, 0.34f, -0.36f, -0.24f, MaterialIdCatalog.WoodPlank, 198);
-        }
+            bool isRightLeaf = (variant & 2) != 0;
+            bool isUpperHalf = (variant & 1) != 0;
+            float yTop = isUpperHalf ? 0.66f : 0.50f; // dy=2 ust kanat dy=3 lentosuna (+0.66 = 2.16m) sifir boslukla uzanir!
 
-        private static void BuildArchedStoneWindow3D(List<LocalKitTriangle> dst)
-        {
-            AddBox(dst, -0.50f, 0.50f, -0.50f, -0.34f, -0.36f, 0.36f, MaterialIdCatalog.DressedMarbleBlock, 232);
-            AddBox(dst, -0.50f, -0.34f, -0.34f, 0.50f, -0.30f, 0.30f, MaterialIdCatalog.DressedMarbleBlock, 222);
-            AddBox(dst,  0.34f,  0.50f, -0.34f, 0.50f, -0.30f, 0.30f, MaterialIdCatalog.DressedMarbleBlock, 222);
-            AddBox(dst, -0.34f,  0.34f,  0.30f, 0.50f, -0.32f, 0.32f, MaterialIdCatalog.DressedMarbleBlock, 228);
-            AddBox(dst, -0.34f,  0.34f, -0.34f, 0.30f, -0.04f, 0.04f, MaterialIdCatalog.LeadedGlassPane, 242);
-            AddBox(dst, -0.03f,  0.03f, -0.34f, 0.30f, -0.08f, 0.08f, MaterialIdCatalog.IronTieBeamBlock, 160);
-        }
-
-        private static void BuildHingedDoorLeaf3D(List<LocalKitTriangle> dst, bool isOpen)
-        {
             if (!isOpen)
             {
-                // Kapali 3B ahsap kapi: Dikey tahtalar + yatay/capraz Z-kusak + dovme demir mentese ve halka tokmak!
-                AddBox(dst, -0.50f, 0.50f, -0.50f, 0.50f, -0.08f, 0.06f, MaterialIdCatalog.WoodPlank, 208);
-                AddBox(dst, -0.48f, 0.48f,  0.26f, 0.38f, -0.12f, 0.10f, MaterialIdCatalog.TreatedTimberBeam, 178);
-                AddBox(dst, -0.48f, 0.48f, -0.38f, -0.26f, -0.12f, 0.10f, MaterialIdCatalog.TreatedTimberBeam, 178);
-                AddStrut(dst, new Vector3(-0.42f, -0.30f, 0f), new Vector3(0.42f, 0.30f, 0f), 0.10f, 0.20f, MaterialIdCatalog.TreatedTimberBeam, 172);
-                // Dovme demir mentese kayislari ve kapi kolu
-                AddBox(dst, -0.50f, -0.10f,  0.30f, 0.35f, -0.14f, 0.12f, MaterialIdCatalog.IronTieBeamBlock, 145);
-                AddBox(dst, -0.50f, -0.10f, -0.35f, -0.30f, -0.14f, 0.12f, MaterialIdCatalog.IronTieBeamBlock, 145);
-                AddBox(dst,  0.28f,  0.40f, -0.06f, 0.08f, -0.16f, 0.14f, MaterialIdCatalog.IronTieBeamBlock, 165);
+                // Kapali tek parca 3B mese kapi kanadi (alt ve ust yari birlestiginde TEK kapi, TEK kol, 2 mentese!)
+                AddCullableBox(dst, -0.50f, 0.50f, -0.50f, yTop, -0.12f, -0.02f, MaterialIdCatalog.WoodPlank, 208, 0);
+                if (distantMode) return;
+
+                if (!isUpperHalf)
+                {
+                    // Alt baza kusagi + tek alt demir mentese + bel hizasinda (y=+0.38) simetrik demir halka kol!
+                    AddCullableBox(dst, -0.48f, 0.48f, -0.46f, -0.32f, -0.15f, 0.01f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+                    float hx0 = isRightLeaf ? 0.08f : -0.50f;
+                    float hx1 = isRightLeaf ? 0.50f : -0.08f;
+                    AddCullableBox(dst, hx0, hx1, -0.34f, -0.28f, -0.17f, 0.02f, MaterialIdCatalog.IronTieBeamBlock, 148, 0);
+
+                    float kx0 = isRightLeaf ? -0.42f : 0.30f;
+                    float kx1 = isRightLeaf ? -0.30f : 0.42f;
+                    AddCullableBox(dst, kx0, kx1, 0.34f, 0.46f, -0.19f, 0.05f, MaterialIdCatalog.IronTieBeamBlock, 168, 0);
+                }
+                else
+                {
+                    // Ust baslik kusagi + tek ust demir mentese (orta yerde kesinti veya 2. kapi kolu YOK!)
+                    AddCullableBox(dst, -0.48f, 0.48f, yTop - 0.16f, yTop - 0.02f, -0.15f, 0.01f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+                    float hx0 = isRightLeaf ? 0.08f : -0.50f;
+                    float hx1 = isRightLeaf ? 0.50f : -0.08f;
+                    AddCullableBox(dst, hx0, hx1, 0.24f, 0.30f, -0.17f, 0.02f, MaterialIdCatalog.IronTieBeamBlock, 148, 0);
+                }
             }
             else
             {
-                // 90° yana (-X kenarina: x = -0.48..-0.36) tam acilmis 3B kapi kanadi -> gecis %100 ferah!
-                AddBox(dst, -0.49f, -0.37f, -0.50f, 0.50f, -0.48f, 0.48f, MaterialIdCatalog.WoodPlank, 206);
-                AddBox(dst, -0.50f, -0.35f,  0.26f, 0.38f, -0.46f, 0.46f, MaterialIdCatalog.TreatedTimberBeam, 178);
-                AddBox(dst, -0.50f, -0.35f, -0.38f, -0.26f, -0.46f, 0.46f, MaterialIdCatalog.TreatedTimberBeam, 178);
-                AddBox(dst, -0.50f, -0.34f, -0.06f, 0.08f,  0.26f, 0.38f, MaterialIdCatalog.IronTieBeamBlock, 165);
+                // 90° iceriye (+Z) yan sovelere sifir boslukla yaslanmis acik kapi kanadi -> ortada 1.78m net gecis!
+                float lx0 = isRightLeaf ? 0.39f : -0.50f;
+                float lx1 = isRightLeaf ? 0.50f : -0.39f;
+                AddCullableBox(dst, lx0, lx1, -0.50f, yTop, -0.18f, 0.68f, MaterialIdCatalog.WoodPlank, 206, 0);
+                if (distantMode) return;
+
+                float bx0 = isRightLeaf ? 0.37f : -0.50f;
+                float bx1 = isRightLeaf ? 0.50f : -0.37f;
+                if (!isUpperHalf)
+                {
+                    AddCullableBox(dst, bx0, bx1, -0.46f, -0.32f, -0.16f, 0.66f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+                    AddCullableBox(dst, bx0 - 0.01f, bx1 + 0.01f, 0.34f, 0.46f, 0.48f, 0.60f, MaterialIdCatalog.IronTieBeamBlock, 168, 0);
+                }
+                else
+                {
+                    AddCullableBox(dst, bx0, bx1, yTop - 0.16f, yTop - 0.02f, -0.16f, 0.66f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+                }
             }
         }
 
-        private static void BuildOpenRiserTimberStair3D(List<LocalKitTriangle> dst)
+        private static void BuildOpenRiserTimberStair3D(List<LocalKitTriangle> dst, bool distantMode)
         {
-            // Iki yan egimli limon kirisi (stringer) + 2 kalin yurunebilir basamak tahtasi!
-            AddStrut(dst, new Vector3(-0.43f, -0.48f, -0.46f), new Vector3(-0.43f, 0.46f, 0.46f), 0.12f, 0.18f, MaterialIdCatalog.TreatedTimberBeam, 178);
-            AddStrut(dst, new Vector3( 0.43f, -0.48f, -0.46f), new Vector3( 0.43f, 0.46f, 0.46f), 0.12f, 0.18f, MaterialIdCatalog.TreatedTimberBeam, 178);
-            // Alt basamak (y = -0.08..0.00, z = -0.50..0.04) ve ust basamak (y = 0.42..0.50, z = -0.02..0.50)
-            AddBox(dst, -0.50f, 0.50f, -0.10f, 0.00f, -0.50f, 0.04f, 0, 224);
-            AddBox(dst, -0.50f, 0.50f,  0.40f, 0.50f, -0.02f, 0.50f, 0, 228);
+            if (!distantMode)
+            {
+                AddStrut(dst, new Vector3(-0.43f, -0.48f, -0.46f), new Vector3(-0.43f, 0.46f, 0.46f), 0.12f, 0.18f, MaterialIdCatalog.TreatedTimberBeam, 178);
+                AddStrut(dst, new Vector3( 0.43f, -0.48f, -0.46f), new Vector3( 0.43f, 0.46f, 0.46f), 0.12f, 0.18f, MaterialIdCatalog.TreatedTimberBeam, 178);
+            }
+            AddCullableBox(dst, -0.50f, 0.50f, -0.10f, 0.00f, -0.50f, 0.04f, 0, 224, 0);
+            AddCullableBox(dst, -0.50f, 0.50f,  0.40f, 0.50f, -0.02f, 0.50f, 0, 228, 0);
         }
 
-        private static void BuildBalustrade3D(List<LocalKitTriangle> dst)
+        private static void BuildBalustrade3D(List<LocalKitTriangle> dst, bool distantMode)
         {
-            // -Z kenarinda alt etek rayi + 3 torna korkuluk dikmesi + ust kupeste
-            AddBox(dst, -0.50f, 0.50f, -0.50f, -0.40f, -0.48f, -0.32f, 0, 196);
-            AddBox(dst, -0.50f, 0.50f,  0.34f,  0.46f, -0.50f, -0.30f, MaterialIdCatalog.TreatedTimberBeam, 218);
+            AddCullableBox(dst, -0.50f, 0.50f, -0.50f, -0.40f, -0.48f, -0.32f, 0, 196, 0);
+            AddCullableBox(dst, -0.50f, 0.50f,  0.34f,  0.46f, -0.50f, -0.30f, MaterialIdCatalog.TreatedTimberBeam, 218, 0);
+            if (distantMode)
+            {
+                AddCullableBox(dst, -0.06f, 0.06f, -0.40f, 0.34f, -0.44f, -0.36f, 0, 206, 0);
+                return;
+            }
             float[] xs = { -0.38f, 0.0f, 0.38f };
             for (int i = 0; i < xs.Length; i++)
             {
-                AddVerticalCylinderY(dst, -0.40f, 0.34f, xs[i], -0.40f, 0.065f, 0.055f, 8, 0, 208);
+                AddVerticalCylinderY(dst, -0.40f, 0.34f, xs[i], -0.40f, 0.06f, 0.05f, 6, 0, 208, cullCapsY: true);
+            }
+        }
+
+        private static void BuildUtilityPropVariant3D(List<LocalKitTriangle> dst, int variant, bool distantMode)
+        {
+            switch (variant)
+            {
+                case ArchitecturalShapeCatalog.UtilVarFence:
+                    BuildSplitRailFence3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarWellWindlass:
+                    BuildWellWindlass3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarGoldenWheat:
+                    // Gercek 3B Altin Bugday Basaklari ve Sap Demeti (tarlalarda ruzgar acili, icinden yurulen ekin!)
+                    BuildGoldenWheatCrop3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarGreenCrops:
+                    // Gercek 3B Yesil Sebze / Lahana-Pancar Yaprak Kumeleri
+                    BuildGreenLeafyCrop3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarStreetLantern:
+                    // Dokme demir sokak feneri basligi + sicak parlayan amber isik cekirdegi (tempOverride = 228!)
+                    BuildStreetLanternHead3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarWallSconce:
+                    // Ic mekan duvara monte sicak mesale/fener apligi (-Z duvara saplanir)
+                    if (!distantMode) BuildInteriorWallSconce3D(dst);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarJettyCorbel:
+                    // 2. kat Tudor cumba (jetty) ve sundurma altini tasiyan 45° oymali mese konsol payandasi!
+                    BuildTimberJettyCorbel3D(dst, distantMode);
+                    break;
+
+                case ArchitecturalShapeCatalog.UtilVarWindmillSail:
+                    // Yel degirmeni ahsap kol + krem yelken kafesi!
+                    BuildWindmillSailLattice3D(dst, distantMode);
+                    break;
+            }
+        }
+
+        private static void BuildGoldenWheatCrop3D(List<LocalKitTriangle> dst, bool distantMode)
+        {
+            if (distantMode)
+            {
+                // Uzaktan altin bugday tarlasi ortusu (4 capraz ucgen)
+                AddCrossedBladeQuad(dst, -0.42f, 0.42f, -0.50f, 0.32f, MaterialIdCatalog.StrawChinkingBundle, 232);
+                return;
+            }
+
+            // 5 adet hafif egimli bugday sapi + dolgun altin basaklar
+            ReadOnlySpan<(float x, float z, float tiltX, float tiltZ, float h)> stalks = stackalloc (float, float, float, float, float)[5]
+            {
+                (-0.28f, -0.24f, -0.06f,  0.04f, 0.36f),
+                ( 0.26f, -0.22f,  0.05f, -0.05f, 0.40f),
+                ( 0.00f,  0.02f,  0.04f,  0.06f, 0.44f),
+                (-0.24f,  0.26f, -0.05f, -0.04f, 0.38f),
+                ( 0.28f,  0.24f,  0.06f,  0.05f, 0.34f)
+            };
+
+            for (int i = 0; i < stalks.Length; i++)
+            {
+                var (sx, sz, tx, tz, topY) = stalks[i];
+                AddStrut(dst, new Vector3(sx, -0.50f, sz), new Vector3(sx + tx, topY - 0.14f, sz + tz), 0.045f, 0.045f, MaterialIdCatalog.StrawChinkingBundle, 212);
+                AddCullableBox(dst, sx + tx - 0.055f, sx + tx + 0.055f, topY - 0.16f, topY + 0.06f, sz + tz - 0.055f, sz + tz + 0.055f, MaterialIdCatalog.StrawChinkingBundle, 242, 0);
+            }
+        }
+
+        private static void BuildGreenLeafyCrop3D(List<LocalKitTriangle> dst, bool distantMode)
+        {
+            AddCullableBox(dst, -0.26f, 0.26f, -0.50f, -0.14f, -0.26f, 0.26f, MaterialIdCatalog.Grass, 218, 0);
+            if (!distantMode)
+            {
+                AddCrossedBladeQuad(dst, -0.38f, 0.38f, -0.48f, 0.04f, MaterialIdCatalog.Grass, 234);
+            }
+        }
+
+        private static void BuildStreetLanternHead3D(List<LocalKitTriangle> dst, bool distantMode)
+        {
+            // Alt demir bilezik + sicak parlayan fener cami + piramit demir sapka
+            AddCullableBox(dst, -0.16f, 0.16f, -0.50f, -0.30f, -0.16f, 0.16f, MaterialIdCatalog.IronTieBeamBlock, 152, 0);
+            AddGlowingBox(dst, -0.20f, 0.20f, -0.30f, 0.14f, -0.20f, 0.20f, MaterialIdCatalog.CampfireBlock, 250, tempOverride: 230);
+            AddPitchedPrismX(dst, -0.28f, 0.28f, 0.14f, 0.42f, 0.28f, MaterialIdCatalog.IronTieBeamBlock, 164, cullEndsX: false);
+            _ = distantMode;
+        }
+
+        private static void BuildInteriorWallSconce3D(List<LocalKitTriangle> dst)
+        {
+            // +Z ic duvara monte dovme demir kol + sicak kor mesale/fener alevi!
+            AddCullableBox(dst, -0.08f, 0.08f, -0.18f, 0.10f, 0.32f, 0.48f, MaterialIdCatalog.IronTieBeamBlock, 150, 0);
+            AddStrut(dst, new Vector3(0f, -0.12f, 0.40f), new Vector3(0f, 0.14f, 0.14f), 0.06f, 0.06f, MaterialIdCatalog.IronTieBeamBlock, 156);
+            AddGlowingBox(dst, -0.10f, 0.10f, 0.10f, 0.34f, 0.06f, 0.24f, MaterialIdCatalog.CampfireBlock, 250, tempOverride: 226);
+        }
+
+        private static void BuildTimberJettyCorbel3D(List<LocalKitTriangle> dst, bool distantMode)
+        {
+            // Ust kati tasiyan 45° mese konsol kirisi (+Z binaya baglanir, -Z sokaga uzanir)
+            AddCullableBox(dst, -0.14f, 0.14f, 0.28f, 0.50f, -0.48f, 0.50f, MaterialIdCatalog.TreatedTimberBeam, 188, 0);
+            AddCullableBox(dst, -0.14f, 0.14f, -0.48f, 0.50f, 0.28f, 0.50f, MaterialIdCatalog.TreatedTimberBeam, 182, 0);
+            if (!distantMode)
+            {
+                AddStrut(dst, new Vector3(0f, -0.38f, 0.36f), new Vector3(0f, 0.36f, -0.38f), 0.22f, 0.16f, MaterialIdCatalog.TreatedTimberBeam, 194);
+            }
+        }
+
+        private static void BuildWindmillSailLattice3D(List<LocalKitTriangle> dst, bool distantMode)
+        {
+            // Ana ahsap yelken diregi + krem keten yelken cercevesi
+            AddCullableBox(dst, -0.10f, 0.10f, -0.50f, 0.50f, -0.12f, 0.04f, MaterialIdCatalog.TreatedTimberBeam, 186, 0);
+            AddCullableBox(dst, -0.48f, 0.48f, -0.48f, 0.48f, -0.20f, -0.13f, MaterialIdCatalog.LimeWashPlaster, 242, 0);
+            if (!distantMode)
+            {
+                AddCullableBox(dst, -0.50f, 0.50f, -0.04f, 0.04f, -0.23f, -0.11f, MaterialIdCatalog.WoodPlank, 198, 0);
+                AddCullableBox(dst, -0.50f, -0.42f, -0.50f, 0.50f, -0.22f, -0.11f, MaterialIdCatalog.WoodPlank, 198, 0);
+                AddCullableBox(dst,  0.42f,  0.50f, -0.50f, 0.50f, -0.22f, -0.11f, MaterialIdCatalog.WoodPlank, 198, 0);
             }
         }
 
         private static void BuildDiningTable3D(List<LocalKitTriangle> dst)
         {
-            // 4 torna ahsap ayak + ust cerceve kusagi + tasan kalin masa tablasi
             float[] lx = { -0.38f, 0.38f };
             float[] lz = { -0.38f, 0.38f };
             for (int ix = 0; ix < 2; ix++)
                 for (int iz = 0; iz < 2; iz++)
-                    AddVerticalCylinderY(dst, -0.50f, 0.36f, lx[ix], lz[iz], 0.065f, 0.055f, 8, MaterialIdCatalog.TreatedTimberBeam, 180);
+                    AddVerticalCylinderY(dst, -0.50f, 0.36f, lx[ix], lz[iz], 0.065f, 0.055f, 6, MaterialIdCatalog.TreatedTimberBeam, 180, cullCapsY: true);
 
-            AddBox(dst, -0.40f, 0.40f, 0.24f, 0.36f, -0.40f, 0.40f, MaterialIdCatalog.TreatedTimberBeam, 174);
-            AddBox(dst, -0.49f, 0.49f, 0.36f, 0.46f, -0.49f, 0.49f, MaterialIdCatalog.WoodPlank, 226);
+            AddCullableBox(dst, -0.40f, 0.40f, 0.24f, 0.36f, -0.40f, 0.40f, MaterialIdCatalog.TreatedTimberBeam, 174, 0);
+            AddCullableBox(dst, -0.49f, 0.49f, 0.36f, 0.46f, -0.49f, 0.49f, MaterialIdCatalog.WoodPlank, 226, 0);
         }
 
         private static void BuildChair3D(List<LocalKitTriangle> dst)
@@ -611,46 +1078,43 @@ namespace Stratocraft.Voxel.Jobs
                 for (int iz = 0; iz < 2; iz++)
                 {
                     float topY = iz == 1 ? 0.46f : -0.04f;
-                    AddVerticalCylinderY(dst, -0.50f, topY, lx[ix], lz[iz], 0.045f, 0.04f, 6, MaterialIdCatalog.TreatedTimberBeam, 182);
+                    AddVerticalCylinderY(dst, -0.50f, topY, lx[ix], lz[iz], 0.045f, 0.04f, 6, MaterialIdCatalog.TreatedTimberBeam, 182, cullCapsY: true);
                 }
             }
-            AddBox(dst, -0.28f, 0.28f, -0.06f, 0.02f, -0.28f, 0.28f, MaterialIdCatalog.WoodPlank, 220);
-            AddBox(dst, -0.25f, 0.25f,  0.16f, 0.26f,  0.21f, 0.27f, MaterialIdCatalog.WoodPlank, 212);
-            AddBox(dst, -0.25f, 0.25f,  0.34f, 0.44f,  0.21f, 0.27f, MaterialIdCatalog.WoodPlank, 218);
+            AddCullableBox(dst, -0.28f, 0.28f, -0.06f, 0.02f, -0.28f, 0.28f, MaterialIdCatalog.WoodPlank, 220, 0);
+            AddCullableBox(dst, -0.25f, 0.25f,  0.16f, 0.26f,  0.21f, 0.27f, MaterialIdCatalog.WoodPlank, 212, 0);
+            AddCullableBox(dst, -0.25f, 0.25f,  0.34f, 0.44f,  0.21f, 0.27f, MaterialIdCatalog.WoodPlank, 218, 0);
         }
 
         private static void BuildBedHead3D(List<LocalKitTriangle> dst)
         {
-            // 2 yuksek topuzlu baslik dikmesi + oymali baslik + beyaz yastik + kirmizi yorgan!
-            AddVerticalCylinderY(dst, -0.50f, 0.48f, -0.42f, 0.40f, 0.07f, 0.06f, 8, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddVerticalCylinderY(dst, -0.50f, 0.48f,  0.42f, 0.40f, 0.07f, 0.06f, 8, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddBox(dst, -0.42f, 0.42f, -0.22f, 0.38f,  0.36f, 0.44f, MaterialIdCatalog.OakWood, 198);
-            AddBox(dst, -0.45f, 0.45f, -0.32f, -0.14f, -0.50f, 0.42f, MaterialIdCatalog.TreatedTimberBeam, 178);
-            // Beyaz carsaf & kabarık yastik + kirmizi battaniye ucu
-            AddBox(dst, -0.42f, 0.42f, -0.14f, 0.06f, -0.50f, 0.36f, MaterialIdCatalog.LimeWashPlaster, 238);
-            AddBox(dst, -0.34f, 0.34f,  0.06f, 0.18f,  0.02f, 0.34f, MaterialIdCatalog.LimeWashPlaster, 246);
-            AddBox(dst, -0.43f, 0.43f, -0.12f, 0.09f, -0.50f, -0.04f, MaterialIdCatalog.BedBlock, 224);
+            AddVerticalCylinderY(dst, -0.50f, 0.48f, -0.42f, 0.40f, 0.07f, 0.06f, 6, MaterialIdCatalog.TreatedTimberBeam, 184, cullCapsY: false);
+            AddVerticalCylinderY(dst, -0.50f, 0.48f,  0.42f, 0.40f, 0.07f, 0.06f, 6, MaterialIdCatalog.TreatedTimberBeam, 184, cullCapsY: false);
+            AddCullableBox(dst, -0.42f, 0.42f, -0.22f, 0.38f,  0.36f, 0.44f, MaterialIdCatalog.OakWood, 198, 0);
+            AddCullableBox(dst, -0.45f, 0.45f, -0.32f, -0.14f, -0.50f, 0.42f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+            AddCullableBox(dst, -0.42f, 0.42f, -0.14f, 0.06f, -0.50f, 0.36f, MaterialIdCatalog.LimeWashPlaster, 238, 0);
+            AddCullableBox(dst, -0.34f, 0.34f,  0.06f, 0.18f,  0.02f, 0.34f, MaterialIdCatalog.LimeWashPlaster, 246, 0);
+            AddCullableBox(dst, -0.43f, 0.43f, -0.12f, 0.09f, -0.50f, -0.04f, MaterialIdCatalog.BedBlock, 224, 0);
         }
 
         private static void BuildBedFoot3D(List<LocalKitTriangle> dst)
         {
-            AddVerticalCylinderY(dst, -0.50f, 0.18f, -0.42f, -0.40f, 0.07f, 0.06f, 8, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddVerticalCylinderY(dst, -0.50f, 0.18f,  0.42f, -0.40f, 0.07f, 0.06f, 8, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddBox(dst, -0.42f, 0.42f, -0.28f, 0.12f, -0.44f, -0.36f, MaterialIdCatalog.OakWood, 196);
-            AddBox(dst, -0.45f, 0.45f, -0.32f, -0.14f, -0.42f, 0.50f, MaterialIdCatalog.TreatedTimberBeam, 178);
-            AddBox(dst, -0.43f, 0.43f, -0.14f, 0.09f, -0.36f, 0.50f, MaterialIdCatalog.BedBlock, 224);
+            AddVerticalCylinderY(dst, -0.50f, 0.18f, -0.42f, -0.40f, 0.07f, 0.06f, 6, MaterialIdCatalog.TreatedTimberBeam, 184, cullCapsY: false);
+            AddVerticalCylinderY(dst, -0.50f, 0.18f,  0.42f, -0.40f, 0.07f, 0.06f, 6, MaterialIdCatalog.TreatedTimberBeam, 184, cullCapsY: false);
+            AddCullableBox(dst, -0.42f, 0.42f, -0.28f, 0.12f, -0.44f, -0.36f, MaterialIdCatalog.OakWood, 196, 0);
+            AddCullableBox(dst, -0.45f, 0.45f, -0.32f, -0.14f, -0.42f, 0.50f, MaterialIdCatalog.TreatedTimberBeam, 178, 0);
+            AddCullableBox(dst, -0.43f, 0.43f, -0.14f, 0.09f, -0.36f, 0.50f, MaterialIdCatalog.BedBlock, 224, 0);
         }
 
         private static void BuildBookshelf3D(List<LocalKitTriangle> dst)
         {
-            // Arka ve yan ahsap govde + 3 raf + her rafta farkli boy ve renkte 3B kitaplar!
-            AddBox(dst, -0.48f, 0.48f, -0.50f, 0.50f,  0.22f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 168);
-            AddBox(dst, -0.48f, -0.38f, -0.50f, 0.50f, -0.18f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddBox(dst,  0.38f,  0.48f, -0.50f, 0.50f, -0.18f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 184);
+            AddCullableBox(dst, -0.48f, 0.48f, -0.50f, 0.50f,  0.22f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 168, 0);
+            AddCullableBox(dst, -0.48f, -0.38f, -0.50f, 0.50f, -0.18f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 184, 0);
+            AddCullableBox(dst,  0.38f,  0.48f, -0.50f, 0.50f, -0.18f, 0.38f, MaterialIdCatalog.TreatedTimberBeam, 184, 0);
             float[] shelfYs = { -0.46f, -0.14f, 0.18f, 0.44f };
             for (int s = 0; s < shelfYs.Length; s++)
             {
-                AddBox(dst, -0.38f, 0.38f, shelfYs[s], shelfYs[s] + 0.06f, -0.18f, 0.24f, MaterialIdCatalog.WoodPlank, 212);
+                AddCullableBox(dst, -0.38f, 0.38f, shelfYs[s], shelfYs[s] + 0.06f, -0.18f, 0.24f, MaterialIdCatalog.WoodPlank, 212, 0);
             }
 
             byte[] bookMats =
@@ -664,78 +1128,72 @@ namespace Stratocraft.Voxel.Jobs
             for (int r = 0; r < 3; r++)
             {
                 float by0 = shelfYs[r] + 0.06f;
-                for (int b = 0; b < 5; b++)
+                for (int b = 0; b < 4; b++)
                 {
-                    float bx0 = -0.34f + b * 0.14f;
+                    float bx0 = -0.32f + b * 0.17f;
                     float bh = 0.20f + ((r + b) % 3) * 0.025f;
-                    AddBox(dst, bx0, bx0 + 0.11f, by0, by0 + bh, -0.12f, 0.21f, bookMats[(r * 2 + b) % bookMats.Length], (byte)(206 + b * 8));
+                    AddFrontReliefBox(dst, bx0, bx0 + 0.13f, by0, by0 + bh, -0.12f, 0.21f, bookMats[(r * 2 + b) % bookMats.Length], (byte)(206 + b * 8), ArchitecturalShapeCatalog.FaceNegY);
                 }
             }
         }
 
         private static void BuildFireplaceHearth3D(List<LocalKitTriangle> dst, string? glbDir)
         {
-            if (!TryAppendFittedGlb(glbDir, "mod_fireplace_hearth.glb", dst, fitX: 0.96f, fitY: 1.00f, fitZ: 0.88f))
-            {
-                AddBox(dst, -0.48f, 0.48f, -0.50f, -0.32f, -0.42f, 0.46f, MaterialIdCatalog.CutAshlarStone, 208, skirt: true);
-                AddBox(dst, -0.48f, 0.48f, -0.32f,  0.42f,  0.22f, 0.46f, MaterialIdCatalog.FiredClayBrick, 196);
-                AddBox(dst, -0.48f, -0.26f, -0.32f, 0.42f, -0.36f, 0.22f, MaterialIdCatalog.FiredClayBrick, 206);
-                AddBox(dst,  0.26f,  0.48f, -0.32f, 0.42f, -0.36f, 0.22f, MaterialIdCatalog.FiredClayBrick, 206);
-                AddBox(dst, -0.50f,  0.50f,  0.36f, 0.50f, -0.42f, 0.46f, MaterialIdCatalog.TreatedTimberBeam, 188);
-            }
+            _ = glbDir;
+            AddCullableBox(dst, -0.48f, 0.48f, -0.50f, -0.32f, -0.42f, 0.46f, MaterialIdCatalog.CutAshlarStone, 208, 0, skirt: true);
+            AddCullableBox(dst, -0.48f, 0.48f, -0.32f,  0.42f,  0.22f, 0.46f, MaterialIdCatalog.StoneBrick, 188, 0);
+            AddCullableBox(dst, -0.48f, -0.26f, -0.32f, 0.42f, -0.36f, 0.22f, MaterialIdCatalog.StoneBrick, 198, 0);
+            AddCullableBox(dst,  0.26f,  0.48f, -0.32f, 0.42f, -0.36f, 0.22f, MaterialIdCatalog.StoneBrick, 198, 0);
+            AddCullableBox(dst, -0.50f,  0.50f,  0.36f, 0.50f, -0.42f, 0.46f, MaterialIdCatalog.TreatedTimberBeam, 188, 0);
             // Ic ates haznesinde parlayan sicak kor kutukler!
-            AddHorizontalCylinderX(dst, -0.20f, 0.20f, -0.24f, -0.04f, 0.07f, 6, MaterialIdCatalog.CampfireBlock, 240, capEnds: true, tempOverride: 215);
-            AddHorizontalCylinderZ(dst, -0.18f, 0.16f, -0.18f,  0.02f, 0.06f, 6, MaterialIdCatalog.CampfireBlock, 248, capEnds: true, tempOverride: 225);
+            AddHorizontalCylinderX(dst, -0.20f, 0.20f, -0.24f, -0.04f, 0.07f, 6, MaterialIdCatalog.CampfireBlock, 240, capEnds: true, tempOverride: 222);
+            AddHorizontalCylinderZ(dst, -0.18f, 0.16f, -0.18f,  0.02f, 0.06f, 6, MaterialIdCatalog.CampfireBlock, 248, capEnds: true, tempOverride: 228);
         }
 
         private static void BuildKitchenCounter3D(List<LocalKitTriangle> dst)
         {
-            AddBox(dst, -0.48f, 0.48f, -0.50f, 0.34f, -0.36f, 0.44f, MaterialIdCatalog.OakWood, 196);
-            AddBox(dst, -0.42f, -0.03f, -0.40f, 0.26f, -0.40f, -0.35f, MaterialIdCatalog.WoodPlank, 212);
-            AddBox(dst,  0.03f,  0.42f, -0.40f, 0.26f, -0.40f, -0.35f, MaterialIdCatalog.WoodPlank, 212);
-            AddBox(dst, -0.50f, 0.50f,  0.34f, 0.44f, -0.44f, 0.48f, MaterialIdCatalog.DressedMarbleBlock, 236);
-            // Tezgah ustu seramik testi
-            AddVerticalCylinderY(dst, 0.44f, 0.58f, 0.22f, 0.08f, 0.09f, 0.06f, 8, MaterialIdCatalog.RoofClayTile, 218);
+            AddCullableBox(dst, -0.48f, 0.48f, -0.50f, 0.34f, -0.36f, 0.44f, MaterialIdCatalog.OakWood, 196, 0);
+            AddCullableBox(dst, -0.42f, -0.03f, -0.40f, 0.26f, -0.40f, -0.35f, MaterialIdCatalog.WoodPlank, 212, 0);
+            AddCullableBox(dst,  0.03f,  0.42f, -0.40f, 0.26f, -0.40f, -0.35f, MaterialIdCatalog.WoodPlank, 212, 0);
+            AddCullableBox(dst, -0.50f, 0.50f,  0.34f, 0.44f, -0.44f, 0.48f, MaterialIdCatalog.DressedMarbleBlock, 236, 0);
+            AddVerticalCylinderY(dst, 0.44f, 0.58f, 0.22f, 0.08f, 0.09f, 0.06f, 6, MaterialIdCatalog.RoofClayTile, 218, cullCapsY: false);
         }
 
         private static void BuildStorageChest3D(List<LocalKitTriangle> dst)
         {
-            AddBox(dst, -0.42f, 0.42f, -0.50f, 0.04f, -0.30f, 0.30f, MaterialIdCatalog.OakWood, 198);
-            // Bombeli sandik kapagi + demir cemberler ve on kilit plakasi
-            AddHorizontalCylinderX(dst, -0.42f, 0.42f, 0.04f, 0.0f, 0.30f, 8, MaterialIdCatalog.WoodPlank, 214, capEnds: true);
-            AddBox(dst, -0.34f, -0.24f, -0.50f, 0.35f, -0.32f, 0.32f, MaterialIdCatalog.IronTieBeamBlock, 152);
-            AddBox(dst,  0.24f,  0.34f, -0.50f, 0.35f, -0.32f, 0.32f, MaterialIdCatalog.IronTieBeamBlock, 152);
-            AddBox(dst, -0.07f,  0.07f, -0.08f, 0.12f, -0.34f, -0.28f, MaterialIdCatalog.Bronze, 224);
+            AddCullableBox(dst, -0.42f, 0.42f, -0.50f, 0.04f, -0.30f, 0.30f, MaterialIdCatalog.OakWood, 198, 0);
+            AddHorizontalCylinderX(dst, -0.42f, 0.42f, 0.04f, 0.0f, 0.30f, 6, MaterialIdCatalog.WoodPlank, 214, capEnds: true);
+            AddCullableBox(dst, -0.34f, -0.24f, -0.50f, 0.35f, -0.32f, 0.32f, MaterialIdCatalog.IronTieBeamBlock, 152, 0);
+            AddCullableBox(dst,  0.24f,  0.34f, -0.50f, 0.35f, -0.32f, 0.32f, MaterialIdCatalog.IronTieBeamBlock, 152, 0);
+            AddCullableBox(dst, -0.07f,  0.07f, -0.08f, 0.12f, -0.34f, -0.28f, MaterialIdCatalog.Bronze, 224, 0);
         }
 
         private static void BuildWoodenBarrel3D(List<LocalKitTriangle> dst)
         {
-            // Gercek gobekli fici (alt/orta/ust konik silindir halkalari + 2 demir fici cemberi)
-            AddVerticalCylinderY(dst, -0.50f, -0.02f, 0f, 0f, 0.31f, 0.38f, 12, MaterialIdCatalog.OakWood, 204);
-            AddVerticalCylinderY(dst, -0.02f,  0.46f, 0f, 0f, 0.38f, 0.31f, 12, MaterialIdCatalog.OakWood, 212);
-            AddVerticalCylinderY(dst, -0.34f, -0.24f, 0f, 0f, 0.35f, 0.36f, 12, MaterialIdCatalog.IronTieBeamBlock, 148);
-            AddVerticalCylinderY(dst,  0.18f,  0.28f, 0f, 0f, 0.36f, 0.35f, 12, MaterialIdCatalog.IronTieBeamBlock, 148);
+            AddVerticalCylinderY(dst, -0.50f, -0.02f, 0f, 0f, 0.31f, 0.38f, 8, MaterialIdCatalog.OakWood, 204, cullCapsY: false);
+            AddVerticalCylinderY(dst, -0.02f,  0.46f, 0f, 0f, 0.38f, 0.31f, 8, MaterialIdCatalog.OakWood, 212, cullCapsY: false);
+            AddVerticalCylinderY(dst, -0.34f, -0.24f, 0f, 0f, 0.35f, 0.36f, 8, MaterialIdCatalog.IronTieBeamBlock, 148, cullCapsY: true);
+            AddVerticalCylinderY(dst,  0.18f,  0.28f, 0f, 0f, 0.36f, 0.35f, 8, MaterialIdCatalog.IronTieBeamBlock, 148, cullCapsY: true);
         }
 
         private static void BuildRoyalThrone3D(List<LocalKitTriangle> dst)
         {
-            AddBox(dst, -0.48f, 0.48f, -0.50f, -0.32f, -0.46f, 0.46f, MaterialIdCatalog.DressedMarbleBlock, 228);
-            AddBox(dst, -0.38f, 0.38f, -0.32f, -0.02f, -0.34f, 0.36f, MaterialIdCatalog.DressedMarbleBlock, 236);
-            AddBox(dst, -0.34f, 0.34f, -0.02f,  0.08f, -0.32f, 0.30f, MaterialIdCatalog.BedBlock, 224);
-            AddBox(dst, -0.40f, -0.28f, -0.02f, 0.28f, -0.32f, 0.34f, MaterialIdCatalog.Bronze, 226);
-            AddBox(dst,  0.28f,  0.40f, -0.02f, 0.28f, -0.32f, 0.34f, MaterialIdCatalog.Bronze, 226);
-            AddBox(dst, -0.36f,  0.36f,  0.08f, 0.68f,  0.24f, 0.38f, MaterialIdCatalog.DressedMarbleBlock, 238);
-            AddBox(dst, -0.28f,  0.28f,  0.10f, 0.58f,  0.20f, 0.25f, MaterialIdCatalog.BedBlock, 228);
+            AddCullableBox(dst, -0.48f, 0.48f, -0.50f, -0.32f, -0.46f, 0.46f, MaterialIdCatalog.DressedMarbleBlock, 228, 0);
+            AddCullableBox(dst, -0.38f, 0.38f, -0.32f, -0.02f, -0.34f, 0.36f, MaterialIdCatalog.DressedMarbleBlock, 236, 0);
+            AddCullableBox(dst, -0.34f, 0.34f, -0.02f,  0.08f, -0.32f, 0.30f, MaterialIdCatalog.BedBlock, 224, 0);
+            AddCullableBox(dst, -0.40f, -0.28f, -0.02f, 0.28f, -0.32f, 0.34f, MaterialIdCatalog.Bronze, 226, 0);
+            AddCullableBox(dst,  0.28f,  0.40f, -0.02f, 0.28f, -0.32f, 0.34f, MaterialIdCatalog.Bronze, 226, 0);
+            AddCullableBox(dst, -0.36f,  0.36f,  0.08f, 0.68f,  0.24f, 0.38f, MaterialIdCatalog.DressedMarbleBlock, 238, 0);
+            AddCullableBox(dst, -0.28f,  0.28f,  0.10f, 0.58f,  0.20f, 0.25f, MaterialIdCatalog.BedBlock, 228, 0);
         }
 
         private static void BuildAnvilOnStump3D(List<LocalKitTriangle> dst)
         {
-            AddVerticalCylinderY(dst, -0.50f, 0.02f, 0f, 0f, 0.34f, 0.30f, 10, MaterialIdCatalog.OakWood, 192);
-            AddBox(dst, -0.24f, 0.24f, 0.02f, 0.14f, -0.16f, 0.16f, MaterialIdCatalog.Steel, 165);
-            AddBox(dst, -0.14f, 0.14f, 0.14f, 0.28f, -0.11f, 0.11f, MaterialIdCatalog.Steel, 155);
-            AddBox(dst, -0.28f, 0.22f, 0.28f, 0.44f, -0.15f, 0.15f, MaterialIdCatalog.Steel, 188);
-            // Sivri ors boynuzu (+X yonune uzanan koni)
-            AddHorizontalConeX(dst, 0.22f, 0.48f, 0.36f, 0f, 0.12f, 8, MaterialIdCatalog.Steel, 196);
+            AddVerticalCylinderY(dst, -0.50f, 0.02f, 0f, 0f, 0.34f, 0.30f, 8, MaterialIdCatalog.OakWood, 192, cullCapsY: false);
+            AddCullableBox(dst, -0.24f, 0.24f, 0.02f, 0.14f, -0.16f, 0.16f, MaterialIdCatalog.Steel, 165, 0);
+            AddCullableBox(dst, -0.14f, 0.14f, 0.14f, 0.28f, -0.11f, 0.11f, MaterialIdCatalog.Steel, 155, 0);
+            AddCullableBox(dst, -0.28f, 0.22f, 0.28f, 0.44f, -0.15f, 0.15f, MaterialIdCatalog.Steel, 188, 0);
+            AddHorizontalConeX(dst, 0.22f, 0.48f, 0.36f, 0f, 0.12f, 6, MaterialIdCatalog.Steel, 196);
         }
 
         private static void BuildSawhorseBench3D(List<LocalKitTriangle> dst)
@@ -744,339 +1202,240 @@ namespace Stratocraft.Voxel.Jobs
             AddStrut(dst, new Vector3(-0.36f, -0.50f,  0.28f), new Vector3(-0.36f, 0.26f, 0.0f), 0.08f, 0.08f, MaterialIdCatalog.TreatedTimberBeam, 182);
             AddStrut(dst, new Vector3( 0.36f, -0.50f, -0.28f), new Vector3( 0.36f, 0.26f, 0.0f), 0.08f, 0.08f, MaterialIdCatalog.TreatedTimberBeam, 182);
             AddStrut(dst, new Vector3( 0.36f, -0.50f,  0.28f), new Vector3( 0.36f, 0.26f, 0.0f), 0.08f, 0.08f, MaterialIdCatalog.TreatedTimberBeam, 182);
-            AddBox(dst, -0.48f, 0.48f, 0.20f, 0.34f, -0.14f, 0.14f, MaterialIdCatalog.WoodPlank, 222);
+            AddCullableBox(dst, -0.48f, 0.48f, 0.20f, 0.34f, -0.14f, 0.14f, MaterialIdCatalog.WoodPlank, 222, 0);
         }
 
         private static void BuildWeaponRack3D(List<LocalKitTriangle> dst)
         {
-            AddBox(dst, -0.44f, 0.44f, -0.50f, -0.38f, -0.22f, 0.22f, MaterialIdCatalog.TreatedTimberBeam, 180);
-            AddBox(dst, -0.42f, -0.34f, -0.38f, 0.38f, -0.06f, 0.06f, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddBox(dst,  0.34f,  0.42f, -0.38f, 0.38f, -0.06f, 0.06f, MaterialIdCatalog.TreatedTimberBeam, 184);
-            AddBox(dst, -0.42f,  0.42f,  0.18f, 0.26f, -0.08f, 0.08f, MaterialIdCatalog.TreatedTimberBeam, 188);
+            AddCullableBox(dst, -0.44f, 0.44f, -0.50f, -0.38f, -0.22f, 0.22f, MaterialIdCatalog.TreatedTimberBeam, 180, 0);
+            AddCullableBox(dst, -0.42f, -0.34f, -0.38f, 0.38f, -0.06f, 0.06f, MaterialIdCatalog.TreatedTimberBeam, 184, 0);
+            AddCullableBox(dst,  0.34f,  0.42f, -0.38f, 0.38f, -0.06f, 0.06f, MaterialIdCatalog.TreatedTimberBeam, 184, 0);
+            AddCullableBox(dst, -0.42f,  0.42f,  0.18f, 0.26f, -0.08f, 0.08f, MaterialIdCatalog.TreatedTimberBeam, 188, 0);
             float[] sx = { -0.20f, 0.0f, 0.20f };
             for (int i = 0; i < sx.Length; i++)
             {
-                AddVerticalCylinderY(dst, -0.38f, 0.36f, sx[i], 0.0f, 0.025f, 0.025f, 6, MaterialIdCatalog.OakWood, 200);
-                AddVerticalCylinderY(dst,  0.36f, 0.62f, sx[i], 0.0f, 0.045f, 0.008f, 6, MaterialIdCatalog.Steel, 232);
+                AddVerticalCylinderY(dst, -0.38f, 0.36f, sx[i], 0.0f, 0.025f, 0.025f, 6, MaterialIdCatalog.OakWood, 200, cullCapsY: true);
+                AddVerticalCylinderY(dst,  0.36f, 0.62f, sx[i], 0.0f, 0.045f, 0.008f, 6, MaterialIdCatalog.Steel, 232, cullCapsY: false);
             }
         }
 
-        private static void BuildSplitRailFence3D(List<LocalKitTriangle> dst)
+        private static void BuildSplitRailFence3D(List<LocalKitTriangle> dst, bool distantMode)
         {
-            AddVerticalCylinderY(dst, -0.50f, 0.46f, 0f, 0f, 0.09f, 0.08f, 8, MaterialIdCatalog.OakWood, 192);
-            AddHorizontalCylinderX(dst, -0.50f, 0.50f, -0.12f, 0f, 0.055f, 6, MaterialIdCatalog.WoodPlank, 212, capEnds: true);
-            AddHorizontalCylinderX(dst, -0.50f, 0.50f,  0.22f, 0f, 0.055f, 6, MaterialIdCatalog.WoodPlank, 218, capEnds: true);
+            int sides = distantMode ? 4 : 6;
+            AddVerticalCylinderY(dst, -0.50f, 0.46f, 0f, 0f, 0.09f, 0.08f, sides, MaterialIdCatalog.OakWood, 192, cullCapsY: false);
+            AddHorizontalCylinderX(dst, -0.50f, 0.50f, -0.12f, 0f, 0.055f, sides, MaterialIdCatalog.WoodPlank, 212, capEnds: false, cullEndCapsX: true);
+            AddHorizontalCylinderX(dst, -0.50f, 0.50f,  0.22f, 0f, 0.055f, sides, MaterialIdCatalog.WoodPlank, 218, capEnds: false, cullEndCapsX: true);
         }
 
-        private static void BuildWellWindlass3D(List<LocalKitTriangle> dst)
+        private static void BuildWellWindlass3D(List<LocalKitTriangle> dst, bool distantMode)
         {
-            AddBox(dst, -0.46f, -0.34f, -0.50f, 0.46f, -0.10f, 0.10f, MaterialIdCatalog.TreatedTimberBeam, 186);
-            AddBox(dst,  0.34f,  0.46f, -0.50f, 0.46f, -0.10f, 0.10f, MaterialIdCatalog.TreatedTimberBeam, 186);
-            AddHorizontalCylinderX(dst, -0.36f, 0.36f, 0.32f, 0f, 0.10f, 8, MaterialIdCatalog.OakWood, 208, capEnds: true);
-            AddPitchedPrismX(dst, -0.52f, 0.52f, 0.44f, 0.72f, 0.44f, MaterialIdCatalog.TimberShingleRoof, 216);
-            AddVerticalCylinderY(dst, -0.24f, -0.02f, 0f, 0f, 0.11f, 0.13f, 8, MaterialIdCatalog.OakWood, 198);
+            // 5x5m gercek koy kuyusunun merkezindeki doner mese tambur, demir kol ve sarkitilmis su kovasi!
+            AddHorizontalCylinderX(dst, -0.50f, 0.50f, 0.28f, 0f, 0.11f, distantMode ? 6 : 8, MaterialIdCatalog.OakWood, 210, capEnds: true);
+            if (!distantMode)
+            {
+                AddCullableBox(dst, -0.03f, 0.03f, -0.18f, 0.28f, -0.03f, 0.03f, MaterialIdCatalog.StrawChinkingBundle, 198, 0);
+                AddVerticalCylinderY(dst, -0.44f, -0.16f, 0f, 0f, 0.14f, 0.17f, 8, MaterialIdCatalog.OakWood, 196, cullCapsY: false);
+                AddVerticalCylinderY(dst, -0.26f, -0.22f, 0f, 0f, 0.16f, 0.165f, 8, MaterialIdCatalog.IronTieBeamBlock, 148, cullCapsY: true);
+            }
         }
 
         // =====================================================================
-        // SAF C# (.NET 10 + UNITY 6) .GLB IKILI OKUYUCU VE PRIMITIF YARDIMCILARI
+        // YUKSEK PERFORMANSLI YUZ-GIZLEMELI PRIMITIF YARDIMCILARI
         // =====================================================================
 
-        private static bool TryAppendFittedGlb(
-            string? glbDir,
-            string fileName,
+        private static void AddQuad(
             List<LocalKitTriangle> dst,
-            float fitX,
-            float fitY,
-            float fitZ)
+            Vector3 v0,
+            Vector3 v1,
+            Vector3 v2,
+            Vector3 v3,
+            byte mat,
+            byte shade,
+            byte temp = 0,
+            bool skirt = false,
+            byte cullFaceBit = 0)
         {
-            if (string.IsNullOrEmpty(glbDir)) return false;
-            string fullPath = Path.Combine(glbDir, fileName);
-            if (!File.Exists(fullPath)) return false;
+            dst.Add(new LocalKitTriangle(v0, v1, v2, mat, shade, temp, skirt, cullFaceBit));
+            dst.Add(new LocalKitTriangle(v0, v2, v3, mat, (byte)Math.Max(110, shade - 8), temp, skirt, cullFaceBit));
+        }
 
-            try
+        private static void AddCrossedBladeQuad(
+            List<LocalKitTriangle> dst,
+            float halfSpan,
+            float extent,
+            float y0,
+            float y1,
+            byte mat,
+            byte shade)
+        {
+            _ = halfSpan;
+            Vector3 a0 = new(-extent, y0, -extent), a1 = new(-extent, y1, -extent), a2 = new(extent, y1, extent), a3 = new(extent, y0, extent);
+            Vector3 b0 = new(-extent, y0,  extent), b1 = new(-extent, y1,  extent), b2 = new(extent, y1, -extent), b3 = new(extent, y0, -extent);
+            AddQuad(dst, a0, a1, a2, a3, mat, shade);
+            AddQuad(dst, a3, a2, a1, a0, mat, (byte)(shade - 8));
+            AddQuad(dst, b0, b1, b2, b3, mat, shade);
+            AddQuad(dst, b3, b2, b1, b0, mat, (byte)(shade - 8));
+        }
+
+        private static void AddWallCheekBox(
+            List<LocalKitTriangle> dst,
+            float x0,
+            float x1,
+            float y0,
+            float y1,
+            byte frontMat,
+            byte cullMask,
+            bool distantMode)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+            const byte FPosZ = ArchitecturalShapeCatalog.FacePosZ;
+            const byte FNegZ = ArchitecturalShapeCatalog.FaceNegZ;
+
+            float z0 = -0.24f, z1 = 0.24f;
+            Vector3 p000 = new(x0, y0, z0), p100 = new(x1, y0, z0), p101 = new(x1, y0, z1), p001 = new(x0, y0, z1);
+            Vector3 p010 = new(x0, y1, z0), p110 = new(x1, y1, z0), p111 = new(x1, y1, z1), p011 = new(x0, y1, z1);
+
+            AddQuad(dst, p000, p010, p110, p100, frontMat, 214, 0, false, FNegZ);
+            if (!distantMode)
             {
-                byte[] bytes = File.ReadAllBytes(fullPath);
-                if (bytes.Length < 28 || BitConverter.ToUInt32(bytes, 0) != 0x46546C67u) return false;
-
-                int offset = 12;
-                string? jsonText = null;
-                int binStart = -1;
-                while (offset + 8 <= bytes.Length)
-                {
-                    int chunkLen = BitConverter.ToInt32(bytes, offset);
-                    uint chunkType = BitConverter.ToUInt32(bytes, offset + 4);
-                    int dataStart = offset + 8;
-                    if (chunkLen < 0 || dataStart + chunkLen > bytes.Length) break;
-                    if (chunkType == 0x4E4F534Au) jsonText = Encoding.UTF8.GetString(bytes, dataStart, chunkLen);
-                    else if (chunkType == 0x004E4942u) binStart = dataStart;
-                    offset = dataStart + chunkLen;
-                }
-                if (string.IsNullOrEmpty(jsonText) || binStart < 0) return false;
-
-                if (!TryExtractGlbTriangles(bytes, binStart, jsonText, out List<(Vector3 a, Vector3 b, Vector3 c, byte shade)> rawTris) ||
-                    rawTris.Count == 0 || rawTris.Count > 320)
-                {
-                    return false;
-                }
-
-                Vector3 min = new(float.MaxValue, float.MaxValue, float.MaxValue);
-                Vector3 max = new(float.MinValue, float.MinValue, float.MinValue);
-                for (int i = 0; i < rawTris.Count; i++)
-                {
-                    min = Vector3.Min(min, Vector3.Min(rawTris[i].a, Vector3.Min(rawTris[i].b, rawTris[i].c)));
-                    max = Vector3.Max(max, Vector3.Max(rawTris[i].a, Vector3.Max(rawTris[i].b, rawTris[i].c)));
-                }
-
-                Vector3 size = max - min;
-                if (size.X < 1e-4f || size.Y < 1e-4f || size.Z < 1e-4f) return false;
-                Vector3 center = (min + max) * 0.5f;
-                Vector3 scale = new(fitX / size.X, fitY / size.Y, fitZ / size.Z);
-
-                for (int i = 0; i < rawTris.Count; i++)
-                {
-                    var (ra, rb, rc, sh) = rawTris[i];
-                    Vector3 a = (ra - center) * scale;
-                    Vector3 b = (rb - center) * scale;
-                    Vector3 c = (rc - center) * scale;
-                    dst.Add(new LocalKitTriangle(a, b, c, 0, sh, 0, allowSkirtDrop: true));
-                }
-
-                return true;
+                AddQuad(dst, p101, p111, p011, p001, MaterialIdCatalog.LimeWashPlaster, 232, 0, false, FPosZ);
             }
-            catch
-            {
-                return false;
-            }
+            AddQuad(dst, p010, p011, p111, p110, frontMat, 220, 0, false, (byte)(cullMask & FPosY));
+            AddQuad(dst, p001, p000, p100, p101, frontMat, 170, 0, false, (byte)(cullMask & FNegY));
+            AddQuad(dst, p001, p011, p010, p000, frontMat, 200, 0, false, (byte)(cullMask & FNegX));
+            AddQuad(dst, p100, p110, p111, p101, frontMat, 200, 0, false, (byte)(cullMask & FPosX));
         }
 
-#if UNITY_5_3_OR_NEWER
-        [Serializable]
-        private sealed class MiniGltfRoot
-        {
-            public MiniGltfMesh[]? meshes;
-            public MiniGltfBufferView[]? bufferViews;
-            public MiniGltfAccessor[]? accessors;
-        }
-
-        [Serializable]
-        private sealed class MiniGltfMesh
-        {
-            public MiniGltfPrim[]? primitives;
-        }
-
-        [Serializable]
-        private sealed class MiniGltfPrim
-        {
-            public MiniGltfAttr? attributes;
-            public int indices = -1;
-        }
-
-        [Serializable]
-        private sealed class MiniGltfAttr
-        {
-            public int POSITION = -1;
-            public int COLOR_0 = -1;
-        }
-
-        [Serializable]
-        private sealed class MiniGltfBufferView
-        {
-            public int byteOffset;
-            public int byteStride;
-        }
-
-        [Serializable]
-        private sealed class MiniGltfAccessor
-        {
-            public int bufferView = -1;
-            public int byteOffset;
-            public int componentType;
-            public int count;
-        }
-#endif
-
-        private static bool TryExtractGlbTriangles(
-            byte[] bytes,
-            int binStart,
-            string jsonText,
-            out List<(Vector3 a, Vector3 b, Vector3 c, byte shade)> tris)
-        {
-            tris = new List<(Vector3, Vector3, Vector3, byte)>(128);
-#if UNITY_5_3_OR_NEWER
-            MiniGltfRoot? root = UnityEngine.JsonUtility.FromJson<MiniGltfRoot>(jsonText);
-            if (root?.meshes == null || root.accessors == null || root.bufferViews == null) return false;
-            for (int m = 0; m < root.meshes.Length; m++)
-            {
-                var prims = root.meshes[m].primitives;
-                if (prims == null) continue;
-                for (int p = 0; p < prims.Length; p++)
-                {
-                    var pr = prims[p];
-                    if (pr.attributes == null || pr.attributes.POSITION < 0) continue;
-                    var posAcc = root.accessors[pr.attributes.POSITION];
-                    var posBv = root.bufferViews[posAcc.bufferView];
-                    int posStride = posBv.byteStride > 0 ? posBv.byteStride : 12;
-                    int posBase = binStart + posBv.byteOffset + posAcc.byteOffset;
-
-                    Vector3[] verts = new Vector3[posAcc.count];
-                    for (int i = 0; i < posAcc.count; i++)
-                    {
-                        int ptr = posBase + i * posStride;
-                        verts[i] = new Vector3(
-                            -BitConverter.ToSingle(bytes, ptr),
-                            BitConverter.ToSingle(bytes, ptr + 4),
-                            BitConverter.ToSingle(bytes, ptr + 8));
-                    }
-
-                    int[] idx = ReadIdx(bytes, binStart, pr.indices >= 0 ? root.accessors[pr.indices] : null, pr.indices >= 0 ? root.bufferViews[root.accessors[pr.indices].bufferView] : null, verts.Length);
-                    for (int i = 0; i + 2 < idx.Length; i += 3)
-                    {
-                        Vector3 a = verts[idx[i]];
-                        Vector3 b = verts[idx[i + 2]];
-                        Vector3 c = verts[idx[i + 1]];
-                        byte sh = ComputeNormalShade(a, b, c);
-                        tris.Add((a, b, c, sh));
-                    }
-                }
-            }
-            return tris.Count > 0;
-
-            static int[] ReadIdx(byte[] buf, int bStart, MiniGltfAccessor? acc, MiniGltfBufferView? bv, int vLen)
-            {
-                if (acc == null || bv == null)
-                {
-                    int[] seq = new int[vLen];
-                    for (int i = 0; i < vLen; i++) seq[i] = i;
-                    return seq;
-                }
-                int ptr = bStart + bv.byteOffset + acc.byteOffset;
-                int[] arr = new int[acc.count];
-                for (int i = 0; i < acc.count; i++)
-                {
-                    arr[i] = acc.componentType switch
-                    {
-                        5125 => (int)BitConverter.ToUInt32(buf, ptr + i * 4),
-                        5123 => BitConverter.ToUInt16(buf, ptr + i * 2),
-                        _ => buf[ptr + i]
-                    };
-                }
-                return arr;
-            }
-#else
-            using JsonDocument doc = JsonDocument.Parse(jsonText);
-            JsonElement root = doc.RootElement;
-            if (!root.TryGetProperty("meshes", out JsonElement meshes) ||
-                !root.TryGetProperty("accessors", out JsonElement accessors) ||
-                !root.TryGetProperty("bufferViews", out JsonElement bufferViews))
-            {
-                return false;
-            }
-
-            foreach (JsonElement mesh in meshes.EnumerateArray())
-            {
-                if (!mesh.TryGetProperty("primitives", out JsonElement prims)) continue;
-                foreach (JsonElement pr in prims.EnumerateArray())
-                {
-                    if (!pr.TryGetProperty("attributes", out JsonElement attrs) ||
-                        !attrs.TryGetProperty("POSITION", out JsonElement posIdxEl))
-                    {
-                        continue;
-                    }
-
-                    JsonElement posAcc = accessors[posIdxEl.GetInt32()];
-                    JsonElement posBv = bufferViews[posAcc.GetProperty("bufferView").GetInt32()];
-                    int posCount = posAcc.GetProperty("count").GetInt32();
-                    int posAccOff = posAcc.TryGetProperty("byteOffset", out JsonElement pao) ? pao.GetInt32() : 0;
-                    int posBvOff = posBv.TryGetProperty("byteOffset", out JsonElement pbo) ? pbo.GetInt32() : 0;
-                    int posStride = posBv.TryGetProperty("byteStride", out JsonElement pbs) && pbs.GetInt32() > 0 ? pbs.GetInt32() : 12;
-                    int posBase = binStart + posBvOff + posAccOff;
-
-                    Vector3[] verts = new Vector3[posCount];
-                    for (int i = 0; i < posCount; i++)
-                    {
-                        int ptr = posBase + i * posStride;
-                        verts[i] = new Vector3(
-                            -BitConverter.ToSingle(bytes, ptr),
-                            BitConverter.ToSingle(bytes, ptr + 4),
-                            BitConverter.ToSingle(bytes, ptr + 8));
-                    }
-
-                    int[] idx;
-                    if (pr.TryGetProperty("indices", out JsonElement idxEl))
-                    {
-                        JsonElement iAcc = accessors[idxEl.GetInt32()];
-                        JsonElement iBv = bufferViews[iAcc.GetProperty("bufferView").GetInt32()];
-                        int iCount = iAcc.GetProperty("count").GetInt32();
-                        int cType = iAcc.GetProperty("componentType").GetInt32();
-                        int iOff = (iBv.TryGetProperty("byteOffset", out JsonElement ibo) ? ibo.GetInt32() : 0) +
-                                   (iAcc.TryGetProperty("byteOffset", out JsonElement iao) ? iao.GetInt32() : 0);
-                        int ptr = binStart + iOff;
-                        idx = new int[iCount];
-                        for (int i = 0; i < iCount; i++)
-                        {
-                            idx[i] = cType switch
-                            {
-                                5125 => (int)BitConverter.ToUInt32(bytes, ptr + i * 4),
-                                5123 => BitConverter.ToUInt16(bytes, ptr + i * 2),
-                                _ => bytes[ptr + i]
-                            };
-                        }
-                    }
-                    else
-                    {
-                        idx = new int[verts.Length];
-                        for (int i = 0; i < verts.Length; i++) idx[i] = i;
-                    }
-
-                    for (int i = 0; i + 2 < idx.Length; i += 3)
-                    {
-                        Vector3 a = verts[idx[i]];
-                        Vector3 b = verts[idx[i + 2]];
-                        Vector3 c = verts[idx[i + 1]];
-                        tris.Add((a, b, c, ComputeNormalShade(a, b, c)));
-                    }
-                }
-            }
-            return tris.Count > 0;
-#endif
-        }
-
-        private static byte ComputeNormalShade(Vector3 a, Vector3 b, Vector3 c)
-        {
-            Vector3 cr = Vector3.Cross(b - a, c - a);
-            float len = cr.Length();
-            if (len < 1e-6f) return 196;
-            Vector3 n = cr / len;
-            float sun = 0.55f + 0.30f * n.Y + 0.15f * MathF.Abs(n.X) + 0.10f * (-n.Z);
-            return (byte)Math.Clamp((int)(sun * 240f), 128, 246);
-        }
-
-        private static void AddQuad(List<LocalKitTriangle> dst, Vector3 v0, Vector3 v1, Vector3 v2, Vector3 v3, byte mat, byte shade, byte temp = 0, bool skirt = false)
-        {
-            dst.Add(new LocalKitTriangle(v0, v1, v2, mat, shade, temp, skirt));
-            dst.Add(new LocalKitTriangle(v0, v2, v3, mat, (byte)Math.Max(110, shade - 8), temp, skirt));
-        }
-
-        private static void AddBox(
+        private static void AddFrontReliefBox(
             List<LocalKitTriangle> dst,
             float x0, float x1,
             float y0, float y1,
             float z0, float z1,
             byte mat,
             byte topShade,
+            byte cullMask,
             bool skirt = false)
         {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+
+            // Arka (+Z) yuzu duvara gomulu oldugu icin HIC uretilmez!
+            Vector3 p000 = new(x0, y0, z0), p100 = new(x1, y0, z0), p101 = new(x1, y0, z1), p001 = new(x0, y0, z1);
+            Vector3 p010 = new(x0, y1, z0), p110 = new(x1, y1, z0), p111 = new(x1, y1, z1), p011 = new(x0, y1, z1);
+            byte side = (byte)Math.Clamp(topShade - 16, 120, 240);
+            byte bot = (byte)Math.Clamp(topShade - 48, 108, 220);
+
+            AddQuad(dst, p000, p010, p110, p100, mat, side, 0, skirt, 0);
+            AddQuad(dst, p010, p011, p111, p110, mat, topShade, 0, false, (byte)(cullMask & FPosY));
+            AddQuad(dst, p001, p000, p100, p101, mat, bot, 0, skirt, (byte)(cullMask & FNegY));
+            AddQuad(dst, p001, p011, p010, p000, mat, side, 0, skirt, (byte)(cullMask & FNegX));
+            AddQuad(dst, p100, p110, p111, p101, mat, side, 0, skirt, (byte)(cullMask & FPosX));
+        }
+
+        private static void AddCullableBox(
+            List<LocalKitTriangle> dst,
+            float x0, float x1,
+            float y0, float y1,
+            float z0, float z1,
+            byte mat,
+            byte topShade,
+            byte cullMask,
+            bool skirt = false)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+            const byte FPosY = ArchitecturalShapeCatalog.FacePosY;
+            const byte FNegY = ArchitecturalShapeCatalog.FaceNegY;
+            const byte FPosZ = ArchitecturalShapeCatalog.FacePosZ;
+            const byte FNegZ = ArchitecturalShapeCatalog.FaceNegZ;
+
             Vector3 p000 = new(x0, y0, z0), p100 = new(x1, y0, z0), p101 = new(x1, y0, z1), p001 = new(x0, y0, z1);
             Vector3 p010 = new(x0, y1, z0), p110 = new(x1, y1, z0), p111 = new(x1, y1, z1), p011 = new(x0, y1, z1);
             byte side = (byte)Math.Clamp(topShade - 22, 120, 240);
             byte bot = (byte)Math.Clamp(topShade - 56, 105, 220);
 
-            AddQuad(dst, p010, p011, p111, p110, mat, topShade, 0, skirt); // +Y
-            AddQuad(dst, p001, p000, p100, p101, mat, bot, 0, skirt);      // -Y
-            AddQuad(dst, p000, p010, p110, p100, mat, side, 0, skirt);     // -Z
-            AddQuad(dst, p101, p111, p011, p001, mat, side, 0, skirt);     // +Z
-            AddQuad(dst, p001, p011, p010, p000, mat, (byte)(side - 8), 0, skirt); // -X
-            AddQuad(dst, p100, p110, p111, p101, mat, (byte)(side - 8), 0, skirt); // +X
+            AddQuad(dst, p010, p011, p111, p110, mat, topShade, 0, skirt, (byte)(cullMask & FPosY));
+            AddQuad(dst, p001, p000, p100, p101, mat, bot, 0, skirt, (byte)(cullMask & FNegY));
+            AddQuad(dst, p000, p010, p110, p100, mat, side, 0, skirt, (byte)(cullMask & FNegZ));
+            AddQuad(dst, p101, p111, p011, p001, mat, side, 0, skirt, (byte)(cullMask & FPosZ));
+            AddQuad(dst, p001, p011, p010, p000, mat, (byte)(side - 8), 0, skirt, (byte)(cullMask & FNegX));
+            AddQuad(dst, p100, p110, p111, p101, mat, (byte)(side - 8), 0, skirt, (byte)(cullMask & FPosX));
+        }
+
+        private static void AddGlowingBox(
+            List<LocalKitTriangle> dst,
+            float x0, float x1,
+            float y0, float y1,
+            float z0, float z1,
+            byte mat,
+            byte shade,
+            byte tempOverride)
+        {
+            Vector3 p000 = new(x0, y0, z0), p100 = new(x1, y0, z0), p101 = new(x1, y0, z1), p001 = new(x0, y0, z1);
+            Vector3 p010 = new(x0, y1, z0), p110 = new(x1, y1, z0), p111 = new(x1, y1, z1), p011 = new(x0, y1, z1);
+            AddQuad(dst, p010, p011, p111, p110, mat, shade, tempOverride);
+            AddQuad(dst, p001, p000, p100, p101, mat, shade, tempOverride);
+            AddQuad(dst, p000, p010, p110, p100, mat, shade, tempOverride);
+            AddQuad(dst, p101, p111, p011, p001, mat, shade, tempOverride);
+            AddQuad(dst, p001, p011, p010, p000, mat, shade, tempOverride);
+            AddQuad(dst, p100, p110, p111, p101, mat, shade, tempOverride);
+        }
+
+        private static void AddSlopedRoofDeck(
+            List<LocalKitTriangle> dst,
+            float x0, float x1,
+            float z0, float z1,
+            float y0, float y1,
+            float thickness,
+            byte topMat,
+            byte undersideMat,
+            byte shade,
+            bool distantMode)
+        {
+            const byte FPosX = ArchitecturalShapeCatalog.FacePosX;
+            const byte FNegX = ArchitecturalShapeCatalog.FaceNegX;
+
+            Vector3 f0 = new(x0, y0, z0),             f1 = new(x1, y0, z0);
+            Vector3 f2 = new(x1, y0 + thickness, z0), f3 = new(x0, y0 + thickness, z0);
+            Vector3 b0 = new(x0, y1, z1),             b1 = new(x1, y1, z1);
+            Vector3 b2 = new(x1, y1 + thickness, z1), b3 = new(x0, y1 + thickness, z1);
+
+            // Ust cati yuzu + on sacak alni (her mesafede gorunur!)
+            AddQuad(dst, f3, b3, b2, f2, topMat, shade);
+            AddQuad(dst, f0, f3, f2, f1, undersideMat, (byte)(shade - 24));
+            if (distantMode)
+            {
+                return;
+            }
+
+            // Alt ahsap kaplama + komsu cati vokselleriyle gizlenen yan alinliklar
+            AddQuad(dst, b0, b1, f1, f0, undersideMat, (byte)(shade - 36));
+            AddQuad(dst, b0, f0, f3, b3, undersideMat, (byte)(shade - 18), 0, false, FNegX);
+            AddQuad(dst, f1, b1, b2, f2, undersideMat, (byte)(shade - 18), 0, false, FPosX);
+        }
+
+        private static void AddRoofTileRidgeStrip(
+            List<LocalKitTriangle> dst,
+            float cx,
+            float width,
+            float z0, float z1,
+            float y0, float y1,
+            float height,
+            byte mat,
+            byte shade)
+        {
+            float hw = width * 0.5f;
+            Vector3 fL = new(cx - hw, y0, z0), fM = new(cx, y0 + height, z0), fR = new(cx + hw, y0, z0);
+            Vector3 bL = new(cx - hw, y1, z1), bM = new(cx, y1 + height, z1), bR = new(cx + hw, y1, z1);
+            // Yalnizca ust-sol, ust-sag ve on kiremit agzi (alt taban cati plakasina gomulu -> 5 ucgen!)
+            AddQuad(dst, fL, bL, bM, fM, mat, shade);
+            AddQuad(dst, fM, bM, bR, fR, mat, (byte)(shade - 12));
+            dst.Add(new LocalKitTriangle(fL, fM, fR, mat, (byte)(shade - 18)));
         }
 
         private static void AddVerticalCylinderY(
@@ -1086,8 +1445,11 @@ namespace Stratocraft.Voxel.Jobs
             float rBot, float rTop,
             int sides,
             byte mat,
-            byte baseShade)
+            byte baseShade,
+            bool cullCapsY)
         {
+            byte topCull = cullCapsY ? ArchitecturalShapeCatalog.FacePosY : (byte)0;
+            byte botCull = cullCapsY ? ArchitecturalShapeCatalog.FaceNegY : (byte)0;
             Vector3 topC = new(cx, y1, cz);
             Vector3 botC = new(cx, y0, cz);
             for (int i = 0; i < sides; i++)
@@ -1100,8 +1462,8 @@ namespace Stratocraft.Voxel.Jobs
                 Vector3 u1 = new(cx + MathF.Cos(a1) * rTop, y1, cz + MathF.Sin(a1) * rTop);
                 byte sh = (byte)Math.Clamp(baseShade - 18 + (int)(MathF.Cos(a0) * 20f), 128, 246);
                 AddQuad(dst, b0, u0, u1, b1, mat, sh);
-                dst.Add(new LocalKitTriangle(topC, u1, u0, mat, baseShade));
-                dst.Add(new LocalKitTriangle(botC, b0, b1, mat, (byte)Math.Max(115, baseShade - 55)));
+                dst.Add(new LocalKitTriangle(topC, u1, u0, mat, baseShade, 0, false, topCull));
+                dst.Add(new LocalKitTriangle(botC, b0, b1, mat, (byte)Math.Max(115, baseShade - 55), 0, false, botCull));
             }
         }
 
@@ -1115,9 +1477,12 @@ namespace Stratocraft.Voxel.Jobs
             byte baseShade,
             bool capEnds,
             byte endCapMat = 0,
-            byte tempOverride = 0)
+            byte tempOverride = 0,
+            bool cullEndCapsX = false)
         {
             byte capM = endCapMat != 0 ? endCapMat : mat;
+            byte lCull = cullEndCapsX ? ArchitecturalShapeCatalog.FaceNegX : (byte)0;
+            byte rCull = cullEndCapsX ? ArchitecturalShapeCatalog.FacePosX : (byte)0;
             Vector3 lC = new(x0, cy, cz);
             Vector3 rC = new(x1, cy, cz);
             for (int i = 0; i < sides; i++)
@@ -1132,8 +1497,8 @@ namespace Stratocraft.Voxel.Jobs
                 AddQuad(dst, l0, l1, r1, r0, mat, sh, tempOverride);
                 if (capEnds)
                 {
-                    dst.Add(new LocalKitTriangle(lC, l1, l0, capM, (byte)Math.Min(245, baseShade + 10), tempOverride));
-                    dst.Add(new LocalKitTriangle(rC, r0, r1, capM, (byte)Math.Min(245, baseShade + 10), tempOverride));
+                    dst.Add(new LocalKitTriangle(lC, l1, l0, capM, (byte)Math.Min(245, baseShade + 10), tempOverride, false, lCull));
+                    dst.Add(new LocalKitTriangle(rC, r0, r1, capM, (byte)Math.Min(245, baseShade + 10), tempOverride, false, rCull));
                 }
             }
         }
@@ -1160,7 +1525,8 @@ namespace Stratocraft.Voxel.Jobs
                 float xA = cx + MathF.Cos(a0) * radius, yA = cy + MathF.Sin(a0) * radius;
                 float xB = cx + MathF.Cos(a1) * radius, yB = cy + MathF.Sin(a1) * radius;
                 Vector3 n0 = new(xA, yA, z0), n1 = new(xB, yB, z0);
-                Vector3 p0 = new(xA, yA, z1), p1 = new(xB, yB, z1);
+                Vector3 p0 = new(xA, yA, z1), p1 = new(xB, yA, z1);
+                p1.Y = yB;
                 byte sh = (byte)Math.Clamp(baseShade - 14 + (int)(MathF.Sin(a0) * 26f), 124, 248);
                 AddQuad(dst, n0, p0, p1, n1, mat, sh, tempOverride);
                 if (capEnds)
@@ -1214,28 +1580,6 @@ namespace Stratocraft.Voxel.Jobs
             AddQuad(dst, a0, a1, b1, b0, mat, (byte)(shade - 28));
             AddQuad(dst, a0, b0, b3, a3, mat, (byte)(shade - 14));
             AddQuad(dst, a1, a2, b2, b1, mat, (byte)(shade - 14));
-            AddQuad(dst, a0, a3, a2, a1, mat, (byte)(shade - 18));
-            AddQuad(dst, b0, b1, b2, b3, mat, (byte)(shade - 10));
-        }
-
-        private static void AddSlopedSlab45(
-            List<LocalKitTriangle> dst,
-            float x0, float x1,
-            float yOffsetBot, float yOffsetTop,
-            byte mat,
-            byte shade)
-        {
-            Vector3 f0 = new(x0, -0.50f + yOffsetBot, -0.50f), f1 = new(x1, -0.50f + yOffsetBot, -0.50f);
-            Vector3 f2 = new(x1, -0.50f + yOffsetTop, -0.50f), f3 = new(x0, -0.50f + yOffsetTop, -0.50f);
-            Vector3 b0 = new(x0,  0.50f + yOffsetBot,  0.50f), b1 = new(x1,  0.50f + yOffsetBot,  0.50f);
-            Vector3 b2 = new(x1,  0.50f + yOffsetTop,  0.50f), b3 = new(x0,  0.50f + yOffsetTop,  0.50f);
-
-            AddQuad(dst, f3, b3, b2, f2, mat, shade);
-            AddQuad(dst, b0, b1, f1, f0, mat, (byte)(shade - 32));
-            AddQuad(dst, f0, f3, f2, f1, mat, (byte)(shade - 14));
-            AddQuad(dst, b1, b2, b3, b0, mat, (byte)(shade - 14));
-            AddQuad(dst, b0, f0, f3, b3, mat, (byte)(shade - 18));
-            AddQuad(dst, f1, b1, b2, f2, mat, (byte)(shade - 18));
         }
 
         private static void AddSlopedWedgeZ(
@@ -1243,17 +1587,20 @@ namespace Stratocraft.Voxel.Jobs
             float x0, float x1,
             float yMin, float yMax,
             byte mat,
-            byte shade)
+            byte shade,
+            bool cullSidesX)
         {
+            byte lCull = cullSidesX ? ArchitecturalShapeCatalog.FaceNegX : (byte)0;
+            byte rCull = cullSidesX ? ArchitecturalShapeCatalog.FacePosX : (byte)0;
             Vector3 bFL = new(x0, yMin, -0.50f), bFR = new(x1, yMin, -0.50f);
             Vector3 bBL = new(x0, yMin,  0.50f), bBR = new(x1, yMin,  0.50f);
             Vector3 tBL = new(x0, yMax,  0.50f), tBR = new(x1, yMax,  0.50f);
 
             AddQuad(dst, bFL, tBL, tBR, bFR, mat, shade);
-            AddQuad(dst, bBR, tBR, tBL, bBL, mat, (byte)(shade - 18));
-            AddQuad(dst, bBL, bFL, bFR, bBR, mat, (byte)(shade - 40));
-            dst.Add(new LocalKitTriangle(bFL, bBL, tBL, mat, (byte)(shade - 12)));
-            dst.Add(new LocalKitTriangle(bFR, tBR, bBR, mat, (byte)(shade - 12)));
+            AddQuad(dst, bBR, tBR, tBL, bBL, mat, (byte)(shade - 18), 0, false, ArchitecturalShapeCatalog.FacePosZ);
+            AddQuad(dst, bBL, bFL, bFR, bBR, mat, (byte)(shade - 40), 0, false, ArchitecturalShapeCatalog.FaceNegY);
+            dst.Add(new LocalKitTriangle(bFL, bBL, tBL, mat, (byte)(shade - 12), 0, false, lCull));
+            dst.Add(new LocalKitTriangle(bFR, tBR, bBR, mat, (byte)(shade - 12), 0, false, rCull));
         }
 
         private static void AddPitchedPrismX(
@@ -1262,22 +1609,20 @@ namespace Stratocraft.Voxel.Jobs
             float yBase, float yApex,
             float halfZ,
             byte mat,
-            byte shade)
+            byte shade,
+            bool cullEndsX)
         {
+            byte lCull = cullEndsX ? ArchitecturalShapeCatalog.FaceNegX : (byte)0;
+            byte rCull = cullEndsX ? ArchitecturalShapeCatalog.FacePosX : (byte)0;
             Vector3 lS = new(x0, yBase, -halfZ), rS = new(x1, yBase, -halfZ);
             Vector3 lN = new(x0, yBase,  halfZ), rN = new(x1, yBase,  halfZ);
             Vector3 lA = new(x0, yApex,  0f),    rA = new(x1, yApex,  0f);
 
             AddQuad(dst, lS, lA, rA, rS, mat, shade);
             AddQuad(dst, rN, rA, lA, lN, mat, (byte)(shade - 10));
-            AddQuad(dst, lN, lS, rS, rN, mat, (byte)(shade - 42));
-            dst.Add(new LocalKitTriangle(lS, lN, lA, mat, (byte)(shade - 16)));
-            dst.Add(new LocalKitTriangle(rS, rA, rN, mat, (byte)(shade - 16)));
-        }
-
-        private static void AddSlantedClapboard(List<LocalKitTriangle> dst, float y0, float y1, byte mat, byte shade)
-        {
-            AddBox(dst, -0.50f, 0.50f, y0, y1, -0.28f, 0.28f, mat, shade);
+            AddQuad(dst, lN, lS, rS, rN, mat, (byte)(shade - 42), 0, false, ArchitecturalShapeCatalog.FaceNegY);
+            dst.Add(new LocalKitTriangle(lS, lN, lA, mat, (byte)(shade - 16), 0, false, lCull));
+            dst.Add(new LocalKitTriangle(rS, rA, rN, mat, (byte)(shade - 16), 0, false, rCull));
         }
     }
 }

@@ -488,5 +488,54 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(pushed, Is.False, "Standing 1.80m x 0.70m player capsule must walk cleanly through the 2x3m 3D doorway without collision pushback!");
             Assert.That(VoxelSettlementArchitectureStamp.StoryHeightBlocks, Is.GreaterThanOrEqualTo(5));
         }
+
+        [Test]
+        public void MK87_DenseCityTriangleBudget_CropsWalkability_AndTreeCanopyRoofBuffer()
+        {
+            // 1) Kuzey Metropolu (3, 39) yogun 3-4 katli apartman chunk'inda ucgen butcesi:
+            // Devir #086'daki ~155.000 ucgen/chunk yerine yakin (LOD0) < 16.000 ve uzak (LOD1 distantExteriorOnly) < 5.000 ucgen olmali!
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>();
+            var worldMicroPools = new Dictionary<(int cx, int cz), MicroVoxelPool4096?[]>();
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var (vox, _, mp) = GenerateFullChunk(3 + dx, 39 + dz);
+                    worldChunks[(3 + dx, 39 + dz)] = vox;
+                    worldMicroPools[(3 + dx, 39 + dz)] = mp;
+                }
+            }
+
+            var nearTris = new List<FacetedVoxelTriangle>(16384);
+            var distantTris = new List<FacetedVoxelTriangle>(4096);
+            // Yuzey + 4 katli sehir mimarisi dilimi (minY: 110 -> yeralti magara piramitlerini ayirarak dogrudan sehir/sokak ucgenlerini olcer!)
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                3, 39, 256, worldChunks, nearTris, worldMicroPools: worldMicroPools, minY: 110, distantExteriorOnly: false);
+            HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                3, 39, 256, worldChunks, distantTris, worldMicroPools: worldMicroPools, minY: 110, distantExteriorOnly: true);
+
+            Assert.That(nearTris.Count, Is.LessThan(26000),
+                $"Near dense 2-apartment city chunk (3,39) must stay under 26,000 triangles (<13k/building) for 60+ FPS, got {nearTris.Count}.");
+            Assert.That(distantTris.Count, Is.LessThan(7500),
+                $"Distant city chunk (3,39) with distantExteriorOnly must stay under 7,500 triangles, got {distantTris.Count}.");
+            Assert.That(distantTris.Count, Is.LessThan(nearTris.Count / 2),
+                $"Distant LOD1 chunk mesh ({distantTris.Count}) must cull >50% of near interior/detail triangles ({nearTris.Count}).");
+
+            // 2) Tarla ekinleri (UtilVarGoldenWheat) icinden oyuncu kapsulu takilmadan gecmeli
+            uint wheatRaw = VoxelBitUtility.PackStandard(
+                MaterialIdCatalog.StrawChinkingBundle,
+                VoxelBitUtility.FullDensity,
+                ArchitecturalShapeCatalog.KitWellAndFence,
+                ArchitecturalShapeCatalog.PackKitYawAndVariant(0, ArchitecturalShapeCatalog.UtilVarGoldenWheat),
+                BlokKokenDurumu.OyuncuItemBlogu,
+                0);
+            Assert.That(Stage1PlayerMovementBridge.IsHardCollisionVoxelPure(wheatRaw), Is.False,
+                "3D Golden Wheat crops must be walkable without blocking the player capsule.");
+
+            // 3) Yerlesim sinirina 4m mesafedeki dis sutunda +6m agac taci tamponu aktif olmali (catilara agac dali girmemeli!)
+            // Guney Koyu cx in [-2..+2] => bati siniri wx = -32; wx = -36 (4m disarisi) rezerve edilmis donmeli!
+            Assert.That(SettlementLayoutSystem.IsColumnReservedBySettlement(-36, -10 * 16 + 8), Is.True,
+                "+6m canopy buffer around settlement border must block adjacent trees from clipping into village roofs.");
+        }
     }
 }

@@ -294,7 +294,7 @@ namespace Stratocraft.Character
             byte mat = VoxelBitUtility.GetMaterialId(raw);
             if (mat == MaterialIdCatalog.Air || mat == MaterialIdCatalog.GlowingMoss) return false;
             byte shape = VoxelBitUtility.GetShapeId(raw);
-            if (ArchitecturalShapeCatalog.IsPassableOpenDoorShape(shape) || shape == ArchitecturalShapeCatalog.KitDoorFrameJamb)
+            if (ArchitecturalShapeCatalog.IsPassableWalkthroughKit(shape, VoxelBitUtility.GetRotationState(raw)))
             {
                 return false;
             }

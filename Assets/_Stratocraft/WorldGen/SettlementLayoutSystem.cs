@@ -2042,7 +2042,8 @@ namespace Stratocraft.WorldGen.Generators
                     bool onSouth = dz == MacroCityDistrictPlanner.CurtainWallMinOffset;
                     bool onNorth = dz == MacroCityDistrictPlanner.CurtainWallMaxOffset;
 
-                    // Guney sur hattinda (dz == -23, cz == +13) ve guney yan surlarda (dz < -12) [-24..23] penceresi seyreltmesi
+                    // Guney sur hattinda (dz == -23, cz == +13) ve guney yan surlarda (dz < -12) [-24..23] site-sayaci seyreltmesi
+                    // (Gercek 3B voksel perde sur VoxelSettlementArchitectureStamp icinde %100 kesintisiz basilir!)
                     if (onSouth && !onWest && !onEast && dx != 0 && (dx & 3) != 0)
                     {
                         return 0;
@@ -2347,6 +2348,12 @@ namespace Stratocraft.WorldGen.Generators
             int cz = FloorDiv(wz, 16);
             if (!TryGetSettlementCoveringChunk(cx, cz, out SettlementDescriptor s))
             {
+                // +6m agac taci / dal tamponu: yerlesim sinirinin dibindeki agaclarin dallari sinir evlerinin catisina Giremez!
+                const int canopyBuffer = 6;
+                if (TryGetSettlementCoveringChunk(FloorDiv(wx - canopyBuffer, 16), cz, out SettlementDescriptor sb1) && sb1.Tier != SettlementTier.None) return true;
+                if (TryGetSettlementCoveringChunk(FloorDiv(wx + canopyBuffer, 16), cz, out SettlementDescriptor sb2) && sb2.Tier != SettlementTier.None) return true;
+                if (TryGetSettlementCoveringChunk(cx, FloorDiv(wz - canopyBuffer, 16), out SettlementDescriptor sb3) && sb3.Tier != SettlementTier.None) return true;
+                if (TryGetSettlementCoveringChunk(cx, FloorDiv(wz + canopyBuffer, 16), out SettlementDescriptor sb4) && sb4.Tier != SettlementTier.None) return true;
                 return false;
             }
 
@@ -2444,55 +2451,56 @@ namespace Stratocraft.WorldGen.Generators
             switch (s.Tier)
             {
                 case SettlementTier.Village:
-                    // Merkez koy meydani (10x10m)
-                    if (dx == 0 && dz == 0 && lx >= 3 && lx <= 12 && lz >= 3 && lz <= 12)
+                    // Merkez koy meydani (12x12m tas doseme + bordur)
+                    if (dx == 0 && dz == 0 && lx >= 2 && lx <= 13 && lz >= 2 && lz <= 13)
                     {
-                        surfaceMat = (lx == 3 || lx == 12 || lz == 3 || lz == 12)
-                            ? MaterialIdCatalog.Cobblestone
-                            : MaterialIdCatalog.Gravel;
+                        surfaceMat = (lx == 2 || lx == 13 || lz == 2 || lz == 13)
+                            ? MaterialIdCatalog.StoneBrick
+                            : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
-                    // N-S ve E-W toprak koy yollari (3m genis)
-                    if (dx == 0 && lx >= 7 && lx <= 9)
+                    // N-S ve E-W kesintisiz 4m koy yollari (testere disi olmadan!)
+                    if (dx == 0 && lx >= 6 && lx <= 9)
                     {
-                        surfaceMat = lx == 8 ? MaterialIdCatalog.Dirt : MaterialIdCatalog.Gravel;
+                        surfaceMat = (lx == 6 || lx == 9) ? MaterialIdCatalog.Gravel : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
-                    if (dz == 0 && lz >= 7 && lz <= 9)
+                    if (dz == 0 && lz >= 6 && lz <= 9)
                     {
-                        surfaceMat = lz == 8 ? MaterialIdCatalog.Dirt : MaterialIdCatalog.Gravel;
+                        surfaceMat = (lz == 6 || lz == 9) ? MaterialIdCatalog.Gravel : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
-                    // 5x5 koy ic halka patikalari
-                    if (adx <= 1 && adz <= 1 && ((adx == 1 && lx == 0) || (adz == 1 && lz == 0)))
+                    // 5x5 koy ic halka ve kapi onu baglanti yollari (3m genis)
+                    if (adx <= 1 && adz <= 1 && (lx <= 1 || lx >= 14 || lz <= 1 || lz >= 14))
                     {
-                        surfaceMat = MaterialIdCatalog.Gravel;
+                        surfaceMat = MaterialIdCatalog.Cobblestone;
                         return true;
                     }
                     return false;
 
                 case SettlementTier.Town:
-                    // Merkez kasaba meydani (14x14m tas doseme)
+                    // Merkez kasaba meydani (14x14m kesme tas & Arnavut kaldirimi)
                     if (dx == 0 && dz == 0 && lx >= 1 && lx <= 14 && lz >= 1 && lz <= 14)
                     {
-                        surfaceMat = ((lx + lz) & 1) == 0 ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.StoneBrick;
+                        surfaceMat = ((lx + lz) & 1) == 0 ? MaterialIdCatalog.Cobblestone : MaterialIdCatalog.CutAshlarStone;
                         return true;
                     }
-                    // Tas doseli ana caddeler (4m genis: Cobblestone + StoneBrick bordur)
+                    // Tas doseli ana caddeler (4m genis + bordur)
                     if (dx == 0 && lx >= 6 && lx <= 9)
                     {
-                        surfaceMat = (lx == 6 || lx == 9) ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Cobblestone;
+                        surfaceMat = (lx == 6 || lx == 9) ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
                     if (dz == 0 && lz >= 6 && lz <= 9)
                     {
-                        surfaceMat = (lz == 6 || lz == 9) ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Cobblestone;
+                        surfaceMat = (lz == 6 || lz == 9) ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
-                    // 11x11 Kasaba izgara sokak agi (|dx| <= 4 && |dz| <= 4 kenar sokaklari)
-                    if (adx <= 4 && adz <= 4 && (lx == 0 || lz == 0 || (adx <= 1 && adz <= 1 && (lx <= 2 || lz <= 2))))
+                    // 11x11 Kasaba kesintisiz izgara sokak ve kaldirim agi (4m genis kenar caddeleri!)
+                    if (adx <= 4 && adz <= 4 && (lx <= 1 || lx >= 14 || lz <= 1 || lz >= 14))
                     {
-                        surfaceMat = MaterialIdCatalog.Cobblestone;
+                        bool isCurb = lx == 1 || lx == 14 || lz == 1 || lz == 14;
+                        surfaceMat = isCurb ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone;
                         return true;
                     }
                     return false;
@@ -2528,31 +2536,34 @@ namespace Stratocraft.WorldGen.Generators
                             return true;
                         }
 
-                        // 4 Ana Zafer Bulvari (5m genis mermer seritli tas bulvar)
-                        if (dx == 0 && lx >= 6 && lx <= 10)
+                        // 4 Ana Zafer Bulvari (6m genis mermer seritli tas bulvar + kesme tas kaldirim)
+                        if (dx == 0 && lx >= 5 && lx <= 10)
                         {
-                            surfaceMat = lx == 8
+                            surfaceMat = (lx == 7 || lx == 8)
                                 ? MaterialIdCatalog.Marble
-                                : ((lx == 6 || lx == 10) ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Cobblestone);
+                                : ((lx == 5 || lx == 10) ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone);
                             return true;
                         }
-                        if (dz == 0 && lz >= 6 && lz <= 10)
+                        if (dz == 0 && lz >= 5 && lz <= 10)
                         {
-                            surfaceMat = lz == 8
+                            surfaceMat = (lz == 7 || lz == 8)
                                 ? MaterialIdCatalog.Marble
-                                : ((lz == 6 || lz == 10) ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Cobblestone);
+                                : ((lz == 5 || lz == 10) ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone);
                             return true;
                         }
 
-                        // Metropol Sur Ici Izgara Sokaklar ve Ara Caddeler (bina ayak izlerine (X in 1..15, Z in 1..7 & 9..15) asla girmez)
+                        // Metropol Sur Ici Kesintisiz Izgara Caddeler, Ara Sokaklar ve Yaya Kaldirimlari!
                         if (dx > MacroCityDistrictPlanner.CurtainWallMinOffset &&
                             dx < MacroCityDistrictPlanner.CurtainWallMaxOffset &&
                             dz > MacroCityDistrictPlanner.CurtainWallMinOffset &&
-                            dz < MacroCityDistrictPlanner.CurtainWallMaxOffset)
+                            dz < MacroCityDistrictPlanner.CurtainWallMaxOffset &&
+                            MacroCityDistrictPlanner.ClassifyChunkDistrict(dx, dz) != MetropolisDistrictKind.ExtramuralAgriculturalBelt)
                         {
-                            if (lx == 0 || lz == 0 || lz == 8)
+                            bool onStreetCore = lx == 0 || lx == 15 || lz == 0 || lz == 15 || lz == 8;
+                            bool onSidewalkCurb = lx == 1 || lx == 14 || lz == 1 || lz == 7 || lz == 9 || lz == 14;
+                            if (onStreetCore || onSidewalkCurb)
                             {
-                                surfaceMat = (lx == 0 && lz == 0) ? MaterialIdCatalog.StoneBrick : MaterialIdCatalog.Cobblestone;
+                                surfaceMat = onSidewalkCurb ? MaterialIdCatalog.CutAshlarStone : MaterialIdCatalog.Cobblestone;
                                 return true;
                             }
                         }
@@ -2618,8 +2629,16 @@ namespace Stratocraft.WorldGen.Generators
             int dx = chunkX - s.CenterChunkX;
             int dz = chunkZ - s.CenterChunkZ;
 
-            // 0) 48x48 Metropol Sehir 3x2 Saray Kampusu ve 6x6 Anitsal Merkez Terasi:
-            // Ucurum veya dikis olusmamasi icin tamami AnchorBaseY kotuna puruzsuz duzlenir!
+            // 0A) ONCE bina parsellerinin dogal zemin teraslarini duzle (boylece sonradan basilan tas caddeler/kaldirimlar ASLA ezilmez!)
+            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[MaxSitesPerChunk];
+            int siteCount = PopulateChunkSettlementSites(chunkX, chunkZ, sites);
+            for (int i = 0; i < siteCount; i++)
+            {
+                LevelModularBuildingTerrace(voxels, in sites[i]);
+            }
+
+            // 0B) 48x48 Metropol Sehir 3x2 Saray Kampusu ve 6x6 Anitsal Merkez Terasi:
+            // Ucurum veya dikis olusmamasi icin tamami AnchorBaseY kotuna keskin tas doseme ile duzlenir!
             if (s.Tier == SettlementTier.City && s.FootprintRadiusChunks >= 16 &&
                 MacroCityDistrictPlanner.IsInsideMonumentalTerracePad(dx, dz))
             {
@@ -2629,14 +2648,16 @@ namespace Stratocraft.WorldGen.Generators
                     for (int lx = 0; lx < 16; lx++)
                     {
                         byte padMat = isPalacePad
-                            ? ((lx == 0 || lx == 15 || lz == 0 || lz == 15) ? MaterialIdCatalog.Marble : MaterialIdCatalog.StoneBrick)
+                            ? ((lx == 0 || lx == 15 || lz == 0 || lz == 15) ? MaterialIdCatalog.Marble : MaterialIdCatalog.CutAshlarStone)
                             : MaterialIdCatalog.Cobblestone;
-                        StampLeveledSurfaceColumn(voxels, lx, s.AnchorBaseY, lz, padMat, s.BiomeId, clearHeight: 16);
+                        StampLeveledSurfaceColumn(
+                            voxels, lx, s.AnchorBaseY, lz, padMat, s.BiomeId, clearHeight: 16,
+                            shapeId: ArchitecturalShapeCatalog.FullMasonryCube);
                     }
                 }
             }
 
-            // 1) Yollar ve Meydanlar (duz teras + tas/toprak kaplama + acik bas-ustu hava)
+            // 1) Yollar, Kaldirimlar ve Meydanlar (FullMasonryCube ile testere dissiz keskin tas doseme!)
             for (int lz = 0; lz < 16; lz++)
             {
                 int wz = chunkZ * 16 + lz;
@@ -2649,11 +2670,13 @@ namespace Stratocraft.WorldGen.Generators
 
                     int wx = chunkX * 16 + lx;
                     int baseY = ResolveSettlementColumnSurfaceY(in s, wx, wz);
-                    StampLeveledSurfaceColumn(voxels, lx, baseY, lz, roadMat, s.BiomeId, clearHeight: 10);
+                    StampLeveledSurfaceColumn(
+                        voxels, lx, baseY, lz, roadMat, s.BiomeId, clearHeight: 10,
+                        shapeId: ArchitecturalShapeCatalog.FullMasonryCube);
                 }
             }
 
-            // 2) Tarla / Ciftlik Parselleri (surulmus toprak siralari + 1m sulama kanali + ahsap cit direkleri)
+            // 2) Tarla / Ciftlik Parselleri (koyu surulmus toprak kariklari + 1m tas kenarli sulama kanali)
             if (IsFarmPlotChunk(in s, dx, dz))
             {
                 StampIrrigatedFarmPlot(in s, chunkX, chunkZ, voxels, fluids);
@@ -2671,7 +2694,9 @@ namespace Stratocraft.WorldGen.Generators
                         bool isEdge = basinRadius > 0 && (Math.Abs(bx - 8) == basinRadius || Math.Abs(bz - 8) == basinRadius);
                         if (isEdge)
                         {
-                            StampLeveledSurfaceColumn(voxels, bx, baseY, bz, MaterialIdCatalog.Marble, s.BiomeId, clearHeight: 8);
+                            StampLeveledSurfaceColumn(
+                                voxels, bx, baseY, bz, MaterialIdCatalog.Marble, s.BiomeId, clearHeight: 8,
+                                shapeId: ArchitecturalShapeCatalog.FullMasonryCube);
                         }
                         else if (fluids != null)
                         {
@@ -2690,14 +2715,6 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            // 4) Chunk icindeki tum moduler bina parsellerinin dogal zemin teraslarini duzle
-            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[MaxSitesPerChunk];
-            int siteCount = PopulateChunkSettlementSites(chunkX, chunkZ, sites);
-            for (int i = 0; i < siteCount; i++)
-            {
-                LevelModularBuildingTerrace(voxels, in sites[i]);
-            }
-
             return true;
         }
 
@@ -2714,21 +2731,13 @@ namespace Stratocraft.WorldGen.Generators
                 for (int lx = 2; lx <= 13; lx++)
                 {
                     bool isBorder = lx == 2 || lx == 13 || lz == 2 || lz == 13;
-                    bool isGate = (lx == 7 || lx == 8) && (lz == 2 || lz == 13);
-                    bool isWaterTrench = !isBorder && (lx == 7 || lx == 8);
+                    bool isWaterTrench = !isBorder && lx == 8;
 
                     if (isBorder)
                     {
-                        StampLeveledSurfaceColumn(voxels, lx, centerBaseY, lz, MaterialIdCatalog.Grass, s.BiomeId, clearHeight: 6);
-                        if (!isGate && ((lx + lz) % 3 == 0 || ((lx == 2 || lx == 13) && (lz == 2 || lz == 13))))
-                        {
-                            int postIdx = ((centerBaseY + 1) << 8) | (lz << 4) | lx;
-                            if (postIdx < voxels.Length)
-                            {
-                                voxels[postIdx] = VoxelBitUtility.PackStandard(
-                                    MaterialIdCatalog.OakWood, VoxelBitUtility.FullDensity, 2, 0, BlokKokenDurumu.DogalKutle, 0);
-                            }
-                        }
+                        StampLeveledSurfaceColumn(
+                            voxels, lx, centerBaseY, lz, MaterialIdCatalog.Cobblestone, s.BiomeId, clearHeight: 6,
+                            shapeId: ArchitecturalShapeCatalog.FullMasonryCube);
                     }
                     else if (isWaterTrench)
                     {
@@ -2738,7 +2747,7 @@ namespace Stratocraft.WorldGen.Generators
                         if (bedIdx >= 0 && trenchIdx < voxels.Length)
                         {
                             voxels[bedIdx] = VoxelBitUtility.PackStandard(
-                                MaterialIdCatalog.Dirt, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                                MaterialIdCatalog.StoneBrick, VoxelBitUtility.FullDensity, ArchitecturalShapeCatalog.FullMasonryCube, 0, BlokKokenDurumu.DogalKutle, 0);
                             voxels[trenchIdx] = 0u;
                             if (fluids != null && trenchIdx < fluids.Length)
                             {
@@ -2752,8 +2761,10 @@ namespace Stratocraft.WorldGen.Generators
                     }
                     else
                     {
-                        byte farmMat = (lz & 1) == 0 ? MaterialIdCatalog.Dirt : MaterialIdCatalog.Grass;
-                        StampLeveledSurfaceColumn(voxels, lx, centerBaseY, lz, farmMat, s.BiomeId, clearHeight: 6);
+                        // Koyu, nemli surulmus karik topragi (ustune VoxelSettlementArchitectureStamp 3B altin bugday/sebze diker!)
+                        StampLeveledSurfaceColumn(
+                            voxels, lx, centerBaseY, lz, MaterialIdCatalog.Dirt, s.BiomeId, clearHeight: 6,
+                            shapeId: ArchitecturalShapeCatalog.FullMasonryCube);
                     }
                 }
             }
@@ -2766,7 +2777,8 @@ namespace Stratocraft.WorldGen.Generators
             int lz,
             byte surfaceMat,
             int biomeId,
-            int clearHeight)
+            int clearHeight,
+            byte shapeId = 0)
         {
             if ((uint)lx >= 16u || (uint)lz >= 16u || baseY < 4 || baseY >= StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 2)
             {
@@ -2775,7 +2787,7 @@ namespace Stratocraft.WorldGen.Generators
 
             StratocraftFloatingIslandWorldGen.EnsureSolidFoundationUnder(voxels, lx, baseY, lz, biomeId);
             voxels[(baseY << 8) | (lz << 4) | lx] = VoxelBitUtility.PackStandard(
-                surfaceMat, VoxelBitUtility.FullDensity, 0, 0, BlokKokenDurumu.DogalKutle, 0);
+                surfaceMat, VoxelBitUtility.FullDensity, shapeId, 0, BlokKokenDurumu.DogalKutle, 0);
 
             int maxClearY = Math.Min(StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 2, baseY + clearHeight);
             for (int y = baseY + 1; y <= maxClearY; y++)

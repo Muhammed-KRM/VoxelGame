@@ -103,7 +103,8 @@ namespace Stratocraft.Voxel.Jobs
             int minY = 0,
             IReadOnlyDictionary<(int cx, int cz), byte[]>? soilMoistureChunks = null,
             IReadOnlyDictionary<(int cx, int cz), byte[]>? snowSweChunks256 = null,
-            IReadOnlyDictionary<(int cx, int cz), ChunkSkyOcclusionMap256>? skyOcclusionMaps = null)
+            IReadOnlyDictionary<(int cx, int cz), ChunkSkyOcclusionMap256>? skyOcclusionMaps = null,
+            bool distantExteriorOnly = false)
         {
             if (worldChunks == null) throw new ArgumentNullException(nameof(worldChunks));
             if (!worldChunks.TryGetValue((chunkX, chunkZ), out uint[]? centerChunk) || centerChunk == null) return;
@@ -552,9 +553,16 @@ namespace Stratocraft.Voxel.Jobs
                         }
 
                         int triStartIdx = outTriangles.Count;
+                        byte rotState = VoxelBitUtility.GetRotationState(raw);
+                        byte effectiveOccludedMask = ArchitecturalShapeCatalog.IsSculpted3DKitShape(shapeId)
+                            ? (byte)(occludedMask | ComputeKitCourseAdjacencyMask(padded, padX, padZ, px, py, pz, shapeId, rotState))
+                            : occludedMask;
                         EmitArchitecturalShape(
-                            new Vector3(lx, ly, lz), matId, shapeId, VoxelBitUtility.GetRotationState(raw), dmg,
-                            outTriangles, extendFoundationSkirt: restsOnNaturalSdf, occludedFaceMask: occludedMask);
+                            new Vector3(lx, ly, lz), matId, shapeId, rotState, dmg,
+                            outTriangles,
+                            extendFoundationSkirt: restsOnNaturalSdf,
+                            occludedFaceMask: effectiveOccludedMask,
+                            distantExteriorOnly: distantExteriorOnly);
 
                         if (paddedSnowSwe != null && paddedTopOccluderY != null && ResolveMaterialDefaultTemperature(matId) == 0)
                         {
@@ -817,6 +825,96 @@ namespace Stratocraft.Voxel.Jobs
             return mask;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsKitVerticalCourseNeighbor(byte selfShape, byte nShape)
+        {
+            if (nShape == ArchitecturalShapeCatalog.FullMasonryCube) return true;
+            if (selfShape == nShape && selfShape is ArchitecturalShapeCatalog.KitChimneyFlue or
+                ArchitecturalShapeCatalog.KitClassicalColumnShaft or
+                ArchitecturalShapeCatalog.KitTimberPostCorner or
+                ArchitecturalShapeCatalog.KitAshlarQuoinBlock or
+                ArchitecturalShapeCatalog.KitNotchedLogCorner or
+                ArchitecturalShapeCatalog.KitDoorFrameJamb)
+            {
+                return true;
+            }
+            if ((selfShape is >= 21 and <= 30 or ArchitecturalShapeCatalog.KitDoorFrameJamb or ArchitecturalShapeCatalog.KitShutteredWindow or ArchitecturalShapeCatalog.KitArchedStoneWindow) &&
+                (nShape is >= 21 and <= 30 or ArchitecturalShapeCatalog.KitDoorFrameJamb))
+            {
+                return true;
+            }
+            if ((selfShape is ArchitecturalShapeCatalog.KitClassicalColumnBase or ArchitecturalShapeCatalog.KitClassicalColumnShaft or ArchitecturalShapeCatalog.KitClassicalColumnCap) &&
+                (nShape is ArchitecturalShapeCatalog.KitClassicalColumnBase or ArchitecturalShapeCatalog.KitClassicalColumnShaft or ArchitecturalShapeCatalog.KitClassicalColumnCap))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsKitTangentHorizontalNeighbor(byte selfShape, byte nShape)
+        {
+            if (nShape == ArchitecturalShapeCatalog.FullMasonryCube) return true;
+            if (selfShape is >= 21 and <= 30 or ArchitecturalShapeCatalog.KitDoorFrameJamb or ArchitecturalShapeCatalog.KitShutteredWindow or ArchitecturalShapeCatalog.KitArchedStoneWindow)
+            {
+                return nShape is >= 21 and <= 30 or ArchitecturalShapeCatalog.KitDoorFrameJamb;
+            }
+            if (selfShape is >= 34 and <= 37)
+            {
+                return nShape is >= 34 and <= 38;
+            }
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte ComputeKitCourseAdjacencyMask(
+            uint[] padded, int padX, int padZ, int px, int py, int pz, byte shapeId, byte rotState)
+        {
+            byte mask = 0;
+            uint upRaw = padded[((py + 1) * padZ + pz) * padX + px];
+            if (VoxelBitUtility.GetMaterialId(upRaw) != 0 && IsKitVerticalCourseNeighbor(shapeId, VoxelBitUtility.GetShapeId(upRaw)))
+            {
+                mask |= ArchitecturalShapeCatalog.FacePosY;
+            }
+
+            uint dnRaw = padded[((py - 1) * padZ + pz) * padX + px];
+            if (VoxelBitUtility.GetMaterialId(dnRaw) != 0 && IsKitVerticalCourseNeighbor(shapeId, VoxelBitUtility.GetShapeId(dnRaw)))
+            {
+                mask |= ArchitecturalShapeCatalog.FaceNegY;
+            }
+
+            // Yalnizca duvar/catinin uzandigi teget eksendeki (yaw 0/2 -> X, yaw 1/3 -> Z) yan komsulari birlestir!
+            int yaw = rotState & 3;
+            if ((yaw & 1) == 0)
+            {
+                uint eRaw = padded[(py * padZ + pz) * padX + (px + 1)];
+                if (VoxelBitUtility.GetMaterialId(eRaw) != 0 && IsKitTangentHorizontalNeighbor(shapeId, VoxelBitUtility.GetShapeId(eRaw)))
+                {
+                    mask |= ArchitecturalShapeCatalog.FacePosX;
+                }
+                uint wRaw = padded[(py * padZ + pz) * padX + (px - 1)];
+                if (VoxelBitUtility.GetMaterialId(wRaw) != 0 && IsKitTangentHorizontalNeighbor(shapeId, VoxelBitUtility.GetShapeId(wRaw)))
+                {
+                    mask |= ArchitecturalShapeCatalog.FaceNegX;
+                }
+            }
+            else
+            {
+                uint nRaw = padded[(py * padZ + (pz + 1)) * padX + px];
+                if (VoxelBitUtility.GetMaterialId(nRaw) != 0 && IsKitTangentHorizontalNeighbor(shapeId, VoxelBitUtility.GetShapeId(nRaw)))
+                {
+                    mask |= ArchitecturalShapeCatalog.FacePosZ;
+                }
+                uint sRaw = padded[(py * padZ + (pz - 1)) * padX + px];
+                if (VoxelBitUtility.GetMaterialId(sRaw) != 0 && IsKitTangentHorizontalNeighbor(shapeId, VoxelBitUtility.GetShapeId(sRaw)))
+                {
+                    mask |= ArchitecturalShapeCatalog.FaceNegZ;
+                }
+            }
+
+            return mask;
+        }
+
         private static void EmitDualQuadAsFacetedTriangles(
             Vector3[] dualVertices, byte[] dualMaterials, byte[] dualTemps, byte[] dualAo, bool[] dualValid,
             int i0, int i1, int i2, int i3, bool flipWinding, uint seedHash, List<FacetedVoxelTriangle> outTriangles)
@@ -1048,14 +1146,19 @@ namespace Stratocraft.Voxel.Jobs
 
         public static void EmitArchitecturalShape(
             Vector3 cellOrigin, byte matId, byte shapeId, byte rotationState, byte damageState,
-            List<FacetedVoxelTriangle> outTriangles, bool extendFoundationSkirt = false, byte occludedFaceMask = 0)
+            List<FacetedVoxelTriangle> outTriangles,
+            bool extendFoundationSkirt = false,
+            byte occludedFaceMask = 0,
+            bool distantExteriorOnly = false)
         {
             byte baseAo = PackAoAndWear((byte)Math.Clamp(245 - damageState * 8, 145, 250), damageState);
             Vector3 center = cellOrigin + new Vector3(0.5f, 0.5f, 0.5f);
-            float skirtDrop = (extendFoundationSkirt && (rotationState & 0x1F) < 4) ? 0.24f : 0.0f;
+            bool isKit = ArchitecturalShapeCatalog.IsSculpted3DKitShape(shapeId);
+            float skirtDrop = (extendFoundationSkirt && (isKit || (rotationState & 0x1F) < 4)) ? 0.24f : 0.0f;
 
-            if (ArchitecturalShapeCatalog.IsSculpted3DKitShape(shapeId) &&
-                GlbVoxelKitTemplateBank.TryEmitSculptedKitShape(center, matId, shapeId, rotationState, baseAo, skirtDrop, outTriangles))
+            if (isKit &&
+                GlbVoxelKitTemplateBank.TryEmitSculptedKitShape(
+                    center, matId, shapeId, rotationState, baseAo, skirtDrop, outTriangles, occludedFaceMask, distantExteriorOnly))
             {
                 return;
             }

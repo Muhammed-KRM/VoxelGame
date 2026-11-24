@@ -90,13 +90,75 @@ namespace Stratocraft.Voxel.Data
         public const byte KitAnvilOnStump = 59;         // Kutuk kaide uzerinde boynuzlu demirci orsu
         public const byte KitSawhorseBench = 60;        // Capraz A-ayakli marangoz tezgahi ve kereste
         public const byte KitWeaponRack = 61;           // 3B celik mizrak/kilic dizili ahsap silahlik
-        public const byte KitWellAndFence = 62;         // rot 0..3: Cift rayli 3B tarla citi; rot 4..7: Kuyu cikrigi ve kovasi
+        public const byte KitWellAndFence = 62;         // v0: Cit, v1: Kuyu Cikrigi, v2: Bugday, v3: Sebze, v4: Sokak Feneri, v5: DuvarMesalesi, v6: Konsol, v7: Yelken
+
+        // Kit Alt-Varyant Kodlari (rotationState = (yaw & 3) | (variant << 2))
+        public const byte DoorVarLeftLower = 0;
+        public const byte DoorVarLeftUpper = 1;
+        public const byte DoorVarRightLower = 2;
+        public const byte DoorVarRightUpper = 3;
+
+        public const byte JambVarLeft = 0;
+        public const byte JambVarRight = 1;
+
+        public const byte WinVarLowerSill = 0;
+        public const byte WinVarUpperHead = 1;
+        public const byte WinVarSingleAttic = 2;
+
+        public const byte GableVarClayWall = 0;
+        public const byte GableVarShingleWall = 1;
+        public const byte GableVarClayBargeOverhang = 2;
+        public const byte GableVarShingleBargeOverhang = 3;
+
+        public const byte ChimneyVarShaft = 0;
+        public const byte ChimneyVarCrownCap = 1;
+
+        public const byte TimberVarVerticalPost = 0;
+        public const byte TimberVarCeilingJoist = 1;
+
+        public const byte UtilVarFence = 0;
+        public const byte UtilVarWellWindlass = 1;
+        public const byte UtilVarGoldenWheat = 2;
+        public const byte UtilVarGreenCrops = 3;
+        public const byte UtilVarStreetLantern = 4;
+        public const byte UtilVarWallSconce = 5;
+        public const byte UtilVarJettyCorbel = 6;
+        public const byte UtilVarWindmillSail = 7;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static byte PackKitYawAndVariant(int yawQuarterTurns, int variant)
+            => (byte)((yawQuarterTurns & 3) | ((variant & 7) << 2));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsSculpted3DKitShape(byte shapeId) => shapeId >= 21 && shapeId <= 62;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsSolidWallCourseKit(byte shapeId) => shapeId >= 21 && shapeId <= 30;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsIndoorCulledDistantPropKit(byte shapeId) => shapeId >= 49 && shapeId <= 61;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsPassableOpenDoorShape(byte shapeId) => shapeId == KitHingedDoorOpen;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsPassableWalkthroughKit(byte shapeId, byte rotationState)
+        {
+            if (shapeId == KitHingedDoorOpen)
+            {
+                return true;
+            }
+            if (shapeId == KitWellAndFence)
+            {
+                int variant = (rotationState >> 2) & 7;
+                return variant is UtilVarGoldenWheat or UtilVarGreenCrops or UtilVarWallSconce or UtilVarJettyCorbel;
+            }
+            if (shapeId == KitTimberPostCorner && ((rotationState >> 2) & 7) == TimberVarCeilingJoist)
+            {
+                return true;
+            }
+            return false;
+        }
 
         // 24 Kubik Grup SO(3) ortogonal baz matrisleri: her eleman (Right, Up, Forward) birim vektor uclusu
         private static readonly Vector3[] CubicBasisRight = new Vector3[24];

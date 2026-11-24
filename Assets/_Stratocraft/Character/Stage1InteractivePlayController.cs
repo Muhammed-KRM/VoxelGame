@@ -6156,7 +6156,8 @@ namespace Stratocraft.Character
                 minY: consolidatedMinY,
                 soilMoistureChunks: _bgDistantMeshSoilMap,
                 snowSweChunks256: _bgDistantMeshSnowMap,
-                skyOcclusionMaps: _bgDistantMeshSkyMap);
+                skyOcclusionMaps: _bgDistantMeshSkyMap,
+                distantExteriorOnly: true);
         }
 
         private void RunBgDistantMeshBatch()
@@ -6299,7 +6300,8 @@ namespace Stratocraft.Character
                     minY: consolidatedMinY,
                     soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
                     snowSweChunks256: _snowSystem.SnowSweChunks256,
-                    skyOcclusionMaps: _skyOcclusionMaps);
+                    skyOcclusionMaps: _skyOcclusionMaps,
+                    distantExteriorOnly: true);
             }
             else if (dist == 3)
             {
@@ -7168,7 +7170,8 @@ namespace Stratocraft.Character
                             minY: startupFluidMinY,
                             soilMoistureChunks: _soilMoistureSystem.SoilMoistureChunks,
                             snowSweChunks256: _snowSystem.SnowSweChunks256,
-                            skyOcclusionMaps: _skyOcclusionMaps);
+                            skyOcclusionMaps: _skyOcclusionMaps,
+                            distantExteriorOnly: true);
                         builtDistantTris[k] = dList;
                         builtSubEntries[k] = new ChunkSubMeshEntry
                         {
