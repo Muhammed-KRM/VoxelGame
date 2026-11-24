@@ -4499,11 +4499,11 @@ namespace Stratocraft.Character
     internal sealed class WorldLooseUnifiedRuntimeBridge
     {
         public readonly Stratocraft.Core.Structures.UnifiedStructureGraphSolver GraphSolver = new(4096, 12288);
-        public readonly CityChunkLodBatchRenderer CityLodRenderer = new(512, 65536);
+        public readonly CityChunkLodBatchRenderer CityLodRenderer = new(CityChunkLodBatchRenderer.DefaultMaxChunkCapacity, CityChunkLodBatchRenderer.DefaultMaxNodeCapacity);
 
         private const int Lod0PhysicsActiveRadiusChunks = 5;
-        private const int Lod0PhysicsEvictRadiusChunks = 7;
-        private const int SkylineMaxScanRadiusChunks = 44;
+        private const int Lod0PhysicsEvictRadiusChunks = 6;
+        private const int SkylineMaxScanRadiusChunks = 48;
 
         private readonly Stratocraft.Core.Structures.StructuralNode64[] _siteNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[8192];
         private readonly Stratocraft.Core.Structures.StructuralJointEdge32[] _siteEdgesScratch = new Stratocraft.Core.Structures.StructuralJointEdge32[24576];
@@ -4708,49 +4708,54 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// 48x48 Kuzey Metropolu ve uzak yerlesimler icin aktif LOD0 fizik penceresini (r &lt;= 5 chunk) RAM butcesi icinde tutar
-        /// ve uzaktaki sehir/saray chunk'larini LOD2 ufuk silueti icin CityLodRenderer'a hafifce on-kaydeder (0-GC).
+        /// 48x48 Kuzey Metropolu ve uzak yerlesimler icin aktif LOD0 fizik penceresini (cheb &lt;= 5 chunk = 80m) RAM &amp; 65536-dugum butcesi icinde tutar,
+        /// uzaklasan chunk'lari 0-dugumlu Lod2HorizonProxy'ye indirir ve ufuktaki sehir/saray/kasaba/koy chunk'larini 0-dugumlu proxy olarak on-kaydeder (0-GC).
         /// </summary>
         public void StepActiveWindowAndDistantCitySkyline(System.Numerics.Vector3 viewerPos)
         {
             int vCx = FloorDiv16(viewerPos.X);
             int vCz = FloorDiv16(viewerPos.Z);
 
-            // 1) Oyuncunun geride biraktigi (chebDist > 7 chunk = 112m) duzenlenmemis sehir sokaklarinin agir fizik dugumlerini bosalt;
-            // CityLodRenderer icindeki LOD2 siluet kaydini ise koru!
+            // 1) Oyuncunun geride biraktigi (chebDist > 6 chunk = 96m) sehir/saray chunk'larinin agir fizik & LOD0 dugumlerini bosalt,
+            // CityLodRenderer icindeki kaydi 0-dugumlu Lod2HorizonProxy olarak koru (65.536 dugum tavanina ASLA ulasilmaz!).
             int evictedThisFrame = 0;
-            for (int i = _activePhysicsChunkCount - 1; i >= 0 && evictedThisFrame < 2; i--)
+            for (int i = _activePhysicsChunkCount - 1; i >= 0 && evictedThisFrame < 6; i--)
             {
                 var (cx, cz) = _activePhysicsChunkList[i];
                 int cheb = System.Math.Max(System.Math.Abs(cx - vCx), System.Math.Abs(cz - vCz));
                 if (cheb <= Lod0PhysicsEvictRadiusChunks || HasChunkStructureEdits(cx, cz)) continue;
 
                 ReleaseChunkUnifiedNodes(cx, cz);
+                CityLodRenderer.DowngradeChunkToSkylineProxy(cx, cz, viewerPos.X, viewerPos.Z);
                 evictedThisFrame++;
             }
 
-            // 2) Oyuncunun hemen etrafindaki (chebDist <= 4 chunk = 64m) sehir/saray chunk'larinin tam LOD0 fizik grafini yukle
+            // 2) Oyuncunun hemen etrafindaki (chebDist <= 5 chunk = 80m) sehir/saray/kasaba/koy chunk'larini ic halkadan disa dogru tam LOD0 yukle
             int promotedThisFrame = 0;
-            for (int dz = -Lod0PhysicsActiveRadiusChunks; dz <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 2; dz++)
+            for (int ring = 0; ring <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 4; ring++)
             {
-                for (int dx = -Lod0PhysicsActiveRadiusChunks; dx <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 2; dx++)
+                for (int dz = -ring; dz <= ring && promotedThisFrame < 4; dz++)
                 {
-                    if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) > 4) continue;
-                    int cx = vCx + dx;
-                    int cz = vCz + dz;
-                    int ck = PackChunkKey(cx, cz);
-                    if (_spawnedUnifiedChunkKeys.Contains(ck)) continue;
-                    if (SpawnChunkSettlementUnifiedGraph(cx, cz, viewerPos.X, viewerPos.Z) > 0)
+                    for (int dx = -ring; dx <= ring && promotedThisFrame < 4; dx++)
                     {
-                        promotedThisFrame++;
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) != ring) continue;
+                        int cx = vCx + dx;
+                        int cz = vCz + dz;
+                        int ck = PackChunkKey(cx, cz);
+                        if (_spawnedUnifiedChunkKeys.Contains(ck)) continue;
+                        if (SpawnChunkSettlementUnifiedGraph(cx, cz, viewerPos.X, viewerPos.Z) > 0)
+                        {
+                            promotedThisFrame++;
+                        }
                     }
                 }
             }
 
-            // 3) Uzak Kuzey Metropolu (Z = +192..+960m), Guney Koyu ve Bati Kasabasi ufuk silueti (LOD1/LOD2) on-kaydi
-            if (CityLodRenderer.RegisteredChunkCount >= 440 || CityLodRenderer.TotalRegisteredNodes >= 56000)
+            // 3) Uzak Kuzey Metropolu (Z = +192..+960m), Guney Koyu ve Bati Kasabasi ufuk siluetini (LOD2)
+            // 0-dugumlu RegisterSkylineChunkProxy ile _nodeBuffer'dan 0 dugum harcayarak on-kaydet!
+            if (CityLodRenderer.RegisteredChunkCount >= CityChunkLodBatchRenderer.DefaultMaxChunkCapacity - 128)
             {
-                System.Span<(int ChunkX, int ChunkZ)> evictCandidates = stackalloc (int ChunkX, int ChunkZ)[8];
+                System.Span<(int ChunkX, int ChunkZ)> evictCandidates = stackalloc (int ChunkX, int ChunkZ)[16];
                 int pendingEvict = CityLodRenderer.GetChunksPendingEviction(
                     viewerPos.X,
                     viewerPos.Z,
@@ -4768,7 +4773,7 @@ namespace Stratocraft.Character
                         CityChunkLodBatchRenderer.Lod2MaxDistanceMeters + 64f,
                         maxEvictions: pendingEvict);
                 }
-                if (CityLodRenderer.RegisteredChunkCount >= 440 || CityLodRenderer.TotalRegisteredNodes >= 56000)
+                if (CityLodRenderer.RegisteredChunkCount >= CityChunkLodBatchRenderer.DefaultMaxChunkCapacity - 64)
                 {
                     return;
                 }
@@ -4776,8 +4781,11 @@ namespace Stratocraft.Character
 
             const int gridSide = SkylineMaxScanRadiusChunks * 2 + 1;
             const int totalCells = gridSide * gridSide;
+            System.Span<Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec> siteBuf =
+                stackalloc Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec[Stratocraft.WorldGen.Generators.SettlementLayoutSystem.MaxSitesPerChunk];
+
             int registeredSkylineNow = 0;
-            for (int probe = 0; probe < 16 && registeredSkylineNow < 2; probe++)
+            for (int probe = 0; probe < 48 && registeredSkylineNow < 16; probe++)
             {
                 int idx = _skylineScanCursor++ % totalCells;
                 int dx = (idx % gridSide) - SkylineMaxScanRadiusChunks;
@@ -4787,34 +4795,92 @@ namespace Stratocraft.Character
 
                 int cx = vCx + dx;
                 int cz = vCz + dz;
-                // Çok uzak (>16 chunk = 256m) metropol kuşağında saray merkezini (cx in -2..2, cz in 34..39) tam al,
-                // dış apartman bloklarını 2x2 seyrek örnekle ki 2.304 chunk'ın ufuk silueti < 440 slot içinde eksiksiz görünsün!
-                bool isPalaceCore = cx >= -2 && cx <= 2 && cz >= 34 && cz <= 39;
-                if (cheb > 16 && !isPalaceCore && (((cx & 1) != 0) || ((cz & 1) != 0)))
-                {
-                    continue;
-                }
-
                 int ck = PackChunkKey(cx, cz);
                 if (_registeredSkylineChunkKeys.Contains(ck)) continue;
                 _registeredSkylineChunkKeys.Add(ck);
 
-                if (Stratocraft.WorldGen.Generators.SettlementLayoutSystem.BuildChunkUnifiedStructureGraph(
-                        cx,
-                        cz,
-                        _siteNodesScratch,
-                        _siteEdgesScratch,
-                        out int nCount,
-                        out _,
-                        _nextUnifiedNodeId))
+                int siteCount = Stratocraft.WorldGen.Generators.SettlementLayoutSystem.PopulateUnifiedChunkSites(cx, cz, siteBuf);
+                if (siteCount <= 0) continue;
+
+                ComputeSkylineProxyMetricsFromSites(
+                    cx, cz, siteBuf.Slice(0, siteCount),
+                    out float minY, out float maxY,
+                    out byte facadeMat, out byte roofMat,
+                    out bool hasDome, out Stratocraft.Core.Structures.ArchitecturalSchool dominantSchool);
+
+                if (CityLodRenderer.RegisterSkylineChunkProxy(
+                        cx, cz, minY, maxY, facadeMat, roofMat, hasDome, dominantSchool, viewerPos.X, viewerPos.Z))
                 {
-                    if (nCount > 0 && CityLodRenderer.RegisterChunkNodes(cx, cz, _siteNodesScratch.AsSpan(0, nCount), viewerPos.X, viewerPos.Z))
-                    {
-                        _nextUnifiedNodeId += (uint)nCount + 1u;
-                        registeredSkylineNow++;
-                    }
+                    registeredSkylineNow++;
                 }
             }
+        }
+
+        private static void ComputeSkylineProxyMetricsFromSites(
+            int chunkX,
+            int chunkZ,
+            System.ReadOnlySpan<Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec> sites,
+            out float minY,
+            out float maxY,
+            out byte facadeMat,
+            out byte roofMat,
+            out bool hasDomeOrTower,
+            out Stratocraft.Core.Structures.ArchitecturalSchool dominantSchool)
+        {
+            int wx = chunkX * 16 + 8;
+            int wz = chunkZ * 16 + 8;
+            float groundY = Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            minY = Stratocraft.WorldGen.Generators.SettlementLayoutSystem.ComputeTerrainTargetHeight(wx, wz, groundY);
+            float maxHeight = 4.2f;
+            hasDomeOrTower = false;
+            facadeMat = Stratocraft.Core.Constants.MaterialIdCatalog.CutAshlarStone;
+            roofMat = Stratocraft.Core.Constants.MaterialIdCatalog.RoofClayTile;
+            dominantSchool = Stratocraft.Core.Structures.ArchitecturalSchool.StoneMasonry;
+
+            for (int i = 0; i < sites.Length; i++)
+            {
+                ref readonly var site = ref sites[i];
+                var style = Stratocraft.WorldGen.Generators.UnifiedSettlementBuilder.ResolveBiomeStyle(site.BiomeId, site.Tier);
+                facadeMat = style.WallMaterialId;
+                roofMat = style.RoofMaterialId;
+                dominantSchool = style.PrimarySchool;
+
+                float siteHeight = site.Archetype switch
+                {
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityPalace or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalace or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalaceSlice => 13.8f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.DomedMosqueTemple or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandDomedTemple => 10.5f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityApartment4Story => 13.4f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityApartment3Story => 10.4f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownMansion3Story => 9.8f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownMansion2Story or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownHouseTwoStory => site.Tier == Stratocraft.WorldGen.Generators.SettlementTier.City ? 10.4f : 7.0f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityBastionTower or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.MeadHallWatchtower or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.WindmillTower => 9.6f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityGatehouse => 8.0f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityCurtainWallSegment or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityWallSegment => 6.2f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.ArcadedInn => 7.4f,
+                    _ => 4.8f
+                };
+
+                if (site.Archetype is Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityPalace
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalace
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalaceSlice
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.DomedMosqueTemple
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandDomedTemple)
+                {
+                    hasDomeOrTower = true;
+                    facadeMat = Stratocraft.Core.Constants.MaterialIdCatalog.DressedMarbleBlock;
+                }
+
+                if (siteHeight > maxHeight) maxHeight = siteHeight;
+            }
+
+            maxY = minY + maxHeight;
         }
 
         private void TrackPhysicsChunkLoaded(int cx, int cz)

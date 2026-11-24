@@ -5705,7 +5705,7 @@ namespace Stratocraft.Character
             "📜 İksir & Parşömen (7)",
             "🌿 Doğa & Metalurji (42)",
             "🌦️ Hava Aletleri (6)",
-            "🏛️ Ekol 1-4 & İç Mekân (38)"
+            "🏛️ 9-Ekol Mimari & İç Mekân (78)"
         };
 
         public const int CreativeWeatherCategoryIndex = 5;

@@ -1863,10 +1863,10 @@ namespace Stratocraft.WorldGen.Generators
             for (int r = 0; r < rafterBays; r++)
             {
                 float rz = -hz + ((r + 0.5f) / rafterBays) * (hz * 2f);
-                uint rafterW = em.AddNode(-hx * 0.5f, 3.0f, rz, wallSchool, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId);
-                uint rafterE = em.AddNode(hx * 0.5f, 3.0f, rz, wallSchool, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId);
-                uint roofW = em.AddNode(-hx * 0.5f, 3.12f, rz, wallSchool, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId);
-                uint roofE = em.AddNode(hx * 0.5f, 3.12f, rz, wallSchool, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId);
+                uint rafterW = em.AddNode(-hx * 0.5f, 3.0f, rz, wallSchool, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId, AnchorType.NoneFloating, MortarType.None, 1);
+                uint rafterE = em.AddNode(hx * 0.5f, 3.0f, rz, wallSchool, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId, AnchorType.NoneFloating, MortarType.None, 3);
+                uint roofW = em.AddNode(-hx * 0.5f, 3.12f, rz, wallSchool, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId, AnchorType.NoneFloating, MortarType.None, 1);
+                uint roofE = em.AddNode(hx * 0.5f, 3.12f, rz, wallSchool, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId, AnchorType.NoneFloating, MortarType.None, 3);
                 em.Connect(purlinW, rafterW, JointConnectionKind.MortiseTenonPeg);
                 em.Connect(purlinE, rafterE, JointConnectionKind.MortiseTenonPeg);
                 em.Connect(rafterW, ridge, JointConnectionKind.MortiseTenonPeg);
@@ -2017,9 +2017,9 @@ namespace Stratocraft.WorldGen.Generators
             for (int bx = -1; bx <= 1; bx++)
             {
                 float x = bx * 2.0f;
-                uint rN = em.AddNode(x, topY + 0.35f, hz * 0.5f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId);
-                uint rS = em.AddNode(x, topY + 0.35f, -hz * 0.5f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId);
-                uint cover = em.AddNode(x, topY + 0.50f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId);
+                uint rN = em.AddNode(x, topY + 0.35f, hz * 0.5f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId, AnchorType.NoneFloating, MortarType.None, 2);
+                uint rS = em.AddNode(x, topY + 0.35f, -hz * 0.5f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, em.Style.TimberMaterialId, AnchorType.NoneFloating, MortarType.None, 0);
+                uint cover = em.AddNode(x, topY + 0.50f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, em.Style.RoofMaterialId, AnchorType.NoneFloating, MortarType.None, 0);
                 em.Connect(prevC00, rS, JointConnectionKind.MortiseTenonPeg);
                 em.Connect(prevC10, rS, JointConnectionKind.MortiseTenonPeg);
                 em.Connect(prevC01, rN, JointConnectionKind.MortiseTenonPeg);
@@ -2210,10 +2210,10 @@ namespace Stratocraft.WorldGen.Generators
             uint chimney = em.AddNode(-hx + 0.8f, roofBaseY + 0.6f, hz - 0.8f, ArchitecturalSchool.StoneMasonry, StructuralElementRole.MasonryHearthChimney, MaterialIdCatalog.FiredClayBrick, AnchorType.NoneFloating, MortarType.Lime);
             uint truss = em.AddNode(0f, roofBaseY + 0.45f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.CollarTieOrTruss, MaterialIdCatalog.TreatedTimberBeam);
             uint ridge = em.AddNode(0f, roofBaseY + 1.35f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofRidgeBeam, MaterialIdCatalog.TreatedTimberBeam);
-            uint rafterW = em.AddNode(-hx * 0.5f, roofBaseY + 0.85f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, MaterialIdCatalog.TreatedTimberBeam);
-            uint rafterE = em.AddNode(hx * 0.5f, roofBaseY + 0.85f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, MaterialIdCatalog.TreatedTimberBeam);
-            uint coverW = em.AddNode(-hx * 0.5f, roofBaseY + 1.00f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, MaterialIdCatalog.RoofClayTile);
-            uint coverE = em.AddNode(hx * 0.5f, roofBaseY + 1.00f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, MaterialIdCatalog.RoofClayTile);
+            uint rafterW = em.AddNode(-hx * 0.5f, roofBaseY + 0.85f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, MaterialIdCatalog.TreatedTimberBeam, AnchorType.NoneFloating, MortarType.None, 1);
+            uint rafterE = em.AddNode(hx * 0.5f, roofBaseY + 0.85f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.InclinedRoofRafter, MaterialIdCatalog.TreatedTimberBeam, AnchorType.NoneFloating, MortarType.None, 3);
+            uint coverW = em.AddNode(-hx * 0.5f, roofBaseY + 1.00f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, MaterialIdCatalog.RoofClayTile, AnchorType.NoneFloating, MortarType.None, 1);
+            uint coverE = em.AddNode(hx * 0.5f, roofBaseY + 1.00f, 0f, ArchitecturalSchool.TimberFrame, StructuralElementRole.RoofCoveringCourse, MaterialIdCatalog.RoofClayTile, AnchorType.NoneFloating, MortarType.None, 3);
 
             em.Connect(prev01, chimney, JointConnectionKind.LimeMortar);
             em.Connect(prevM0, truss, JointConnectionKind.MortiseTenonPeg);

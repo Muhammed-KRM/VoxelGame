@@ -2460,7 +2460,8 @@ namespace Stratocraft.Character
             }
 
             EnsureLogisticsRoot();
-            UnityEngine.Material? matteMat = WorldLooseBuildSystem.ResolveModularVertexColorMaterial(sharedVoxelMat);
+            UnityEngine.Material? matteMat = CityChunkLodBatchRenderer.ResolveSafeGlbVertexColorMaterial(sharedVoxelMat)
+                ?? WorldLooseBuildSystem.ResolveModularVertexColorMaterial(sharedVoxelMat);
 
             // 1) 6 Yeni Mimari İstasyon Görselleri
             ReadOnlySpan<ArchitecturalStationRecord> stations = Core.StationsSpan;
@@ -2641,7 +2642,10 @@ namespace Stratocraft.Character
                 string fullPath = System.IO.Path.Combine(UnityEngine.Application.dataPath, "Art", "Generated", "Structures_Modular", glbFileName);
                 if (System.IO.File.Exists(fullPath))
                 {
-                    var glbData = Stratocraft.Rendering.GlbHierarchyLoader.LoadGlbFromDisk(fullPath, glbFileName);
+                    var glbData = Stratocraft.Rendering.GlbHierarchyLoader.LoadGlbFromDisk(
+                        fullPath,
+                        glbFileName,
+                        preserveLinearVertexRgb: true);
                     if (glbData != null && glbData.CombinedMesh != null)
                     {
                         loaded = glbData.CombinedMesh;

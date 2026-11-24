@@ -1115,13 +1115,16 @@ namespace Stratocraft.Character
                 loadedMesh = CustomMeshLoaderDelegate(idx, meta.RelativeAssetPath);
             }
 
-            // 2. GlbHierarchyLoader uzerinden dogrudan COLOR_0 ikili .glb okuma (LoadModularPieceMeshCached deseni)
+            // 2. GlbHierarchyLoader uzerinden dogrudan COLOR_0 ikili .glb okuma (linear->sRGB + node transform baking)
             if (loadedMesh == null)
             {
                 string diskPath = ResolveGlbDiskPath(idx, Application.dataPath);
                 if (!string.IsNullOrEmpty(diskPath) && File.Exists(diskPath))
                 {
-                    GlbHierarchyLoader.LoadedGlbData? glbData = GlbHierarchyLoader.LoadGlbFromDisk(diskPath, meta.AssetStem);
+                    GlbHierarchyLoader.LoadedGlbData? glbData = GlbHierarchyLoader.LoadGlbFromDisk(
+                        diskPath,
+                        meta.AssetStem,
+                        preserveLinearVertexRgb: true);
                     if (glbData != null && glbData.CombinedMesh != null && glbData.CombinedMesh.vertexCount > 0)
                     {
                         loadedMesh = glbData.CombinedMesh;
@@ -1177,9 +1180,106 @@ namespace Stratocraft.Character
             {
                 loadedMesh = BuildColor0ArchitecturalFallbackMesh(in meta);
             }
+            else
+            {
+                EnsureRichColor0ForModularGlb(loadedMesh, meta.CanonicalMaterialId);
+            }
 
             CachedGlbMeshes[idx] = loadedMesh;
             return loadedMesh;
+        }
+
+        /// <summary>
+        /// Koyu/monokrom veya eski linear COLOR_0 iceren .glb varliklarinin (orn. mod_roof_rafter_45deg_2x2m)
+        /// sahnede siyah/gri yerine sicak ve okunabilir mimari malzeme tonlariyla gorunmesini tek seferlik onbellekte saglar (0-GC).
+        /// </summary>
+        private static void EnsureRichColor0ForModularGlb(Mesh mesh, byte canonicalMaterialId)
+        {
+            Color32[] cols = mesh.colors32;
+            if (cols == null || cols.Length == 0)
+            {
+                int vc = mesh.vertexCount;
+                if (vc <= 0) return;
+                MaterialIdCatalog.GetBaseColorRgb(canonicalMaterialId, out byte dr, out byte dg, out byte db);
+                if (dr is 0 or 3 or 11) dr++;
+                cols = new Color32[vc];
+                Array.Fill(cols, new Color32(dr, dg, db, 245));
+                mesh.colors32 = cols;
+                return;
+            }
+
+            double sumR = 0, sumG = 0, sumB = 0, sumSat = 0;
+            for (int i = 0; i < cols.Length; i++)
+            {
+                byte r = cols[i].r;
+                byte g = cols[i].g;
+                byte b = cols[i].b;
+                sumR += r;
+                sumG += g;
+                sumB += b;
+                int mx = Math.Max(r, Math.Max(g, b));
+                int mn = Math.Min(r, Math.Min(g, b));
+                sumSat += (mx - mn);
+            }
+
+            float invN = 1f / cols.Length;
+            float avgR = (float)(sumR * invN);
+            float avgG = (float)(sumG * invN);
+            float avgB = (float)(sumB * invN);
+            float avgLuma = 0.299f * avgR + 0.587f * avgG + 0.114f * avgB;
+            float avgSat = (float)(sumSat * invN);
+
+            MaterialIdCatalog.GetBaseColorRgb(canonicalMaterialId, out byte tr, out byte tg, out byte tb);
+            float targetLuma = 0.299f * tr + 0.587f * tg + 0.114f * tb;
+            int targetSat = Math.Max(tr, Math.Max(tg, tb)) - Math.Min(tr, Math.Min(tg, tb));
+
+            bool tooDark = avgLuma < 68.0f;
+            bool monochromeNeedingTint = avgSat < 10.0f && targetSat >= 18;
+            bool needsSentinelFix = false;
+            if (!tooDark && !monochromeNeedingTint)
+            {
+                for (int i = 0; i < cols.Length; i++)
+                {
+                    if (cols[i].r is 0 or 3 or 11)
+                    {
+                        needsSentinelFix = true;
+                        break;
+                    }
+                }
+                if (!needsSentinelFix) return;
+            }
+
+            float safeAvgLuma = MathF.Max(8.0f, avgLuma);
+            float blend = tooDark ? 0.68f : (monochromeNeedingTint ? 0.55f : 0.0f);
+
+            for (int i = 0; i < cols.Length; i++)
+            {
+                Color32 c = cols[i];
+                if (blend > 0.0f)
+                {
+                    float vLuma = 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+                    float relShade = Mathf.Clamp(vLuma / safeAvgLuma, 0.70f, 1.28f);
+                    float liftScale = tooDark ? Mathf.Clamp(targetLuma / safeAvgLuma, 1.15f, 3.2f) : 1.0f;
+
+                    float liftedR = Mathf.Min(250f, c.r * liftScale);
+                    float liftedG = Mathf.Min(250f, c.g * liftScale);
+                    float liftedB = Mathf.Min(250f, c.b * liftScale);
+
+                    float nr = Mathf.Lerp(liftedR, tr * relShade, blend);
+                    float ng = Mathf.Lerp(liftedG, tg * relShade, blend);
+                    float nb = Mathf.Lerp(liftedB, tb * relShade, blend);
+
+                    c.r = (byte)Mathf.Clamp(Mathf.RoundToInt(nr), 4, 252);
+                    c.g = (byte)Mathf.Clamp(Mathf.RoundToInt(ng), 4, 252);
+                    c.b = (byte)Mathf.Clamp(Mathf.RoundToInt(nb), 4, 252);
+                    if (c.a < 235) c.a = 245;
+                }
+
+                if (c.r is 0 or 3 or 11) c.r++;
+                cols[i] = c;
+            }
+
+            mesh.colors32 = cols;
         }
 
         /// <summary>

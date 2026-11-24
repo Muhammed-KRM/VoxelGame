@@ -265,6 +265,9 @@ namespace Stratocraft.WorldGen.Generators
         [ThreadStatic]
         private static RegionCacheSlot[]? _tsRegionCache;
 
+        [ThreadStatic]
+        private static bool _tsInsideSettlementLookup;
+
 #if UNITY_5_3_OR_NEWER
         [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticCachesForDomainReloadDisabled()
@@ -457,17 +460,17 @@ namespace Stratocraft.WorldGen.Generators
         {
             int wx = centerCx * 16 + 8;
             int wz = centerCz * 16 + 8;
-            float topH = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            float topH = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx, wz);
             int rawBiome = StratocraftFloatingIslandWorldGen.GetBiomeId(wx, wz);
-            if (rawBiome == 8 || rawBiome == 11 || rawBiome == 3)
+            if (rawBiome is 3 or 4 or 5 or 8 or 10 or 11)
             {
                 rawBiome = fallbackBiomeOut;
             }
             resolvedBiomeId = rawBiome;
             return Math.Clamp(
                 (int)MathF.Round(topH),
-                StratocraftFloatingIslandWorldGen.SeaLevelY + 3,
-                StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 24);
+                StratocraftFloatingIslandWorldGen.SeaLevelY + 5,
+                112);
         }
 
         private static SettlementDescriptor CreateStarterSouthVillageDescriptor(int worldSeed)
@@ -571,7 +574,17 @@ namespace Stratocraft.WorldGen.Generators
                 return slot.HasSettlement != 0;
             }
 
-            bool found = ComputeSettlementInMacroRegionUncached(regionX, regionZ, seed, out settlement);
+            bool prevGuard = _tsInsideSettlementLookup;
+            _tsInsideSettlementLookup = true;
+            bool found;
+            try
+            {
+                found = ComputeSettlementInMacroRegionUncached(regionX, regionZ, seed, out settlement);
+            }
+            finally
+            {
+                _tsInsideSettlementLookup = prevGuard;
+            }
             slot.Initialized = 1;
             slot.HasSettlement = found ? (byte)1 : (byte)0;
             slot.InfiniteMode = infFlag;
@@ -841,17 +854,17 @@ namespace Stratocraft.WorldGen.Generators
                 return false;
             }
 
-            float centerTop = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            float centerTop = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx, wz);
             if (centerTop < StratocraftFloatingIslandWorldGen.SeaLevelY + 2.0f || centerTop > 118.0f)
             {
                 return false;
             }
 
             float sampleOffset = MathF.Max(16.0f, Math.Min(radiusChunks, 5) * 11.0f);
-            float hN = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz + sampleOffset);
-            float hS = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz - sampleOffset);
-            float hE = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx + sampleOffset, wz);
-            float hW = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx - sampleOffset, wz);
+            float hN = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx, wz + sampleOffset);
+            float hS = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx, wz - sampleOffset);
+            float hE = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx + sampleOffset, wz);
+            float hW = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx - sampleOffset, wz);
 
             float minH = MathF.Min(MathF.Min(hN, hS), MathF.Min(hE, hW));
             float maxH = MathF.Max(MathF.Max(hN, hS), MathF.Max(hE, hW));
@@ -2083,15 +2096,108 @@ namespace Stratocraft.WorldGen.Generators
                 return s.AnchorBaseY;
             }
 
-            float naturalY = StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            float naturalY = StratocraftFloatingIslandWorldGen.SampleNaturalIslandTopSurfaceY(wx, wz);
             float blended = ComputeTerrainTargetHeight(in s, wx, wz, naturalY);
             int clamped = Math.Clamp((int)MathF.Round(blended), s.AnchorBaseY - 2, s.AnchorBaseY + 2);
-            return Math.Clamp(clamped, StratocraftFloatingIslandWorldGen.SeaLevelY + 2, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 18);
+            return Math.Clamp(clamped, StratocraftFloatingIslandWorldGen.SeaLevelY + 5, StratocraftFloatingIslandWorldGen.MaxEditableVoxelY - 18);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsInsideSettlementFootprint(int wx, int wz)
+        {
+            return TryGetSettlementCoveringChunk(FloorDiv(wx, 16), FloorDiv(wz, 16), out _);
+        }
+
+        /// <summary>
+        /// Fix 3: Voksel ve okyanus sivi damgalamasindan ONCE calisarak 48x48 Kuzey Metropolu, 11x11 Bati Kasabasi,
+        /// 5x5 Guney Koyu ve uzak yerlesimlerin tum ayak izini SeaLevelY + 5 (>= 95m) uzerine yumusakca teraslar,
+        /// sehir ici deniz/kar daglarini ve pembe-camgobegi biyom sinir bozulmalarini %100 onler (0-GC).
+        /// </summary>
+        public static bool TryApplySettlementTerracingAndBiome(
+            float worldX,
+            float worldZ,
+            ref float topH,
+            ref int biomeId)
+        {
+            if (_tsInsideSettlementLookup)
+            {
+                return false;
+            }
+
+            int wx = (int)MathF.Floor(worldX);
+            int wz = (int)MathF.Floor(worldZ);
+            int cx = FloorDiv(wx, 16);
+            int cz = FloorDiv(wz, 16);
+
+            // 1) Dogrudan yerlesim ayak izi icindeyse: >= SeaLevelY + 5 (95m) teras + temiz yasanabilir biyom
+            if (TryGetSettlementCoveringChunk(cx, cz, out SettlementDescriptor s))
+            {
+                float targetY = ComputeTerrainTargetHeight(in s, wx, wz, topH);
+                float minDryY = StratocraftFloatingIslandWorldGen.SeaLevelY + 5.0f;
+                topH = MathF.Max(minDryY, Math.Clamp(targetY, s.AnchorBaseY - 2.0f, s.AnchorBaseY + 2.0f));
+
+                if (biomeId is 3 or 4 or 5 or 8 or 10 or 11)
+                {
+                    biomeId = s.BiomeId is 3 or 4 or 5 or 8 or 10 or 11 ? 0 : s.BiomeId;
+                }
+                return true;
+            }
+
+            // 2) 3 Baslangic Yerlesimi (Kuzey Metropol, Bati Kasaba, Guney Koy) etrafinda 12m yumusak etek gecisi (ucurum/su duvarini onler)
+            const float skirtMeters = 12.0f;
+            if (TryBlendStarterSettlementSkirt(worldX, worldZ, StarterNorthCityCenterChunkX, StarterNorthCityCenterChunkZ, StarterNorthCityRadiusChunks, isSymmetricRadius: false, skirtMeters, ref topH))
+            {
+                return true;
+            }
+            if (TryBlendStarterSettlementSkirt(worldX, worldZ, StarterWestTownCenterChunkX, StarterWestTownCenterChunkZ, StarterWestTownRadiusChunks, isSymmetricRadius: true, skirtMeters, ref topH))
+            {
+                return true;
+            }
+            if (TryBlendStarterSettlementSkirt(worldX, worldZ, StarterSouthVillageCenterChunkX, StarterSouthVillageCenterChunkZ, StarterSouthVillageRadiusChunks, isSymmetricRadius: true, skirtMeters, ref topH))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryBlendStarterSettlementSkirt(
+            float worldX,
+            float worldZ,
+            int centerCx,
+            int centerCz,
+            int radiusChunks,
+            bool isSymmetricRadius,
+            float skirtMeters,
+            ref float topH)
+        {
+            float minX = (centerCx - radiusChunks) * 16.0f;
+            float maxX = (centerCx + radiusChunks + (isSymmetricRadius ? 1 : 0)) * 16.0f;
+            float minZ = (centerCz - radiusChunks) * 16.0f;
+            float maxZ = (centerCz + radiusChunks + (isSymmetricRadius ? 1 : 0)) * 16.0f;
+
+            float dxOut = worldX < minX ? (minX - worldX) : (worldX > maxX ? (worldX - maxX) : 0f);
+            float dzOut = worldZ < minZ ? (minZ - worldZ) : (worldZ > maxZ ? (worldZ - maxZ) : 0f);
+            if (dxOut > skirtMeters || dzOut > skirtMeters) return false;
+
+            float edgeDist = MathF.Sqrt(dxOut * dxOut + dzOut * dzOut);
+            if (edgeDist <= 0.001f || edgeDist >= skirtMeters) return false;
+
+            if (!TryGetSettlementCoveringChunk(centerCx, centerCz, out SettlementDescriptor s))
+            {
+                return false;
+            }
+
+            float t = edgeDist / skirtMeters;
+            float smooth = t * t * (3.0f - 2.0f * t);
+            float terraceEdgeY = MathF.Max(StratocraftFloatingIslandWorldGen.SeaLevelY + 5.0f, s.AnchorBaseY);
+            topH = terraceEdgeY + (topH - terraceEdgeY) * smooth;
+            return true;
         }
 
         /// <summary>
         /// Verilen dunya kolonu (wx, wz) bir yerlesimin yolu, meydani, tarlasi veya bina terasi icinde mi?
-        /// Agac, yabani cali ve kaya cikintilarinin ev veya cadde icine cikmasini %100 onler (0 B GC).
+        /// Agac, yabani cali ve kaya cikintilarinin ev, cadde veya tarla icine cikmasini %100 onler (0 B GC).
         /// </summary>
         public static bool IsColumnReservedBySettlement(int wx, int wz)
         {
@@ -2107,20 +2213,36 @@ namespace Stratocraft.WorldGen.Generators
             int lx = wx - cx * 16;
             int lz = wz - cz * 16;
 
-            if (s.Tier == SettlementTier.City && s.FootprintRadiusChunks >= 16 &&
-                MacroCityDistrictPlanner.IsInsideMonumentalTerracePad(dx, dz))
+            // Fix 3b: Koy (5x5), Kasaba (11x11) ve Sehir sur ici (48x48 veya 9x9) tamami yapi/yol/tarla/avlu alanidir —
+            // iceride hicbir yola, tarlaya veya binaya yabani agac veya kaya cikintisi spawn edilmez!
+            if (s.Tier == SettlementTier.Village || s.Tier == SettlementTier.Town)
             {
                 return true;
             }
 
+            if (s.Tier == SettlementTier.City)
+            {
+                if (s.FootprintRadiusChunks >= 16)
+                {
+                    if (MacroCityDistrictPlanner.ClassifyChunkDistrict(dx, dz) != MetropolisDistrictKind.ExtramuralAgriculturalBelt)
+                    {
+                        return true;
+                    }
+                }
+                else if (Math.Abs(dx) <= 3 && Math.Abs(dz) <= 3)
+                {
+                    return true;
+                }
+            }
+
             if (IsRoadOrPlazaColumn(in s, dx, dz, lx, lz, out _)) return true;
-            if (IsFarmPlotChunk(in s, dx, dz) && lx >= 1 && lx <= 14 && lz >= 1 && lz <= 14) return true;
+            if (IsFarmPlotChunk(in s, dx, dz)) return true;
 
             Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[MaxSitesPerChunk];
             int count = PopulateChunkSettlementSites(cx, cz, sites);
             for (int i = 0; i < count; i++)
             {
-                int ext = sites[i].TerraceHalfExtentBlocks + 2;
+                int ext = sites[i].TerraceHalfExtentBlocks + 3;
                 if (Math.Abs(lx - sites[i].LocalCenterX) <= ext &&
                     Math.Abs(lz - sites[i].LocalCenterZ) <= ext)
                 {

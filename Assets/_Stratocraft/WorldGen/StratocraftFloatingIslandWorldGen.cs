@@ -623,9 +623,14 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             topH = Math.Clamp(baseH, 68.0f, 240.0f);
+            SettlementLayoutSystem.TryApplySettlementTerracingAndBiome(worldX, worldZ, ref topH, ref biomeId);
         }
 
-        public static float SampleIslandTopSurfaceY(float worldX, float worldZ)
+        /// <summary>
+        /// Yerlesim teraslamasi uygulanmadan ham dogal kita yuzey yuksekligini hesaplar
+        /// (SettlementLayoutSystem.AnchorBaseY ve ComputeTerrainTargetHeight icin ozyinelemesiz kaynak).
+        /// </summary>
+        public static float SampleNaturalIslandTopSurfaceY(float worldX, float worldZ)
         {
             float p1 = SeedPhaseOffset(4), p2 = SeedPhaseOffset(5);
             float ridge = MathF.Sin(worldX * 0.065f + p1) * 1.25f + MathF.Cos(worldZ * 0.062f + p2) * 1.15f;
@@ -667,8 +672,26 @@ namespace Stratocraft.WorldGen.Generators
             return Math.Clamp(baseH, 68.0f, 240.0f);
         }
 
+        public static float SampleIslandTopSurfaceY(float worldX, float worldZ)
+        {
+            float topH = SampleNaturalIslandTopSurfaceY(worldX, worldZ);
+            int dummyBiome = 0;
+            SettlementLayoutSystem.TryApplySettlementTerracingAndBiome(worldX, worldZ, ref topH, ref dummyBiome);
+            return topH;
+        }
+
         private static byte ResolveBiomeSurfaceMaterialId(float worldX, float topH, float worldZ, float r, int biomeId)
         {
+            if (SettlementLayoutSystem.IsInsideSettlementFootprint((int)MathF.Floor(worldX), (int)MathF.Floor(worldZ)))
+            {
+                return biomeId switch
+                {
+                    6 => MaterialIdCatalog.Sand,
+                    2 or 12 => MaterialIdCatalog.Grass,
+                    _ => MaterialIdCatalog.Grass
+                };
+            }
+
             float snowlineY = 170.0f;
             if (biomeId == 4 || topH >= 126.0f)
             {
@@ -711,6 +734,11 @@ namespace Stratocraft.WorldGen.Generators
         /// </summary>
         public static (float r, float g, float b, byte matId) SampleBiomeColor(float worldX, float topH, float worldZ)
         {
+            if (SettlementLayoutSystem.IsInsideSettlementFootprint((int)MathF.Floor(worldX), (int)MathF.Floor(worldZ)))
+            {
+                return (0.42f, 0.54f, 0.30f, MaterialIdCatalog.Grass);
+            }
+
             int biomeId = GetBiomeId(worldX, worldZ);
             float climateTemp = SampleMacroLatitudeTemperature(worldX, worldZ);
             float snowlineY = ComputeSnowlineAltitudeY(climateTemp);
@@ -920,21 +948,21 @@ namespace Stratocraft.WorldGen.Generators
                     if (coastR - distOrigin < 28.0f) continue; // Dis falez kenarina cok yaklasmasin
                 }
 
-                float centerTop = SampleIslandTopSurfaceY(candX, candZ);
+                float centerTop = SampleNaturalIslandTopSurfaceY(candX, candZ);
                 if (centerTop < SeaLevelY + 3.2f || centerTop > MaxEditableVoxelY - 22) continue;
 
                 // Agiz cevresinde gol/deniz/kaldera olmadigini dogrula ki su magaraya dolmasin:
-                if (SampleIslandTopSurfaceY(candX + 6f, candZ) < SeaLevelY + 2.4f ||
-                    SampleIslandTopSurfaceY(candX - 6f, candZ) < SeaLevelY + 2.4f ||
-                    SampleIslandTopSurfaceY(candX, candZ + 6f) < SeaLevelY + 2.4f ||
-                    SampleIslandTopSurfaceY(candX, candZ - 6f) < SeaLevelY + 2.4f)
+                if (SampleNaturalIslandTopSurfaceY(candX + 6f, candZ) < SeaLevelY + 2.4f ||
+                    SampleNaturalIslandTopSurfaceY(candX - 6f, candZ) < SeaLevelY + 2.4f ||
+                    SampleNaturalIslandTopSurfaceY(candX, candZ + 6f) < SeaLevelY + 2.4f ||
+                    SampleNaturalIslandTopSurfaceY(candX, candZ - 6f) < SeaLevelY + 2.4f)
                 {
                     continue;
                 }
 
                 // Tunel yonu yokus yukari / tepe icine dogru baksin ki yamaca dogal bir magara agzi gibi oyulsun:
-                float gx = SampleIslandTopSurfaceY(candX + 4f, candZ) - SampleIslandTopSurfaceY(candX - 4f, candZ);
-                float gz = SampleIslandTopSurfaceY(candX, candZ + 4f) - SampleIslandTopSurfaceY(candX, candZ - 4f);
+                float gx = SampleNaturalIslandTopSurfaceY(candX + 4f, candZ) - SampleNaturalIslandTopSurfaceY(candX - 4f, candZ);
+                float gz = SampleNaturalIslandTopSurfaceY(candX, candZ + 4f) - SampleNaturalIslandTopSurfaceY(candX, candZ - 4f);
                 float gLen = MathF.Sqrt(gx * gx + gz * gz);
                 if (gLen > 0.15f)
                 {
@@ -949,7 +977,7 @@ namespace Stratocraft.WorldGen.Generators
                 }
 
                 // Tam kapi onunde de kuru zemin oldugunu dogrula:
-                if (SampleIslandTopSurfaceY(candX - dirX * 5f, candZ - dirZ * 5f) < SeaLevelY + 2.0f)
+                if (SampleNaturalIslandTopSurfaceY(candX - dirX * 5f, candZ - dirZ * 5f) < SeaLevelY + 2.0f)
                 {
                     continue;
                 }

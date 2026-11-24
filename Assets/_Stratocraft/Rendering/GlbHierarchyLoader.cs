@@ -32,6 +32,7 @@ namespace Stratocraft.Rendering
             public string? name;
             public int mesh = -1;
             public int[]? children;
+            public float[]? matrix;
             public float[]? translation;
             public float[]? rotation;
             public float[]? scale;
@@ -396,7 +397,10 @@ namespace Stratocraft.Rendering
             return null;
         }
 
-        public static LoadedGlbData? LoadGlbFromDisk(string glbDiskPath, string meshName)
+        public static LoadedGlbData? LoadGlbFromDisk(
+            string glbDiskPath,
+            string meshName,
+            bool preserveLinearVertexRgb = false)
         {
             if (!File.Exists(glbDiskPath))
             {
@@ -459,10 +463,48 @@ namespace Stratocraft.Rendering
             var allColors = new List<Color32>(1024);
             var allTris = new List<int>(2048);
 
-            for (int m = 0; m < root.meshes.Length; m++)
+            // Dugum hiyerarsisinden (parent -> child TRS / matrix) tum mesh orneklerinin dunya matrislerini hesapla
+            var meshInstances = new List<(int MeshIndex, Matrix4x4 WorldMatrix, bool IsIdentity)>(root.meshes.Length);
+            if (root.nodes != null && root.nodes.Length > 0)
             {
-                GltfPrimitive[]? prims = root.meshes[m].primitives;
+                int nodeCount = root.nodes.Length;
+                bool[] hasParent = new bool[nodeCount];
+                for (int n = 0; n < nodeCount; n++)
+                {
+                    int[]? ch = root.nodes[n].children;
+                    if (ch == null) continue;
+                    for (int c = 0; c < ch.Length; c++)
+                    {
+                        if ((uint)ch[c] < (uint)nodeCount) hasParent[ch[c]] = true;
+                    }
+                }
+
+                for (int n = 0; n < nodeCount; n++)
+                {
+                    if (!hasParent[n])
+                    {
+                        CollectNodeMeshInstances(root.nodes, n, Matrix4x4.identity, parentIsIdentity: true, meshInstances, depth: 0);
+                    }
+                }
+            }
+
+            if (meshInstances.Count == 0)
+            {
+                for (int m = 0; m < root.meshes.Length; m++)
+                {
+                    meshInstances.Add((m, Matrix4x4.identity, true));
+                }
+            }
+
+            for (int inst = 0; inst < meshInstances.Count; inst++)
+            {
+                var (mIdx, worldMat, isIdentity) = meshInstances[inst];
+                if ((uint)mIdx >= (uint)root.meshes.Length) continue;
+                GltfPrimitive[]? prims = root.meshes[mIdx].primitives;
                 if (prims == null) continue;
+
+                Matrix4x4 normalMat = isIdentity ? Matrix4x4.identity : worldMat.inverse.transpose;
+                bool hasNegativeDet = !isIdentity && worldMat.determinant < 0f;
 
                 for (int p = 0; p < prims.Length; p++)
                 {
@@ -482,7 +524,7 @@ namespace Stratocraft.Rendering
                     }
 
                     Color32[] colArr = prim.attributes.COLOR_0 >= 0
-                        ? ReadColor32Accessor(bytes, binStart, root, prim.attributes.COLOR_0, vCount)
+                        ? ReadColor32Accessor(bytes, binStart, root, prim.attributes.COLOR_0, vCount, preserveZeroRed: preserveLinearVertexRgb)
                         : CreateDefaultColorArray(vCount, defaultMatId: 51);
 
                     int[] idxArr = prim.indices >= 0
@@ -490,15 +532,39 @@ namespace Stratocraft.Rendering
                         : CreateSequentialIndices(vCount);
 
                     int baseVertex = allVerts.Count;
-                    allVerts.AddRange(posArr);
-                    allNorms.AddRange(nrmArr);
-                    allColors.AddRange(colArr);
-                    // glTF 2.0 Sag-El (CCW) ucgen sarimini Unity Sol-El (CW) sarimina cevir (dis yuzey normalleri %100 disa bakar)
+                    for (int i = 0; i < vCount; i++)
+                    {
+                        Vector3 vp = isIdentity ? posArr[i] : worldMat.MultiplyPoint3x4(posArr[i]);
+                        Vector3 np = isIdentity ? nrmArr[i] : normalMat.MultiplyVector(nrmArr[i]);
+                        if (np.sqrMagnitude > 1e-6f) np.Normalize();
+
+                        // glTF 2.0 Sag-El (RH, +Y up) -> Unity Sol-El (LH, +Y up): X ekseni yansit + ucgen sarimini cevir
+                        allVerts.Add(new Vector3(-vp.x, vp.y, vp.z));
+                        allNorms.Add(new Vector3(-np.x, np.y, np.z));
+
+                        Color32 c = colArr[i];
+                        if (preserveLinearVertexRgb && (c.r == 0 || c.r == 3 || c.r == 11))
+                        {
+                            c.r = (byte)(c.r + 1);
+                        }
+                        allColors.Add(c);
+                    }
+
+                    bool flipWinding = !hasNegativeDet;
                     for (int i = 0; i + 2 < idxArr.Length; i += 3)
                     {
-                        allTris.Add(baseVertex + idxArr[i]);
-                        allTris.Add(baseVertex + idxArr[i + 2]);
-                        allTris.Add(baseVertex + idxArr[i + 1]);
+                        if (flipWinding)
+                        {
+                            allTris.Add(baseVertex + idxArr[i]);
+                            allTris.Add(baseVertex + idxArr[i + 2]);
+                            allTris.Add(baseVertex + idxArr[i + 1]);
+                        }
+                        else
+                        {
+                            allTris.Add(baseVertex + idxArr[i]);
+                            allTris.Add(baseVertex + idxArr[i + 1]);
+                            allTris.Add(baseVertex + idxArr[i + 2]);
+                        }
                     }
                 }
             }
@@ -535,10 +601,10 @@ namespace Stratocraft.Rendering
                     }
 
                     Vector3 t = (node.translation != null && node.translation.Length >= 3)
-                        ? new Vector3(node.translation[0], node.translation[1], node.translation[2])
+                        ? new Vector3(-node.translation[0], node.translation[1], node.translation[2])
                         : Vector3.zero;
                     Quaternion r = (node.rotation != null && node.rotation.Length >= 4)
-                        ? new Quaternion(node.rotation[0], node.rotation[1], node.rotation[2], node.rotation[3])
+                        ? new Quaternion(node.rotation[0], -node.rotation[1], -node.rotation[2], node.rotation[3])
                         : Quaternion.identity;
                     Vector3 s = (node.scale != null && node.scale.Length >= 3)
                         ? new Vector3(node.scale[0], node.scale[1], node.scale[2])
@@ -549,6 +615,68 @@ namespace Stratocraft.Rendering
             }
 
             return result;
+        }
+
+        private static void CollectNodeMeshInstances(
+            GltfNode[] nodes,
+            int nodeIdx,
+            Matrix4x4 parentWorld,
+            bool parentIsIdentity,
+            List<(int MeshIndex, Matrix4x4 WorldMatrix, bool IsIdentity)> outInstances,
+            int depth)
+        {
+            if ((uint)nodeIdx >= (uint)nodes.Length || depth > 32) return;
+            GltfNode node = nodes[nodeIdx];
+
+            Matrix4x4 local = BuildGltfNodeLocalMatrix(node, out bool localIsIdentity);
+            bool worldIsIdentity = parentIsIdentity && localIsIdentity;
+            Matrix4x4 world = worldIsIdentity ? Matrix4x4.identity : (parentIsIdentity ? local : (localIsIdentity ? parentWorld : parentWorld * local));
+
+            if (node.mesh >= 0)
+            {
+                outInstances.Add((node.mesh, world, worldIsIdentity));
+            }
+
+            if (node.children != null)
+            {
+                for (int i = 0; i < node.children.Length; i++)
+                {
+                    CollectNodeMeshInstances(nodes, node.children[i], world, worldIsIdentity, outInstances, depth + 1);
+                }
+            }
+        }
+
+        private static Matrix4x4 BuildGltfNodeLocalMatrix(GltfNode node, out bool isIdentity)
+        {
+            if (node.matrix != null && node.matrix.Length == 16)
+            {
+                isIdentity = false;
+                var m = new Matrix4x4();
+                m.SetColumn(0, new Vector4(node.matrix[0], node.matrix[1], node.matrix[2], node.matrix[3]));
+                m.SetColumn(1, new Vector4(node.matrix[4], node.matrix[5], node.matrix[6], node.matrix[7]));
+                m.SetColumn(2, new Vector4(node.matrix[8], node.matrix[9], node.matrix[10], node.matrix[11]));
+                m.SetColumn(3, new Vector4(node.matrix[12], node.matrix[13], node.matrix[14], node.matrix[15]));
+                return m;
+            }
+
+            bool hasT = node.translation != null && node.translation.Length >= 3 &&
+                        (Mathf.Abs(node.translation[0]) > 1e-5f || Mathf.Abs(node.translation[1]) > 1e-5f || Mathf.Abs(node.translation[2]) > 1e-5f);
+            bool hasR = node.rotation != null && node.rotation.Length >= 4 &&
+                        (Mathf.Abs(node.rotation[0]) > 1e-5f || Mathf.Abs(node.rotation[1]) > 1e-5f || Mathf.Abs(node.rotation[2]) > 1e-5f || Mathf.Abs(node.rotation[3] - 1f) > 1e-5f);
+            bool hasS = node.scale != null && node.scale.Length >= 3 &&
+                        (Mathf.Abs(node.scale[0] - 1f) > 1e-5f || Mathf.Abs(node.scale[1] - 1f) > 1e-5f || Mathf.Abs(node.scale[2] - 1f) > 1e-5f);
+
+            if (!hasT && !hasR && !hasS)
+            {
+                isIdentity = true;
+                return Matrix4x4.identity;
+            }
+
+            isIdentity = false;
+            Vector3 t = hasT ? new Vector3(node.translation![0], node.translation[1], node.translation[2]) : Vector3.zero;
+            Quaternion r = hasR ? new Quaternion(node.rotation![0], node.rotation[1], node.rotation[2], node.rotation[3]) : Quaternion.identity;
+            Vector3 s = hasS ? new Vector3(node.scale![0], node.scale[1], node.scale[2]) : Vector3.one;
+            return Matrix4x4.TRS(t, r, s);
         }
 
         /// <summary>

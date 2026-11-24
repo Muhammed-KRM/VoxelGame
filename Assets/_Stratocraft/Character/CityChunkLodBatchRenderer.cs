@@ -121,7 +121,7 @@ namespace Stratocraft.Character
         public const float Lod2MaxDistanceMeters = 750.0f;
         public const double DefaultStreamingBudgetMs = 1.5;
 
-        public const int DefaultMaxChunkCapacity = 512;
+        public const int DefaultMaxChunkCapacity = 2048;
         public const int DefaultMaxNodeCapacity = 65536;
 
         private readonly CityChunkLodSlot[] _chunkSlots;
@@ -291,6 +291,115 @@ namespace Stratocraft.Character
 
             _chunkSlots[_chunkCount++] = slot;
             return true;
+        }
+
+        /// <summary>
+        /// Uzak ufuk silueti (LOD2) icin _nodeBuffer'dan 0 dugum tuketen hafif 0-dugumlu skyline proxy kaydeder (0-GC).
+        /// Eger chunk zaten LOD0/LOD1 dugumlerine sahipse mevcut detayli kaydi korur.
+        /// </summary>
+        public bool RegisterSkylineChunkProxy(
+            int chunkX,
+            int chunkZ,
+            float minY,
+            float maxY,
+            byte dominantFacadeMatId,
+            byte dominantRoofMatId,
+            bool hasDomeOrTower,
+            ArchitecturalSchool dominantSchool,
+            float viewerX = 0f,
+            float viewerZ = 0f)
+        {
+            int existingSlot = FindChunkSlotIndex(chunkX, chunkZ);
+            if (existingSlot >= 0)
+            {
+                if (_chunkSlots[existingSlot].NodeCount > 0)
+                {
+                    _chunkSlots[existingSlot].LastAccessTick = ++_accessTickCounter;
+                    return true;
+                }
+
+                ref CityChunkLodSlot existing = ref _chunkSlots[existingSlot];
+                existing.MinY = minY;
+                existing.MaxY = MathF.Max(minY + 3.0f, maxY);
+                existing.DominantFacadeMaterialId = dominantFacadeMatId != 0 ? dominantFacadeMatId : MaterialIdCatalog.CutAshlarStone;
+                existing.DominantRoofMaterialId = dominantRoofMatId != 0 ? dominantRoofMatId : MaterialIdCatalog.RoofClayTile;
+                existing.HasDomedOrTowerSilhouette = hasDomeOrTower;
+                existing.DominantSchool = dominantSchool;
+                existing.LastAccessTick = ++_accessTickCounter;
+                existing.IsDirty = true;
+                return true;
+            }
+
+            if (_chunkCount >= _chunkSlots.Length)
+            {
+                if (!EnsureCapacityByEvictingFarthest(viewerX, viewerZ, 0))
+                {
+                    return false;
+                }
+            }
+
+            float cx = chunkX * 16.0f + 8.0f;
+            float cz = chunkZ * 16.0f + 8.0f;
+            float dx = cx - viewerX;
+            float dz = cz - viewerZ;
+            float dist = MathF.Sqrt(dx * dx + dz * dz);
+            CityChunkLodTier initialTier = dist <= Lod2MaxDistanceMeters
+                ? CityChunkLodTier.Lod2HorizonProxy
+                : CityChunkLodTier.Culled;
+            float clampedMaxY = MathF.Max(minY + 3.0f, maxY);
+            int proxyTris = hasDomeOrTower ? 48 : ((clampedMaxY - minY) > 5.0f ? 36 : 24);
+
+            _chunkSlots[_chunkCount++] = new CityChunkLodSlot
+            {
+                ChunkX = chunkX,
+                ChunkZ = chunkZ,
+                NodeStartIndex = 0,
+                NodeCount = 0,
+                Lod0ActiveNodeCount = 0,
+                Lod0StaticBatchNodeCount = 0,
+                Lod1ShellNodeCount = 0,
+                Lod2ProxyTriangles = proxyTris,
+                CenterX = cx,
+                CenterZ = cz,
+                MinY = minY,
+                MaxY = clampedMaxY,
+                CurrentLod = initialTier,
+                TargetLod = initialTier,
+                ForcedLod0UntilSec = 0.0,
+                IsDirty = true,
+                HasDomedOrTowerSilhouette = hasDomeOrTower,
+                DominantFacadeMaterialId = dominantFacadeMatId != 0 ? dominantFacadeMatId : MaterialIdCatalog.CutAshlarStone,
+                DominantRoofMaterialId = dominantRoofMatId != 0 ? dominantRoofMatId : MaterialIdCatalog.RoofClayTile,
+                DominantSchool = dominantSchool,
+                LastAccessTick = ++_accessTickCounter
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// Aktif LOD0 penceresinden cikan bir chunk'in _nodeBuffer dugumlerini 0-GC ile serbest birakir,
+        /// ancak ufukta gorunmeye devam etmesi icin 0-dugumlu Lod2HorizonProxy kaydini korur.
+        /// </summary>
+        public bool DowngradeChunkToSkylineProxy(int chunkX, int chunkZ, float viewerX = 0f, float viewerZ = 0f)
+        {
+            int idx = FindChunkSlotIndex(chunkX, chunkZ);
+            if (idx < 0) return false;
+
+            CityChunkLodSlot prev = _chunkSlots[idx];
+            if (prev.NodeCount <= 0) return true;
+
+            RemoveChunkSlotAt(idx);
+            return RegisterSkylineChunkProxy(
+                chunkX,
+                chunkZ,
+                prev.MinY,
+                prev.MaxY,
+                prev.DominantFacadeMaterialId,
+                prev.DominantRoofMaterialId,
+                prev.HasDomedOrTowerSilhouette,
+                prev.DominantSchool,
+                viewerX,
+                viewerZ);
         }
 
         /// <summary>
@@ -490,9 +599,19 @@ namespace Stratocraft.Character
                 float distSq = dx * dx + dz * dz;
                 float dist = MathF.Sqrt(distSq);
 
-                CityChunkLodTier desired = slot.ForcedLod0UntilSec > nowSeconds
-                    ? CityChunkLodTier.Lod0FullDetail
-                    : EvaluateDistanceTier(dist);
+                CityChunkLodTier desired;
+                if (slot.NodeCount == 0)
+                {
+                    desired = dist <= Lod2MaxDistanceMeters
+                        ? CityChunkLodTier.Lod2HorizonProxy
+                        : CityChunkLodTier.Culled;
+                }
+                else
+                {
+                    desired = slot.ForcedLod0UntilSec > nowSeconds
+                        ? CityChunkLodTier.Lod0FullDetail
+                        : EvaluateDistanceTier(dist);
+                }
 
                 if (desired == CityChunkLodTier.Lod0FullDetail)
                 {
@@ -1195,8 +1314,8 @@ namespace Stratocraft.Character
                     hasDome: false);
 
                 float h = MathF.Max(3.2f, slot.MaxY - slot.MinY);
-                Vector3 pos = new Vector3(slot.CenterX, slot.MinY, slot.CenterZ);
-                Vector3 scl = new Vector3(12.5f, h, 10.5f);
+                Vector3 pos = new Vector3(slot.CenterX, slot.MinY - 0.15f, slot.CenterZ);
+                Vector3 scl = new Vector3(12.5f, h + 0.15f, 10.5f);
                 _sharedInstanceMatrices[gableCount++] = Matrix4x4.TRS(pos, Quaternion.identity, scl);
 
                 if (gableCount == MaxInstancesPerDrawCall)
@@ -1226,8 +1345,8 @@ namespace Stratocraft.Character
                     hasDome: true);
 
                 float h = MathF.Max(6.5f, slot.MaxY - slot.MinY);
-                Vector3 pos = new Vector3(slot.CenterX, slot.MinY, slot.CenterZ);
-                Vector3 scl = new Vector3(14.5f, h, 14.5f);
+                Vector3 pos = new Vector3(slot.CenterX, slot.MinY - 0.15f, slot.CenterZ);
+                Vector3 scl = new Vector3(14.5f, h + 0.15f, 14.5f);
                 _sharedInstanceMatrices[domeCount++] = Matrix4x4.TRS(pos, Quaternion.identity, scl);
 
                 if (domeCount == MaxInstancesPerDrawCall)
