@@ -146,6 +146,26 @@ namespace Stratocraft.Character
         public int MaxNodeCapacity => _nodeBuffer.Length;
         public int TotalEvictedChunks => _totalEvictedChunks;
 
+        /// <summary>
+        /// Aktif voksel arazi chunk sozlugu: icinde gercek voksel/mikro-voksel bina mesh'i aktif olan chunk'larin
+        /// 0-dugumlu Lod2HorizonProxy siluetleri otomatik gizlenir (gercek voksel binalarin ustune proxy binmez!).
+        /// </summary>
+        public System.Collections.Generic.IReadOnlyDictionary<(int cx, int cz), uint[]>? ActiveVoxelTerrainChunks { get; set; }
+        public int ActiveVoxelTerrainRadiusChunks { get; set; }
+        public int ActiveViewerChunkX { get; set; }
+        public int ActiveViewerChunkZ { get; set; }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsSkylineProxySuppressedByActiveVoxelChunk(int chunkX, int chunkZ)
+        {
+            if (ActiveVoxelTerrainChunks == null || ActiveVoxelTerrainRadiusChunks <= 0)
+            {
+                return false;
+            }
+            int cheb = Math.Max(Math.Abs(chunkX - ActiveViewerChunkX), Math.Abs(chunkZ - ActiveViewerChunkZ));
+            return cheb <= ActiveVoxelTerrainRadiusChunks && ActiveVoxelTerrainChunks.ContainsKey((chunkX, chunkZ));
+        }
+
         public CityChunkLodBatchRenderer(
             int maxChunkCapacity = DefaultMaxChunkCapacity,
             int maxNodeCapacity = DefaultMaxNodeCapacity)
@@ -520,6 +540,39 @@ namespace Stratocraft.Character
             return false;
         }
 
+        /// <summary>
+        /// GraphSolver icinde CollapseState, Integrity01 veya IsDoorOrWindowOpen durumu degisen
+        /// dugumleri CityLodRenderer._nodeBuffer icine 0-GC ile aninda senkronize eder;
+        /// yikilan duvarin ustundeki catinin veya kapinin eski render tamponunda havada kalmasini %100 engeller.
+        /// </summary>
+        public int SyncNodeStatesFromSolver(UnifiedStructureGraphSolver solver)
+        {
+            if (_nodeCount == 0) return 0;
+            int changed = 0;
+            for (int i = 0; i < _nodeCount; i++)
+            {
+                ref StructuralNode64 bufNode = ref _nodeBuffer[i];
+                if (bufNode.NodeId == 0u) continue;
+                if (solver.TryGetNode(bufNode.NodeId, out StructuralNode64 liveNode))
+                {
+                    if (bufNode.CollapseState != liveNode.CollapseState ||
+                        MathF.Abs(bufNode.Integrity01 - liveNode.Integrity01) > 0.001f ||
+                        bufNode.IsDoorOrWindowOpen != liveNode.IsDoorOrWindowOpen)
+                    {
+                        bufNode = liveNode;
+                        changed++;
+                    }
+                }
+                else if (bufNode.CollapseState != StructureCollapseState.Collapsed)
+                {
+                    bufNode.CollapseState = StructureCollapseState.Collapsed;
+                    bufNode.Integrity01 = 0f;
+                    changed++;
+                }
+            }
+            return changed;
+        }
+
         public ReadOnlySpan<StructuralNode64> GetChunkNodesSpan(in CityChunkLodSlot slot)
         {
             if (slot.NodeCount <= 0 || slot.NodeStartIndex + slot.NodeCount > _nodeCount)
@@ -602,7 +655,7 @@ namespace Stratocraft.Character
                 CityChunkLodTier desired;
                 if (slot.NodeCount == 0)
                 {
-                    desired = dist <= Lod2MaxDistanceMeters
+                    desired = (dist <= Lod2MaxDistanceMeters && !IsSkylineProxySuppressedByActiveVoxelChunk(slot.ChunkX, slot.ChunkZ))
                         ? CityChunkLodTier.Lod2HorizonProxy
                         : CityChunkLodTier.Culled;
                 }
@@ -1105,49 +1158,52 @@ namespace Stratocraft.Character
             _sharedMpb ??= new MaterialPropertyBlock();
             _sharedMpb.SetFloat("_UsePaletteLUT", 0.0f);
 
-            // 1. Gecis: LOD0 ve LOD1 dugumlerini 65 .glb varlik indeksine gore say (0-GC)
-            Array.Clear(_glbBucketCounts, 0, StructureRoleGlbRegistry.TotalGlbAssetCount);
+            // 1. Gecis: Yalnizca oyuncu-yerlestirmeli (veya kayitli) LOD0/LOD1 dugumleri varsa 65 .glb varligina gore grupla (0-GC)
             int totalInstancesToBucket = 0;
-
-            for (int c = 0; c < _chunkCount; c++)
+            if (_nodeCount > 0)
             {
-                ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
-                if (slot.CurrentLod is CityChunkLodTier.Culled or CityChunkLodTier.Lod2HorizonProxy)
-                {
-                    continue;
-                }
+                Array.Clear(_glbBucketCounts, 0, StructureRoleGlbRegistry.TotalGlbAssetCount);
 
-                bool isLod1 = slot.CurrentLod == CityChunkLodTier.Lod1CombinedShell;
-                int start = slot.NodeStartIndex;
-                int end = start + slot.NodeCount;
-
-                for (int idx = start; idx < end; idx++)
+                for (int c = 0; c < _chunkCount; c++)
                 {
-                    ref readonly StructuralNode64 node = ref _nodeBuffer[idx];
-                    if (node.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
-                        node.Integrity01 <= 0.001f)
-                    {
-                        continue;
-                    }
-                    if (isLod1 && IsInteriorCulledInLod1(node.Role))
+                    ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
+                    if (slot.NodeCount <= 0 || slot.CurrentLod is CityChunkLodTier.Culled or CityChunkLodTier.Lod2HorizonProxy)
                     {
                         continue;
                     }
 
-                    int assetIdx = StructureRoleGlbRegistry.ResolveGlbAssetIndex(in node);
-                    _glbBucketCounts[assetIdx]++;
-                    totalInstancesToBucket++;
+                    bool isLod1 = slot.CurrentLod == CityChunkLodTier.Lod1CombinedShell;
+                    int start = slot.NodeStartIndex;
+                    int end = start + slot.NodeCount;
 
-                    // DoorFrameOpening: Kapi kasasina ek olarak 0° <-> 90° donen kapi kanadini (veya cift kanadi) kuyruga ekle!
-                    if (node.Role == StructuralElementRole.DoorFrameOpening)
+                    for (int idx = start; idx < end; idx++)
                     {
-                        int leafAssetIdx = StructureRoleGlbRegistry.ResolveDoorLeafGlbAssetIndex(in node, out bool isDoubleLeaf);
-                        _glbBucketCounts[leafAssetIdx]++;
-                        totalInstancesToBucket++;
-                        if (isDoubleLeaf)
+                        ref readonly StructuralNode64 node = ref _nodeBuffer[idx];
+                        if (node.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
+                            node.Integrity01 <= 0.001f)
                         {
+                            continue;
+                        }
+                        if (isLod1 && IsInteriorCulledInLod1(node.Role))
+                        {
+                            continue;
+                        }
+
+                        int assetIdx = StructureRoleGlbRegistry.ResolveGlbAssetIndex(in node);
+                        _glbBucketCounts[assetIdx]++;
+                        totalInstancesToBucket++;
+
+                        // DoorFrameOpening: Kapi kasasina ek olarak 0° <-> 90° donen kapi kanadini (veya cift kanadi) kuyruga ekle!
+                        if (node.Role == StructuralElementRole.DoorFrameOpening)
+                        {
+                            int leafAssetIdx = StructureRoleGlbRegistry.ResolveDoorLeafGlbAssetIndex(in node, out bool isDoubleLeaf);
                             _glbBucketCounts[leafAssetIdx]++;
                             totalInstancesToBucket++;
+                            if (isDoubleLeaf)
+                            {
+                                _glbBucketCounts[leafAssetIdx]++;
+                                totalInstancesToBucket++;
+                            }
                         }
                     }
                 }
@@ -1307,6 +1363,10 @@ namespace Stratocraft.Character
                 {
                     continue;
                 }
+                if (slot.NodeCount == 0 && IsSkylineProxySuppressedByActiveVoxelChunk(slot.ChunkX, slot.ChunkZ))
+                {
+                    continue;
+                }
 
                 gableSilhouette ??= GetOrCreateHorizonSilhouetteMesh(
                     slot.DominantFacadeMaterialId,
@@ -1335,6 +1395,10 @@ namespace Stratocraft.Character
             {
                 ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
                 if (slot.CurrentLod != CityChunkLodTier.Lod2HorizonProxy || !slot.HasDomedOrTowerSilhouette)
+                {
+                    continue;
+                }
+                if (slot.NodeCount == 0 && IsSkylineProxySuppressedByActiveVoxelChunk(slot.ChunkX, slot.ChunkZ))
                 {
                     continue;
                 }

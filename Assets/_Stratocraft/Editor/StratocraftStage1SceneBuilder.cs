@@ -213,19 +213,23 @@ namespace Stratocraft.EditorTools
             }
             if (chunkEntries.Count == 0) return;
 
-            var popArr = new (uint[] voxels, ushort[] fluids)[chunkEntries.Count];
+            var popArr = new (uint[] voxels, ushort[] fluids, MicroVoxelPool4096?[] microPools)[chunkEntries.Count];
             System.Threading.Tasks.Parallel.For(0, chunkEntries.Count, i =>
             {
-                popArr[i] = StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(chunkEntries[i].cx, chunkEntries[i].cz);
+                var microPools = new MicroVoxelPool4096?[Stage1InteractivePlayController.SubChunkCountY];
+                var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(chunkEntries[i].cx, chunkEntries[i].cz, microPools);
+                popArr[i] = (voxels, fluids, microPools);
             });
 
             var worldChunks = new Dictionary<(int cx, int cz), uint[]>(chunkEntries.Count);
             var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(chunkEntries.Count);
+            var worldMicroPools = new Dictionary<(int cx, int cz), MicroVoxelPool4096?[]>(chunkEntries.Count);
             for (int i = 0; i < chunkEntries.Count; i++)
             {
                 var key = (chunkEntries[i].cx, chunkEntries[i].cz);
                 worldChunks[key] = popArr[i].voxels;
                 fluidChunks[key] = popArr[i].fluids;
+                worldMicroPools[key] = popArr[i].microPools;
             }
 
             int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
@@ -238,7 +242,8 @@ namespace Stratocraft.EditorTools
                 var (cx, cz, _) = chunkEntries[i];
                 var sTris = new List<FacetedVoxelTriangle>(8192);
                 var fTris = new List<FacetedVoxelTriangle>(1024);
-                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(cx, cz, maxEditableY, worldChunks, sTris, minY: 0);
+                HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
+                    cx, cz, maxEditableY, worldChunks, sTris, worldMicroPools: worldMicroPools, minY: 0);
                 FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(cx, cz, maxEditableY, worldChunks, fluidChunks, fTris, minY: 0);
                 solidTriLists[i] = sTris;
                 fluidTriLists[i] = fTris;
@@ -341,22 +346,25 @@ namespace Stratocraft.EditorTools
             int totalChunkCount = gridWidth * gridWidth;
 
             // 1. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk (16x16x160m) verisini tum CPU cekirdeklerinde PARALEL uret!
-            var popResults = new (int cx, int cz, uint[] voxels, ushort[] fluids)[totalChunkCount];
+            var popResults = new (int cx, int cz, uint[] voxels, ushort[] fluids, MicroVoxelPool4096?[] microPools)[totalChunkCount];
             System.Threading.Tasks.Parallel.For(0, totalChunkCount, idx =>
             {
                 int cz = ChunkMin + (idx / gridWidth);
                 int cx = ChunkMin + (idx % gridWidth);
-                var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(cx, cz);
-                popResults[idx] = (cx, cz, voxels, fluids);
+                var microPools = new MicroVoxelPool4096?[Stage1InteractivePlayController.SubChunkCountY];
+                var (voxels, fluids) = PopulateVolumetricFloatingIslandChunk(cx, cz, microPools);
+                popResults[idx] = (cx, cz, voxels, fluids, microPools);
             });
 
             var worldChunks = new Dictionary<(int cx, int cz), uint[]>(totalChunkCount);
             var fluidChunks = new Dictionary<(int cx, int cz), ushort[]>(totalChunkCount);
+            var worldMicroPools = new Dictionary<(int cx, int cz), MicroVoxelPool4096?[]>(totalChunkCount);
             for (int i = 0; i < totalChunkCount; i++)
             {
                 var r = popResults[i];
                 worldChunks[(r.cx, r.cz)] = r.voxels;
                 fluidChunks[(r.cx, r.cz)] = r.fluids;
+                worldMicroPools[(r.cx, r.cz)] = r.microPools;
             }
 
             string fluidMatPath = GeneratedAssetsFolder + "/Mat_StratocraftFluidSurface.mat";
@@ -378,7 +386,7 @@ namespace Stratocraft.EditorTools
             if (fluidMat.HasProperty("_LavaCoreColor")) fluidMat.SetColor("_LavaCoreColor", new Color(1.0f, 0.42f, 0.10f, 1.0f));
             EditorUtility.SetDirty(fluidMat);
 
-            // 2. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk'in Kati (SurfaceNets + 5 Yeralti Katmani + 7DTD) ve Akiskan ucgenlerini PARALEL or!
+            // 2. Adim: TUM 400 (20x20) Gercek 3B VoxelChunk'in Kati (SurfaceNets + 5 Yeralti Katmani + 7DTD + MicroVoxelPool4096) ve Akiskan ucgenlerini PARALEL or!
             int maxEditableY = Stage1InteractivePlayController.MaxEditableVoxelY;
             var solidTriLists = new List<FacetedVoxelTriangle>[totalChunkCount];
             var fluidTriLists = new List<FacetedVoxelTriangle>[totalChunkCount];
@@ -392,7 +400,7 @@ namespace Stratocraft.EditorTools
                 // Edit Mode (Scene View) icinde tum 5 yeralti magara katmanini, zindanlari ve magma denizini (minY = 0) tam derinlikte or!
                 const int meshMinY = 0;
                 HybridSurfaceNetsAndShapeMesher.GenerateSeamlessHybridChunkMesh(
-                    cx, cz, maxEditableY, worldChunks, sTris, minY: meshMinY);
+                    cx, cz, maxEditableY, worldChunks, sTris, worldMicroPools: worldMicroPools, minY: meshMinY);
                 FluidSurfaceSkirtMesher.GenerateChunkFluidSurfaceMesh(
                     cx, cz, maxEditableY, worldChunks, fluidChunks, fTris, minY: meshMinY);
 
@@ -400,7 +408,7 @@ namespace Stratocraft.EditorTools
                 fluidTriLists[idx] = fTris;
             });
 
-            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)>(totalChunkCount);
+            var builtChunks = new Dictionary<Vector2Int, (uint[] voxels, MicroVoxelPool4096?[] microPools, MeshFilter mf, MeshCollider mc)>(totalChunkCount);
 
             // 3. Adim: Ana is parcaciginda (Main Thread) Unity Mesh ve VoxelChunk GameObject'lerini olustur
             for (int idx = 0; idx < totalChunkCount; idx++)
@@ -477,7 +485,7 @@ namespace Stratocraft.EditorTools
                     emptyFluidMr.enabled = false;
                 }
 
-                builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], mf, mc);
+                builtChunks[new Vector2Int(cx, cz)] = (worldChunks[(cx, cz)], worldMicroPools[(cx, cz)], mf, mc);
             }
 
             // 3. Faz 2: 16x32x4 Cift Boynuzlu Demirci Atolyesi, Fiziksel 3B CAS Sandigi ve Klan Koruma Kristali
@@ -648,8 +656,16 @@ namespace Stratocraft.EditorTools
         private static float SampleIslandUnderbellyY(float worldX, float worldZ)
             => StratocraftFloatingIslandWorldGen.SampleIslandUnderbellyY(worldX, worldZ);
 
-        private static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(int chunkX, int chunkZ)
-            => StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunk(chunkX, chunkZ);
+        private static (uint[] voxels, ushort[] fluids) PopulateVolumetricFloatingIslandChunk(
+            int chunkX,
+            int chunkZ,
+            MicroVoxelPool4096?[]? microPools = null)
+        {
+            uint[] voxels = new uint[65536];
+            ushort[] fluids = new ushort[65536];
+            Stage1InteractivePlayController.PopulateChunkVoxelsFluidsAndMicroPools(chunkX, chunkZ, voxels, fluids, microPools);
+            return (voxels, fluids);
+        }
 
         /// <summary>
         /// GAME LOGIC BIBLE Bolum 3.4:
@@ -828,7 +844,7 @@ namespace Stratocraft.EditorTools
             Vector3 position,
             Material sharedMat,
             Transform backpackMatTransform,
-            Dictionary<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)> builtChunks,
+            Dictionary<Vector2Int, (uint[] voxels, MicroVoxelPool4096?[] microPools, MeshFilter mf, MeshCollider mc)> builtChunks,
             out Stage1InteractivePlayController controller)
         {
             GameObject playerRoot = new GameObject("Player_PhysicalCharacter_And_Backpack");
@@ -946,9 +962,9 @@ namespace Stratocraft.EditorTools
             controller.SharedVoxelMaterial = sharedMat;
             controller.ApplyFirstPersonVisibility();
 
-            foreach (KeyValuePair<Vector2Int, (uint[] voxels, MeshFilter mf, MeshCollider mc)> kvp in builtChunks)
+            foreach (KeyValuePair<Vector2Int, (uint[] voxels, MicroVoxelPool4096?[] microPools, MeshFilter mf, MeshCollider mc)> kvp in builtChunks)
             {
-                controller.RegisterEditableChunk(kvp.Key, kvp.Value.voxels, kvp.Value.mf, kvp.Value.mc);
+                controller.RegisterEditableChunk(kvp.Key, kvp.Value.voxels, kvp.Value.mf, kvp.Value.mc, microPools: kvp.Value.microPools);
             }
 
             return playerRoot;
