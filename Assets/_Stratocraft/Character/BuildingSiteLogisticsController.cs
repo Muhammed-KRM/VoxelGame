@@ -1503,13 +1503,17 @@ namespace Stratocraft.Character
                 }
             }
 
-            if (!solver.RemoveNode(supportNodeId))
+            bool solverCanStripSafely = solver.CanStripSupportSafely(supportNodeId, out string solverStripReason);
+
+            if (!solver.RemoveNodeAndRedistribute(supportNodeId, out StructureSolveSummary solveSum))
             {
                 return false;
             }
 
-            StructureSolveSummary solveSum = solver.SolveDirty();
-            if (solveSum.DetachedInstantCount > 0 || solveSum.OverloadWarningCount > 0 || solveSum.CollapsedCount > 0)
+            if (!solverCanStripSafely ||
+                solveSum.DetachedInstantCount > 0 ||
+                solveSum.OverloadWarningCount > 0 ||
+                solveSum.CollapsedCount > 0)
             {
                 triggeredEarlyCollapse = true;
             }
@@ -1547,7 +1551,9 @@ namespace Stratocraft.Character
             }
 
             feedback = triggeredEarlyCollapse
-                ? "⚠️ ERKEN KALIP / GEÇİCİ DESTEK SÖKÜMÜ! Kilit/tokmak/kür tamamlanmadığı için üst yapı dengesini kaybetti (%100 destek malzemesi iade edildi)!"
+                ? (!solverCanStripSafely && !string.IsNullOrEmpty(solverStripReason)
+                    ? $"⚠️ ERKEN KALIP / GEÇİCİ DESTEK SÖKÜMÜ ({solverStripReason})! Üst yapı dengesini kaybetti (%100 destek malzemesi iade edildi)!"
+                    : "⚠️ ERKEN KALIP / GEÇİCİ DESTEK SÖKÜMÜ! Kilit/tokmak/kür tamamlanmadığı için üst yapı dengesini kaybetti (%100 destek malzemesi iade edildi)!")
                 : "♻️ Geçici destek / kalıp güvenle söküldü (%100 malzeme iade edildi, yapı yükü kendi taşıyor).";
             return true;
         }
@@ -2135,6 +2141,7 @@ namespace Stratocraft.Character
             string msg;
             if (toolKind == InventoryItemKind.ToolEarthTamper)
             {
+                looseBuildSystem.UnifiedGraphSolver.TampRammedEarthNode(updated.NodeId);
                 updated.IsCompactedOrCured = true;
                 if (updated.Role == StructuralElementRole.RammedEarthWall)
                 {

@@ -4750,7 +4750,28 @@ namespace Stratocraft.Character
             // 3) Uzak Kuzey Metropolu (Z = +192..+960m), Guney Koyu ve Bati Kasabasi ufuk silueti (LOD1/LOD2) on-kaydi
             if (CityLodRenderer.RegisteredChunkCount >= 440 || CityLodRenderer.TotalRegisteredNodes >= 56000)
             {
-                return;
+                System.Span<(int ChunkX, int ChunkZ)> evictCandidates = stackalloc (int ChunkX, int ChunkZ)[8];
+                int pendingEvict = CityLodRenderer.GetChunksPendingEviction(
+                    viewerPos.X,
+                    viewerPos.Z,
+                    CityChunkLodBatchRenderer.Lod2MaxDistanceMeters + 64f,
+                    evictCandidates);
+                if (pendingEvict > 0)
+                {
+                    for (int e = 0; e < pendingEvict; e++)
+                    {
+                        _registeredSkylineChunkKeys.Remove(PackChunkKey(evictCandidates[e].ChunkX, evictCandidates[e].ChunkZ));
+                    }
+                    CityLodRenderer.EvictDistantChunks(
+                        viewerPos.X,
+                        viewerPos.Z,
+                        CityChunkLodBatchRenderer.Lod2MaxDistanceMeters + 64f,
+                        maxEvictions: pendingEvict);
+                }
+                if (CityLodRenderer.RegisteredChunkCount >= 440 || CityLodRenderer.TotalRegisteredNodes >= 56000)
+                {
+                    return;
+                }
             }
 
             const int gridSide = SkylineMaxScanRadiusChunks * 2 + 1;

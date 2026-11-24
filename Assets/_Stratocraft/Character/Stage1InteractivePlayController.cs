@@ -1325,7 +1325,8 @@ namespace Stratocraft.Character
                 _looseBuildSystem.UpdateModularVisibilityAndShadowCulling(cullCamPos, camUnderground);
             }
             Material? cityModularMat = WorldLooseBuildSystem.ResolveModularVertexColorMaterial(SharedVoxelMaterial);
-            _looseBuildSystem.CityLodRenderer.RenderVisibleCityBatches(cityModularMat);
+            _looseBuildSystem.CityLodRenderer.GlbVertexColorMaterial = cityModularMat;
+            _looseBuildSystem.CityLodRenderer.RenderVisibleCityBatches(SharedVoxelMaterial, cityModularMat);
             RebuildAllDirtyChunks(forceImmediateAll: false);
             if (spanId >= 0L) _telemetryLogger?.LogPipelineEnd(spanId, "OK");
         }

@@ -1209,7 +1209,9 @@ namespace Stratocraft.StandaloneCoreTests
                     {
                         for (int i = 0; i < count; i++)
                         {
-                            if (siteBuf[i].Archetype == UnifiedSettlementArchetype.TownHouseTwoStory &&
+                            if ((siteBuf[i].Archetype is UnifiedSettlementArchetype.TownHouseTwoStory
+                                    or UnifiedSettlementArchetype.CityApartment3Story
+                                    or UnifiedSettlementArchetype.CityApartment4Story) &&
                                 UnifiedSettlementBuilder.BuildSiteGraph(in siteBuf[i], nodes, edges, out int nCount, out _))
                             {
                                 float minY = float.MaxValue;
@@ -1280,8 +1282,9 @@ namespace Stratocraft.StandaloneCoreTests
             var nodes = new StructuralNode64[Math.Max(4096, UnifiedSettlementBuilder.DefaultMaxNodesPerBuilding)];
             var edges = new StructuralJointEdge32[Math.Max(8192, UnifiedSettlementBuilder.DefaultMaxEdgesPerBuilding)];
 
-            // 1) Oncelikle Kuzey Metropol'deki (0,+36) CityPalace parsel(ler)ini topla; yoksa dogrudan BuildSiteGraph ile uret
+            // 1) Oncelikle Kuzey Metropol'deki (0,+36) CityPalace 3x2 dilim parsel(ler)ini topla; yoksa dogrudan BuildSiteGraph ile uret
             int palaceParcelsFound = 0;
+            var palaceSlicesSeen = new HashSet<(int sx, int sz)>();
             if (SettlementLayoutSystem.TryGetSettlementCoveringChunk(0, 36, out SettlementDescriptor city))
             {
                 var siteBuf = new UnifiedSettlementSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
@@ -1295,9 +1298,13 @@ namespace Stratocraft.StandaloneCoreTests
                         int sc = SettlementLayoutSystem.PopulateUnifiedChunkSites(cx, cz, siteBuf);
                         for (int i = 0; i < sc; i++)
                         {
-                            if (siteBuf[i].Archetype == UnifiedSettlementArchetype.CityPalace)
+                            if (siteBuf[i].Archetype is UnifiedSettlementArchetype.CityPalace or UnifiedSettlementArchetype.GrandCityPalace or UnifiedSettlementArchetype.GrandCityPalaceSlice)
                             {
                                 palaceParcelsFound++;
+                                if (siteBuf[i].HasPalaceSlice)
+                                {
+                                    palaceSlicesSeen.Add((siteBuf[i].PalaceSliceX, siteBuf[i].PalaceSliceZ));
+                                }
                                 if (UnifiedSettlementBuilder.BuildSiteGraph(in siteBuf[i], nodes, edges, out int nCount, out _, nextId))
                                 {
                                     for (int k = 0; k < nCount; k++)
@@ -1311,6 +1318,11 @@ namespace Stratocraft.StandaloneCoreTests
                     }
                 }
             }
+
+            Assert.That(palaceParcelsFound, Is.EqualTo(6),
+                "MK-17: Kuzey Metropol Saray kampusu tam 3x2 = 6 deterministik dilim parselinden olusmalidir.");
+            Assert.That(palaceSlicesSeen.Count, Is.EqualTo(6),
+                "MK-17: 6 saray parseli (0..2) x (0..1) 6 ayri benzersiz dilime (HasPalaceSlice) sahip olmalidir.");
 
             if (palaceNodes.Count == 0)
             {

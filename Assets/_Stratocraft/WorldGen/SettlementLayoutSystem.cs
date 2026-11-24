@@ -971,13 +971,21 @@ namespace Stratocraft.WorldGen.Generators
                     {
                         arch = UnifiedSettlementArchetype.ArcadedInn;
                     }
+                    else if (arch == UnifiedSettlementArchetype.TownHouseTwoStory)
+                    {
+                        arch = ((ls.DeterministicSeed & 1u) == 0u)
+                            ? UnifiedSettlementArchetype.TownMansion2Story
+                            : UnifiedSettlementArchetype.TownMansion3Story;
+                    }
                     else if ((Math.Abs(dx) >= 3 || Math.Abs(dz) >= 3) &&
                              (ls.Kind == ProceduralModularSiteKind.CarpenterWorkshop ||
                               ls.Kind == ProceduralModularSiteKind.WarehouseHall))
                     {
                         // 11x11 Kasaba dis caddelerinde 2 ve 3 katli cok odali Kasaba Konaklari:
                         arch = (i == 0 || ((dx + dz) & 1) == 0)
-                            ? UnifiedSettlementArchetype.TownHouseTwoStory
+                            ? (((ls.DeterministicSeed & 1u) == 0u)
+                                ? UnifiedSettlementArchetype.TownMansion2Story
+                                : UnifiedSettlementArchetype.TownMansion3Story)
                             : UnifiedSettlementArchetype.CarpenterWorkshop;
                     }
                 }
@@ -1008,7 +1016,7 @@ namespace Stratocraft.WorldGen.Generators
                         else { halfX = 4.0f; halfZ = 3.0f; }
                     }
                 }
-                else if (arch == UnifiedSettlementArchetype.TownHouseTwoStory)
+                else if (arch is UnifiedSettlementArchetype.TownHouseTwoStory or UnifiedSettlementArchetype.TownMansion2Story or UnifiedSettlementArchetype.TownMansion3Story)
                 {
                     halfX = s.Tier == SettlementTier.City ? 5.0f : ((ls.DeterministicSeed & 1u) == 0u ? 3.5f : 4.0f);
                     halfZ = s.Tier == SettlementTier.City ? 3.5f : 3.0f;
@@ -1039,6 +1047,17 @@ namespace Stratocraft.WorldGen.Generators
                 }
 
                 uint unifiedSeed = ls.DeterministicSeed | 0x00020000u;
+                byte storyCount = arch switch
+                {
+                    UnifiedSettlementArchetype.TownMansion3Story => 3,
+                    UnifiedSettlementArchetype.TownMansion2Story => 2,
+                    UnifiedSettlementArchetype.TownHouseTwoStory => 2,
+                    _ => 0
+                };
+                byte cultureOverride = (s.Tier == SettlementTier.Village && arch == UnifiedSettlementArchetype.VillageHouse)
+                    ? (byte)(villageCulture + 1)
+                    : (byte)0;
+
                 ClampExtentsToChunkBounds(ls.LocalCenterX, ls.LocalCenterZ, ls.YawDegrees, ref halfX, ref halfZ);
                 outSites[writeCount++] = new UnifiedSettlementSiteSpec(
                     ls.ChunkX,
@@ -1053,7 +1072,11 @@ namespace Stratocraft.WorldGen.Generators
                     halfX,
                     halfZ,
                     unifiedSeed,
-                    isRuin);
+                    isRuin,
+                    storyCount,
+                    palaceSliceX: -1,
+                    palaceSliceZ: -1,
+                    culturalStyleOverride: cultureOverride);
             }
 
             // Kasaba icin (-1, 1) parselinde 2 Katli Revakli Han / Taverna garantisi
@@ -1270,16 +1293,26 @@ namespace Stratocraft.WorldGen.Generators
             uint seedSalt,
             bool isRuin,
             Span<UnifiedSettlementSiteSpec> outSites,
-            ref int count)
+            ref int count,
+            byte storyCount = 0,
+            sbyte palaceSliceX = -1,
+            sbyte palaceSliceZ = -1,
+            byte culturalStyleOverride = 0,
+            bool useCustomWorldCenter = false,
+            float customWorldX = 0f,
+            float customWorldZ = 0f)
         {
             if (count >= outSites.Length) return;
-            if (archetype != UnifiedSettlementArchetype.CityPalace)
+            bool isPalaceArchetype = archetype is UnifiedSettlementArchetype.CityPalace
+                or UnifiedSettlementArchetype.GrandCityPalace
+                or UnifiedSettlementArchetype.GrandCityPalaceSlice;
+            if (!isPalaceArchetype && !useCustomWorldCenter)
             {
                 ClampExtentsToChunkBounds(localCx, localCz, yawDeg, ref halfX, ref halfZ);
             }
             int wx = chunkX * 16 + localCx;
             int wz = chunkZ * 16 + localCz;
-            int baseY = ResolveSettlementColumnSurfaceY(in s, wx, wz);
+            int baseY = useCustomWorldCenter ? s.AnchorBaseY : ResolveSettlementColumnSurfaceY(in s, wx, wz);
             int biomeId = s.BiomeId;
             if (biomeId == 8 || biomeId == 11 || biomeId == 3)
             {
@@ -1293,14 +1326,18 @@ namespace Stratocraft.WorldGen.Generators
                 archetype: archetype,
                 tier: s.Tier,
                 biomeId: biomeId,
-                worldCenterX: wx + 0.5f,
+                worldCenterX: useCustomWorldCenter ? customWorldX : (wx + 0.5f),
                 worldBaseY: baseY + 0.5f,
-                worldCenterZ: wz + 0.5f,
+                worldCenterZ: useCustomWorldCenter ? customWorldZ : (wz + 0.5f),
                 yawDegrees: yawDeg,
                 footprintHalfExtentX: halfX,
                 footprintHalfExtentZ: halfZ,
                 deterministicSeed: seed,
-                isRuin: isRuin);
+                isRuin: isRuin,
+                storyCount: storyCount,
+                palaceSliceX: palaceSliceX,
+                palaceSliceZ: palaceSliceZ,
+                culturalStyleOverride: culturalStyleOverride);
         }
 
         // =====================================================================
@@ -1631,14 +1668,14 @@ namespace Stratocraft.WorldGen.Generators
                 ref readonly UnifiedSettlementSiteSpec u = ref unified[i];
                 ProceduralModularSiteKind legacyKind = u.Archetype switch
                 {
-                    UnifiedSettlementArchetype.CityPalace => ProceduralModularSiteKind.CarvedMarbleShrine,
-                    UnifiedSettlementArchetype.DomedMosqueTemple => ProceduralModularSiteKind.CarvedMarbleShrine,
+                    UnifiedSettlementArchetype.CityPalace or UnifiedSettlementArchetype.GrandCityPalace or UnifiedSettlementArchetype.GrandCityPalaceSlice => ProceduralModularSiteKind.CarvedMarbleShrine,
+                    UnifiedSettlementArchetype.DomedMosqueTemple or UnifiedSettlementArchetype.GrandDomedTemple => ProceduralModularSiteKind.CarvedMarbleShrine,
                     UnifiedSettlementArchetype.ArcadedInn => ProceduralModularSiteKind.TownHouseTwoStory,
-                    UnifiedSettlementArchetype.TownHouseTwoStory => ProceduralModularSiteKind.TownHouseTwoStory,
-                    UnifiedSettlementArchetype.VillageHouse => ProceduralModularSiteKind.NordicTimberCabin,
-                    UnifiedSettlementArchetype.MeadHallWatchtower => ProceduralModularSiteKind.MeadHallWatchtower,
+                    UnifiedSettlementArchetype.TownHouseTwoStory or UnifiedSettlementArchetype.TownMansion2Story or UnifiedSettlementArchetype.TownMansion3Story or UnifiedSettlementArchetype.CityApartment3Story or UnifiedSettlementArchetype.CityApartment4Story => ProceduralModularSiteKind.TownHouseTwoStory,
+                    UnifiedSettlementArchetype.VillageHouse or UnifiedSettlementArchetype.VillageHouseLogForest or UnifiedSettlementArchetype.VillageHouseStoneHighland or UnifiedSettlementArchetype.VillageHouseMixedTimber or UnifiedSettlementArchetype.VillageHouseAdobeEarth => ProceduralModularSiteKind.NordicTimberCabin,
+                    UnifiedSettlementArchetype.MeadHallWatchtower or UnifiedSettlementArchetype.CityBastionTower => ProceduralModularSiteKind.MeadHallWatchtower,
                     UnifiedSettlementArchetype.CityGatehouse => ProceduralModularSiteKind.CityGatehouse,
-                    UnifiedSettlementArchetype.CityWallSegment => ProceduralModularSiteKind.CityWallSegment,
+                    UnifiedSettlementArchetype.CityWallSegment or UnifiedSettlementArchetype.CityCurtainWallSegment => ProceduralModularSiteKind.CityWallSegment,
                     UnifiedSettlementArchetype.BlacksmithForge => ProceduralModularSiteKind.BlacksmithForge,
                     UnifiedSettlementArchetype.CarpenterWorkshop => ProceduralModularSiteKind.CarpenterWorkshop,
                     UnifiedSettlementArchetype.WarehouseHall => ProceduralModularSiteKind.WarehouseHall,
@@ -1687,17 +1724,27 @@ namespace Stratocraft.WorldGen.Generators
                 case MetropolisDistrictKind.PalaceAndMonumentalCenter:
                 {
                     // 3x2 chunk (48x32 m) 22+ Buyuk Odali 3 Katli Dev Saray (GrandCityPalace): dx in [-1..+1], dz in [+1..+2]
+                    // Her 6 chunk tek ortak saray merkezinden (CenterChunkX*16+8, (CenterChunkZ+2)*16) kendi deterministik
+                    // (sliceX, sliceZ) dilimini (0..2 x 0..1) uretir -> sifir ust uste binme, sifir dikis!
                     if (MacroCityDistrictPlanner.TryGetPalaceChunkSlice(dx, dz, out int sliceX, out int sliceZ))
                     {
                         uint sliceSalt = (uint)(sliceX + sliceZ * 3 + 1);
+                        float palaceCenterX = s.CenterChunkX * 16 + 8.0f;
+                        float palaceCenterZ = (s.CenterChunkZ + 2) * 16.0f;
                         EmitUnifiedPlot(
                             in s, cx, cz, 8, 8,
-                            halfX: 7.5f, halfZ: 7.5f,
+                            halfX: 20.0f, halfZ: 13.0f,
                             UnifiedSettlementArchetype.CityPalace,
                             yawDeg: 0f,
                             seedSalt: sliceSalt,
                             isRuin: false,
-                            outSites, ref count);
+                            outSites, ref count,
+                            storyCount: 3,
+                            palaceSliceX: (sbyte)sliceX,
+                            palaceSliceZ: (sbyte)sliceZ,
+                            useCustomWorldCenter: true,
+                            customWorldX: palaceCenterX,
+                            customWorldZ: palaceCenterZ);
                         return count;
                     }
 
@@ -1719,7 +1766,7 @@ namespace Stratocraft.WorldGen.Generators
                     // Buyuk Kubbeli Tapinak / Cami ((2, 1), (-2, 1), (-3, 1))
                     if ((dx == 2 && dz == 1) || (dx == -2 && dz == 1) || (dx == -3 && dz == 1))
                     {
-                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 5.5f, 5.5f, UnifiedSettlementArchetype.DomedMosqueTemple, dx > 0 ? 270f : 90f, 20u, false, outSites, ref count);
+                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 5.5f, 5.5f, UnifiedSettlementArchetype.GrandDomedTemple, dx > 0 ? 270f : 90f, 20u, false, outSites, ref count);
                         return count;
                     }
 
@@ -1731,8 +1778,8 @@ namespace Stratocraft.WorldGen.Generators
                     }
 
                     // Anitsal Divan & Soylu Konaklari (kalan 6x6 merkez parselleri: 3-4 katli yuksek anitsal bloklar)
-                    EmitUnifiedPlot(in s, cx, cz, 8, 4, 5.0f, 3.2f, UnifiedSettlementArchetype.TownHouseTwoStory, 0f, 40u, false, outSites, ref count);
-                    EmitUnifiedPlot(in s, cx, cz, 8, 12, 5.0f, 3.2f, UnifiedSettlementArchetype.TownHouseTwoStory, 180f, 41u, false, outSites, ref count);
+                    EmitUnifiedPlot(in s, cx, cz, 8, 4, 5.0f, 3.2f, UnifiedSettlementArchetype.CityApartment3Story, 0f, 40u, false, outSites, ref count, storyCount: 3);
+                    EmitUnifiedPlot(in s, cx, cz, 8, 12, 5.0f, 3.2f, UnifiedSettlementArchetype.CityApartment4Story, 180f, 41u, false, outSites, ref count, storyCount: 4);
                     return count;
                 }
 
@@ -1742,10 +1789,13 @@ namespace Stratocraft.WorldGen.Generators
                 case MetropolisDistrictKind.InnerHighRiseApartmentRing:
                 {
                     // Her apartman blogu chunk'inda 2 adet genis (10x6.4m / 11x7m) 3 ve 4 katli apartman + kose lonca dukkani
-                    uint storySaltA = (uint)(((cx + cz) & 1) == 0 ? 0 : 1); // 0 -> 3 kat, 1 -> 4 kat
-                    uint storySaltB = storySaltA ^ 1u;
-                    EmitUnifiedPlot(in s, cx, cz, 8, 4, 5.0f, 3.2f, UnifiedSettlementArchetype.TownHouseTwoStory, 0f, 100u + storySaltA, false, outSites, ref count);
-                    EmitUnifiedPlot(in s, cx, cz, 8, 12, 5.0f, 3.2f, UnifiedSettlementArchetype.TownHouseTwoStory, 180f, 102u + storySaltB, false, outSites, ref count);
+                    bool firstIsFour = ((cx + cz) & 1) != 0;
+                    UnifiedSettlementArchetype aptA = firstIsFour ? UnifiedSettlementArchetype.CityApartment4Story : UnifiedSettlementArchetype.CityApartment3Story;
+                    UnifiedSettlementArchetype aptB = firstIsFour ? UnifiedSettlementArchetype.CityApartment3Story : UnifiedSettlementArchetype.CityApartment4Story;
+                    byte storiesA = firstIsFour ? (byte)4 : (byte)3;
+                    byte storiesB = firstIsFour ? (byte)3 : (byte)4;
+                    EmitUnifiedPlot(in s, cx, cz, 8, 4, 5.0f, 3.2f, aptA, 0f, 100u + (firstIsFour ? 1u : 0u), false, outSites, ref count, storyCount: storiesA);
+                    EmitUnifiedPlot(in s, cx, cz, 8, 12, 5.0f, 3.2f, aptB, 180f, 102u + (firstIsFour ? 0u : 1u), false, outSites, ref count, storyCount: storiesB);
                     return count;
                 }
 
@@ -1759,14 +1809,14 @@ namespace Stratocraft.WorldGen.Generators
                     {
                         EmitUnifiedPlot(in s, cx, cz, 3, 4, 2.5f, 2.5f, UnifiedSettlementArchetype.MarketStall, 90f, 200u, false, outSites, ref count);
                         EmitUnifiedPlot(in s, cx, cz, 13, 4, 2.5f, 2.5f, UnifiedSettlementArchetype.MarketStall, 270f, 201u, false, outSites, ref count);
-                        EmitUnifiedPlot(in s, cx, cz, 13, 12, 3.0f, 3.0f, UnifiedSettlementArchetype.TownHouseTwoStory, 270f, 203u, false, outSites, ref count);
+                        EmitUnifiedPlot(in s, cx, cz, 13, 12, 3.0f, 3.0f, UnifiedSettlementArchetype.CityApartment3Story, 270f, 203u, false, outSites, ref count, storyCount: 3);
                         return count;
                     }
                     if (dz == 0)
                     {
                         EmitUnifiedPlot(in s, cx, cz, 4, 3, 2.5f, 2.5f, UnifiedSettlementArchetype.MarketStall, 0f, 210u, false, outSites, ref count);
                         EmitUnifiedPlot(in s, cx, cz, 4, 13, 2.5f, 2.5f, UnifiedSettlementArchetype.MarketStall, 180f, 211u, false, outSites, ref count);
-                        EmitUnifiedPlot(in s, cx, cz, 12, 13, 3.0f, 3.0f, UnifiedSettlementArchetype.TownHouseTwoStory, 180f, 213u, false, outSites, ref count);
+                        EmitUnifiedPlot(in s, cx, cz, 12, 13, 3.0f, 3.0f, UnifiedSettlementArchetype.CityApartment3Story, 180f, 213u, false, outSites, ref count, storyCount: 3);
                         return count;
                     }
 
@@ -1780,8 +1830,13 @@ namespace Stratocraft.WorldGen.Generators
                     };
 
                     // Alt parselde Lonca / Han, ust parselde 3-4 katli tuccar apartmani
+                    bool isFourStoryGuildApt = ((dx + dz) & 1) != 0;
                     EmitUnifiedPlot(in s, cx, cz, 8, 4, 4.0f, 3.0f, guildArch, 0f, 220u, false, outSites, ref count);
-                    EmitUnifiedPlot(in s, cx, cz, 8, 12, 5.0f, 3.2f, UnifiedSettlementArchetype.TownHouseTwoStory, 180f, 221u, false, outSites, ref count);
+                    EmitUnifiedPlot(
+                        in s, cx, cz, 8, 12, 5.0f, 3.2f,
+                        isFourStoryGuildApt ? UnifiedSettlementArchetype.CityApartment4Story : UnifiedSettlementArchetype.CityApartment3Story,
+                        180f, 221u, false, outSites, ref count,
+                        storyCount: isFourStoryGuildApt ? (byte)4 : (byte)3);
                     return count;
                 }
 
@@ -1852,7 +1907,7 @@ namespace Stratocraft.WorldGen.Generators
                     if ((onWest || onEast) && (onSouth || onNorth))
                     {
                         float cornerYaw = onSouth ? (onWest ? 0f : 270f) : (onWest ? 90f : 180f);
-                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.5f, 3.5f, UnifiedSettlementArchetype.MeadHallWatchtower, cornerYaw, 400u, false, outSites, ref count);
+                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.5f, 3.5f, UnifiedSettlementArchetype.CityBastionTower, cornerYaw, 400u, false, outSites, ref count);
                         return count;
                     }
 
@@ -1884,14 +1939,14 @@ namespace Stratocraft.WorldGen.Generators
                         float wallYaw = onSouth ? 0f : 180f;
                         if ((adx & 3) == 0)
                         {
-                            EmitUnifiedPlot(in s, cx, cz, 3, 8, 3.0f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 420u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.MeadHallWatchtower, wallYaw, 421u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 13, 8, 3.0f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 422u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 3, 8, 3.0f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 420u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.CityBastionTower, wallYaw, 421u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 13, 8, 3.0f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 422u, false, outSites, ref count);
                         }
                         else
                         {
-                            EmitUnifiedPlot(in s, cx, cz, 4, 8, 3.2f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 423u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 12, 8, 3.2f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 424u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 4, 8, 3.2f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 423u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 12, 8, 3.2f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 424u, false, outSites, ref count);
                         }
                         return count;
                     }
@@ -1900,14 +1955,14 @@ namespace Stratocraft.WorldGen.Generators
                         float wallYaw = onWest ? 90f : 270f;
                         if ((adz & 3) == 0)
                         {
-                            EmitUnifiedPlot(in s, cx, cz, 8, 3, 3.0f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 430u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.MeadHallWatchtower, wallYaw, 431u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 8, 13, 3.0f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 432u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 3, 3.0f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 430u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.CityBastionTower, wallYaw, 431u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 13, 3.0f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 432u, false, outSites, ref count);
                         }
                         else
                         {
-                            EmitUnifiedPlot(in s, cx, cz, 8, 4, 3.2f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 433u, false, outSites, ref count);
-                            EmitUnifiedPlot(in s, cx, cz, 8, 12, 3.2f, 1.2f, UnifiedSettlementArchetype.CityWallSegment, wallYaw, 434u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 4, 3.2f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 433u, false, outSites, ref count);
+                            EmitUnifiedPlot(in s, cx, cz, 8, 12, 3.2f, 1.2f, UnifiedSettlementArchetype.CityCurtainWallSegment, wallYaw, 434u, false, outSites, ref count);
                         }
                         return count;
                     }
@@ -1926,7 +1981,7 @@ namespace Stratocraft.WorldGen.Generators
                     }
                     if (dz == -24 && (dx == -4 || dx == 4))
                     {
-                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.MeadHallWatchtower, 0f, 501u, false, outSites, ref count);
+                        EmitUnifiedPlot(in s, cx, cz, 8, 8, 3.0f, 3.0f, UnifiedSettlementArchetype.CityBastionTower, 0f, 501u, false, outSites, ref count);
                         return count;
                     }
 
