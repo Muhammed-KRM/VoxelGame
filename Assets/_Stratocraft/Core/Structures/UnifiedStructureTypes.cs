@@ -8,9 +8,9 @@ using Stratocraft.Core.Constants;
 namespace Stratocraft.Core.Structures
 {
     /// <summary>
-    /// Mimari yapi ekolleri (DOK1 / DOK4 / Karar A3).
+    /// Mimari yapi ekolleri (DOK1 / DOK4 / Karar A3 / 9-Ekol Mimari Gelistirme Sartnamesi).
     /// <see cref="RawNaturalCrystal"/> (0) [C] Madde Kristali ile sekillendirilmis dogal kutle barinaklarini,
-    /// 1..4 ise kazma/balta ve zanaat istasyonlariyla uretilen gercek mimari ekolleri temsil eder.
+    /// 1..10 ise kazma/balta ve zanaat istasyonlariyla uretilen 9 gercek mimari yapi yontemini (+ anitsal ekol) temsil eder.
     /// </summary>
     public enum ArchitecturalSchool : byte
     {
@@ -18,11 +18,17 @@ namespace Stratocraft.Core.Structures
         LogCabin = 1,
         TimberFrame = 2,
         StoneMasonry = 3,
-        MonumentalArchDome = 4
+        MonumentalArchDome = 4,
+        LogPostAndFill = 5,
+        PlatformWoodFrame = 6,
+        BrickMasonry = 7,
+        RammedEarth = 8,
+        AdobeAndCob = 9,
+        ReinforcedConcreteAndSteel = 10
     }
 
     /// <summary>
-    /// Ekol 0..4 kapsamindaki tum tasiyici, ortu, dolgu, sirkulasyon ve santiye iskele eleman rolleri (0..42, DOK4 §2.2).
+    /// Ekol 0..10 kapsamindaki tum tasiyici, ortu, dolgu, gecici destek, sirkulasyon ve santiye iskele eleman rolleri (0..63).
     /// </summary>
     public enum StructuralElementRole : byte
     {
@@ -77,7 +83,30 @@ namespace Stratocraft.Core.Structures
         MasonryHearthChimney = 39,
         TemporaryCenteringScaffold = 40,
         StairwellTrimmerOpening = 41,
-        ModularScaffolding = 42
+        ModularScaffolding = 42,
+
+        // --- F. 9-Ekol Genisletilmis Yapi ve Gecici Destek Rolleri (43..63) ---
+        GroovedLogPost = 43,
+        SaddleNotchedBaseLog = 44,
+        HalfFlatStarterLog = 45,
+        LogChinkingFill = 46,
+        TimberRingBeam = 47,
+        PlatformStudWall = 48,
+        PlywoodSheathingPanel = 49,
+        RammedEarthWall = 50,
+        CobCurvedWall = 51,
+        EnglishBondBrickWall = 52,
+        RebarFoundationCage = 53,
+        RebarColumnCage = 54,
+        ConcreteColumnFormwork = 55,
+        TelescopicShoringProp = 56,
+        SlabDeckFormwork = 57,
+        SteelHBeamColumn = 58,
+        SteelGuyWireBrace = 59,
+        SteelXBrace = 60,
+        CorrugatedMetalDeck = 61,
+        WoodenArchCentering = 62,
+        SlidingEarthFormwork = 63
     }
 
     /// <summary>
@@ -115,7 +144,30 @@ namespace Stratocraft.Core.Structures
         KeystoneLock = 12,
         LintelBearing = 13,
         ScaffoldingClamp = 14,
-        DryStoneInterlock = 15
+        DryStoneInterlock = 15,
+        GroovedPostChannel = 16,
+        SheathingDiaphragmNail = 17,
+        CobMudBond = 18,
+        CompactedEarthLift = 19,
+        ConcreteMonolithicPour = 20,
+        SteelTorqueBolt = 21,
+        SteelGuyWireTension = 22,
+        TemporaryShoringProp = 23
+    }
+
+    /// <summary>
+    /// Insaat anindaki anlik denge, gecici destek, ek dikme (reshoring), kalip ve sıkıstırma/kur bayraklari (Bolum 2.1 - 2.3).
+    /// </summary>
+    [Flags]
+    public enum TemporarySupportFlags : byte
+    {
+        None = 0,
+        TemporarySupport = 1 << 0,
+        AdditionalReshoreSupport = 1 << 1,
+        RequiresShoringBeforeLoad = 1 << 2,
+        ArchCentering = 1 << 3,
+        SlidingFormwork = 1 << 4,
+        IsCompactedOrCured = 1 << 5
     }
 
     /// <summary>
@@ -166,18 +218,21 @@ namespace Stratocraft.Core.Structures
     }
 
     /// <summary>
-    /// Kagir veya derz dugumunde kullanilan baglayici harc sinifi.
+    /// Kagir, toprak, derz veya betonarme dugumunde kullanilan baglayici / sertlesme sinifi (Bolum 2.3).
     /// </summary>
     public enum MortarType : byte
     {
         None = 0,
         Clay = 1,
         Lime = 2,
-        Horasan = 3
+        Horasan = 3,
+        CobMud = 4,
+        RammedEarthCompact = 5,
+        PortlandConcrete = 6
     }
 
     /// <summary>
-    /// Kilitlenen Karar A1, A2, A3 ve santiye lojistigi kanonik sabitleri.
+    /// Kilitlenen Karar A1, A2, A3, 9-ekol kur sureleri (Bolum 2.3) ve santiye lojistigi kanonik sabitleri.
     /// </summary>
     public static class MortarConstants
     {
@@ -199,8 +254,41 @@ namespace Stratocraft.Core.Structures
         /// <summary>Horasan / puzolanik harcin tam sertlesme suresi (7.5 gercek dk).</summary>
         public const float HorasanFullCureSeconds = 450f;
 
+        /// <summary>Bolum 2.3: Kalipsiz Cob camur katmaninin (&lt;= 45 cm) yuk tasima esigine ulasma suresi (1.5 gercek dk).</summary>
+        public const float CobLoadBearingSeconds = 90f;
+
+        /// <summary>Bolum 2.3: Cob camur katmaninin tam kuruma suresi (3 gercek dk).</summary>
+        public const float CobFullCureSeconds = 180f;
+
+        /// <summary>Bolum 2.3: Cob katmani basina tek seferde cikilabilecek maksimum islak yukseklik (45 cm).</summary>
+        public const float CobMaxLayerHeightMeters = 0.45f;
+
+        /// <summary>Bolum 2.3: Sikistirilmis toprak (Rammed Earth) tokmak sonrasi aninda kalip sokum suresi (0 sn).</summary>
+        public const float RammedEarthLoadBearingSeconds = 0f;
+
+        /// <summary>Bolum 2.3: Sikistirilmis topragin tam kuruma suresi (4 gercek dk).</summary>
+        public const float RammedEarthFullCureSeconds = 240f;
+
+        /// <summary>Bolum 2.3: Betonarme kolon yan kalibinin sokulebilme suresi (1.5 gercek dk).</summary>
+        public const float ConcreteSideFormStripSeconds = 90f;
+
+        /// <summary>Bolum 2.3: Betonarme kolon yan kalibi bolgesinin tam sertlesme suresi (5 gercek dk).</summary>
+        public const float ConcreteSideFormFullCureSeconds = 300f;
+
+        /// <summary>Bolum 2.3: Betonarme kiris/tabliye ana dikmelerinin sokulebilme suresi (5 gercek dk, %75 kur).</summary>
+        public const float ConcreteSlabShoringStripSeconds = 300f;
+
+        /// <summary>Bolum 2.3: Betonarme kiris/tabliye tam sertlesme suresi (10 gercek dk).</summary>
+        public const float ConcreteSlabShoringFullCureSeconds = 600f;
+
         /// <summary>Islak / kirilgan harc esigi; bu degerin altinda agir kat cikilirsa harc ezilir/kayar.</summary>
         public const float WetCureThreshold = 0.45f;
+
+        /// <summary>Bolum 2.3: Betonarme tabliye/kiris ana dikmelerinin sokulebilmesi icin gereken minimum %75 kur esigi.</summary>
+        public const float ConcreteSlabShoringCureThreshold = 0.75f;
+
+        /// <summary>Bolum 2.3: Betonarme kolon yan kalibinin sokulebilmesi icin gereken kur esigi (90s / 300s * 0.75).</summary>
+        public const float ConcreteSideFormStripCureThreshold = 0.225f;
 
         /// <summary>Taze surulmus islak harcin (CureRatio == 0) baslangic mukavemet carpani.</summary>
         public const float WetStrengthFactor = 0.28f;
@@ -229,6 +317,9 @@ namespace Stratocraft.Core.Structures
             MortarType.Clay => ClayLoadBearingSeconds,
             MortarType.Lime => LimeLoadBearingSeconds,
             MortarType.Horasan => HorasanLoadBearingSeconds,
+            MortarType.CobMud => CobLoadBearingSeconds,
+            MortarType.RammedEarthCompact => RammedEarthLoadBearingSeconds,
+            MortarType.PortlandConcrete => ConcreteSlabShoringStripSeconds,
             _ => 0f
         };
 
@@ -238,11 +329,55 @@ namespace Stratocraft.Core.Structures
             MortarType.Clay => ClayFullCureSeconds,
             MortarType.Lime => LimeFullCureSeconds,
             MortarType.Horasan => HorasanFullCureSeconds,
+            MortarType.CobMud => CobFullCureSeconds,
+            MortarType.RammedEarthCompact => RammedEarthFullCureSeconds,
+            MortarType.PortlandConcrete => ConcreteSlabShoringFullCureSeconds,
             _ => 0f
         };
 
         /// <summary>
-        /// Karar A2 uyarinca harc kurlenme oranini ilerletir.
+        /// Verilen baglayici turu icin yuk tasima / ana dikme sokumu icin gereken minimum <see cref="StructuralNode64.CureRatio01"/> esigini doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static float GetLoadBearingCureThreshold(MortarType mortar) => mortar switch
+        {
+            MortarType.None => 0f,
+            MortarType.RammedEarthCompact => 0f,
+            MortarType.PortlandConcrete => ConcreteSlabShoringCureThreshold,
+            _ => WetCureThreshold
+        };
+
+        /// <summary>
+        /// Bolum 2.2 ve 2.3 uyarinca bir kalibin / gecici destegin erken cokme olmadan sokulup sokulemeyecegini denetler.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool CanStripFormwork(
+            MortarType mortar,
+            float cureRatio01,
+            bool isSideFormworkOnly = false,
+            bool isCompactedOrCured = false)
+        {
+            if (mortar == MortarType.None)
+            {
+                return true;
+            }
+
+            if (mortar == MortarType.RammedEarthCompact)
+            {
+                return isCompactedOrCured || cureRatio01 >= 1.0f;
+            }
+
+            if (mortar == MortarType.PortlandConcrete)
+            {
+                float req = isSideFormworkOnly ? ConcreteSideFormStripCureThreshold : ConcreteSlabShoringCureThreshold;
+                return isCompactedOrCured || cureRatio01 >= req;
+            }
+
+            return isCompactedOrCured || cureRatio01 >= GetLoadBearingCureThreshold(mortar);
+        }
+
+        /// <summary>
+        /// Karar A2 ve Bolum 2.3 uyarinca harc/beton/toprak kurlenme oranini ilerletir.
         /// [F4] Yaratici Mod'da (<paramref name="isCreativeMode"/> == true) aninda 1.0 doner.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -265,26 +400,32 @@ namespace Stratocraft.Core.Structures
 
             float loadSec = GetLoadBearingSeconds(mortar);
             float fullSec = GetFullCureSeconds(mortar);
-            if (fullSec <= 0f || loadSec <= 0f || fullSec <= loadSec)
+            if (fullSec <= 0f)
             {
                 return 1.0f;
             }
 
-            float remainingDt = deltaTimeSeconds;
-            if (c < WetCureThreshold)
+            float threshold = GetLoadBearingCureThreshold(mortar);
+            if (loadSec <= 0f || threshold <= 0f || fullSec <= loadSec)
             {
-                float ratePhase1 = WetCureThreshold / loadSec;
-                float neededToThreshold = (WetCureThreshold - c) / ratePhase1;
+                return System.Math.Clamp(c + (deltaTimeSeconds / fullSec), 0f, 1f);
+            }
+
+            float remainingDt = deltaTimeSeconds;
+            if (c < threshold)
+            {
+                float ratePhase1 = threshold / loadSec;
+                float neededToThreshold = (threshold - c) / ratePhase1;
                 if (remainingDt <= neededToThreshold)
                 {
                     return System.Math.Clamp(c + (remainingDt * ratePhase1), 0f, 1f);
                 }
 
-                c = WetCureThreshold;
+                c = threshold;
                 remainingDt -= neededToThreshold;
             }
 
-            float ratePhase2 = (1.0f - WetCureThreshold) / (fullSec - loadSec);
+            float ratePhase2 = (1.0f - threshold) / (fullSec - loadSec);
             return System.Math.Clamp(c + (remainingDt * ratePhase2), 0f, 1f);
         }
 
@@ -339,9 +480,98 @@ namespace Stratocraft.Core.Structures
         public StructureCollapseState CollapseState;
         public byte FoundationDepthDm;
         public byte Wetness0_15;
-        public bool IsDoorOrWindowOpen;
-        public bool IsLocked;
+        public byte DoorLockStateFlags;
+        public TemporarySupportFlags TemporarySupport;
         public byte CompletedCourses;
+
+        private const byte DoorOpenMask = 1 << 0;
+        private const byte LockedMask = 1 << 1;
+
+        public bool IsDoorOrWindowOpen
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (DoorLockStateFlags & DoorOpenMask) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => DoorLockStateFlags = value
+                ? (byte)(DoorLockStateFlags | DoorOpenMask)
+                : (byte)(DoorLockStateFlags & ~DoorOpenMask);
+        }
+
+        public bool IsLocked
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (DoorLockStateFlags & LockedMask) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => DoorLockStateFlags = value
+                ? (byte)(DoorLockStateFlags | LockedMask)
+                : (byte)(DoorLockStateFlags & ~LockedMask);
+        }
+
+        public bool IsTemporarySupport
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.TemporarySupport) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.TemporarySupport, value);
+        }
+
+        public bool IsAdditionalReshoreSupport
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.AdditionalReshoreSupport) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.AdditionalReshoreSupport, value);
+        }
+
+        public bool RequiresShoringBeforeLoad
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.RequiresShoringBeforeLoad) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.RequiresShoringBeforeLoad, value);
+        }
+
+        public bool IsArchCentering
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.ArchCentering) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.ArchCentering, value);
+        }
+
+        public bool IsSlidingFormwork
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.SlidingFormwork) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.SlidingFormwork, value);
+        }
+
+        public bool IsCompactedOrCured
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            readonly get => (TemporarySupport & TemporarySupportFlags.IsCompactedOrCured) != 0;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => SetTemporarySupportFlag(TemporarySupportFlags.IsCompactedOrCured, value);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public readonly TemporarySupportFlags GetTemporarySupportFlags() => TemporarySupport;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetTemporarySupportFlags(TemporarySupportFlags flags) => TemporarySupport = flags;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void AddTemporarySupportFlags(TemporarySupportFlags flags) => TemporarySupport |= flags;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void ClearTemporarySupportFlags(TemporarySupportFlags flags) => TemporarySupport &= ~flags;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void SetTemporarySupportFlag(TemporarySupportFlags flag, bool enabled)
+        {
+            TemporarySupport = enabled ? (TemporarySupport | flag) : (TemporarySupport & ~flag);
+        }
 
         public readonly bool IsDetached
         {
@@ -403,15 +633,21 @@ namespace Stratocraft.Core.Structures
             byte yawQuarterTurns = 0,
             StructureThicknessProfile thickness = StructureThicknessProfile.Standard,
             uint ownerClanOrPlayerId = 0u,
-            bool instantCure = false)
+            bool instantCure = false,
+            TemporarySupportFlags temporarySupport = TemporarySupportFlags.None)
         {
+            bool curedAtCreate = mortar == MortarType.None || instantCure;
+            TemporarySupportFlags resolvedTempFlags = temporarySupport != TemporarySupportFlags.None
+                ? temporarySupport
+                : StructureMaterialCatalog.ResolveDefaultTemporarySupportFlags(role, mortar, curedAtCreate);
+
             return new StructuralNode64
             {
                 NodeId = nodeId,
                 PosX = posX,
                 PosY = posY,
                 PosZ = posZ,
-                CureRatio01 = mortar == MortarType.None || instantCure ? 1.0f : 0.0f,
+                CureRatio01 = curedAtCreate ? 1.0f : 0.0f,
                 Integrity01 = 1.0f,
                 StressRatio = 0.0f,
                 CollapseWarningTimerSec = 0.0f,
@@ -433,8 +669,8 @@ namespace Stratocraft.Core.Structures
                 CollapseState = StructureCollapseState.Stable,
                 FoundationDepthDm = 0,
                 Wetness0_15 = 0,
-                IsDoorOrWindowOpen = false,
-                IsLocked = false,
+                DoorLockStateFlags = 0,
+                TemporarySupport = resolvedTempFlags,
                 CompletedCourses = 1
             };
         }
@@ -551,15 +787,21 @@ namespace Stratocraft.Core.Structures
             EncodeSigned24(node.PosY, out byte y0, out byte y1, out byte y2);
             EncodeSigned24(node.PosZ, out byte z0, out byte z1, out byte z2);
 
-            byte schoolBits = (byte)((byte)node.School & 0x07);
+            byte schoolRaw = (byte)node.School;
+            byte schoolBits = (byte)(schoolRaw & 0x07);
+            byte schoolBit3InRole = (byte)((schoolRaw & 0x08) != 0 ? 0x40 : 0x00);
             byte yawBits = (byte)((node.YawQuarterTurns & 0x03) << 3);
             byte thickBits = (byte)((node.ThicknessProfile & 0x03) << 5);
             byte openBit = node.IsDoorOrWindowOpen ? (byte)0x80 : (byte)0x00;
 
             byte anchorBits = (byte)((byte)node.Anchor & 0x07);
-            byte mortarBits = (byte)(((byte)node.Mortar & 0x03) << 3);
+            byte mortarRaw = (byte)node.Mortar;
+            byte mortarBits = (byte)((mortarRaw & 0x03) << 3);
+            byte mortarBit2InRole = (byte)((mortarRaw & 0x04) != 0 ? 0x80 : 0x00);
             byte collapseBits = (byte)(((byte)node.CollapseState & 0x03) << 5);
             byte lockBit = node.IsLocked ? (byte)0x80 : (byte)0x00;
+
+            byte rolePacked = (byte)(((byte)node.Role & 0x3F) | schoolBit3InRole | mortarBit2InRole);
 
             byte chinkBits = (byte)((byte)node.Chinking & 0x1F);
             byte crystalBits = (byte)(((byte)node.CrystalFlags & 0x03) << 5);
@@ -585,7 +827,7 @@ namespace Stratocraft.Core.Structures
                 PosZQ1 = z1,
                 PosZQ2 = z2,
                 SchoolYawThicknessOpenPacked = (byte)(schoolBits | yawBits | thickBits | openBit),
-                RoleRaw = (byte)node.Role,
+                RoleRaw = rolePacked,
                 MaterialId = node.MaterialId,
                 AnchorMortarCollapseLockPacked = (byte)(anchorBits | mortarBits | collapseBits | lockBit),
                 ChinkingCrystalDetachedPacked = (byte)(chinkBits | crystalBits | detachedBit),
@@ -600,13 +842,14 @@ namespace Stratocraft.Core.Structures
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void UnpackTo(out StructuralNode64 node)
         {
-            var school = (ArchitecturalSchool)(SchoolYawThicknessOpenPacked & 0x07);
+            var school = (ArchitecturalSchool)((SchoolYawThicknessOpenPacked & 0x07) | ((RoleRaw & 0x40) >> 3));
             byte yaw = (byte)((SchoolYawThicknessOpenPacked >> 3) & 0x03);
             byte thickness = (byte)((SchoolYawThicknessOpenPacked >> 5) & 0x03);
             bool isOpen = (SchoolYawThicknessOpenPacked & 0x80) != 0;
 
+            var role = (StructuralElementRole)(RoleRaw & 0x3F);
             var anchor = (AnchorType)(AnchorMortarCollapseLockPacked & 0x07);
-            var mortar = (MortarType)((AnchorMortarCollapseLockPacked >> 3) & 0x03);
+            var mortar = (MortarType)(((AnchorMortarCollapseLockPacked >> 3) & 0x03) | ((RoleRaw & 0x80) >> 5));
             var collapse = (StructureCollapseState)((AnchorMortarCollapseLockPacked >> 5) & 0x03);
             bool isLocked = (AnchorMortarCollapseLockPacked & 0x80) != 0;
 
@@ -617,6 +860,9 @@ namespace Stratocraft.Core.Structures
             ushort geoDist = isDetached
                 ? MortarConstants.DetachedGeodesicDistance
                 : (anchor != AnchorType.NoneFloating ? (ushort)0 : (ushort)1);
+
+            bool isCured = mortar == MortarType.None || CureRatioByte >= 255;
+            TemporarySupportFlags tempFlags = StructureMaterialCatalog.ResolveDefaultTemporarySupportFlags(role, mortar, isCured);
 
             node = new StructuralNode64
             {
@@ -637,7 +883,7 @@ namespace Stratocraft.Core.Structures
                 EdgeCount = 0,
                 YawQuarterTurns = yaw,
                 School = school,
-                Role = (StructuralElementRole)RoleRaw,
+                Role = role,
                 MaterialId = MaterialId,
                 ThicknessProfile = thickness,
                 Anchor = anchor,
@@ -648,10 +894,12 @@ namespace Stratocraft.Core.Structures
                 CollapseState = collapse,
                 FoundationDepthDm = 0,
                 Wetness0_15 = 0,
-                IsDoorOrWindowOpen = isOpen,
-                IsLocked = isLocked,
+                DoorLockStateFlags = 0,
+                TemporarySupport = tempFlags,
                 CompletedCourses = (byte)((CharAndCoursesPacked >> 4) & 0x0F)
             };
+            node.IsDoorOrWindowOpen = isOpen;
+            node.IsLocked = isLocked;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -789,6 +1037,65 @@ namespace Stratocraft.Core.Structures
         }
 
         /// <summary>
+        /// Verilen eleman rolunun [Shift+E] ile %100 iade edilebilen gecici destek / kalip / iskele rolu olup olmadigini doner.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsTemporarySupportRole(StructuralElementRole role) => role switch
+        {
+            StructuralElementRole.TemporaryCenteringScaffold or
+            StructuralElementRole.ModularScaffolding or
+            StructuralElementRole.ConcreteColumnFormwork or
+            StructuralElementRole.TelescopicShoringProp or
+            StructuralElementRole.SlabDeckFormwork or
+            StructuralElementRole.SteelGuyWireBrace or
+            StructuralElementRole.WoodenArchCentering or
+            StructuralElementRole.SlidingEarthFormwork => true,
+            _ => false
+        };
+
+        /// <summary>
+        /// Eleman rolune ve baglayici durumuna gore varsayilan <see cref="TemporarySupportFlags"/> bayraklarini cozer.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static TemporarySupportFlags ResolveDefaultTemporarySupportFlags(
+            StructuralElementRole role,
+            MortarType mortar = MortarType.None,
+            bool isCompactedOrCured = false)
+        {
+            TemporarySupportFlags flags = role switch
+            {
+                StructuralElementRole.TemporaryCenteringScaffold =>
+                    TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.ArchCentering,
+                StructuralElementRole.WoodenArchCentering =>
+                    TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.ArchCentering,
+                StructuralElementRole.SlidingEarthFormwork =>
+                    TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.SlidingFormwork,
+                StructuralElementRole.ModularScaffolding or
+                StructuralElementRole.ConcreteColumnFormwork or
+                StructuralElementRole.TelescopicShoringProp or
+                StructuralElementRole.SlabDeckFormwork or
+                StructuralElementRole.SteelGuyWireBrace =>
+                    TemporarySupportFlags.TemporarySupport,
+                StructuralElementRole.ArchVoussoir or
+                StructuralElementRole.RammedEarthWall =>
+                    TemporarySupportFlags.RequiresShoringBeforeLoad,
+                _ => TemporarySupportFlags.None
+            };
+
+            if (mortar == MortarType.PortlandConcrete && !IsTemporarySupportRole(role))
+            {
+                flags |= TemporarySupportFlags.RequiresShoringBeforeLoad;
+            }
+
+            if (isCompactedOrCured && (mortar != MortarType.None || role == StructuralElementRole.RammedEarthWall))
+            {
+                flags |= TemporarySupportFlags.IsCompactedOrCured;
+            }
+
+            return flags;
+        }
+
+        /// <summary>
         /// Ekol bilgisini hesaba katarak etkin mekanik profili doner.
         /// <see cref="ArchitecturalSchool.RawNaturalCrystal"/> yapilar Karar A3 geregi 0.45x mukavemet carpanina dusurulur.
         /// </summary>
@@ -907,6 +1214,24 @@ namespace Stratocraft.Core.Structures
             SetCrafted(lut, MaterialIdCatalog.IronTieBeamBlock, 7800f, 240f, 295f, 150f, 11.0f, 26.0f, 0f, 0.25f);
             SetCrafted(lut, MaterialIdCatalog.LeadedGlassPane, 2500f, 14.0f, 2.20f, 1.80f, 1.8f, 3.0f, 0f, 1.15f);
             SetCrafted(lut, MaterialIdCatalog.TimberShingleRoof, 580f, 16.0f, 12.0f, 3.20f, 3.5f, 0f, 1.25f, 1.50f);
+
+            // 9-Ekol Genisletilmis Islenmis Mimari Bloklar (137..152 — Tamami %100 CrystalImmune & RequiresRealToolOrSiege)
+            SetCrafted(lut, MaterialIdCatalog.EnglishBondBrickMasonry, 1920f, 42.0f, 1.55f, 4.80f, 2.8f, 15.0f, 0f, 1.70f);
+            SetCrafted(lut, MaterialIdCatalog.CobMudBrick, 1600f, 5.2f, 0.55f, 0.95f, 1.4f, 4.5f, 0.05f, 1.65f);
+            SetCrafted(lut, MaterialIdCatalog.RammedEarthCompacted, 2050f, 6.5f, 0.35f, 1.10f, 1.5f, 5.0f, 0f, 1.40f);
+            SetCrafted(lut, MaterialIdCatalog.DriedRammedEarth, 1950f, 11.5f, 0.65f, 1.85f, 1.8f, 6.5f, 0f, 1.60f);
+            SetCrafted(lut, MaterialIdCatalog.PlywoodOsbPanel, 640f, 20.0f, 16.5f, 7.80f, 3.6f, 0f, 1.10f, 1.45f);
+            SetCrafted(lut, MaterialIdCatalog.TreatedTimberBeam, 720f, 36.0f, 24.0f, 6.20f, 5.4f, 9.5f, 0.75f, 1.75f);
+            SetCrafted(lut, MaterialIdCatalog.GroovedLogTimber, 700f, 32.0f, 20.0f, 5.40f, 4.8f, 8.5f, 0.85f, 2.05f);
+            SetCrafted(lut, MaterialIdCatalog.LimeWashPlaster, 1750f, 8.5f, 0.80f, 1.40f, 1.2f, 3.0f, 0f, 1.30f);
+            SetCrafted(lut, MaterialIdCatalog.SteelRebarMesh, 7850f, 250.0f, 420.0f, 190.0f, 6.0f, 12.0f, 0f, 0.20f);
+            SetCrafted(lut, MaterialIdCatalog.WetPortlandConcrete, 2400f, 3.2f, 0.25f, 0.60f, 0.8f, 0f, 0f, 0.90f);
+            SetCrafted(lut, MaterialIdCatalog.CuredReinforcedConcrete, 2450f, 48.0f, 18.0f, 14.5f, 8.5f, 22.0f, 0f, 1.55f);
+            SetCrafted(lut, MaterialIdCatalog.StructuralSteelHBeam, 7850f, 320.0f, 355.0f, 205.0f, 14.0f, 32.0f, 0f, 0.22f);
+            SetCrafted(lut, MaterialIdCatalog.CorrugatedSteelDeck, 7800f, 240.0f, 275.0f, 145.0f, 6.5f, 14.0f, 0f, 0.28f);
+            SetCrafted(lut, MaterialIdCatalog.StrawChinkingBundle, 240f, 1.4f, 0.90f, 0.45f, 1.0f, 0f, 2.20f, 2.30f);
+            SetCrafted(lut, MaterialIdCatalog.CrushedLimeAggregate, 1800f, 12.0f, 0.15f, 1.60f, 0.8f, 0f, 0f, 0.75f);
+            SetCrafted(lut, MaterialIdCatalog.FormworkTimberBoard, 600f, 22.0f, 15.0f, 4.20f, 3.2f, 5.0f, 1.15f, 1.40f);
 
             for (int z = MaterialIdCatalog.DungeonSanctumImmuneStart; z <= MaterialIdCatalog.DungeonSanctumImmuneEnd; z++)
             {
@@ -1043,10 +1368,15 @@ namespace Stratocraft.Core.Structures
                 MaterialIdCatalog.StoneBrick or
                 MaterialIdCatalog.CutAshlarStone or
                 MaterialIdCatalog.DressedMarbleBlock or
-                MaterialIdCatalog.LimeMortarStoneWall => TerrainSoilClass.PackedStone,
+                MaterialIdCatalog.LimeMortarStoneWall or
+                MaterialIdCatalog.EnglishBondBrickMasonry or
+                MaterialIdCatalog.CuredReinforcedConcrete => TerrainSoilClass.PackedStone,
 
                 MaterialIdCatalog.Gravel or
-                MaterialIdCatalog.Cobblestone => TerrainSoilClass.Gravel,
+                MaterialIdCatalog.Cobblestone or
+                MaterialIdCatalog.RammedEarthCompacted or
+                MaterialIdCatalog.DriedRammedEarth or
+                MaterialIdCatalog.CrushedLimeAggregate => TerrainSoilClass.Gravel,
 
                 MaterialIdCatalog.Clay => soilMoisture255 >= 150 ? TerrainSoilClass.WetClay : TerrainSoilClass.Dirt,
 
