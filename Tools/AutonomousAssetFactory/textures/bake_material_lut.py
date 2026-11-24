@@ -34,6 +34,7 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         17: ((118, 114, 124), 180, 5, 0, 0),     # Stalagnate
         18: ((145, 175, 195), 160, 20, 3, 12),   # Floatstone
         19: ((60, 220, 40), 30, 20, 3, 19),      # FiniteAcidSurface
+        20: ((207, 198, 178), 202, 0, 0, 7),     # Limestone
         # 14 Yeralti Cevheri (30..43) + Komur/Kozmik (44..46)
         30: ((196, 108, 64), 120, 210, 0, 8),    # CopperOre
         31: ((176, 180, 182), 130, 200, 0, 8),   # TinOre
@@ -73,16 +74,45 @@ def _define_base_materials() -> dict[int, tuple[tuple[int, int, int], int, int, 
         76: ((232, 224, 204), 135, 10, 0, 28),   # BoneIvory
         77: ((86, 76, 72), 212, 0, 0, 29),       # CreatureFurAsh
         78: ((252, 168, 44), 76, 160, 3, 30),    # PhoenixFeatherGold
-        # Mimari Bloklar (120..125)
-        120: ((135, 138, 142), 175, 0, 0, 7),    # StoneBrick
-        121: ((168, 122, 78), 185, 0, 2, 24),    # WoodPlank
-        122: ((120, 130, 145), 70, 245, 0, 22),  # ReinforcedSteelBlock
-        123: ((42, 32, 60), 50, 40, 3, 5),       # ObsidianBrick
-        124: ((185, 160, 95), 235, 0, 0, 3),     # ThatchTile
-        125: ((85, 90, 98), 110, 230, 0, 22),    # IronGrating
+        # Mimari Bloklar & 9-Ekol Islenmis Yapı Malzemeleri (120..152)
+        120: ((150, 153, 156), 175, 0, 0, 7),    # StoneBrick
+        121: ((166, 123, 81), 185, 0, 2, 24),    # WoodPlank
+        122: ((94, 106, 117), 70, 245, 1, 22),   # ReinforcedSteelBlock
+        123: ((38, 32, 54), 50, 40, 3, 5),       # ObsidianBrick
+        124: ((196, 164, 89), 235, 0, 0, 3),     # ThatchTile
+        125: ((76, 84, 92), 110, 230, 1, 22),    # IronGrating
+        126: ((184, 178, 166), 162, 0, 0, 7),    # CutAshlarStone
+        127: ((236, 232, 223), 68, 0, 0, 7),     # DressedMarbleBlock
+        128: ((178, 76, 52), 192, 0, 0, 6),      # FiredClayBrick
+        129: ((194, 90, 56), 168, 0, 0, 6),      # RoofClayTile
+        130: ((196, 154, 108), 224, 0, 0, 1),    # AdobeBrickBlock
+        131: ((212, 196, 168), 216, 0, 0, 3),    # WattleDaubPanelBlock
+        132: ((171, 164, 149), 196, 0, 0, 7),    # LimeMortarStoneWall
+        133: ((127, 84, 54), 186, 0, 2, 24),     # ChinkedLogBlock
+        134: ((61, 67, 74), 104, 236, 1, 22),    # IronTieBeamBlock
+        135: ((143, 184, 200), 32, 28, 0, 12),   # LeadedGlassPane
+        136: ((110, 75, 50), 194, 0, 2, 25),     # TimberShingleRoof
+        137: ((164, 68, 46), 188, 0, 0, 6),      # EnglishBondBrickMasonry
+        138: ((184, 142, 98), 228, 0, 0, 1),     # CobMudBrick
+        139: ((156, 114, 76), 208, 0, 0, 2),     # RammedEarthCompacted
+        140: ((190, 150, 110), 218, 0, 0, 2),    # DriedRammedEarth
+        141: ((200, 161, 101), 182, 0, 2, 26),   # PlywoodOsbPanel
+        142: ((107, 70, 43), 172, 0, 2, 25),     # TreatedTimberBeam
+        143: ((132, 87, 53), 180, 0, 2, 24),     # GroovedLogTimber
+        144: ((232, 226, 213), 204, 0, 0, 3),    # LimeWashPlaster
+        145: ((82, 91, 100), 96, 238, 1, 21),    # SteelRebarMesh
+        146: ((126, 130, 132), 138, 0, 0, 4),    # WetPortlandConcrete
+        147: ((165, 168, 170), 184, 0, 0, 4),    # CuredReinforcedConcrete
+        148: ((73, 86, 100), 78, 246, 1, 22),    # StructuralSteelHBeam
+        149: ((138, 150, 162), 84, 242, 1, 23),  # CorrugatedSteelDeck
+        150: ((204, 178, 104), 232, 0, 0, 3),    # StrawChinkingBundle
+        151: ((194, 188, 176), 214, 0, 0, 7),    # CrushedLimeAggregate
+        152: ((184, 142, 84), 190, 0, 2, 27),    # FormworkTimberBoard
         160: ((60, 175, 240), 55, 180, 3, 20),   # BatteryCore
         165: ((45, 215, 130), 195, 0, 3, 2),     # GlowingMoss
         166: ((225, 95, 25), 120, 0, 0, 14),     # CampfireBlock
+        167: ((142, 112, 92), 185, 0, 0, 7),     # PrimitiveStoneKilnBlock
+        168: ((178, 64, 58), 210, 0, 0, 24),     # BedBlock
         # Boss Trofe Yapi Bloklari (180..195)
         **{
             mat_id: ((180 + (mat_id * 7) % 60, 80 + (mat_id * 11) % 100, 140 + (mat_id * 13) % 80),
