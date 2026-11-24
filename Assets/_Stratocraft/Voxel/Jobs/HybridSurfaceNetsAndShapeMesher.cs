@@ -1054,21 +1054,27 @@ namespace Stratocraft.Voxel.Jobs
             Vector3 center = cellOrigin + new Vector3(0.5f, 0.5f, 0.5f);
             float skirtDrop = (extendFoundationSkirt && (rotationState & 0x1F) < 4) ? 0.24f : 0.0f;
 
+            if (ArchitecturalShapeCatalog.IsSculpted3DKitShape(shapeId) &&
+                GlbVoxelKitTemplateBank.TryEmitSculptedKitShape(center, matId, shapeId, rotationState, baseAo, skirtDrop, outTriangles))
+            {
+                return;
+            }
+
             switch (shapeId)
             {
                 case ArchitecturalShapeCatalog.FullMasonryCube: EmitChamferedMasonryBlock(center, matId, baseAo, skirtDrop, occludedFaceMask, outTriangles); break;
-                case ArchitecturalShapeCatalog.OctagonalColumn or 47 or 48 or 49 or 50: EmitOctagonalPillar(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.Ramp45 or 27 or 28 or 29 or 30: EmitSlopedRamp(center, rotationState, -0.50f, 0.50f, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.Ramp22Low or 31 or 32 or 33 or 34: EmitSlopedRamp(center, rotationState, -0.50f, 0.0f, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.OctagonalColumn: EmitOctagonalPillar(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.Ramp45: EmitSlopedRamp(center, rotationState, -0.50f, 0.50f, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.Ramp22Low: EmitSlopedRamp(center, rotationState, -0.50f, 0.0f, matId, baseAo, skirtDrop, outTriangles); break;
                 case ArchitecturalShapeCatalog.Ramp22High: EmitSlopedRamp(center, rotationState, 0.0f, 0.50f, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.ArchVoussoir or ArchitecturalShapeCatalog.GothicArchHalf or 55 or 56 or 57 or 58: EmitArchVoussoir(center, rotationState, matId, baseAo, outTriangles); break;
-                case ArchitecturalShapeCatalog.TrapezoidalKeystone or 51 or 52: EmitTrapezoidalKeystone(center, rotationState, matId, baseAo, outTriangles); break;
-                case ArchitecturalShapeCatalog.BattlementMerlon or ArchitecturalShapeCatalog.ArrowSlitWall or ArchitecturalShapeCatalog.ButtressSupport or 43 or 44 or 45 or 46 or 53 or 54: EmitBeveledBattlementWall(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.ArchVoussoir or ArchitecturalShapeCatalog.GothicArchHalf: EmitArchVoussoir(center, rotationState, matId, baseAo, outTriangles); break;
+                case ArchitecturalShapeCatalog.TrapezoidalKeystone: EmitTrapezoidalKeystone(center, rotationState, matId, baseAo, outTriangles); break;
+                case ArchitecturalShapeCatalog.BattlementMerlon or ArchitecturalShapeCatalog.ArrowSlitWall or ArchitecturalShapeCatalog.ButtressSupport: EmitBeveledBattlementWall(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
                 case ArchitecturalShapeCatalog.FacetedCrystalSpire: EmitFacetedCrystalCluster(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.HalfSlab or ArchitecturalShapeCatalog.TrophyPlinth or 21 or 22 or 23 or 24 or 25 or 26: EmitTaperedBoxRotated(center, rotationState, 0.50f, 0.50f, 0.50f, 0.50f, -0.50f - skirtDrop, 0.0f, matId, baseAo, 0, outTriangles); break;
-                case ArchitecturalShapeCatalog.QuarterBeam or ArchitecturalShapeCatalog.CorniceMolding or ArchitecturalShapeCatalog.GratingFrame or 59 or 60 or 61 or 62: EmitTaperedBoxRotated(center, rotationState, 0.22f, 0.50f, 0.22f, 0.50f, -0.22f, 0.22f, matId, baseAo, 0, outTriangles); break;
-                case ArchitecturalShapeCatalog.InnerRoofCorner45 or 35 or 36 or 37 or 38: EmitRoofCorner(center, rotationState, true, matId, baseAo, skirtDrop, outTriangles); break;
-                case ArchitecturalShapeCatalog.OuterRoofCorner45 or 39 or 40 or 41 or 42: EmitRoofCorner(center, rotationState, false, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.HalfSlab or ArchitecturalShapeCatalog.TrophyPlinth: EmitTaperedBoxRotated(center, rotationState, 0.50f, 0.50f, 0.50f, 0.50f, -0.50f - skirtDrop, 0.0f, matId, baseAo, 0, outTriangles); break;
+                case ArchitecturalShapeCatalog.QuarterBeam or ArchitecturalShapeCatalog.CorniceMolding or ArchitecturalShapeCatalog.GratingFrame: EmitTaperedBoxRotated(center, rotationState, 0.22f, 0.50f, 0.22f, 0.50f, -0.22f, 0.22f, matId, baseAo, 0, outTriangles); break;
+                case ArchitecturalShapeCatalog.InnerRoofCorner45: EmitRoofCorner(center, rotationState, true, matId, baseAo, skirtDrop, outTriangles); break;
+                case ArchitecturalShapeCatalog.OuterRoofCorner45: EmitRoofCorner(center, rotationState, false, matId, baseAo, skirtDrop, outTriangles); break;
                 case ArchitecturalShapeCatalog.StairStep: EmitStairSteps(center, rotationState, matId, baseAo, skirtDrop, outTriangles); break;
                 case VoxelBitUtility.ChiseledMicroVoxelShapeId: EmitMicroVoxel4x4x4FromMask(cellOrigin, matId, BuildProceduralButtressMask64(rotationState), baseAo, occludedFaceMask, outTriangles); break;
                 default: EmitChamferedMasonryBlock(center, matId, baseAo, skirtDrop, occludedFaceMask, outTriangles); break;

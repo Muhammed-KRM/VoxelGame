@@ -287,12 +287,18 @@ namespace Stratocraft.Character
         /// <summary>Kati blok icinde sikisma / gomulme sirasinda akciger oksijen kaybi (%/s).</summary>
         public const float SolidBlockSuffocationOxygenDrainPerSecond = 28.0f;
 
-        /// <summary>Saf C# kati voksel carpismasi kontrolu (Air ve GlowingMoss haric tum fiziksel kati vokseller).</summary>
+        /// <summary>Saf C# kati voksel carpismasi kontrolu (Air, GlowingMoss ve 90° acik 3B kapi kanadi haric tum fiziksel kati vokseller).</summary>
         public static bool IsHardCollisionVoxelPure(uint raw)
         {
             if (!VoxelBitUtility.IsPhysicallySolid(raw)) return false;
             byte mat = VoxelBitUtility.GetMaterialId(raw);
-            return mat != MaterialIdCatalog.Air && mat != MaterialIdCatalog.GlowingMoss;
+            if (mat == MaterialIdCatalog.Air || mat == MaterialIdCatalog.GlowingMoss) return false;
+            byte shape = VoxelBitUtility.GetShapeId(raw);
+            if (ArchitecturalShapeCatalog.IsPassableOpenDoorShape(shape) || shape == ArchitecturalShapeCatalog.KitDoorFrameJamb)
+            {
+                return false;
+            }
+            return true;
         }
 
         /// <summary>

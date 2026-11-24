@@ -26,7 +26,7 @@ namespace Stratocraft.WorldGen.Generators
     /// </summary>
     public static class VoxelSettlementArchitectureStamp
     {
-        public const int StoryHeightBlocks = 4; // 1 blok kat dosemesi + 3 blok temiz ic mekan yuksekligi
+        public const int StoryHeightBlocks = 5; // 1 blok kat dosemesi + 4.0m ferah insan olcekli tavan yuksekligi!
 
         /// <summary>
         /// Verilen chunk icindeki ve komsu chunk'lardan tasan tum yerlesim binalarini, 3x2 chunk Dev Saray'i,
@@ -172,14 +172,48 @@ namespace Stratocraft.WorldGen.Generators
             int quarterTurns = ((int)MathF.Round(site.YawDegrees / 90.0f)) & 3;
             int hx = Math.Clamp((int)MathF.Round(site.FootprintHalfExtentX), 2, 8);
             int hz = Math.Clamp((int)MathF.Round(site.FootprintHalfExtentZ), 1, 8);
+
+            // Insan olcekli ferah bina garantisi: Koy evleri en az 9x9m (hx>=4, hz>=4), Konak/Apartman/Han en az 11x9m (hx>=5, hz>=4)
+            bool isFullBuilding = site.Archetype is not (
+                UnifiedSettlementArchetype.VillageWell or
+                UnifiedSettlementArchetype.CityFountain or
+                UnifiedSettlementArchetype.MarketStall or
+                UnifiedSettlementArchetype.CityWallSegment or
+                UnifiedSettlementArchetype.CityCurtainWallSegment or
+                UnifiedSettlementArchetype.CityGatehouse or
+                UnifiedSettlementArchetype.ProceduralRuin);
+            if (isFullBuilding)
+            {
+                bool isLargeMultiStory = site.Tier != SettlementTier.Village ||
+                                         site.StoryCount >= 2 ||
+                                         site.Archetype is UnifiedSettlementArchetype.ArcadedInn
+                                             or UnifiedSettlementArchetype.TownHouseTwoStory
+                                             or UnifiedSettlementArchetype.TownMansion2Story
+                                             or UnifiedSettlementArchetype.TownMansion3Story
+                                             or UnifiedSettlementArchetype.CityApartment3Story
+                                             or UnifiedSettlementArchetype.CityApartment4Story
+                                             or UnifiedSettlementArchetype.DomedMosqueTemple
+                                             or UnifiedSettlementArchetype.GrandDomedTemple;
+                hx = Math.Max(hx, isLargeMultiStory ? 5 : 4);
+                hz = Math.Max(hz, 4);
+
+                // Parsel merkezi chunk kenarina cok yakinsa caddeye tasmamasi icin chunk merkezine (+7..+9) yumusakca hizala
+                int localCx = centerWx - site.ChunkX * 16;
+                int localCz = centerWz - site.ChunkZ * 16;
+                if (localCx < 5) centerWx = site.ChunkX * 16 + 6;
+                else if (localCx > 11) centerWx = site.ChunkX * 16 + 10;
+                if (localCz < 5) centerWz = site.ChunkZ * 16 + 6;
+                else if (localCz > 11) centerWz = site.ChunkZ * 16 + 10;
+            }
+
             int worldSpanX = (quarterTurns & 1) != 0 ? hz : hx;
             int worldSpanZ = (quarterTurns & 1) != 0 ? hx : hz;
 
             if (!canvas.IntersectsWorldBox(
-                    centerWx - worldSpanX - 2,
-                    centerWx + worldSpanX + 2,
-                    centerWz - worldSpanZ - 2,
-                    centerWz + worldSpanZ + 2))
+                    centerWx - worldSpanX - 3,
+                    centerWx + worldSpanX + 3,
+                    centerWz - worldSpanZ - 3,
+                    centerWz + worldSpanZ + 3))
             {
                 return false;
             }
@@ -291,12 +325,18 @@ namespace Stratocraft.WorldGen.Generators
             BuildingInteriorTheme theme,
             ref ChunkStampCanvas canvas)
         {
-            int hx = Math.Max(2, f.HalfX);
-            int hz = Math.Max(2, f.HalfZ);
+            int hx = Math.Max(4, f.HalfX);
+            int hz = Math.Max(4, f.HalfZ);
             stories = Math.Clamp(stories, 1, 4);
             int roofBaseY = f.BaseY + stories * StoryHeightBlocks;
 
-            // 1) Zemine Tam Oturan Masif Tas Temel (DK-01 / DK-03: 0 havada kose) + Ic Hacim Temizligi
+            byte wallShape = ResolveExteriorWallKitShape(in pal, theme);
+            byte cornerShape = ResolveCornerKitShape(in pal);
+            byte windowShape = pal.UseShutterWindow
+                ? ArchitecturalShapeCatalog.KitShutteredWindow
+                : ArchitecturalShapeCatalog.KitArchedStoneWindow;
+
+            // 1) Zemine Tam Oturan Masif Tas Temel + Ic Hacim Temizligi
             for (int bz = -hz; bz <= hz; bz++)
             {
                 for (int bx = -hx; bx <= hx; bx++)
@@ -310,27 +350,31 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            // On giris esigi basamagi (bz = -hz - 1, bx = 0)
-            f.ToWorld(0, -hz - 1, out int stepWx, out int stepWz);
-            canvas.ExtendFoundationToGround(stepWx, f.BaseY, stepWz, pal.PlinthMat);
-            canvas.SetBlock(stepWx, f.BaseY, stepWz, pal.PlinthMat, ArchitecturalShapeCatalog.FullMasonryCube);
-            canvas.ClearAir(stepWx, f.BaseY + 1, stepWz);
-            canvas.ClearAir(stepWx, f.BaseY + 2, stepWz);
+            // Genis 4m x 1m on giris verandasive merdiven basamagi (bz = -hz - 1, bx in [-2..+1])
+            for (int sbx = -2; sbx <= 1; sbx++)
+            {
+                f.ToWorld(sbx, -hz - 1, out int stepWx, out int stepWz);
+                canvas.ExtendFoundationToGround(stepWx, f.BaseY, stepWz, pal.PlinthMat);
+                canvas.SetBlock(stepWx, f.BaseY, stepWz, pal.PlinthMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                for (int clearDy = 1; clearDy <= 4; clearDy++)
+                {
+                    canvas.ClearAir(stepWx, f.BaseY + clearDy, stepWz);
+                }
+            }
 
-            bool hasPartitionWall = hx >= 3 && theme is BuildingInteriorTheme.VillageHome
-                or BuildingInteriorTheme.NobleMansion
+            bool hasPartitionWall = hx >= 5 && theme is BuildingInteriorTheme.NobleMansion
                 or BuildingInteriorTheme.CityApartment
                 or BuildingInteriorTheme.ArcadedInn;
-            int partitionX = 1; // bx == 1 bolme duvari (sol genis salon [-hx..0], sag oda [2..hx])
+            int partitionX = 1; // bx == 1 bolme duvari (sol genis salon [-hx..0], sag yatak/calisma odasi [2..hx])
 
-            // 2) Kat Dosemeleri, 4 Cephe Kapali Duvarlar, Bolme Duvarlari, Pencereler, Kapilar ve Merdivenler
+            // 2) Kat Dosemeleri (5m kat yuksekligi = 4.0m net tavan!), 3B Dis Duvarlar, 2x3m 3B Kapilar ve 2m Genis 3B Merdivenler
             for (int s = 0; s < stories; s++)
             {
                 int floorY = f.BaseY + s * StoryHeightBlocks;
                 byte slabMat = s == 0 ? pal.PlinthMat : pal.FloorMat;
-                bool hasStairBelow = s > 0 && hz >= 2;
-                bool hasStairUp = s < stories - 1 && hz >= 2;
-                int stairBx = -hx + 1;
+                bool hasStairBelow = s > 0;
+                bool hasStairUp = s < stories - 1;
+                int stairBx0 = -hx + 1; // 2m genis merdiven: stairBx0 ve stairBx0 + 1
 
                 // a) Kat Dosemesi (y = floorY)
                 for (int bz = -hz; bz <= hz; bz++)
@@ -340,32 +384,30 @@ namespace Stratocraft.WorldGen.Generators
                         f.ToWorld(bx, bz, out int wx, out int wz);
                         bool onPerim = Math.Abs(bx) == hx || Math.Abs(bz) == hz;
 
-                        // Alt kattan gelen merdiven boslugu (bx == stairBx, bz in [-1..1])
-                        if (hasStairBelow && !onPerim && bx == stairBx && bz >= -1 && bz <= 1)
+                        // Alt kattan gelen 2m x 4m ferah merdiven boslugu (kafa carpmasi %0!)
+                        if (hasStairBelow && !onPerim && (bx == stairBx0 || bx == stairBx0 + 1) && bz >= -2 && bz <= 1)
                         {
                             canvas.ClearAir(wx, floorY, wz);
                             continue;
                         }
 
-                        byte cellMat = onPerim && s > 0 ? pal.QuoinMat : slabMat;
-                        canvas.SetBlock(wx, floorY, wz, cellMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                        byte cellMat = onPerim && s > 0 ? pal.TimberMat : slabMat;
+                        byte cellShape = onPerim && s > 0 ? cornerShape : ArchitecturalShapeCatalog.FullMasonryCube;
+                        canvas.SetBlock(wx, floorY, wz, cellMat, cellShape, f.Rot(0));
                     }
                 }
 
-                // Merdiven korkulugu (ust katlarda merdiven boslugu yanina)
-                if (hasStairBelow && stairBx + 1 < hx)
+                // Ust kat merdiven boslugu etrafina 3B torna korkuluk (KitBalconyBalustrade = 48)
+                if (hasStairBelow && stairBx0 + 2 < hx)
                 {
-                    f.ToWorld(stairBx + 1, 0, out int railWx, out int railWz);
-                    canvas.SetMicro(
-                        railWx, floorY + 1, railWz,
-                        pal.TimberMat,
-                        VoxelMicroFurnitureTemplates.BalconyRailing64,
-                        f.Rot(3),
-                        ArchitecturalShapeCatalog.QuarterBeam,
-                        f.Rot(3));
+                    for (int rbz = -2; rbz <= 1; rbz++)
+                    {
+                        f.ToWorld(stairBx0 + 2, rbz, out int railWx, out int railWz);
+                        canvas.SetBlock(railWx, floorY + 1, railWz, pal.TimberMat, ArchitecturalShapeCatalog.KitBalconyBalustrade, f.Rot(3));
+                    }
                 }
 
-                // b) 4 Cephe Kapali Dis Duvarlar (y = floorY + 1 .. floorY + 3)
+                // b) 4 Cephe Gercek 3B Mimari Duvarlar (y = floorY + 1 .. floorY + 4 -> 4.0m net ic tavan!)
                 for (int bz = -hz; bz <= hz; bz++)
                 {
                     for (int bx = -hx; bx <= hx; bx++)
@@ -378,108 +420,167 @@ namespace Stratocraft.WorldGen.Generators
 
                         f.ToWorld(bx, bz, out int wx, out int wz);
                         bool isCorner = Math.Abs(bx) == hx && Math.Abs(bz) == hz;
-                        bool isPilaster = (Math.Abs(bz) == hz && bx == 0 && !(s == 0 && bz == -hz)) ||
-                                          (Math.Abs(bx) == hx && bz == 0);
 
-                        // Zemin kat on giris kapisi (bz == -hz, bx == 0)
-                        if (s == 0 && bz == -hz && bx == 0)
+                        // Zemin kat ferah 2m genis x 3m yuksek (bx = -1 ve bx = 0, dy = 1..3) acik 3B giris kapisi!
+                        // Oyuncu kapsulu (0.70m x 1.80m) 1.74m x 3.00m acikliktan hic takilmadan kosarak gecer; [E] ile kapanir/acilir!
+                        if (s == 0 && bz == -hz && (bx == -1 || bx == 0))
                         {
-                            StampDoorway1x2(wx, floorY, wz, pal.TimberMat, pal.QuoinMat, f.Rot(0), ref canvas);
+                            bool isRightLeaf = bx == 0;
+                            StampWalkable3DDoorColumn(
+                                wx, floorY, wz,
+                                pal.TimberMat, pal.QuoinMat,
+                                f.Rot(isRightLeaf ? 2 : 0),
+                                f.Rot(0),
+                                startOpen: true,
+                                ref canvas);
                             continue;
                         }
 
-                        // Revakli Han / Atolye yan kemer penceresi veya arka servis kapisi
-                        if (s == 0 && theme == BuildingInteriorTheme.ArcadedInn && bz == -hz && Math.Abs(bx) == 2 && hx >= 4)
+                        // Giris kapisi sol/sag oymali kapi sogeleri (bx == -2 ve bx == +1)
+                        if (s == 0 && bz == -hz && (bx == -2 || bx == 1))
                         {
-                            StampDoorway1x2(wx, floorY, wz, pal.TimberMat, pal.QuoinMat, f.Rot(0), ref canvas);
+                            byte jambRot = bx == -2 ? f.Rot(0) : f.Rot(2);
+                            for (int dy = 1; dy <= 3; dy++)
+                            {
+                                canvas.SetBlock(wx, floorY + dy, wz, pal.QuoinMat, ArchitecturalShapeCatalog.KitDoorFrameJamb, jambRot);
+                            }
+                            canvas.SetBlock(wx, floorY + 4, wz, pal.TimberMat, ArchitecturalShapeCatalog.KitDoorArchLintel, f.Rot(0));
                             continue;
                         }
 
-                        // Simetrik cephe pencereleri (dy = 2)
-                        bool isSouthNorthWindow = Math.Abs(bz) == hz &&
-                                                  ((hx >= 3 && Math.Abs(bx) == hx - 1) || (s > 0 && bx == 0));
-                        bool isEastWestWindow = Math.Abs(bx) == hx &&
-                                                ((hz >= 3 && Math.Abs(bz) == hz - 1) || (hz == 2 && bz == 0));
-                        // Baca hatti (-hx+1, hz-1) komsulugunu koru
-                        bool isChimneyBack = bz == hz && bx == -hx + 1;
+                        bool onZWall = Math.Abs(bz) == hz;
+                        byte wallFaceRot = onZWall
+                            ? (bz < 0 ? f.Rot(0) : f.Rot(2))
+                            : (bx < 0 ? f.Rot(1) : f.Rot(3));
 
-                        for (int dy = 1; dy <= 3; dy++)
+                        bool isSouthNorthWindow = onZWall &&
+                                                  ((Math.Abs(bx) == hx - 2) || (s > 0 && (bx == -1 || bx == 1)));
+                        bool isEastWestWindow = !onZWall &&
+                                                (Math.Abs(bz) == hz - 2 || bz == 0);
+                        bool isChimneyBack = bz == hz && bx == hx - 1;
+
+                        for (int dy = 1; dy <= 4; dy++)
                         {
                             int wy = floorY + dy;
                             if (isCorner)
                             {
-                                canvas.SetBlock(wx, wy, wz, pal.QuoinMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                byte cRot = (dy & 1) == 0 ? f.Rot(0) : f.Rot(1);
+                                canvas.SetBlock(wx, wy, wz, pal.QuoinMat, cornerShape, cRot);
                             }
-                            else if (dy == 2 && !isChimneyBack && (isSouthNorthWindow || isEastWestWindow))
+                            else if ((dy == 2 || dy == 3) && !isChimneyBack && (isSouthNorthWindow || isEastWestWindow))
                             {
-                                byte winRot = Math.Abs(bz) == hz ? f.Rot(0) : f.Rot(1);
-                                ulong winMask = pal.UseShutterWindow
-                                    ? VoxelMicroFurnitureTemplates.ShutterWindow64
-                                    : VoxelMicroFurnitureTemplates.MullionWindow64;
-                                canvas.SetMicro(
-                                    wx, wy, wz,
-                                    pal.WindowMat,
-                                    winMask,
-                                    winRot,
-                                    ArchitecturalShapeCatalog.GratingFrame,
-                                    winRot);
+                                canvas.SetBlock(wx, wy, wz, pal.WindowMat, windowShape, wallFaceRot);
                             }
-                            else if (dy == 3 || isPilaster)
+                            else if (dy == 4 && pal.UseTimberRingBeam)
                             {
-                                byte lintelMat = (dy == 3 && pal.UseTimberRingBeam) ? pal.QuoinMat : pal.WallMat;
-                                canvas.SetBlock(wx, wy, wz, lintelMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(wx, wy, wz, pal.TimberMat, ArchitecturalShapeCatalog.KitTimberFrameWall, wallFaceRot);
                             }
                             else
                             {
-                                canvas.SetBlock(wx, wy, wz, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                byte activeWallShape = wallShape;
+                                if (wallShape == ArchitecturalShapeCatalog.KitTimberFrameWall &&
+                                    (dy == 2 || dy == 3) &&
+                                    ((Math.Abs(bx + bz) & 1) == 1))
+                                {
+                                    activeWallShape = ArchitecturalShapeCatalog.KitTimberBraceWall;
+                                }
+                                canvas.SetBlock(wx, wy, wz, pal.WallMat, activeWallShape, wallFaceRot);
                             }
                         }
                     }
                 }
 
-                // c) Ic Bolme Duvari + Ic Oda Kapisi (y = floorY + 1 .. floorY + 3)
+                // c) Ic Bolme Duvari + 2m x 3m Ferah Acik 3B Oda Gecisi (bz == -1 ve bz == 0)
                 if (hasPartitionWall && partitionX < hx)
                 {
                     for (int bz = -hz + 1; bz <= hz - 1; bz++)
                     {
                         f.ToWorld(partitionX, bz, out int pWx, out int pWz);
-                        if (bz == 0)
+                        if (bz == -1 || bz == 0)
                         {
-                            StampDoorway1x2(pWx, floorY, pWz, pal.TimberMat, pal.WallMat, f.Rot(1), ref canvas);
+                            StampWalkable3DDoorColumn(
+                                pWx, floorY, pWz,
+                                pal.TimberMat, pal.TimberMat,
+                                f.Rot(bz == 0 ? 3 : 1),
+                                f.Rot(1),
+                                startOpen: true,
+                                ref canvas);
                         }
                         else
                         {
-                            for (int dy = 1; dy <= 3; dy++)
+                            for (int dy = 1; dy <= 4; dy++)
                             {
-                                canvas.SetBlock(pWx, floorY + dy, pWz, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(pWx, floorY + dy, pWz, pal.WallMat, wallShape, f.Rot(1));
                             }
                         }
                     }
                 }
 
-                // d) Ust Kata Cikan Yurunebilir Merdiven (bx == stairBx, bz = -1, 0, +1)
+                // d) Ust Kata Cikan 2m Genis Ferah 3B Ahsap Merdiven (bx = stairBx0..stairBx0+1, bz = -2..+1, 4 basamak -> +5m!)
                 if (hasStairUp)
                 {
-                    byte stairRot = f.Rot(0); // +Z yonune yukselen basamaklar
-                    f.ToWorld(stairBx, -1, out int s0x, out int s0z);
-                    canvas.SetBlock(s0x, floorY + 1, s0z, pal.TimberMat, ArchitecturalShapeCatalog.StairStep, stairRot);
-
-                    f.ToWorld(stairBx, 0, out int s1x, out int s1z);
-                    canvas.SetBlock(s1x, floorY + 1, s1z, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
-                    canvas.SetBlock(s1x, floorY + 2, s1z, pal.TimberMat, ArchitecturalShapeCatalog.StairStep, stairRot);
-
-                    f.ToWorld(stairBx, 1, out int s2x, out int s2z);
-                    canvas.SetBlock(s2x, floorY + 1, s2z, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
-                    canvas.SetBlock(s2x, floorY + 2, s2z, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
-                    canvas.SetBlock(s2x, floorY + 3, s2z, pal.TimberMat, ArchitecturalShapeCatalog.StairStep, stairRot);
+                    byte stairRot = f.Rot(0); // +Z yonune yukselen genis 3B basamaklar
+                    for (int w = 0; w <= 1; w++)
+                    {
+                        int sbx = stairBx0 + w;
+                        for (int stepIdx = 0; stepIdx < 4; stepIdx++)
+                        {
+                            int sbz = -2 + stepIdx;
+                            int stairWy = floorY + 1 + stepIdx;
+                            f.ToWorld(sbx, sbz, out int sx, out int sz);
+                            for (int supY = floorY + 1; supY < stairWy; supY++)
+                            {
+                                canvas.SetBlock(sx, supY, sz, pal.TimberMat, ArchitecturalShapeCatalog.KitTimberPostCorner, stairRot);
+                            }
+                            canvas.SetBlock(sx, stairWy, sz, pal.FloorMat, ArchitecturalShapeCatalog.KitWideTimberStair, stairRot);
+                        }
+                    }
                 }
 
-                // e) Kat Ic Mekan 4x4x4 Mikro-Voksel Mobilyalari (ShapeID = 63, DK-02)
+                // e) Kat Ic Mekan %100 3B Cok-Malzemeli Kit Mobilyalari (ShapeID 49..61)
                 StampStoryInteriorFurniture(in f, in pal, s, floorY, hx, hz, hasPartitionWall, partitionX, theme, ref canvas);
             }
 
-            // 3) Ust Tavan Plakasi + Kapali Egimli Kalkan (Gable) Cati + Tugla Baca
+            // 3) Ust Tavan Plakasi + Gercek 3B Mertekli & Oluklu Kiremit/Zona Cati + Baca
             StampClosedRoofAndChimney(in f, in pal, roofBaseY, hx, hz, ref canvas);
+        }
+
+        private static byte ResolveExteriorWallKitShape(in BuildingPalette pal, BuildingInteriorTheme theme)
+        {
+            if (theme is BuildingInteriorTheme.CarpenterWorkshop or BuildingInteriorTheme.BarnStable)
+            {
+                return ArchitecturalShapeCatalog.KitPlankFramedWall;
+            }
+            if (pal.WallMat == MaterialIdCatalog.ChinkedLogBlock)
+            {
+                return ArchitecturalShapeCatalog.KitChinkedLogWall;
+            }
+            if (pal.WallMat is MaterialIdCatalog.WattleDaubPanelBlock or MaterialIdCatalog.LimeWashPlaster)
+            {
+                return ArchitecturalShapeCatalog.KitTimberFrameWall;
+            }
+            if (pal.WallMat is MaterialIdCatalog.AdobeBrickBlock or MaterialIdCatalog.CobMudBrick or MaterialIdCatalog.DriedRammedEarth)
+            {
+                return ArchitecturalShapeCatalog.KitAdobeCurvedWall;
+            }
+            if (pal.WallMat is MaterialIdCatalog.EnglishBondBrickMasonry or MaterialIdCatalog.FiredClayBrick)
+            {
+                return ArchitecturalShapeCatalog.KitBrickCourseWall;
+            }
+            return ArchitecturalShapeCatalog.KitRusticatedStoneWall;
+        }
+
+        private static byte ResolveCornerKitShape(in BuildingPalette pal)
+        {
+            if (pal.WallMat == MaterialIdCatalog.ChinkedLogBlock)
+            {
+                return ArchitecturalShapeCatalog.KitNotchedLogCorner;
+            }
+            if (pal.QuoinMat == MaterialIdCatalog.TreatedTimberBeam)
+            {
+                return ArchitecturalShapeCatalog.KitTimberPostCorner;
+            }
+            return ArchitecturalShapeCatalog.KitAshlarQuoinBlock;
         }
 
         private static void StampStoryInteriorFurniture(
@@ -496,8 +597,8 @@ namespace Stratocraft.WorldGen.Generators
         {
             int y = floorY + 1;
 
-            // 1) Somine ve Tugla Baca Sutunu (-hx + 1, hz - 1)
-            int hearthBx = -hx + 1;
+            // 1) Gercek 3B Kemerli Somine + Kor Ates ve Tugla Baca (hx - 1, hz - 1)
+            int hearthBx = hx - 1;
             int hearthBz = hz - 1;
             f.ToWorld(hearthBx, hearthBz, out int hWx, out int hWz);
             if (storyIndex == 0)
@@ -505,112 +606,98 @@ namespace Stratocraft.WorldGen.Generators
                 byte hearthMat = theme == BuildingInteriorTheme.BlacksmithForge
                     ? MaterialIdCatalog.PrimitiveStoneKilnBlock
                     : MaterialIdCatalog.FiredClayBrick;
-                canvas.SetMicro(
-                    hWx, y, hWz,
-                    hearthMat,
-                    VoxelMicroFurnitureTemplates.CookingHearth64,
-                    f.Rot(0),
-                    ArchitecturalShapeCatalog.FullMasonryCube,
-                    f.Rot(0));
+                canvas.SetBlock(hWx, y, hWz, hearthMat, ArchitecturalShapeCatalog.KitFireplaceHearth, f.Rot(0));
             }
             else
             {
-                canvas.SetBlock(hWx, y, hWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.FullMasonryCube);
+                canvas.SetBlock(hWx, y, hWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.KitChimneyFlue, f.Rot(0));
             }
-            canvas.SetBlock(hWx, floorY + 2, hWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.FullMasonryCube);
-            canvas.SetBlock(hWx, floorY + 3, hWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.FullMasonryCube);
+            for (int dy = 2; dy <= 4; dy++)
+            {
+                canvas.SetBlock(hWx, floorY + dy, hWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.KitChimneyFlue, f.Rot(0));
+            }
 
-            // 2) Tema ve kata gore zanaat / yasam mobilyalari
+            // 2) Tema ve kata gore %100 3B oymali mobilyalar (ortadaki 2m yuruyus koridoru tamamen acik!)
             if (storyIndex == 0 && theme == BuildingInteriorTheme.BlacksmithForge)
             {
-                f.ToWorld(0, 0, out int anvX, out int anvZ);
-                canvas.SetMicro(anvX, y, anvZ, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.AnvilPedestal64, f.Rot(0), ArchitecturalShapeCatalog.TrophyPlinth);
+                f.ToWorld(0, 1, out int anvX, out int anvZ);
+                canvas.SetBlock(anvX, y, anvZ, MaterialIdCatalog.Steel, ArchitecturalShapeCatalog.KitAnvilOnStump, f.Rot(0));
 
-                f.ToWorld(hx - 1, hz - 1, out int wtX, out int wtZ);
-                canvas.SetMicro(wtX, y, wtZ, pal.TimberMat, VoxelMicroFurnitureTemplates.WorkTable64, f.Rot(0));
+                f.ToWorld(-hx + 2, hz - 1, out int wtX, out int wtZ);
+                canvas.SetBlock(wtX, y, wtZ, pal.TimberMat, ArchitecturalShapeCatalog.KitDiningTable, f.Rot(0));
 
-                f.ToWorld(hx - 1, -hz + 1, out int wrX, out int wrZ);
-                canvas.SetMicro(wrX, y, wrZ, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, f.Rot(3));
+                f.ToWorld(hx - 1, -hz + 2, out int wrX, out int wrZ);
+                canvas.SetBlock(wrX, y, wrZ, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, f.Rot(3));
 
                 f.ToWorld(-hx + 1, -hz + 1, out int brX, out int brZ);
-                canvas.SetMicro(brX, y, brZ, MaterialIdCatalog.OakWood, VoxelMicroFurnitureTemplates.Barrel64, f.Rot(0));
+                canvas.SetBlock(brX, y, brZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitWoodenBarrel, f.Rot(0));
                 return;
             }
 
             if (storyIndex == 0 && theme == BuildingInteriorTheme.CarpenterWorkshop)
             {
-                f.ToWorld(0, 0, out int swX, out int swZ);
-                canvas.SetMicro(swX, y, swZ, pal.TimberMat, VoxelMicroFurnitureTemplates.SawhorseBench64, f.Rot(0));
+                f.ToWorld(0, 1, out int swX, out int swZ);
+                canvas.SetBlock(swX, y, swZ, pal.TimberMat, ArchitecturalShapeCatalog.KitSawhorseBench, f.Rot(0));
 
-                f.ToWorld(hx - 1, hz - 1, out int wtX, out int wtZ);
-                canvas.SetMicro(wtX, y, wtZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.WorkTable64, f.Rot(0));
+                f.ToWorld(-hx + 2, hz - 1, out int wtX, out int wtZ);
+                canvas.SetBlock(wtX, y, wtZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, f.Rot(0));
 
                 f.ToWorld(hx - 1, 0, out int bsX, out int bsZ);
-                canvas.SetMicro(bsX, y, bsZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, f.Rot(3));
+                canvas.SetBlock(bsX, y, bsZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, f.Rot(3));
 
                 f.ToWorld(hx - 1, -hz + 1, out int chX, out int chZ);
-                canvas.SetMicro(chX, y, chZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, f.Rot(2));
+                canvas.SetBlock(chX, y, chZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, f.Rot(2));
                 return;
             }
 
             if (storyIndex == 0 && (theme == BuildingInteriorTheme.Warehouse || theme == BuildingInteriorTheme.BarnStable))
             {
-                for (int bz = -hz + 1; bz <= hz - 1; bz++)
+                for (int bz = -hz + 2; bz <= hz - 2; bz++)
                 {
                     f.ToWorld(hx - 1, bz, out int rWx, out int rWz);
-                    ulong propMask = theme == BuildingInteriorTheme.BarnStable
-                        ? VoxelMicroFurnitureTemplates.FencePostAndRail64
-                        : ((bz & 1) == 0 ? VoxelMicroFurnitureTemplates.Barrel64 : VoxelMicroFurnitureTemplates.StorageChest64);
-                    canvas.SetMicro(rWx, y, rWz, MaterialIdCatalog.OakWood, propMask, f.Rot(1));
+                    byte propShape = theme == BuildingInteriorTheme.BarnStable
+                        ? ArchitecturalShapeCatalog.KitWellAndFence
+                        : ((bz & 1) == 0 ? ArchitecturalShapeCatalog.KitWoodenBarrel : ArchitecturalShapeCatalog.KitStorageChest);
+                    canvas.SetBlock(rWx, y, rWz, MaterialIdCatalog.OakWood, propShape, f.Rot(1));
                 }
                 f.ToWorld(0, hz - 1, out int tblX, out int tblZ);
-                canvas.SetMicro(tblX, y, tblZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.WorkTable64, f.Rot(0));
+                canvas.SetBlock(tblX, y, tblZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, f.Rot(0));
                 return;
             }
 
-            // Sol / Ana Salon Mobilyalari: Yemek Masasi + Sandalyeler + Mutfak Tezgahi / Kitaplik
-            int tableBx = hasPartitionWall ? -1 : 0;
-            f.ToWorld(tableBx, 0, out int tWx, out int tWz);
-            canvas.SetMicro(tWx, y, tWz, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.DiningTable64, f.Rot(0));
+            // Sol / Ana Yasam Salonu: 3B Torna Bacakli Masa + 2 Sandalye + Mutfak Tezgahi / Renkli Kitaplik
+            int tableBx = hasPartitionWall ? -1 : -1;
+            f.ToWorld(tableBx, 1, out int tWx, out int tWz);
+            canvas.SetBlock(tWx, y, tWz, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, f.Rot(0));
 
-            if (hz >= 3)
-            {
-                f.ToWorld(tableBx, 1, out int cNorthX, out int cNorthZ);
-                canvas.SetMicro(cNorthX, y, cNorthZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.ChairWithBack64, f.Rot(0));
-            }
-            if (!hasPartitionWall && hx >= 3)
-            {
-                f.ToWorld(1, 0, out int cEastX, out int cEastZ);
-                canvas.SetMicro(cEastX, y, cEastZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.ChairWithBack64, f.Rot(3));
-            }
+            f.ToWorld(tableBx, 2, out int cNorthX, out int cNorthZ);
+            canvas.SetBlock(cNorthX, y, cNorthZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitChairWithBack, f.Rot(0));
 
-            // Arka duvar tezgah veya kitaplik (bx = tableBx, bz = hz - 1)
-            if (hz >= 3)
-            {
-                f.ToWorld(tableBx, hz - 1, out int kWx, out int kWz);
-                ulong backMask = storyIndex == 0
-                    ? VoxelMicroFurnitureTemplates.KitchenCounter64
-                    : VoxelMicroFurnitureTemplates.Bookshelf64;
-                canvas.SetMicro(kWx, y, kWz, MaterialIdCatalog.WoodPlank, backMask, f.Rot(0));
-            }
+            f.ToWorld(tableBx, 0, out int cSouthX, out int cSouthZ);
+            canvas.SetBlock(cSouthX, y, cSouthZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitChairWithBack, f.Rot(2));
 
-            // Sag Oda (veya kose) Yatak Odasi + Sandik + Kitaplik
-            int bedBx = hx - 1;
-            if (hz >= 3 && bedBx > (hasPartitionWall ? partitionX : 0))
+            // Arka duvar 3B tezgah veya kitaplik
+            f.ToWorld(tableBx - 1, hz - 1, out int kWx, out int kWz);
+            byte backShape = storyIndex == 0
+                ? ArchitecturalShapeCatalog.KitKitchenCounter
+                : ArchitecturalShapeCatalog.KitBookshelf;
+            canvas.SetBlock(kWx, y, kWz, MaterialIdCatalog.OakWood, backShape, f.Rot(0));
+
+            // Sag Taraf: 3B Oymali Yatak (Baslik + Ayak Ucu) + Demir Kusakli Sandik + Fici
+            int bedBx = hx - 2;
+            if (bedBx > (hasPartitionWall ? partitionX : 0))
             {
                 f.ToWorld(bedBx, hz - 1, out int bhX, out int bhZ);
-                canvas.SetMicro(bhX, y, bhZ, MaterialIdCatalog.BedBlock, VoxelMicroFurnitureTemplates.BedHeadboard64, f.Rot(0));
+                canvas.SetBlock(bhX, y, bhZ, MaterialIdCatalog.BedBlock, ArchitecturalShapeCatalog.KitBedHeadboard, f.Rot(0));
 
                 f.ToWorld(bedBx, hz - 2, out int bfX, out int bfZ);
-                canvas.SetMicro(bfX, y, bfZ, MaterialIdCatalog.BedBlock, VoxelMicroFurnitureTemplates.BedFoot64, f.Rot(0));
+                canvas.SetBlock(bfX, y, bfZ, MaterialIdCatalog.BedBlock, ArchitecturalShapeCatalog.KitBedFoot, f.Rot(0));
 
-                f.ToWorld(bedBx, -hz + 1, out int chX, out int chZ);
-                canvas.SetMicro(chX, y, chZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, f.Rot(2));
-            }
-            else
-            {
                 f.ToWorld(hx - 1, -hz + 1, out int chX, out int chZ);
-                canvas.SetMicro(chX, y, chZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, f.Rot(2));
+                canvas.SetBlock(chX, y, chZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, f.Rot(2));
+
+                f.ToWorld(hx - 2, -hz + 1, out int brX, out int brZ);
+                canvas.SetBlock(brX, y, brZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitWoodenBarrel, f.Rot(0));
             }
         }
 
@@ -622,7 +709,9 @@ namespace Stratocraft.WorldGen.Generators
             int hz,
             ref ChunkStampCanvas canvas)
         {
-            // 1) Ust Tavan Dosemesi (y = roofBaseY): Tamamen kapali tavan plakasi (DK-01)
+            byte cornerShape = ResolveCornerKitShape(in pal);
+
+            // 1) Ust Tavan Dosemesi (y = roofBaseY): Tamamen kapali ahsap/tas tavan plakasi
             for (int bz = -hz; bz <= hz; bz++)
             {
                 for (int bx = -hx; bx <= hx; bx++)
@@ -631,12 +720,13 @@ namespace Stratocraft.WorldGen.Generators
                     bool onPerim = Math.Abs(bx) == hx || Math.Abs(bz) == hz;
                     canvas.SetBlock(
                         wx, roofBaseY, wz,
-                        onPerim ? pal.QuoinMat : pal.FloorMat,
-                        ArchitecturalShapeCatalog.FullMasonryCube);
+                        onPerim ? pal.TimberMat : pal.FloorMat,
+                        onPerim ? cornerShape : ArchitecturalShapeCatalog.FullMasonryCube,
+                        f.Rot(0));
                 }
             }
 
-            // Kerpic / Kurak Koy duz parapetli teras cati uslubu
+            // Kerpic / Kurak Koy duz korkuluklu teras cati uslubu
             if (pal.FlatTerraceRoof)
             {
                 for (int bz = -hz; bz <= hz; bz++)
@@ -646,14 +736,29 @@ namespace Stratocraft.WorldGen.Generators
                         if (Math.Abs(bx) == hx || Math.Abs(bz) == hz)
                         {
                             f.ToWorld(bx, bz, out int wx, out int wz);
-                            canvas.SetBlock(wx, roofBaseY + 1, wz, pal.WallMat, ArchitecturalShapeCatalog.BattlementMerlon);
+                            byte rRot = Math.Abs(bz) == hz ? (bz < 0 ? f.Rot(0) : f.Rot(2)) : (bx < 0 ? f.Rot(1) : f.Rot(3));
+                            canvas.SetBlock(wx, roofBaseY + 1, wz, pal.TimberMat, ArchitecturalShapeCatalog.KitBalconyBalustrade, rRot);
                         }
                     }
                 }
             }
             else
             {
-                // 2) Kapali Egimli Ramp45 Cati + %100 Dolu Ucgen Kalkan (Gable) Duvarlar
+                byte slopeShape = pal.RoofMat == MaterialIdCatalog.TimberShingleRoof
+                    ? ArchitecturalShapeCatalog.KitRoofShingle45
+                    : ArchitecturalShapeCatalog.KitRoofClayTile45;
+
+                // Disari uzanan oymali mertek sacagi (bz = -hz - 1 ve bz = +hz + 1, y = roofBaseY, konsol = 1m)
+                for (int bx = -hx; bx <= hx; bx++)
+                {
+                    f.ToWorld(bx, -hz - 1, out int esX, out int esZ);
+                    canvas.SetBlock(esX, roofBaseY, esZ, pal.RoofMat, ArchitecturalShapeCatalog.KitRoofEaveOverhang45, f.Rot(0));
+
+                    f.ToWorld(bx, hz + 1, out int enX, out int enZ);
+                    canvas.SetBlock(enX, roofBaseY, enZ, pal.RoofMat, ArchitecturalShapeCatalog.KitRoofEaveOverhang45, f.Rot(2));
+                }
+
+                // 2) Gercek 3B Mertekli & Oluklu Kiremit / Zona Cati + 3B Kalkan (Gable) Duvarlar + Mahya Asigi
                 int maxRise = Math.Min(hz, 4);
                 for (int step = 0; step <= maxRise; step++)
                 {
@@ -668,34 +773,39 @@ namespace Stratocraft.WorldGen.Generators
                     for (int bx = -hx; bx <= hx; bx++)
                     {
                         bool isGableWall = Math.Abs(bx) == hx;
+                        byte supportShape = isGableWall
+                            ? ResolveExteriorWallKitShape(in pal, BuildingInteriorTheme.VillageHome)
+                            : ArchitecturalShapeCatalog.KitTimberPostCorner;
+                        byte supportRot = bx < 0 ? f.Rot(1) : f.Rot(3);
+
                         if (zSouth == zNorth)
                         {
                             f.ToWorld(bx, zSouth, out int rWx, out int rWz);
                             for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                             {
-                                canvas.SetBlock(rWx, suppY, rWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(rWx, suppY, rWz, isGableWall ? pal.WallMat : pal.TimberMat, supportShape, supportRot);
                             }
-                            canvas.SetBlock(rWx, wy, rWz, pal.RoofMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(rWx, wy, rWz, pal.RoofMat, ArchitecturalShapeCatalog.KitRoofRidgeCrest, f.Rot(0));
                             continue;
                         }
 
-                        // Guney (-Z) egimli cati yuzu (localRot = 0 -> disari -Z'ye egimli)
+                        // Guney (-Z) 3B kiremit/mertek cati yuzu
                         f.ToWorld(bx, zSouth, out int sWx, out int sWz);
                         for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                         {
-                            canvas.SetBlock(sWx, suppY, sWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(sWx, suppY, sWz, isGableWall ? pal.WallMat : pal.TimberMat, supportShape, supportRot);
                         }
-                        canvas.SetBlock(sWx, wy, sWz, pal.RoofMat, ArchitecturalShapeCatalog.Ramp45, f.Rot(0));
+                        canvas.SetBlock(sWx, wy, sWz, pal.RoofMat, isGableWall ? ArchitecturalShapeCatalog.KitGableWall45 : slopeShape, f.Rot(0));
 
-                        // Kuzey (+Z) egimli cati yuzu (localRot = 2 -> disari +Z'ye egimli)
+                        // Kuzey (+Z) 3B kiremit/mertek cati yuzu
                         f.ToWorld(bx, zNorth, out int nWx, out int nWz);
                         for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                         {
-                            canvas.SetBlock(nWx, suppY, nWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(nWx, suppY, nWz, isGableWall ? pal.WallMat : pal.TimberMat, supportShape, supportRot);
                         }
-                        canvas.SetBlock(nWx, wy, nWz, pal.RoofMat, ArchitecturalShapeCatalog.Ramp45, f.Rot(2));
+                        canvas.SetBlock(nWx, wy, nWz, pal.RoofMat, isGableWall ? ArchitecturalShapeCatalog.KitGableWall45 : slopeShape, f.Rot(2));
 
-                        // Ucgen Kalkan (Gable) Uclari (bx == -hx ve bx == +hx), ic makas (bx == 0) ve tepe kapamasi
+                        // Ucgen Kalkan (Gable) Uclari (bx == -hx ve bx == +hx), ic makas (bx == 0) ve tepe mahyasi
                         for (int bz = zSouth + 1; bz <= zNorth - 1; bz++)
                         {
                             f.ToWorld(bx, bz, out int gWx, out int gWz);
@@ -703,30 +813,52 @@ namespace Stratocraft.WorldGen.Generators
                             {
                                 for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                                 {
-                                    canvas.SetBlock(gWx, suppY, gWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                    canvas.SetBlock(gWx, suppY, gWz, isGableWall ? pal.WallMat : pal.TimberMat, supportShape, supportRot);
                                 }
-                                canvas.SetBlock(gWx, wy, gWz, pal.RoofMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(gWx, wy, gWz, pal.RoofMat, ArchitecturalShapeCatalog.KitRoofRidgeCrest, f.Rot(0));
                             }
                             else if (isGableWall)
                             {
-                                canvas.SetBlock(gWx, wy, gWz, pal.WallMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(gWx, wy, gWz, pal.WallMat, supportShape, supportRot);
                             }
                             else if (bx == 0)
                             {
-                                canvas.SetBlock(gWx, wy, gWz, pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                canvas.SetBlock(gWx, wy, gWz, pal.TimberMat, ArchitecturalShapeCatalog.KitTimberPostCorner, f.Rot(0));
                             }
                         }
                     }
                 }
             }
 
-            // 3) Cati Ustu Firinlanmis Kirmizi Tugla Baca (FiredClayBrick = 128)
+            // 3) Cati Ustu 3B Kirmizi Tugla ve Tas Sapkali Baca (KitChimneyFlue = 39)
             int chimTopY = roofBaseY + Math.Min(hz, 4) + 2;
-            f.ToWorld(-hx + 1, hz - 1, out int cWx, out int cWz);
+            f.ToWorld(hx - 1, hz - 1, out int cWx, out int cWz);
             for (int cy = roofBaseY; cy <= chimTopY; cy++)
             {
-                canvas.SetBlock(cWx, cy, cWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.FullMasonryCube);
+                canvas.SetBlock(cWx, cy, cWz, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.KitChimneyFlue, f.Rot(0));
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void StampWalkable3DDoorColumn(
+            int wx,
+            int floorY,
+            int wz,
+            byte doorMat,
+            byte lintelMat,
+            byte leafRot,
+            byte lintelRot,
+            bool startOpen,
+            ref ChunkStampCanvas canvas)
+        {
+            byte doorShape = startOpen
+                ? ArchitecturalShapeCatalog.KitHingedDoorOpen
+                : ArchitecturalShapeCatalog.KitHingedDoorClosed;
+            for (int dy = 1; dy <= 3; dy++)
+            {
+                canvas.SetBlock(wx, floorY + dy, wz, doorMat, doorShape, leafRot);
+            }
+            canvas.SetBlock(wx, floorY + 4, wz, lintelMat, ArchitecturalShapeCatalog.KitDoorArchLintel, lintelRot);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -739,29 +871,7 @@ namespace Stratocraft.WorldGen.Generators
             byte rot,
             ref ChunkStampCanvas canvas)
         {
-            if (canvas.MicroPools != null)
-            {
-                canvas.SetMicro(
-                    wx, floorY + 1, wz,
-                    doorMat,
-                    VoxelMicroFurnitureTemplates.HingedDoorLowerClosed64,
-                    rot,
-                    ArchitecturalShapeCatalog.FullMasonryCube,
-                    rot);
-                canvas.SetMicro(
-                    wx, floorY + 2, wz,
-                    doorMat,
-                    VoxelMicroFurnitureTemplates.HingedDoorUpperClosed64,
-                    rot,
-                    ArchitecturalShapeCatalog.FullMasonryCube,
-                    rot);
-            }
-            else
-            {
-                canvas.ClearAir(wx, floorY + 1, wz);
-                canvas.ClearAir(wx, floorY + 2, wz);
-            }
-            canvas.SetBlock(wx, floorY + 3, wz, lintelMat, ArchitecturalShapeCatalog.FullMasonryCube);
+            StampWalkable3DDoorColumn(wx, floorY, wz, doorMat, lintelMat, rot, rot, startOpen: true, ref canvas);
         }
 
         // =====================================================================
@@ -793,7 +903,7 @@ namespace Stratocraft.WorldGen.Generators
                     int bx = wx - centerWx;
                     canvas.ExtendFoundationToGround(wx, baseY, wz, MaterialIdCatalog.CutAshlarStone);
 
-                    for (int cy = baseY + 1; cy <= roofBaseY + 7; cy++)
+                    for (int cy = baseY + 1; cy <= roofBaseY + 8; cy++)
                     {
                         canvas.ClearAir(wx, cy, wz);
                     }
@@ -801,8 +911,10 @@ namespace Stratocraft.WorldGen.Generators
                     for (int s = 0; s <= stories; s++)
                     {
                         int slabY = baseY + s * StoryHeightBlocks;
-                        // Bati (bx == -15) ve Dogu (bx == +15) Merdiven Holu (bz in [-1..1]) kat gecis acikliklari
-                        if ((s == 1 || s == 2) && (bx == -15 || bx == 15) && bz >= -1 && bz <= 1)
+                        // Bati (bx in [-15..-14]) ve Dogu (bx in [14..15]) 2m x 4m Genis Merdiven Holu kat gecis acikliklari
+                        if ((s == 1 || s == 2) &&
+                            (bx == -15 || bx == -14 || bx == 14 || bx == 15) &&
+                            bz >= -2 && bz <= 1)
                         {
                             continue;
                         }
@@ -856,94 +968,120 @@ namespace Stratocraft.WorldGen.Generators
                             continue;
                         }
 
-                        // a) Dis Anitsal Giris Kapilari ve Pencereler
+                        // a) Dis Anitsal Giris Kapilari ve 3B Kemerli Pencereler (4.0m net kat yuksekligi: dy = 1..4)
                         if (onOuter)
                         {
-                            // Guney Ana Saray Girisi (Kat 1, bz == -12, bx in [-1..+1]) ve Kuzey Bahce Kapisi (bz == +12, bx == 0)
-                            if (s == 0 && ((bz == -hz && Math.Abs(bx) <= 1) || (bz == hz && bx == 0)))
+                            // Guney 3m x 3m Anitsal Saray Girisi (Kat 1, bz == -12, bx in [-1..+1]) ve Kuzey 2m x 3m Bahce Kapisi (bz == +12, bx in [-1..0])
+                            if (s == 0 && ((bz == -hz && Math.Abs(bx) <= 1) || (bz == hz && (bx == -1 || bx == 0))))
                             {
-                                if (bx == 0)
+                                if (Math.Abs(bx) == 1 && bz == -hz)
                                 {
-                                    StampDoorway1x2(wx, floorY, wz, MaterialIdCatalog.TreatedTimberBeam, MaterialIdCatalog.DressedMarbleBlock, 0, ref canvas);
+                                    StampWalkable3DDoorColumn(
+                                        wx, floorY, wz,
+                                        MaterialIdCatalog.TreatedTimberBeam,
+                                        MaterialIdCatalog.DressedMarbleBlock,
+                                        bx < 0 ? (byte)0 : (byte)2,
+                                        0,
+                                        startOpen: true,
+                                        ref canvas);
+                                }
+                                else if (bz == hz)
+                                {
+                                    StampWalkable3DDoorColumn(
+                                        wx, floorY, wz,
+                                        MaterialIdCatalog.TreatedTimberBeam,
+                                        MaterialIdCatalog.DressedMarbleBlock,
+                                        bx < 0 ? (byte)0 : (byte)2,
+                                        2,
+                                        startOpen: true,
+                                        ref canvas);
                                 }
                                 else
                                 {
-                                    canvas.ClearAir(wx, floorY + 1, wz);
-                                    canvas.ClearAir(wx, floorY + 2, wz);
-                                    canvas.SetBlock(wx, floorY + 3, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.ArchVoussoir);
+                                    for (int dy = 1; dy <= 3; dy++) canvas.ClearAir(wx, floorY + dy, wz);
+                                    canvas.SetBlock(wx, floorY + 4, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.TrapezoidalKeystone);
                                 }
                                 continue;
                             }
 
+                            byte faceRot = onOuterZ ? (bz < 0 ? (byte)0 : (byte)2) : (bx < 0 ? (byte)1 : (byte)3);
                             bool isQuoin = (onOuterX && onOuterZ) || (onOuterZ && (bx % 4 == 0)) || (onOuterX && (bz % 4 == 0));
                             bool isWindow = !isQuoin && ((onOuterZ && ((bx & 1) == 0)) || (onOuterX && ((bz & 1) == 0)));
 
-                            for (int dy = 1; dy <= 3; dy++)
+                            for (int dy = 1; dy <= 4; dy++)
                             {
-                                if (dy == 2 && isWindow)
+                                if ((dy == 2 || dy == 3) && isWindow)
                                 {
-                                    byte winRot = onOuterZ ? (byte)0 : (byte)1;
-                                    canvas.SetMicro(
+                                    canvas.SetBlock(
                                         wx, floorY + dy, wz,
                                         MaterialIdCatalog.LeadedGlassPane,
-                                        VoxelMicroFurnitureTemplates.MullionWindow64,
-                                        winRot,
-                                        ArchitecturalShapeCatalog.GratingFrame,
-                                        winRot);
+                                        ArchitecturalShapeCatalog.KitArchedStoneWindow,
+                                        faceRot);
                                 }
                                 else
                                 {
-                                    byte wallMat = (isQuoin || dy == 3)
+                                    byte wallMat = (isQuoin || dy == 4)
                                         ? MaterialIdCatalog.DressedMarbleBlock
                                         : MaterialIdCatalog.CutAshlarStone;
-                                    canvas.SetBlock(wx, floorY + dy, wz, wallMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                    byte wShape = isQuoin
+                                        ? ArchitecturalShapeCatalog.KitAshlarQuoinBlock
+                                        : ArchitecturalShapeCatalog.KitRusticatedStoneWall;
+                                    canvas.SetBlock(wx, floorY + dy, wz, wallMat, wShape, faceRot);
                                 }
                             }
                             continue;
                         }
 
-                        // b) 23 Odayi Birbirine Baglayan Ic Oda Kapilari
+                        // b) 23 Odayi Birbirine Baglayan 2m x 3m Genis Acik 3B Ic Oda Kapilari!
                         bool isInnerDoorOnZ = onInnerZ && !onInnerX &&
-                            (bx == -15 || bx == -7 || bx == 0 || bx == 7 || bx == 12 || bx == 17);
+                            (bx == -15 || bx == -14 || bx == -7 || bx == -6 || bx == 0 || bx == 1 || bx == 7 || bx == 8 || bx == 12 || bx == 13 || bx == 17 || bx == 18);
                         bool isInnerDoorOnX = onInnerX && !onInnerZ &&
-                            (bz == -8 || bz == 0 || bz == 8);
+                            (bz == -8 || bz == -7 || bz == 0 || bz == 1 || bz == 8 || bz == 9);
 
                         if (isInnerDoorOnZ)
                         {
-                            StampDoorway1x2(wx, floorY, wz, MaterialIdCatalog.TreatedTimberBeam, MaterialIdCatalog.DressedMarbleBlock, 0, ref canvas);
+                            byte lRot = ((bx & 1) == 0) ? (byte)0 : (byte)2;
+                            StampWalkable3DDoorColumn(wx, floorY, wz, MaterialIdCatalog.TreatedTimberBeam, MaterialIdCatalog.DressedMarbleBlock, lRot, 0, startOpen: true, ref canvas);
                             continue;
                         }
 
                         if (isInnerDoorOnX)
                         {
-                            StampDoorway1x2(wx, floorY, wz, MaterialIdCatalog.TreatedTimberBeam, MaterialIdCatalog.DressedMarbleBlock, 1, ref canvas);
+                            byte lRot = ((bz & 1) == 0) ? (byte)1 : (byte)3;
+                            StampWalkable3DDoorColumn(wx, floorY, wz, MaterialIdCatalog.TreatedTimberBeam, MaterialIdCatalog.DressedMarbleBlock, lRot, 1, startOpen: true, ref canvas);
                             continue;
                         }
 
-                        // c) Tasiyici Ic Oda Duvari
+                        // c) Tasiyici 3B Kabartma Kesme Tas Ic Oda Duvari (dy = 1..4)
                         bool isIntersection = onInnerX && onInnerZ;
                         byte innerMat = isIntersection
                             ? MaterialIdCatalog.DressedMarbleBlock
                             : MaterialIdCatalog.CutAshlarStone;
-                        for (int dy = 1; dy <= 3; dy++)
+                        byte innerShape = isIntersection
+                            ? ArchitecturalShapeCatalog.KitAshlarQuoinBlock
+                            : ArchitecturalShapeCatalog.KitRusticatedStoneWall;
+                        byte innerRot = onInnerZ ? (byte)0 : (byte)1;
+                        for (int dy = 1; dy <= 4; dy++)
                         {
-                            canvas.SetBlock(wx, floorY + dy, wz, innerMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(wx, floorY + dy, wz, innerMat, innerShape, innerRot);
                         }
                     }
                 }
 
-                // d) Bati (bx == -15) ve Dogu (bx == +15) Anitsal Tas Merdiven Holleri (Room 7 & Room 8 -> Kat 2 -> Kat 3)
+                // d) Bati (bx = -15..-14) ve Dogu (bx = +14..+15) 2m Genis Anitsal Mermer Merdiven Holleri
                 if (s < stories - 1)
                 {
                     StampPalaceStairwell(centerWx - 15, floorY, centerWz, ref canvas);
+                    StampPalaceStairwell(centerWx - 14, floorY, centerWz, ref canvas);
+                    StampPalaceStairwell(centerWx + 14, floorY, centerWz, ref canvas);
                     StampPalaceStairwell(centerWx + 15, floorY, centerWz, ref canvas);
                 }
             }
 
-            // 3) 23 Odanin Tamamina Ozel %100 Voksel / 4x4x4 Mikro-Voksel Mobilyalar (DK-02)
+            // 3) 23 Odanin Tamamina Ozel %100 3B Cok-Malzemeli Kit Mobilyalar
             StampGrandCityPalaceRoomFurniture(centerWx, baseY, centerWz, ref canvas);
 
-            // 4) Saray Cati Korkulugu, Bati/Dogu Kule Catilari ve Merkez Kademeli Mermer Kubbe
+            // 4) Saray Cati Korkulugu ve Merkez Kaburgali Mermer Kubbe (KitDomeRibVault = 40)
             for (int wz = minZ; wz <= maxZ; wz++)
             {
                 int bz = wz - centerWz;
@@ -952,12 +1090,13 @@ namespace Stratocraft.WorldGen.Generators
                     int bx = wx - centerWx;
                     if (Math.Abs(bx) == hx || Math.Abs(bz) == hz)
                     {
-                        canvas.SetBlock(wx, roofBaseY + 1, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.BattlementMerlon);
+                        byte rRot = Math.Abs(bz) == hz ? (bz < 0 ? (byte)0 : (byte)2) : (bx < 0 ? (byte)1 : (byte)3);
+                        canvas.SetBlock(wx, roofBaseY + 1, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitBalconyBalustrade, rRot);
                     }
                 }
             }
 
-            // Merkez Kubbe Tamburu ve Kademeli Mermer Kubbe (bx in [-5..+5], bz in [-5..+5], Room 19 ustu)
+            // Merkez Kubbe Tamburu ve Kaburgali Mermer Kubbe (bx in [-5..+5], bz in [-5..+5], Room 19 ustu)
             for (int step = 0; step <= 4; step++)
             {
                 int r = 5 - step;
@@ -969,21 +1108,21 @@ namespace Stratocraft.WorldGen.Generators
                         int wx = centerWx + dx;
                         int wz = centerWz + dz;
                         bool onEdge = Math.Abs(dx) == r || Math.Abs(dz) == r;
-                        if (step > 0)
+                        for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                         {
-                            canvas.SetBlock(wx, wy - 1, wz, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(wx, suppY, wz, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.FullMasonryCube);
                         }
 
                         if (r <= 1 || !onEdge)
                         {
-                            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitRoofRidgeCrest);
                         }
                         else
                         {
                             byte slopeRot = Math.Abs(dz) >= Math.Abs(dx)
                                 ? (dz < 0 ? (byte)0 : (byte)2)
                                 : (dx < 0 ? (byte)1 : (byte)3);
-                            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.Ramp45, slopeRot);
+                            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitDomeRibVault, slopeRot);
                         }
                     }
                 }
@@ -993,14 +1132,16 @@ namespace Stratocraft.WorldGen.Generators
 
         private static void StampPalaceStairwell(int stairWx, int floorY, int centerWz, ref ChunkStampCanvas canvas)
         {
-            canvas.SetBlock(stairWx, floorY + 1, centerWz - 1, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.StairStep, 0);
-
-            canvas.SetBlock(stairWx, floorY + 1, centerWz, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.FullMasonryCube);
-            canvas.SetBlock(stairWx, floorY + 2, centerWz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.StairStep, 0);
-
-            canvas.SetBlock(stairWx, floorY + 1, centerWz + 1, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.FullMasonryCube);
-            canvas.SetBlock(stairWx, floorY + 2, centerWz + 1, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.FullMasonryCube);
-            canvas.SetBlock(stairWx, floorY + 3, centerWz + 1, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.StairStep, 0);
+            for (int stepIdx = 0; stepIdx < 4; stepIdx++)
+            {
+                int wz = centerWz - 2 + stepIdx;
+                int stairWy = floorY + 1 + stepIdx;
+                for (int supY = floorY + 1; supY < stairWy; supY++)
+                {
+                    canvas.SetBlock(stairWx, supY, wz, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.KitAshlarQuoinBlock);
+                }
+                canvas.SetBlock(stairWx, stairWy, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitWideTimberStair, 0);
+            }
         }
 
         private static void StampGrandCityPalaceRoomFurniture(
@@ -1011,118 +1152,113 @@ namespace Stratocraft.WorldGen.Generators
         {
             // === 1. KAT (8 Oda: y = baseY + 1) ===
             int y1 = baseY + 1;
-            // Oda 1 & 2: Sol/Sag Muhafiz Salonlari (-15, -8) ve (+15, -8)
             StampTableWithChairs(cx - 15, y1, cz - 8, ref canvas);
-            canvas.SetMicro(cx - 18, y1, cz - 10, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 1);
-            canvas.SetMicro(cx - 18, y1, cz - 6, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, 1);
+            canvas.SetBlock(cx - 18, y1, cz - 10, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 1);
+            canvas.SetBlock(cx - 18, y1, cz - 6, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, 1);
 
             StampTableWithChairs(cx + 15, y1, cz - 8, ref canvas);
-            canvas.SetMicro(cx + 18, y1, cz - 10, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 3);
-            canvas.SetMicro(cx + 18, y1, cz - 6, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, 3);
+            canvas.SetBlock(cx + 18, y1, cz - 10, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 3);
+            canvas.SetBlock(cx + 18, y1, cz - 6, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, 3);
 
-            // Oda 3: Sutunlu Giris Holu (Mermer sutunlar)
-            for (int dy = 0; dy < 3; dy++)
-            {
-                canvas.SetBlock(cx - 4, y1 + dy, cz - 8, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.OctagonalColumn);
-                canvas.SetBlock(cx + 4, y1 + dy, cz - 8, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.OctagonalColumn);
-            }
+            // Oda 3 & 4: Yivli Klasik Mermer Sutunlar (Kaide + Govde + Baslik!)
+            StampClassicalMarbleColumn(cx - 4, y1, cz - 8, ref canvas);
+            StampClassicalMarbleColumn(cx + 4, y1, cz - 8, ref canvas);
 
-            // Oda 4: 12x8m Dev Taht Salonu (Kraliyet Tahti + Sutunlar + Muhafiz Silahliklari)
-            canvas.SetMicro(cx, y1, cz + 2, MaterialIdCatalog.DressedMarbleBlock, VoxelMicroFurnitureTemplates.RoyalThrone64, 0, ArchitecturalShapeCatalog.TrophyPlinth);
-            canvas.SetMicro(cx - 3, y1, cz + 2, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 0);
-            canvas.SetMicro(cx + 3, y1, cz + 2, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 0);
-            for (int dy = 0; dy < 3; dy++)
-            {
-                canvas.SetBlock(cx - 5, y1 + dy, cz - 1, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.OctagonalColumn);
-                canvas.SetBlock(cx + 5, y1 + dy, cz - 1, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.OctagonalColumn);
-            }
+            // Oda 4: Dev Taht Salonu (3B Kraliyet Tahti + Klasik Sutunlar + Muhafiz Silahliklari)
+            canvas.SetBlock(cx, y1, cz + 2, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitRoyalThrone, 0);
+            canvas.SetBlock(cx - 3, y1, cz + 2, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 0);
+            canvas.SetBlock(cx + 3, y1, cz + 2, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 0);
+            StampClassicalMarbleColumn(cx - 5, y1, cz - 1, ref canvas);
+            StampClassicalMarbleColumn(cx + 5, y1, cz - 1, ref canvas);
 
-            // Oda 5: Buyuk Ziyafet Salonu (Uzun ziyafet masasi + sandalyeler + ocak)
-            for (int bx = -16; bx <= -10; bx += 2)
+            // Oda 5: Buyuk Ziyafet Salonu (Uzun 3B ziyafet masasi + sandalyeler + kor atesli somine)
+            for (int bx = -16; bx <= -10; bx += 3)
             {
                 StampTableWithChairs(cx + bx, y1, cz + 8, ref canvas);
             }
-            canvas.SetMicro(cx - 18, y1, cz + 10, MaterialIdCatalog.FiredClayBrick, VoxelMicroFurnitureTemplates.CookingHearth64, 0);
+            canvas.SetBlock(cx - 18, y1, cz + 11, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.KitFireplaceHearth, 0);
 
-            // Oda 6: Somineli Saray Mutfagi ve Kiler (Ocak + Tezgahlar + Variller + Sandik)
-            canvas.SetMicro(cx + 18, y1, cz + 10, MaterialIdCatalog.FiredClayBrick, VoxelMicroFurnitureTemplates.CookingHearth64, 0);
+            // Oda 6: Somineli Saray Mutfagi ve Kiler (3B Ocak + Mermer Tezgahlar + Ficilar)
+            canvas.SetBlock(cx + 18, y1, cz + 11, MaterialIdCatalog.FiredClayBrick, ArchitecturalShapeCatalog.KitFireplaceHearth, 0);
             for (int bx = 10; bx <= 16; bx += 2)
             {
-                canvas.SetMicro(cx + bx, y1, cz + 10, MaterialIdCatalog.CutAshlarStone, VoxelMicroFurnitureTemplates.KitchenCounter64, 0);
-                canvas.SetMicro(cx + bx, y1, cz + 6, MaterialIdCatalog.OakWood, VoxelMicroFurnitureTemplates.Barrel64, 0);
+                canvas.SetBlock(cx + bx, y1, cz + 11, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitKitchenCounter, 0);
+                canvas.SetBlock(cx + bx, y1, cz + 6, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitWoodenBarrel, 0);
             }
 
-            // === 2. KAT (8 Oda: y = baseY + 5) ===
-            int y2 = baseY + 5;
-            // Oda 9: Divan / Konsey Odasi
+            // === 2. KAT (8 Oda: y = baseY + StoryHeightBlocks + 1) ===
+            int y2 = baseY + StoryHeightBlocks + 1;
             StampTableWithChairs(cx - 16, y2, cz - 8, ref canvas);
             StampTableWithChairs(cx - 13, y2, cz - 8, ref canvas);
-            canvas.SetMicro(cx - 18, y2, cz - 10, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 1);
+            canvas.SetBlock(cx - 18, y2, cz - 10, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 1);
 
-            // Oda 10: Buyuk Kutuphane
             for (int bx = -18; bx <= -12; bx += 2)
             {
-                canvas.SetMicro(cx + bx, y2, cz + 11, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 0);
+                canvas.SetBlock(cx + bx, y2, cz + 11, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 0);
             }
             StampTableWithChairs(cx - 15, y2, cz + 8, ref canvas);
 
-            // Oda 11 & 12: Merkez Galeri + Harita ve Strateji Odasi
-            canvas.SetMicro(cx, y2, cz - 8, MaterialIdCatalog.TreatedTimberBeam, VoxelMicroFurnitureTemplates.WorkTable64, 0);
-            canvas.SetMicro(cx - 3, y2, cz - 10, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 2);
-            canvas.SetMicro(cx + 3, y2, cz - 10, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 2);
+            canvas.SetBlock(cx, y2, cz - 8, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, 0);
+            canvas.SetBlock(cx - 3, y2, cz - 10, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 2);
+            canvas.SetBlock(cx + 3, y2, cz - 10, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 2);
 
-            // Oda 13, 14, 15, 16: 4 Soylu / Konuk Dairesi
-            StampBedroomSuite(cx + 12, y2, cz - 8, ref canvas);
-            StampBedroomSuite(cx + 17, y2, cz - 8, ref canvas);
-            StampBedroomSuite(cx + 12, y2, cz + 8, ref canvas);
-            StampBedroomSuite(cx + 17, y2, cz + 8, ref canvas);
+            StampBedroomSuite(cx + 12, y2, cz - 9, ref canvas);
+            StampBedroomSuite(cx + 17, y2, cz - 9, ref canvas);
+            StampBedroomSuite(cx + 12, y2, cz + 7, ref canvas);
+            StampBedroomSuite(cx + 17, y2, cz + 7, ref canvas);
 
-            // === 3. KAT (7 Oda: y = baseY + 9) ===
-            int y3 = baseY + 9;
-            // Oda 17: Bati Kule Odasi
-            canvas.SetMicro(cx - 17, y3, cz - 8, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 1);
-            canvas.SetMicro(cx - 17, y3, cz - 6, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, 1);
+            // === 3. KAT (7 Oda: y = baseY + 2 * StoryHeightBlocks + 1) ===
+            int y3 = baseY + 2 * StoryHeightBlocks + 1;
+            canvas.SetBlock(cx - 17, y3, cz - 8, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 1);
+            canvas.SetBlock(cx - 17, y3, cz - 6, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, 1);
 
-            // Oda 18: Kraliyet Yatak Dairesi
-            StampBedroomSuite(cx - 8, y3, cz - 8, ref canvas);
-            canvas.SetMicro(cx - 6, y3, cz - 10, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 2);
+            StampBedroomSuite(cx - 8, y3, cz - 9, ref canvas);
+            canvas.SetBlock(cx - 6, y3, cz - 11, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 2);
 
-            // Oda 19: Kubbe Alti Kraliyet Kabul Salonu
-            canvas.SetMicro(cx, y3, cz, MaterialIdCatalog.DressedMarbleBlock, VoxelMicroFurnitureTemplates.RoyalThrone64, 0, ArchitecturalShapeCatalog.TrophyPlinth);
+            // Oda 19: Kubbe Alti Kraliyet Kabul Salonu (4 Mermer Kubbe Ayagi + Kraliyet Tahti)
+            canvas.SetBlock(cx, y3, cz + 1, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitRoyalThrone, 0);
+            StampClassicalMarbleColumn(cx - 3, y3, cz - 3, ref canvas);
+            StampClassicalMarbleColumn(cx + 3, y3, cz - 3, ref canvas);
+            StampClassicalMarbleColumn(cx - 3, y3, cz + 3, ref canvas);
+            StampClassicalMarbleColumn(cx + 3, y3, cz + 3, ref canvas);
 
-            // Oda 20: Hazine Odasi (Royal Treasury)
             for (int bz = -10; bz <= -6; bz += 2)
             {
-                canvas.SetMicro(cx + 6, y3, cz + bz, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, 1);
-                canvas.SetMicro(cx + 8, y3, cz + bz, MaterialIdCatalog.OakWood, VoxelMicroFurnitureTemplates.Barrel64, 3);
+                canvas.SetBlock(cx + 6, y3, cz + bz, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, 1);
+                canvas.SetBlock(cx + 9, y3, cz + bz, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitWoodenBarrel, 3);
             }
 
-            // Oda 21: Arsiv ve Dogu Kule Odasi
-            canvas.SetMicro(cx + 17, y3, cz - 10, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.Bookshelf64, 2);
-            canvas.SetMicro(cx + 17, y3, cz - 7, MaterialIdCatalog.TreatedTimberBeam, VoxelMicroFurnitureTemplates.WorkTable64, 0);
+            canvas.SetBlock(cx + 17, y3, cz - 10, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitBookshelf, 2);
+            canvas.SetBlock(cx + 17, y3, cz - 7, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, 0);
 
-            // Oda 22: Kuzey Balkon Galerisi
             StampTableWithChairs(cx - 6, y3, cz + 8, ref canvas);
-
-            // Oda 23: Ozel Muhafiz Odasi
             StampTableWithChairs(cx + 6, y3, cz + 8, ref canvas);
-            canvas.SetMicro(cx + 10, y3, cz + 10, MaterialIdCatalog.IronTieBeamBlock, VoxelMicroFurnitureTemplates.WeaponRack64, 0);
+            canvas.SetBlock(cx + 10, y3, cz + 10, MaterialIdCatalog.TreatedTimberBeam, ArchitecturalShapeCatalog.KitWeaponRack, 0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void StampClassicalMarbleColumn(int wx, int y1, int wz, ref ChunkStampCanvas canvas)
+        {
+            canvas.SetBlock(wx, y1, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitClassicalColumnBase);
+            canvas.SetBlock(wx, y1 + 1, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitClassicalColumnShaft);
+            canvas.SetBlock(wx, y1 + 2, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitClassicalColumnShaft);
+            canvas.SetBlock(wx, y1 + 3, wz, MaterialIdCatalog.DressedMarbleBlock, ArchitecturalShapeCatalog.KitClassicalColumnCap);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StampTableWithChairs(int wx, int wy, int wz, ref ChunkStampCanvas canvas)
         {
-            canvas.SetMicro(wx, wy, wz, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.DiningTable64, 0);
-            canvas.SetMicro(wx, wy, wz + 1, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.ChairWithBack64, 0);
-            canvas.SetMicro(wx, wy, wz - 1, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.ChairWithBack64, 2);
+            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitDiningTable, 0);
+            canvas.SetBlock(wx, wy, wz + 1, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitChairWithBack, 0);
+            canvas.SetBlock(wx, wy, wz - 1, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitChairWithBack, 2);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void StampBedroomSuite(int wx, int wy, int wz, ref ChunkStampCanvas canvas)
         {
-            canvas.SetMicro(wx, wy, wz + 1, MaterialIdCatalog.BedBlock, VoxelMicroFurnitureTemplates.BedHeadboard64, 0);
-            canvas.SetMicro(wx, wy, wz, MaterialIdCatalog.BedBlock, VoxelMicroFurnitureTemplates.BedFoot64, 0);
-            canvas.SetMicro(wx + 1, wy, wz + 1, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, 0);
+            canvas.SetBlock(wx, wy, wz + 1, MaterialIdCatalog.BedBlock, ArchitecturalShapeCatalog.KitBedHeadboard, 0);
+            canvas.SetBlock(wx, wy, wz, MaterialIdCatalog.BedBlock, ArchitecturalShapeCatalog.KitBedFoot, 0);
+            canvas.SetBlock(wx + 1, wy, wz + 1, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, 0);
         }
 
         // =====================================================================
@@ -1301,13 +1437,13 @@ namespace Stratocraft.WorldGen.Generators
                 }
             }
 
-            // On satis tezgahi + varil + sandik
+            // On satis 3B tezgahi + 3B fici + 3B sandik
             f.ToWorld(0, -hz + 1, out int cntX, out int cntZ);
-            canvas.SetMicro(cntX, f.BaseY + 1, cntZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.KitchenCounter64, f.Rot(0));
+            canvas.SetBlock(cntX, f.BaseY + 1, cntZ, MaterialIdCatalog.WoodPlank, ArchitecturalShapeCatalog.KitKitchenCounter, f.Rot(0));
             f.ToWorld(-1, hz - 1, out int brX, out int brZ);
-            canvas.SetMicro(brX, f.BaseY + 1, brZ, MaterialIdCatalog.OakWood, VoxelMicroFurnitureTemplates.Barrel64, f.Rot(0));
+            canvas.SetBlock(brX, f.BaseY + 1, brZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitWoodenBarrel, f.Rot(0));
             f.ToWorld(1, hz - 1, out int chX, out int chZ);
-            canvas.SetMicro(chX, f.BaseY + 1, chZ, MaterialIdCatalog.WoodPlank, VoxelMicroFurnitureTemplates.StorageChest64, f.Rot(0));
+            canvas.SetBlock(chX, f.BaseY + 1, chZ, MaterialIdCatalog.OakWood, ArchitecturalShapeCatalog.KitStorageChest, f.Rot(0));
         }
 
         private static void StampVillageWell(in BuildingFrame f, in BuildingPalette pal, ref ChunkStampCanvas canvas)
@@ -1322,16 +1458,15 @@ namespace Stratocraft.WorldGen.Generators
                     {
                         canvas.SetBlock(wx, f.BaseY - 1, wz, MaterialIdCatalog.StoneBrick, ArchitecturalShapeCatalog.FullMasonryCube);
                         canvas.SetWater(wx, f.BaseY, wz);
-                        canvas.SetMicro(
+                        canvas.SetBlock(
                             wx, f.BaseY + 1, wz,
                             MaterialIdCatalog.TreatedTimberBeam,
-                            VoxelMicroFurnitureTemplates.WellWindlassFrame64,
-                            f.Rot(0),
-                            ArchitecturalShapeCatalog.GratingFrame);
+                            ArchitecturalShapeCatalog.KitWellAndFence,
+                            (byte)(4 | f.Rot(0)));
                     }
                     else
                     {
-                        canvas.SetBlock(wx, f.BaseY, wz, MaterialIdCatalog.StoneBrick, ArchitecturalShapeCatalog.FullMasonryCube);
+                        canvas.SetBlock(wx, f.BaseY, wz, MaterialIdCatalog.StoneBrick, ArchitecturalShapeCatalog.KitRusticatedStoneWall);
                         canvas.SetBlock(wx, f.BaseY + 1, wz, MaterialIdCatalog.CutAshlarStone, ArchitecturalShapeCatalog.HalfSlab);
                     }
                 }
@@ -1414,14 +1549,12 @@ namespace Stratocraft.WorldGen.Generators
                     }
 
                     byte rot = (lz == 2 || lz == 13) ? (byte)0 : (byte)1;
-                    canvas.SetMicro(
+                    canvas.SetBlock(
                         canvas.BaseWx + lx,
                         fenceY,
                         canvas.BaseWz + lz,
                         MaterialIdCatalog.OakWood,
-                        VoxelMicroFurnitureTemplates.FencePostAndRail64,
-                        rot,
-                        ArchitecturalShapeCatalog.OctagonalColumn,
+                        ArchitecturalShapeCatalog.KitWellAndFence,
                         rot);
                 }
             }

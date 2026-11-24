@@ -42,6 +42,62 @@ namespace Stratocraft.Voxel.Data
         public const byte GratingFrame = 19;
         public const byte TrophyPlinth = 20;
 
+        // =====================================================================
+        // Devir #086: 3B .glb & Cok-Malzemeli Mimari + Ic Mekan Kit Sekilleri (21..62)
+        // Tekil voksel chunk mesh'ine dogrudan 3B model geometrisi olarak gomulur (0 kup gorunumu, 1 draw call/chunk).
+        // =====================================================================
+        public const byte KitChinkedLogWall = 21;       // Yuvarlak kertikli kutuk + derz dolgulu duvar (mod_chinked_log_course_2m.glb)
+        public const byte KitNotchedLogCorner = 22;     // Kesisen disari tasan kose kutuk bogumu (mod_notched_log_saddle_2m.glb)
+        public const byte KitTimberFrameWall = 23;      // Ahsap dikme/kiris karkas + siva dolgu duvar (mod_wattle_daub_panel_2x2m.glb)
+        public const byte KitTimberBraceWall = 24;      // 45 derece capraz payandali ahsap karkas duvar (mod_diagonal_brace_2m.glb)
+        public const byte KitTimberPostCorner = 25;     // Pahli kalin ahsap kose dikmesi ve kavela (mod_timber_post_mortise_3m.glb)
+        public const byte KitAshlarQuoinBlock = 26;     // Derin derzli kesme kose tasi (mod_ashlar_quoin_corner.glb)
+        public const byte KitRusticatedStoneWall = 27;  // Kabartmali yigma/kesme tas duvar (mod_rubble_stone_course_2x1m.glb)
+        public const byte KitBrickCourseWall = 28;      // Kabartmali tugla orgusu + silme duvar (mod_english_bond_brick_2x2m.glb)
+        public const byte KitAdobeCurvedWall = 29;      // Yuvarlatilmis kerpic/cob + ahsap hatil uclari (mod_cob_curved_wall_2m.glb)
+        public const byte KitPlankFramedWall = 30;      // Binili yali baskisi tahta cephe + citasi (mod_plank_wall_2x2m.glb)
+        public const byte KitClassicalColumnBase = 31;  // Klasik sutun kaidesi (mod_classical_column_base.glb)
+        public const byte KitClassicalColumnShaft = 32; // Yivli silindirik sutun govdesi (mod_classical_column_shaft_3m.glb)
+        public const byte KitClassicalColumnCap = 33;   // Klasik sutun basligi (mod_classical_column_capital.glb)
+
+        public const byte KitRoofClayTile45 = 34;       // Altta ahsap mertek + ustte oluklu kiremit 45° cati (mod_roof_rafter_45deg_2x2m.glb)
+        public const byte KitRoofShingle45 = 35;        // Altta ahsap mertek + ustte bindirmeli pedavra/zona 45° cati
+        public const byte KitRoofEaveOverhang45 = 36;   // Disari uzanan oymali mertek uclu 45° cati sacagi
+        public const byte KitRoofRidgeCrest = 37;       // Ahsap mahya asigi + sirt kiremidi (mod_roof_ridge_2m.glb)
+        public const byte KitGableWall45 = 38;          // 45° ucgen kalkan duvar + alin tahtasi (mod_gable_wall_45deg_2m.glb)
+        public const byte KitChimneyFlue = 39;          // Kirmizi tugla baca + tas sapka + duman agzi (mod_chimney_flue_2m.glb)
+        public const byte KitDomeRibVault = 40;         // Kaburgali tas/mermer kubbe tonozu (mod_dome_rib_segment.glb)
+
+        public const byte KitShutteredWindow = 41;      // Ahsap kasali, camli, iki yana acik panjurlu 3B pencere (mod_shuttered_window_2x2m.glb)
+        public const byte KitArchedStoneWindow = 42;    // Kemerli tas sogeli + kursun camli saray/konak penceresi
+        public const byte KitDoorFrameJamb = 43;        // Ince profilli kapi yan kasasi / sogesi (mod_plank_doorway_2x2m.glb)
+        public const byte KitDoorArchLintel = 44;       // Oymali tas/ahsap kapi ust lentosu ve kemeri (mod_relieving_arch_2m.glb)
+        public const byte KitHingedDoorClosed = 45;     // Kapali 3B kusakli ahsap kapi + demir mentese/halka kol (mod_hinged_door_leaf.glb)
+        public const byte KitHingedDoorOpen = 46;       // 90° yana acilmis gecilebilir 3B kapi kanadi (oyuncu kapsulu rahatca gecer!)
+        public const byte KitWideTimberStair = 47;      // Cift limon kirisli gercek 3B ahsap/tas merdiven (mod_stairs_straight_2m.glb)
+        public const byte KitBalconyBalustrade = 48;    // Torna korkuluk babali 3B balkon/merdiven kupestesi
+
+        public const byte KitDiningTable = 49;          // 4 torna bacakli, kusakli 3B yemek/calisma masasi
+        public const byte KitChairWithBack = 50;        // egimli ayakli, citali sirtlikli 3B sandalye
+        public const byte KitBedHeadboard = 51;         // Oymali dikmeli, beyaz yastikli, kirmizi yorganli 3B yatak basligi
+        public const byte KitBedFoot = 52;              // Oymali ayak ucu + kirmizi yorganli 3B yatak govdesi
+        public const byte KitBookshelf = 53;            // Renkli 3B kitap siralariyla dolu ahsap kitaplik
+        public const byte KitFireplaceHearth = 54;      // Kemerli tas ocak + ahsap raf + kor atesli somine (mod_fireplace_hearth.glb)
+        public const byte KitKitchenCounter = 55;       // Kapakli dolap + mermer tezgah + ustunde seramik kaplar
+        public const byte KitStorageChest = 56;         // Bombeli kapakli, demir kusakli ve kilitli 3B sandik
+        public const byte KitWoodenBarrel = 57;         // 12 dilimli fici tahtasi + cift demir cemberli 3B varil
+        public const byte KitRoyalThrone = 58;          // Mermer kaideli, bronz kolcakli, yuksek kadife sirtli 3B taht
+        public const byte KitAnvilOnStump = 59;         // Kutuk kaide uzerinde boynuzlu demirci orsu
+        public const byte KitSawhorseBench = 60;        // Capraz A-ayakli marangoz tezgahi ve kereste
+        public const byte KitWeaponRack = 61;           // 3B celik mizrak/kilic dizili ahsap silahlik
+        public const byte KitWellAndFence = 62;         // rot 0..3: Cift rayli 3B tarla citi; rot 4..7: Kuyu cikrigi ve kovasi
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsSculpted3DKitShape(byte shapeId) => shapeId >= 21 && shapeId <= 62;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsPassableOpenDoorShape(byte shapeId) => shapeId == KitHingedDoorOpen;
+
         // 24 Kubik Grup SO(3) ortogonal baz matrisleri: her eleman (Right, Up, Forward) birim vektor uclusu
         private static readonly Vector3[] CubicBasisRight = new Vector3[24];
         private static readonly Vector3[] CubicBasisUp = new Vector3[24];
@@ -199,19 +255,17 @@ namespace Stratocraft.Voxel.Data
 
         private static byte GetCanonicalUnrotatedFullFaceMask(byte shapeId)
         {
-            // 62 kanonik sekil 8 ailesel geometri grubuna ayrilir:
-            // 1: Tam Kup, 8/21..26: Yarim Plaka, 3/10/11/14/27..34: Rampa/Merdiven (-Y ve +Z kapali),
-            // 12/35..38: Ic Cati Kosesi (-Y, +Z, +X kapali), 13/39..42: Dis Cati Kosesi (-Y kapali),
-            // 2/5/6/15/16/43..54: Sutun/Duvar/Kilit Tasi/Mazgal, 4/9/17..20/55..62: Kemer/Kiris/Trofe Kaidesi.
+            // Yalnizca 1..20 temel prizmatik sekiller komsu tam-yuz elemesi yapar;
+            // 21..62 3B .glb & oymali kit sekilleri girintili/silindirik 3B siluet tasidigi icin 0 doner (hicbir yuz yanlislikla kirpilmaz!).
             return shapeId switch
             {
                 FullMasonryCube => AllSixFacesMask,
-                HalfSlab or 21 or 22 or 23 or 24 or 25 or 26 => FaceNegY,
-                Ramp45 or Ramp22High or StairStep or 27 or 28 or 29 or 30 => (byte)(FaceNegY | FacePosZ),
-                Ramp22Low or 31 or 32 or 33 or 34 => FaceNegY,
-                InnerRoofCorner45 or 35 or 36 or 37 or 38 => (byte)(FaceNegY | FacePosZ | FacePosX),
-                OuterRoofCorner45 or 39 or 40 or 41 or 42 => FaceNegY,
-                ButtressSupport or ArrowSlitWall or 43 or 44 or 45 or 46 => 0,
+                HalfSlab => FaceNegY,
+                Ramp45 or Ramp22High or StairStep => (byte)(FaceNegY | FacePosZ),
+                Ramp22Low => FaceNegY,
+                InnerRoofCorner45 => (byte)(FaceNegY | FacePosZ | FacePosX),
+                OuterRoofCorner45 => FaceNegY,
+                ButtressSupport or ArrowSlitWall => 0,
                 TrapezoidalKeystone or ArchVoussoir or GothicArchHalf => FacePosY,
                 TrophyPlinth => FaceNegY,
                 _ => 0

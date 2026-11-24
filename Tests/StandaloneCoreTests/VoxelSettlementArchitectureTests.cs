@@ -59,6 +59,19 @@ namespace Stratocraft.StandaloneCoreTests
                         microBlocks++;
                     }
                 }
+                else if (shape >= ArchitecturalShapeCatalog.KitDiningTable && shape <= ArchitecturalShapeCatalog.KitWellAndFence)
+                {
+                    // 3B cok-malzemeli oymali kit mobilyalari (ShapeID 49..62)
+                    microBlocks++;
+                    archBlocks++;
+                    slopedShapes++;
+                }
+                else if (ArchitecturalShapeCatalog.IsSculpted3DKitShape(shape))
+                {
+                    // 3B .glb & karkas/kutuk/cati/kapi/pencere kit sekilleri (ShapeID 21..48)
+                    archBlocks++;
+                    slopedShapes++;
+                }
                 else if (MaterialIdCatalog.IsCraftedItemBlockMaterial(mat) || shape != 0)
                 {
                     archBlocks++;
@@ -100,9 +113,10 @@ namespace Stratocraft.StandaloneCoreTests
                 worldChunks[(cx, cz)] = voxels;
                 worldMicroPools[(cx, cz)] = microPools;
 
-                var (archCount, microCount, _) = CountArchitecturalAndMicroVoxels(voxels, microPools);
-                Assert.That(archCount, Is.GreaterThan(40), $"{label} ({cx},{cz}) must contain solid voxel walls/floors/roofs, got {archCount}.");
-                Assert.That(microCount, Is.GreaterThan(0), $"{label} ({cx},{cz}) must contain 4x4x4 ShapeID=63 micro-voxel furniture/doors/windows, got {microCount}.");
+                var (archCount, microCount, slopedCount) = CountArchitecturalAndMicroVoxels(voxels, microPools);
+                Assert.That(archCount, Is.GreaterThan(60), $"{label} ({cx},{cz}) must contain solid 3D voxel architecture, got {archCount}.");
+                Assert.That(slopedCount, Is.GreaterThan(30), $"{label} ({cx},{cz}) must use sculpted 3D Kit shapes (not flat cubes!), got {slopedCount}.");
+                Assert.That(microCount, Is.GreaterThan(0), $"{label} ({cx},{cz}) must contain 3D sculpted voxel furniture/props, got {microCount}.");
 
                 if (label.StartsWith("PalaceSlice", StringComparison.Ordinal))
                 {
@@ -409,6 +423,70 @@ namespace Stratocraft.StandaloneCoreTests
 
             Assert.That(sw.ElapsedMilliseconds, Is.LessThan(2500),
                 $"9 dense city chunks (terrain + voxel buildings + micro-furniture) took {sw.ElapsedMilliseconds} ms (must be < 2500 ms).");
+        }
+
+        [Test]
+        public void DK08_DK09_All42Sculpted3DKitShapesBakeIntoSingleMesh_AndPlayerCapsuleWalksThroughHouseDoorway()
+        {
+            // 1) Tum 42 yeni 3B Kit seklinin (ShapeID 21..62) dejenere olmadan, 12'den fazla faset ucgeniyle (kup degil!) uretildigini dogrula
+            var tris = new List<FacetedVoxelTriangle>(512);
+            for (byte shapeId = 21; shapeId <= 62; shapeId++)
+            {
+                tris.Clear();
+                HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
+                    System.Numerics.Vector3.Zero,
+                    MaterialIdCatalog.ChinkedLogBlock,
+                    shapeId,
+                    rotationState: 0,
+                    damageState: 0,
+                    tris);
+                Assert.That(tris.Count, Is.GreaterThan(12),
+                    $"3D Kit Shape {shapeId} must emit rich sculpted 3D geometry (> 12 triangles, not a 12-tri cube), got {tris.Count}.");
+            }
+
+            // 2) Gercek Guney Koyu evinin (0, -9) 2m x 3m acik 3B kapisindan 1.80m x 0.70m oyuncu kapsulunun takilmadan gectigini dogrula!
+            var worldChunks = new Dictionary<(int cx, int cz), uint[]>();
+            for (int dz = -1; dz <= 1; dz++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    var (vox, _, _) = GenerateFullChunk(dx, -9 + dz);
+                    worldChunks[(dx, -9 + dz)] = vox;
+                }
+            }
+
+            // Chunk (0, -9) icinde KitHingedDoorOpen (46) zemin hucresini bul ve oyuncu kapsulunu kapinin ortasina koyup test et:
+            uint[] houseChunk = worldChunks[(0, -9)];
+            int foundDoorWx = int.MinValue, foundDoorWy = -1, foundDoorWz = int.MinValue;
+            for (int idx = 0; idx < houseChunk.Length; idx++)
+            {
+                uint raw = houseChunk[idx];
+                if (raw != 0u && VoxelBitUtility.GetShapeId(raw) == ArchitecturalShapeCatalog.KitHingedDoorOpen)
+                {
+                    int wy = idx >> 8;
+                    int lz = (idx >> 4) & 15;
+                    int lx = idx & 15;
+                    // En alt kapi kanadi hucresi (altinda kati zemin olan)
+                    if (wy > 2 && VoxelBitUtility.IsPhysicallySolid(houseChunk[((wy - 1) << 8) | (lz << 4) | lx]))
+                    {
+                        foundDoorWx = lx;
+                        foundDoorWy = wy;
+                        foundDoorWz = -9 * 16 + lz;
+                        break;
+                    }
+                }
+            }
+
+            Assert.That(foundDoorWy, Is.GreaterThan(0), "South Village house must contain a walkable 3D KitHingedDoorOpen entrance!");
+
+            // Kapi icinde 3m yukseklik (wy, wy+1, wy+2) boyunca kapsulun itilmedigini ve iceride 4m tavan boslugu oldugunu dogrula:
+            float px = foundDoorWx + 0.5f;
+            float py = foundDoorWy + 0.02f;
+            float pz = foundDoorWz + 0.5f;
+            bool pushed = Stage1PlayerMovementBridge.ResolveHorizontalSolidCapsuleDepenetrationPure(
+                worldChunks, ref px, py, ref pz, capsuleHeightMeters: 1.80f, capsuleRadiusMeters: 0.35f);
+            Assert.That(pushed, Is.False, "Standing 1.80m x 0.70m player capsule must walk cleanly through the 2x3m 3D doorway without collision pushback!");
+            Assert.That(VoxelSettlementArchitectureStamp.StoryHeightBlocks, Is.GreaterThanOrEqualTo(5));
         }
     }
 }

@@ -7426,7 +7426,65 @@ namespace Stratocraft.Character
             int lz = wz - (cz << 4);
             int idx = (wy << 8) | (lz << 4) | lx;
             uint raw = voxels[idx];
-            if (raw == 0u || VoxelBitUtility.GetShapeId(raw) != VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            if (raw == 0u)
+            {
+                return false;
+            }
+
+            byte rawShape = VoxelBitUtility.GetShapeId(raw);
+            if (rawShape == ArchitecturalShapeCatalog.KitHingedDoorClosed ||
+                rawShape == ArchitecturalShapeCatalog.KitHingedDoorOpen)
+            {
+                bool targetOpen = rawShape == ArchitecturalShapeCatalog.KitHingedDoorClosed;
+                byte nextDoorShape = targetOpen
+                    ? ArchitecturalShapeCatalog.KitHingedDoorOpen
+                    : ArchitecturalShapeCatalog.KitHingedDoorClosed;
+
+                // Tum bagli 2x3m cift/tek 3B kapi kanadi hucrelerini (wx-1..wx+1, wy-2..wy+2, wz-1..wz+1) birlikte ac/kapat!
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int nWx = wx + dx;
+                        int nWz = wz + dz;
+                        int nCx = nWx >= 0 ? (nWx >> 4) : -(((-nWx) + 15) >> 4);
+                        int nCz = nWz >= 0 ? (nWz >> 4) : -(((-nWz) + 15) >> 4);
+                        if (!_worldChunks.TryGetValue((nCx, nCz), out uint[]? nVox) || nVox == null) continue;
+                        int nLx = nWx - (nCx << 4);
+                        int nLz = nWz - (nCz << 4);
+
+                        for (int dy = -2; dy <= 2; dy++)
+                        {
+                            int nWy = wy + dy;
+                            if (nWy < 1 || nWy >= MaxEditableVoxelY) continue;
+                            int nIdx = (nWy << 8) | (nLz << 4) | nLx;
+                            uint nRaw = nVox[nIdx];
+                            byte nShp = VoxelBitUtility.GetShapeId(nRaw);
+                            if (nShp == ArchitecturalShapeCatalog.KitHingedDoorClosed ||
+                                nShp == ArchitecturalShapeCatalog.KitHingedDoorOpen)
+                            {
+                                nVox[nIdx] = VoxelBitUtility.PackStandard(
+                                    VoxelBitUtility.GetMaterialId(nRaw),
+                                    VoxelBitUtility.FullDensity,
+                                    nextDoorShape,
+                                    VoxelBitUtility.GetRotationState(nRaw),
+                                    VoxelBitUtility.GetOriginState(nRaw),
+                                    VoxelBitUtility.GetDamageState(nRaw));
+                                MarkSubChunkDirtyInternal(nCx, nCz, nWy, nLx, nLz, includeNeighbors: true);
+                                MarkChunkDirtyFlag((nCx, nCz), ChunkDirtyFlags.Structures);
+                                _dirtyChunks.Add((nCx, nCz));
+                            }
+                        }
+                    }
+                }
+
+                _miningCtrl.LastFeedbackText = targetOpen
+                    ? "🚪 3B Kapı açıldı."
+                    : "🚪 3B Kapı kapatıldı.";
+                return true;
+            }
+
+            if (rawShape != VoxelBitUtility.ChiseledMicroVoxelShapeId)
             {
                 return false;
             }

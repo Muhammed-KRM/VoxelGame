@@ -11,7 +11,7 @@
 
 | Doğrulama Katmanı | Komut / Kapsam | Sonuç | Not |
 | :--- | :--- | :---: | :--- |
-| **C# `.NET 10` Release Testleri** | `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release` | **401 / 401 PASS** | `0 Error / 0 Warning` (`396` mevcut + `5` kapsamlı `DK-01..DK-11` voksel/mikro-eşya/gerçek fizik/performans testi) |
+| **C# `.NET 10` Release Testleri** | `dotnet test Tests/StandaloneCoreTests/Stratocraft.StandaloneCoreTests.csproj -c Release` | **402 / 402 PASS** | `0 Error / 0 Warning` (`42` adet 3B Kit şekli + `1.80m × 0.70m` oyuncu kapsülü kapı geçiş testi `DK08_DK09` dahil) |
 | **C++20 Native (`StratocraftNative`)** | `ctest --output-on-failure` | **6 / 6 PASS** | `Simd`, `WorldGen`, `LZ4`, `Zstd`, `Ed25519`, `SQLite WAL` |
 | **Python 3.11 Otonom 3B Fabrika** | `ruff check` + `pytest Tools/AutonomousAssetFactory/tests` | **9 / 9 PASS** | `All checks passed!`, `T_Stratocraft_MaterialLUT_256x16.png` (`120..152` mimari derz/tuğla/taş/kiremit tonları) |
 | **Kaplama VRAM Bütçesi** | `scripts/quality-gate.ps1 -Phase 4` (`Assets/Art/Generated/Textures`) | **3.133 MB / 16.000 MB** | `< 16.0 MB` bütçesinin çok altında |
