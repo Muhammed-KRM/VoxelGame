@@ -1716,7 +1716,8 @@ namespace Stratocraft.WorldGen.Generators
             int chunkZ,
             uint[] voxels,
             ushort[] fluids,
-            ChunkSalinityBitset? salinityBitset = null)
+            ChunkSalinityBitset? salinityBitset = null,
+            MicroVoxelPool4096?[]? microPools = null)
         {
             Array.Clear(voxels, 0, voxels.Length);
             Array.Clear(fluids, 0, fluids.Length);
@@ -2078,7 +2079,7 @@ namespace Stratocraft.WorldGen.Generators
 
             // Biyom 10 (Gökyüzü Adaları Takımadası) ve Kesif Noktalari icin Bagimsiz Yuksek İrtifa Gökyüzü Adaları
             StampDetachedFloatingSkyIslands(chunkX, chunkZ, voxels, fluids, cachedBiomes);
-            PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels, fluids);
+            PopulateArchitecturalStructuresForChunk(chunkX, chunkZ, voxels, fluids, microPools);
             // Halka >= 1 kara chunk'larinda %5 deterministik 4-odali Kadim Zindan damgalamasi:
             float centerColTopH = cachedTopH.Length == 256 ? cachedTopH[(8 << 4) | 8] : SampleIslandTopSurfaceY((chunkX << 4) + 8, (chunkZ << 4) + 8);
             if (centerColTopH >= 85.0f)
@@ -3383,12 +3384,19 @@ namespace Stratocraft.WorldGen.Generators
             return ResolveUndergroundHostRockStrata(wx, y, wz, topH, inF12MagmaRoom);
         }
 
-        public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels, ushort[]? fluids = null)
+        public static void PopulateArchitecturalStructuresForChunk(
+            int chunkX,
+            int chunkZ,
+            uint[] voxels,
+            ushort[]? fluids = null,
+            MicroVoxelPool4096?[]? microPools = null)
         {
-            // KN-6 & PT-02: Eski surumlerden kalan tekil kulube/kemer/obsidyen sus bloklari ve
-            // daginik dairesel yama spami tamamen kaldirildi! Yalnizca 3 katmanli (Koy / Kasaba / Sehir)
-            // yerlesimlerin yol, meydan, sulamali tarla, kuyu/cesme havuzu ve moduler bina teraslari damgalanir.
+            // KN-6 & PT-02 & Faz D2 (DK-01..DK-09):
+            // 1) Yerlesim yollarini, meydanlarini, sulamali tarlalarini, kuyu/cesme havuzlarini ve bina teraslarini damgala
             SettlementLayoutSystem.StampSettlementTerrainFeaturesForChunk(chunkX, chunkZ, voxels, fluids);
+
+            // 2) %100 kapali voksel + 4x4x4 mikro-voksel (ShapeID = 63) yerlesim binalarini ve ic mekan mobilyalarini damgala
+            VoxelSettlementArchitectureStamp.StampChunkBuildings(chunkX, chunkZ, voxels, microPools, fluids);
         }
 
         /// <summary>
