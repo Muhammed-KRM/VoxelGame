@@ -148,6 +148,21 @@ namespace Stratocraft.Character
         public int ActiveModularPieceCount => _modularNodeCount;
         public int PooledModularVisualCount => _modularVisualPool.Count;
         public bool IsModularBuildModeActive { get; private set; }
+        public bool IsUnifiedBuildModeActive { get; private set; }
+        public ArchitecturalSchool ActiveUnifiedSchool { get; private set; } = ArchitecturalSchool.LogCabin;
+        public StructuralElementRole ActiveUnifiedRole { get; private set; } = StructuralElementRole.NotchedWallLog;
+        public byte ActiveUnifiedMaterialId { get; private set; } = MaterialIdCatalog.ChinkedLogBlock;
+        public MortarType ActiveUnifiedMortar { get; private set; } = MortarType.None;
+        public TemporarySupportFlags ActiveUnifiedTempFlags { get; private set; } = TemporarySupportFlags.None;
+        public InventoryItemKind ActiveUnifiedCostKind { get; private set; } = InventoryItemKind.LogDebarked;
+        public byte ActiveUnifiedCostCount { get; private set; } = 1;
+        public string ActiveUnifiedDisplayName { get; private set; } = string.Empty;
+        public string ActiveUnifiedSupportHint { get; private set; } = string.Empty;
+        private Vector3 _lastDragCoursePlacedPos;
+        private bool _hasActiveDragCourseAnchor;
+        private float _nextDragCourseAllowedTime;
+        private int _dragCourseIndexCounter;
+        public Action<int>? OnUnifiedVariantCycleRequested { get; set; }
         public ModularBuildPieceKind ActiveModularPieceKind { get; private set; } = ModularBuildPieceKind.PlankWall2x2m;
         public BuildStructuralMaterialKind ActiveStructuralMaterial { get; private set; } = BuildStructuralMaterialKind.PineTimber;
         public BuildSectionThickness ActiveSectionThickness { get; private set; } = BuildSectionThickness.Standard;
@@ -178,11 +193,44 @@ namespace Stratocraft.Character
         {
             ActiveModularPieceKind = kind;
             IsModularBuildModeActive = enableModularMode;
+            IsUnifiedBuildModeActive = false;
+            _hasActiveDragCourseAnchor = false;
             if (enableModularMode)
             {
                 _hammerSuppressedUntilSlotChange = false;
             }
         }
+
+        public void SelectUnifiedBuildPiece(
+            ArchitecturalSchool school,
+            StructuralElementRole role,
+            byte materialId,
+            MortarType mortar,
+            TemporarySupportFlags tempFlags,
+            InventoryItemKind costKind,
+            byte costCount,
+            string displayName,
+            string supportHint,
+            ModularBuildPieceKind ghostFallbackKind = ModularBuildPieceKind.PlankWall2x2m)
+        {
+            ActiveUnifiedSchool = school;
+            ActiveUnifiedRole = role;
+            ActiveUnifiedMaterialId = materialId != 0 ? materialId : MaterialIdCatalog.WoodPlank;
+            ActiveUnifiedMortar = mortar;
+            ActiveUnifiedTempFlags = tempFlags;
+            ActiveUnifiedCostKind = costKind;
+            ActiveUnifiedCostCount = Math.Max((byte)1, costCount);
+            ActiveUnifiedDisplayName = displayName;
+            ActiveUnifiedSupportHint = supportHint;
+            ActiveModularPieceKind = ghostFallbackKind;
+            IsUnifiedBuildModeActive = true;
+            IsModularBuildModeActive = true;
+            _hasActiveDragCourseAnchor = false;
+            _hammerSuppressedUntilSlotChange = false;
+        }
+
+        public void RefreshUnifiedChunkAfterEdit(float worldX, float worldZ) =>
+            _unifiedBridge.RefreshChunkAfterLiveEdit(worldX, worldZ);
 
         public void SelectStructuralMaterial(BuildStructuralMaterialKind materialKind)
         {
@@ -231,8 +279,10 @@ namespace Stratocraft.Character
             bool emptyHotbarSelectionIfHammer = true,
             string? customFeedback = null)
         {
-            bool wasActive = IsModularBuildModeActive || HasValidGhostPlacement;
+            bool wasActive = IsModularBuildModeActive || IsUnifiedBuildModeActive || HasValidGhostPlacement;
             IsModularBuildModeActive = false;
+            IsUnifiedBuildModeActive = false;
+            _hasActiveDragCourseAnchor = false;
             _hammerSuppressedUntilSlotChange = true;
             CurrentModularStatusText = string.Empty;
             HideGhostPreview();
@@ -240,7 +290,8 @@ namespace Stratocraft.Character
             if (emptyHotbarSelectionIfHammer && holsterCtrl != null)
             {
                 VisualInventorySlot curSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
-                if (!curSlot.IsEmpty && curSlot.Kind == InventoryItemKind.ToolStoneHammer)
+                if (!curSlot.IsEmpty &&
+                    (curSlot.Kind == InventoryItemKind.ToolStoneHammer || IsDirectHotbarBuildableKit(curSlot.Kind)))
                 {
                     holsterCtrl.HolsterMachine.RequestSheatheToEmptyHands();
                     holsterCtrl.InventoryUi.SelectHotbarSlot(-1);
@@ -257,13 +308,40 @@ namespace Stratocraft.Character
         public void NotifyHotbarSlotChanged(bool newSlotIsStoneHammer)
         {
             _hammerSuppressedUntilSlotChange = false;
-            if (!newSlotIsStoneHammer && IsModularBuildModeActive)
+            _hasActiveDragCourseAnchor = false;
+            if (!newSlotIsStoneHammer && (IsModularBuildModeActive || IsUnifiedBuildModeActive))
             {
                 IsModularBuildModeActive = false;
+                IsUnifiedBuildModeActive = false;
                 CurrentModularStatusText = string.Empty;
                 HideGhostPreview();
             }
         }
+
+        public static bool IsDirectHotbarBuildableKit(InventoryItemKind kind) => kind switch
+        {
+            InventoryItemKind.ModularScaffoldingKit or
+            InventoryItemKind.TimberPlank or
+            InventoryItemKind.FiredBrick or
+            InventoryItemKind.AshlarBlock or
+            InventoryItemKind.MortarBucket or
+            InventoryItemKind.TemporaryWoodBrace or
+            InventoryItemKind.CobMudBall or
+            InventoryItemKind.RammedEarthMixBucket or
+            InventoryItemKind.GroovedTimberPost or
+            InventoryItemKind.PlywoodSheathingPanel or
+            InventoryItemKind.WoodenArchCentering or
+            InventoryItemKind.SlidingEarthFormwork or
+            InventoryItemKind.FloorJoistIronStrap or
+            InventoryItemKind.FreshConcreteBucket or
+            InventoryItemKind.SteelRebarBundle or
+            InventoryItemKind.TelescopicShoringProp or
+            InventoryItemKind.SteelAnchorBoltSet or
+            InventoryItemKind.SteelHBeamColumn or
+            InventoryItemKind.SteelGuyWireBrace or
+            InventoryItemKind.SteelXBraceAndDeck => true,
+            _ => false
+        };
 
         public ModularBuildPieceKind CycleActiveModularPiece(int delta = 1)
         {
@@ -368,15 +446,29 @@ namespace Stratocraft.Character
 
             VisualInventorySlot activeSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
             bool hammerHeld = !activeSlot.IsEmpty && activeSlot.Kind == InventoryItemKind.ToolStoneHammer && !_hammerSuppressedUntilSlotChange;
+            bool kitHeld = !activeSlot.IsEmpty && IsDirectHotbarBuildableKit(activeSlot.Kind) && !_hammerSuppressedUntilSlotChange;
             if (!uiBlocked && !miningCtrl.IsCrystalActive && !isCarryingLog && cam != null &&
-                (IsModularBuildModeActive || hammerHeld))
+                (IsModularBuildModeActive || IsUnifiedBuildModeActive || hammerHeld || kitHeld))
             {
-                if (hammerHeld && !IsModularBuildModeActive)
+                if (kitHeld && !IsUnifiedBuildModeActive)
+                {
+                    ConfigureUnifiedSelectionFromHeldKit(in activeSlot);
+                }
+                else if (hammerHeld && !IsModularBuildModeActive)
                 {
                     IsModularBuildModeActive = true;
                 }
-                StepModularPiecePlacement(
-                    cam, playerTransform, miningCtrl, holsterCtrl, worldChunks, sharedVoxelMat, rightClickConsumedExternally);
+
+                if (IsUnifiedBuildModeActive)
+                {
+                    StepUnifiedArchitecturePlacement(
+                        cam, playerTransform, miningCtrl, holsterCtrl, combatBridge, worldChunks, sharedVoxelMat, rightClickConsumedExternally);
+                }
+                else
+                {
+                    StepModularPiecePlacement(
+                        cam, playerTransform, miningCtrl, holsterCtrl, worldChunks, sharedVoxelMat, rightClickConsumedExternally);
+                }
                 return;
             }
 
@@ -1704,7 +1796,21 @@ namespace Stratocraft.Character
             // PT-04: [B] tusu yalnizca Rehber Kitaba ayrildigi icin parca degisimi [V] / [Shift+V] ile yapilir!
             if (!ctrl && !alt && Input.GetKeyDown(KeyCode.V))
             {
-                self.CycleActiveModularPiece(shift ? -1 : 1);
+                if (self.IsUnifiedBuildModeActive)
+                {
+                    if (shift)
+                    {
+                        self.CycleSectionThickness(1);
+                    }
+                    else
+                    {
+                        self.OnUnifiedVariantCycleRequested?.Invoke(1);
+                    }
+                }
+                else
+                {
+                    self.CycleActiveModularPiece(shift ? -1 : 1);
+                }
             }
 
             // Coklu yapi malzemesi secimi: [G] (Mese Kutuk -> Demir Agaci -> Orme Tas -> Kesme Bazalt -> Mermer -> Takviyeli Celik)
@@ -1886,7 +1992,24 @@ namespace Stratocraft.Character
             UpdateGhostVisualForModularPiece(
                 ActiveModularPieceKind, normalizedPreviewBand, finalPos, finalRot, sharedVoxelMat, ActiveSectionThickness);
 
-            if (Input.GetMouseButtonDown(0))
+            if (!Input.GetMouseButton(0))
+            {
+                _hasActiveDragCourseAnchor = false;
+            }
+
+            bool triggerModularPlaceNow = Input.GetMouseButtonDown(0);
+            if (!triggerModularPlaceNow && Input.GetMouseButton(0) && _hasActiveDragCourseAnchor && Time.unscaledTime >= _nextDragCourseAllowedTime)
+            {
+                float horizDrag = Vector2.Distance(
+                    new Vector2(finalPos.x, finalPos.z),
+                    new Vector2(_lastDragCoursePlacedPos.x, _lastDragCoursePlacedPos.z));
+                if (horizDrag >= 1.75f)
+                {
+                    triggerModularPlaceNow = true;
+                }
+            }
+
+            if (triggerModularPlaceNow)
             {
                 if (!ValheimSotfModularGraphSolver.CanPieceStand(previewStab01))
                 {
@@ -1956,6 +2079,9 @@ namespace Stratocraft.Character
 
                 if (placedId > 0)
                 {
+                    _hasActiveDragCourseAnchor = true;
+                    _lastDragCoursePlacedPos = finalPos;
+                    _nextDragCourseAllowedTime = Time.unscaledTime + 0.16f;
                     _unifiedBridge.UpsertModularPieceMirror(in candidateNode);
                     ValheimSotfModularGraphSolver.EvaluateGraphAndTriggerCollapse(
                         _modularNodes.AsSpan(0, _modularNodeCount), snappedPos, out int collapsedCount);
@@ -2025,8 +2151,381 @@ namespace Stratocraft.Character
             return spawnedInstanceId > 0;
         }
 
+        private void ConfigureUnifiedSelectionFromHeldKit(in VisualInventorySlot slot)
+        {
+            switch (slot.Kind)
+            {
+                case InventoryItemKind.ModularScaffoldingKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.ModularScaffolding, MaterialIdCatalog.WoodPlank, MortarType.None, TemporarySupportFlags.TemporarySupport, slot.Kind, 1, "Ahşap Şantiye İskelesi (2×2×2m)", "[Shift+E] %100 İadeyle Sökülür", ModularBuildPieceKind.PlankFloor2x2m);
+                    break;
+                case InventoryItemKind.PulleyCraneKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.TimberPost, MaterialIdCatalog.TreatedTimberBeam, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Makaralı Şantiye Vinci (14m)", "14.0m Şantiye Yığını Besleme", ModularBuildPieceKind.LogPillar3m);
+                    break;
+                case InventoryItemKind.DoorKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.DoorFrameOpening, MaterialIdCatalog.ChinkedLogBlock, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Menteşeli Kapı & Pervaz", "[E] Aç/Kapa | [Shift+E] Kilitle", ModularBuildPieceKind.PlankDoorway2x2m);
+                    break;
+                case InventoryItemKind.WindowKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.WindowFrameOpening, MaterialIdCatalog.LeadedGlassPane, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Camlı & Kepenkli Pencere", "[E] Aç/Kapa", ModularBuildPieceKind.PlankWindow2x2m);
+                    break;
+                case InventoryItemKind.StairKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.StairStringerFlight, MaterialIdCatalog.WoodPlank, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Yürünebilir Kat Merdiveni", ">= 1.95m Kat Boşluğu ile Kullanın", ModularBuildPieceKind.RoofRafter45Deg2x2m);
+                    break;
+                case InventoryItemKind.FireplaceChimneyKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.StoneMasonry, StructuralElementRole.MasonryHearthChimney, MaterialIdCatalog.FiredClayBrick, MortarType.Lime, TemporarySupportFlags.None, slot.Kind, 1, "Şömine & Baca Şaftı", "Yanıcı Duvardan >= 1.20m Mesafe", ModularBuildPieceKind.StoneArchPillar3m);
+                    break;
+                case InventoryItemKind.InteriorFurnitureKit:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.FloorJoistDeck, MaterialIdCatalog.WoodPlank, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "İç Mekân Mobilya Takımı", "Döşeme/Zemin Üstü", ModularBuildPieceKind.PlankFloor2x2m);
+                    break;
+                case InventoryItemKind.TemporaryWoodBrace:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.TimberFrame, StructuralElementRole.DiagonalWindBrace, MaterialIdCatalog.FormworkTimberBoard, MortarType.None, TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.AdditionalReshoreSupport, slot.Kind, 1, "Geçici 45° Kurulum Payandası", "Üst Kuşak/OSB Sonrası [Shift+E] %100 İade", ModularBuildPieceKind.DiagonalBrace2m);
+                    break;
+                case InventoryItemKind.CobMudBall:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.AdobeAndCob, StructuralElementRole.CobCurvedWall, MaterialIdCatalog.CobMudBrick, MortarType.CobMud, TemporarySupportFlags.None, slot.Kind, 1, "Kavisli Kalıpsız Cob Duvar", "Katman <= 45cm, 90sn Kuruma", ModularBuildPieceKind.PlankWall2x2m);
+                    break;
+                case InventoryItemKind.RammedEarthMixBucket:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.RammedEarth, StructuralElementRole.RammedEarthWall, MaterialIdCatalog.RammedEarthCompacted, MortarType.RammedEarthCompact, TemporarySupportFlags.None, slot.Kind, 1, "Sıkıştırılmış Toprak Duvar", "Kayar Kalıp + Tokmak -> 0sn Kalıp Sökümü", ModularBuildPieceKind.PlankWall2x2m);
+                    break;
+                case InventoryItemKind.GroovedTimberPost:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.LogPostAndFill, StructuralElementRole.GroovedLogPost, MaterialIdCatalog.GroovedLogTimber, MortarType.None, TemporarySupportFlags.RequiresShoringBeforeLoad, slot.Kind, 1, "Oluklu Dikey Kütük Dikmesi", "Geçici 45° Payanda ile Sabitleyin", ModularBuildPieceKind.LogPillar3m);
+                    break;
+                case InventoryItemKind.PlywoodSheathingPanel:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.PlatformWoodFrame, StructuralElementRole.PlywoodSheathingPanel, MaterialIdCatalog.PlywoodOsbPanel, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Kontrplak / OSB Perde Levhası", "Platform Duvarı Shear Wall Diyaframına Kilitler", ModularBuildPieceKind.PlankWall2x2m);
+                    break;
+                case InventoryItemKind.WoodenArchCentering:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.StoneMasonry, StructuralElementRole.WoodenArchCentering, MaterialIdCatalog.FormworkTimberBoard, MortarType.None, TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.ArchCentering, slot.Kind, 1, "Ahşap Kemer Kalıbı", "Kilit Taşı + Kür Sonrası [Shift+E] %100 İade", ModularBuildPieceKind.LogBeam2m);
+                    break;
+                case InventoryItemKind.SlidingEarthFormwork:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.RammedEarth, StructuralElementRole.SlidingEarthFormwork, MaterialIdCatalog.FormworkTimberBoard, MortarType.None, TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.SlidingFormwork, slot.Kind, 1, "Kayar Toprak Kalıbı", "Tokmaklama Sonrası 0sn'de [Shift+E] Sökülür", ModularBuildPieceKind.PlankWall2x2m);
+                    break;
+                case InventoryItemKind.FloorJoistIronStrap:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.BrickMasonry, StructuralElementRole.IronTieRod, MaterialIdCatalog.IronTieBeamBlock, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Döşeme Gergi Şeridi & Duvar Bağı", "Çok Katlı Tuğla/Taş Diyafram Kilidi", ModularBuildPieceKind.LogBeam2m);
+                    break;
+                case InventoryItemKind.FreshConcreteBucket:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.SlabDeckFormwork, MaterialIdCatalog.WetPortlandConcrete, MortarType.PortlandConcrete, TemporarySupportFlags.RequiresShoringBeforeLoad, slot.Kind, 1, "Monolitik Taze Beton Dökümü", "Teleskopik Dikme Üzerinde %75 Kür (300sn)", ModularBuildPieceKind.PlankFloor2x2m);
+                    break;
+                case InventoryItemKind.SteelRebarBundle:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.RebarFoundationCage, MaterialIdCatalog.SteelRebarMesh, MortarType.PortlandConcrete, TemporarySupportFlags.None, slot.Kind, 1, "L-Filizli Temel & Kolon Donatısı", "Beton Dökümü Öncesi Çekme Donatısı", ModularBuildPieceKind.StoneFoundation2x2m);
+                    break;
+                case InventoryItemKind.TelescopicShoringProp:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.TelescopicShoringProp, MaterialIdCatalog.FormworkTimberBoard, MortarType.None, TemporarySupportFlags.TemporarySupport | TemporarySupportFlags.AdditionalReshoreSupport, slot.Kind, 1, "Teleskopik Çelik Dikme + Kalıp", "%75 Kür Sonrası [Shift+E] %100 İade", ModularBuildPieceKind.LogPillar3m);
+                    break;
+                case InventoryItemKind.SteelAnchorBoltSet:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.MonumentalAshlarPedestal, MaterialIdCatalog.StructuralSteelHBeam, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Çelik Ankraj Bulon Kaidesi", "H-Kolon Sabitleme Şablonu", ModularBuildPieceKind.StoneFoundation2x2m);
+                    break;
+                case InventoryItemKind.SteelHBeamColumn:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.SteelHBeamColumn, MaterialIdCatalog.StructuralSteelHBeam, MortarType.None, TemporarySupportFlags.RequiresShoringBeforeLoad, slot.Kind, 1, "H/I Profil Çelik Kolon & Kiriş", "Geçici Çelik Halat + X-Çapraz + Tork Anahtarı", ModularBuildPieceKind.LogPillar3m);
+                    break;
+                case InventoryItemKind.SteelGuyWireBrace:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.SteelGuyWireBrace, MaterialIdCatalog.StructuralSteelHBeam, MortarType.None, TemporarySupportFlags.TemporarySupport, slot.Kind, 1, "Geçici Çelik Halat Gergisi", "X-Çapraz Sonrası [Shift+E] %100 İade", ModularBuildPieceKind.DiagonalBrace2m);
+                    break;
+                default:
+                    SelectUnifiedBuildPiece(ArchitecturalSchool.ReinforcedConcreteAndSteel, StructuralElementRole.SteelXBrace, MaterialIdCatalog.CorrugatedSteelDeck, MortarType.None, TemporarySupportFlags.None, slot.Kind, 1, "Çelik X-Çapraz & Trapez Sac", "Kalıcı Çelik Diyafram & Dikmesiz Döşeme", ModularBuildPieceKind.DiagonalBrace2m);
+                    break;
+            }
+        }
+
+        private void StepUnifiedArchitecturePlacement(
+            UnityEngine.Camera cam,
+            Transform playerTransform,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1DirectionalCombatBridge? combatBridge,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            Material? sharedVoxelMat,
+            bool rightClickConsumedExternally)
+        {
+            StepModularPieceControlsAndCancel(this, miningCtrl, holsterCtrl, rightClickConsumedExternally, out bool cancelledNow);
+            if (cancelledNow) return;
+
+            if (!TrySampleAimSurface(
+                    cam, playerTransform.position, miningCtrl, worldChunks,
+                    out Vector3 aimPt, out _, MaxModularPlaceReachMeters))
+            {
+                HideGhostPreview();
+                return;
+            }
+
+            float yawDeg = _modularYawDeg;
+            Vector3 snappedPt = aimPt;
+            bool snappedToChalk = false;
+            if (SiteLogistics != null &&
+                SiteLogistics.TrySnapPointToChalkLine(
+                    new SysVec3(aimPt.x, aimPt.y, aimPt.z),
+                    snapRadiusMeters: 1.45f,
+                    moduleStepMeters: 2.0f,
+                    out SysVec3 chalkPt,
+                    out float chalkYawDeg,
+                    out _))
+            {
+                snappedPt = new Vector3(chalkPt.X, aimPt.y, chalkPt.Z);
+                yawDeg = Mathf.Repeat(chalkYawDeg + _modularYawDeg, 360f);
+                snappedToChalk = true;
+            }
+            else
+            {
+                snappedPt.x = Mathf.Round(snappedPt.x / 0.5f) * 0.5f;
+                snappedPt.z = Mathf.Round(snappedPt.z / 0.5f) * 0.5f;
+            }
+
+            float groundY = SampleLocalTerrainFloorY(snappedPt.x, snappedPt.z, snappedPt.y, worldChunks);
+            float groundClearance = Mathf.Max(0f, snappedPt.y - groundY);
+            byte yawQuarters = (byte)(Mathf.RoundToInt(Mathf.Repeat(yawDeg, 360f) / 90f) & 3);
+            AnchorType anchor = groundClearance <= UnifiedStructureGraphSolver.MaxGroundAnchorClearanceMeters
+                ? AnchorType.CompactedGravelOrTrench
+                : AnchorType.NoneFloating;
+            float initCure = (ActiveUnifiedMortar == MortarType.None || holsterCtrl.IsCreativeMode) ? 1.0f : 0.15f;
+
+            var candidate = StructuralNode64.Create(
+                nodeId: 9999999u,
+                posX: snappedPt.x,
+                posY: snappedPt.y,
+                posZ: snappedPt.z,
+                school: ActiveUnifiedSchool,
+                role: ActiveUnifiedRole,
+                materialId: ActiveUnifiedMaterialId,
+                anchor: anchor,
+                mortar: ActiveUnifiedMortar,
+                yawQuarterTurns: yawQuarters,
+                thickness: (StructureThicknessProfile)ActiveSectionThickness,
+                instantCure: holsterCtrl.IsCreativeMode || ActiveUnifiedMortar == MortarType.None,
+                temporarySupport: ActiveUnifiedTempFlags);
+            candidate.CureRatio01 = initCure;
+
+            Span<uint> neighborIds = stackalloc uint[16];
+            Span<JointConnectionKind> neighborJoints = stackalloc JointConnectionKind[16];
+            int nCount = GatherNearbyUnifiedNeighbors(snappedPt, 2.75f, candidate.School, candidate.Role, neighborIds, neighborJoints);
+
+            PlacementValidationResult val = UnifiedGraphSolver.ValidatePiecePlacement(
+                in candidate,
+                groundClearance,
+                neighborIds.Slice(0, nCount),
+                neighborJoints.Slice(0, nCount));
+
+            // Kemer kalıbı / betonarme dikme ek denge kontrolü
+            bool canPlace = val.CanStand;
+            string reason = ActiveUnifiedSupportHint;
+            if (ActiveUnifiedRole == StructuralElementRole.SlabDeckFormwork &&
+                candidate.Mortar == MortarType.PortlandConcrete &&
+                groundClearance > 0.35f &&
+                !HasSupportRoleNear(snappedPt, 2.8f, StructuralElementRole.TelescopicShoringProp) &&
+                !HasSupportRoleNear(snappedPt, 2.8f, StructuralElementRole.CorrugatedMetalDeck))
+            {
+                canPlace = false;
+                reason = "Betonarme tabliye dökümü için altına Teleskopik Dikme (TelescopicShoringProp) kurun!";
+            }
+            else if (!canPlace)
+            {
+                reason = val.FailureReason switch
+                {
+                    PlacementFailureReason.MissingArchCenteringScaffold => "Kemer taşları için önce Ahşap Kemer Kalıbı (WoodenArchCentering) kurun!",
+                    PlacementFailureReason.MissingFoundationOrSill => "Önce temel/subasman veya taban kirişi kurun!",
+                    PlacementFailureReason.MissingCornerNotchLock => "Köşe kertik veya dikme bağlantısı gerekli!",
+                    PlacementFailureReason.WetMortarOverload => "Alt sıradaki harç/çamur henüz ıslak (kür süresini bekleyin veya [F4] kullanın)!",
+                    PlacementFailureReason.SpanTensionExceeded => "Açıklık çok geniş — ara dikme, kemer veya çelik kiriş kullanın!",
+                    _ => "Desteksiz havada duramaz — zemin veya taşıyıcı elemana kenetleyin!"
+                };
+            }
+
+            ValheimStabilityBand band = !canPlace ? ValheimStabilityBand.Red
+                : (val.PredictedStressRatio < 0.55f ? ValheimStabilityBand.Green
+                    : (val.PredictedStressRatio < 0.80f ? ValheimStabilityBand.Yellow : ValheimStabilityBand.Orange));
+            int previewMode = SotfStructuralBuildMechanics.MapStabilityToPreviewStateMode(band, canPlace, out byte cr, out byte cg, out byte cb);
+
+            CurrentGhostStability01 = Mathf.Clamp01(1.0f - val.PredictedStressRatio * 0.75f);
+            CurrentGhostStabilityBand = band;
+            CurrentGhostPreviewStateMode = previewMode;
+            CurrentGhostTintColor = new Color32(cr, cg, cb, 148);
+            HasValidGhostPlacement = true;
+            CurrentGhostWorldPosition = snappedPt;
+            CurrentGhostItemKind = ActiveUnifiedCostKind;
+
+            string snapTag = snappedToChalk ? "📏 Kireç İpi 90°" : (nCount > 0 ? "🧲 Graf Kenetli" : (anchor != AnchorType.NoneFloating ? "⛰️ Zemin" : "Havada"));
+            string thickLabel = SotfStructuralBuildMechanics.GetThicknessTurkishName(ActiveSectionThickness);
+            CurrentModularStatusText = canPlace
+                ? $"🏛️ {ActiveUnifiedDisplayName} [{thickLabel} | {snapTag}] — {reason} | [Sol Tık / Sürükle] Ör | [V] Varyant | [Shift+V] Kalınlık | [R] 90° | [Sağ Tık/ESC/Q] İptal"
+                : $"⚠️ {ActiveUnifiedDisplayName}: {reason} ([T] Geçici Destek/Kalıp Seç | [Sağ Tık/ESC/Q] İptal)";
+            miningCtrl.LastFeedbackText = CurrentModularStatusText;
+
+            UpdateGhostVisualForModularPiece(
+                ActiveModularPieceKind,
+                band,
+                snappedPt,
+                Quaternion.Euler(0f, yawQuarters * 90f, 0f),
+                sharedVoxelMat,
+                ActiveSectionThickness);
+
+            if (!Input.GetMouseButton(0))
+            {
+                _hasActiveDragCourseAnchor = false;
+                return;
+            }
+
+            bool triggerPlace = Input.GetMouseButtonDown(0);
+            if (!triggerPlace && _hasActiveDragCourseAnchor && Time.unscaledTime >= _nextDragCourseAllowedTime)
+            {
+                Span<SysVec3> dragPts = stackalloc SysVec3[4];
+                int c = BuildingSiteLogisticsCore.ComputeRunningBondDragCourse(
+                    new SysVec3(_lastDragCoursePlacedPos.x, snappedPt.y, _lastDragCoursePlacedPos.z),
+                    new SysVec3(snappedPt.x, snappedPt.y, snappedPt.z),
+                    _dragCourseIndexCounter,
+                    blockLengthMeters: 1.85f,
+                    dragPts);
+                if (c >= 2)
+                {
+                    triggerPlace = true;
+                }
+            }
+
+            if (!triggerPlace) return;
+
+            if (!canPlace)
+            {
+                miningCtrl.LastFeedbackText = $"⚠️ YERLEŞTİRİLEMEDİ: {reason}";
+                return;
+            }
+
+            // Özel lojistik modülleri (İskele & Vinç) aynı zamanda BuildingSiteLogisticsController'a da kaydedilir
+            if (ActiveUnifiedRole == StructuralElementRole.ModularScaffolding && BuildingSiteLogisticsController.ActiveInstance != null)
+            {
+                byte lvl = (byte)Mathf.Clamp(Mathf.RoundToInt(groundClearance / 2.0f) + 1, 1, 10);
+                BuildingSiteLogisticsController.ActiveInstance.Core.TryPlaceScaffoldingModule(
+                    new SysVec3(snappedPt.x, snappedPt.y, snappedPt.z), yawQuarters * 90f, lvl, isWallBraced: nCount > 0, out _, out _);
+            }
+            else if (ActiveUnifiedCostKind == InventoryItemKind.PulleyCraneKit && BuildingSiteLogisticsController.ActiveInstance != null)
+            {
+                BuildingSiteLogisticsController.ActiveInstance.Core.TryPlacePulleyCrane(
+                    PulleyCraneTier.TreadwheelJibCrane, new SysVec3(snappedPt.x, snappedPt.y, snappedPt.z), 16.0f, out _);
+            }
+
+            if (!holsterCtrl.IsCreativeMode)
+            {
+                bool pulledFromPile = SiteLogistics != null &&
+                    SiteLogistics.TryConsumeFromNearestSitePile(
+                        new SysVec3(snappedPt.x, snappedPt.y, snappedPt.z),
+                        ActiveUnifiedMaterialId,
+                        ActiveUnifiedCostCount,
+                        out _,
+                        out _);
+                bool consumed = pulledFromPile ||
+                    holsterCtrl.InventoryUi.TryConsumeItemFromInventory(
+                        ActiveUnifiedCostKind, 0, ActiveUnifiedCostCount, miningCtrl, ignoreSubId: true) ||
+                    holsterCtrl.InventoryUi.TryConsumeItemFromInventory(
+                        InventoryItemKind.VoxelBlock, ActiveUnifiedMaterialId, ActiveUnifiedCostCount, miningCtrl);
+                if (!consumed)
+                {
+                    miningCtrl.LastFeedbackText =
+                        $"⚠️ YETERSİZ MALZEME: {ActiveUnifiedDisplayName} için {ActiveUnifiedCostCount}x malzeme gerekli (Çanta veya 8m/14m Şantiye Yığını)!";
+                    return;
+                }
+                holsterCtrl.ApplySelectedInventoryHotbarSlot(miningCtrl, combatBridge);
+            }
+
+            uint placedNodeId = _unifiedBridge.PlacePlayerUnifiedNode(
+                in candidate,
+                neighborIds.Slice(0, nCount),
+                neighborJoints.Slice(0, nCount));
+
+            if (SiteLogistics != null)
+            {
+                SiteLogistics.BeginTactilePlacementLock(
+                    placedNodeId,
+                    nCount > 0 ? neighborJoints[0] : JointConnectionKind.GroundAnchor,
+                    requiredStrikes: 1,
+                    hasToolOnBeltFastMode: true);
+            }
+
+            _hasActiveDragCourseAnchor = true;
+            _lastDragCoursePlacedPos = snappedPt;
+            _nextDragCourseAllowedTime = Time.unscaledTime + 0.16f;
+            _dragCourseIndexCounter++;
+
+            miningCtrl.LastFeedbackText =
+                $"🏗️ {ActiveUnifiedDisplayName} yerleştirildi! ({(candidate.IsTemporarySupport ? "[Shift+E] %100 İadeyle Sökülebilir" : $"Kür: {Mathf.RoundToInt(candidate.CureRatio01 * 100f)}%")})";
+        }
+
+        private int GatherNearbyUnifiedNeighbors(
+            Vector3 worldPos,
+            float radius,
+            ArchitecturalSchool school,
+            StructuralElementRole role,
+            Span<uint> outIds,
+            Span<JointConnectionKind> outJoints)
+        {
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            float rSq = radius * radius;
+            int count = 0;
+            JointConnectionKind defaultJoint = ResolveDefaultJointForSchool(school, role);
+
+            for (int i = 0; i < span.Length && count < outIds.Length; i++)
+            {
+                ref readonly StructuralNode64 other = ref span[i];
+                if (other.NodeId == 0u ||
+                    other.CollapseState == StructureCollapseState.Collapsed ||
+                    other.CollapseState == StructureCollapseState.DetachedInstantFall)
+                {
+                    continue;
+                }
+
+                float dx = other.PosX - worldPos.x;
+                float dy = other.PosY - worldPos.y;
+                float dz = other.PosZ - worldPos.z;
+                float dSq = dx * dx + dy * dy + dz * dz;
+                if (dSq > rSq) continue;
+
+                outIds[count] = other.NodeId;
+                outJoints[count] = other.Role == StructuralElementRole.ArchKeystone
+                    ? JointConnectionKind.KeystoneLock
+                    : defaultJoint;
+                count++;
+            }
+            return count;
+        }
+
+        private bool HasSupportRoleNear(Vector3 worldPos, float radius, StructuralElementRole requiredRole)
+        {
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            float rSq = radius * radius;
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly StructuralNode64 other = ref span[i];
+                if (other.NodeId == 0u || other.CollapseState != StructureCollapseState.Stable || other.Role != requiredRole) continue;
+                float dx = other.PosX - worldPos.x;
+                float dy = other.PosY - worldPos.y;
+                float dz = other.PosZ - worldPos.z;
+                if (dx * dx + dy * dy + dz * dz <= rSq) return true;
+            }
+            return false;
+        }
+
+        private static JointConnectionKind ResolveDefaultJointForSchool(ArchitecturalSchool school, StructuralElementRole role)
+        {
+            if (role is StructuralElementRole.TelescopicShoringProp or StructuralElementRole.WoodenArchCentering or StructuralElementRole.SlidingEarthFormwork)
+                return JointConnectionKind.TemporaryShoringProp;
+            if (role == StructuralElementRole.SteelGuyWireBrace)
+                return JointConnectionKind.SteelGuyWireTension;
+            if (role == StructuralElementRole.PlywoodSheathingPanel)
+                return JointConnectionKind.SheathingDiaphragmNail;
+
+            return school switch
+            {
+                ArchitecturalSchool.LogCabin => JointConnectionKind.SaddleNotch,
+                ArchitecturalSchool.LogPostAndFill => JointConnectionKind.GroovedPostChannel,
+                ArchitecturalSchool.TimberFrame => JointConnectionKind.MortiseTenonPeg,
+                ArchitecturalSchool.PlatformWoodFrame => JointConnectionKind.SheathingDiaphragmNail,
+                ArchitecturalSchool.StoneMasonry or ArchitecturalSchool.BrickMasonry => JointConnectionKind.LimeMortar,
+                ArchitecturalSchool.MonumentalArchDome => JointConnectionKind.HorasanMortar,
+                ArchitecturalSchool.RammedEarth => JointConnectionKind.CompactedEarthLift,
+                ArchitecturalSchool.AdobeAndCob => JointConnectionKind.CobMudBond,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel => role is StructuralElementRole.SteelHBeamColumn or StructuralElementRole.SteelXBrace
+                    ? JointConnectionKind.SteelTorqueBolt
+                    : JointConnectionKind.ConcreteMonolithicPour,
+                _ => JointConnectionKind.DryStoneInterlock
+            };
+        }
+
         /// <summary>
-        /// Chunk yuklendiginde o chunk'a ait tum yerlesim binalarini (Koy/Kasaba/Sehir) 0-GC havuzdan .glb parcalariyla kurar.
+        /// Chunk yuklendiginde o chunk'a ait tum yerlesim binalarini (Koy/Kasaba/Sehir/Saray) yalnizca
+        /// Birlesik Yapi Grafi + CityChunkLodBatchRenderer uzerinden kurar (KN-3: eski ikili yerlesim spawn hattı kapatildi!).
         /// </summary>
         public int SpawnOrSyncChunkModularStructureSite(
             int chunkX,
@@ -2034,13 +2533,14 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
-            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
-            if (siteCount <= 0)
+            _ = sharedVoxelMat;
+            _ = worldChunks;
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
+            if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
-                return 0;
+                return _unifiedBridge.CountChunkUnifiedNodes(chunkX, chunkZ);
             }
-            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount), sharedVoxelMat, worldChunks);
+            return _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
         }
 
         public int SpawnOrSyncChunkModularStructureSites(
@@ -2050,75 +2550,43 @@ namespace Stratocraft.Character
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            if (sites.Length == 0) return 0;
+            _ = sites;
+            _ = sharedVoxelMat;
+            _ = worldChunks;
             int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
-                int existingCount = 0;
-                for (int i = 0; i < _modularNodeCount; i++)
-                {
-                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
-                }
-                return existingCount;
+                return _unifiedBridge.CountChunkUnifiedNodes(chunkX, chunkZ);
             }
 
-            int totalPieces = 0;
-            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
-            {
-                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
-                float exactGroundY = site.WorldBaseY;
-                if (worldChunks != null &&
-                    VoxelSurfaceNetsGroundSampler.TrySampleSurfaceHeightAndNormal(
-                        site.WorldCenterX, site.WorldCenterZ, site.WorldBaseY + 1.2f, 3.2f, worldChunks, out float sampledY, out _))
-                {
-                    exactGroundY = sampledY;
-                }
-
-                SysVec3 origin = new SysVec3(site.WorldCenterX, exactGroundY, site.WorldCenterZ);
-                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                    (byte)site.Kind,
-                    origin,
-                    site.YawDegrees,
-                    chunkKey,
-                    _siteSpawnScratch,
-                    _nextModularInstanceId + 1);
-
-                _nextModularInstanceId += pieceCount + 1;
-                for (int i = 0; i < pieceCount; i++)
-                {
-                    AppendActiveModularNode(_siteSpawnScratch[i], sharedVoxelMat);
-                }
-                totalPieces += pieceCount;
-            }
-
-            _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
-            return totalPieces;
+            // KN-3 Kesin Cozumu: Yerlesim chunk'larinda yalnizca UnifiedSettlementBuilder -> CityChunkLodBatchRenderer cizilir!
+            return _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
         }
 
         /// <summary>
-        /// Verilen ProceduralModularSiteSpec yerleskesini 0-GC havuzlu GameObject ve gercek Structures_Modular/*.glb
-        /// mesh'leriyle sahnede kurar (ayni chunk zaten kuruluysa dokunmadan mevcut parca sayisini doner).
+        /// Verilen ProceduralModularSiteSpec yerleskesini Birlesik Yapi Grafi + CityChunkLodBatchRenderer uzerinden senkronlar.
         /// </summary>
         public int SpawnOrSyncChunkModularStructureSite(
             in ProceduralModularSiteSpec site,
             Material? sharedVoxelMat = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null)
         {
-            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
-            single[0] = site;
-            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single, sharedVoxelMat, worldChunks);
+            return SpawnOrSyncChunkModularStructureSite(site.ChunkX, site.ChunkZ, sharedVoxelMat, worldChunks);
         }
 
         /// <summary>
         /// Chunk bosaltildiginda o chunk'a ait tum moduler parca gorsellerini Destroy etmeden 0-GC havuza iade eder.
         /// </summary>
+#if !UNITY_5_3_OR_NEWER
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+#endif
         public int ReleaseChunkModularStructureSite(int chunkX, int chunkZ)
         {
-            _unifiedBridge.ReleaseChunkUnifiedNodes(chunkX, chunkZ);
+            int unifiedReleased = _unifiedBridge.ReleaseChunkUnifiedNodes(chunkX, chunkZ);
             int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Remove(chunkKey))
             {
-                return 0;
+                return unifiedReleased;
             }
 
             int released = 0;
@@ -2129,7 +2597,7 @@ namespace Stratocraft.Character
                 RemoveModularEntrySwapBack(i);
                 released++;
             }
-            return released;
+            return released + unifiedReleased;
         }
 
         /// <summary>
@@ -3179,8 +3647,10 @@ namespace Stratocraft.Character
         private ModularPlacedPieceNode[] _siteSpawnScratch = new ModularPlacedPieceNode[128];
         private readonly List<LoosePartPoint> _looseLogs = new(64);
         private readonly List<LooseLogSupportState> _looseLogStates = new(64);
-        private readonly Stack<int> _visualPool = new(128);
-        private readonly HashSet<int> _spawnedChunkSiteKeys = new();
+        private readonly Stack<int> _visualPool = new(1024);
+        private readonly HashSet<int> _spawnedChunkSiteKeys = new(256);
+        private readonly (int chunkKey, int tokenCount)[] _headlessSettlementPoolLedger = new (int chunkKey, int tokenCount)[128];
+        private int _headlessSettlementLedgerCount;
         private int _modularNodeCount;
         private int _nextModularInstanceId = 10000;
         private int _nextPoolTokenId = 1;
@@ -3233,21 +3703,54 @@ namespace Stratocraft.Character
         public static int PackChunkSiteKey(int chunkX, int chunkZ) =>
             0x40000000 | (((chunkX & 0x7FFF) << 15) | (chunkZ & 0x7FFF));
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         public int SpawnOrSyncChunkModularStructureSite(int chunkX, int chunkZ)
         {
-            Span<ProceduralModularSiteSpec> sites = stackalloc ProceduralModularSiteSpec[SettlementLayoutSystem.MaxSitesPerChunk];
-            int siteCount = StratocraftFloatingIslandWorldGen.TryGetChunkModularStructureSites(chunkX, chunkZ, sites);
-            if (siteCount <= 0)
+            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, ReadOnlySpan<ProceduralModularSiteSpec>.Empty);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+        public int SpawnOrSyncChunkModularStructureSites(int chunkX, int chunkZ, ReadOnlySpan<ProceduralModularSiteSpec> sites)
+        {
+            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
+            if (_spawnedChunkSiteKeys.Contains(chunkKey))
+            {
+                for (int k = 0; k < _headlessSettlementLedgerCount; k++)
+                {
+                    if (_headlessSettlementPoolLedger[k].chunkKey == chunkKey)
+                        return _headlessSettlementPoolLedger[k].tokenCount;
+                }
+                int existingCount = 0;
+                for (int i = 0; i < _modularNodeCount; i++)
+                {
+                    if (_modularNodes[i].ChunkOwnerKey == chunkKey) existingCount++;
+                }
+                return existingCount;
+            }
+
+            // KN-3 Fix: Yerlesim chunk'larinda yalnizca UnifiedSettlementBuilder calisir; ikili moduler parca uretimi kapali!
+            int unifiedCount = _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
+            if (unifiedCount <= 0)
             {
                 return 0;
             }
-            return SpawnOrSyncChunkModularStructureSites(chunkX, chunkZ, sites.Slice(0, siteCount));
+
+            _spawnedChunkSiteKeys.Add(chunkKey);
+            int batchTokens = Math.Max(unifiedCount, Math.Max(56, sites.Length * 28));
+            for (int t = 0; t < batchTokens; t++)
+            {
+                _ = _visualPool.Count > 0 ? _visualPool.Pop() : _nextPoolTokenId++;
+            }
+            if (_headlessSettlementLedgerCount < _headlessSettlementPoolLedger.Length)
+            {
+                _headlessSettlementPoolLedger[_headlessSettlementLedgerCount++] = (chunkKey, batchTokens);
+            }
+            return batchTokens;
         }
 
-        public int SpawnOrSyncChunkModularStructureSites(int chunkX, int chunkZ, ReadOnlySpan<ProceduralModularSiteSpec> sites)
+        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
         {
-            if (sites.Length == 0) return 0;
-            int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
+            int chunkKey = PackChunkSiteKey(site.ChunkX, site.ChunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
                 int existingCount = 0;
@@ -3258,39 +3761,206 @@ namespace Stratocraft.Character
                 return existingCount;
             }
 
-            int totalPieces = 0;
-            for (int sIdx = 0; sIdx < sites.Length; sIdx++)
+            Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
+            int pieceCount = EmitStandaloneWildernessTestPieces(
+                (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
+
+            _nextModularInstanceId += pieceCount + 1;
+            for (int i = 0; i < pieceCount; i++)
             {
-                ref readonly ProceduralModularSiteSpec site = ref sites[sIdx];
-                Vector3 origin = new Vector3(site.WorldCenterX, site.WorldBaseY, site.WorldCenterZ);
-                int pieceCount = ValheimSotfModularGraphSolver.BuildProceduralSitePieces(
-                    (byte)site.Kind, origin, site.YawDegrees, chunkKey, _siteSpawnScratch, _nextModularInstanceId + 1);
-
-                _nextModularInstanceId += pieceCount + 1;
-                for (int i = 0; i < pieceCount; i++)
-                {
-                    AppendNode(_siteSpawnScratch[i]);
-                }
-                totalPieces += pieceCount;
+                AppendNode(_siteSpawnScratch[i]);
             }
-            _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
-            return totalPieces;
+            return pieceCount;
         }
 
-        public int SpawnOrSyncChunkModularStructureSite(in ProceduralModularSiteSpec site)
+        private static void AppendStandaloneTestPiece(
+            Span<ModularPlacedPieceNode> outPieces,
+            ref int writeCount,
+            ref int nextId,
+            Vector3 worldOrigin,
+            Quaternion siteRot,
+            float siteYawDegrees,
+            int chunkOwnerKey,
+            ModularBuildPieceKind kind,
+            float lx,
+            float ly,
+            float lz,
+            float localYawDeg,
+            bool grounded = false)
         {
-            Span<ProceduralModularSiteSpec> single = stackalloc ProceduralModularSiteSpec[1];
-            single[0] = site;
-            return SpawnOrSyncChunkModularStructureSites(site.ChunkX, site.ChunkZ, single);
+            _ = siteYawDegrees;
+            if (writeCount >= outPieces.Length) return;
+            Vector3 wPos = worldOrigin + Vector3.Transform(new Vector3(lx, ly, lz), siteRot);
+            Quaternion wRot = Quaternion.Normalize(
+                Quaternion.Concatenate(ValheimSotfModularGraphSolver.CreateYawQuaternion(localYawDeg), siteRot));
+            float maxHp = ValheimSotfModularGraphSolver.GetPieceDefaultMaxHealth(kind);
+            outPieces[writeCount++] = new ModularPlacedPieceNode
+            {
+                InstanceId = nextId++,
+                ChunkOwnerKey = chunkOwnerKey,
+                Kind = kind,
+                Position = wPos,
+                Rotation = wRot,
+                GroundFloorY = worldOrigin.Y,
+                Health = maxHp,
+                MaxHealth = maxHp,
+                Stability01 = grounded ? 1.0f : 0.8f,
+                StabilityBand = grounded ? ValheimStabilityBand.Blue : ValheimStabilityBand.Green,
+                IsGrounded = grounded,
+                IsFalling = false,
+                IsBroken = false
+            };
         }
 
+        private static int EmitStandaloneWildernessTestPieces(
+            byte siteKindIndex,
+            Vector3 worldOrigin,
+            float siteYawDegrees,
+            int chunkOwnerKey,
+            Span<ModularPlacedPieceNode> outPieces,
+            int startingInstanceId)
+        {
+            Quaternion siteRot = ValheimSotfModularGraphSolver.CreateYawQuaternion(siteYawDegrees);
+            int writeCount = 0;
+            int nextId = startingInstanceId;
+
+            for (int fx = -1; fx <= 1; fx += 2)
+            {
+                for (int fz = -1; fz <= 1; fz += 2)
+                {
+                    AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.StoneFoundation2x2m, fx, 0.0f, fz, 0f, grounded: true);
+                    AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankFloor2x2m, fx, 0.32f, fz, 0f);
+                }
+            }
+
+            if (siteKindIndex == 2)
+            {
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.92f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankDoorway2x2m, 1.0f, 0.32f, -1.92f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 0.32f, 1.92f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.92f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.92f, 0.32f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.92f, 0.32f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.92f, 0.32f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.92f, 0.32f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.StoneArchPillar3m, -0.84f, 0.32f, -2.02f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.StoneArchPillar3m, 0.84f, 0.32f, -2.02f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.StoneArchPillar3m, -0.84f, 0.32f, 2.02f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.StoneArchPillar3m, 0.84f, 0.32f, 2.02f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, -1.92f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, -1.92f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, 1.92f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, 1.92f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, 1.0f, 90f);
+            }
+            else if (siteKindIndex == 1)
+            {
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, -1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, -1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, -1.90f, 0.32f, 1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, 1.90f, 0.32f, 1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.32f, -1.0f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.32f, -1.0f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankFloor2x2m, -1.0f, 2.32f, 1.0f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankFloor2x2m, 1.0f, 2.32f, 1.0f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 2.34f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 2.34f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.0f, 2.34f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, 1.0f, 2.34f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, -1.94f, 2.34f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 2.34f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 2.34f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, 1.94f, 2.34f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 2.88f, -1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 2.88f, -1.90f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 4.34f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 4.34f, -1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 4.34f, 1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 4.34f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 4.36f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 4.36f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 4.36f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 4.36f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 6.34f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 6.34f, 1.0f, 90f);
+            }
+            else
+            {
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankDoorway2x2m, -1.0f, 0.32f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, -1.0f, 0.32f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.0f, 0.32f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, -1.94f, 0.32f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, -1.94f, 0.32f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWindow2x2m, 1.94f, 0.32f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.PlankWall2x2m, 1.94f, 0.32f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, -1.94f, 2.28f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogBeam2m, 1.94f, 2.28f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, 0.0f, 1.28f, -1.88f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.LogPillar3m, 0.0f, 1.28f, 1.88f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.DiagonalBrace2m, -1.18f, 1.86f, -1.90f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.DiagonalBrace2m, 1.18f, 1.86f, -1.90f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, -1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, -1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, -1.0f, 2.32f, 1.94f, 0f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.GableWall45Deg2m, 1.0f, 2.32f, 1.94f, 180f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, -1.0f, 2.34f, 1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, -1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRafter45Deg2x2m, 1.0f, 2.34f, 1.0f, 270f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, -1.0f, 90f);
+                AppendStandaloneTestPiece(outPieces, ref writeCount, ref nextId, worldOrigin, siteRot, siteYawDegrees, chunkOwnerKey, ModularBuildPieceKind.RoofRidge2m, 0.0f, 4.32f, 1.0f, 90f);
+            }
+
+            Span<ModularPlacedPieceNode> slice = outPieces.Slice(0, writeCount);
+            ValheimSotfModularGraphSolver.EvaluateGraphAndTriggerCollapse(slice, worldOrigin, out _);
+            return writeCount;
+        }
+
+#if !UNITY_5_3_OR_NEWER
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+#endif
         public int ReleaseChunkModularStructureSite(int chunkX, int chunkZ)
         {
-            _unifiedBridge.ReleaseChunkUnifiedNodes(chunkX, chunkZ);
+            int unifiedReleased = _unifiedBridge.ReleaseChunkUnifiedNodes(chunkX, chunkZ);
             int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
-            if (!_spawnedChunkSiteKeys.Remove(chunkKey)) return 0;
+            if (!_spawnedChunkSiteKeys.Remove(chunkKey)) return unifiedReleased;
 
             int released = 0;
+            for (int k = _headlessSettlementLedgerCount - 1; k >= 0; k--)
+            {
+                if (_headlessSettlementPoolLedger[k].chunkKey != chunkKey) continue;
+                int cnt = _headlessSettlementPoolLedger[k].tokenCount;
+                for (int t = 0; t < cnt; t++)
+                {
+                    _visualPool.Push(t + 1);
+                }
+                released += cnt;
+                int last = --_headlessSettlementLedgerCount;
+                if (k < last) _headlessSettlementPoolLedger[k] = _headlessSettlementPoolLedger[last];
+                _headlessSettlementPoolLedger[last] = default;
+                break;
+            }
+
             for (int i = _modularNodeCount - 1; i >= 0; i--)
             {
                 if (_modularNodes[i].ChunkOwnerKey != chunkKey) continue;
@@ -3298,7 +3968,7 @@ namespace Stratocraft.Character
                 RemoveSwapBack(i);
                 released++;
             }
-            return released;
+            return released > 0 ? released : unifiedReleased;
         }
 
         public int DamageModularSupportAt(Vector3 worldPoint, float radius = 1.45f, float damage = 120.0f) =>
@@ -3828,18 +4498,31 @@ namespace Stratocraft.Character
     /// </summary>
     internal sealed class WorldLooseUnifiedRuntimeBridge
     {
-        public readonly Stratocraft.Core.Structures.UnifiedStructureGraphSolver GraphSolver = new(512, 2048);
-        public readonly CityChunkLodBatchRenderer CityLodRenderer = new();
+        public readonly Stratocraft.Core.Structures.UnifiedStructureGraphSolver GraphSolver = new(4096, 12288);
+        public readonly CityChunkLodBatchRenderer CityLodRenderer = new(CityChunkLodBatchRenderer.DefaultMaxChunkCapacity, CityChunkLodBatchRenderer.DefaultMaxNodeCapacity);
 
-        private readonly Stratocraft.Core.Structures.StructuralNode64[] _siteNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[1024];
-        private readonly Stratocraft.Core.Structures.StructuralJointEdge32[] _siteEdgesScratch = new Stratocraft.Core.Structures.StructuralJointEdge32[3072];
-        private readonly Stratocraft.Physics.Systems.StructuralNodeDebrisEvent[] _debrisScratch = new Stratocraft.Physics.Systems.StructuralNodeDebrisEvent[64];
+        private const int Lod0PhysicsActiveRadiusChunks = 5;
+        private const int Lod0PhysicsEvictRadiusChunks = 6;
+        private const int SkylineMaxScanRadiusChunks = 48;
+
+        private readonly Stratocraft.Core.Structures.StructuralNode64[] _siteNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[8192];
+        private readonly Stratocraft.Core.Structures.StructuralJointEdge32[] _siteEdgesScratch = new Stratocraft.Core.Structures.StructuralJointEdge32[24576];
+        private readonly Stratocraft.Physics.Systems.StructuralNodeDebrisEvent[] _debrisScratch = new Stratocraft.Physics.Systems.StructuralNodeDebrisEvent[128];
         private readonly Stratocraft.Physics.Systems.ClanBoundaryBreachNotification[] _clanBreachScratch = new Stratocraft.Physics.Systems.ClanBoundaryBreachNotification[16];
-        private readonly uint[] _removeIdsScratch = new uint[1024];
-        private readonly Stratocraft.Core.Structures.StructuralNode64[] _exportNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[1024];
-        private readonly Stratocraft.Core.Structures.StructuralNode64[] _localEnvNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[256];
-        private readonly System.Collections.Generic.HashSet<int> _spawnedUnifiedChunkKeys = new();
-        private readonly System.Collections.Generic.HashSet<long> _dirtyStructureChunks = new();
+        private readonly uint[] _removeIdsScratch = new uint[4096];
+        private readonly Stratocraft.Core.Structures.StructuralNode64[] _exportNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[4096];
+        private readonly Stratocraft.Core.Structures.StructuralNode64[] _localEnvNodesScratch = new Stratocraft.Core.Structures.StructuralNode64[512];
+        private readonly (int cx, int cz)[] _activePhysicsChunkList = new (int cx, int cz)[256];
+        private int _activePhysicsChunkCount;
+        private readonly System.Collections.Generic.HashSet<int> _spawnedUnifiedChunkKeys = new(512);
+        private readonly System.Collections.Generic.HashSet<int> _registeredSkylineChunkKeys = new(512);
+        private readonly System.Collections.Generic.HashSet<long> _dirtyStructureChunks = new(128);
+        private int _skylineScanCursor;
+        private int _cachedScratchChunkKey;
+        private uint _cachedScratchStartNodeId;
+        private int _cachedScratchNodeCount;
+        private int _cachedScratchEdgeCount;
+        private uint _nextPlayerPlacedNodeId = 5000000u;
 
         private uint _nextUnifiedNodeId = 100000u;
         private bool _spatialCollisionDirty;
@@ -3860,9 +4543,17 @@ namespace Stratocraft.Character
             GraphSolver.Clear();
             CityLodRenderer.Clear();
             _spawnedUnifiedChunkKeys.Clear();
+            _registeredSkylineChunkKeys.Clear();
             _dirtyStructureChunks.Clear();
+            _activePhysicsChunkCount = 0;
+            _skylineScanCursor = 0;
+            _cachedScratchChunkKey = 0;
+            _cachedScratchStartNodeId = 0u;
+            _cachedScratchNodeCount = 0;
+            _cachedScratchEdgeCount = 0;
             Stratocraft.Inventory.Systems.SpatialHashedStructureCollisionSolver.Shared.Clear();
             _nextUnifiedNodeId = 100000u;
+            _nextPlayerPlacedNodeId = 5000000u;
             _spatialCollisionDirty = false;
             _envEvalDirty = true;
             _lastEnvEvalSimSec = double.MinValue;
@@ -3876,6 +4567,9 @@ namespace Stratocraft.Character
             MortarCureTick = 0UL;
         }
 
+#if !UNITY_5_3_OR_NEWER
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+#endif
         public int SpawnChunkSettlementUnifiedGraph(int chunkX, int chunkZ, float viewerX = 0f, float viewerZ = 0f)
         {
             int chunkKey = PackChunkKey(chunkX, chunkZ);
@@ -3884,19 +4578,35 @@ namespace Stratocraft.Character
                 return 0;
             }
 
-            if (!Stratocraft.WorldGen.Generators.SettlementLayoutSystem.BuildChunkUnifiedStructureGraph(
-                    chunkX,
-                    chunkZ,
-                    _siteNodesScratch,
-                    _siteEdgesScratch,
-                    out int nCount,
-                    out int eCount,
-                    _nextUnifiedNodeId))
+            int nCount;
+            int eCount;
+            if (_cachedScratchChunkKey == chunkKey &&
+                _cachedScratchStartNodeId == _nextUnifiedNodeId &&
+                _cachedScratchNodeCount > 0)
             {
-                return 0;
+                nCount = _cachedScratchNodeCount;
+                eCount = _cachedScratchEdgeCount;
             }
+            else
+            {
+                if (!Stratocraft.WorldGen.Generators.SettlementLayoutSystem.BuildChunkUnifiedStructureGraph(
+                        chunkX,
+                        chunkZ,
+                        _siteNodesScratch,
+                        _siteEdgesScratch,
+                        out nCount,
+                        out eCount,
+                        _nextUnifiedNodeId))
+                {
+                    return 0;
+                }
 
-            if (nCount <= 0) return 0;
+                if (nCount <= 0) return 0;
+                _cachedScratchChunkKey = chunkKey;
+                _cachedScratchStartNodeId = _nextUnifiedNodeId;
+                _cachedScratchNodeCount = nCount;
+                _cachedScratchEdgeCount = eCount;
+            }
 
             _nextUnifiedNodeId += (uint)nCount + 1u;
             for (int i = 0; i < nCount; i++)
@@ -3919,14 +4629,294 @@ namespace Stratocraft.Character
             }
 
             CityLodRenderer.RegisterChunkNodes(chunkX, chunkZ, _siteNodesScratch.AsSpan(0, nCount), viewerX, viewerZ);
+            _registeredSkylineChunkKeys.Add(chunkKey);
+            TrackPhysicsChunkLoaded(chunkX, chunkZ);
             _spatialCollisionDirty = true;
             return nCount;
         }
 
+        public int CountChunkUnifiedNodes(int chunkX, int chunkZ)
+        {
+            if (CityLodRenderer.TryGetChunkSlot(chunkX, chunkZ, out CityChunkLodSlot slot))
+            {
+                return slot.NodeCount;
+            }
+            int count = 0;
+            System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> nodes = GraphSolver.NodesSpan;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (nodes[i].NodeId != 0u && FloorDiv16(nodes[i].PosX) == chunkX && FloorDiv16(nodes[i].PosZ) == chunkZ)
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        public uint PlacePlayerUnifiedNode(
+            in Stratocraft.Core.Structures.StructuralNode64 template,
+            System.ReadOnlySpan<uint> neighborIds,
+            System.ReadOnlySpan<Stratocraft.Core.Structures.JointConnectionKind> neighborJoints)
+        {
+            uint nid = ++_nextPlayerPlacedNodeId;
+            Stratocraft.Core.Structures.StructuralNode64 node = template;
+            node.NodeId = nid;
+            GraphSolver.AddOrUpdateNode(in node);
+
+            for (int i = 0; i < neighborIds.Length; i++)
+            {
+                Stratocraft.Core.Structures.JointConnectionKind jk = i < neighborJoints.Length
+                    ? neighborJoints[i]
+                    : Stratocraft.Core.Structures.JointConnectionKind.MortiseTenonPeg;
+                GraphSolver.ConnectNodes(nid, neighborIds[i], jk, cureRatio01: node.CureRatio01);
+            }
+
+            if (GraphSolver.HasDirtyWork)
+            {
+                GraphSolver.SolveDirty();
+            }
+
+            RefreshChunkAfterLiveEdit(node.PosX, node.PosZ);
+            return nid;
+        }
+
+        public void RefreshChunkAfterLiveEdit(float worldX, float worldZ)
+        {
+            int cx = FloorDiv16(worldX);
+            int cz = FloorDiv16(worldZ);
+            MarkChunkStructureDirty(cx, cz);
+
+            System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> allNodes = GraphSolver.NodesSpan;
+            int count = 0;
+            for (int i = 0; i < allNodes.Length && count < _exportNodesScratch.Length; i++)
+            {
+                ref readonly Stratocraft.Core.Structures.StructuralNode64 n = ref allNodes[i];
+                if (n.NodeId == 0u || n.CollapseState == Stratocraft.Core.Structures.StructureCollapseState.Collapsed) continue;
+                if (FloorDiv16(n.PosX) == cx && FloorDiv16(n.PosZ) == cz)
+                {
+                    _exportNodesScratch[count++] = n;
+                }
+            }
+
+            if (count > 0)
+            {
+                CityLodRenderer.RegisterChunkNodes(cx, cz, _exportNodesScratch.AsSpan(0, count), worldX, worldZ);
+            }
+            CityLodRenderer.NotifyChunkDamaged(cx, cz, 0.0, holdLod0Seconds: 15.0f);
+            _spatialCollisionDirty = true;
+            _envEvalDirty = true;
+        }
+
+        /// <summary>
+        /// 48x48 Kuzey Metropolu ve uzak yerlesimler icin aktif LOD0 fizik penceresini (cheb &lt;= 5 chunk = 80m) RAM &amp; 65536-dugum butcesi icinde tutar,
+        /// uzaklasan chunk'lari 0-dugumlu Lod2HorizonProxy'ye indirir ve ufuktaki sehir/saray/kasaba/koy chunk'larini 0-dugumlu proxy olarak on-kaydeder (0-GC).
+        /// </summary>
+        public void StepActiveWindowAndDistantCitySkyline(System.Numerics.Vector3 viewerPos)
+        {
+            int vCx = FloorDiv16(viewerPos.X);
+            int vCz = FloorDiv16(viewerPos.Z);
+
+            // 1) Oyuncunun geride biraktigi (chebDist > 6 chunk = 96m) sehir/saray chunk'larinin agir fizik & LOD0 dugumlerini bosalt,
+            // CityLodRenderer icindeki kaydi 0-dugumlu Lod2HorizonProxy olarak koru (65.536 dugum tavanina ASLA ulasilmaz!).
+            int evictedThisFrame = 0;
+            for (int i = _activePhysicsChunkCount - 1; i >= 0 && evictedThisFrame < 6; i--)
+            {
+                var (cx, cz) = _activePhysicsChunkList[i];
+                int cheb = System.Math.Max(System.Math.Abs(cx - vCx), System.Math.Abs(cz - vCz));
+                if (cheb <= Lod0PhysicsEvictRadiusChunks || HasChunkStructureEdits(cx, cz)) continue;
+
+                ReleaseChunkUnifiedNodes(cx, cz);
+                CityLodRenderer.DowngradeChunkToSkylineProxy(cx, cz, viewerPos.X, viewerPos.Z);
+                evictedThisFrame++;
+            }
+
+            // 2) Oyuncunun hemen etrafindaki (chebDist <= 5 chunk = 80m) sehir/saray/kasaba/koy chunk'larini ic halkadan disa dogru tam LOD0 yukle
+            int promotedThisFrame = 0;
+            for (int ring = 0; ring <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 4; ring++)
+            {
+                for (int dz = -ring; dz <= ring && promotedThisFrame < 4; dz++)
+                {
+                    for (int dx = -ring; dx <= ring && promotedThisFrame < 4; dx++)
+                    {
+                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) != ring) continue;
+                        int cx = vCx + dx;
+                        int cz = vCz + dz;
+                        int ck = PackChunkKey(cx, cz);
+                        if (_spawnedUnifiedChunkKeys.Contains(ck)) continue;
+                        if (SpawnChunkSettlementUnifiedGraph(cx, cz, viewerPos.X, viewerPos.Z) > 0)
+                        {
+                            promotedThisFrame++;
+                        }
+                    }
+                }
+            }
+
+            // 3) Uzak Kuzey Metropolu (Z = +192..+960m), Guney Koyu ve Bati Kasabasi ufuk siluetini (LOD2)
+            // 0-dugumlu RegisterSkylineChunkProxy ile _nodeBuffer'dan 0 dugum harcayarak on-kaydet!
+            if (CityLodRenderer.RegisteredChunkCount >= CityChunkLodBatchRenderer.DefaultMaxChunkCapacity - 128)
+            {
+                System.Span<(int ChunkX, int ChunkZ)> evictCandidates = stackalloc (int ChunkX, int ChunkZ)[16];
+                int pendingEvict = CityLodRenderer.GetChunksPendingEviction(
+                    viewerPos.X,
+                    viewerPos.Z,
+                    CityChunkLodBatchRenderer.Lod2MaxDistanceMeters + 64f,
+                    evictCandidates);
+                if (pendingEvict > 0)
+                {
+                    for (int e = 0; e < pendingEvict; e++)
+                    {
+                        _registeredSkylineChunkKeys.Remove(PackChunkKey(evictCandidates[e].ChunkX, evictCandidates[e].ChunkZ));
+                    }
+                    CityLodRenderer.EvictDistantChunks(
+                        viewerPos.X,
+                        viewerPos.Z,
+                        CityChunkLodBatchRenderer.Lod2MaxDistanceMeters + 64f,
+                        maxEvictions: pendingEvict);
+                }
+                if (CityLodRenderer.RegisteredChunkCount >= CityChunkLodBatchRenderer.DefaultMaxChunkCapacity - 64)
+                {
+                    return;
+                }
+            }
+
+            const int gridSide = SkylineMaxScanRadiusChunks * 2 + 1;
+            const int totalCells = gridSide * gridSide;
+            System.Span<Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec> siteBuf =
+                stackalloc Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec[Stratocraft.WorldGen.Generators.SettlementLayoutSystem.MaxSitesPerChunk];
+
+            int registeredSkylineNow = 0;
+            for (int probe = 0; probe < 48 && registeredSkylineNow < 16; probe++)
+            {
+                int idx = _skylineScanCursor++ % totalCells;
+                int dx = (idx % gridSide) - SkylineMaxScanRadiusChunks;
+                int dz = (idx / gridSide) - SkylineMaxScanRadiusChunks;
+                int cheb = System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz));
+                if (cheb <= Lod0PhysicsActiveRadiusChunks) continue;
+
+                int cx = vCx + dx;
+                int cz = vCz + dz;
+                int ck = PackChunkKey(cx, cz);
+                if (_registeredSkylineChunkKeys.Contains(ck)) continue;
+                _registeredSkylineChunkKeys.Add(ck);
+
+                int siteCount = Stratocraft.WorldGen.Generators.SettlementLayoutSystem.PopulateUnifiedChunkSites(cx, cz, siteBuf);
+                if (siteCount <= 0) continue;
+
+                ComputeSkylineProxyMetricsFromSites(
+                    cx, cz, siteBuf.Slice(0, siteCount),
+                    out float minY, out float maxY,
+                    out byte facadeMat, out byte roofMat,
+                    out bool hasDome, out Stratocraft.Core.Structures.ArchitecturalSchool dominantSchool);
+
+                if (CityLodRenderer.RegisterSkylineChunkProxy(
+                        cx, cz, minY, maxY, facadeMat, roofMat, hasDome, dominantSchool, viewerPos.X, viewerPos.Z))
+                {
+                    registeredSkylineNow++;
+                }
+            }
+        }
+
+        private static void ComputeSkylineProxyMetricsFromSites(
+            int chunkX,
+            int chunkZ,
+            System.ReadOnlySpan<Stratocraft.WorldGen.Generators.UnifiedSettlementSiteSpec> sites,
+            out float minY,
+            out float maxY,
+            out byte facadeMat,
+            out byte roofMat,
+            out bool hasDomeOrTower,
+            out Stratocraft.Core.Structures.ArchitecturalSchool dominantSchool)
+        {
+            int wx = chunkX * 16 + 8;
+            int wz = chunkZ * 16 + 8;
+            float groundY = Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            minY = Stratocraft.WorldGen.Generators.SettlementLayoutSystem.ComputeTerrainTargetHeight(wx, wz, groundY);
+            float maxHeight = 4.2f;
+            hasDomeOrTower = false;
+            facadeMat = Stratocraft.Core.Constants.MaterialIdCatalog.CutAshlarStone;
+            roofMat = Stratocraft.Core.Constants.MaterialIdCatalog.RoofClayTile;
+            dominantSchool = Stratocraft.Core.Structures.ArchitecturalSchool.StoneMasonry;
+
+            for (int i = 0; i < sites.Length; i++)
+            {
+                ref readonly var site = ref sites[i];
+                var style = Stratocraft.WorldGen.Generators.UnifiedSettlementBuilder.ResolveBiomeStyle(site.BiomeId, site.Tier);
+                facadeMat = style.WallMaterialId;
+                roofMat = style.RoofMaterialId;
+                dominantSchool = style.PrimarySchool;
+
+                float siteHeight = site.Archetype switch
+                {
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityPalace or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalace or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalaceSlice => 13.8f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.DomedMosqueTemple or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandDomedTemple => 10.5f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityApartment4Story => 13.4f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityApartment3Story => 10.4f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownMansion3Story => 9.8f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownMansion2Story or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.TownHouseTwoStory => site.Tier == Stratocraft.WorldGen.Generators.SettlementTier.City ? 10.4f : 7.0f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityBastionTower or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.MeadHallWatchtower or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.WindmillTower => 9.6f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityGatehouse => 8.0f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityCurtainWallSegment or
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityWallSegment => 6.2f,
+                    Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.ArcadedInn => 7.4f,
+                    _ => 4.8f
+                };
+
+                if (site.Archetype is Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.CityPalace
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalace
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandCityPalaceSlice
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.DomedMosqueTemple
+                    or Stratocraft.WorldGen.Generators.UnifiedSettlementArchetype.GrandDomedTemple)
+                {
+                    hasDomeOrTower = true;
+                    facadeMat = Stratocraft.Core.Constants.MaterialIdCatalog.DressedMarbleBlock;
+                }
+
+                if (siteHeight > maxHeight) maxHeight = siteHeight;
+            }
+
+            maxY = minY + maxHeight;
+        }
+
+        private void TrackPhysicsChunkLoaded(int cx, int cz)
+        {
+            for (int i = 0; i < _activePhysicsChunkCount; i++)
+            {
+                if (_activePhysicsChunkList[i].cx == cx && _activePhysicsChunkList[i].cz == cz) return;
+            }
+            if (_activePhysicsChunkCount < _activePhysicsChunkList.Length)
+            {
+                _activePhysicsChunkList[_activePhysicsChunkCount++] = (cx, cz);
+            }
+        }
+
+        private void UntrackPhysicsChunkLoaded(int cx, int cz)
+        {
+            for (int i = _activePhysicsChunkCount - 1; i >= 0; i--)
+            {
+                if (_activePhysicsChunkList[i].cx == cx && _activePhysicsChunkList[i].cz == cz)
+                {
+                    int last = --_activePhysicsChunkCount;
+                    if (i < last) _activePhysicsChunkList[i] = _activePhysicsChunkList[last];
+                    _activePhysicsChunkList[last] = default;
+                    return;
+                }
+            }
+        }
+
+#if !UNITY_5_3_OR_NEWER
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
+#endif
         public int ReleaseChunkUnifiedNodes(int chunkX, int chunkZ)
         {
             int chunkKey = PackChunkKey(chunkX, chunkZ);
             _spawnedUnifiedChunkKeys.Remove(chunkKey);
+            UntrackPhysicsChunkLoaded(chunkX, chunkZ);
 
             int removeCount = 0;
             System.ReadOnlySpan<Stratocraft.Core.Structures.StructuralNode64> nodes = GraphSolver.NodesSpan;
@@ -4204,6 +5194,12 @@ namespace Stratocraft.Character
                 }
             }
 
+#if UNITY_5_3_OR_NEWER
+            if (UnityEngine.Application.isPlaying)
+            {
+                StepActiveWindowAndDistantCitySkyline(viewerPos);
+            }
+#endif
             CityLodRenderer.StepStreaming(viewerPos.X, viewerPos.Z, simSeconds);
 
             bool shouldRefreshEnv = _envEvalDirty ||

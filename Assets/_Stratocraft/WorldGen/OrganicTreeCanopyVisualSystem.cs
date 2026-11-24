@@ -590,6 +590,7 @@ namespace Stratocraft.WorldGen
             ref int writeCount)
         {
             if (writeCount >= outSpecs.Length) return;
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement((chunkX << 4) + lx, (chunkZ << 4) + lz)) return;
 
             if (!StratocraftFloatingIslandWorldGen.TryResolveNaturalTreeCandidate(
                     chunkX, chunkZ, lx, lz, trunkHeight, isIronwood,
@@ -598,6 +599,8 @@ namespace Stratocraft.WorldGen
             {
                 return;
             }
+
+            if (SettlementLayoutSystem.IsColumnReservedBySettlement(wx, wz)) return;
 
             outSpecs[writeCount++] = new OrganicTreePlacementSpec(
                 worldX: wx + 0.5f,
@@ -621,8 +624,13 @@ namespace Stratocraft.WorldGen
 
             for (int lz = 2; lz <= 13 && writeCount < outSpecs.Length; lz++)
             {
+                int colWz = (chunkZ << 4) + lz;
                 for (int lx = 2; lx <= 13 && writeCount < outSpecs.Length; lx++)
                 {
+                    if (SettlementLayoutSystem.IsColumnReservedBySettlement((chunkX << 4) + lx, colWz))
+                    {
+                        continue;
+                    }
                     int col = (lz << 4) | lx;
                     int minTrunkY = -1;
                     int maxTrunkY = -1;

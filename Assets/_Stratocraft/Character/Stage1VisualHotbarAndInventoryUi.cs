@@ -110,7 +110,32 @@ namespace Stratocraft.Character
         WindowKit = 89,
         StairKit = 90,
         FireplaceChimneyKit = 91,
-        InteriorFurnitureKit = 92
+        InteriorFurnitureKit = 92,
+
+        // --- 9-Ekol Yeni Insaat Aletleri, Gecici Destekler, Kalip/Donati ve Betonarme/Celik Esyalari (93..115) ---
+        ToolShovel = 93,
+        ToolEarthTamper = 94,
+        ToolPlumbAndLevel = 95,
+        WoodenStake = 96,
+        WoodenDowelPeg = 97,
+        TemporaryWoodBrace = 98,
+        CobMudBall = 99,
+        RammedEarthMixBucket = 100,
+        GroovedTimberPost = 101,
+        PlywoodSheathingPanel = 102,
+        WoodenArchCentering = 103,
+        SlidingEarthFormwork = 104,
+        FloorJoistIronStrap = 105,
+        PortlandCementBag = 106,
+        FreshConcreteBucket = 107,
+        SteelRebarBundle = 108,
+        TelescopicShoringProp = 109,
+        SteelAnchorBoltSet = 110,
+        SteelHBeamColumn = 111,
+        SteelGuyWireBrace = 112,
+        SteelXBraceAndDeck = 113,
+        ToolConcreteVibrator = 114,
+        ToolTorqueWrench = 115
     }
 
     /// <summary>
@@ -202,6 +227,14 @@ namespace Stratocraft.Character
             InventoryItemKind.ToolTrowel or InventoryItemKind.ToolChalkLine or InventoryItemKind.ToolHandSaw or InventoryItemKind.ToolMasonChisel or InventoryItemKind.ToolAdze => PhysicalItemArchetype.ToolPrimitiveHammer,
             InventoryItemKind.RopeAndPulley => PhysicalItemArchetype.WoodenWheel,
             InventoryItemKind.ModularScaffoldingKit or InventoryItemKind.PulleyCraneKit or InventoryItemKind.DoorKit or InventoryItemKind.WindowKit or InventoryItemKind.StairKit or InventoryItemKind.FireplaceChimneyKit or InventoryItemKind.InteriorFurnitureKit => PhysicalItemArchetype.ArchitecturalBlock,
+            InventoryItemKind.ToolShovel => PhysicalItemArchetype.ToolPrimitivePickaxe,
+            InventoryItemKind.ToolEarthTamper or InventoryItemKind.ToolPlumbAndLevel or InventoryItemKind.ToolConcreteVibrator or InventoryItemKind.ToolTorqueWrench => PhysicalItemArchetype.ToolPrimitiveHammer,
+            InventoryItemKind.WoodenStake or InventoryItemKind.WoodenDowelPeg => PhysicalItemArchetype.NaturalStick,
+            InventoryItemKind.TemporaryWoodBrace or InventoryItemKind.GroovedTimberPost => PhysicalItemArchetype.SplitFirewood,
+            InventoryItemKind.CobMudBall or InventoryItemKind.RammedEarthMixBucket or InventoryItemKind.FreshConcreteBucket => PhysicalItemArchetype.ClayLump,
+            InventoryItemKind.PortlandCementBag => PhysicalItemArchetype.CrushedFluxPowder,
+            InventoryItemKind.FloorJoistIronStrap or InventoryItemKind.SteelRebarBundle or InventoryItemKind.SteelAnchorBoltSet or InventoryItemKind.SteelGuyWireBrace => PhysicalItemArchetype.WroughtIronBar,
+            InventoryItemKind.PlywoodSheathingPanel or InventoryItemKind.WoodenArchCentering or InventoryItemKind.SlidingEarthFormwork or InventoryItemKind.TelescopicShoringProp or InventoryItemKind.SteelHBeamColumn or InventoryItemKind.SteelXBraceAndDeck => PhysicalItemArchetype.ArchitecturalBlock,
             _ => PhysicalItemArchetype.None
         };
 
@@ -276,7 +309,8 @@ namespace Stratocraft.Character
                    Kind == InventoryItemKind.WindowKit ||
                    Kind == InventoryItemKind.StairKit ||
                    Kind == InventoryItemKind.FireplaceChimneyKit ||
-                   Kind == InventoryItemKind.InteriorFurnitureKit;
+                   Kind == InventoryItemKind.InteriorFurnitureKit ||
+                   (Kind >= InventoryItemKind.WoodenStake && Kind <= InventoryItemKind.SteelXBraceAndDeck);
         }
     }
 
@@ -547,6 +581,24 @@ namespace Stratocraft.Character
             InventoryItemKind.StairKit => 4,
             InventoryItemKind.FireplaceChimneyKit => 4,
             InventoryItemKind.InteriorFurnitureKit => 4,
+            InventoryItemKind.WoodenStake => 16,
+            InventoryItemKind.WoodenDowelPeg => 24,
+            InventoryItemKind.TemporaryWoodBrace => 8,
+            InventoryItemKind.CobMudBall => 16,
+            InventoryItemKind.RammedEarthMixBucket => 8,
+            InventoryItemKind.GroovedTimberPost => 8,
+            InventoryItemKind.PlywoodSheathingPanel => 12,
+            InventoryItemKind.WoodenArchCentering => 4,
+            InventoryItemKind.SlidingEarthFormwork => 4,
+            InventoryItemKind.FloorJoistIronStrap => 16,
+            InventoryItemKind.PortlandCementBag => 12,
+            InventoryItemKind.FreshConcreteBucket => 8,
+            InventoryItemKind.SteelRebarBundle => 12,
+            InventoryItemKind.TelescopicShoringProp => 8,
+            InventoryItemKind.SteelAnchorBoltSet => 16,
+            InventoryItemKind.SteelHBeamColumn => 8,
+            InventoryItemKind.SteelGuyWireBrace => 8,
+            InventoryItemKind.SteelXBraceAndDeck => 8,
             _ => 1
         };
 
@@ -1546,9 +1598,20 @@ namespace Stratocraft.Character
                 InventoryItemKind.IronHardware => CraftIngredientToken.IronHardware,
                 InventoryItemKind.GlassPane => CraftIngredientToken.GlassPane,
                 InventoryItemKind.AshlarBlock => CraftIngredientToken.CutAshlarBlock,
+                InventoryItemKind.TimberBeam => CraftIngredientToken.TimberBeam,
+                InventoryItemKind.WoodenStake => CraftIngredientToken.WoodenStake,
+                InventoryItemKind.PlywoodSheathingPanel => CraftIngredientToken.PlywoodOsb,
+                InventoryItemKind.PortlandCementBag when slot.SubId == 1 => CraftIngredientToken.CementClinker,
+                InventoryItemKind.PortlandCementBag => CraftIngredientToken.PortlandCement,
+                InventoryItemKind.SteelRebarBundle => CraftIngredientToken.SteelRebar,
                 InventoryItemKind.ToolFluidBucket when slot.SubId == 1 => CraftIngredientToken.WaterBucket,
                 InventoryItemKind.MetalIngot when slot.SubId == 1 => CraftIngredientToken.CopperIngot,
                 InventoryItemKind.MetalIngot when slot.SubId == 2 => CraftIngredientToken.WroughtIronBar,
+                InventoryItemKind.MetalIngot when slot.SubId == 3 => CraftIngredientToken.SteelIngot,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Steel => CraftIngredientToken.SteelIngot,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.PlywoodOsbPanel => CraftIngredientToken.PlywoodOsb,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.TreatedTimberBeam => CraftIngredientToken.TimberBeam,
+                InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.CrushedLimeAggregate => CraftIngredientToken.GravelClod,
                 InventoryItemKind.OreChunk when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.QuartzGem => CraftIngredientToken.QuartzCrystal,
                 InventoryItemKind.VoxelBlock when slot.SubId == MaterialIdCatalog.Limestone => CraftIngredientToken.LimestoneChunk,
@@ -1570,6 +1633,58 @@ namespace Stratocraft.Character
 
         public static VisualInventorySlot BuildSlotForCraftOutput(PrimitiveCraftOutputId outputId)
         {
+            switch (outputId)
+            {
+                case PrimitiveCraftOutputId.ToolShovel:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.ToolShovel, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.ToolEarthTamper:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.ToolEarthTamper, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.ToolPlumbAndLevel:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.ToolPlumbAndLevel, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.WoodenStake:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.WoodenStake, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.WoodenDowelPeg:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.WoodenDowelPeg, SubId = 0, Count = 6, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.TemporaryWoodBrace:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.TemporaryWoodBrace, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.CobMudBall:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.CobMudBall, SubId = 0, Count = 6, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.RammedEarthMixBucket:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.RammedEarthMixBucket, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.GroovedTimberPost:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.GroovedTimberPost, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.PlywoodSheathingPanel:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.PlywoodSheathingPanel, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.WoodenArchCentering:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.WoodenArchCentering, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SlidingEarthFormwork:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SlidingEarthFormwork, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.FloorJoistIronStrap:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.FloorJoistIronStrap, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.CementClinkerNodule:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.PortlandCementBag, SubId = 1, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.PortlandCementBag:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.PortlandCementBag, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.FreshConcreteBucket:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.FreshConcreteBucket, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SteelRebarBundle:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SteelRebarBundle, SubId = 0, Count = 4, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.TelescopicShoringProp:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.TelescopicShoringProp, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SteelAnchorBoltSet:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SteelAnchorBoltSet, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SteelHBeamColumn:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SteelHBeamColumn, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SteelGuyWireBrace:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SteelGuyWireBrace, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.SteelXBraceAndDeck:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.SteelXBraceAndDeck, SubId = 0, Count = 2, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.ToolConcreteVibrator:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.ToolConcreteVibrator, SubId = 0, Count = 1, Durability01 = 1.0f };
+                case PrimitiveCraftOutputId.ToolTorqueWrench:
+                    return new VisualInventorySlot { Kind = InventoryItemKind.ToolTorqueWrench, SubId = 0, Count = 1, Durability01 = 1.0f };
+            }
+
             if (PrimitiveSurvivalCraftingCatalog.TryResolveBuildingMaterialId(outputId, out byte buildingMaterialId))
             {
                 return new VisualInventorySlot
@@ -3241,6 +3356,29 @@ namespace Stratocraft.Character
             InventoryItemKind.StairKit => slot.SubId == 2 ? "SrmMrd" : (slot.SubId == 1 ? "L-Mrdvn" : "DüzMrd"),
             InventoryItemKind.FireplaceChimneyKit => "Şömine",
             InventoryItemKind.InteriorFurnitureKit => "Mobilya",
+            InventoryItemKind.ToolShovel => "Kürek",
+            InventoryItemKind.ToolEarthTamper => "Tokmak",
+            InventoryItemKind.ToolPlumbAndLevel => "Şakul",
+            InventoryItemKind.WoodenStake => "Kazık",
+            InventoryItemKind.WoodenDowelPeg => "Kavela",
+            InventoryItemKind.TemporaryWoodBrace => "GçPaynd",
+            InventoryItemKind.CobMudBall => "CobTopu",
+            InventoryItemKind.RammedEarthMixBucket => "SkşTopr",
+            InventoryItemKind.GroovedTimberPost => "OlkDkm",
+            InventoryItemKind.PlywoodSheathingPanel => "OSB-Prd",
+            InventoryItemKind.WoodenArchCentering => "KmrKlb",
+            InventoryItemKind.SlidingEarthFormwork => "KyrKlp",
+            InventoryItemKind.FloorJoistIronStrap => "GergŞrt",
+            InventoryItemKind.PortlandCementBag => slot.SubId == 1 ? "Klinker" : "Çimento",
+            InventoryItemKind.FreshConcreteBucket => "TzBeton",
+            InventoryItemKind.SteelRebarBundle => "Rebar",
+            InventoryItemKind.TelescopicShoringProp => "TelDkm",
+            InventoryItemKind.SteelAnchorBoltSet => "Ankraj",
+            InventoryItemKind.SteelHBeamColumn => "H-Çelik",
+            InventoryItemKind.SteelGuyWireBrace => "ÇlkHlt",
+            InventoryItemKind.SteelXBraceAndDeck => "X-Sac",
+            InventoryItemKind.ToolConcreteVibrator => "Vibrtr",
+            InventoryItemKind.ToolTorqueWrench => "TorkAn",
             _ => "Eşya"
         };
 
@@ -3268,6 +3406,22 @@ namespace Stratocraft.Character
             MaterialIdCatalog.FiredClayBrick => "PişTuğla",
             MaterialIdCatalog.RoofClayTile => "Kiremit",
             MaterialIdCatalog.AdobeBrickBlock => "Kerpiç",
+            MaterialIdCatalog.EnglishBondBrickMasonry => "İngTuğla",
+            MaterialIdCatalog.CobMudBrick => "CobDuvar",
+            MaterialIdCatalog.RammedEarthCompacted => "SkşTopr",
+            MaterialIdCatalog.DriedRammedEarth => "KrToprk",
+            MaterialIdCatalog.PlywoodOsbPanel => "OSB",
+            MaterialIdCatalog.TreatedTimberBeam => "HatılKr",
+            MaterialIdCatalog.GroovedLogTimber => "OlkKütük",
+            MaterialIdCatalog.LimeWashPlaster => "KrcSıva",
+            MaterialIdCatalog.SteelRebarMesh => "RebarAğ",
+            MaterialIdCatalog.WetPortlandConcrete => "TzBeton",
+            MaterialIdCatalog.CuredReinforcedConcrete => "Betonrm",
+            MaterialIdCatalog.StructuralSteelHBeam => "H-Çelik",
+            MaterialIdCatalog.CorrugatedSteelDeck => "TrpzSac",
+            MaterialIdCatalog.StrawChinkingBundle => "SmnDerz",
+            MaterialIdCatalog.CrushedLimeAggregate => "Agrega",
+            MaterialIdCatalog.FormworkTimberBoard => "KalıpTh",
             MaterialIdCatalog.WattleDaubPanelBlock => "DalÖrgü",
             MaterialIdCatalog.LimeMortarStoneWall => "HarçDuv",
             MaterialIdCatalog.ChinkedLogBlock => "DerzKtk",
@@ -4017,6 +4171,33 @@ namespace Stratocraft.Character
             },
             InventoryItemKind.FireplaceChimneyKit => "Taş/Tuğla Şömine Ocağı & Baca Şaftı Kiti (Yanmaz Taban + %100 Çekiş)",
             InventoryItemKind.InteriorFurnitureKit => "İç Mekân Mobilya Kiti (Masa, Bank, Sandık, Raf & Meşale Askısı)",
+            InventoryItemKind.ToolShovel => slot.SubId == 1
+                ? "İlkel Taş Kürek (T1 — Temel Hendeği & Toprak/Kum/Çakıl Kazısı)"
+                : "Demir İnşaat Küreği (T2 — Hızlı Kireç İpi Temel Hendeği Kazısı)",
+            InventoryItemKind.ToolEarthTamper => "Toprak & Blokaj Tokmağı (%50 Rammed Earth Sıkıştırma -> 0 sn Kalıp Sökümü)",
+            InventoryItemKind.ToolPlumbAndLevel => "Şakul & Su Terazisi (Duvar Diklik & Kot Göstergesi)",
+            InventoryItemKind.WoodenStake => "Ahşap Temel Kazığı (Kireç İpi, Geçici Payanda & Kazıklı Temel Ankrajı)",
+            InventoryItemKind.WoodenDowelPeg => "Meşe Kavela / Ahşap Pim (Kertikli Kütük & Zıvana-Delik Kilidi)",
+            InventoryItemKind.TemporaryWoodBrace => "Geçici 45° Kurulum Payandası ([Shift+E] ile %100 Geri Alınır)",
+            InventoryItemKind.CobMudBall => "Samanlı Cob Çamur Topu (Kavisli Kalıpsız Duvar — Maks 45cm / 90sn Kür)",
+            InventoryItemKind.RammedEarthMixBucket => "Sıkıştırılmış Toprak Karışımı (Kayar Kalıba 15cm Dök -> Tokmakla)",
+            InventoryItemKind.GroovedTimberPost => "Oluklu Dikey Kütük Dikmesi (LogPostAndFill Kanallı Dikme İskeleti)",
+            InventoryItemKind.PlywoodSheathingPanel => "Kontrplak / OSB Perde Levhası (Platform Çerçeve Shear Wall Kilidi)",
+            InventoryItemKind.WoodenArchCentering => "Ahşap Kemer Kalıbı (Kilit Taşı + Kür Sonrası [Shift+E] %100 İade)",
+            InventoryItemKind.SlidingEarthFormwork => "Kayar Toprak Kalıbı (Tokmaklama Sonrası 0 sn'de [Shift+E] Sökülür)",
+            InventoryItemKind.FloorJoistIronStrap => "Döşeme Gergi Şeridi & Duvar Bağı (Tuğla/Taş Çok Katlı Diyafram Kilidi)",
+            InventoryItemKind.PortlandCementBag => slot.SubId == 1
+                ? "Portland Çimento Klinkeri (1450 °C -> Yel Değirmeninde Öğüt!)"
+                : "Portland Çimento Torbası (Beton Teknesinde Kum + Çakıl + Su ile Karıştır)",
+            InventoryItemKind.FreshConcreteBucket => "Taze Portland Betonu Kovası (Grobeton, Kolon & Tabliye Dökümü)",
+            InventoryItemKind.SteelRebarBundle => "İnşaat Demiri Paketi (Rebar, L-Filiz, Etriye & Döşeme Hasırı)",
+            InventoryItemKind.TelescopicShoringProp => "Teleskopik Çelik Dikme + Tabliye Kalıbı (%75 Kür Sonrası [Shift+E] %100 İade)",
+            InventoryItemKind.SteelAnchorBoltSet => "Çelik Ankraj Bulon Seti (Beton Temele H-Kolon Sabitleme)",
+            InventoryItemKind.SteelHBeamColumn => "H/I Profil Çelik Kolon & Kiriş (Vinç 14m & Tork Anahtarı Uyumlu)",
+            InventoryItemKind.SteelGuyWireBrace => "Geçici Çelik Halat Gergisi (X-Çapraz Sonrası [Shift+E] %100 İade)",
+            InventoryItemKind.SteelXBraceAndDeck => "Çelik X-Çapraz & Trapez Sac Tabliye (Dikmesiz Metal Deck Döşeme)",
+            InventoryItemKind.ToolConcreteVibrator => "Beton Şişleme / Vibratör Çubuğu (Taze Betonda %100 Mukavemet Kilidi)",
+            InventoryItemKind.ToolTorqueWrench => "Çelik Tork Anahtarı (Snug-Tight -> Tam Tork Çelik Bulon Kilidi)",
             _ => "Boş Yuva"
             };
         }
@@ -4126,6 +4307,31 @@ namespace Stratocraft.Character
             InventoryItemKind.StairKit => "[T] Katlar Arası Merdiven Kur (Üst Döşemede >= 1.95m StairwellTrimmerOpening Açın)",
             InventoryItemKind.FireplaceChimneyKit => "[T] Taş/Toprak Zemine Kur (Yanıcı Ahşaptan >= 1.20 m veya Taş Yangın Duvarı!)",
             InventoryItemKind.InteriorFurnitureKit => "[T] İç Mekân Masa, Bank, 16-Yuva Sandık, Raf & Duvar Meşale Askısı Yerleştir",
+            InventoryItemKind.ToolShovel => "[Sol Tık] Kireç İpi Boyunca Temel Hendeği Kaz, Toprak/Kum/Çakıl Çıkar",
+            InventoryItemKind.ToolEarthTamper => "[Sol Tık] Hendek Blokajını veya Kayar Kalıptaki Toprağı %50 Sıkıştır (-> 0sn Kalıp Sökümü!)",
+            InventoryItemKind.ToolPlumbAndLevel => "Eldeyken Duvar/Dikme Diklik Açısını ve Kot Farkını Gösterir (+Hizalı İnşa Bonusu)",
+            InventoryItemKind.WoodenStake => "[Sol Tık] Kireç İpi Kazığı Çak, Geçici Payanda Sabitle veya Kazıklı Temel Kur",
+            InventoryItemKind.WoodenDowelPeg => "[Sol Tık] Kertikli Kütük Duvarları ve Karkas Zıvanalarını Dikey Kilitle",
+            InventoryItemKind.TemporaryWoodBrace => "[Sol Tık] Dikme/Çerçeveyi 45° Geçici Sabitle | Üst Kuşak/OSB Sonrası [Shift+E] %100 İade",
+            InventoryItemKind.CobMudBall => "[Sol Tık / Sürükle] Kavisli Kalıpsız Cob Duvar Ör (Katman <= 45cm, 90sn Kuruma)",
+            InventoryItemKind.RammedEarthMixBucket => "[Sol Tık / Sürükle] Kayar Toprak Kalıbına Dök -> Tokmakla Sıkıştır",
+            InventoryItemKind.GroovedTimberPost => "[Sol Tık] Dikmeli-Kanallı Kütük İskeleti Dik -> Geçici 45° Payandayla Sabitle",
+            InventoryItemKind.PlywoodSheathingPanel => "[Sol Tık / Sürükle] Platform Duvarı Shear Wall Diyaframına Kilitle",
+            InventoryItemKind.WoodenArchCentering => "[Sol Tık] İki Söve Arasına Kemer Kalıbı Kur | Kilit Taşı + Kür Sonrası [Shift+E] %100 İade",
+            InventoryItemKind.SlidingEarthFormwork => "[Sol Tık] Rammed Earth Kalıbı Kur | Tokmaklama Sonrası 0 sn'de [Shift+E] Sök & Taşı",
+            InventoryItemKind.FloorJoistIronStrap => "[Sol Tık] Döşeme Kirişini Taş/Tuğla Dış Duvara Çelik Gergi Şeridiyle Kilitle",
+            InventoryItemKind.PortlandCementBag => slot.SubId == 1
+                ? "[Sağ Tık] Yel Değirmeni Hunisine Yükle -> [E] 4x Portland Çimento Torbası Al"
+                : "Harç & Beton Teknesinde 2x Kum + 3x Çakıl + Su ile Taze Beton Karıştır",
+            InventoryItemKind.FreshConcreteBucket => "[Sol Tık / Sürükle] Kalıp ve Dikme Ormanı Üzerine Monolitik Beton Dök -> Vibratörle Şişle",
+            InventoryItemKind.SteelRebarBundle => "[Sol Tık] Temel L-Filizi, Etriyeli Kolon Kafesi ve Tabliye Donatısı Yerleştir",
+            InventoryItemKind.TelescopicShoringProp => "[Sol Tık] Betonarme Tabliye Altına Dikme Ormanı Kur | %75 Kür (300sn) Sonrası [Shift+E] %100 İade",
+            InventoryItemKind.SteelAnchorBoltSet => "[Sol Tık] Betonarme Temele Çelik H-Kolon Ankraj Şablonu Kur",
+            InventoryItemKind.SteelHBeamColumn => "[Sol Tık] H/I Profil Çelik Kolon & Kiriş Kur -> Geçici Çelik Halat + Tork Anahtarı",
+            InventoryItemKind.SteelGuyWireBrace => "[Sol Tık] Çelik Kolonu Rüzgâra Karşı Geçici Ger | X-Çapraz Sonrası [Shift+E] %100 İade",
+            InventoryItemKind.SteelXBraceAndDeck => "[Sol Tık] Kalıcı Çelik X-Çapraz veya Dikmesiz Trapez Sac Tabliye Döşe ([V] Varyant)",
+            InventoryItemKind.ToolConcreteVibrator => "[Sol Tık] Taze Dökülen Betonu Şişleyerek Hava Boşluklarını Al (%100 Mukavemet)",
+            InventoryItemKind.ToolTorqueWrench => "[Sol Tık] Çelik Kolon/Kiriş Bulonlarını Snug-Tight -> Tam Tork Rijit Kilitle",
             _ => string.Empty
         };
 
@@ -4616,6 +4822,29 @@ namespace Stratocraft.Character
                 case InventoryItemKind.StairKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.StoneBrick); break;
                 case InventoryItemKind.FireplaceChimneyKit: DrawStoneKilnIcon(tex); break;
                 case InventoryItemKind.InteriorFurnitureKit: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.WoodPlank); break;
+                case InventoryItemKind.ToolShovel: DrawPickaxeIcon(tex, slot.SubId == 1); break;
+                case InventoryItemKind.ToolEarthTamper: DrawHammerIcon(tex, false); break;
+                case InventoryItemKind.ToolPlumbAndLevel: DrawChiselIcon(tex); break;
+                case InventoryItemKind.WoodenStake:
+                case InventoryItemKind.WoodenDowelPeg: DrawStickIcon(tex); break;
+                case InventoryItemKind.TemporaryWoodBrace:
+                case InventoryItemKind.GroovedTimberPost: DrawFirewoodIcon(tex, MaterialIdCatalog.GroovedLogTimber); break;
+                case InventoryItemKind.CobMudBall: DrawSoilMoundIcon(tex, new Color(0.68f, 0.50f, 0.34f, 1f), new Color(0.82f, 0.68f, 0.46f, 1f)); break;
+                case InventoryItemKind.RammedEarthMixBucket:
+                case InventoryItemKind.FreshConcreteBucket: DrawFluidBucketIcon(tex, 1); break;
+                case InventoryItemKind.PlywoodSheathingPanel: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.PlywoodOsbPanel); break;
+                case InventoryItemKind.WoodenArchCentering:
+                case InventoryItemKind.SlidingEarthFormwork:
+                case InventoryItemKind.TelescopicShoringProp: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.FormworkTimberBoard); break;
+                case InventoryItemKind.FloorJoistIronStrap:
+                case InventoryItemKind.SteelRebarBundle:
+                case InventoryItemKind.SteelAnchorBoltSet:
+                case InventoryItemKind.SteelGuyWireBrace: DrawIngotIcon(tex, 3); break;
+                case InventoryItemKind.PortlandCementBag: DrawSoilMoundIcon(tex, new Color(0.64f, 0.66f, 0.68f, 1f), new Color(0.82f, 0.84f, 0.85f, 1f)); break;
+                case InventoryItemKind.SteelHBeamColumn: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.StructuralSteelHBeam); break;
+                case InventoryItemKind.SteelXBraceAndDeck: DrawIsometricVoxelCubeIcon(tex, MaterialIdCatalog.CorrugatedSteelDeck); break;
+                case InventoryItemKind.ToolConcreteVibrator:
+                case InventoryItemKind.ToolTorqueWrench: DrawChiselIcon(tex); break;
             }
 
             tex.Apply(false, false);
@@ -5476,7 +5705,7 @@ namespace Stratocraft.Character
             "📜 İksir & Parşömen (7)",
             "🌿 Doğa & Metalurji (42)",
             "🌦️ Hava Aletleri (6)",
-            "🏛️ Ekol 1-4 & İç Mekân (38)"
+            "🏛️ 9-Ekol Mimari & İç Mekân (78)"
         };
 
         public const int CreativeWeatherCategoryIndex = 5;
@@ -5553,7 +5782,12 @@ namespace Stratocraft.Character
             (InventoryItemKind.ToolFluidCauldron, 2),
             (InventoryItemKind.MetalIngot, 1),
             (InventoryItemKind.MetalIngot, 2),
-            (InventoryItemKind.MetalIngot, 3)
+            (InventoryItemKind.MetalIngot, 3),
+            (InventoryItemKind.ToolShovel, 0),
+            (InventoryItemKind.ToolEarthTamper, 0),
+            (InventoryItemKind.ToolPlumbAndLevel, 0),
+            (InventoryItemKind.ToolConcreteVibrator, 0),
+            (InventoryItemKind.ToolTorqueWrench, 0)
         };
 
         private static readonly (InventoryItemKind kind, byte subId)[] CreativeArmors =
@@ -5685,7 +5919,51 @@ namespace Stratocraft.Character
             (InventoryItemKind.StairKit, 1), // L-Dönüşlü Sahanlıklı Merdiven
             (InventoryItemKind.StairKit, 2), // Taş Sarmal Merdiven
             (InventoryItemKind.FireplaceChimneyKit, 0),
-            (InventoryItemKind.InteriorFurnitureKit, 0)
+            (InventoryItemKind.InteriorFurnitureKit, 0),
+
+            // 9-Ekol Yeni İşlenmiş Mimari Bloklar (137..152 — %100 CrystalImmune)
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.EnglishBondBrickMasonry),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CobMudBrick),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.RammedEarthCompacted),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.DriedRammedEarth),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.PlywoodOsbPanel),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.TreatedTimberBeam),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.GroovedLogTimber),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.LimeWashPlaster),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.SteelRebarMesh),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.WetPortlandConcrete),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CuredReinforcedConcrete),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.StructuralSteelHBeam),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CorrugatedSteelDeck),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.StrawChinkingBundle),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.CrushedLimeAggregate),
+            (InventoryItemKind.VoxelBlock, MaterialIdCatalog.FormworkTimberBoard),
+
+            // 9-Ekol Yeni Uzman Aletler, Geçici Destekler, Kalıplar, Betonarme & Çelik Eşyaları (93..115)
+            (InventoryItemKind.ToolShovel, 0),
+            (InventoryItemKind.ToolEarthTamper, 0),
+            (InventoryItemKind.ToolPlumbAndLevel, 0),
+            (InventoryItemKind.WoodenStake, 0),
+            (InventoryItemKind.WoodenDowelPeg, 0),
+            (InventoryItemKind.TemporaryWoodBrace, 0),
+            (InventoryItemKind.CobMudBall, 0),
+            (InventoryItemKind.RammedEarthMixBucket, 0),
+            (InventoryItemKind.GroovedTimberPost, 0),
+            (InventoryItemKind.PlywoodSheathingPanel, 0),
+            (InventoryItemKind.WoodenArchCentering, 0),
+            (InventoryItemKind.SlidingEarthFormwork, 0),
+            (InventoryItemKind.FloorJoistIronStrap, 0),
+            (InventoryItemKind.PortlandCementBag, 1), // Klinker
+            (InventoryItemKind.PortlandCementBag, 0), // Portland Çimento
+            (InventoryItemKind.FreshConcreteBucket, 0),
+            (InventoryItemKind.SteelRebarBundle, 0),
+            (InventoryItemKind.TelescopicShoringProp, 0),
+            (InventoryItemKind.SteelAnchorBoltSet, 0),
+            (InventoryItemKind.SteelHBeamColumn, 0),
+            (InventoryItemKind.SteelGuyWireBrace, 0),
+            (InventoryItemKind.SteelXBraceAndDeck, 0),
+            (InventoryItemKind.ToolConcreteVibrator, 0),
+            (InventoryItemKind.ToolTorqueWrench, 0)
         };
 
         private uint _creativeSeedCounter = 0x51A70C01u;

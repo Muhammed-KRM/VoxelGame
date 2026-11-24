@@ -102,6 +102,7 @@ namespace Stratocraft.EditorTools
             int totalVoxelChunkObjects = 0;
             int validVoxelChunkMeshes = 0;
             bool hasLegacyMismatchedShells = false;
+            bool hasLegacyModularPieceLeftovers = false;
             var runtimeLeftoversToDestroy = new List<GameObject>();
 
             for (int i = 0; i < filters.Length; i++)
@@ -112,6 +113,12 @@ namespace Stratocraft.EditorTools
                 if (n.StartsWith("VoxelChunk_Pooled_", StringComparison.Ordinal) ||
                     n.StartsWith("DistantHorizon_ClipmapRing_", StringComparison.Ordinal))
                 {
+                    runtimeLeftoversToDestroy.Add(go);
+                    continue;
+                }
+                if (n.StartsWith("ModularPiece3D_", StringComparison.Ordinal))
+                {
+                    hasLegacyModularPieceLeftovers = true;
                     runtimeLeftoversToDestroy.Add(go);
                     continue;
                 }
@@ -160,7 +167,7 @@ namespace Stratocraft.EditorTools
                 hasCentralPhoenix = true;
             }
 
-            if (totalVoxelChunkObjects < 200 || hasCentralPhoenix || hasLegacyMismatchedShells)
+            if (totalVoxelChunkObjects < 200 || hasCentralPhoenix || hasLegacyMismatchedShells || hasLegacyModularPieceLeftovers)
             {
                 _autoSyncInProgress = true;
                 try
@@ -1168,6 +1175,24 @@ namespace Stratocraft.EditorTools
                     string p2 = $"{GeneratedAssetsFolder}/Mesh_ContinentFluid_{sx}_{sz}.asset";
                     if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(p1) != null) AssetDatabase.DeleteAsset(p1);
                     if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(p2) != null) AssetDatabase.DeleteAsset(p2);
+                }
+            }
+
+            string[] legacyObsoleteAssets =
+            {
+                $"{GeneratedAssetsFolder}/Mesh_HybridChunk_0_0.asset",
+                $"{GeneratedAssetsFolder}/Mesh_HybridChunk_0_1.asset",
+                $"{GeneratedAssetsFolder}/Mesh_HybridChunk_1_0.asset",
+                $"{GeneratedAssetsFolder}/Mesh_HybridChunk_1_1.asset",
+                $"{GeneratedAssetsFolder}/Mesh_VoxelChunk_0_0.asset",
+                $"{GeneratedAssetsFolder}/Mesh_VoxelChunk_1_0.asset",
+                $"{GeneratedAssetsFolder}/Mesh_ForgedSurfaceNets_SwordBlade.asset"
+            };
+            for (int i = 0; i < legacyObsoleteAssets.Length; i++)
+            {
+                if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(legacyObsoleteAssets[i]) != null)
+                {
+                    AssetDatabase.DeleteAsset(legacyObsoleteAssets[i]);
                 }
             }
         }

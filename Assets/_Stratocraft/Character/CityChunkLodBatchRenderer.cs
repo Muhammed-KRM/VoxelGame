@@ -2,6 +2,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Stratocraft.Core.Constants;
 using Stratocraft.Core.Structures;
 
 #if UNITY_5_3_OR_NEWER
@@ -13,14 +14,15 @@ using UnityEngine.Rendering;
 namespace Stratocraft.Character
 {
     /// <summary>
-    /// DOK4 §5.3 &amp; DOK6 §7: Sehir olcegi (9x9 chunk, 3.000-10.000+ dugum) 3-kademeli LOD seviyesi.
+    /// DOK4 §5.3, DOK6 §7 &amp; MIMARI_OZELLIKLERI_GELISTIRME_DOKUMANI Bolum 5.4 / Bolum 6:
+    /// 48x48 chunk Metropol Sehir olceginde (2.304 chunk) 3-kademeli aktif pencere LOD seviyesi.
     /// </summary>
     public enum CityChunkLodTier : byte
     {
         Culled = 0,
-        Lod2HorizonProxy = 1,   // 128 - 384 m+: Dusuk ucgenli dis siluet proxy (24-64 ucgen/bina)
-        Lod1CombinedShell = 2,  // 48 - 128 m: Kapi/pencere aciklikli birlesik bina kabugu (ic mekan elenir)
-        Lod0FullDetail = 3      // 0 - 48 m: Tam detay (statik cephe instanced batch + dinamik aktif dugumler)
+        Lod2HorizonProxy = 1,   // 160 - 750 m+: Renkli catili / kubbeli dusuk ucgenli dis siluet proxy (24-64 ucgen/bina)
+        Lod1CombinedShell = 2,  // 64 - 160 m: Kapi/pencere aciklikli birlesik dis cephe kabugu (ic mekan elenir)
+        Lod0FullDetail = 3      // 0 - 64 m: Tam 65 .glb detay (mesh-gruplu instanced batch + donen kapi kanatlari)
     }
 
     /// <summary>
@@ -45,6 +47,10 @@ namespace Stratocraft.Character
         public double ForcedLod0UntilSec;
         public bool IsDirty;
         public bool HasDomedOrTowerSilhouette;
+        public byte DominantFacadeMaterialId;
+        public byte DominantRoofMaterialId;
+        public ArchitecturalSchool DominantSchool;
+        public uint LastAccessTick;
     }
 
     /// <summary>
@@ -101,19 +107,22 @@ namespace Stratocraft.Character
     }
 
     /// <summary>
-    /// DOK4 §5.3 &amp; DOK6 §7 (AK-21 / T21):
-    /// 9x9 chunk Sehir olceginde 0-GC LOD0 (0-48m) / LOD1 (48-128m) / LOD2 (128-384m+) gecis planlayicisi,
-    /// ic mekan elemesi, hasar aninda aninda LOD0 yukseltme ve &lt;= 1.5 ms Stopwatch akis butcesi denetleyicisi.
+    /// DOK4 §5.3, DOK6 §7 (AK-21 / T21) &amp; MIMARI_OZELLIKLERI_GELISTIRME_DOKUMANI Bolum 1 (KN-1, KN-2) + Bolum 5.4 + Bolum 6:
+    /// - 48x48 chunk Metropol Sehir olceginde 0-GC LOD0 (0-64m) / LOD1 (64-160m) / LOD2 (160-750m+) aktif pencere gecis planlayicisi,
+    /// - Ham birim kup (KN-1) ve bembeyaz HDR parlama (KN-2) hatalarini %100 ortadan kaldiran,
+    ///   <see cref="StructureRoleGlbRegistry"/> uzerinden 65 gercek .glb mesh-gruplu 0-GC Graphics.DrawMeshInstanced cizicisi,
+    /// - DoorFrameOpening dugumleri icin IsDoorOrWindowOpen durumuna gore 0° &lt;-&gt; 90° donen kapi kanadi (mod_hinged_door_leaf / mod_double_gate_leaf),
+    /// - LRU uzak chunk tahliyesi (EvictDistantChunks / GetChunksPendingEviction / UnregisterChunkNodes) ve &lt;= 1.5 ms Stopwatch butcesi.
     /// </summary>
     public sealed class CityChunkLodBatchRenderer
     {
-        public const float Lod0MaxDistanceMeters = 48.0f;
-        public const float Lod1MaxDistanceMeters = 128.0f;
-        public const float Lod2MaxDistanceMeters = 384.0f;
+        public const float Lod0MaxDistanceMeters = 64.0f;
+        public const float Lod1MaxDistanceMeters = 160.0f;
+        public const float Lod2MaxDistanceMeters = 750.0f;
         public const double DefaultStreamingBudgetMs = 1.5;
 
-        public const int DefaultMaxChunkCapacity = 256;
-        public const int DefaultMaxNodeCapacity = 16384;
+        public const int DefaultMaxChunkCapacity = 2048;
+        public const int DefaultMaxNodeCapacity = 65536;
 
         private readonly CityChunkLodSlot[] _chunkSlots;
         private readonly StructuralNode64[] _nodeBuffer;
@@ -126,11 +135,16 @@ namespace Stratocraft.Character
         private int _pendingCount;
         private int _damagePromotionsTotal;
         private int _lastTransitionsApplied;
+        private int _totalEvictedChunks;
+        private uint _accessTickCounter = 1u;
         private double _lastStreamingElapsedMs;
 
         public int RegisteredChunkCount => _chunkCount;
         public int TotalRegisteredNodes => _nodeCount;
         public int PendingTransitionCount => _pendingCount;
+        public int MaxChunkCapacity => _chunkSlots.Length;
+        public int MaxNodeCapacity => _nodeBuffer.Length;
+        public int TotalEvictedChunks => _totalEvictedChunks;
 
         public CityChunkLodBatchRenderer(
             int maxChunkCapacity = DefaultMaxChunkCapacity,
@@ -142,6 +156,11 @@ namespace Stratocraft.Character
             _nodeBuffer = new StructuralNode64[capNodes];
             _pendingTransitionIndices = new int[capChunks];
             _pendingDistancesSq = new float[capChunks];
+#if UNITY_5_3_OR_NEWER
+            _chunkCombinedShellMeshes = new Mesh?[capChunks];
+            _chunkMeshDirtyFlags = new bool[capChunks];
+            _bucketedInstanceRefs = new uint[Math.Max(1024, capNodes + (capNodes >> 2))];
+#endif
         }
 
         public void Clear()
@@ -151,6 +170,8 @@ namespace Stratocraft.Character
             _pendingCount = 0;
             _damagePromotionsTotal = 0;
             _lastTransitionsApplied = 0;
+            _totalEvictedChunks = 0;
+            _accessTickCounter = 1u;
             _lastStreamingElapsedMs = 0.0;
 #if UNITY_5_3_OR_NEWER
             ClearUnityInstanceState();
@@ -167,13 +188,15 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// LOD0 icinde bireysel aktif fiziksel dugume yukseltilmesi gereken (kapi/pencere/merdiven/iskele/hasarli) elemanlar.
+        /// LOD0 icinde bireysel aktif fiziksel dugume yukseltilmesi gereken (kapi/pencere/merdiven/iskele/kalip/hasarli) elemanlar.
         /// Diger sabit duvar/subasman elemanlari tekil instanced batch olarak cizilir.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsInteractiveOrDynamicInLod0(in StructuralNode64 node)
         {
-            if (node.CollapseState != StructureCollapseState.Stable || node.Integrity01 < 0.99f)
+            if (node.CollapseState != StructureCollapseState.Stable ||
+                node.Integrity01 < 0.99f ||
+                node.IsTemporarySupport)
             {
                 return true;
             }
@@ -183,12 +206,18 @@ namespace Stratocraft.Character
                 StructuralElementRole.WindowFrameOpening or
                 StructuralElementRole.StairStringerFlight or
                 StructuralElementRole.ModularScaffolding or
-                StructuralElementRole.TemporaryCenteringScaffold;
+                StructuralElementRole.TemporaryCenteringScaffold or
+                StructuralElementRole.ConcreteColumnFormwork or
+                StructuralElementRole.TelescopicShoringProp or
+                StructuralElementRole.SlabDeckFormwork or
+                StructuralElementRole.SteelGuyWireBrace or
+                StructuralElementRole.WoodenArchCentering or
+                StructuralElementRole.SlidingEarthFormwork;
         }
 
         /// <summary>
-        /// LOD1 (48-128 m) orta mesafede ic mekan elemesi: Kapi/pencere/duvar/kemer/kubbe/cati dis kabugu korunurken
-        /// disaridan gorunmeyen doseme kirisleri, ic merdivenler, iskele ve temel hendekleri elenir.
+        /// LOD1 (64-160 m) orta mesafede ic mekan elemesi: Kapi/pencere/duvar/kemer/kubbe/cati dis kabugu korunurken
+        /// disaridan gorunmeyen doseme kirisleri, ic merdivenler, gecici kaliplar, iskele ve temel hendekleri elenir.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsInteriorCulledInLod1(StructuralElementRole role)
@@ -204,11 +233,24 @@ namespace Stratocraft.Character
                 StructuralElementRole.TemporaryCenteringScaffold or
                 StructuralElementRole.ModularScaffolding or
                 StructuralElementRole.CantileverCorbelBracket or
-                StructuralElementRole.IronTieRod;
+                StructuralElementRole.IronTieRod or
+                StructuralElementRole.SaddleNotchedBaseLog or
+                StructuralElementRole.HalfFlatStarterLog or
+                StructuralElementRole.LogChinkingFill or
+                StructuralElementRole.RebarFoundationCage or
+                StructuralElementRole.RebarColumnCage or
+                StructuralElementRole.ConcreteColumnFormwork or
+                StructuralElementRole.TelescopicShoringProp or
+                StructuralElementRole.SlabDeckFormwork or
+                StructuralElementRole.SteelGuyWireBrace or
+                StructuralElementRole.CorrugatedMetalDeck or
+                StructuralElementRole.WoodenArchCentering or
+                StructuralElementRole.SlidingEarthFormwork;
         }
 
         /// <summary>
         /// Bir (chunkX, chunkZ) chunk'ina ait yapi dugumlerini sifir heap tahsisiyle LOD sistemine kaydeder.
+        /// Kapasite dolmussa en uzaktaki aktif olmayan chunk'lari LRU/mesafe sirasiyla otomatik tahliye eder.
         /// </summary>
         public bool RegisterChunkNodes(
             int chunkX,
@@ -217,17 +259,25 @@ namespace Stratocraft.Character
             float initialViewerX = 0f,
             float initialViewerZ = 0f)
         {
-            if (nodes.Length == 0) return false;
-            if (_nodeCount + nodes.Length > _nodeBuffer.Length) return false;
+            if (nodes.Length == 0 || nodes.Length > _nodeBuffer.Length) return false;
 
             int existingSlot = FindChunkSlotIndex(chunkX, chunkZ);
             if (existingSlot >= 0)
             {
-                // Varolan chunk guncelleniyorsa yerinde yenile (ek kapasite varsa)
-                return RefreshChunkSlot(existingSlot, nodes);
+                if (RefreshChunkSlot(existingSlot, nodes, initialViewerX, initialViewerZ))
+                {
+                    return true;
+                }
+                RemoveChunkSlotAt(existingSlot);
             }
 
-            if (_chunkCount >= _chunkSlots.Length) return false;
+            if (_chunkCount >= _chunkSlots.Length || _nodeCount + nodes.Length > _nodeBuffer.Length)
+            {
+                if (!EnsureCapacityByEvictingFarthest(initialViewerX, initialViewerZ, nodes.Length))
+                {
+                    return false;
+                }
+            }
 
             int startIdx = _nodeCount;
             nodes.CopyTo(_nodeBuffer.AsSpan(startIdx, nodes.Length));
@@ -236,10 +286,208 @@ namespace Stratocraft.Character
             ComputeChunkLodMetrics(
                 chunkX, chunkZ, startIdx, nodes.Length,
                 initialViewerX, initialViewerZ,
+                ++_accessTickCounter,
                 out CityChunkLodSlot slot);
 
             _chunkSlots[_chunkCount++] = slot;
             return true;
+        }
+
+        /// <summary>
+        /// Uzak ufuk silueti (LOD2) icin _nodeBuffer'dan 0 dugum tuketen hafif 0-dugumlu skyline proxy kaydeder (0-GC).
+        /// Eger chunk zaten LOD0/LOD1 dugumlerine sahipse mevcut detayli kaydi korur.
+        /// </summary>
+        public bool RegisterSkylineChunkProxy(
+            int chunkX,
+            int chunkZ,
+            float minY,
+            float maxY,
+            byte dominantFacadeMatId,
+            byte dominantRoofMatId,
+            bool hasDomeOrTower,
+            ArchitecturalSchool dominantSchool,
+            float viewerX = 0f,
+            float viewerZ = 0f)
+        {
+            int existingSlot = FindChunkSlotIndex(chunkX, chunkZ);
+            if (existingSlot >= 0)
+            {
+                if (_chunkSlots[existingSlot].NodeCount > 0)
+                {
+                    _chunkSlots[existingSlot].LastAccessTick = ++_accessTickCounter;
+                    return true;
+                }
+
+                ref CityChunkLodSlot existing = ref _chunkSlots[existingSlot];
+                existing.MinY = minY;
+                existing.MaxY = MathF.Max(minY + 3.0f, maxY);
+                existing.DominantFacadeMaterialId = dominantFacadeMatId != 0 ? dominantFacadeMatId : MaterialIdCatalog.CutAshlarStone;
+                existing.DominantRoofMaterialId = dominantRoofMatId != 0 ? dominantRoofMatId : MaterialIdCatalog.RoofClayTile;
+                existing.HasDomedOrTowerSilhouette = hasDomeOrTower;
+                existing.DominantSchool = dominantSchool;
+                existing.LastAccessTick = ++_accessTickCounter;
+                existing.IsDirty = true;
+                return true;
+            }
+
+            if (_chunkCount >= _chunkSlots.Length)
+            {
+                if (!EnsureCapacityByEvictingFarthest(viewerX, viewerZ, 0))
+                {
+                    return false;
+                }
+            }
+
+            float cx = chunkX * 16.0f + 8.0f;
+            float cz = chunkZ * 16.0f + 8.0f;
+            float dx = cx - viewerX;
+            float dz = cz - viewerZ;
+            float dist = MathF.Sqrt(dx * dx + dz * dz);
+            CityChunkLodTier initialTier = dist <= Lod2MaxDistanceMeters
+                ? CityChunkLodTier.Lod2HorizonProxy
+                : CityChunkLodTier.Culled;
+            float clampedMaxY = MathF.Max(minY + 3.0f, maxY);
+            int proxyTris = hasDomeOrTower ? 48 : ((clampedMaxY - minY) > 5.0f ? 36 : 24);
+
+            _chunkSlots[_chunkCount++] = new CityChunkLodSlot
+            {
+                ChunkX = chunkX,
+                ChunkZ = chunkZ,
+                NodeStartIndex = 0,
+                NodeCount = 0,
+                Lod0ActiveNodeCount = 0,
+                Lod0StaticBatchNodeCount = 0,
+                Lod1ShellNodeCount = 0,
+                Lod2ProxyTriangles = proxyTris,
+                CenterX = cx,
+                CenterZ = cz,
+                MinY = minY,
+                MaxY = clampedMaxY,
+                CurrentLod = initialTier,
+                TargetLod = initialTier,
+                ForcedLod0UntilSec = 0.0,
+                IsDirty = true,
+                HasDomedOrTowerSilhouette = hasDomeOrTower,
+                DominantFacadeMaterialId = dominantFacadeMatId != 0 ? dominantFacadeMatId : MaterialIdCatalog.CutAshlarStone,
+                DominantRoofMaterialId = dominantRoofMatId != 0 ? dominantRoofMatId : MaterialIdCatalog.RoofClayTile,
+                DominantSchool = dominantSchool,
+                LastAccessTick = ++_accessTickCounter
+            };
+            return true;
+        }
+
+        /// <summary>
+        /// Aktif LOD0 penceresinden cikan bir chunk'in _nodeBuffer dugumlerini 0-GC ile serbest birakir,
+        /// ancak ufukta gorunmeye devam etmesi icin 0-dugumlu Lod2HorizonProxy kaydini korur.
+        /// </summary>
+        public bool DowngradeChunkToSkylineProxy(int chunkX, int chunkZ, float viewerX = 0f, float viewerZ = 0f)
+        {
+            int idx = FindChunkSlotIndex(chunkX, chunkZ);
+            if (idx < 0) return false;
+
+            CityChunkLodSlot prev = _chunkSlots[idx];
+            if (prev.NodeCount <= 0) return true;
+
+            RemoveChunkSlotAt(idx);
+            return RegisterSkylineChunkProxy(
+                chunkX,
+                chunkZ,
+                prev.MinY,
+                prev.MaxY,
+                prev.DominantFacadeMaterialId,
+                prev.DominantRoofMaterialId,
+                prev.HasDomedOrTowerSilhouette,
+                prev.DominantSchool,
+                viewerX,
+                viewerZ);
+        }
+
+        /// <summary>
+        /// Belirtilen (chunkX, chunkZ) chunk kaydini ve dugumlerini 0-GC ile LOD tamponundan kaldirir.
+        /// </summary>
+        public bool UnregisterChunkNodes(int chunkX, int chunkZ)
+        {
+            int idx = FindChunkSlotIndex(chunkX, chunkZ);
+            if (idx < 0) return false;
+            RemoveChunkSlotAt(idx);
+            return true;
+        }
+
+        /// <summary>
+        /// Oyuncudan <paramref name="evictionDistanceMeters"/> mesafeden daha uzakta kalan kayitli chunk'larin
+        /// (ChunkX, ChunkZ) koordinatlarini en uzaktan baslayarak <paramref name="outChunks"/> tamponuna doldurur (0-GC).
+        /// </summary>
+        public int GetChunksPendingEviction(
+            float viewerX,
+            float viewerZ,
+            float evictionDistanceMeters,
+            Span<(int ChunkX, int ChunkZ)> outChunks)
+        {
+            if (_chunkCount == 0 || outChunks.Length == 0) return 0;
+
+            float thresholdSq = evictionDistanceMeters * evictionDistanceMeters;
+            int found = 0;
+
+            for (int i = 0; i < _chunkCount && found < outChunks.Length; i++)
+            {
+                ref readonly CityChunkLodSlot s = ref _chunkSlots[i];
+                if (s.ForcedLod0UntilSec > 0.0 && s.CurrentLod == CityChunkLodTier.Lod0FullDetail)
+                {
+                    continue;
+                }
+
+                float dx = s.CenterX - viewerX;
+                float dz = s.CenterZ - viewerZ;
+                float distSq = dx * dx + dz * dz;
+                if (distSq > thresholdSq)
+                {
+                    outChunks[found++] = (s.ChunkX, s.ChunkZ);
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>
+        /// 48x48 chunk Metropol aktif pencere akisi icin <paramref name="maxKeepDistanceMeters"/> disinda kalan
+        /// uzak chunk'lari en uzaktan baslayarak 0-GC ile tahliye eder.
+        /// </summary>
+        public int EvictDistantChunks(
+            float viewerX,
+            float viewerZ,
+            float maxKeepDistanceMeters = Lod2MaxDistanceMeters,
+            int maxEvictions = 16)
+        {
+            if (_chunkCount == 0 || maxEvictions <= 0) return 0;
+
+            float maxKeepSq = maxKeepDistanceMeters * maxKeepDistanceMeters;
+            int evicted = 0;
+
+            while (evicted < maxEvictions && _chunkCount > 0)
+            {
+                int worstIdx = -1;
+                float worstDistSq = maxKeepSq;
+
+                for (int i = 0; i < _chunkCount; i++)
+                {
+                    ref readonly CityChunkLodSlot s = ref _chunkSlots[i];
+                    float dx = s.CenterX - viewerX;
+                    float dz = s.CenterZ - viewerZ;
+                    float distSq = dx * dx + dz * dz;
+                    if (distSq > worstDistSq)
+                    {
+                        worstDistSq = distSq;
+                        worstIdx = i;
+                    }
+                }
+
+                if (worstIdx < 0) break;
+                RemoveChunkSlotAt(worstIdx);
+                _totalEvictedChunks++;
+                evicted++;
+            }
+
+            return evicted;
         }
 
         public bool TryGetChunkSlot(int chunkX, int chunkZ, out CityChunkLodSlot slot)
@@ -251,6 +499,24 @@ namespace Stratocraft.Character
                 return true;
             }
             slot = default;
+            return false;
+        }
+
+        /// <summary>
+        /// Kayitli bir chunk'taki belirli bir dugumun <see cref="StructuralNode64.IsDoorOrWindowOpen"/> durumunu
+        /// yerinde gunceller (kapi kanadinin 0° &lt;-&gt; 90° aninda donmesi icin, 0-GC).
+        /// </summary>
+        public bool TrySetNodeDoorOpenState(uint nodeId, bool isOpen)
+        {
+            if (nodeId == 0u) return false;
+            for (int i = 0; i < _nodeCount; i++)
+            {
+                if (_nodeBuffer[i].NodeId == nodeId)
+                {
+                    _nodeBuffer[i].IsDoorOrWindowOpen = isOpen;
+                    return true;
+                }
+            }
             return false;
         }
 
@@ -275,6 +541,7 @@ namespace Stratocraft.Character
             ref CityChunkLodSlot slot = ref _chunkSlots[idx];
             slot.ForcedLod0UntilSec = Math.Max(slot.ForcedLod0UntilSec, nowSeconds + holdLod0Seconds);
             slot.TargetLod = CityChunkLodTier.Lod0FullDetail;
+            slot.LastAccessTick = ++_accessTickCounter;
             if (slot.CurrentLod != CityChunkLodTier.Lod0FullDetail)
             {
                 slot.CurrentLod = CityChunkLodTier.Lod0FullDetail;
@@ -322,6 +589,7 @@ namespace Stratocraft.Character
         {
             _streamingStopwatch.Restart();
             _pendingCount = 0;
+            uint tick = ++_accessTickCounter;
 
             for (int i = 0; i < _chunkCount; i++)
             {
@@ -331,9 +599,24 @@ namespace Stratocraft.Character
                 float distSq = dx * dx + dz * dz;
                 float dist = MathF.Sqrt(distSq);
 
-                CityChunkLodTier desired = slot.ForcedLod0UntilSec > nowSeconds
-                    ? CityChunkLodTier.Lod0FullDetail
-                    : EvaluateDistanceTier(dist);
+                CityChunkLodTier desired;
+                if (slot.NodeCount == 0)
+                {
+                    desired = dist <= Lod2MaxDistanceMeters
+                        ? CityChunkLodTier.Lod2HorizonProxy
+                        : CityChunkLodTier.Culled;
+                }
+                else
+                {
+                    desired = slot.ForcedLod0UntilSec > nowSeconds
+                        ? CityChunkLodTier.Lod0FullDetail
+                        : EvaluateDistanceTier(dist);
+                }
+
+                if (desired == CityChunkLodTier.Lod0FullDetail)
+                {
+                    slot.LastAccessTick = tick;
+                }
 
                 slot.TargetLod = desired;
                 if (slot.CurrentLod != desired || slot.IsDirty)
@@ -377,6 +660,7 @@ namespace Stratocraft.Character
                 ref CityChunkLodSlot slot = ref _chunkSlots[slotIdx];
                 slot.CurrentLod = slot.TargetLod;
                 slot.IsDirty = false;
+                slot.LastAccessTick = tick;
 #if UNITY_5_3_OR_NEWER
                 RebuildUnityChunkRenderState(slotIdx);
 #endif
@@ -418,10 +702,10 @@ namespace Stratocraft.Character
                 }
             }
 
-            // LOD0: 1 instanced batch + dinamik aktif katman; LOD1: chunk basina 1 birlesik shell; LOD2: toplam 1-8 ufuk kabugu
-            int drawCalls = (lod0Chunks > 0 ? Math.Min(12, Math.Max(1, lod0Chunks)) : 0) +
-                            lod1Chunks +
-                            (lod2Chunks > 0 ? Math.Min(8, Math.Max(1, (lod2Chunks + 7) / 8)) : 0);
+            // LOD0/LOD1: 65 .glb mesh-gruplu DrawMeshInstanced; LOD2: renkli catili/kubbeli ufuk siluetleri (1-4 draw call)
+            int drawCalls = (lod0Chunks > 0 ? Math.Min(16, Math.Max(1, lod0Chunks)) : 0) +
+                            (lod1Chunks > 0 ? Math.Min(12, Math.Max(1, (lod1Chunks + 1) / 2)) : 0) +
+                            (lod2Chunks > 0 ? Math.Min(4, Math.Max(1, (lod2Chunks + 15) / 16)) : 0);
 
             summary = new CityLodRenderSummary(
                 _chunkCount,
@@ -452,7 +736,11 @@ namespace Stratocraft.Character
             return -1;
         }
 
-        private bool RefreshChunkSlot(int slotIdx, ReadOnlySpan<StructuralNode64> nodes)
+        private bool RefreshChunkSlot(
+            int slotIdx,
+            ReadOnlySpan<StructuralNode64> nodes,
+            float viewerX,
+            float viewerZ)
         {
             ref CityChunkLodSlot oldSlot = ref _chunkSlots[slotIdx];
             if (nodes.Length <= oldSlot.NodeCount)
@@ -461,7 +749,8 @@ namespace Stratocraft.Character
                 ComputeChunkLodMetrics(
                     oldSlot.ChunkX, oldSlot.ChunkZ,
                     oldSlot.NodeStartIndex, nodes.Length,
-                    oldSlot.CenterX, oldSlot.CenterZ,
+                    viewerX, viewerZ,
+                    ++_accessTickCounter,
                     out CityChunkLodSlot updated);
                 updated.CurrentLod = oldSlot.CurrentLod;
                 updated.ForcedLod0UntilSec = oldSlot.ForcedLod0UntilSec;
@@ -472,6 +761,72 @@ namespace Stratocraft.Character
             return false;
         }
 
+        private void RemoveChunkSlotAt(int slotIdx)
+        {
+            if ((uint)slotIdx >= (uint)_chunkCount) return;
+
+            CityChunkLodSlot removed = _chunkSlots[slotIdx];
+            int removedStart = removed.NodeStartIndex;
+            int removedLen = removed.NodeCount;
+
+            // NodeBuffer icindeki boslugu kaydirarak kapat (0-GC in-place compaction)
+            if (removedLen > 0 && removedStart + removedLen < _nodeCount)
+            {
+                int tailCount = _nodeCount - (removedStart + removedLen);
+                _nodeBuffer.AsSpan(removedStart + removedLen, tailCount)
+                    .CopyTo(_nodeBuffer.AsSpan(removedStart, tailCount));
+
+                for (int i = 0; i < _chunkCount; i++)
+                {
+                    if (i != slotIdx && _chunkSlots[i].NodeStartIndex > removedStart)
+                    {
+                        _chunkSlots[i].NodeStartIndex -= removedLen;
+                    }
+                }
+            }
+
+            _nodeCount = Math.Max(0, _nodeCount - removedLen);
+            _chunkCount--;
+
+            if (slotIdx < _chunkCount)
+            {
+                _chunkSlots[slotIdx] = _chunkSlots[_chunkCount];
+            }
+            _chunkSlots[_chunkCount] = default;
+            _pendingCount = 0;
+        }
+
+        private bool EnsureCapacityByEvictingFarthest(float viewerX, float viewerZ, int requiredNodes)
+        {
+            while ((_chunkCount >= _chunkSlots.Length || _nodeCount + requiredNodes > _nodeBuffer.Length) && _chunkCount > 0)
+            {
+                int worstIdx = -1;
+                float worstScore = -1f;
+
+                for (int i = 0; i < _chunkCount; i++)
+                {
+                    ref readonly CityChunkLodSlot s = ref _chunkSlots[i];
+                    float dx = s.CenterX - viewerX;
+                    float dz = s.CenterZ - viewerZ;
+                    float distSq = dx * dx + dz * dz;
+                    // En uzak ve en eski erisilen chunk oncelikle tahliye edilir
+                    uint age = _accessTickCounter >= s.LastAccessTick ? (_accessTickCounter - s.LastAccessTick) : 0u;
+                    float score = distSq + (age * 16.0f);
+                    if (score > worstScore)
+                    {
+                        worstScore = score;
+                        worstIdx = i;
+                    }
+                }
+
+                if (worstIdx < 0) return false;
+                RemoveChunkSlotAt(worstIdx);
+                _totalEvictedChunks++;
+            }
+
+            return _chunkCount < _chunkSlots.Length && (_nodeCount + requiredNodes <= _nodeBuffer.Length);
+        }
+
         private void ComputeChunkLodMetrics(
             int chunkX,
             int chunkZ,
@@ -479,6 +834,7 @@ namespace Stratocraft.Character
             int count,
             float viewerX,
             float viewerZ,
+            uint accessTick,
             out CityChunkLodSlot slot)
         {
             int activeCount = 0;
@@ -487,6 +843,9 @@ namespace Stratocraft.Character
             float minY = float.MaxValue;
             float maxY = float.MinValue;
             bool hasDomeOrTower = false;
+            byte facadeMat = MaterialIdCatalog.CutAshlarStone;
+            byte roofMat = MaterialIdCatalog.RoofClayTile;
+            ArchitecturalSchool dominantSchool = ArchitecturalSchool.StoneMasonry;
 
             for (int i = 0; i < count; i++)
             {
@@ -501,9 +860,31 @@ namespace Stratocraft.Character
 
                 if (n.Role is StructuralElementRole.DomeRingCourse or
                     StructuralElementRole.DomeOculusCrown or
-                    StructuralElementRole.DomeDrumTambour)
+                    StructuralElementRole.DomeDrumTambour or
+                    StructuralElementRole.PendentiveOrSquinch)
                 {
                     hasDomeOrTower = true;
+                }
+
+                if (n.Role is StructuralElementRole.AshlarMasonryWall or
+                    StructuralElementRole.RubbleMasonryCourse or
+                    StructuralElementRole.NotchedWallLog or
+                    StructuralElementRole.InfillPanelWattleAdobe or
+                    StructuralElementRole.EnglishBondBrickWall or
+                    StructuralElementRole.RammedEarthWall or
+                    StructuralElementRole.CobCurvedWall or
+                    StructuralElementRole.PlywoodSheathingPanel &&
+                    n.MaterialId != 0)
+                {
+                    facadeMat = n.MaterialId;
+                    dominantSchool = n.School;
+                }
+                else if (n.Role is StructuralElementRole.InclinedRoofRafter or
+                         StructuralElementRole.RoofCoveringCourse or
+                         StructuralElementRole.DomeRingCourse &&
+                         n.MaterialId != 0)
+                {
+                    roofMat = n.MaterialId;
                 }
             }
 
@@ -514,7 +895,7 @@ namespace Stratocraft.Character
             float dz = cz - viewerZ;
             CityChunkLodTier initialTier = EvaluateDistanceTier(MathF.Sqrt(dx * dx + dz * dz));
 
-            // DOK4 §5.3: LOD2 bina adasi basina 24-64 ucgen siluet proxy
+            // DOK4 §5.3: LOD2 bina adasi basina 24-64 ucgen renkli/catili/kubbeli siluet proxy
             int proxyTris = hasDomeOrTower ? 48 : ((maxY - minY) > 5.0f ? 36 : 24);
 
             slot = new CityChunkLodSlot
@@ -535,29 +916,93 @@ namespace Stratocraft.Character
                 TargetLod = initialTier,
                 ForcedLod0UntilSec = 0.0,
                 IsDirty = true,
-                HasDomedOrTowerSilhouette = hasDomeOrTower
+                HasDomedOrTowerSilhouette = hasDomeOrTower,
+                DominantFacadeMaterialId = facadeMat,
+                DominantRoofMaterialId = roofMat,
+                DominantSchool = dominantSchool,
+                LastAccessTick = accessTick
             };
+        }
+
+        /// <summary>
+        /// Dugum kesit kalinlik profiline (Slender / Standard / HeavyBearing) gore yerel olcek carpanini cozer (0-GC).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ResolveNodeThicknessScale(
+            StructuralElementRole role,
+            StructureThicknessProfile profile,
+            out float scaleX,
+            out float scaleY,
+            out float scaleZ)
+        {
+            scaleX = 1.0f;
+            scaleY = 1.0f;
+            scaleZ = 1.0f;
+
+            if (profile == StructureThicknessProfile.Standard)
+            {
+                return;
+            }
+
+            float factor = profile == StructureThicknessProfile.Slender ? 0.82f : 1.22f;
+            switch (role)
+            {
+                case StructuralElementRole.AshlarMasonryWall:
+                case StructuralElementRole.RubbleMasonryCourse:
+                case StructuralElementRole.NotchedWallLog:
+                case StructuralElementRole.InfillPanelWattleAdobe:
+                case StructuralElementRole.RetainingWallCourse:
+                case StructuralElementRole.PlatformStudWall:
+                case StructuralElementRole.PlywoodSheathingPanel:
+                case StructuralElementRole.RammedEarthWall:
+                case StructuralElementRole.CobCurvedWall:
+                case StructuralElementRole.EnglishBondBrickWall:
+                    scaleZ = factor;
+                    break;
+
+                case StructuralElementRole.TimberPost:
+                case StructuralElementRole.DrivenTimberPile:
+                case StructuralElementRole.MonolithicColumnShaft:
+                case StructuralElementRole.GroovedLogPost:
+                case StructuralElementRole.SteelHBeamColumn:
+                    scaleX = factor;
+                    scaleZ = factor;
+                    break;
+            }
         }
 
 #if UNITY_5_3_OR_NEWER
         private const int MaxInstancesPerDrawCall = 1023;
         private static readonly Matrix4x4[] _sharedInstanceMatrices = new Matrix4x4[MaxInstancesPerDrawCall];
-        private static readonly Vector4[] _sharedInstanceColors = new Vector4[MaxInstancesPerDrawCall];
-        private static readonly List<Mesh> _sharedUnitMeshPool = new(16);
-        private static Mesh? _sharedUnitBoxMesh;
         private static MaterialPropertyBlock? _sharedMpb;
+        private static Material? _cachedSafeGlbMaterial;
+        private static Material? _lastCheckedInputMaterial;
 
-        private readonly Mesh?[] _chunkCombinedShellMeshes = new Mesh?[DefaultMaxChunkCapacity];
-        private readonly bool[] _chunkMeshDirtyFlags = new bool[DefaultMaxChunkCapacity];
+        // LOD2 Ufuk Silueti (catili bina blogu + kubbeli anitsal saray/tapinak) COLOR_0 mesh onbellegi
+        private static readonly Dictionary<int, Mesh> _horizonSilhouetteMeshCache = new(32);
+
+        private readonly Mesh?[] _chunkCombinedShellMeshes;
+        private readonly bool[] _chunkMeshDirtyFlags;
+        private readonly int[] _glbBucketCounts = new int[StructureRoleGlbRegistry.TotalGlbAssetCount];
+        private readonly int[] _glbBucketOffsets = new int[StructureRoleGlbRegistry.TotalGlbAssetCount];
+        private readonly int[] _glbBucketCursors = new int[StructureRoleGlbRegistry.TotalGlbAssetCount];
+        private uint[] _bucketedInstanceRefs;
+
+        /// <summary>
+        /// KN-2 Cozumu: _UsePaletteLUT = 0 ve enableInstancing = true olarak yapilandirilmis
+        /// .glb COLOR_0 uyumlu paylasilan materyal. Atanmazsa otomatik olarak
+        /// <see cref="WorldLooseBuildSystem.ResolveModularVertexColorMaterial"/> uzerinden cozulur.
+        /// </summary>
+        public Material? GlbVertexColorMaterial { get; set; }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticUnityCachesForDomainReloadDisabled()
         {
             Array.Clear(_sharedInstanceMatrices, 0, _sharedInstanceMatrices.Length);
-            Array.Clear(_sharedInstanceColors, 0, _sharedInstanceColors.Length);
-            _sharedUnitMeshPool.Clear();
-            _sharedUnitBoxMesh = null;
             _sharedMpb = null;
+            _cachedSafeGlbMaterial = null;
+            _lastCheckedInputMaterial = null;
+            _horizonSilhouetteMeshCache.Clear();
         }
 
         private void ClearUnityInstanceState()
@@ -570,6 +1015,7 @@ namespace Stratocraft.Character
                 }
                 _chunkMeshDirtyFlags[i] = false;
             }
+            Array.Clear(_glbBucketCounts, 0, _glbBucketCounts.Length);
         }
 
         private void MarkUnityChunkMeshDirty(int slotIdx)
@@ -587,81 +1033,449 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Unity sahnesinde 0-GC GPU Instancing (Graphics.DrawMeshInstanced) ile LOD0/1/2 sehir
-        /// bloklarini cizer. Sabit 1023 matris havuzu sayesinde kare basina 0 B GC alloc yapar.
+        /// KN-2 Cozumu: Gonderilen materyal SharedVoxelMaterial (_UsePaletteLUT = 1) olsa bile
+        /// Stefan-Boltzmann T^4 beyaz magma parlamasini %100 onlemek icin _UsePaletteLUT = 0 ve
+        /// enableInstancing = true olan COLOR_0 materyaline donusturur.
         /// </summary>
-        public void RenderVisibleCityBatches(Material? sharedMaterial, ShadowCastingMode shadows = ShadowCastingMode.On)
+        public static Material? ResolveSafeGlbVertexColorMaterial(Material? candidateMaterial)
         {
-            if (sharedMaterial == null || _chunkCount == 0) return;
+            if (candidateMaterial != null &&
+                candidateMaterial.HasProperty("_UsePaletteLUT") &&
+                candidateMaterial.GetFloat("_UsePaletteLUT") <= 0.01f)
+            {
+                if (!candidateMaterial.enableInstancing)
+                {
+                    candidateMaterial.enableInstancing = true;
+                }
+                return candidateMaterial;
+            }
 
-            Mesh unitMesh = GetOrCreateSharedUnitBoxMesh();
+            if (_cachedSafeGlbMaterial != null && ReferenceEquals(_lastCheckedInputMaterial, candidateMaterial))
+            {
+                return _cachedSafeGlbMaterial;
+            }
+
+            _lastCheckedInputMaterial = candidateMaterial;
+            Material? resolved = WorldLooseBuildSystem.ResolveModularVertexColorMaterial(candidateMaterial);
+            if (resolved == null && candidateMaterial != null)
+            {
+                resolved = new Material(candidateMaterial)
+                {
+                    name = "M_Stratocraft_CityGlbVertexColor_Safe"
+                };
+            }
+
+            if (resolved != null)
+            {
+                resolved.enableInstancing = true;
+                if (resolved.HasProperty("_UsePaletteLUT"))
+                {
+                    resolved.SetFloat("_UsePaletteLUT", 0.0f);
+                }
+                _cachedSafeGlbMaterial = resolved;
+            }
+
+            return resolved;
+        }
+
+        /// <summary>
+        /// Unity sahnesinde 0-GC GPU Instancing (Graphics.DrawMeshInstanced) ile LOD0/1/2 sehir
+        /// yapilarini 65 gercek .glb modeli + donen kapi kanatlari + renkli ufuk siluetleriyle cizer.
+        /// </summary>
+        public void RenderVisibleCityBatches(
+            Material? sharedMaterial,
+            ShadowCastingMode shadows = ShadowCastingMode.On)
+        {
+            RenderVisibleCityBatches(sharedMaterial, GlbVertexColorMaterial, shadows);
+        }
+
+        /// <summary>
+        /// Acik <paramref name="glbVertexColorMaterial"/> parametresiyle 0-GC mesh-gruplu sehir LOD0/1/2 cizimi.
+        /// </summary>
+        public void RenderVisibleCityBatches(
+            Material? sharedMaterial,
+            Material? glbVertexColorMaterial,
+            ShadowCastingMode shadows = ShadowCastingMode.On)
+        {
+            if (_chunkCount == 0) return;
+
+            Material? safeMat = ResolveSafeGlbVertexColorMaterial(glbVertexColorMaterial ?? GlbVertexColorMaterial ?? sharedMaterial);
+            if (safeMat == null) return;
+
             _sharedMpb ??= new MaterialPropertyBlock();
+            _sharedMpb.SetFloat("_UsePaletteLUT", 0.0f);
 
-            int batchCount = 0;
+            // 1. Gecis: LOD0 ve LOD1 dugumlerini 65 .glb varlik indeksine gore say (0-GC)
+            Array.Clear(_glbBucketCounts, 0, StructureRoleGlbRegistry.TotalGlbAssetCount);
+            int totalInstancesToBucket = 0;
+
             for (int c = 0; c < _chunkCount; c++)
             {
                 ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
-                if (slot.CurrentLod == CityChunkLodTier.Culled) continue;
-
-                if (slot.CurrentLod == CityChunkLodTier.Lod2HorizonProxy)
+                if (slot.CurrentLod is CityChunkLodTier.Culled or CityChunkLodTier.Lod2HorizonProxy)
                 {
-                    float h = MathF.Max(2.5f, slot.MaxY - slot.MinY);
-                    Vector3 pos = new Vector3(slot.CenterX, slot.MinY + h * 0.5f, slot.CenterZ);
-                    Vector3 scl = new Vector3(12.0f, h, 12.0f);
-                    _sharedInstanceMatrices[batchCount++] = Matrix4x4.TRS(pos, Quaternion.identity, scl);
-                    if (batchCount == MaxInstancesPerDrawCall)
-                    {
-                        Graphics.DrawMeshInstanced(unitMesh, 0, sharedMaterial, _sharedInstanceMatrices, batchCount, _sharedMpb, shadows, true);
-                        batchCount = 0;
-                    }
                     continue;
                 }
 
                 bool isLod1 = slot.CurrentLod == CityChunkLodTier.Lod1CombinedShell;
-                for (int i = 0; i < slot.NodeCount; i++)
+                int start = slot.NodeStartIndex;
+                int end = start + slot.NodeCount;
+
+                for (int idx = start; idx < end; idx++)
                 {
-                    ref readonly StructuralNode64 node = ref _nodeBuffer[slot.NodeStartIndex + i];
-                    if (node.CollapseState == StructureCollapseState.Collapsed) continue;
-                    if (isLod1 && IsInteriorCulledInLod1(node.Role)) continue;
-
-                    Vector3 pos = new Vector3(node.PosX, node.PosY, node.PosZ);
-                    Quaternion rot = Quaternion.Euler(0f, (node.YawQuarterTurns & 3) * 90f, 0f);
-                    Vector3 scl = ResolveNodeProxyScale(node.Role);
-                    _sharedInstanceMatrices[batchCount++] = Matrix4x4.TRS(pos, rot, scl);
-
-                    if (batchCount == MaxInstancesPerDrawCall)
+                    ref readonly StructuralNode64 node = ref _nodeBuffer[idx];
+                    if (node.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
+                        node.Integrity01 <= 0.001f)
                     {
-                        Graphics.DrawMeshInstanced(unitMesh, 0, sharedMaterial, _sharedInstanceMatrices, batchCount, _sharedMpb, shadows, true);
-                        batchCount = 0;
+                        continue;
+                    }
+                    if (isLod1 && IsInteriorCulledInLod1(node.Role))
+                    {
+                        continue;
+                    }
+
+                    int assetIdx = StructureRoleGlbRegistry.ResolveGlbAssetIndex(in node);
+                    _glbBucketCounts[assetIdx]++;
+                    totalInstancesToBucket++;
+
+                    // DoorFrameOpening: Kapi kasasina ek olarak 0° <-> 90° donen kapi kanadini (veya cift kanadi) kuyruga ekle!
+                    if (node.Role == StructuralElementRole.DoorFrameOpening)
+                    {
+                        int leafAssetIdx = StructureRoleGlbRegistry.ResolveDoorLeafGlbAssetIndex(in node, out bool isDoubleLeaf);
+                        _glbBucketCounts[leafAssetIdx]++;
+                        totalInstancesToBucket++;
+                        if (isDoubleLeaf)
+                        {
+                            _glbBucketCounts[leafAssetIdx]++;
+                            totalInstancesToBucket++;
+                        }
                     }
                 }
             }
 
-            if (batchCount > 0)
+            // 2. Gecis: CSR prefix-sum ve dugum referanslarinin sabit tampona dagitimi (0-GC)
+            if (totalInstancesToBucket > 0)
             {
-                Graphics.DrawMeshInstanced(unitMesh, 0, sharedMaterial, _sharedInstanceMatrices, batchCount, _sharedMpb, shadows, true);
+                if (totalInstancesToBucket > _bucketedInstanceRefs.Length)
+                {
+                    _bucketedInstanceRefs = new uint[Math.Max(totalInstancesToBucket, _bucketedInstanceRefs.Length * 2)];
+                }
+
+                int runningOffset = 0;
+                for (int a = 0; a < StructureRoleGlbRegistry.TotalGlbAssetCount; a++)
+                {
+                    _glbBucketOffsets[a] = runningOffset;
+                    _glbBucketCursors[a] = runningOffset;
+                    runningOffset += _glbBucketCounts[a];
+                }
+
+                for (int c = 0; c < _chunkCount; c++)
+                {
+                    ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
+                    if (slot.CurrentLod is CityChunkLodTier.Culled or CityChunkLodTier.Lod2HorizonProxy)
+                    {
+                        continue;
+                    }
+
+                    bool isLod1 = slot.CurrentLod == CityChunkLodTier.Lod1CombinedShell;
+                    int start = slot.NodeStartIndex;
+                    int end = start + slot.NodeCount;
+
+                    for (int idx = start; idx < end; idx++)
+                    {
+                        ref readonly StructuralNode64 node = ref _nodeBuffer[idx];
+                        if (node.CollapseState is StructureCollapseState.Collapsed or StructureCollapseState.DetachedInstantFall ||
+                            node.Integrity01 <= 0.001f)
+                        {
+                            continue;
+                        }
+                        if (isLod1 && IsInteriorCulledInLod1(node.Role))
+                        {
+                            continue;
+                        }
+
+                        int assetIdx = StructureRoleGlbRegistry.ResolveGlbAssetIndex(in node);
+                        _bucketedInstanceRefs[_glbBucketCursors[assetIdx]++] = ((uint)idx << 2);
+
+                        if (node.Role == StructuralElementRole.DoorFrameOpening)
+                        {
+                            int leafAssetIdx = StructureRoleGlbRegistry.ResolveDoorLeafGlbAssetIndex(in node, out bool isDoubleLeaf);
+                            _bucketedInstanceRefs[_glbBucketCursors[leafAssetIdx]++] = ((uint)idx << 2) | 1u;
+                            if (isDoubleLeaf)
+                            {
+                                _bucketedInstanceRefs[_glbBucketCursors[leafAssetIdx]++] = ((uint)idx << 2) | 2u;
+                            }
+                        }
+                    }
+                }
+
+                // 3. Gecis: Her .glb varligi icin 1023'luk gruplar halinde Graphics.DrawMeshInstanced cagir (0-GC)
+                for (int a = 0; a < StructureRoleGlbRegistry.TotalGlbAssetCount; a++)
+                {
+                    int count = _glbBucketCounts[a];
+                    if (count <= 0) continue;
+
+                    Mesh? glbMesh = StructureRoleGlbRegistry.LoadGlbMeshCached(a);
+                    if (glbMesh == null) continue;
+
+                    int startRef = _glbBucketOffsets[a];
+                    int endRef = startRef + count;
+                    int batchCount = 0;
+
+                    for (int rIdx = startRef; rIdx < endRef; rIdx++)
+                    {
+                        uint packedRef = _bucketedInstanceRefs[rIdx];
+                        int nodeIdx = (int)(packedRef >> 2);
+                        uint subPart = packedRef & 3u;
+                        ref readonly StructuralNode64 node = ref _nodeBuffer[nodeIdx];
+
+                        _sharedInstanceMatrices[batchCount++] = BuildNodeOrSubPartMatrix(in node, subPart);
+                        if (batchCount == MaxInstancesPerDrawCall)
+                        {
+                            Graphics.DrawMeshInstanced(glbMesh, 0, safeMat, _sharedInstanceMatrices, batchCount, _sharedMpb, shadows, true);
+                            batchCount = 0;
+                        }
+                    }
+
+                    if (batchCount > 0)
+                    {
+                        Graphics.DrawMeshInstanced(glbMesh, 0, safeMat, _sharedInstanceMatrices, batchCount, _sharedMpb, shadows, true);
+                    }
+                }
+            }
+
+            // 4. Gecis: LOD2 (160 - 750 m+) Renkli Catili & Kubbeli Ufuk Siluetleri (North Metropolis + Palace Dome)
+            RenderLod2HorizonSilhouettes(safeMat);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Matrix4x4 BuildNodeOrSubPartMatrix(in StructuralNode64 node, uint subPart)
+        {
+            float baseYawDeg = (node.YawQuarterTurns & 3) * 90.0f;
+            Quaternion baseRot = Quaternion.Euler(0f, baseYawDeg, 0f);
+            Vector3 basePos = new Vector3(node.PosX, node.PosY, node.PosZ);
+
+            if (subPart == 0u)
+            {
+                ResolveNodeThicknessScale(
+                    node.Role,
+                    (StructureThicknessProfile)node.ThicknessProfile,
+                    out float sx,
+                    out float sy,
+                    out float sz);
+                return Matrix4x4.TRS(basePos, baseRot, new Vector3(sx, sy, sz));
+            }
+
+            // subPart == 1 (tek kanat veya sol cift kanat) / subPart == 2 (sag cift kanat)
+            StructureRoleGlbRegistry.ResolveDoorLeafGlbAssetIndex(in node, out bool isDoubleLeaf);
+            bool isOpen = node.IsDoorOrWindowOpen;
+
+            if (!isDoubleLeaf)
+            {
+                // Tek kanat menteseli kapi: -0.48m sol mentese ekseni etrafinda 0° <-> +90° iceri (+Z) doner
+                Vector3 hingeLocal = new Vector3(-0.48f, 0.0f, 0.0f);
+                Quaternion leafLocalRot = isOpen ? Quaternion.Euler(0f, -90.0f, 0f) : Quaternion.identity;
+                Vector3 leafCenterFromHinge = new Vector3(0.48f, 0.0f, 0.0f);
+                Vector3 localPos = hingeLocal + (leafLocalRot * leafCenterFromHinge);
+                return Matrix4x4.TRS(basePos + (baseRot * localPos), baseRot * leafLocalRot, Vector3.one);
+            }
+            else
+            {
+                // Cift kanatli anitsal/saray kapisi: sol (-1.18m) ve sag (+1.18m) menteselerden 90° iceri acilir
+                float sideSign = subPart == 1u ? -1.0f : 1.0f;
+                Vector3 hingeLocal = new Vector3(sideSign * 1.18f, 0.0f, 0.0f);
+                Quaternion leafLocalRot = isOpen
+                    ? Quaternion.Euler(0f, sideSign * 90.0f, 0f)
+                    : Quaternion.identity;
+                Vector3 leafCenterFromHinge = new Vector3(-sideSign * 0.59f, 0.0f, 0.0f);
+                Vector3 localPos = hingeLocal + (leafLocalRot * leafCenterFromHinge);
+                return Matrix4x4.TRS(basePos + (baseRot * localPos), baseRot * leafLocalRot, new Vector3(0.50f, 1.0f, 1.0f));
             }
         }
 
-        private static Vector3 ResolveNodeProxyScale(StructuralElementRole role) => role switch
+        private void RenderLod2HorizonSilhouettes(Material safeMat)
         {
-            StructuralElementRole.AshlarMasonryWall or StructuralElementRole.RubbleMasonryCourse => new Vector3(2.0f, 1.4f, 0.45f),
-            StructuralElementRole.NotchedWallLog => new Vector3(2.0f, 0.48f, 0.44f),
-            StructuralElementRole.MonolithicColumnShaft or StructuralElementRole.TimberPost => new Vector3(0.45f, 2.8f, 0.45f),
-            StructuralElementRole.RoofCoveringCourse or StructuralElementRole.FloorJoistDeck => new Vector3(2.0f, 0.25f, 2.0f),
-            StructuralElementRole.DomeRingCourse or StructuralElementRole.DomeDrumTambour => new Vector3(3.2f, 1.0f, 3.2f),
-            _ => new Vector3(1.0f, 1.0f, 1.0f)
-        };
+            // Ufukta (160-750m+) gorunen metropol chunk'larini (standart egimli catili blok vs kubbeli saray/tapinak) cizer
+            Mesh? gableSilhouette = null;
+            Mesh? domedSilhouette = null;
 
-        private static Mesh GetOrCreateSharedUnitBoxMesh()
+            int gableCount = 0;
+            for (int c = 0; c < _chunkCount; c++)
+            {
+                ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
+                if (slot.CurrentLod != CityChunkLodTier.Lod2HorizonProxy || slot.HasDomedOrTowerSilhouette)
+                {
+                    continue;
+                }
+
+                gableSilhouette ??= GetOrCreateHorizonSilhouetteMesh(
+                    slot.DominantFacadeMaterialId,
+                    slot.DominantRoofMaterialId,
+                    hasDome: false);
+
+                float h = MathF.Max(3.2f, slot.MaxY - slot.MinY);
+                Vector3 pos = new Vector3(slot.CenterX, slot.MinY - 0.15f, slot.CenterZ);
+                Vector3 scl = new Vector3(12.5f, h + 0.15f, 10.5f);
+                _sharedInstanceMatrices[gableCount++] = Matrix4x4.TRS(pos, Quaternion.identity, scl);
+
+                if (gableCount == MaxInstancesPerDrawCall)
+                {
+                    Graphics.DrawMeshInstanced(gableSilhouette, 0, safeMat, _sharedInstanceMatrices, gableCount, _sharedMpb, ShadowCastingMode.Off, true);
+                    gableCount = 0;
+                }
+            }
+
+            if (gableCount > 0 && gableSilhouette != null)
+            {
+                Graphics.DrawMeshInstanced(gableSilhouette, 0, safeMat, _sharedInstanceMatrices, gableCount, _sharedMpb, ShadowCastingMode.Off, true);
+            }
+
+            int domeCount = 0;
+            for (int c = 0; c < _chunkCount; c++)
+            {
+                ref readonly CityChunkLodSlot slot = ref _chunkSlots[c];
+                if (slot.CurrentLod != CityChunkLodTier.Lod2HorizonProxy || !slot.HasDomedOrTowerSilhouette)
+                {
+                    continue;
+                }
+
+                domedSilhouette ??= GetOrCreateHorizonSilhouetteMesh(
+                    MaterialIdCatalog.DressedMarbleBlock,
+                    MaterialIdCatalog.RoofClayTile,
+                    hasDome: true);
+
+                float h = MathF.Max(6.5f, slot.MaxY - slot.MinY);
+                Vector3 pos = new Vector3(slot.CenterX, slot.MinY - 0.15f, slot.CenterZ);
+                Vector3 scl = new Vector3(14.5f, h + 0.15f, 14.5f);
+                _sharedInstanceMatrices[domeCount++] = Matrix4x4.TRS(pos, Quaternion.identity, scl);
+
+                if (domeCount == MaxInstancesPerDrawCall)
+                {
+                    Graphics.DrawMeshInstanced(domedSilhouette, 0, safeMat, _sharedInstanceMatrices, domeCount, _sharedMpb, ShadowCastingMode.Off, true);
+                    domeCount = 0;
+                }
+            }
+
+            if (domeCount > 0 && domedSilhouette != null)
+            {
+                Graphics.DrawMeshInstanced(domedSilhouette, 0, safeMat, _sharedInstanceMatrices, domeCount, _sharedMpb, ShadowCastingMode.Off, true);
+            }
+        }
+
+        /// <summary>
+        /// LOD2 (160-750m+) icin MaterialIdCatalog.GetBaseColorRgb24 renklerini kullanan,
+        /// BottomCenter_Zero pivotlu, egimli catili veya kubbeli mimari siluet mesh'i uretir (ASLA ham beyaz kup degil!).
+        /// </summary>
+        private static Mesh GetOrCreateHorizonSilhouetteMesh(byte facadeMaterialId, byte roofMaterialId, bool hasDome)
         {
-            if (_sharedUnitBoxMesh != null) return _sharedUnitBoxMesh;
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            var mf = go.GetComponent<MeshFilter>();
-            _sharedUnitBoxMesh = UnityEngine.Object.Instantiate(mf.sharedMesh);
-            _sharedUnitBoxMesh.name = "CityChunkLod_UnitBoxMesh";
-            UnityEngine.Object.DestroyImmediate(go);
-            return _sharedUnitBoxMesh;
+            int key = ((hasDome ? 1 : 0) << 16) | (facadeMaterialId << 8) | roofMaterialId;
+            if (_horizonSilhouetteMeshCache.TryGetValue(key, out Mesh? cached) && cached != null)
+            {
+                return cached;
+            }
+
+            MaterialIdCatalog.GetBaseColorRgb(
+                facadeMaterialId != 0 ? facadeMaterialId : MaterialIdCatalog.CutAshlarStone,
+                out byte fr, out byte fg, out byte fb);
+            MaterialIdCatalog.GetBaseColorRgb(
+                roofMaterialId != 0 ? roofMaterialId : MaterialIdCatalog.RoofClayTile,
+                out byte rr, out byte rg, out byte rb);
+
+            if (fr is 0 or 3 or 11) fr++;
+            if (rr is 0 or 3 or 11) rr++;
+
+            Color32 wallCol = new Color32(fr, fg, fb, 245);
+            Color32 wallShadeCol = new Color32(
+                (byte)Mathf.Max(6, fr * 84 / 100),
+                (byte)Mathf.Max(6, fg * 84 / 100),
+                (byte)Mathf.Max(6, fb * 84 / 100),
+                245);
+            if (wallShadeCol.r is 3 or 11) wallShadeCol.r++;
+
+            Color32 roofCol = new Color32(rr, rg, rb, 248);
+
+            var verts = new List<Vector3>(64);
+            var norms = new List<Vector3>(64);
+            var cols = new List<Color32>(64);
+            var tris = new List<int>(96);
+
+            static void AddQuad(
+                List<Vector3> vL, List<Vector3> nL, List<Color32> cL, List<int> tL,
+                Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color32 col)
+            {
+                int idx = vL.Count;
+                Vector3 n = Vector3.Cross(b - a, c - a).normalized;
+                vL.Add(a); vL.Add(b); vL.Add(c); vL.Add(d);
+                for (int k = 0; k < 4; k++) { nL.Add(n); cL.Add(col); }
+                tL.Add(idx + 0); tL.Add(idx + 1); tL.Add(idx + 2);
+                tL.Add(idx + 0); tL.Add(idx + 2); tL.Add(idx + 3);
+            }
+
+            // Alt cephe govdesi: X,Z in [-0.5..+0.5], Y in [0.0..0.72]
+            const float eaveY = 0.72f;
+            AddQuad(verts, norms, cols, tris,
+                new Vector3(-0.5f, 0f, -0.5f), new Vector3(-0.5f, eaveY, -0.5f),
+                new Vector3(0.5f, eaveY, -0.5f), new Vector3(0.5f, 0f, -0.5f), wallCol);
+            AddQuad(verts, norms, cols, tris,
+                new Vector3(0.5f, 0f, 0.5f), new Vector3(0.5f, eaveY, 0.5f),
+                new Vector3(-0.5f, eaveY, 0.5f), new Vector3(-0.5f, 0f, 0.5f), wallCol);
+            AddQuad(verts, norms, cols, tris,
+                new Vector3(-0.5f, 0f, 0.5f), new Vector3(-0.5f, eaveY, 0.5f),
+                new Vector3(-0.5f, eaveY, -0.5f), new Vector3(-0.5f, 0f, -0.5f), wallShadeCol);
+            AddQuad(verts, norms, cols, tris,
+                new Vector3(0.5f, 0f, -0.5f), new Vector3(0.5f, eaveY, -0.5f),
+                new Vector3(0.5f, eaveY, 0.5f), new Vector3(0.5f, 0f, 0.5f), wallShadeCol);
+
+            if (!hasDome)
+            {
+                // Egimli kırma/besik cati: mahya Y = 1.00f
+                AddQuad(verts, norms, cols, tris,
+                    new Vector3(-0.54f, eaveY, -0.54f), new Vector3(-0.54f, 1.0f, 0f),
+                    new Vector3(0.54f, 1.0f, 0f), new Vector3(0.54f, eaveY, -0.54f), roofCol);
+                AddQuad(verts, norms, cols, tris,
+                    new Vector3(0.54f, eaveY, 0.54f), new Vector3(0.54f, 1.0f, 0f),
+                    new Vector3(-0.54f, 1.0f, 0f), new Vector3(-0.54f, eaveY, 0.54f), roofCol);
+                // Alinlik kapaklari
+                AddQuad(verts, norms, cols, tris,
+                    new Vector3(-0.5f, eaveY, 0.5f), new Vector3(-0.5f, 1.0f, 0f),
+                    new Vector3(-0.5f, 1.0f, 0f), new Vector3(-0.5f, eaveY, -0.5f), wallShadeCol);
+                AddQuad(verts, norms, cols, tris,
+                    new Vector3(0.5f, eaveY, -0.5f), new Vector3(0.5f, 1.0f, 0f),
+                    new Vector3(0.5f, 1.0f, 0f), new Vector3(0.5f, eaveY, 0.5f), wallShadeCol);
+            }
+            else
+            {
+                // Anitsal Saray / Tapinak sekizgen kasnak + kubbe taci (Y in [0.72..1.18])
+                const int segs = 8;
+                const float rDrum = 0.38f;
+                const float drumTopY = 0.88f;
+                const float domeTopY = 1.18f;
+                for (int s = 0; s < segs; s++)
+                {
+                    float a0 = (s / (float)segs) * Mathf.PI * 2f;
+                    float a1 = ((s + 1) / (float)segs) * Mathf.PI * 2f;
+                    Vector3 p0 = new Vector3(Mathf.Cos(a0) * rDrum, eaveY, Mathf.Sin(a0) * rDrum);
+                    Vector3 p1 = new Vector3(Mathf.Cos(a1) * rDrum, eaveY, Mathf.Sin(a1) * rDrum);
+                    Vector3 d0 = new Vector3(Mathf.Cos(a0) * rDrum, drumTopY, Mathf.Sin(a0) * rDrum);
+                    Vector3 d1 = new Vector3(Mathf.Cos(a1) * rDrum, drumTopY, Mathf.Sin(a1) * rDrum);
+                    Vector3 apex = new Vector3(0f, domeTopY, 0f);
+                    AddQuad(verts, norms, cols, tris, p0, d0, d1, p1, wallCol);
+                    AddQuad(verts, norms, cols, tris, d0, apex, apex, d1, roofCol);
+                }
+            }
+
+            Mesh mesh = new Mesh
+            {
+                name = hasDome ? $"CityLod2_DomedSilhouette_{key}" : $"CityLod2_PitchedSilhouette_{key}",
+                indexFormat = IndexFormat.UInt16
+            };
+            mesh.SetVertices(verts);
+            mesh.SetNormals(norms);
+            mesh.SetColors(cols);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateBounds();
+            _horizonSilhouetteMeshCache[key] = mesh;
+            return mesh;
         }
 #endif
     }

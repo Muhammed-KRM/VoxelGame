@@ -30,11 +30,12 @@ namespace Stratocraft.Inventory.Systems
         LimeAndBrickKiln = 7,
         MortarSlakingTrough = 8,
         MasonsChiselTable = 9,
-        GlassPotFurnace = 10
+        GlassPotFurnace = 10,
+        SteelRebarBench = 11
     }
 
     /// <summary>
-    /// Paket 2 (IP-1) &amp; DOK5 — Fiziksel Birlestirme (Cloth-Mat Assembly) ve 4 Ekol insaat/ic mekan cikti kimligi.
+    /// Paket 2 (IP-1) &amp; DOK5 — Fiziksel Birlestirme (Cloth-Mat Assembly) ve 9 Ekol insaat/ic mekan cikti kimligi.
     /// </summary>
     public enum PrimitiveCraftOutputId : byte
     {
@@ -98,7 +99,42 @@ namespace Stratocraft.Inventory.Systems
         StoneFireplaceHearthKit = 51,
         IronHingeAndLockSet = 52,
         InteriorFurnitureKit = 53,
-        WoodPlankBlock = 54
+        WoodPlankBlock = 54,
+
+        // --- 9-Ekol Yeni Insaat Aletleri, Gecici Destekler, Kalip/Donati ve Istasyon Ciktilari (55..87) ---
+        ToolShovel = 55,
+        ToolEarthTamper = 56,
+        ToolPlumbAndLevel = 57,
+        WoodenStake = 58,
+        WoodenDowelPeg = 59,
+        TemporaryWoodBrace = 60,
+        CobMudBall = 61,
+        RammedEarthMixBucket = 62,
+        GroovedTimberPost = 63,
+        PlywoodSheathingPanel = 64,
+        WoodenArchCentering = 65,
+        SlidingEarthFormwork = 66,
+        FloorJoistIronStrap = 67,
+        CementClinkerNodule = 68,
+        PortlandCementBag = 69,
+        FreshConcreteBucket = 70,
+        SteelRebarBundle = 71,
+        TelescopicShoringProp = 72,
+        SteelAnchorBoltSet = 73,
+        SteelHBeamColumn = 74,
+        SteelGuyWireBrace = 75,
+        SteelXBraceAndDeck = 76,
+        ToolConcreteVibrator = 77,
+        ToolTorqueWrench = 78,
+        EnglishBondBrickMasonry = 79,
+        DriedRammedEarthBlock = 80,
+        TreatedTimberBeamBlock = 81,
+        LimeWashPlasterMix = 82,
+        CuredReinforcedConcreteBlock = 83,
+        StrawChinkingBundle = 84,
+        CrushedLimeAggregate = 85,
+        FormworkTimberBoard = 86,
+        HorasanMortarMix = 87
     }
 
     /// <summary>
@@ -142,7 +178,17 @@ namespace Stratocraft.Inventory.Systems
         IronHardware = 31,
         GlassPane = 32,
         CutAshlarBlock = 33,
-        MarbleChunk = 34
+        MarbleChunk = 34,
+
+        // --- 9-Ekol Yeni Girdi Tokenlari (35..42) ---
+        SteelIngot = 35,
+        GravelClod = 36,
+        WoodenStake = 37,
+        PlywoodOsb = 38,
+        PortlandCement = 39,
+        SteelRebar = 40,
+        CementClinker = 41,
+        TimberBeam = 42
     }
 
     public readonly struct ClothMatCraftMatch
@@ -565,7 +611,95 @@ namespace Stratocraft.Inventory.Systems
                 CraftIngredientToken.WoodPlank, 4,
                 CraftIngredientToken.Stick, 2,
                 CraftIngredientToken.TacticalCloth, 1,
-                "İç Mekân Mobilya Kiti (Masa, Bank, 16-Yuva Sandık, Raf & Meşale Askısı)")
+                "İç Mekân Mobilya Kiti (Masa, Bank, 16-Yuva Sandık, Raf & Meşale Askısı)"),
+
+            // 42) Kürek (ToolShovel, ID=93): 2x FlintStone + 1x SplitFirewood + 1x PlantFiber
+            new(
+                PrimitiveCraftOutputId.ToolShovel,
+                CraftIngredientToken.FlintStone, 2,
+                CraftIngredientToken.SplitFirewood, 1,
+                CraftIngredientToken.PlantFiber, 1,
+                "İnşaat Küreği (Kireç İpi Temel Hendeği & Kum/Toprak/Çakıl Kazısı)"),
+
+            // 43) Toprak & Blokaj Tokmağı (ToolEarthTamper, ID=94): 1x DebarkedLog + 2x Stick + 1x PlantFiber
+            new(
+                PrimitiveCraftOutputId.ToolEarthTamper,
+                CraftIngredientToken.DebarkedLog, 1,
+                CraftIngredientToken.Stick, 2,
+                CraftIngredientToken.PlantFiber, 1,
+                "Toprak & Blokaj Tokmağı (%50 Rammed Earth Sıkıştırma -> 0sn Kalıp Sökümü)"),
+
+            // 44) Şakul & Su Terazisi (ToolPlumbAndLevel, ID=95): 1x RoughStoneChunk + 1x Stick + 2x PlantFiber
+            new(
+                PrimitiveCraftOutputId.ToolPlumbAndLevel,
+                CraftIngredientToken.RoughStoneChunk, 1,
+                CraftIngredientToken.Stick, 1,
+                CraftIngredientToken.PlantFiber, 2,
+                "Şakul & Su Terazisi (Duvar Diklik & Kot Göstergesi)"),
+
+            // 45) Ahşap Temel Kazığı (WoodenStake, ID=96): 1x DebarkedLog + 1x FlintStone
+            new(
+                PrimitiveCraftOutputId.WoodenStake,
+                CraftIngredientToken.DebarkedLog, 1,
+                CraftIngredientToken.FlintStone, 1,
+                CraftIngredientToken.None, 0,
+                "Ahşap Temel Kazığı (Kireç İpi, Geçici Payanda & Kazıklı Temel Ankrajı)"),
+
+            // 46) Meşe Kavela / Ahşap Pim (WoodenDowelPeg, ID=97): 2x Stick + 1x FlintStone
+            new(
+                PrimitiveCraftOutputId.WoodenDowelPeg,
+                CraftIngredientToken.Stick, 2,
+                CraftIngredientToken.FlintStone, 1,
+                CraftIngredientToken.None, 0,
+                "Meşe Kavela / Ahşap Pim (Kertikli Kütük & Zıvana-Delik Kilidi)"),
+
+            // 47) Geçici 45° Kurulum Payandası (TemporaryWoodBrace, ID=98): 2x WoodPlank + 2x WoodenStake + 1x PlantFiber
+            new(
+                PrimitiveCraftOutputId.TemporaryWoodBrace,
+                CraftIngredientToken.WoodPlank, 2,
+                CraftIngredientToken.WoodenStake, 2,
+                CraftIngredientToken.PlantFiber, 1,
+                "Geçici 45° Kurulum Payandası ([Shift+E] ile %100 Geri Alınır)"),
+
+            // 48) Ahşap Kemer Kalıbı (WoodenArchCentering, ID=103): 3x WoodPlank + 2x IronHardware + 1x WoodenStake
+            new(
+                PrimitiveCraftOutputId.WoodenArchCentering,
+                CraftIngredientToken.WoodPlank, 3,
+                CraftIngredientToken.IronHardware, 2,
+                CraftIngredientToken.WoodenStake, 1,
+                "Ahşap Kemer Kalıbı (Kilit Taşı + Kür Sonrası [Shift+E] %100 İade)"),
+
+            // 49) Kayar Toprak Kalıbı (SlidingEarthFormwork, ID=104): 2x PlywoodOsb + 2x TimberBeam + 2x IronHardware
+            new(
+                PrimitiveCraftOutputId.SlidingEarthFormwork,
+                CraftIngredientToken.PlywoodOsb, 2,
+                CraftIngredientToken.TimberBeam, 2,
+                CraftIngredientToken.IronHardware, 2,
+                "Kayar Toprak Kalıbı (Rammed Earth Tokmak Sonrası 0sn'de [Shift+E] Sökülür)"),
+
+            // 50) Teleskopik Çelik Dikme + Tabliye Kalıbı (TelescopicShoringProp, ID=109): 2x SteelIngot + 2x PlywoodOsb + 1x IronHardware
+            new(
+                PrimitiveCraftOutputId.TelescopicShoringProp,
+                CraftIngredientToken.SteelIngot, 2,
+                CraftIngredientToken.PlywoodOsb, 2,
+                CraftIngredientToken.IronHardware, 1,
+                "Teleskopik Çelik Dikme + Tabliye Kalıbı (%75 Kür Sonrası [Shift+E] %100 İade)"),
+
+            // 51) Beton Şişleme / Vibratör Çubuğu (ToolConcreteVibrator, ID=114): 1x SteelIngot + 1x WroughtIronBar + 2x PlantFiber
+            new(
+                PrimitiveCraftOutputId.ToolConcreteVibrator,
+                CraftIngredientToken.SteelIngot, 1,
+                CraftIngredientToken.WroughtIronBar, 1,
+                CraftIngredientToken.PlantFiber, 2,
+                "Beton Şişleme / Vibratör Çubuğu (Taze Betonda %100 Sıkıştırma)"),
+
+            // 52) Çelik Tork Anahtarı (ToolTorqueWrench, ID=115): 1x SteelIngot + 1x WroughtIronBar + 1x IronHardware
+            new(
+                PrimitiveCraftOutputId.ToolTorqueWrench,
+                CraftIngredientToken.SteelIngot, 1,
+                CraftIngredientToken.WroughtIronBar, 1,
+                CraftIngredientToken.IronHardware, 1,
+                "Çelik Tork Anahtarı (Snug-Tight -> Tam Tork Bulon Kilitleme)")
         };
 
         /// <summary>
@@ -786,7 +920,400 @@ namespace Stratocraft.Inventory.Systems
                 isCrystalVacuumImmune: true,
                 displayName: "Kurşunlu Mimari Pencere Camı (LeadedGlassPane ID=135)",
                 ingredientsSummary: "3x Kuru Silis Kumu + 1x Akı/Kireç Tozu + 2x Odun Kömürü (1150 °C, 25 sn)",
-                processNotes: "Rüzgâr ve soğuğu %100 keserken gün ışığını %88 geçirir; cevher tozuyla Vitray Cam olur.")
+                processNotes: "Rüzgâr ve soğuğu %100 keserken gün ışığını %88 geçirir; cevher tozuyla Vitray Cam olur."),
+
+            // --- 9-Ekol 6 İstasyon Genişlemesi (Bıçkı, Harç/Beton Teknesi, Kireç/Tuğla/Çimento Fırını 1450°C, Yel Değirmeni, Taşçı, Çelik Hadde & MaterialId 137..152) ---
+            new(
+                PrimitiveCraftOutputId.GroovedTimberPost,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.LogPostAndFill,
+                MaterialIdCatalog.GroovedLogTimber, 2,
+                processingSeconds: 2.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Oluklu Dikey Kütük Dikmesi (GroovedLogTimber ID=143)",
+                ingredientsSummary: "1x Soyulmuş Kütük + El Testeresi / Keser",
+                processNotes: "Bıçkı Sehpasında 2 darbede kanallı dikey dikme açılır; TemporaryWoodBrace ile sabitlenip yatay kütükler oluğa indirilir."),
+
+            new(
+                PrimitiveCraftOutputId.TreatedTimberBeamBlock,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.TimberFrame,
+                MaterialIdCatalog.TreatedTimberBeam, 2,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "İşlenmiş Ağır Yapısal Kiriş & Hatıl (TreatedTimberBeam ID=142)",
+                ingredientsSummary: "1x Soyulmuş Kütük + El Testeresi",
+                processNotes: "Taş/tuğla/kerpiç duvarlarda çekme kuşağı (TimberRingBeam) ve ağır karkas ana kirişi."),
+
+            new(
+                PrimitiveCraftOutputId.PlywoodSheathingPanel,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.PlatformWoodFrame,
+                MaterialIdCatalog.PlywoodOsbPanel, 2,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Kontrplak / OSB Perde Levhası (PlywoodOsbPanel ID=141)",
+                ingredientsSummary: "4x Kalas + Demir Çivi / Lif Bağlayıcı",
+                processNotes: "Platform ahşap çerçeveyi yanal rüzgâra karşı Shear Wall diyaframına kilitler ve beton/toprak kalıp yüzeyi oluşturur."),
+
+            new(
+                PrimitiveCraftOutputId.WoodenArchCentering,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.StoneMasonry,
+                MaterialIdCatalog.FormworkTimberBoard, 1,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Ahşap Kemer Kalıbı (WoodenArchCentering — Formwork ID=152)",
+                ingredientsSummary: "3x Kalas + 2x Çivi/Donanım + 1x Kazık",
+                processNotes: "Kemer taşlarını Kilit Taşı ve harç yük eşiğine (Cure >= 0.45) kadar taşır; [Shift+E] ile %100 iadeyle sökülür."),
+
+            new(
+                PrimitiveCraftOutputId.SlidingEarthFormwork,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.RammedEarth,
+                MaterialIdCatalog.FormworkTimberBoard, 1,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Kayar Toprak Kalıbı (SlidingEarthFormwork — Formwork ID=152)",
+                ingredientsSummary: "2x OSB Levha + 2x Kiriş + 2x Demir Saplama",
+                processNotes: "Rammed Earth döküm kalıbı; tokmaklama sonrası 0 sn beklemeden [Shift+E] ile sökülüp bir üst/yan sıraya taşınır."),
+
+            new(
+                PrimitiveCraftOutputId.TemporaryWoodBrace,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.TimberFrame,
+                MaterialIdCatalog.FormworkTimberBoard, 2,
+                processingSeconds: 2.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Geçici 45° Kurulum Payandası (TemporaryWoodBrace)",
+                ingredientsSummary: "2x Kalas + 2x Kazık + 1x Lif",
+                processNotes: "2B karkas çerçeveleri ve dikmeleri üst kuşak/OSB kilitlenene kadar tutar; [Shift+E] ile %100 geri alınır."),
+
+            new(
+                PrimitiveCraftOutputId.FormworkTimberBoard,
+                CraftStationKind.SawhorseBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.FormworkTimberBoard, 4,
+                processingSeconds: 2.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Kalıp ve Kemer İskelesi Tahtası (FormworkTimberBoard ID=152)",
+                ingredientsSummary: "2x Kalas + Testere",
+                processNotes: "Betonarme kolon/tabliye kalıbı ve kemer iskelesi tahtası."),
+
+            new(
+                PrimitiveCraftOutputId.CobMudBall,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.AdobeAndCob,
+                MaterialIdCatalog.CobMudBrick, 6,
+                processingSeconds: 3.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.CobLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.CobFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Samanlı Cob Çamur Topu (CobMudBrick ID=138)",
+                ingredientsSummary: "2x Kil + 1x Kum + 2x Saman/Tahıl + Su",
+                processNotes: "Kalıpsız kavisli Cob duvar örme harcı (katman başına <= 45 cm, 90s yük taşıma / 180s tam kuruma)."),
+
+            new(
+                PrimitiveCraftOutputId.RammedEarthMixBucket,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.RammedEarth,
+                MaterialIdCatalog.RammedEarthCompacted, 4,
+                processingSeconds: 3.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.RammedEarthLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.RammedEarthFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Sıkıştırılmış Toprak Karışımı (RammedEarthCompacted ID=139)",
+                ingredientsSummary: "2x Kum + 1x Çakıl/Agrega + 1x Kil + Nemli Su",
+                processNotes: "SlidingEarthFormwork içine 15 cm tabakalarla dökülüp ToolEarthTamper ile %50 sıkıştırılır (tokmak sonrası 0 sn kalıp sökümü!)."),
+
+            new(
+                PrimitiveCraftOutputId.DriedRammedEarthBlock,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.RammedEarth,
+                MaterialIdCatalog.DriedRammedEarth, 4,
+                processingSeconds: 4.0f,
+                requiredTempCelsius: 24.0f,
+                loadBearingCureSeconds: MortarConstants.RammedEarthLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.RammedEarthFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Tam Kurumuş Sıkıştırılmış Toprak (DriedRammedEarth ID=140)",
+                ingredientsSummary: "Tokmaklanmış Rammed Earth (240 sn tam kuruma)",
+                processNotes: "Tam kuruduğunda kaya sertliğinde katmanlı monolitik toprak duvara dönüşür."),
+
+            new(
+                PrimitiveCraftOutputId.LimeWashPlasterMix,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.StoneMasonry,
+                MaterialIdCatalog.LimeWashPlaster, 6,
+                processingSeconds: 3.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.ClayLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.ClayFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Kireç Badana & Koruyucu Mineral Sıva (LimeWashPlaster ID=144)",
+                ingredientsSummary: "2x Sönmüş Kireç + 1x İnce Kum + Su",
+                processNotes: "Kerpiç, Cob, taş ve tuğla cepheleri yağmur aşınmasına karşı koruyan nefes alır mineral sıva."),
+
+            new(
+                PrimitiveCraftOutputId.HorasanMortarMix,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.MonumentalArchDome,
+                MaterialIdCatalog.LimeMortarStoneWall, 8,
+                processingSeconds: 4.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.HorasanLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.HorasanFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Horasan Harcı (Puzolanik Su Geçirmez Harç — 180s/450s Kür)",
+                ingredientsSummary: "1x Sönmüş Kireç + 2x Kum + 2x Pişmiş Tuğla Tozu + Su",
+                processNotes: "Suya ve yağmura %100 dayanıklı anıtsal kemer, kubbe ve radye temel harcı (180 sn yük eşiği / 450 sn tam kür)."),
+
+            new(
+                PrimitiveCraftOutputId.StrawChinkingBundle,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.LogPostAndFill,
+                MaterialIdCatalog.StrawChinkingBundle, 6,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.ClayLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.ClayFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Samanlı ve Lifli Kütük Derz Dolgusu (StrawChinkingBundle ID=150)",
+                ingredientsSummary: "2x Saman/Lif + 1x Kil + 1x Kireç Macunu",
+                processNotes: "Dikmeli-kanallı ve kertikli kütük duvarlarda rüzgâr sızdırmazlığını (Seal >= 0.70) mühürler."),
+
+            new(
+                PrimitiveCraftOutputId.EnglishBondBrickMasonry,
+                CraftStationKind.LimeAndBrickKiln,
+                ArchitecturalSchool.BrickMasonry,
+                MaterialIdCatalog.EnglishBondBrickMasonry, 6,
+                processingSeconds: 30.0f,
+                requiredTempCelsius: 950.0f,
+                loadBearingCureSeconds: MortarConstants.LimeLoadBearingSeconds,
+                fullCureSeconds: MortarConstants.LimeFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "İngiliz Bağı Taşıyıcı Pişmiş Tuğla (EnglishBondBrickMasonry ID=137)",
+                ingredientsSummary: "4x Kil + 1x Kum -> Tuğla Fırını (950 °C, 30 sn) + Kireç Harcı",
+                processNotes: "Bir sıra boyuna, bir sıra enine kilitlenen çok katlı taşıyıcı tuğla duvar bloğu."),
+
+            new(
+                PrimitiveCraftOutputId.CementClinkerNodule,
+                CraftStationKind.LimeAndBrickKiln,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.Air, 4,
+                processingSeconds: 45.0f,
+                requiredTempCelsius: 1450.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Portland Çimento Klinkeri (1450 °C Sinterlenmiş Klinker)",
+                ingredientsSummary: "4x Kireçtaşı + 2x Kil + 1x Demir Cürufu + Odun Kömürü (Körük ile 1450 °C, 45 sn)",
+                processNotes: "Kireç/Çimento Fırınında körükle 1450 °C'de sinterlenir; ardından Yel Değirmeninde öğütülerek Portland Çimentosu olur."),
+
+            new(
+                PrimitiveCraftOutputId.PortlandCementBag,
+                CraftStationKind.Windmill,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.Air, 4,
+                processingSeconds: 12.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Portland Çimento Torbası (Yel Değirmeni Klinker Öğütme)",
+                ingredientsSummary: "4x Çimento Klinkeri -> Betz Yel Değirmeni Öğütme",
+                processNotes: "1450 °C klinker nodülleri Yel Değirmeni taşında ince Portland Çimentosu tozuna öğütülür."),
+
+            new(
+                PrimitiveCraftOutputId.FreshConcreteBucket,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.WetPortlandConcrete, 4,
+                processingSeconds: 5.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.ConcreteSlabShoringStripSeconds,
+                fullCureSeconds: MortarConstants.ConcreteSlabShoringFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Taze Portland Betonu Kovası (WetPortlandConcrete ID=146)",
+                ingredientsSummary: "1x Portland Çimento Torbası + 2x Kum + 3x Kırma Çakıl Agrega + Su",
+                processNotes: "Kolon yan kalıbı 90s'de, kiriş/tabliye dikmeleri (TelescopicShoringProp) 300s (%75 kür) sonunda güvenle sökülür."),
+
+            new(
+                PrimitiveCraftOutputId.CuredReinforcedConcreteBlock,
+                CraftStationKind.MortarSlakingTrough,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.CuredReinforcedConcrete, 4,
+                processingSeconds: 5.0f,
+                requiredTempCelsius: 20.0f,
+                loadBearingCureSeconds: MortarConstants.ConcreteSlabShoringStripSeconds,
+                fullCureSeconds: MortarConstants.ConcreteSlabShoringFullCureSeconds,
+                isCrystalVacuumImmune: true,
+                displayName: "Kürlenmiş Donatılı Betonarme (CuredReinforcedConcrete ID=147)",
+                ingredientsSummary: "İnşaat Demiri Kafesi + Taze Beton + Vibratör Şişleme (300s / 600s kür)",
+                processNotes: "Çekme yükünü çelik donatının, basınç yükünü betonun taşıdığı yüksek katlı monolitik betonarme eleman."),
+
+            new(
+                PrimitiveCraftOutputId.CrushedLimeAggregate,
+                CraftStationKind.MasonsChiselTable,
+                ArchitecturalSchool.StoneMasonry,
+                MaterialIdCatalog.CrushedLimeAggregate, 6,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Kırma Kireçtaşı & Çakıl Beton Agregası (CrushedLimeAggregate ID=151)",
+                ingredientsSummary: "2x Kireçtaşı / Kırma Taş + Taşçı Çekici",
+                processNotes: "Temel hendeği drenaj blokajı, Rammed Earth karışımı ve Portland betonu iri agregası."),
+
+            new(
+                PrimitiveCraftOutputId.FloorJoistIronStrap,
+                CraftStationKind.AnvilForge,
+                ArchitecturalSchool.BrickMasonry,
+                MaterialIdCatalog.IronTieBeamBlock, 4,
+                processingSeconds: 5.0f,
+                requiredTempCelsius: 720.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Döşeme Gergi Şeridi & Duvar Bağı (FloorJoistIronStrap)",
+                ingredientsSummary: "1x Dövme Demir Külçesi (>= 720 °C) + Örs & Çekiç",
+                processNotes: "Çok katlı taş/tuğla binalarda döşeme kirişlerini dış duvara kilitleyerek duvarların dışa açılmasını önler."),
+
+            new(
+                PrimitiveCraftOutputId.SteelRebarBundle,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.SteelRebarMesh, 4,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "İnşaat Demiri, L-Filiz & Etriye Paketi (SteelRebarMesh ID=145)",
+                ingredientsSummary: "2x Çelik Külçe -> Çelik Hadde & Donatı Tezgâhı (2 darbe)",
+                processNotes: "Betonarme temel hasırı, L-kolon filizi, etriyeli kolon kafesi ve döşeme çift sıra donatısı."),
+
+            new(
+                PrimitiveCraftOutputId.TelescopicShoringProp,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.FormworkTimberBoard, 2,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Teleskopik Çelik Dikme + Tabliye Kalıbı (TelescopicShoringProp)",
+                ingredientsSummary: "2x Çelik Külçe + 2x OSB Panel -> Çelik Hadde Tezgâhı",
+                processNotes: "Betonarme tabliye dökümünün zorunlu alt dikme ormanı; %75 kür (300s) dolmadan sökülürse tavan çöker!"),
+
+            new(
+                PrimitiveCraftOutputId.SteelAnchorBoltSet,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.StructuralSteelHBeam, 2,
+                processingSeconds: 2.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Çelik Ankraj Bulon Seti (SteelAnchorBoltSet)",
+                ingredientsSummary: "1x Çelik Külçe -> Çelik Hadde Tezgâhı",
+                processNotes: "Betonarme temele H-profil çelik kolonları sabitleyen şablonlu ankraj bulon ve somun takımı."),
+
+            new(
+                PrimitiveCraftOutputId.SteelHBeamColumn,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.StructuralSteelHBeam, 2,
+                processingSeconds: 3.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "H/I Profil Çelik Kolon & Kiriş (StructuralSteelHBeam ID=148)",
+                ingredientsSummary: "3x Çelik Külçe -> Çelik Hadde Tezgâhı",
+                processNotes: "Yüksek açıklıklı çok katlı çelik karkas taşıyıcı profili (Vinç 14 m ve Tork Anahtarı uyumlu)."),
+
+            new(
+                PrimitiveCraftOutputId.SteelGuyWireBrace,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.StructuralSteelHBeam, 2,
+                processingSeconds: 2.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Geçici Çelik Halat Gergisi (SteelGuyWireBrace)",
+                ingredientsSummary: "1x Çelik Külçe + Gerdirme -> Çelik Hadde Tezgâhı",
+                processNotes: "Tek dikilen çelik kolonları X-Çapraz takılana kadar rüzgâra karşı tutar; [Shift+E] ile %100 geri alınır."),
+
+            new(
+                PrimitiveCraftOutputId.SteelXBraceAndDeck,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.CorrugatedSteelDeck, 2,
+                processingSeconds: 3.0f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Çelik X-Çapraz & Trapez Sac Tabliye (CorrugatedSteelDeck ID=149)",
+                ingredientsSummary: "2x Çelik Külçe -> Çelik Hadde Tezgâhı",
+                processNotes: "Kalıcı çelik rüzgâr çaprazı ve altında dikme ormanı gerektirmeyen oluklu trapez çelik döşeme sacı."),
+
+            new(
+                PrimitiveCraftOutputId.ToolConcreteVibrator,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.Air, 1,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Beton Şişleme / Vibratör Çubuğu (ToolConcreteVibrator)",
+                ingredientsSummary: "1x Çelik + 1x Dövme Demir -> Çelik Hadde Tezgâhı",
+                processNotes: "Taze dökülen betonun hava boşluklarını gidererek mukavemeti %100'e çıkarır."),
+
+            new(
+                PrimitiveCraftOutputId.ToolTorqueWrench,
+                CraftStationKind.SteelRebarBench,
+                ArchitecturalSchool.ReinforcedConcreteAndSteel,
+                MaterialIdCatalog.Air, 1,
+                processingSeconds: 2.5f,
+                requiredTempCelsius: 0.0f,
+                loadBearingCureSeconds: 0.0f,
+                fullCureSeconds: 0.0f,
+                isCrystalVacuumImmune: true,
+                displayName: "Çelik Tork Anahtarı (ToolTorqueWrench)",
+                ingredientsSummary: "1x Çelik + 1x Demir Donanım -> Çelik Hadde Tezgâhı",
+                processNotes: "Çelik kolon ve kiriş bulonlarını Snug-Tight ön montajdan Tam Tork rijit kilide geçirir.")
         };
 
         /// <summary>
@@ -873,7 +1400,15 @@ namespace Stratocraft.Inventory.Systems
                 requiresChimneyOrVentWhenEnclosed: false,
                 minCombustibleWallClearanceMeters: 0.0f,
                 zeroClearanceWithStoneFireback: false,
-                summary: "Kapalı bina içine kurulamaz; açık sırt veya Ekol 3 taş değirmen kulesi tepesine (14 m iz mesafesiyle) kurulur.")
+                summary: "Kapalı bina içine kurulamaz; açık sırt veya Ekol 3 taş değirmen kulesi tepesine (14 m iz mesafesiyle) kurulur."),
+            new(
+                CraftStationKind.SteelRebarBench,
+                allowedIndoors: true,
+                requiresNonCombustibleFloor: true,
+                requiresChimneyOrVentWhenEnclosed: false,
+                minCombustibleWallClearanceMeters: 0.0f,
+                zeroClearanceWithStoneFireback: true,
+                summary: "Çelik Hadde & Donatı Tezgâhı: Taş/beton zemin üzerinde ağır çelik kolon, rebar ve trapez sac işler.")
         };
 
         public static ReadOnlySpan<ClothMatCraftMatch> WeatherInstrumentAndRodRecipes => CachedWeatherAndRodRecipes;
@@ -905,10 +1440,17 @@ namespace Stratocraft.Inventory.Systems
             outputId >= PrimitiveCraftOutputId.ReinforcedSteelBlock && outputId <= PrimitiveCraftOutputId.Floatstone;
 
         public static bool IsConstructionToolOutput(PrimitiveCraftOutputId outputId) =>
-            outputId >= PrimitiveCraftOutputId.ToolChalkLineAndStakes && outputId <= PrimitiveCraftOutputId.RopeAndPulleyWheel;
+            (outputId >= PrimitiveCraftOutputId.ToolChalkLineAndStakes && outputId <= PrimitiveCraftOutputId.RopeAndPulleyWheel) ||
+            outputId == PrimitiveCraftOutputId.ToolShovel ||
+            outputId == PrimitiveCraftOutputId.ToolEarthTamper ||
+            outputId == PrimitiveCraftOutputId.ToolPlumbAndLevel ||
+            outputId == PrimitiveCraftOutputId.ToolConcreteVibrator ||
+            outputId == PrimitiveCraftOutputId.ToolTorqueWrench;
 
         public static bool IsArchitecturalMaterialOrInteriorOutput(PrimitiveCraftOutputId outputId) =>
-            outputId >= PrimitiveCraftOutputId.QuicklimePowder && outputId <= PrimitiveCraftOutputId.WoodPlankBlock;
+            (outputId >= PrimitiveCraftOutputId.QuicklimePowder && outputId <= PrimitiveCraftOutputId.WoodPlankBlock) ||
+            (outputId >= PrimitiveCraftOutputId.WoodenStake && outputId <= PrimitiveCraftOutputId.SteelXBraceAndDeck) ||
+            (outputId >= PrimitiveCraftOutputId.EnglishBondBrickMasonry && outputId <= PrimitiveCraftOutputId.HorasanMortarMix);
 
         /// <summary>
         /// Karar A3: [C] Madde Kristali ASLA tuğla, harçlı duvar, kertikli kütük veya herhangi bir işlenmiş mimari blok üretemez!
@@ -1116,6 +1658,68 @@ namespace Stratocraft.Inventory.Systems
                 case PrimitiveCraftOutputId.TimberShingleRoof:
                     materialId = MaterialIdCatalog.TimberShingleRoof;
                     return true;
+
+                // 9-Ekol yeni işlenmiş mimari bloklar (137..152 — tamamı Karar A3 %100 CrystalImmune)
+                case PrimitiveCraftOutputId.EnglishBondBrickMasonry:
+                    materialId = MaterialIdCatalog.EnglishBondBrickMasonry;
+                    return true;
+                case PrimitiveCraftOutputId.CobMudBall:
+                    materialId = MaterialIdCatalog.CobMudBrick;
+                    return true;
+                case PrimitiveCraftOutputId.RammedEarthMixBucket:
+                    materialId = MaterialIdCatalog.RammedEarthCompacted;
+                    return true;
+                case PrimitiveCraftOutputId.DriedRammedEarthBlock:
+                    materialId = MaterialIdCatalog.DriedRammedEarth;
+                    return true;
+                case PrimitiveCraftOutputId.PlywoodSheathingPanel:
+                    materialId = MaterialIdCatalog.PlywoodOsbPanel;
+                    return true;
+                case PrimitiveCraftOutputId.TreatedTimberBeamBlock:
+                    materialId = MaterialIdCatalog.TreatedTimberBeam;
+                    return true;
+                case PrimitiveCraftOutputId.GroovedTimberPost:
+                    materialId = MaterialIdCatalog.GroovedLogTimber;
+                    return true;
+                case PrimitiveCraftOutputId.LimeWashPlasterMix:
+                    materialId = MaterialIdCatalog.LimeWashPlaster;
+                    return true;
+                case PrimitiveCraftOutputId.SteelRebarBundle:
+                    materialId = MaterialIdCatalog.SteelRebarMesh;
+                    return true;
+                case PrimitiveCraftOutputId.FreshConcreteBucket:
+                    materialId = MaterialIdCatalog.WetPortlandConcrete;
+                    return true;
+                case PrimitiveCraftOutputId.CuredReinforcedConcreteBlock:
+                    materialId = MaterialIdCatalog.CuredReinforcedConcrete;
+                    return true;
+                case PrimitiveCraftOutputId.SteelHBeamColumn:
+                case PrimitiveCraftOutputId.SteelAnchorBoltSet:
+                case PrimitiveCraftOutputId.SteelGuyWireBrace:
+                    materialId = MaterialIdCatalog.StructuralSteelHBeam;
+                    return true;
+                case PrimitiveCraftOutputId.SteelXBraceAndDeck:
+                    materialId = MaterialIdCatalog.CorrugatedSteelDeck;
+                    return true;
+                case PrimitiveCraftOutputId.StrawChinkingBundle:
+                    materialId = MaterialIdCatalog.StrawChinkingBundle;
+                    return true;
+                case PrimitiveCraftOutputId.CrushedLimeAggregate:
+                    materialId = MaterialIdCatalog.CrushedLimeAggregate;
+                    return true;
+                case PrimitiveCraftOutputId.FormworkTimberBoard:
+                case PrimitiveCraftOutputId.TemporaryWoodBrace:
+                case PrimitiveCraftOutputId.WoodenArchCentering:
+                case PrimitiveCraftOutputId.SlidingEarthFormwork:
+                case PrimitiveCraftOutputId.TelescopicShoringProp:
+                    materialId = MaterialIdCatalog.FormworkTimberBoard;
+                    return true;
+                case PrimitiveCraftOutputId.HorasanMortarMix:
+                    materialId = MaterialIdCatalog.LimeMortarStoneWall;
+                    return true;
+                case PrimitiveCraftOutputId.FloorJoistIronStrap:
+                    materialId = MaterialIdCatalog.IronTieBeamBlock;
+                    return true;
                 default:
                     materialId = MaterialIdCatalog.Air;
                     return false;
@@ -1164,7 +1768,7 @@ namespace Stratocraft.Inventory.Systems
             match = default;
             if (padTokens.Length < 3 || padCounts.Length < 3) return false;
 
-            Span<int> totals = stackalloc int[40];
+            Span<int> totals = stackalloc int[64];
             int distinctNonZeroTypes = 0;
             for (int i = 0; i < 3; i++)
             {
