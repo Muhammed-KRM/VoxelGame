@@ -181,6 +181,11 @@ namespace Stratocraft.Character
         public HearthAndChimneyEvaluation LastPlayerHearthEval => _unifiedBridge.LastHearthEval;
         public string LastUnifiedCollapseWarningText => _unifiedBridge.LastCollapseWarningText;
         internal WorldLooseUnifiedRuntimeBridge UnifiedBridge => _unifiedBridge;
+        public bool UseLegacyGlbSettlementInstances
+        {
+            get => _unifiedBridge.UseLegacyGlbSettlementInstances;
+            set => _unifiedBridge.UseLegacyGlbSettlementInstances = value;
+        }
         public string CurrentModularStatusText { get; private set; } = string.Empty;
         public bool IsKneeSnapAnimActive => _kneeSnapAnimTimer > 0.001f;
         public bool HasValidGhostPlacement { get; private set; }
@@ -2524,8 +2529,9 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Chunk yuklendiginde o chunk'a ait tum yerlesim binalarini (Koy/Kasaba/Sehir/Saray) yalnizca
-        /// Birlesik Yapi Grafi + CityChunkLodBatchRenderer uzerinden kurar (KN-3: eski ikili yerlesim spawn hattı kapatildi!).
+        /// DK-06 Cozumu: Dunya uretimi yerlesim binalari (Koy/Kasaba/48x48 Metropol/GrandCityPalace) ve ic esyalari artik
+        /// %100 voksel + MicroVoxelPool4096 olarak chunk mesh'ine gomuludur. Normal chunk akisi sirasinda 20.000+ .glb
+        /// dugumu basmak varsayilan olarak KAPALIDIR (<see cref="UseLegacyGlbSettlementInstances"/> = false).
         /// </summary>
         public int SpawnOrSyncChunkModularStructureSite(
             int chunkX,
@@ -2535,6 +2541,10 @@ namespace Stratocraft.Character
         {
             _ = sharedVoxelMat;
             _ = worldChunks;
+            if (!UseLegacyGlbSettlementInstances)
+            {
+                return _unifiedBridge.CountChunkUnifiedNodes(chunkX, chunkZ);
+            }
             int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
@@ -2553,13 +2563,16 @@ namespace Stratocraft.Character
             _ = sites;
             _ = sharedVoxelMat;
             _ = worldChunks;
+            if (!UseLegacyGlbSettlementInstances)
+            {
+                return _unifiedBridge.CountChunkUnifiedNodes(chunkX, chunkZ);
+            }
             int chunkKey = PackChunkSiteKey(chunkX, chunkZ);
             if (!_spawnedChunkSiteKeys.Add(chunkKey))
             {
                 return _unifiedBridge.CountChunkUnifiedNodes(chunkX, chunkZ);
             }
 
-            // KN-3 Kesin Cozumu: Yerlesim chunk'larinda yalnizca UnifiedSettlementBuilder -> CityChunkLodBatchRenderer cizilir!
             return _unifiedBridge.SpawnChunkSettlementUnifiedGraph(chunkX, chunkZ);
         }
 
@@ -3672,6 +3685,11 @@ namespace Stratocraft.Character
         public HearthAndChimneyEvaluation LastPlayerHearthEval => _unifiedBridge.LastHearthEval;
         public string LastUnifiedCollapseWarningText => _unifiedBridge.LastCollapseWarningText;
         internal WorldLooseUnifiedRuntimeBridge UnifiedBridge => _unifiedBridge;
+        public bool UseLegacyGlbSettlementInstances
+        {
+            get => _unifiedBridge.UseLegacyGlbSettlementInstances;
+            set => _unifiedBridge.UseLegacyGlbSettlementInstances = value;
+        }
 
         public void SelectModularPieceForPlacement(ModularBuildPieceKind kind, bool enableModularMode = true)
         {
@@ -4537,6 +4555,7 @@ namespace Stratocraft.Character
         public int LastInstantFallCount { get; private set; }
         public string LastCollapseWarningText { get; private set; } = string.Empty;
         public ulong MortarCureTick { get; private set; }
+        public bool UseLegacyGlbSettlementInstances { get; set; } = false;
 
         public void Clear()
         {
@@ -4702,19 +4721,29 @@ namespace Stratocraft.Character
             {
                 CityLodRenderer.RegisterChunkNodes(cx, cz, _exportNodesScratch.AsSpan(0, count), worldX, worldZ);
             }
+            else
+            {
+                CityLodRenderer.UnregisterChunkNodes(cx, cz);
+            }
+            CityLodRenderer.SyncNodeStatesFromSolver(GraphSolver);
             CityLodRenderer.NotifyChunkDamaged(cx, cz, 0.0, holdLod0Seconds: 15.0f);
             _spatialCollisionDirty = true;
             _envEvalDirty = true;
         }
 
         /// <summary>
-        /// 48x48 Kuzey Metropolu ve uzak yerlesimler icin aktif LOD0 fizik penceresini (cheb &lt;= 5 chunk = 80m) RAM &amp; 65536-dugum butcesi icinde tutar,
-        /// uzaklasan chunk'lari 0-dugumlu Lod2HorizonProxy'ye indirir ve ufuktaki sehir/saray/kasaba/koy chunk'larini 0-dugumlu proxy olarak on-kaydeder (0-GC).
+        /// 48x48 Kuzey Metropolu ve uzak yerlesimler icin aktif voksel arazi menzili disinda kalan
+        /// sehir/saray/kasaba/koy chunk'larini 0-dugumlu Lod2HorizonProxy olarak on-kaydeder (0-GC).
+        /// Dunya uretimi binalari artik %100 voksel + MicroVoxelPool4096 oldugundan UseLegacyGlbSettlementInstances == false
+        /// iken 0 adet .glb bina dugumu uretilir!
         /// </summary>
         public void StepActiveWindowAndDistantCitySkyline(System.Numerics.Vector3 viewerPos)
         {
             int vCx = FloorDiv16(viewerPos.X);
             int vCz = FloorDiv16(viewerPos.Z);
+            int minSkylineRadiusChunks = System.Math.Max(
+                Lod0PhysicsActiveRadiusChunks,
+                CityLodRenderer.ActiveVoxelTerrainRadiusChunks);
 
             // 1) Oyuncunun geride biraktigi (chebDist > 6 chunk = 96m) sehir/saray chunk'larinin agir fizik & LOD0 dugumlerini bosalt,
             // CityLodRenderer icindeki kaydi 0-dugumlu Lod2HorizonProxy olarak koru (65.536 dugum tavanina ASLA ulasilmaz!).
@@ -4730,28 +4759,32 @@ namespace Stratocraft.Character
                 evictedThisFrame++;
             }
 
-            // 2) Oyuncunun hemen etrafindaki (chebDist <= 5 chunk = 80m) sehir/saray/kasaba/koy chunk'larini ic halkadan disa dogru tam LOD0 yukle
-            int promotedThisFrame = 0;
-            for (int ring = 0; ring <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 4; ring++)
+            // 2) Yalnizca UseLegacyGlbSettlementInstances == true ise eski .glb yerlesim dugumlerini yukle (varsayilan false -> 0 .glb!)
+            if (UseLegacyGlbSettlementInstances)
             {
-                for (int dz = -ring; dz <= ring && promotedThisFrame < 4; dz++)
+                int promotedThisFrame = 0;
+                for (int ring = 0; ring <= Lod0PhysicsActiveRadiusChunks && promotedThisFrame < 4; ring++)
                 {
-                    for (int dx = -ring; dx <= ring && promotedThisFrame < 4; dx++)
+                    for (int dz = -ring; dz <= ring && promotedThisFrame < 4; dz++)
                     {
-                        if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) != ring) continue;
-                        int cx = vCx + dx;
-                        int cz = vCz + dz;
-                        int ck = PackChunkKey(cx, cz);
-                        if (_spawnedUnifiedChunkKeys.Contains(ck)) continue;
-                        if (SpawnChunkSettlementUnifiedGraph(cx, cz, viewerPos.X, viewerPos.Z) > 0)
+                        for (int dx = -ring; dx <= ring && promotedThisFrame < 4; dx++)
                         {
-                            promotedThisFrame++;
+                            if (System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz)) != ring) continue;
+                            int cx = vCx + dx;
+                            int cz = vCz + dz;
+                            int ck = PackChunkKey(cx, cz);
+                            if (_spawnedUnifiedChunkKeys.Contains(ck)) continue;
+                            if (SpawnChunkSettlementUnifiedGraph(cx, cz, viewerPos.X, viewerPos.Z) > 0)
+                            {
+                                promotedThisFrame++;
+                            }
                         }
                     }
                 }
             }
 
             // 3) Uzak Kuzey Metropolu (Z = +192..+960m), Guney Koyu ve Bati Kasabasi ufuk siluetini (LOD2)
+            // YALNIZCA aktif voksel arazi yaricapi disindaki (> minSkylineRadiusChunks) chunk'lar icin
             // 0-dugumlu RegisterSkylineChunkProxy ile _nodeBuffer'dan 0 dugum harcayarak on-kaydet!
             if (CityLodRenderer.RegisteredChunkCount >= CityChunkLodBatchRenderer.DefaultMaxChunkCapacity - 128)
             {
@@ -4791,10 +4824,12 @@ namespace Stratocraft.Character
                 int dx = (idx % gridSide) - SkylineMaxScanRadiusChunks;
                 int dz = (idx / gridSide) - SkylineMaxScanRadiusChunks;
                 int cheb = System.Math.Max(System.Math.Abs(dx), System.Math.Abs(dz));
-                if (cheb <= Lod0PhysicsActiveRadiusChunks) continue;
+                if (cheb <= minSkylineRadiusChunks) continue;
 
                 int cx = vCx + dx;
                 int cz = vCz + dz;
+                if (CityLodRenderer.IsSkylineProxySuppressedByActiveVoxelChunk(cx, cz)) continue;
+
                 int ck = PackChunkKey(cx, cz);
                 if (_registeredSkylineChunkKeys.Contains(ck)) continue;
                 _registeredSkylineChunkKeys.Add(ck);
@@ -5069,8 +5104,9 @@ namespace Stratocraft.Character
                 totalHits += res.DamagedNodeCount + res.FracturedNodeCount;
             }
 
-            if (totalHits > 0 || brokenCount > 0)
+            if (totalHits > 0 || brokenCount > 0 || collapsedCount > 0)
             {
+                CityLodRenderer.SyncNodeStatesFromSolver(GraphSolver);
                 CityLodRenderer.NotifyDamageAtWorldPos(worldPoint.X, worldPoint.Z, radius, simSeconds);
                 MarkChunkStructureDirty(FloorDiv16(worldPoint.X), FloorDiv16(worldPoint.Z));
                 _spatialCollisionDirty = true;
@@ -5096,6 +5132,14 @@ namespace Stratocraft.Character
         {
             MortarCureTick++;
             bool anyDebrisThisStep = false;
+            CityLodRenderer.ActiveVoxelTerrainChunks = worldChunks;
+            CityLodRenderer.ActiveViewerChunkX = FloorDiv16(viewerPos.X);
+            CityLodRenderer.ActiveViewerChunkZ = FloorDiv16(viewerPos.Z);
+#if UNITY_5_3_OR_NEWER
+            CityLodRenderer.ActiveVoxelTerrainRadiusChunks = worldChunks != null ? Stage1GameSettings.RenderDistanceChunks : 0;
+#else
+            CityLodRenderer.ActiveVoxelTerrainRadiusChunks = worldChunks != null ? 12 : 0;
+#endif
 
             if (GraphSolver.ActiveNodeCount > 0)
             {
@@ -5115,6 +5159,9 @@ namespace Stratocraft.Character
                 Stratocraft.Core.Structures.StructureSolveSummary solve = GraphSolver.SolveDirty();
                 int activeWarnCount = solve.OverloadWarningCount;
                 LastInstantFallCount = solve.DetachedInstantCount;
+                bool needsLodNodeSync = solve.DetachedInstantCount > 0 ||
+                                        solve.CollapsedCount > 0 ||
+                                        (collapseBridge == null && solve.EvaluatedNodeCount > 0);
 
                 if (collapseBridge != null && GraphSolver.NodeSlotCount > 0)
                 {
@@ -5136,6 +5183,7 @@ namespace Stratocraft.Character
                     if (debrisCount > 0)
                     {
                         anyDebrisThisStep = true;
+                        needsLodNodeSync = true;
                         for (int i = 0; i < debrisCount; i++)
                         {
                             ref readonly Stratocraft.Physics.Systems.StructuralNodeDebrisEvent ev = ref _debrisScratch[i];
@@ -5172,6 +5220,15 @@ namespace Stratocraft.Character
                                 dirtyChunks);
 #endif
                         }
+                        _spatialCollisionDirty = true;
+                        _envEvalDirty = true;
+                    }
+                }
+
+                if (needsLodNodeSync)
+                {
+                    if (CityLodRenderer.SyncNodeStatesFromSolver(GraphSolver) > 0)
+                    {
                         _spatialCollisionDirty = true;
                         _envEvalDirty = true;
                     }
