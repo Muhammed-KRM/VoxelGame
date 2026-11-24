@@ -162,6 +162,14 @@ namespace Stratocraft.Core.Structures
         public const float ClanBreachWindowRadiusMeters = 8.0f;
 
         public const string ErrCrystalCraftedBlockForbidden = "ERR_CRYSTAL_CRAFTED_BLOCK_FORBIDDEN";
+        public const string StripReasonOk = "OK";
+        public const string ErrStripNodeNotFound = "ERR_STRIP_NODE_NOT_FOUND";
+        public const string ErrStripArchMissingKeystoneOrWet = "ERR_ARCH_MISSING_KEYSTONE_OR_WET_MORTAR";
+        public const string ErrStripRammedEarthNotCompacted = "ERR_RAMMED_EARTH_NOT_COMPACTED";
+        public const string ErrStripConcreteShoringBelow75Pct = "ERR_CONCRETE_SHORING_CURE_BELOW_75_PERCENT";
+        public const string ErrStripConcreteColumnFormBelow90s = "ERR_CONCRETE_COLUMN_FORM_CURE_BELOW_90S";
+        public const string ErrStripBraceFrameNotLocked = "ERR_TEMPORARY_BRACE_FRAME_NOT_LOCKED";
+        public const string ErrStripSteelMissingXBrace = "ERR_STEEL_FRAME_MISSING_X_BRACE";
 
         private const int ClanBfsGridSizeXZ = 48;
         private const int ClanBfsArea = ClanBfsGridSizeXZ * ClanBfsGridSizeXZ;
@@ -211,6 +219,7 @@ namespace Stratocraft.Core.Structures
         private float[] _nodeWindLoadKn;
         private float[] _nodeSnowLoadKn;
         private byte[] _nodeDifferentialSettled;
+        private byte[] _nodePrematurelyStripped;
         private int _nodeSlotCount;
         private int _activeNodeCount;
 
@@ -254,6 +263,7 @@ namespace Stratocraft.Core.Structures
             _nodeWindLoadKn = new float[nCap];
             _nodeSnowLoadKn = new float[nCap];
             _nodeDifferentialSettled = new byte[nCap];
+            _nodePrematurelyStripped = new byte[nCap];
 
             _edges = new StructuralJointEdge32[eCap];
             _edgeActive = new byte[eCap];
@@ -283,6 +293,7 @@ namespace Stratocraft.Core.Structures
         {
             Array.Clear(_nodePresent, 0, _nodeSlotCount);
             Array.Clear(_nodeDifferentialSettled, 0, _nodeSlotCount);
+            Array.Clear(_nodePrematurelyStripped, 0, _nodeSlotCount);
             Array.Clear(_nodeWindLoadKn, 0, _nodeSlotCount);
             Array.Clear(_nodeSnowLoadKn, 0, _nodeSlotCount);
             Array.Clear(_edgeActive, 0, _edgeSlotCount);
@@ -393,8 +404,10 @@ namespace Stratocraft.Core.Structures
             int notchLockCount = 0;
             bool hasFoundationOrSillSupport = false;
             bool hasCenteringScaffoldSupport = false;
+            bool hasSlidingFormworkSupport = false;
             bool hasKeystoneNeighbor = false;
             bool hasLintelOrArchSupport = false;
+            bool hasUncuredCobDirectlyBelow = false;
             int maxStackBelow = 0;
 
             for (int i = 0; i < connectedNeighborIds.Length; i++)
@@ -431,11 +444,20 @@ namespace Stratocraft.Core.Structures
                         {
                             maxStackBelow = belowCourses;
                         }
+
+                        if (nb.Role == StructuralElementRole.CobCurvedWall &&
+                            nb.Mortar == MortarType.CobMud &&
+                            nb.CureRatio01 < MortarConstants.WetCureThreshold &&
+                            !nb.IsCompactedOrCured)
+                        {
+                            hasUncuredCobDirectlyBelow = true;
+                        }
                     }
                 }
 
-                if (jKind is JointConnectionKind.SaddleNotch or JointConnectionKind.DovetailNotch ||
-                    (jKind == JointConnectionKind.MortiseTenonPeg && nb.Role == StructuralElementRole.TimberPost))
+                if (jKind is JointConnectionKind.SaddleNotch or JointConnectionKind.DovetailNotch or JointConnectionKind.GroovedPostChannel ||
+                    (jKind == JointConnectionKind.MortiseTenonPeg &&
+                     nb.Role is StructuralElementRole.TimberPost or StructuralElementRole.GroovedLogPost))
                 {
                     notchLockCount++;
                 }
@@ -446,15 +468,29 @@ namespace Stratocraft.Core.Structures
                         or StructuralElementRole.DrivenTimberPile
                         or StructuralElementRole.MonumentalAshlarPedestal
                         or StructuralElementRole.SteppedSlopePlinth
-                        or StructuralElementRole.SillBeamOrLog)
+                        or StructuralElementRole.RebarFoundationCage
+                        or StructuralElementRole.SillBeamOrLog
+                        or StructuralElementRole.SaddleNotchedBaseLog
+                        or StructuralElementRole.HalfFlatStarterLog)
                 {
                     hasFoundationOrSillSupport = true;
                 }
 
-                if (nb.Role is StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.ModularScaffolding ||
-                    jKind == JointConnectionKind.ScaffoldingClamp)
+                if (nb.Role is StructuralElementRole.TemporaryCenteringScaffold
+                        or StructuralElementRole.WoodenArchCentering
+                        or StructuralElementRole.ModularScaffolding
+                        or StructuralElementRole.TelescopicShoringProp
+                        or StructuralElementRole.SlabDeckFormwork
+                        or StructuralElementRole.CorrugatedMetalDeck ||
+                    nb.IsArchCentering ||
+                    jKind is JointConnectionKind.ScaffoldingClamp or JointConnectionKind.TemporaryShoringProp)
                 {
                     hasCenteringScaffoldSupport = true;
+                }
+
+                if (nb.Role == StructuralElementRole.SlidingEarthFormwork || nb.IsSlidingFormwork)
+                {
+                    hasSlidingFormworkSupport = true;
                 }
 
                 if (nb.Role is StructuralElementRole.ArchKeystone or StructuralElementRole.DomeOculusCrown ||
@@ -465,6 +501,8 @@ namespace Stratocraft.Core.Structures
 
                 if (nb.Role is StructuralElementRole.StoneOrWoodLintel
                         or StructuralElementRole.TimberMainGirder
+                        or StructuralElementRole.TimberRingBeam
+                        or StructuralElementRole.CorrugatedMetalDeck
                         or StructuralElementRole.RelievingArch ||
                     jKind == JointConnectionKind.LintelBearing)
                 {
@@ -501,7 +539,7 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            // Ekol 4 (MonumentalArchDome) kemer tasi kalip zorunlulugu (AK-11):
+            // Ekol 4/5/7 kemer tasi kalip zorunlulugu (AK-11):
             if (candidate.Role == StructuralElementRole.ArchVoussoir &&
                 !grounded &&
                 !hasCenteringScaffoldSupport &&
@@ -510,15 +548,49 @@ namespace Stratocraft.Core.Structures
                 return new PlacementValidationResult(false, PlacementFailureReason.MissingArchCenteringScaffold, predictedGeo, 1.60f);
             }
 
-            // Ekol 3 duz tas aciklik cekme/egilme siniri (AK-09):
+            // Ekol 8 (RammedEarth): Sikistirilmamis gevsek toprak kalipsiz (SlidingEarthFormwork) dokulemez (Bolum 2.2)
+            if (candidate.Role == StructuralElementRole.RammedEarthWall &&
+                !candidate.IsCompactedOrCured &&
+                candidate.CureRatio01 < 1.0f &&
+                candidate.MaterialId != MaterialIdCatalog.DriedRammedEarth &&
+                !hasSlidingFormworkSupport)
+            {
+                return new PlacementValidationResult(false, PlacementFailureReason.MissingArchCenteringScaffold, predictedGeo, 1.55f);
+            }
+
+            // Ekol 10 (Betonarme): Sivi beton tabliye/kiris dikmesiz/kalipsiz havaya dokulemez (Bolum 2.2)
+            if (!grounded &&
+                (candidate.Mortar == MortarType.PortlandConcrete || candidate.MaterialId == MaterialIdCatalog.WetPortlandConcrete) &&
+                candidate.CureRatio01 < MortarConstants.ConcreteSlabShoringCureThreshold &&
+                !candidate.IsCompactedOrCured &&
+                IsHorizontalConcreteSpanRole(candidate.Role) &&
+                !hasCenteringScaffoldSupport)
+            {
+                return new PlacementValidationResult(false, PlacementFailureReason.MissingArchCenteringScaffold, predictedGeo, 1.70f);
+            }
+
+            // Ekol 9 (CobCurvedWall): Tek seferde <= 0.45m / 90s kuruma hizi siniri (Bolum 2.2 & 2.3)
+            if (candidate.Role == StructuralElementRole.CobCurvedWall &&
+                candidate.Mortar == MortarType.CobMud &&
+                candidate.CureRatio01 < MortarConstants.WetCureThreshold &&
+                !candidate.IsCompactedOrCured &&
+                (candidate.CompletedCourses >= 2 || hasUncuredCobDirectlyBelow))
+            {
+                return new PlacementValidationResult(false, PlacementFailureReason.WetMortarOverload, predictedGeo, 1.40f);
+            }
+
+            // Ekol 3/7/8/9/0 duz kagir/toprak aciklik cekme/egilme siniri (AK-09):
             if (clearSpanMeters > 0.1f &&
                 !grounded &&
                 !hasLintelOrArchSupport &&
                 candidate.Role is StructuralElementRole.RubbleMasonryCourse
                     or StructuralElementRole.AshlarMasonryWall
+                    or StructuralElementRole.EnglishBondBrickWall
+                    or StructuralElementRole.RammedEarthWall
+                    or StructuralElementRole.CobCurvedWall
                     or StructuralElementRole.RawCrystalMassSegment)
             {
-                StructureMaterialMechanicsProfile prof = StructureMaterialCatalog.GetEffectiveProfile(candidate.MaterialId, candidate.School);
+                StructureMaterialMechanicsProfile prof = ResolveEffectiveMechanicsProfile(in candidate);
                 float maxFlatSpan = candidate.Mortar == MortarType.None
                     ? MathF.Min(2.50f, prof.MaxUnreinforcedSpanMeters * 0.90f)
                     : prof.MaxUnreinforcedSpanMeters;
@@ -530,9 +602,11 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            // Ekol 3 islak harc >= 3 kat siniri (AK-10):
+            // Islak harc >= 3 kat siniri (AK-10):
             if (candidate.Mortar != MortarType.None &&
-                candidate.CureRatio01 < MortarConstants.WetCureThreshold)
+                candidate.Mortar != MortarType.RammedEarthCompact &&
+                candidate.CureRatio01 < MortarConstants.WetCureThreshold &&
+                !candidate.IsCompactedOrCured)
             {
                 int stackedCourses = System.Math.Max((int)candidate.CompletedCourses, maxStackBelow + 1);
                 if (stackedCourses >= 3)
@@ -571,6 +645,7 @@ namespace Stratocraft.Core.Structures
                 normalized.EdgeCount = _nodes[existingSlot].EdgeCount;
                 _nodes[existingSlot] = normalized;
                 _nodePresent[existingSlot] = 1;
+                _nodePrematurelyStripped[existingSlot] = 0;
                 EnqueueDirtySlot(existingSlot);
                 return existingSlot;
             }
@@ -586,6 +661,7 @@ namespace Stratocraft.Core.Structures
             _nodeWindLoadKn[slot] = 0f;
             _nodeSnowLoadKn[slot] = 0f;
             _nodeDifferentialSettled[slot] = 0;
+            _nodePrematurelyStripped[slot] = 0;
             _activeNodeCount++;
             if (normalized.Mortar != MortarType.None && normalized.CureRatio01 < 0.9999f)
             {
@@ -679,6 +755,140 @@ namespace Stratocraft.Core.Structures
 
             EnqueueDirtySlot(slotA);
             EnqueueDirtySlot(slotB);
+            _nodePrematurelyStripped[slotA] = 0;
+            _nodePrematurelyStripped[slotB] = 0;
+            return true;
+        }
+
+        /// <summary>
+        /// Bolum 2.2 ve 2.3 uyarinca bir gecici destegin / kalibin / payandanin ([Shift+E]) erken yikima veya
+        /// paralelkenar devrilmeye (racking) yol acmadan guvenle sokulup sokulemeyecegini 0-GC olarak denetler.
+        /// </summary>
+        public bool CanStripSupportSafely(uint nodeId, out string reason)
+        {
+            if (!TryGetNodeSlot(nodeId, out int slot) || _nodePresent[slot] == 0)
+            {
+                reason = ErrStripNodeNotFound;
+                return false;
+            }
+
+            ref readonly StructuralNode64 sup = ref _nodes[slot];
+            for (int e = sup.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                ref readonly StructuralNode64 dep = ref _nodes[nb];
+
+                // 1. Kemer kalibi (WoodenArchCentering / TemporaryCenteringScaffold) -> Kilit tasi + harc kuru >= 0.45 olmali
+                if (IsTemporaryArchCenteringNode(in sup) &&
+                    dep.Role is StructuralElementRole.ArchVoussoir
+                        or StructuralElementRole.ArchKeystone
+                        or StructuralElementRole.DomeRingCourse
+                        or StructuralElementRole.DomeOculusCrown)
+                {
+                    if (!IsArchMemberSelfSupportingWithoutCentering(nb, slot))
+                    {
+                        reason = ErrStripArchMissingKeystoneOrWet;
+                        return false;
+                    }
+                }
+
+                // 2. Sikistirilmis toprak kayar kalibi (SlidingEarthFormwork) -> tokmaklanmis (IsCompactedOrCured) olmali (0s sokum!)
+                if ((sup.Role == StructuralElementRole.SlidingEarthFormwork || sup.IsSlidingFormwork) &&
+                    (dep.Role == StructuralElementRole.RammedEarthWall || dep.Mortar == MortarType.RammedEarthCompact))
+                {
+                    bool compacted = dep.IsCompactedOrCured || dep.MaterialId == MaterialIdCatalog.DriedRammedEarth;
+                    if (!MortarConstants.CanStripFormwork(MortarType.RammedEarthCompact, dep.CureRatio01, isSideFormworkOnly: false, isCompactedOrCured: compacted))
+                    {
+                        reason = ErrStripRammedEarthNotCompacted;
+                        return false;
+                    }
+                }
+
+                // 3. Betonarme kolon yan kalibi (ConcreteColumnFormwork) -> 90s (0.225f) kur olmali
+                if (sup.Role == StructuralElementRole.ConcreteColumnFormwork &&
+                    (dep.Mortar == MortarType.PortlandConcrete || dep.MaterialId == MaterialIdCatalog.WetPortlandConcrete))
+                {
+                    if (!MortarConstants.CanStripFormwork(MortarType.PortlandConcrete, dep.CureRatio01, isSideFormworkOnly: true, isCompactedOrCured: dep.IsCompactedOrCured))
+                    {
+                        reason = ErrStripConcreteColumnFormBelow90s;
+                        return false;
+                    }
+                }
+
+                // 4. Betonarme kiris/tabliye ana dikmesi (TelescopicShoringProp / SlabDeckFormwork) -> 300s (%75) kur olmali
+                if (sup.Role is StructuralElementRole.TelescopicShoringProp or StructuralElementRole.SlabDeckFormwork &&
+                    (dep.Mortar == MortarType.PortlandConcrete || dep.MaterialId == MaterialIdCatalog.WetPortlandConcrete) &&
+                    !sup.IsAdditionalReshoreSupport)
+                {
+                    if (!MortarConstants.CanStripFormwork(MortarType.PortlandConcrete, dep.CureRatio01, isSideFormworkOnly: false, isCompactedOrCured: dep.IsCompactedOrCured) &&
+                        !HasActiveConcreteSlabShoring(nb, excludingSlot: slot))
+                    {
+                        reason = ErrStripConcreteShoringBelow75Pct;
+                        return false;
+                    }
+                }
+
+                // 5. Gecici celik halat (SteelGuyWireBrace) -> SteelXBrace takilmis olmali
+                if (sup.Role == StructuralElementRole.SteelGuyWireBrace &&
+                    dep.Role == StructuralElementRole.SteelHBeamColumn &&
+                    !HasPermanentSteelXBraceInBay(nb, excludingSlot: slot))
+                {
+                    reason = ErrStripSteelMissingXBrace;
+                    return false;
+                }
+
+                // 6. Gecici 45° ahsap kurulum payandasi (TemporaryWoodBrace) -> ust hatil/OSB perde/kalici capraz bagli olmali
+                if (sup.IsTemporarySupport &&
+                    sup.Role is StructuralElementRole.DiagonalWindBrace or StructuralElementRole.ModularScaffolding or StructuralElementRole.TemporaryCenteringScaffold &&
+                    dep.Role is StructuralElementRole.GroovedLogPost or StructuralElementRole.TimberPost or StructuralElementRole.PlatformStudWall &&
+                    !HasPermanentFrameOrShearLockInBay(nb, excludingSlot: slot))
+                {
+                    reason = ErrStripBraceFrameNotLocked;
+                    return false;
+                }
+            }
+
+            reason = StripReasonOk;
+            return true;
+        }
+
+        /// <summary>
+        /// Sikistirilmis toprak (RammedEarthWall) dugumunu tokmaklanmis (%50 sikismis) olarak isaretler;
+        /// boylece kayar kalip (SlidingEarthFormwork) 0.0 sn beklemeden guvenle sokulebilir (Bolum 2.2 &amp; 2.3).
+        /// </summary>
+        public bool TampRammedEarthNode(uint nodeId)
+        {
+            if (!TryGetNodeSlot(nodeId, out int slot) || _nodePresent[slot] == 0)
+            {
+                return false;
+            }
+
+            _nodes[slot].IsCompactedOrCured = true;
+            _nodePrematurelyStripped[slot] = 0;
+            EnqueueDirtySlot(slot);
+            return true;
+        }
+
+        /// <summary>
+        /// Bir tasiyiciyi veya gecici destegi kaldirir ve kalan saglam tasiyicilar / ek destekler (AdditionalReshoreSupport)
+        /// uzerinden yuku aninda yeniden dagitarak etkilenen yapi adalarini cozer (Bolum 2.1 &amp; 2.2, 0-GC).
+        /// </summary>
+        public bool RemoveNodeAndRedistribute(
+            uint nodeId,
+            out StructureSolveSummary solveSummary,
+            bool recordAsCollapsedBreach = false)
+        {
+            if (!RemoveNode(nodeId, recordAsCollapsedBreach))
+            {
+                solveSummary = default;
+                return false;
+            }
+
+            solveSummary = HasDirtyWork ? SolveDirty(HardCeilingBudgetMs) : default;
             return true;
         }
 
@@ -692,6 +902,8 @@ namespace Stratocraft.Core.Structures
             {
                 return false;
             }
+
+            MarkPrematureTemporarySupportStripOnNeighbors(slot);
 
             // Tum komsulari uyandir ve kenarlari pasiflestir
             for (int e = _nodes[slot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
@@ -729,6 +941,7 @@ namespace Stratocraft.Core.Structures
             _nodes[slot].FirstEdgeIndex = -1;
             _nodes[slot].CollapseState = StructureCollapseState.Collapsed;
             _nodes[slot].Integrity01 = 0f;
+            _nodePrematurelyStripped[slot] = 0;
             _nodePresent[slot] = 0;
             _activeNodeCount = System.Math.Max(0, _activeNodeCount - 1);
             MapRemove(nodeId);
@@ -823,6 +1036,14 @@ namespace Stratocraft.Core.Structures
 
             float clamped = System.Math.Clamp(newCureRatio01, 0f, 1f);
             _nodes[slot].CureRatio01 = clamped;
+            if (clamped >= 0.9999f)
+            {
+                _nodes[slot].IsCompactedOrCured = true;
+            }
+            if (clamped >= MortarConstants.GetLoadBearingCureThreshold(_nodes[slot].Mortar))
+            {
+                _nodePrematurelyStripped[slot] = 0;
+            }
             byte cureByte = (byte)System.Math.Clamp((int)MathF.Round(clamped * 255f), 0, 255);
 
             for (int e = _nodes[slot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
@@ -904,6 +1125,10 @@ namespace Stratocraft.Core.Structures
                     out _);
 
                 node.CureRatio01 = nextCure;
+                if (nextCure >= 0.9999f)
+                {
+                    node.IsCompactedOrCured = true;
+                }
                 if (rainWashed)
                 {
                     node.Chinking |= ChinkingFlags.RainWashedDamaged;
@@ -914,7 +1139,17 @@ namespace Stratocraft.Core.Structures
                     anyUncuredRemaining = true;
                 }
 
-                bool crossedLoadThreshold = prevCure < MortarConstants.WetCureThreshold && nextCure >= MortarConstants.WetCureThreshold;
+                float loadThreshold = MortarConstants.GetLoadBearingCureThreshold(node.Mortar);
+                bool crossedLoadThreshold = (prevCure < MortarConstants.WetCureThreshold && nextCure >= MortarConstants.WetCureThreshold) ||
+                                            (loadThreshold > 0f && prevCure < loadThreshold && nextCure >= loadThreshold) ||
+                                            (node.Mortar == MortarType.PortlandConcrete &&
+                                             prevCure < MortarConstants.ConcreteSideFormStripCureThreshold &&
+                                             nextCure >= MortarConstants.ConcreteSideFormStripCureThreshold);
+                if (crossedLoadThreshold && nextCure >= loadThreshold)
+                {
+                    _nodePrematurelyStripped[slot] = 0;
+                }
+
                 bool completedCure = prevCure < 0.9999f && nextCure >= 0.9999f;
                 bool significantStep = MathF.Abs(nextCure - prevCure) >= 0.05f;
                 if (crossedLoadThreshold || completedCure || significantStep || rainWashed)
@@ -927,17 +1162,10 @@ namespace Stratocraft.Core.Structures
             {
                 if (_edgeActive[e] == 0) continue;
                 ref StructuralJointEdge32 edge = ref _edges[e];
-                if (edge.Kind is JointConnectionKind.ClayMortar or JointConnectionKind.LimeMortar or JointConnectionKind.HorasanMortar)
+                if (MortarAndInteriorEnvironmentSolver.TryResolveJointMortarType(edge.Kind, out MortarType edgeMortar))
                 {
                     float cur01 = isCreativeMode ? 1.0f : (edge.MortarCureByte / 255f);
                     if (cur01 >= 0.9999f && clampedRain <= 0f) continue;
-
-                    MortarType edgeMortar = edge.Kind switch
-                    {
-                        JointConnectionKind.ClayMortar => MortarType.Clay,
-                        JointConnectionKind.HorasanMortar => MortarType.Horasan,
-                        _ => MortarType.Lime
-                    };
 
                     float next01 = MortarAndInteriorEnvironmentSolver.StepMortarCuringDetailed(
                         edgeMortar,
@@ -973,6 +1201,8 @@ namespace Stratocraft.Core.Structures
                 or StructuralElementRole.InclinedRoofRafter
                 or StructuralElementRole.RoofPurlin
                 or StructuralElementRole.RoofRidgeBeam
+                or StructuralElementRole.SlabDeckFormwork
+                or StructuralElementRole.CorrugatedMetalDeck
                 or StructuralElementRole.DomeRingCourse
                 or StructuralElementRole.DomeOculusCrown
                 or StructuralElementRole.BarrelOrCrossVault)
@@ -994,6 +1224,8 @@ namespace Stratocraft.Core.Structures
                     or StructuralElementRole.InclinedRoofRafter
                     or StructuralElementRole.RoofPurlin
                     or StructuralElementRole.RoofRidgeBeam
+                    or StructuralElementRole.SlabDeckFormwork
+                    or StructuralElementRole.CorrugatedMetalDeck
                     or StructuralElementRole.DomeRingCourse
                     or StructuralElementRole.DomeOculusCrown
                     or StructuralElementRole.BarrelOrCrossVault)
@@ -1604,13 +1836,23 @@ namespace Stratocraft.Core.Structures
                 if (py > islandMaxY) islandMaxY = py;
                 islandWindLoadKn += _nodeWindLoadKn[u];
 
-                if (_nodes[u].Role == StructuralElementRole.DiagonalWindBrace)
+                if (_nodes[u].Role is StructuralElementRole.DiagonalWindBrace
+                    or StructuralElementRole.SteelXBrace
+                    or StructuralElementRole.SteelGuyWireBrace)
                 {
                     braceCount++;
                 }
+                else if (_nodes[u].Role == StructuralElementRole.PlywoodSheathingPanel)
+                {
+                    braceCount++;
+                    shearWallCount++;
+                }
                 else if (_nodes[u].Role is StructuralElementRole.InfillPanelWattleAdobe
                          or StructuralElementRole.RubbleMasonryCourse
-                         or StructuralElementRole.AshlarMasonryWall)
+                         or StructuralElementRole.AshlarMasonryWall
+                         or StructuralElementRole.EnglishBondBrickWall
+                         or StructuralElementRole.RammedEarthWall
+                         or StructuralElementRole.CobCurvedWall)
                 {
                     shearWallCount++;
                 }
@@ -1622,11 +1864,15 @@ namespace Stratocraft.Core.Structures
                         continue;
                     }
 
-                    if (_edges[e].Kind == JointConnectionKind.MortiseTenonPeg)
+                    if (_edges[e].Kind is JointConnectionKind.MortiseTenonPeg
+                        or JointConnectionKind.SteelTorqueBolt
+                        or JointConnectionKind.GroovedPostChannel)
                     {
                         mortiseTenonCount++;
                     }
-                    else if (_edges[e].Kind == JointConnectionKind.DiagonalBraceTie)
+                    else if (_edges[e].Kind is JointConnectionKind.DiagonalBraceTie
+                             or JointConnectionKind.SheathingDiaphragmNail
+                             or JointConnectionKind.SteelGuyWireTension)
                     {
                         braceCount++;
                     }
@@ -1772,8 +2018,10 @@ namespace Stratocraft.Core.Structures
                     continue;
                 }
 
-                // Destekleyen alt komsulari say
-                int receiverCount = 0;
+                // Bolum 2.1: Coklu-Yol Yuk Paylasimi (Tributary Load Redistribution) —
+                // Kalan saglam (CollapseState != Collapsed/Detached) komsu tasiyicilara ve ek desteklere (AdditionalReshoreSupport)
+                // k_i / sum(k_j) rijitlik + yakinlik agirligiyla dusey yuku dagit.
+                float sumReceiverWeight = 0f;
                 for (int e = nodeU.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
                 {
                     if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int v))
@@ -1788,14 +2036,20 @@ namespace Stratocraft.Core.Structures
 
                     if (IsSupportingNeighbor(u, v))
                     {
-                        receiverCount++;
+                        sumReceiverWeight += ComputeSupportReceiverStiffnessWeight(u, v, in _edges[e]);
                     }
                 }
 
-                if (receiverCount > 0)
+                if (sumReceiverWeight > 1e-6f)
                 {
-                    float shareKn = totalVerticalKn / receiverCount;
+                    bool addsVerticalCourse = nodeU.Role is not (StructuralElementRole.InfillPanelWattleAdobe
+                        or StructuralElementRole.LogChinkingFill
+                        or StructuralElementRole.PlywoodSheathingPanel
+                        or StructuralElementRole.DoorFrameOpening
+                        or StructuralElementRole.WindowFrameOpening) &&
+                        !nodeU.IsTemporarySupport;
                     int myCourses = System.Math.Max(1, (int)nodeU.CompletedCourses) + coursesAbove[u];
+
                     for (int e = nodeU.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
                     {
                         if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int v))
@@ -1808,10 +2062,11 @@ namespace Stratocraft.Core.Structures
                             continue;
                         }
 
+                        float wReceiver = ComputeSupportReceiverStiffnessWeight(u, v, in _edges[e]);
+                        float shareKn = totalVerticalKn * (wReceiver / sumReceiverWeight);
                         accumLoadKn[v] += shareKn;
-                        // Infill paneller dusey sira yukunu ezilme hesabina eklemez
-                        if (nodeU.Role != StructuralElementRole.InfillPanelWattleAdobe &&
-                            myCourses > coursesAbove[v])
+
+                        if (addsVerticalCourse && myCourses > coursesAbove[v])
                         {
                             coursesAbove[v] = myCourses;
                         }
@@ -1912,7 +2167,9 @@ namespace Stratocraft.Core.Structures
                 }
 
                 // Islak harcli (CureRatio < 0.45) kilit tasi henuz kalipsiz kemeri tutamaz (DOK4 §3.2.B)
-                if (crown.Mortar != MortarType.None && crown.CureRatio01 < MortarConstants.WetCureThreshold)
+                if (crown.Mortar != MortarType.None &&
+                    crown.CureRatio01 < MortarConstants.WetCureThreshold &&
+                    !crown.IsCompactedOrCured)
                 {
                     continue;
                 }
@@ -1944,12 +2201,12 @@ namespace Stratocraft.Core.Structures
                             continue;
                         }
 
-                        StructuralElementRole nbRole = _nodes[nb].Role;
-                        if (nbRole is StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.ModularScaffolding)
+                        if (IsTemporaryArchCenteringNode(in _nodes[nb]))
                         {
                             continue;
                         }
 
+                        StructuralElementRole nbRole = _nodes[nb].Role;
                         bool isArchRingElement = nbRole is StructuralElementRole.ArchVoussoir
                             or StructuralElementRole.ArchKeystone
                             or StructuralElementRole.DomeRingCourse
@@ -1961,7 +2218,8 @@ namespace Stratocraft.Core.Structures
                         if (isArchRingElement)
                         {
                             if (_nodes[nb].Mortar != MortarType.None &&
-                                _nodes[nb].CureRatio01 < MortarConstants.WetCureThreshold)
+                                _nodes[nb].CureRatio01 < MortarConstants.WetCureThreshold &&
+                                !_nodes[nb].IsCompactedOrCured)
                             {
                                 continue;
                             }
@@ -2008,17 +2266,17 @@ namespace Stratocraft.Core.Structures
             StructuralElementRole recRole = _nodes[receiverSlot].Role;
             if (recRole == StructuralElementRole.ArchVoussoir && archLocked[receiverSlot] == 0)
             {
-                // Kilit tasi konmamis veya kilit tasi kirilmis kemerde ArchVoussoir YALNIZCA gecici iskele/kaliptan destek alir!
-                StructuralElementRole provRole = _nodes[providerSlot].Role;
-                bool isCentering = provRole is StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.ModularScaffolding ||
-                                   edge.Kind == JointConnectionKind.ScaffoldingClamp ||
+                // Kilit tasi konmamis, harci < 0.45 islak veya kilit tasi kirilmis kemerde ArchVoussoir YALNIZCA gecici iskele/kaliptan destek alir!
+                bool isCentering = IsTemporaryArchCenteringNode(in _nodes[providerSlot]) ||
+                                   edge.Kind is JointConnectionKind.ScaffoldingClamp or JointConnectionKind.TemporaryShoringProp ||
                                    (edge.Flags & StructuralJointFlags.IsTemporaryCentering) != 0;
                 return isCentering;
             }
 
-            // Infill panel tek basina baska tasiyici dugumu ayakta tutamaz (DOK4 §2.2: 0 dusey tasima)
-            if (_nodes[providerSlot].Role == StructuralElementRole.InfillPanelWattleAdobe &&
-                recRole != StructuralElementRole.InfillPanelWattleAdobe)
+            // Infill panel / derz dolgusu tek basina baska tasiyici dugumu ayakta tutamaz (DOK4 §2.2: 0 dusey tasima)
+            StructuralElementRole provRole = _nodes[providerSlot].Role;
+            if (provRole is StructuralElementRole.InfillPanelWattleAdobe or StructuralElementRole.LogChinkingFill &&
+                recRole != provRole)
             {
                 return false;
             }
@@ -2079,7 +2337,7 @@ namespace Stratocraft.Core.Structures
                         }
 
                         StructuralElementRole nbRole = _nodes[nb].Role;
-                        if (nbRole is StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.ModularScaffolding)
+                        if (IsTemporaryArchCenteringNode(in _nodes[nb]))
                         {
                             continue;
                         }
@@ -2279,9 +2537,15 @@ namespace Stratocraft.Core.Structures
         {
             differentialSettled = false;
             ref readonly StructuralNode64 node = ref _nodes[slot];
+            _ = islandMinY;
+            _ = frameSpanHeight;
+            _ = islandBraceCount;
+            _ = islandShearWallCount;
+            _ = islandWindKn;
+            _ = islandGravityKn;
 
             // Gecici iskele kendi basina asiri yuklenmedikce yardimci elemandir
-            StructureMaterialMechanicsProfile prof = StructureMaterialCatalog.GetEffectiveProfile(node.MaterialId, node.School);
+            StructureMaterialMechanicsProfile prof = ResolveEffectiveMechanicsProfile(in node);
             var thickness = (StructureThicknessProfile)node.ThicknessProfile;
             float compThickScale = GetThicknessCapacityScale(thickness);
             float momThickScale = GetThicknessMomentScale(thickness);
@@ -2302,7 +2566,7 @@ namespace Stratocraft.Core.Structures
             float axialLoadKn = accumLoadKn[slot];
             float etaMax = axialLoadKn / nCompCapKn;
 
-            // --- 1. Ekol 1 (LogCabin): Temel/Sill ve Kose Kertigi (SaddleNotch/DovetailNotch) Denetimi (AK-04, T04) ---
+            // --- 1. Ekol 1 (LogCabin) & Ekol 5 (LogPostAndFill): Temel/Sill ve Kose Kertigi / Oluklu Dikme Denetimi ---
             if (node.School == ArchitecturalSchool.LogCabin &&
                 node.Role == StructuralElementRole.NotchedWallLog)
             {
@@ -2322,45 +2586,124 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            // --- 2. Ekol 2 (TimberFrame): >3.0m Cercevede DiagonalWindBrace Yoksa >=25 kN Ruzgarda Yanal Devrilme (AK-06, T06) ---
-            if ((node.School == ArchitecturalSchool.TimberFrame ||
-                 node.Role is StructuralElementRole.TimberPost or StructuralElementRole.TimberMainGirder) &&
-                frameSpanHeight >= 3.0f &&
-                node.Role is StructuralElementRole.TimberPost or StructuralElementRole.TimberMainGirder)
+            // --- 2. Ekol 2/5/6/10 Karkas, Platform OSB & Celik Cerceveler: Yerel Aks Yanal Devrilme (Racking), Burkulma ve Erken Payanda Sokumu ---
+            bool isFramedRole = node.School is ArchitecturalSchool.TimberFrame or ArchitecturalSchool.PlatformWoodFrame ||
+                                node.Role is StructuralElementRole.TimberPost
+                                    or StructuralElementRole.TimberMainGirder
+                                    or StructuralElementRole.GroovedLogPost
+                                    or StructuralElementRole.PlatformStudWall
+                                    or StructuralElementRole.SteelHBeamColumn;
+            if (isFramedRole)
             {
-                float pegFactor = islandMortiseCount > 0 ? 1.0f : 0.55f;
-                float kStoryKnPerM = (14.0f * pegFactor) +
-                                     (islandBraceCount * 480.0f * pegFactor) +
-                                     (islandShearWallCount * 85.0f);
+                ComputeLocalBayFrameMetrics(
+                    slot,
+                    islandSlots,
+                    islandSlotCount,
+                    islandMortiseCount,
+                    out float localStoryHeight,
+                    out float kStoryKnPerM,
+                    out float localBayGravityKn,
+                    out float localBayWindKn,
+                    out bool hasLocalBraceOrShearLock);
 
-                float vLatKn = islandWindKn + (0.03f * islandGravityKn);
-                float pDeltaDenom = (kStoryKnPerM * frameSpanHeight) - islandGravityKn;
-                float swayEta;
-                if (pDeltaDenom <= 0.15f * islandGravityKn)
+                if (localStoryHeight >= 2.8f &&
+                    node.Role is StructuralElementRole.TimberPost
+                        or StructuralElementRole.TimberMainGirder
+                        or StructuralElementRole.GroovedLogPost
+                        or StructuralElementRole.PlatformStudWall
+                        or StructuralElementRole.SteelHBeamColumn)
                 {
-                    swayEta = 2.0f;
-                }
-                else
-                {
-                    float driftRad = vLatKn / MathF.Max(2.0f, pDeltaDenom);
-                    swayEta = driftRad / 0.035f;
+                    float vLatKn = localBayWindKn + (0.03f * localBayGravityKn);
+                    float pDeltaDenom = (kStoryKnPerM * localStoryHeight) - localBayGravityKn;
+                    float swayEta;
+                    if (pDeltaDenom <= 0.15f * localBayGravityKn)
+                    {
+                        swayEta = 2.0f;
+                    }
+                    else
+                    {
+                        float driftRad = vLatKn / MathF.Max(2.0f, pDeltaDenom);
+                        swayEta = driftRad / 0.035f;
+                    }
+
+                    // Narin dikme Euler burkulmasi (DOK4 §3.3.A — yerel kat yuksekligi ile!)
+                    if (node.Role is StructuralElementRole.TimberPost
+                        or StructuralElementRole.GroovedLogPost
+                        or StructuralElementRole.PlatformStudWall
+                        or StructuralElementRole.SteelHBeamColumn)
+                    {
+                        float kEff = hasLocalBraceOrShearLock ? 0.75f : 1.85f;
+                        float bMin = thickness == StructureThicknessProfile.Slender
+                            ? 0.18f
+                            : (thickness == StructureThicknessProfile.HeavyBearing ? 0.34f : 0.25f);
+                        float lambdaBar = (kEff * localStoryHeight / bMin) * 0.058f;
+                        float phiBuckle = 1.0f / (1.0f + (lambdaBar * lambdaBar));
+                        float buckleEta = axialLoadKn / MathF.Max(1.0f, nCompCapKn * phiBuckle);
+                        etaMax = MathF.Max(etaMax, buckleEta);
+                    }
+
+                    etaMax = MathF.Max(etaMax, swayEta);
                 }
 
-                // Narin dikme Euler burkulmasi (DOK4 §3.3.A)
-                if (node.Role == StructuralElementRole.TimberPost)
+                // Erken gecici payanda / celik halat sokumu kontrolu (ruzgar 0 iken bile kilitlenmemis duvarda devrilme!)
+                if (_nodePrematurelyStripped[slot] != 0)
                 {
-                    float kEff = islandBraceCount > 0 ? 0.75f : 1.85f;
-                    float bMin = thickness == StructureThicknessProfile.Slender ? 0.18f : (thickness == StructureThicknessProfile.HeavyBearing ? 0.34f : 0.25f);
-                    float lambdaBar = (kEff * frameSpanHeight / bMin) * 0.058f;
-                    float phiBuckle = 1.0f / (1.0f + (lambdaBar * lambdaBar));
-                    float buckleEta = axialLoadKn / MathF.Max(1.0f, nCompCapKn * phiBuckle);
-                    etaMax = MathF.Max(etaMax, buckleEta);
+                    if (node.Role == StructuralElementRole.SteelHBeamColumn && !HasPermanentSteelXBraceInBay(slot))
+                    {
+                        etaMax = MathF.Max(etaMax, 1.45f);
+                    }
+                    else if (node.Role is StructuralElementRole.GroovedLogPost
+                                 or StructuralElementRole.TimberPost
+                                 or StructuralElementRole.PlatformStudWall &&
+                             !HasPermanentFrameOrShearLockInBay(slot))
+                    {
+                        etaMax = MathF.Max(etaMax, 1.35f);
+                    }
                 }
-
-                etaMax = MathF.Max(etaMax, swayEta);
             }
 
-            // --- 3. Ekol 3 (StoneMasonry) & Genel Terzaghi Zemin Tasima Kapasitesi ve Diferansiyel Oturma (AK-08, T08) ---
+            // --- 2B. Ekol 8 (RammedEarth): Sikistirilmadan (IsCompactedOrCured == false) Kalibi Sokulen Gevsek Toprak Dokulmesi (MK-10) ---
+            if ((node.Role == StructuralElementRole.RammedEarthWall || node.Mortar == MortarType.RammedEarthCompact) &&
+                !node.IsCompactedOrCured &&
+                node.CureRatio01 < 1.0f &&
+                node.MaterialId != MaterialIdCatalog.DriedRammedEarth &&
+                !HasActiveSlidingEarthFormwork(slot))
+            {
+                etaMax = MathF.Max(etaMax, 1.65f);
+            }
+
+            // --- 2C. Ekol 10 (Betonarme): %75 Kur (300s) Dolmadan Ana Dikmesi Sokulen Tabliye & 90s Dolmadan Yan Kalibi Sokulen Kolon (MK-13) ---
+            bool isShoredWetConcreteSlab = false;
+            if ((node.Mortar == MortarType.PortlandConcrete || node.MaterialId == MaterialIdCatalog.WetPortlandConcrete) &&
+                !node.IsCompactedOrCured)
+            {
+                if (IsHorizontalConcreteSpanRole(node.Role))
+                {
+                    if (node.CureRatio01 < MortarConstants.ConcreteSlabShoringCureThreshold)
+                    {
+                        if (HasActiveConcreteSlabShoring(slot))
+                        {
+                            isShoredWetConcreteSlab = true;
+                        }
+                        else
+                        {
+                            // %75 kur dolmadan TelescopicShoringProp sokulurse tabliye bel verip coker!
+                            etaMax = MathF.Max(etaMax, 1.75f);
+                        }
+                    }
+                }
+                else if (node.Role is StructuralElementRole.RebarColumnCage or StructuralElementRole.MonolithicColumnShaft &&
+                         node.CureRatio01 < MortarConstants.ConcreteSideFormStripCureThreshold)
+                {
+                    if (_nodePrematurelyStripped[slot] != 0 ||
+                        (!HasActiveConcreteColumnFormwork(slot) && coursesAbove[slot] > 0))
+                    {
+                        etaMax = MathF.Max(etaMax, 1.55f);
+                    }
+                }
+            }
+
+            // --- 3. Ekol 3/7/8/9 & Genel Terzaghi Zemin Tasima Kapasitesi ve Diferansiyel Oturma (AK-08, T08) ---
             if (node.GeoSupportDist == 0 &&
                 node.Anchor != AnchorType.NoneFloating &&
                 node.MaterialId != MaterialIdCatalog.Floatstone)
@@ -2379,8 +2722,8 @@ namespace Stratocraft.Core.Structures
                 etaMax = MathF.Max(etaMax, soilEta);
             }
 
-            // --- 4. Ekol 3 & Ekol 0: Duz Tas Aciklik Cekme/Egilme Kirilmasi (>2.5m Lento/Kiris/Tahfif Kemeri Zorunlulugu, AK-09, T09) ---
-            if (node.GeoSupportDist > 0 && !HasDirectVerticalSupportBelow(slot))
+            // --- 4. Yatay Aciklik (L_eff) Yeniden Hesabi & Cekme/Egilme Kirilmasi (Bolum 2.1, AK-09, T09, MK-03..MK-05) ---
+            if (!isShoredWetConcreteSlab && node.GeoSupportDist > 0 && !HasDirectVerticalSupportBelow(slot))
             {
                 float clearSpan = MeasureUnsupportedHorizontalSpan(slot);
                 if (clearSpan > 0.5f)
@@ -2401,6 +2744,9 @@ namespace Stratocraft.Core.Structures
                         if (node.Mortar == MortarType.None &&
                             node.Role is StructuralElementRole.RubbleMasonryCourse
                                 or StructuralElementRole.AshlarMasonryWall
+                                or StructuralElementRole.EnglishBondBrickWall
+                                or StructuralElementRole.RammedEarthWall
+                                or StructuralElementRole.CobCurvedWall
                                 or StructuralElementRole.RawCrystalMassSegment)
                         {
                             maxFlatSpan = MathF.Min(2.50f, maxFlatSpan * 0.88f);
@@ -2426,11 +2772,22 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            // --- 5. Ekol 3 Islak Harc (CureRatio < 0.45) >=3 Sira Ezilme/Kayma Siniri (AK-10, T10 & Karar A2) ---
-            if (node.Mortar != MortarType.None && node.CureRatio01 < MortarConstants.WetCureThreshold)
+            // --- 5. Islak Harc (CureRatio < 0.45) >=3 Sira Ezilme & Cob <= 0.45m / 90s Hiz Siniri (AK-10, T10, Karar A2, MK-11) ---
+            if (!isShoredWetConcreteSlab &&
+                node.Mortar != MortarType.None &&
+                node.Mortar != MortarType.RammedEarthCompact &&
+                node.CureRatio01 < MortarConstants.WetCureThreshold &&
+                !node.IsCompactedOrCured)
             {
                 int totalCoursesOnJoint = System.Math.Max((int)node.CompletedCourses, 1 + coursesAbove[slot]);
-                if (totalCoursesOnJoint >= 3)
+                if (node.Role == StructuralElementRole.CobCurvedWall &&
+                    (node.CompletedCourses >= 2 || coursesAbove[slot] >= 1))
+                {
+                    // Cob: tek seferde > 0.45m (90s kuruma beklenmeden ust kat cikilmasi) sisme/akma yapar
+                    float cobWetEta = 1.25f + (0.20f * coursesAbove[slot]);
+                    etaMax = MathF.Max(etaMax, cobWetEta);
+                }
+                else if (totalCoursesOnJoint >= 3)
                 {
                     float maxPlasticCourses = 2.0f + (0.90f * (node.CureRatio01 / MortarConstants.WetCureThreshold));
                     float wetMortarEta = totalCoursesOnJoint / maxPlasticCourses;
@@ -2501,7 +2858,8 @@ namespace Stratocraft.Core.Structures
                 or StructuralElementRole.StonePlinthFoundation
                 or StructuralElementRole.DrivenTimberPile
                 or StructuralElementRole.MonumentalAshlarPedestal
-                or StructuralElementRole.SteppedSlopePlinth;
+                or StructuralElementRole.SteppedSlopePlinth
+                or StructuralElementRole.RebarFoundationCage;
 
             TerrainSoilClass rawSoil = node.Anchor switch
             {
@@ -2547,11 +2905,16 @@ namespace Stratocraft.Core.Structures
             int totalVerticalCourses = System.Math.Max((int)node.CompletedCourses, 1 + coursesAbove);
             float effectiveLoadKn = axialLoadKn;
 
-            // Temelsiz yumusak kum/camur uzerinde >=2 katli tas yapida eksantrik oturma carpani (DOK4 §3.4 & AK-08)
+            // Temelsiz yumusak kum/camur uzerinde >=2 katli tas/tugla yapida eksantrik oturma carpani (DOK4 §3.4 & AK-08)
             SoilBearingProfile soilProf = SoilBearingCatalog.GetProfile(rawSoil);
-            bool isHeavyMasonry = node.School is ArchitecturalSchool.StoneMasonry or ArchitecturalSchool.MonumentalArchDome ||
+            bool isHeavyMasonry = node.School is ArchitecturalSchool.StoneMasonry
+                                      or ArchitecturalSchool.MonumentalArchDome
+                                      or ArchitecturalSchool.BrickMasonry
+                                      or ArchitecturalSchool.RammedEarth ||
                                   node.Role is StructuralElementRole.RubbleMasonryCourse
                                       or StructuralElementRole.AshlarMasonryWall
+                                      or StructuralElementRole.EnglishBondBrickWall
+                                      or StructuralElementRole.RammedEarthWall
                                       or StructuralElementRole.MonolithicColumnShaft;
 
             if (!isDedicatedFooting &&
@@ -2589,7 +2952,10 @@ namespace Stratocraft.Core.Structures
                         or StructuralElementRole.DrivenTimberPile
                         or StructuralElementRole.MonumentalAshlarPedestal
                         or StructuralElementRole.SteppedSlopePlinth
-                        or StructuralElementRole.SillBeamOrLog)
+                        or StructuralElementRole.RebarFoundationCage
+                        or StructuralElementRole.SillBeamOrLog
+                        or StructuralElementRole.SaddleNotchedBaseLog
+                        or StructuralElementRole.HalfFlatStarterLog)
                 {
                     return true;
                 }
@@ -2609,9 +2975,11 @@ namespace Stratocraft.Core.Structures
                 }
 
                 JointConnectionKind kind = _edges[e].Kind;
-                if (kind is JointConnectionKind.SaddleNotch or JointConnectionKind.DovetailNotch ||
+                if (kind is JointConnectionKind.SaddleNotch or JointConnectionKind.DovetailNotch or JointConnectionKind.GroovedPostChannel ||
                     (_edges[e].Flags & StructuralJointFlags.LocksLateralRoll) != 0 ||
-                    (kind == JointConnectionKind.MortiseTenonPeg && _nodes[nb].Role == StructuralElementRole.TimberPost))
+                    _nodes[nb].Role == StructuralElementRole.GroovedLogPost ||
+                    (kind == JointConnectionKind.MortiseTenonPeg &&
+                     _nodes[nb].Role is StructuralElementRole.TimberPost or StructuralElementRole.GroovedLogPost))
                 {
                     locks++;
                 }
@@ -2651,8 +3019,13 @@ namespace Stratocraft.Core.Structures
 
                 if (_nodes[below].Role is StructuralElementRole.NotchedWallLog
                     or StructuralElementRole.SillBeamOrLog
+                    or StructuralElementRole.SaddleNotchedBaseLog
+                    or StructuralElementRole.HalfFlatStarterLog
                     or StructuralElementRole.RubbleMasonryCourse
-                    or StructuralElementRole.AshlarMasonryWall)
+                    or StructuralElementRole.AshlarMasonryWall
+                    or StructuralElementRole.EnglishBondBrickWall
+                    or StructuralElementRole.RammedEarthWall
+                    or StructuralElementRole.CobCurvedWall)
                 {
                     courses += System.Math.Max(1, (int)_nodes[below].CompletedCourses);
                 }
@@ -2666,6 +3039,11 @@ namespace Stratocraft.Core.Structures
         private bool HasDirectVerticalSupportBelow(int slot)
         {
             ref readonly StructuralNode64 node = ref _nodes[slot];
+            if (node.GeoSupportDist == 0)
+            {
+                return true;
+            }
+
             for (int e = node.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
             {
                 if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
@@ -2674,21 +3052,32 @@ namespace Stratocraft.Core.Structures
                 }
 
                 ref readonly StructuralNode64 other = ref _nodes[nb];
+                if (other.Role is StructuralElementRole.InfillPanelWattleAdobe or StructuralElementRole.LogChinkingFill)
+                {
+                    continue;
+                }
+
                 float dy = node.PosY - other.PosY;
                 float dx = MathF.Abs(node.PosX - other.PosX);
                 float dz = MathF.Abs(node.PosZ - other.PosZ);
 
-                if (dy >= 0.10f && dy <= 3.50f && dx <= 0.65f && dz <= 0.65f && other.GeoSupportDist <= node.GeoSupportDist)
+                if (dy >= 0.08f && dy <= 3.60f && dx <= 0.72f && dz <= 0.72f && other.GeoSupportDist <= node.GeoSupportDist)
                 {
                     return true;
                 }
 
-                // Lento / ana kiris uzerine dogrudan oturma (LintelBearing)
-                if (_edges[e].Kind == JointConnectionKind.LintelBearing &&
+                // Lento / ana kiris / hatil / trapez sac / dikme uzerine dogrudan oturma
+                if ((_edges[e].Kind is JointConnectionKind.LintelBearing or JointConnectionKind.TemporaryShoringProp or JointConnectionKind.ScaffoldingClamp) &&
                     other.Role is StructuralElementRole.StoneOrWoodLintel
                         or StructuralElementRole.TimberMainGirder
+                        or StructuralElementRole.TimberRingBeam
+                        or StructuralElementRole.CorrugatedMetalDeck
+                        or StructuralElementRole.TelescopicShoringProp
+                        or StructuralElementRole.WoodenArchCentering
+                        or StructuralElementRole.TemporaryCenteringScaffold
                         or StructuralElementRole.RelievingArch &&
-                    other.PosY <= node.PosY + 0.25f)
+                    other.PosY <= node.PosY + 0.25f &&
+                    other.GeoSupportDist < MortarConstants.DetachedGeodesicDistance)
                 {
                     return true;
                 }
@@ -2699,19 +3088,33 @@ namespace Stratocraft.Core.Structures
 
         private float MeasureUnsupportedHorizontalSpan(int slot)
         {
-            // Bu dugumden yatay zincir boyunca sol ve sag en yakin kolon/duvar/temel mesnedine kadar acikligi olcer
-            Span<int> chain = stackalloc int[32];
+            // Bolum 2.1: Bu dugumden yatay zincir boyunca hayatta kalan EN YAKIN sol/sag/capraz tasiyici mesnetlere
+            // (veya AdditionalReshoreSupport dikmelerine) kadar etkin acikligi (L_eff) 0-GC olarak olcer.
+            Span<int> chain = stackalloc int[48];
+            Span<float> supX = stackalloc float[32];
+            Span<float> supZ = stackalloc float[32];
+
             int count = 0;
+            int supCount = 0;
             chain[count++] = slot;
 
-            float baseY = _nodes[slot].PosY;
-            float minSupportX = float.PositiveInfinity, maxSupportX = float.NegativeInfinity;
-            float minSupportZ = float.PositiveInfinity, maxSupportZ = float.NegativeInfinity;
-            int verticalSupportsFound = 0;
+            ref readonly StructuralNode64 origin = ref _nodes[slot];
+            float px = origin.PosX;
+            float baseY = origin.PosY;
+            float pz = origin.PosZ;
 
             for (int idx = 0; idx < count; idx++)
             {
                 int cur = chain[idx];
+
+                // Eger zincirde ilerledigimiz komsu yatay dugum kendi altinda dogrudan saglam bir kolona/dikmeye/temele oturuyorsa,
+                // aciklik tam bu mesnette biter — daha uzaktaki kolonlara dogru yurume!
+                if (cur != slot && (_nodes[cur].GeoSupportDist == 0 || HasDirectVerticalSupportBelow(cur)))
+                {
+                    AddUniqueSupportPoint(ref supCount, supX, supZ, _nodes[cur].PosX, _nodes[cur].PosZ);
+                    continue;
+                }
+
                 for (int e = _nodes[cur].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
                 {
                     if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
@@ -2720,32 +3123,36 @@ namespace Stratocraft.Core.Structures
                     }
 
                     ref readonly StructuralNode64 other = ref _nodes[nb];
-                    bool isVerticalSupport = other.GeoSupportDist == 0 ||
-                                             HasDirectVerticalSupportBelow(nb) ||
-                                             other.Role is StructuralElementRole.TimberPost
-                                                 or StructuralElementRole.MonolithicColumnShaft
-                                                 or StructuralElementRole.StoneOrWoodLintel
-                                                 or StructuralElementRole.TimberMainGirder;
-
-                    if (isVerticalSupport && other.PosY <= baseY + 0.35f)
+                    if (other.Role is StructuralElementRole.InfillPanelWattleAdobe or StructuralElementRole.LogChinkingFill)
                     {
-                        // Eger kendi kendisi bir kiris/lento ise baglandigi dikey kolonlar arasi acikligi olc
-                        if (nb != slot &&
-                            !(cur == slot &&
-                              _nodes[slot].Role is StructuralElementRole.StoneOrWoodLintel or StructuralElementRole.TimberMainGirder &&
-                              other.Role is StructuralElementRole.RubbleMasonryCourse or StructuralElementRole.AshlarMasonryWall &&
-                              other.PosY > baseY + 0.05f))
-                        {
-                            verticalSupportsFound++;
-                            if (other.PosX < minSupportX) minSupportX = other.PosX;
-                            if (other.PosX > maxSupportX) maxSupportX = other.PosX;
-                            if (other.PosZ < minSupportZ) minSupportZ = other.PosZ;
-                            if (other.PosZ > maxSupportZ) maxSupportZ = other.PosZ;
-                            continue;
-                        }
+                        continue;
                     }
 
-                    if (MathF.Abs(other.PosY - baseY) <= 0.60f && count < chain.Length)
+                    bool isUpperSupportedWall = cur == slot &&
+                                                origin.Role is StructuralElementRole.StoneOrWoodLintel
+                                                    or StructuralElementRole.TimberMainGirder
+                                                    or StructuralElementRole.TimberRingBeam &&
+                                                other.PosY > baseY + 0.05f &&
+                                                !IsGroundedAnchor(in other);
+                    if (isUpperSupportedWall)
+                    {
+                        continue;
+                    }
+
+                    bool isVerticalSupport = other.PosY <= baseY + 0.35f &&
+                                             (other.GeoSupportDist == 0 ||
+                                              HasDirectVerticalSupportBelow(nb) ||
+                                              (IsVerticalOrReshoreSupportRole(other.Role, in other) &&
+                                               other.PosY < baseY - 0.10f &&
+                                               other.GeoSupportDist <= _nodes[cur].GeoSupportDist));
+
+                    if (isVerticalSupport && nb != slot)
+                    {
+                        AddUniqueSupportPoint(ref supCount, supX, supZ, other.PosX, other.PosZ);
+                        continue;
+                    }
+
+                    if (MathF.Abs(other.PosY - baseY) <= 0.75f && count < chain.Length)
                     {
                         bool seen = false;
                         for (int k = 0; k < count; k++)
@@ -2765,23 +3172,100 @@ namespace Stratocraft.Core.Structures
                 }
             }
 
-            if (verticalSupportsFound >= 2)
+            if (supCount == 0)
             {
-                float dx = maxSupportX - minSupportX;
-                float dz = maxSupportZ - minSupportZ;
-                return MathF.Sqrt((dx * dx) + (dz * dz));
+                return count * 1.2f;
             }
 
-            if (verticalSupportsFound == 1)
+            float minDistToAny = float.PositiveInfinity;
+            for (int i = 0; i < supCount; i++)
             {
-                // Tek tarafli konsol -> esdeger basit kiris acikligi ~ 2.2x konsol boyu
-                float dx = _nodes[slot].PosX - minSupportX;
-                float dz = _nodes[slot].PosZ - minSupportZ;
-                float cantLen = MathF.Sqrt((dx * dx) + (dz * dz));
-                return cantLen * 2.2f;
+                float dx = supX[i] - px;
+                float dz = supZ[i] - pz;
+                float d = MathF.Sqrt((dx * dx) + (dz * dz));
+                if (d <= 0.65f)
+                {
+                    return 0f;
+                }
+                if (d < minDistToAny)
+                {
+                    minDistToAny = d;
+                }
             }
 
-            return count * 1.2f;
+            if (supCount >= 2)
+            {
+                // Dugumu iki yandan / koseden kusatan en yakin mesnet ciftinin acikligini bul
+                float minBracketingSpan = float.PositiveInfinity;
+                int bracketingPairCount = 0;
+
+                for (int a = 0; a < supCount; a++)
+                {
+                    float ax = supX[a] - px;
+                    float az = supZ[a] - pz;
+                    float da = MathF.Sqrt((ax * ax) + (az * az));
+
+                    for (int b = a + 1; b < supCount; b++)
+                    {
+                        float bx = supX[b] - px;
+                        float bz = supZ[b] - pz;
+                        float db = MathF.Sqrt((bx * bx) + (bz * bz));
+
+                        float dot = (ax * bx) + (az * bz);
+                        if (dot <= 0.15f * da * db)
+                        {
+                            bracketingPairCount++;
+                            float spanDx = supX[b] - supX[a];
+                            float spanDz = supZ[b] - supZ[a];
+                            float pairSpan = MathF.Sqrt((spanDx * spanDx) + (spanDz * spanDz));
+                            if (pairSpan < minBracketingSpan)
+                            {
+                                minBracketingSpan = pairSpan;
+                            }
+                        }
+                    }
+                }
+
+                if (minBracketingSpan < float.PositiveInfinity)
+                {
+                    // 3 veya 4 mesnetli cift-yonlu doseme/cati plaklarinda iki eksenli tasima indirimi
+                    if (supCount >= 3 && bracketingPairCount >= 2)
+                    {
+                        return minBracketingSpan * 0.85f;
+                    }
+
+                    return minBracketingSpan;
+                }
+            }
+
+            // Tek tarafli konsol -> esdeger basit kiris acikligi ~ 2.2x konsol boyu
+            return minDistToAny * 2.2f;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void AddUniqueSupportPoint(
+            ref int count,
+            Span<float> supX,
+            Span<float> supZ,
+            float x,
+            float z)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                float dx = supX[i] - x;
+                float dz = supZ[i] - z;
+                if ((dx * dx) + (dz * dz) <= 0.04f)
+                {
+                    return;
+                }
+            }
+
+            if (count < supX.Length)
+            {
+                supX[count] = x;
+                supZ[count] = z;
+                count++;
+            }
         }
 
         private bool HasRelievingArchAboveOpening(int slot, float spanMeters, int[] islandSlots, int islandSlotCount)
@@ -2798,12 +3282,12 @@ namespace Stratocraft.Core.Structures
                 }
 
                 ref readonly StructuralNode64 cand = ref _nodes[otherSlot];
-                if (cand.Role is not (StructuralElementRole.RelievingArch or StructuralElementRole.ArchKeystone or StructuralElementRole.TimberMainGirder or StructuralElementRole.StoneOrWoodLintel))
-                {
-                    continue;
-                }
-
-                if (otherSlot == slot)
+                if (cand.Role is not (StructuralElementRole.RelievingArch
+                    or StructuralElementRole.ArchKeystone
+                    or StructuralElementRole.TimberMainGirder
+                    or StructuralElementRole.TimberRingBeam
+                    or StructuralElementRole.CorrugatedMetalDeck
+                    or StructuralElementRole.StoneOrWoodLintel))
                 {
                     continue;
                 }
@@ -2814,8 +3298,7 @@ namespace Stratocraft.Core.Structures
                     MathF.Abs(cand.PosZ - node.PosZ) <= halfSpan &&
                     cand.GeoSupportDist < MortarConstants.DetachedGeodesicDistance)
                 {
-                    // Eger lento/kiris ise kendi malzemesinin bu acikligi tasiyabildigini dogrula
-                    StructureMaterialMechanicsProfile candProf = StructureMaterialCatalog.GetEffectiveProfile(cand.MaterialId, cand.School);
+                    StructureMaterialMechanicsProfile candProf = ResolveEffectiveMechanicsProfile(in cand);
                     float allowed = cand.Role is StructuralElementRole.RelievingArch or StructuralElementRole.ArchKeystone
                         ? candProf.MaxArchOrVaultSpanMeters
                         : candProf.MaxUnreinforcedSpanMeters;
@@ -2882,26 +3365,612 @@ namespace Stratocraft.Core.Structures
 
         private float EstimateMaxPostHeight(int[] slots, int count)
         {
+            if (count == 0)
+            {
+                return 0f;
+            }
+
+            float minY = float.PositiveInfinity;
+            for (int i = 0; i < count; i++)
+            {
+                float py = _nodes[slots[i]].PosY;
+                if (py < minY)
+                {
+                    minY = py;
+                }
+            }
+
             float maxPostH = 0f;
             for (int i = 0; i < count; i++)
             {
                 ref readonly StructuralNode64 n = ref _nodes[slots[i]];
-                if (n.Role == StructuralElementRole.TimberPost)
+                if (n.Role is StructuralElementRole.TimberPost
+                    or StructuralElementRole.GroovedLogPost
+                    or StructuralElementRole.PlatformStudWall
+                    or StructuralElementRole.SteelHBeamColumn)
                 {
-                    // Standart dikme modulu 3.0m (veya PosY tabandan yuksekligi)
-                    maxPostH = MathF.Max(maxPostH, MathF.Max(3.0f, n.PosY));
+                    float relY = MathF.Min(4.5f, MathF.Max(3.0f, n.PosY - minY));
+                    maxPostH = MathF.Max(maxPostH, relY);
                 }
             }
 
             return maxPostH;
         }
 
+        private float ComputeSupportReceiverStiffnessWeight(
+            int upperSlot,
+            int receiverSlot,
+            in StructuralJointEdge32 edge)
+        {
+            ref readonly StructuralNode64 u = ref _nodes[upperSlot];
+            ref readonly StructuralNode64 v = ref _nodes[receiverSlot];
+
+            StructureMaterialMechanicsProfile profV = ResolveEffectiveMechanicsProfile(in v);
+            float thickScale = GetThicknessCapacityScale((StructureThicknessProfile)v.ThicknessProfile);
+            float mortarFactor = MortarConstants.EvaluateMortarStrengthFactor(v.Mortar, v.CureRatio01);
+            float integrity = MathF.Max(0.10f, v.Integrity01);
+            float jointStiff = MathF.Max(0.15f, edge.EffectiveStiffness01);
+
+            float roleFactor;
+            if (v.IsAdditionalReshoreSupport)
+            {
+                roleFactor = 1.40f;
+            }
+            else if (IsVerticalOrReshoreSupportRole(v.Role, in v))
+            {
+                roleFactor = 1.20f;
+            }
+            else if (v.Role is StructuralElementRole.DiagonalWindBrace
+                     or StructuralElementRole.SteelXBrace
+                     or StructuralElementRole.SteelGuyWireBrace
+                     or StructuralElementRole.ExteriorButtressPier
+                     or StructuralElementRole.FlyingButtressStrut)
+            {
+                roleFactor = 1.00f;
+            }
+            else if (v.Role is StructuralElementRole.InfillPanelWattleAdobe
+                     or StructuralElementRole.LogChinkingFill
+                     or StructuralElementRole.DoorFrameOpening
+                     or StructuralElementRole.WindowFrameOpening)
+            {
+                roleFactor = 0.05f;
+            }
+            else
+            {
+                roleFactor = 0.85f;
+            }
+
+            float dx = v.PosX - u.PosX;
+            float dz = v.PosZ - u.PosZ;
+            float horizDist = MathF.Sqrt((dx * dx) + (dz * dz));
+            float proximityFactor = 1.0f / (0.25f + horizDist);
+
+            float axialStiffness = MathF.Sqrt(MathF.Max(1.0f, profV.CompressionStrengthMpa)) * thickScale * mortarFactor * integrity;
+            return MathF.Max(0.001f, axialStiffness * jointStiff * roleFactor * proximityFactor);
+        }
+
+        private void ComputeLocalBayFrameMetrics(
+            int centerSlot,
+            int[] islandSlots,
+            int islandSlotCount,
+            int islandMortiseCount,
+            out float outStoryHeight,
+            out float outFrameStiffnessKnPerM,
+            out float outLocalGravityKn,
+            out float outLocalWindKn,
+            out bool outHasBraceOrShearLock)
+        {
+            ref readonly StructuralNode64 center = ref _nodes[centerSlot];
+            float minY = center.PosY;
+            float maxY = center.PosY;
+            float localGravity = 0f;
+            float localWind = _globalLateralWindLoadKn;
+
+            int woodBraceCount = 0;
+            int osbSheathingCount = 0;
+            int steelXBraceCount = 0;
+            int steelGuyWireCount = 0;
+            int masonryShearCount = 0;
+            int groovedInfillCount = 0;
+            int ringBeamCount = 0;
+            int localMortiseCount = 0;
+            bool hasPostInBay = false;
+
+            for (int i = 0; i < islandSlotCount; i++)
+            {
+                int s = islandSlots[i];
+                if (_nodePresent[s] == 0 || IsSlotFailed(s))
+                {
+                    continue;
+                }
+
+                ref readonly StructuralNode64 nb = ref _nodes[s];
+                if (MathF.Abs(nb.PosX - center.PosX) > 6.5f ||
+                    MathF.Abs(nb.PosZ - center.PosZ) > 6.5f ||
+                    MathF.Abs(nb.PosY - center.PosY) > 4.2f)
+                {
+                    continue;
+                }
+
+                if (nb.PosY < minY) minY = nb.PosY;
+                if (nb.PosY > maxY) maxY = nb.PosY;
+
+                localGravity += ComputeNodeSelfWeightKn(in nb);
+                localWind += _nodeWindLoadKn[s];
+
+                switch (nb.Role)
+                {
+                    case StructuralElementRole.TimberPost:
+                    case StructuralElementRole.GroovedLogPost:
+                    case StructuralElementRole.PlatformStudWall:
+                    case StructuralElementRole.SteelHBeamColumn:
+                        hasPostInBay = true;
+                        break;
+                    case StructuralElementRole.DiagonalWindBrace:
+                        woodBraceCount++;
+                        break;
+                    case StructuralElementRole.PlywoodSheathingPanel:
+                        osbSheathingCount++;
+                        break;
+                    case StructuralElementRole.SteelXBrace:
+                        steelXBraceCount++;
+                        break;
+                    case StructuralElementRole.SteelGuyWireBrace:
+                        steelGuyWireCount++;
+                        break;
+                    case StructuralElementRole.TimberRingBeam:
+                        ringBeamCount++;
+                        break;
+                    case StructuralElementRole.NotchedWallLog:
+                    case StructuralElementRole.SaddleNotchedBaseLog:
+                    case StructuralElementRole.HalfFlatStarterLog:
+                        if (nb.School == ArchitecturalSchool.LogPostAndFill)
+                        {
+                            groovedInfillCount++;
+                        }
+                        else
+                        {
+                            masonryShearCount++;
+                        }
+                        break;
+                    case StructuralElementRole.InfillPanelWattleAdobe:
+                    case StructuralElementRole.RubbleMasonryCourse:
+                    case StructuralElementRole.AshlarMasonryWall:
+                    case StructuralElementRole.EnglishBondBrickWall:
+                    case StructuralElementRole.RammedEarthWall:
+                    case StructuralElementRole.CobCurvedWall:
+                        masonryShearCount++;
+                        break;
+                }
+
+                for (int e = nb.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+                {
+                    if (_edgeActive[e] == 0)
+                    {
+                        continue;
+                    }
+
+                    JointConnectionKind k = _edges[e].Kind;
+                    if (k is JointConnectionKind.MortiseTenonPeg or JointConnectionKind.SteelTorqueBolt or JointConnectionKind.GroovedPostChannel)
+                    {
+                        localMortiseCount++;
+                    }
+                    else if (k == JointConnectionKind.DiagonalBraceTie)
+                    {
+                        woodBraceCount++;
+                    }
+                    else if (k == JointConnectionKind.SheathingDiaphragmNail)
+                    {
+                        osbSheathingCount++;
+                    }
+                    else if (k == JointConnectionKind.SteelGuyWireTension)
+                    {
+                        steelGuyWireCount++;
+                    }
+                }
+            }
+
+            float spanY = maxY - minY;
+            if (hasPostInBay && spanY < 3.0f)
+            {
+                spanY = 3.0f;
+            }
+            outStoryHeight = MathF.Min(4.5f, spanY);
+
+            float pegFactor = (islandMortiseCount > 0 || localMortiseCount > 0) ? 1.0f : 0.55f;
+            float basePortalStiff = center.Role == StructuralElementRole.SteelHBeamColumn ? 18.0f : (14.0f * pegFactor);
+            float groovedLockStiff = (groovedInfillCount > 0 && ringBeamCount > 0) ? 240.0f : 0f;
+
+            outFrameStiffnessKnPerM = basePortalStiff +
+                                      (woodBraceCount * 480.0f * pegFactor) +
+                                      (osbSheathingCount * 650.0f) +
+                                      (steelXBraceCount * 950.0f) +
+                                      (steelGuyWireCount * 540.0f) +
+                                      (masonryShearCount * 95.0f) +
+                                      groovedLockStiff;
+
+            outLocalGravityKn = MathF.Max(1.0f, localGravity);
+            outLocalWindKn = localWind;
+            outHasBraceOrShearLock = woodBraceCount > 0 ||
+                                     osbSheathingCount > 0 ||
+                                     steelXBraceCount > 0 ||
+                                     steelGuyWireCount > 0 ||
+                                     masonryShearCount > 0 ||
+                                     groovedLockStiff > 0f;
+        }
+
+        private void MarkPrematureTemporarySupportStripOnNeighbors(int strippedSupportSlot)
+        {
+            ref readonly StructuralNode64 sup = ref _nodes[strippedSupportSlot];
+            if (!sup.IsTemporarySupport && !StructureMaterialCatalog.IsTemporarySupportRole(sup.Role))
+            {
+                return;
+            }
+
+            for (int e = sup.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                ref readonly StructuralNode64 dep = ref _nodes[nb];
+
+                if ((sup.Role == StructuralElementRole.SlidingEarthFormwork || sup.IsSlidingFormwork) &&
+                    (dep.Role == StructuralElementRole.RammedEarthWall || dep.Mortar == MortarType.RammedEarthCompact) &&
+                    !dep.IsCompactedOrCured &&
+                    dep.CureRatio01 < 1.0f &&
+                    dep.MaterialId != MaterialIdCatalog.DriedRammedEarth)
+                {
+                    _nodePrematurelyStripped[nb] = 1;
+                }
+                else if (sup.Role == StructuralElementRole.ConcreteColumnFormwork &&
+                         (dep.Mortar == MortarType.PortlandConcrete || dep.MaterialId == MaterialIdCatalog.WetPortlandConcrete) &&
+                         !MortarConstants.CanStripFormwork(MortarType.PortlandConcrete, dep.CureRatio01, isSideFormworkOnly: true, isCompactedOrCured: dep.IsCompactedOrCured))
+                {
+                    _nodePrematurelyStripped[nb] = 1;
+                }
+                else if (sup.Role is StructuralElementRole.TelescopicShoringProp or StructuralElementRole.SlabDeckFormwork &&
+                         !sup.IsAdditionalReshoreSupport &&
+                         (dep.Mortar == MortarType.PortlandConcrete || dep.MaterialId == MaterialIdCatalog.WetPortlandConcrete) &&
+                         !MortarConstants.CanStripFormwork(MortarType.PortlandConcrete, dep.CureRatio01, isSideFormworkOnly: false, isCompactedOrCured: dep.IsCompactedOrCured) &&
+                         !HasActiveConcreteSlabShoring(nb, excludingSlot: strippedSupportSlot))
+                {
+                    _nodePrematurelyStripped[nb] = 1;
+                }
+                else if (sup.Role == StructuralElementRole.SteelGuyWireBrace &&
+                         dep.Role == StructuralElementRole.SteelHBeamColumn &&
+                         !HasPermanentSteelXBraceInBay(nb, excludingSlot: strippedSupportSlot))
+                {
+                    _nodePrematurelyStripped[nb] = 1;
+                }
+                else if (sup.IsTemporarySupport &&
+                         sup.Role is StructuralElementRole.DiagonalWindBrace or StructuralElementRole.ModularScaffolding or StructuralElementRole.TemporaryCenteringScaffold &&
+                         dep.Role is StructuralElementRole.GroovedLogPost or StructuralElementRole.TimberPost or StructuralElementRole.PlatformStudWall &&
+                         !HasPermanentFrameOrShearLockInBay(nb, excludingSlot: strippedSupportSlot))
+                {
+                    _nodePrematurelyStripped[nb] = 1;
+                }
+            }
+        }
+
+        private bool IsArchMemberSelfSupportingWithoutCentering(int startArchSlot, int excludingCenteringSlot)
+        {
+            Span<int> stack = stackalloc int[64];
+            Span<int> visited = stackalloc int[64];
+            int sp = 0;
+            int visCount = 0;
+
+            stack[sp++] = startArchSlot;
+            visited[visCount++] = startArchSlot;
+
+            bool foundCuredCrown = false;
+            uint abut1 = 0u;
+            uint abut2 = 0u;
+
+            while (sp > 0)
+            {
+                int cur = stack[--sp];
+                ref readonly StructuralNode64 curNode = ref _nodes[cur];
+
+                if (curNode.Mortar != MortarType.None &&
+                    curNode.CureRatio01 < MortarConstants.WetCureThreshold &&
+                    !curNode.IsCompactedOrCured)
+                {
+                    return false;
+                }
+
+                if (curNode.Role is StructuralElementRole.ArchKeystone
+                    or StructuralElementRole.DomeOculusCrown
+                    or StructuralElementRole.RelievingArch
+                    or StructuralElementRole.BarrelOrCrossVault)
+                {
+                    foundCuredCrown = true;
+                }
+
+                for (int e = curNode.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+                {
+                    if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb))
+                    {
+                        continue;
+                    }
+
+                    if (nb == excludingCenteringSlot || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                    {
+                        continue;
+                    }
+
+                    if (IsTemporaryArchCenteringNode(in _nodes[nb]))
+                    {
+                        continue;
+                    }
+
+                    StructuralElementRole r = _nodes[nb].Role;
+                    bool isRing = r is StructuralElementRole.ArchVoussoir
+                        or StructuralElementRole.ArchKeystone
+                        or StructuralElementRole.DomeRingCourse
+                        or StructuralElementRole.DomeOculusCrown
+                        or StructuralElementRole.PendentiveOrSquinch
+                        or StructuralElementRole.RelievingArch
+                        or StructuralElementRole.BarrelOrCrossVault;
+
+                    if (isRing)
+                    {
+                        bool seen = false;
+                        for (int k = 0; k < visCount; k++)
+                        {
+                            if (visited[k] == nb)
+                            {
+                                seen = true;
+                                break;
+                            }
+                        }
+
+                        if (!seen && sp < stack.Length && visCount < visited.Length)
+                        {
+                            visited[visCount++] = nb;
+                            stack[sp++] = nb;
+                        }
+                    }
+                    else
+                    {
+                        uint id = _nodes[nb].NodeId;
+                        if (abut1 == 0u) abut1 = id;
+                        else if (id != abut1 && abut2 == 0u) abut2 = id;
+                    }
+                }
+            }
+
+            return foundCuredCrown && abut1 != 0u && abut2 != 0u;
+        }
+
+        private bool HasActiveSlidingEarthFormwork(int earthSlot)
+        {
+            for (int e = _nodes[earthSlot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                if (_nodes[nb].Role == StructuralElementRole.SlidingEarthFormwork || _nodes[nb].IsSlidingFormwork)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasActiveConcreteColumnFormwork(int colSlot)
+        {
+            for (int e = _nodes[colSlot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                if (_nodes[nb].Role is StructuralElementRole.ConcreteColumnFormwork or StructuralElementRole.TelescopicShoringProp)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasActiveConcreteSlabShoring(int slabSlot, int excludingSlot = -1)
+        {
+            ref readonly StructuralNode64 slab = ref _nodes[slabSlot];
+            for (int e = slab.FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || nb == excludingSlot || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                ref readonly StructuralNode64 sup = ref _nodes[nb];
+                if (sup.PosY <= slab.PosY + 0.15f &&
+                    (sup.Role is StructuralElementRole.TelescopicShoringProp
+                         or StructuralElementRole.CorrugatedMetalDeck
+                         or StructuralElementRole.TemporaryCenteringScaffold
+                         or StructuralElementRole.ModularScaffolding ||
+                     (sup.Role == StructuralElementRole.SlabDeckFormwork && sup.Mortar != MortarType.PortlandConcrete) ||
+                     _edges[e].Kind == JointConnectionKind.TemporaryShoringProp))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasPermanentSteelXBraceInBay(int colSlot, int excludingSlot = -1)
+        {
+            for (int e = _nodes[colSlot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || nb == excludingSlot || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                if (_nodes[nb].Role == StructuralElementRole.SteelXBrace)
+                {
+                    return true;
+                }
+
+                // Ust kiris/tabliye uzerinden ayni cercevedeki SteelXBrace baglantisi
+                for (int e2 = _nodes[nb].FirstEdgeIndex; e2 >= 0; e2 = _edges[e2].NextEdgeIndex)
+                {
+                    if (_edgeActive[e2] == 0 || !TryGetNodeSlot(_edges[e2].NodeB, out int nb2) || nb2 == excludingSlot || _nodePresent[nb2] == 0 || IsSlotFailed(nb2))
+                    {
+                        continue;
+                    }
+
+                    if (_nodes[nb2].Role == StructuralElementRole.SteelXBrace)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool HasPermanentFrameOrShearLockInBay(int postSlot, int excludingSlot = -1)
+        {
+            bool hasTopBeam = false;
+            bool hasPermanentLateralLock = false;
+
+            for (int e = _nodes[postSlot].FirstEdgeIndex; e >= 0; e = _edges[e].NextEdgeIndex)
+            {
+                if (_edgeActive[e] == 0 || !TryGetNodeSlot(_edges[e].NodeB, out int nb) || nb == excludingSlot || _nodePresent[nb] == 0 || IsSlotFailed(nb))
+                {
+                    continue;
+                }
+
+                ref readonly StructuralNode64 other = ref _nodes[nb];
+                if (other.Role is StructuralElementRole.TimberRingBeam
+                    or StructuralElementRole.TimberMainGirder
+                    or StructuralElementRole.RoofPurlin
+                    or StructuralElementRole.InclinedRoofRafter
+                    or StructuralElementRole.CollarTieOrTruss)
+                {
+                    hasTopBeam = true;
+                }
+
+                if (other.Role is StructuralElementRole.PlywoodSheathingPanel
+                        or StructuralElementRole.InfillPanelWattleAdobe ||
+                    _edges[e].Kind == JointConnectionKind.SheathingDiaphragmNail ||
+                    (other.Role == StructuralElementRole.DiagonalWindBrace && !other.IsTemporarySupport))
+                {
+                    hasPermanentLateralLock = true;
+                }
+
+                for (int e2 = other.FirstEdgeIndex; e2 >= 0; e2 = _edges[e2].NextEdgeIndex)
+                {
+                    if (_edgeActive[e2] == 0 || !TryGetNodeSlot(_edges[e2].NodeB, out int nb2) || nb2 == excludingSlot || _nodePresent[nb2] == 0 || IsSlotFailed(nb2))
+                    {
+                        continue;
+                    }
+
+                    ref readonly StructuralNode64 other2 = ref _nodes[nb2];
+                    if (other2.Role is StructuralElementRole.PlywoodSheathingPanel or StructuralElementRole.InfillPanelWattleAdobe ||
+                        (other2.Role == StructuralElementRole.DiagonalWindBrace && !other2.IsTemporarySupport))
+                    {
+                        hasPermanentLateralLock = true;
+                    }
+                }
+            }
+
+            if (_nodes[postSlot].Role == StructuralElementRole.PlatformStudWall)
+            {
+                return hasPermanentLateralLock;
+            }
+
+            return hasTopBeam && hasPermanentLateralLock;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static StructureMaterialMechanicsProfile ResolveEffectiveMechanicsProfile(in StructuralNode64 node)
+        {
+            byte effectiveMat = node.MaterialId;
+            if (effectiveMat == MaterialIdCatalog.WetPortlandConcrete &&
+                (node.CureRatio01 >= MortarConstants.ConcreteSlabShoringCureThreshold || node.IsCompactedOrCured))
+            {
+                effectiveMat = MaterialIdCatalog.CuredReinforcedConcrete;
+            }
+            else if (effectiveMat == MaterialIdCatalog.RammedEarthCompacted && node.CureRatio01 >= 0.99f)
+            {
+                effectiveMat = MaterialIdCatalog.DriedRammedEarth;
+            }
+
+            return StructureMaterialCatalog.GetEffectiveProfile(effectiveMat, node.School);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsTemporaryArchCenteringNode(in StructuralNode64 node)
+        {
+            return node.Role is StructuralElementRole.TemporaryCenteringScaffold
+                       or StructuralElementRole.WoodenArchCentering
+                       or StructuralElementRole.ModularScaffolding ||
+                   node.IsArchCentering;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsHorizontalConcreteSpanRole(StructuralElementRole role)
+        {
+            return role is StructuralElementRole.SlabDeckFormwork
+                or StructuralElementRole.FloorJoistDeck
+                or StructuralElementRole.TimberMainGirder
+                or StructuralElementRole.TimberRingBeam
+                or StructuralElementRole.StoneOrWoodLintel
+                or StructuralElementRole.CorrugatedMetalDeck
+                or StructuralElementRole.RoofCoveringCourse
+                or StructuralElementRole.InclinedRoofRafter;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsVerticalOrReshoreSupportRole(StructuralElementRole role, in StructuralNode64 node)
+        {
+            if (node.IsAdditionalReshoreSupport)
+            {
+                return true;
+            }
+
+            return role is StructuralElementRole.TimberPost
+                or StructuralElementRole.GroovedLogPost
+                or StructuralElementRole.PlatformStudWall
+                or StructuralElementRole.MonolithicColumnShaft
+                or StructuralElementRole.ColumnCapitalImpost
+                or StructuralElementRole.RebarColumnCage
+                or StructuralElementRole.SteelHBeamColumn
+                or StructuralElementRole.TelescopicShoringProp
+                or StructuralElementRole.RubbleMasonryCourse
+                or StructuralElementRole.AshlarMasonryWall
+                or StructuralElementRole.EnglishBondBrickWall
+                or StructuralElementRole.RammedEarthWall
+                or StructuralElementRole.CobCurvedWall
+                or StructuralElementRole.NotchedWallLog
+                or StructuralElementRole.ExteriorButtressPier
+                or StructuralElementRole.StonePlinthFoundation
+                or StructuralElementRole.TrenchRubbleFooting
+                or StructuralElementRole.DrivenTimberPile
+                or StructuralElementRole.MonumentalAshlarPedestal
+                or StructuralElementRole.SteppedSlopePlinth
+                or StructuralElementRole.RebarFoundationCage;
+        }
+
         private void FractureSlotInternal(int slot, bool notifyClanBreach)
         {
+            MarkPrematureTemporarySupportStripOnNeighbors(slot);
+
             ref StructuralNode64 node = ref _nodes[slot];
             node.CollapseState = StructureCollapseState.Collapsed;
             node.CollapseWarningTimerSec = 0f;
             node.Integrity01 = 0f;
+            _nodePrematurelyStripped[slot] = 0;
 
             if (notifyClanBreach && IsClanPerimeterBarrierRole(node.Role))
             {
@@ -2986,8 +4055,14 @@ namespace Stratocraft.Core.Structures
         {
             return role is StructuralElementRole.NotchedWallLog
                 or StructuralElementRole.SillBeamOrLog
+                or StructuralElementRole.SaddleNotchedBaseLog
+                or StructuralElementRole.HalfFlatStarterLog
                 or StructuralElementRole.RubbleMasonryCourse
                 or StructuralElementRole.AshlarMasonryWall
+                or StructuralElementRole.EnglishBondBrickWall
+                or StructuralElementRole.RammedEarthWall
+                or StructuralElementRole.CobCurvedWall
+                or StructuralElementRole.PlywoodSheathingPanel
                 or StructuralElementRole.InfillPanelWattleAdobe
                 or StructuralElementRole.ExteriorButtressPier
                 or StructuralElementRole.RetainingWallCourse
@@ -3012,13 +4087,19 @@ namespace Stratocraft.Core.Structures
 
         private static float ComputeNodeSelfWeightKn(in StructuralNode64 node)
         {
-            StructureMaterialMechanicsProfile prof = StructureMaterialCatalog.GetEffectiveProfile(node.MaterialId, node.School);
+            StructureMaterialMechanicsProfile prof = ResolveEffectiveMechanicsProfile(in node);
             float baseVolM3 = node.Role switch
             {
-                StructuralElementRole.IronTieRod => 0.025f,
-                StructuralElementRole.InfillPanelWattleAdobe or StructuralElementRole.RoofCoveringCourse => 0.10f,
-                StructuralElementRole.DiagonalWindBrace or StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.ModularScaffolding => 0.08f,
-                StructuralElementRole.TrenchRubbleFooting or StructuralElementRole.MonumentalAshlarPedestal or StructuralElementRole.ExteriorButtressPier => 0.65f,
+                StructuralElementRole.IronTieRod or StructuralElementRole.SteelGuyWireBrace => 0.025f,
+                StructuralElementRole.LogChinkingFill => 0.03f,
+                StructuralElementRole.InfillPanelWattleAdobe or StructuralElementRole.PlywoodSheathingPanel or
+                StructuralElementRole.CorrugatedMetalDeck or StructuralElementRole.RoofCoveringCourse => 0.10f,
+                StructuralElementRole.DiagonalWindBrace or StructuralElementRole.SteelXBrace or
+                StructuralElementRole.TemporaryCenteringScaffold or StructuralElementRole.WoodenArchCentering or
+                StructuralElementRole.SlidingEarthFormwork or StructuralElementRole.ConcreteColumnFormwork or
+                StructuralElementRole.TelescopicShoringProp or StructuralElementRole.ModularScaffolding => 0.08f,
+                StructuralElementRole.TrenchRubbleFooting or StructuralElementRole.MonumentalAshlarPedestal or
+                StructuralElementRole.RebarFoundationCage or StructuralElementRole.ExteriorButtressPier => 0.65f,
                 _ => 0.32f
             };
 
@@ -3045,9 +4126,52 @@ namespace Stratocraft.Core.Structures
                 return JointConnectionKind.KeystoneLock;
             }
 
-            if (a.Role == StructuralElementRole.TemporaryCenteringScaffold || b.Role == StructuralElementRole.TemporaryCenteringScaffold)
+            if (a.Role == StructuralElementRole.TelescopicShoringProp || b.Role == StructuralElementRole.TelescopicShoringProp)
+            {
+                return JointConnectionKind.TemporaryShoringProp;
+            }
+
+            if (IsTemporaryArchCenteringNode(in a) || IsTemporaryArchCenteringNode(in b) ||
+                a.Role is StructuralElementRole.SlidingEarthFormwork or StructuralElementRole.ConcreteColumnFormwork ||
+                b.Role is StructuralElementRole.SlidingEarthFormwork or StructuralElementRole.ConcreteColumnFormwork)
             {
                 return JointConnectionKind.ScaffoldingClamp;
+            }
+
+            if (a.Role == StructuralElementRole.SteelGuyWireBrace || b.Role == StructuralElementRole.SteelGuyWireBrace)
+            {
+                return JointConnectionKind.SteelGuyWireTension;
+            }
+
+            if (a.Role is StructuralElementRole.SteelHBeamColumn or StructuralElementRole.SteelXBrace ||
+                b.Role is StructuralElementRole.SteelHBeamColumn or StructuralElementRole.SteelXBrace)
+            {
+                return JointConnectionKind.SteelTorqueBolt;
+            }
+
+            if (a.Role == StructuralElementRole.PlywoodSheathingPanel || b.Role == StructuralElementRole.PlywoodSheathingPanel)
+            {
+                return JointConnectionKind.SheathingDiaphragmNail;
+            }
+
+            if (a.Role == StructuralElementRole.GroovedLogPost || b.Role == StructuralElementRole.GroovedLogPost)
+            {
+                return JointConnectionKind.GroovedPostChannel;
+            }
+
+            if (a.Mortar == MortarType.PortlandConcrete || b.Mortar == MortarType.PortlandConcrete)
+            {
+                return JointConnectionKind.ConcreteMonolithicPour;
+            }
+
+            if (a.Mortar == MortarType.RammedEarthCompact || b.Mortar == MortarType.RammedEarthCompact)
+            {
+                return JointConnectionKind.CompactedEarthLift;
+            }
+
+            if (a.Mortar == MortarType.CobMud || b.Mortar == MortarType.CobMud)
+            {
+                return JointConnectionKind.CobMudBond;
             }
 
             if (a.Mortar == MortarType.Horasan || b.Mortar == MortarType.Horasan)
@@ -3079,7 +4203,7 @@ namespace Stratocraft.Core.Structures
                 return System.Math.Clamp(explicitCure01, 0f, 1f);
             }
 
-            if (kind is JointConnectionKind.ClayMortar or JointConnectionKind.LimeMortar or JointConnectionKind.HorasanMortar)
+            if (MortarAndInteriorEnvironmentSolver.TryResolveJointMortarType(kind, out _))
             {
                 return MathF.Min(a.CureRatio01, b.CureRatio01);
             }
@@ -3093,6 +4217,7 @@ namespace Stratocraft.Core.Structures
             switch (kind)
             {
                 case JointConnectionKind.SaddleNotch:
+                case JointConnectionKind.GroovedPostChannel:
                     inferred |= StructuralJointFlags.LocksLateralRoll;
                     break;
                 case JointConnectionKind.DovetailNotch:
@@ -3100,13 +4225,19 @@ namespace Stratocraft.Core.Structures
                     break;
                 case JointConnectionKind.MortiseTenonPeg:
                 case JointConnectionKind.DiagonalBraceTie:
+                case JointConnectionKind.SheathingDiaphragmNail:
+                case JointConnectionKind.SteelTorqueBolt:
                     inferred |= StructuralJointFlags.TransfersTension | StructuralJointFlags.TransfersMoment | StructuralJointFlags.LocksLateralRoll;
                     break;
                 case JointConnectionKind.IronCramp:
                 case JointConnectionKind.IronTieRod:
                     inferred |= StructuralJointFlags.TransfersTension;
                     break;
+                case JointConnectionKind.SteelGuyWireTension:
+                    inferred |= StructuralJointFlags.TransfersTension | StructuralJointFlags.LocksLateralRoll | StructuralJointFlags.IsTemporaryCentering;
+                    break;
                 case JointConnectionKind.ScaffoldingClamp:
+                case JointConnectionKind.TemporaryShoringProp:
                     inferred |= StructuralJointFlags.IsTemporaryCentering;
                     break;
             }
@@ -3114,14 +4245,15 @@ namespace Stratocraft.Core.Structures
             return inferred;
         }
 
-        private static float ComputeJointStiffness(JointConnectionKind kind, float cure01) => kind switch
+        private static float ComputeJointStiffness(JointConnectionKind kind, float cure01)
         {
-            JointConnectionKind.ClayMortar => MortarConstants.EvaluateMortarStrengthFactor(MortarType.Clay, cure01),
-            JointConnectionKind.LimeMortar => MortarConstants.EvaluateMortarStrengthFactor(MortarType.Lime, cure01),
-            JointConnectionKind.HorasanMortar => MortarConstants.EvaluateMortarStrengthFactor(MortarType.Horasan, cure01),
-            JointConnectionKind.None => 0.15f,
-            _ => 1.0f
-        };
+            if (MortarAndInteriorEnvironmentSolver.TryResolveJointMortarType(kind, out MortarType mortar))
+            {
+                return MortarConstants.EvaluateMortarStrengthFactor(mortar, cure01);
+            }
+
+            return kind == JointConnectionKind.None ? 0.15f : 1.0f;
+        }
 
         private static void UpdateHalfEdge(
             ref StructuralJointEdge32 edge,
@@ -3233,6 +4365,7 @@ namespace Stratocraft.Core.Structures
             Array.Resize(ref _nodeWindLoadKn, newCap);
             Array.Resize(ref _nodeSnowLoadKn, newCap);
             Array.Resize(ref _nodeDifferentialSettled, newCap);
+            Array.Resize(ref _nodePrematurelyStripped, newCap);
 
             // Kirli halka kuyrugu dogrusal siraya acip genislet
             var newDirtySeeds = new int[newCap];
