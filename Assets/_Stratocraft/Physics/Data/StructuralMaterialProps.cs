@@ -259,13 +259,14 @@ namespace Stratocraft.Physics.Data
             lut[MaterialIdCatalog.PackedIce] = new VoxelMaterialSpec8(
                 9, 300, 90, 3, 5, 18, StructuralMaterialFlags.IsArchCapable);
 
-            // Ahsap ve Cati Malzemeleri (Bible 2.7.C: Thatch=120, Wood=400)
+            // Ahsap ve Cati Malzemeleri (Bible 2.7.C: Thatch=120+, Wood=400+)
+            // Tum mimari cati/kiris malzemeleri IsArchCapable bayragi ile 45° egimli cati (Ramp45) capraz baglantisini destekler.
             lut[MaterialIdCatalog.ThatchTile] = new VoxelMaterialSpec8(
-                4, 120, 96, 3, 6, 12, StructuralMaterialFlags.None);
+                4, 180, 140, 5, 3, 14, StructuralMaterialFlags.IsArchCapable);
             lut[MaterialIdCatalog.OakWood] = new VoxelMaterialSpec8(
-                7, 400, 140, 4, 4, 15, StructuralMaterialFlags.IsArchCapable);
+                7, 450, 155, 5, 3, 16, StructuralMaterialFlags.IsArchCapable);
             lut[MaterialIdCatalog.WoodPlank] = new VoxelMaterialSpec8(
-                7, 400, 145, 4, 4, 15, StructuralMaterialFlags.IsArchCapable);
+                7, 450, 165, 5, 3, 18, StructuralMaterialFlags.IsArchCapable);
             lut[MaterialIdCatalog.Ironwood] = new VoxelMaterialSpec8(
                 10, 850, 165, 6, 3, 25, StructuralMaterialFlags.IsArchCapable);
             lut[MaterialIdCatalog.SpiritWood] = new VoxelMaterialSpec8(
@@ -284,6 +285,71 @@ namespace Stratocraft.Physics.Data
                 27, 2400, 145, 5, 3, 36, StructuralMaterialFlags.IsArchCapable);
             lut[MaterialIdCatalog.StoneBrick] = new VoxelMaterialSpec8(
                 24, 2500, 155, 5, 3, 40, StructuralMaterialFlags.IsArchCapable);
+
+            // 9-Ekol Islenmis Mimari Malzemeler (126..152 — Karar A3 %100 CrystalImmune, 1..4 katli 4..8m aciklikli binalar & catilar)
+            lut[MaterialIdCatalog.CutAshlarStone] = new VoxelMaterialSpec8(
+                25, 3200, 165, 6, 3, 45, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.DressedMarbleBlock] = new VoxelMaterialSpec8(
+                27, 3600, 170, 6, 2, 48, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.FiredClayBrick] = new VoxelMaterialSpec8(
+                19, 2200, 155, 5, 3, 36, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.RoofClayTile] = new VoxelMaterialSpec8(
+                18, 1400, 150, 5, 3, 28, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.AdobeBrickBlock] = new VoxelMaterialSpec8(
+                16, 650, 130, 4, 4, 20, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.WattleDaubPanelBlock] = new VoxelMaterialSpec8(
+                11, 380, 130, 4, 4, 16, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.LimeMortarStoneWall] = new VoxelMaterialSpec8(
+                24, 2800, 160, 5, 3, 42, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.ChinkedLogBlock] = new VoxelMaterialSpec8(
+                7, 520, 165, 5, 3, 20, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.IronTieBeamBlock] = new VoxelMaterialSpec8(
+                78, 11000, 215, 10, 2, 82, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.LeadedGlassPane] = new VoxelMaterialSpec8(
+                12, 500, 135, 4, 4, 18, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.TimberShingleRoof] = new VoxelMaterialSpec8(
+                6, 360, 150, 5, 3, 18, StructuralMaterialFlags.IsArchCapable);
+
+            lut[MaterialIdCatalog.EnglishBondBrickMasonry] = new VoxelMaterialSpec8(
+                19, 2600, 160, 5, 3, 38, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.CobMudBrick] = new VoxelMaterialSpec8(
+                16, 480, 125, 4, 4, 18, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.RammedEarthCompacted] = new VoxelMaterialSpec8(
+                20, 620, 130, 4, 4, 20, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.DriedRammedEarth] = new VoxelMaterialSpec8(
+                19, 950, 140, 5, 3, 26, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.PlywoodOsbPanel] = new VoxelMaterialSpec8(
+                6, 420, 160, 5, 3, 18, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.TreatedTimberBeam] = new VoxelMaterialSpec8(
+                7, 750, 180, 6, 3, 24, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.GroovedLogTimber] = new VoxelMaterialSpec8(
+                7, 560, 165, 5, 3, 20, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.LimeWashPlaster] = new VoxelMaterialSpec8(
+                17, 720, 135, 4, 4, 22, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.SteelRebarMesh] = new VoxelMaterialSpec8(
+                78, 10500, 210, 8, 2, 78, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.WetPortlandConcrete] = new VoxelMaterialSpec8(
+                24, 320, 95, 3, 5, 16, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.CuredReinforcedConcrete] = new VoxelMaterialSpec8(
+                24, 5200, 195, 8, 2, 62, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.StructuralSteelHBeam] = new VoxelMaterialSpec8(
+                78, 14000, 225, 12, 2, 92, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.CorrugatedSteelDeck] = new VoxelMaterialSpec8(
+                45, 7500, 205, 8, 2, 72, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.StrawChinkingBundle] = new VoxelMaterialSpec8(
+                3, 140, 115, 4, 4, 12, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.CrushedLimeAggregate] = new VoxelMaterialSpec8(
+                18, 800, 110, 3, 5, 22, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.FormworkTimberBoard] = new VoxelMaterialSpec8(
+                6, 360, 150, 4, 4, 16, StructuralMaterialFlags.IsArchCapable);
+
+            // Ic Mekan Esya ve Ocak Bloklari (166..168): Ahsap dosemeleri gereksiz agirlikla ezmemesi icin gercekci yogunluk
+            lut[MaterialIdCatalog.CampfireBlock] = new VoxelMaterialSpec8(
+                8, 300, 120, 4, 4, 16, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.PrimitiveStoneKilnBlock] = new VoxelMaterialSpec8(
+                18, 900, 140, 4, 4, 24, StructuralMaterialFlags.IsArchCapable);
+            lut[MaterialIdCatalog.BedBlock] = new VoxelMaterialSpec8(
+                5, 300, 140, 4, 4, 15, StructuralMaterialFlags.IsArchCapable);
 
             // Metaller, Takviyeli Celik ve Obsidyen/Titanyum (Bible 2.7.C: ReinforcedSteel=12000, Titanium/Obsidian=25000)
             lut[MaterialIdCatalog.IronGrating] = new VoxelMaterialSpec8(

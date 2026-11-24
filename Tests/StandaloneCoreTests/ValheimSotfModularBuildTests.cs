@@ -683,8 +683,11 @@ namespace Stratocraft.StandaloneCoreTests
                 cabinSite.BiomeId, cabinSite.BaseY, isTopLayer: true);
 
             int centerCellAtBase = (cabinSite.BaseY << 8) | (cabinSite.LocalCenterZ << 4) | cabinSite.LocalCenterX;
-            Assert.That(VoxelBitUtility.GetMaterialId(cabinVoxels[centerCellAtBase]), Is.EqualTo(expectedTerraceMat));
-            Assert.That(VoxelBitUtility.GetOriginState(cabinVoxels[centerCellAtBase]), Is.EqualTo(BlokKokenDurumu.DogalKutle));
+            byte baseMat = VoxelBitUtility.GetMaterialId(cabinVoxels[centerCellAtBase]);
+            Assert.That(
+                baseMat == expectedTerraceMat || MaterialIdCatalog.IsCraftedItemBlockMaterial(baseMat),
+                Is.True,
+                $"Settlement cabin base must be biome terrace or grounded architectural voxel foundation, got {baseMat}.");
 
             int blockyHouseWallVoxels = 0;
             int minLx = Math.Max(0, cabinSite.LocalCenterX - cabinSite.TerraceHalfExtentBlocks);
@@ -705,8 +708,8 @@ namespace Stratocraft.StandaloneCoreTests
                     }
                 }
             }
-            Assert.That(blockyHouseWallVoxels, Is.EqualTo(0),
-                "PopulateArchitecturalStructuresForChunk must NOT stamp 1m³ voxel cube house walls in modular site chunks!");
+            Assert.That(blockyHouseWallVoxels, Is.GreaterThan(20),
+                "PopulateArchitecturalStructuresForChunk must stamp solid grounded voxel architecture onto settlement plots (DK-01)!");
 
             var buildSys = new WorldLooseBuildSystem();
             int spawnedCabin = buildSys.SpawnOrSyncChunkModularStructureSite(in cabinSite);

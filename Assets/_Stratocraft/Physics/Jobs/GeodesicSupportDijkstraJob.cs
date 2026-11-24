@@ -693,6 +693,11 @@ namespace Stratocraft.Physics.Jobs
                 return true;
             }
 
+            if (y <= 0)
+            {
+                return false;
+            }
+
             // Taban (-Y) kati kaya kontrolu veya YMajorChunk / kalin dogal tavan kemeri dis sinir ankraji
             int belowIdx = GridIndex(x, y - 1, z, sizeX, sizeY, sizeZ, layout);
             bool hasSolidBelow = VoxelBitUtility.IsPhysicallySolid(voxels[belowIdx]);

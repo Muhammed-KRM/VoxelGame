@@ -128,6 +128,10 @@ namespace Stratocraft.Physics.Systems
         public const float DefaultClanBreachRadiusMeters = 8.0f;
         public const int DefaultMaxNodeDebrisPerStep = 16;
 
+        private static readonly int[] FollowupStepDx = { 1, -1, 0, 0, 0, 0, 1, -1, 0, 0 };
+        private static readonly int[] FollowupStepDy = { 0, 0, 1, -1, 0, 0, 1, 1, 1, 1 };
+        private static readonly int[] FollowupStepDz = { 0, 0, 0, 0, 1, -1, 0, 0, 1, -1 };
+
         [ThreadStatic] private static ushort[]? _tlsGeodesicDist;
         [ThreadStatic] private static ushort[]? _tlsCantileverSpan;
         [ThreadStatic] private static byte[]? _tlsDetachedMask;
@@ -241,6 +245,7 @@ namespace Stratocraft.Physics.Systems
                     groundedTimberMask: timberSpan);
 
                 int newlyBrokenInWave = 0;
+                bool needsMixedMaterialFollowupWave = false;
                 if (phase1Detached > 0 || phase2Failed > 0)
                 {
                     for (int i = 0; i < volume; i++)
@@ -252,16 +257,59 @@ namespace Stratocraft.Physics.Systems
                             newlyBrokenInWave++;
                         }
                     }
+
+                    // Eger Faz 2 kolon ezmediyse (phase2Failed == 0), yalnizca Dijkstra'nin genislettigi
+                    // (d_geo != Unreachable) bir blok konsol asimiyla kopup hemen bitisiginde hala hayatta kalan
+                    // daha yuksek konsol limitli baska bir malzeme/mobilya/cati blogu biraktiysa 1 dalga daha kos.
+                    if (phase2Failed == 0 && newlyBrokenInWave > 0 && wave + 1 < MaxDominoWaves)
+                    {
+                        for (int i = 0; i < volume && !needsMixedMaterialFollowupWave; i++)
+                        {
+                            if (waveSpan[i] == 0 || geoSpan[i] == GeodesicSupportDijkstraJob.UnreachableDistance)
+                            {
+                                continue;
+                            }
+
+                            byte brokenMat = VoxelBitUtility.GetMaterialId(voxels[i]);
+                            int brokenMaxCant = StructuralMaterialProps.GetForMaterial(brokenMat).MaxCantileverSpanBlocks;
+                            GeodesicSupportDijkstraJob.DecodeGridIndex(i, sizeX, sizeY, sizeZ, layout, out int bx, out int by, out int bz);
+
+                            for (int d = 0; d < 10; d++)
+                            {
+                                int nx = bx + FollowupStepDx[d];
+                                int ny = by + FollowupStepDy[d];
+                                int nz = bz + FollowupStepDz[d];
+                                if ((uint)nx >= (uint)sizeX || (uint)ny >= (uint)sizeY || (uint)nz >= (uint)sizeZ)
+                                {
+                                    continue;
+                                }
+
+                                int nIdx = GeodesicSupportDijkstraJob.GridIndex(nx, ny, nz, sizeX, sizeY, sizeZ, layout);
+                                if (detSpan[nIdx] != 0)
+                                {
+                                    continue;
+                                }
+
+                                uint nRaw = workSpan[nIdx];
+                                if (!VoxelBitUtility.IsPhysicallySolid(nRaw))
+                                {
+                                    continue;
+                                }
+
+                                byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
+                                if (nMat != brokenMat &&
+                                    StructuralMaterialProps.GetForMaterial(nMat).MaxCantileverSpanBlocks > brokenMaxCant)
+                                {
+                                    needsMixedMaterialFollowupWave = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
 
-                if (newlyBrokenInWave == 0 || phase2Failed == 0)
+                if (newlyBrokenInWave == 0 || (phase2Failed == 0 && !needsMixedMaterialFollowupWave))
                 {
-                    // Eger Faz 2 kolon ezdiyse bir kez daha Faz 1 calistir ki kolon ustundeki yapilar da kopsun
-                    if (phase2Failed > 0 && wave + 1 < MaxDominoWaves)
-                    {
-                        continue;
-                    }
-
                     wave++;
                     break;
                 }

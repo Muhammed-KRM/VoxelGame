@@ -324,8 +324,10 @@ float4 _StratoBiomeNeonB;
 // x = globalWetMortarOverride, y = globalStressCrackOverride, z = globalCharDepthOverride, w = activeMask
 float4 _StratoStructureVisualParams;
 
-/// 0 MB VRAM: Kagir yapi bloklarinda (StoneBrick=120, CutAshlar=126, FiredClayBrick=128, LimeMortarWall=132)
-/// islak harc (koyu, parlak) -> kuru sertlesmis kirec harci (acik tebesir, mat) gecisini 3B derz bandinda uygular.
+/// 0 MB VRAM: 9-Ekol mimari yapi bloklari ve 4x4x4 mikro-voksel mobilyalarda (MaterialId 120..152)
+/// tugla/kesme tas harc derzleri, islak->kuru kirec harci kurlesmesi, terracotta kiremit oluklari,
+/// kertikli kutuk derz dolgulari, ahsap kalas/kiris lifleri, sikistirilmis toprak katmanlari,
+/// kursunlu cam kayitlari ve kirec badana siva dokusunu 3B dunya-uzayinda uygular.
 void ApplyProceduralMortarCureTone(
     uint matId,
     float3 posWS,
@@ -333,36 +335,188 @@ void ApplyProceduralMortarCureTone(
     inout float3 albedo,
     inout float roughness)
 {
-    bool isMasonryMat = (matId == 120u || matId == 126u || matId == 128u || matId == 132u);
-    if (!isMasonryMat && mortarWetness01 <= 0.005)
+    bool isBrickMasonry = (matId == 128u || matId == 130u || matId == 137u);
+    bool isStoneOrConcreteMasonry = (matId == 120u || matId == 123u || matId == 126u ||
+                                     matId == 127u || matId == 132u || matId == 146u ||
+                                     matId == 147u);
+    bool isMasonryMat = isBrickMasonry || isStoneOrConcreteMasonry;
+    bool isRoofTileOrShingle = (matId == 124u || matId == 129u || matId == 136u);
+    bool isTimberOrLogMat = (matId == 121u || matId == 133u || matId == 141u ||
+                             matId == 142u || matId == 143u || matId == 152u);
+    bool isEarthOrPlasterMat = (matId == 131u || matId == 138u || matId == 139u ||
+                                matId == 140u || matId == 144u || matId == 150u ||
+                                matId == 151u);
+    bool isArchGlassOrSteel = (matId == 122u || matId == 125u || matId == 134u ||
+                               matId == 135u || matId == 145u || matId == 148u ||
+                               matId == 149u);
+    bool isArchMat = isMasonryMat || isRoofTileOrShingle || isTimberOrLogMat ||
+                     isEarthOrPlasterMat || isArchGlassOrSteel;
+
+    if (!isArchMat && mortarWetness01 <= 0.005)
     {
         return;
     }
 
     const float kStep = 0.19634954; // 2*PI / 32m Floating-Origin kilitli
     float3 p = posWS - floor(posWS * (1.0 / 32.0)) * 32.0;
-
-    // Yatay harc derzi (0.25m kurs yuksekligi) + sasirtmali Running Bond dusey derz
-    float courseIdx = floor(p.y * 4.0);
-    float horizFrac = frac(p.y * 4.0);
-    float horizJoint = 1.0 - smoothstep(0.04, 0.11, min(horizFrac, 1.0 - horizFrac));
-
-    float stagger = frac(courseIdx * 0.5) * 0.5;
-    float vertCoord = (p.x + p.z) * 2.0 + stagger;
-    float vertFrac = frac(vertCoord);
-    float vertJoint = 1.0 - smoothstep(0.03, 0.09, min(vertFrac, 1.0 - vertFrac));
-
-    float jointMask = saturate(max(horizJoint, vertJoint * 0.85));
     float wet = saturate(mortarWetness01);
 
-    float3 dryLimeMortar = ConvertLutSrgbToActiveColorSpace(float3(0.76, 0.74, 0.69));
-    float3 wetLimeMortar = ConvertLutSrgbToActiveColorSpace(float3(0.32, 0.30, 0.27));
-    float3 mortarCol = lerp(dryLimeMortar, wetLimeMortar, wet);
-    float mortarRough = lerp(0.90, 0.22, wet);
+    if (isMasonryMat || (!isArchMat && wet > 0.005))
+    {
+        // Tugla (0.25m = 4 kurs/m) vs Kesme Tas / Mermer / Beton (0.50m = 2 kurs/m)
+        bool isLargeAshlarCourse = (matId == 126u || matId == 127u || matId == 146u || matId == 147u);
+        float courseRate = isLargeAshlarCourse ? 2.0 : 4.0;
+        float courseIdx = floor(p.y * courseRate);
+        float horizFrac = frac(p.y * courseRate);
+        float jointHalfWidthH = (matId == 132u) ? 0.14 : (isLargeAshlarCourse ? 0.08 : 0.11);
+        float horizJoint = 1.0 - smoothstep(0.035, jointHalfWidthH, min(horizFrac, 1.0 - horizFrac));
 
-    float blendW = isMasonryMat ? (jointMask * 0.78) : (jointMask * wet * 0.65);
-    albedo = lerp(albedo, mortarCol, blendW);
-    roughness = lerp(roughness, mortarRough, blendW);
+        // Ingiliz bagi (137): bir sira boyuna (2/m), bir sira enine kelle tugla (4/m)
+        float isHeaderCourse = step(0.5, frac(courseIdx * 0.5));
+        float blockRateXZ = (matId == 137u)
+            ? lerp(2.0, 4.0, isHeaderCourse)
+            : (isLargeAshlarCourse ? 1.0 : 2.0);
+        float stagger = frac(courseIdx * 0.5) * 0.5;
+        float vertCoord = (p.x + p.z) * blockRateXZ + stagger;
+        float vertFrac = frac(vertCoord);
+        float jointHalfWidthV = (matId == 132u) ? 0.12 : (isLargeAshlarCourse ? 0.07 : 0.09);
+        float vertJoint = 1.0 - smoothstep(0.03, jointHalfWidthV, min(vertFrac, 1.0 - vertFrac));
+
+        // Blok bazli dogal firinlama / tas tonu varyasyonu
+        float cellSeed = floor(vertCoord) + courseIdx * 19.0 + (float)matId * 7.0;
+        float blockHash = frac(sin(cellSeed * 12.9898 + 78.233) * 43758.5453);
+        float toneSpread = isBrickMasonry ? 0.10 : ((matId == 127u) ? 0.04 : 0.07);
+        albedo *= lerp(1.0 - toneSpread, 1.0 + toneSpread, blockHash);
+
+        if (matId == 127u) // Islenmis Mermer: ince mineral damar dalgasi
+        {
+            float marbleVein = 0.5 + 0.5 * sin(p.x * (11.0 * kStep) + p.y * (17.0 * kStep) + sin(p.z * (13.0 * kStep)));
+            albedo *= lerp(0.95, 1.05, marbleVein);
+        }
+
+        float jointMask = (matId == 146u || matId == 147u)
+            ? saturate(max(horizJoint * 0.75, vertJoint * 0.35))
+            : saturate(max(horizJoint, vertJoint * 0.88));
+
+        float3 dryMortarSrgb = (matId == 130u)
+            ? float3(0.68, 0.54, 0.39) // Kerpic camur harci
+            : ((matId == 123u) ? float3(0.28, 0.25, 0.34) : float3(0.78, 0.75, 0.69));
+        float3 wetMortarSrgb = (matId == 130u)
+            ? float3(0.38, 0.28, 0.19)
+            : float3(0.32, 0.30, 0.27);
+
+        float3 dryLimeMortar = ConvertLutSrgbToActiveColorSpace(dryMortarSrgb);
+        float3 wetLimeMortar = ConvertLutSrgbToActiveColorSpace(wetMortarSrgb);
+        float3 mortarCol = lerp(dryLimeMortar, wetLimeMortar, wet);
+        float mortarRough = lerp(0.90, 0.22, wet);
+
+        float baseJointWeight = (matId == 127u) ? 0.48 : ((matId == 146u || matId == 147u) ? 0.45 : 0.78);
+        float blendW = isMasonryMat ? (jointMask * baseJointWeight) : (jointMask * wet * 0.65);
+        albedo = lerp(albedo, mortarCol, blendW);
+        roughness = lerp(roughness, mortarRough, blendW);
+        return;
+    }
+
+    if (isRoofTileOrShingle)
+    {
+        float courseIdx = floor(p.y * 4.0);
+        float courseFrac = frac(p.y * 4.0);
+        float overlapShadow = smoothstep(0.0, 0.20, courseFrac);
+
+        if (matId == 129u) // RoofClayTile: Terracotta oluklu kiremit siralari
+        {
+            float barrelCoord = (p.x + p.z) * 5.0;
+            float barrelWave = 0.5 + 0.5 * sin(barrelCoord * 6.2831853);
+            float tileHash = frac(sin((floor(barrelCoord) + courseIdx * 13.0) * 12.9898) * 43758.5453);
+            albedo *= lerp(0.76, 1.09, overlapShadow * lerp(0.84, 1.12, barrelWave)) * lerp(0.93, 1.07, tileHash);
+            roughness = saturate(lerp(roughness + 0.08, roughness - 0.06, barrelWave));
+        }
+        else // TimberShingleRoof (136) & ThatchTile (124)
+        {
+            float stagger = frac(courseIdx * 0.5) * 0.5;
+            float shingleCoord = (p.x + p.z) * 4.0 + stagger;
+            float shingleFrac = frac(shingleCoord);
+            float slitMask = smoothstep(0.03, 0.10, min(shingleFrac, 1.0 - shingleFrac));
+            float shingleHash = frac(sin((floor(shingleCoord) + courseIdx * 17.0) * 12.9898) * 43758.5453);
+            albedo *= lerp(0.78, 1.06, overlapShadow * lerp(0.80, 1.02, slitMask)) * lerp(0.92, 1.08, shingleHash);
+        }
+        return;
+    }
+
+    if (isTimberOrLogMat)
+    {
+        if (matId == 133u || matId == 143u) // ChinkedLogBlock (133) & GroovedLogTimber (143)
+        {
+            float logCoord = (matId == 143u) ? ((p.x + p.z) * 4.0) : (p.y * 4.0);
+            float logIdx = floor(logCoord);
+            float logFrac = frac(logCoord);
+            float chinkSeam = 1.0 - smoothstep(0.05, 0.14, min(logFrac, 1.0 - logFrac));
+            float logProfile = 0.86 + 0.20 * sin(logFrac * 3.14159265);
+            float logHash = frac(sin(logIdx * 19.19 + 47.3) * 43758.5453);
+            float3 chinkCol = ConvertLutSrgbToActiveColorSpace(
+                lerp(float3(0.76, 0.68, 0.46), float3(0.38, 0.33, 0.22), wet));
+            albedo = lerp(albedo * logProfile * lerp(0.93, 1.07, logHash), chinkCol, chinkSeam * 0.80);
+            roughness = lerp(roughness, lerp(0.92, 0.30, wet), chinkSeam * 0.80);
+        }
+        else // WoodPlank (121), PlywoodOsbPanel (141), TreatedTimberBeam (142), FormworkTimberBoard (152) + 4x4x4 mobilya
+        {
+            float plankIdx = floor(p.y * 4.0);
+            float plankFracY = frac(p.y * 4.0);
+            float seamY = 1.0 - smoothstep(0.025, 0.075, min(plankFracY, 1.0 - plankFracY));
+            float stagger = frac(plankIdx * 0.5) * 0.5;
+            float boardCoordXZ = (p.x + p.z) * 2.0 + stagger;
+            float seamXZ = 1.0 - smoothstep(0.02, 0.06, min(frac(boardCoordXZ), 1.0 - frac(boardCoordXZ)));
+            float seamMask = saturate(max(seamY, seamXZ * 0.70));
+
+            float boardHash = frac(sin((floor(boardCoordXZ) + plankIdx * 23.0) * 12.9898) * 43758.5453);
+            float fineGrain = 0.5 + 0.5 * sin((p.x + p.z) * 28.0 + p.y * 6.0 + boardHash * 6.2831853);
+            albedo *= lerp(0.92, 1.08, boardHash) * lerp(0.94, 1.06, fineGrain);
+            albedo *= lerp(1.0, 0.74, seamMask * 0.65);
+            roughness = saturate(roughness + seamMask * 0.12);
+        }
+        return;
+    }
+
+    if (isEarthOrPlasterMat)
+    {
+        if (matId == 138u || matId == 139u || matId == 140u) // Cob (138) & RammedEarth (139, 140)
+        {
+            float strataWave = 0.5 + 0.5 * sin(p.y * 18.849556 + 0.45 * sin((p.x + p.z) * 3.14159265));
+            float liftSeam = 1.0 - smoothstep(0.03, 0.09, min(frac(p.y * 2.0), 1.0 - frac(p.y * 2.0)));
+            albedo *= lerp(0.89, 1.11, strataWave) * lerp(1.0, 0.85, liftSeam * 0.55);
+        }
+        else // WattleDaub (131), LimeWashPlaster (144), StrawChinking (150), CrushedLimeAggregate (151)
+        {
+            float trowelPatch = 0.5 + 0.5 * (sin(p.x * (29.0 * kStep) + p.y * (37.0 * kStep)) *
+                                             cos(p.z * (31.0 * kStep) - p.y * (23.0 * kStep)));
+            float spread = (matId == 144u) ? 0.045 : 0.075;
+            albedo *= lerp(1.0 - spread, 1.0 + spread, trowelPatch);
+            if (wet > 0.005)
+            {
+                albedo *= lerp(1.0, 0.72, wet);
+                roughness = lerp(roughness, 0.28, wet);
+            }
+        }
+        return;
+    }
+
+    if (isArchGlassOrSteel)
+    {
+        if (matId == 135u) // LeadedGlassPane: 0.25m kursun kafes kayitlari + parlak cam
+        {
+            float gx = min(frac((p.x + p.z) * 4.0), 1.0 - frac((p.x + p.z) * 4.0));
+            float gy = min(frac(p.y * 4.0), 1.0 - frac(p.y * 4.0));
+            float leadCame = 1.0 - smoothstep(0.03, 0.085, min(gx, gy));
+            float3 leadCol = ConvertLutSrgbToActiveColorSpace(float3(0.22, 0.24, 0.27));
+            albedo = lerp(albedo * 1.06, leadCol, leadCame * 0.88);
+            roughness = lerp(0.10, 0.68, leadCame);
+        }
+        else if (matId == 125u || matId == 145u || matId == 149u) // Grating / Rebar / CorrugatedSteelDeck
+        {
+            float ribWave = 0.5 + 0.5 * sin((p.x + p.z) * 25.132741); // 8 oluk/m
+            albedo *= lerp(0.88, 1.12, ribWave);
+        }
+    }
 }
 
 /// 0 MB VRAM: Asiri yuklu yapi dugumlerinde (stressCrack01 > 0) 3B prosedurel stres catlaklari ve kritik kehribar vurgusu.
@@ -686,7 +840,8 @@ half4 StratocraftUberFrag(StratocraftVaryings input) : SV_Target
     float stressCrack01 = max(input.structureVisualMeta.y, _StratoStructureVisualParams.y * _StratoStructureVisualParams.w);
     float charDepth01 = max(input.structureVisualMeta.z, _StratoStructureVisualParams.z * _StratoStructureVisualParams.w);
 
-    ApplyProceduralMortarCureTone(input.matId, input.positionWS, mortarWet01, albedo, roughness);
+    uint archMatId = useLutMode ? input.matId : 0u;
+    ApplyProceduralMortarCureTone(archMatId, input.positionWS, mortarWet01, albedo, roughness);
     float3 stressCrackEmission = float3(0.0, 0.0, 0.0);
     ApplyProceduralStructuralStressCracks(input.positionWS, stressCrack01, albedo, roughness, stressCrackEmission);
     ApplyProceduralWoodCharring(input.positionWS, charDepth01, albedo, roughness, metallic);

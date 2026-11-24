@@ -262,8 +262,29 @@ namespace Stratocraft.WorldGen.Generators
             public SettlementDescriptor Descriptor;
         }
 
+        private struct ChunkLookupCacheSlot
+        {
+            public byte Initialized;
+            public byte HasCoveringSettlement;
+            public byte NearStarterSkirt;
+            public byte InfiniteMode;
+            public int Seed;
+            public int ChunkX;
+            public int ChunkZ;
+            public SettlementDescriptor Descriptor;
+        }
+
         [ThreadStatic]
         private static RegionCacheSlot[]? _tsRegionCache;
+
+        [ThreadStatic]
+        private static ChunkLookupCacheSlot _tsChunkSlot0;
+
+        [ThreadStatic]
+        private static ChunkLookupCacheSlot _tsChunkSlot1;
+
+        [ThreadStatic]
+        private static byte _tsChunkSlotVictim;
 
         [ThreadStatic]
         private static bool _tsInsideSettlementLookup;
@@ -273,12 +294,18 @@ namespace Stratocraft.WorldGen.Generators
         private static void ResetStaticCachesForDomainReloadDisabled()
         {
             _tsRegionCache = null;
+            _tsChunkSlot0 = default;
+            _tsChunkSlot1 = default;
+            _tsChunkSlotVictim = 0;
         }
 #endif
 
         public static void ClearThreadCacheForTests()
         {
             _tsRegionCache = null;
+            _tsChunkSlot0 = default;
+            _tsChunkSlot1 = default;
+            _tsChunkSlotVictim = 0;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -597,9 +624,120 @@ namespace Stratocraft.WorldGen.Generators
 
         /// <summary>
         /// Verilen chunk herhangi bir Koy, Kasaba veya Sehir yerlesiminin sinirlari icindeyse ilgili yerlesimi doner.
+        /// Faz D1: [ThreadStatic] 2-yuvali chunk onbellegi ile ayni chunk icindeki 324+ sutun sorgusu O(1) (&lt; 5 ns) cozulur.
         /// Baslangic vadisi cekirdegi (|cx| &lt;= 5 &amp;&amp; |cz| &lt;= 5, r &lt; ~80m) daima %100 temiz ve bos tutulur.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryGetSettlementCoveringChunk(int chunkX, int chunkZ, out SettlementDescriptor settlement)
+        {
+            return LookupChunkSettlementCached(chunkX, chunkZ, out settlement, out _);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool LookupChunkSettlementCached(
+            int chunkX,
+            int chunkZ,
+            out SettlementDescriptor settlement,
+            out bool nearStarterSkirt)
+        {
+            int seed = StratocraftFloatingIslandWorldGen.ActiveWorldSeed;
+            byte infFlag = StratocraftFloatingIslandWorldGen.InfiniteProceduralWorldMode ? (byte)1 : (byte)0;
+
+            if (_tsChunkSlot0.Initialized != 0 &&
+                _tsChunkSlot0.ChunkX == chunkX &&
+                _tsChunkSlot0.ChunkZ == chunkZ &&
+                _tsChunkSlot0.Seed == seed &&
+                _tsChunkSlot0.InfiniteMode == infFlag)
+            {
+                settlement = _tsChunkSlot0.Descriptor;
+                nearStarterSkirt = _tsChunkSlot0.NearStarterSkirt != 0;
+                return _tsChunkSlot0.HasCoveringSettlement != 0;
+            }
+
+            if (_tsChunkSlot1.Initialized != 0 &&
+                _tsChunkSlot1.ChunkX == chunkX &&
+                _tsChunkSlot1.ChunkZ == chunkZ &&
+                _tsChunkSlot1.Seed == seed &&
+                _tsChunkSlot1.InfiniteMode == infFlag)
+            {
+                settlement = _tsChunkSlot1.Descriptor;
+                nearStarterSkirt = _tsChunkSlot1.NearStarterSkirt != 0;
+                return _tsChunkSlot1.HasCoveringSettlement != 0;
+            }
+
+            return PopulateChunkSettlementCacheSlow(chunkX, chunkZ, seed, infFlag, out settlement, out nearStarterSkirt);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool PopulateChunkSettlementCacheSlow(
+            int chunkX,
+            int chunkZ,
+            int seed,
+            byte infFlag,
+            out SettlementDescriptor settlement,
+            out bool nearStarterSkirt)
+        {
+            bool hasCovering = ComputeSettlementCoveringChunkUncached(chunkX, chunkZ, seed, out settlement);
+            nearStarterSkirt = !hasCovering && IsChunkNearAnyStarterSettlementSkirt(chunkX, chunkZ);
+
+            var newSlot = new ChunkLookupCacheSlot
+            {
+                Initialized = 1,
+                HasCoveringSettlement = hasCovering ? (byte)1 : (byte)0,
+                NearStarterSkirt = nearStarterSkirt ? (byte)1 : (byte)0,
+                InfiniteMode = infFlag,
+                Seed = seed,
+                ChunkX = chunkX,
+                ChunkZ = chunkZ,
+                Descriptor = settlement
+            };
+
+            if (_tsChunkSlotVictim == 0)
+            {
+                _tsChunkSlot0 = newSlot;
+                _tsChunkSlotVictim = 1;
+            }
+            else
+            {
+                _tsChunkSlot1 = newSlot;
+                _tsChunkSlotVictim = 0;
+            }
+
+            return hasCovering;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool IsChunkNearAnyStarterSettlementSkirt(int chunkX, int chunkZ)
+        {
+            // 12m etek gecisi yalnizca baslangic yerlesimlerinin sinirina 1 chunk komsu olan dilimlerde etkilidir:
+            if (chunkX >= StarterNorthCityCenterChunkX - StarterNorthCityRadiusChunks - 1 &&
+                chunkX <= StarterNorthCityCenterChunkX + StarterNorthCityRadiusChunks &&
+                chunkZ >= StarterNorthCityCenterChunkZ - StarterNorthCityRadiusChunks - 1 &&
+                chunkZ <= StarterNorthCityCenterChunkZ + StarterNorthCityRadiusChunks)
+            {
+                return true;
+            }
+
+            if (Math.Abs(chunkX - StarterWestTownCenterChunkX) <= StarterWestTownRadiusChunks + 1 &&
+                Math.Abs(chunkZ - StarterWestTownCenterChunkZ) <= StarterWestTownRadiusChunks + 1)
+            {
+                return true;
+            }
+
+            if (Math.Abs(chunkX - StarterSouthVillageCenterChunkX) <= StarterSouthVillageRadiusChunks + 1 &&
+                Math.Abs(chunkZ - StarterSouthVillageCenterChunkZ) <= StarterSouthVillageRadiusChunks + 1)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool ComputeSettlementCoveringChunkUncached(
+            int chunkX,
+            int chunkZ,
+            int seed,
+            out SettlementDescriptor settlement)
         {
             // 1) Baslangic Vadisi (0,0) (r < ~80m, |cx| <= 5 && |cz| <= 5): KESINLIKLE TEMIZ & BOS!
             if (Math.Abs(chunkX) <= StarterCleanValleyRadiusChunks &&
@@ -608,8 +746,6 @@ namespace Stratocraft.WorldGen.Generators
                 settlement = default;
                 return false;
             }
-
-            int seed = StratocraftFloatingIslandWorldGen.ActiveWorldSeed;
 
             // 2) KUZEY (+Z, Merkez (0, +36)): 48x48 chunk Dev Metropol Sehir (cx in [-24..+23], cz in [+12..+59])
             if (chunkX >= StarterNorthCityCenterChunkX - StarterNorthCityRadiusChunks &&
@@ -2113,6 +2249,7 @@ namespace Stratocraft.WorldGen.Generators
         /// 5x5 Guney Koyu ve uzak yerlesimlerin tum ayak izini SeaLevelY + 5 (>= 95m) uzerine yumusakca teraslar,
         /// sehir ici deniz/kar daglarini ve pembe-camgobegi biyom sinir bozulmalarini %100 onler (0-GC).
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool TryApplySettlementTerracingAndBiome(
             float worldX,
             float worldZ,
@@ -2130,7 +2267,7 @@ namespace Stratocraft.WorldGen.Generators
             int cz = FloorDiv(wz, 16);
 
             // 1) Dogrudan yerlesim ayak izi icindeyse: >= SeaLevelY + 5 (95m) teras + temiz yasanabilir biyom
-            if (TryGetSettlementCoveringChunk(cx, cz, out SettlementDescriptor s))
+            if (LookupChunkSettlementCached(cx, cz, out SettlementDescriptor s, out bool nearStarterSkirt))
             {
                 float targetY = ComputeTerrainTargetHeight(in s, wx, wz, topH);
                 float minDryY = StratocraftFloatingIslandWorldGen.SeaLevelY + 5.0f;
@@ -2141,6 +2278,11 @@ namespace Stratocraft.WorldGen.Generators
                     biomeId = s.BiomeId is 3 or 4 or 5 or 8 or 10 or 11 ? 0 : s.BiomeId;
                 }
                 return true;
+            }
+
+            if (!nearStarterSkirt)
+            {
+                return false;
             }
 
             // 2) 3 Baslangic Yerlesimi (Kuzey Metropol, Bati Kasaba, Guney Koy) etrafinda 12m yumusak etek gecisi (ucurum/su duvarini onler)
