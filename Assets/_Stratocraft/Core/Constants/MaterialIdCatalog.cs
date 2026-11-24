@@ -246,6 +246,55 @@ namespace Stratocraft.Core.Constants
         /// <summary>Yarma Ahsap Zona / Pedavra Cati Kaplamasi (136 - Ekol 1/2 egimli cati ortusu, vakum bagisik).</summary>
         public const byte TimberShingleRoof = 136;
 
+        // ---------- 9-Ekol Genisletilmis Islenmis Mimari Bloklar (IS_ITEM_BLOCK: 137..152, Karar A3 %100 CrystalImmune) ----------
+        /// <summary>Ingiliz/Flaman Bagi Tasiyici Pismis Tugla Duvar Blogu (137 - Ekol 7 BrickMasonry, FiredClayBrick=128 ile uyumlu, vakum bagisik).</summary>
+        public const byte EnglishBondBrickMasonry = 137;
+
+        /// <summary>Samanli Kavisli Cob Camur Tugla / Blok (138 - Ekol 9 AdobeAndCob, vakum bagisik).</summary>
+        public const byte CobMudBrick = 138;
+
+        /// <summary>Tokmaklanmis Taze Sikistirilmis Toprak / Rammed Earth (139 - Ekol 8 RammedEarth, vakum bagisik).</summary>
+        public const byte RammedEarthCompacted = 139;
+
+        /// <summary>Tam Kurumus Sikistirilmis Toprak / Dried Rammed Earth (140 - Ekol 8 RammedEarth, vakum bagisik).</summary>
+        public const byte DriedRammedEarth = 140;
+
+        /// <summary>Kontrplak / OSB Perde Levha Paneli (141 - Ekol 6 PlatformWoodFrame shear wall kilidi, vakum bagisik).</summary>
+        public const byte PlywoodOsbPanel = 141;
+
+        /// <summary>Emprenyeli / Islenmis Agir Yapisal Kereste Kirisi (142 - Ekol 2/5/6 tasiyici kiris &amp; hatil, vakum bagisik).</summary>
+        public const byte TreatedTimberBeam = 142;
+
+        /// <summary>Oluklu Dikey Kutuk Dikmesi Kerestesi (143 - Ekol 5 LogPostAndFill kanalli dikme, vakum bagisik).</summary>
+        public const byte GroovedLogTimber = 143;
+
+        /// <summary>Kirec Badana ve Koruyucu Mineral Siva (144 - Ekol 3/7/8/9 nem bariyeri &amp; cephe sivasi, vakum bagisik).</summary>
+        public const byte LimeWashPlaster = 144;
+
+        /// <summary>Insaat Demiri / Celik Donati Hasiri (145 - Ekol 10 temel/kolon/tabliye rebar kafesi, vakum bagisik).</summary>
+        public const byte SteelRebarMesh = 145;
+
+        /// <summary>Taze Islak Portland Betonu (146 - Ekol 10 kalip/dikme altinda dokulmus yas beton, vakum bagisik).</summary>
+        public const byte WetPortlandConcrete = 146;
+
+        /// <summary>Tam Sertlesmis Donatili Betonarme (147 - Ekol 10 monolitik kolon/kiris/tabliye, vakum bagisik).</summary>
+        public const byte CuredReinforcedConcrete = 147;
+
+        /// <summary>Yapisal H/I Profil Celik Kolon &amp; Kiris (148 - Ekol 10 endustriyel celik karkas, vakum bagisik).</summary>
+        public const byte StructuralSteelHBeam = 148;
+
+        /// <summary>Oluklu Trapez Celik Doseme Saci / Metal Deck (149 - Ekol 10 dikmesiz celik tabliye, vakum bagisik).</summary>
+        public const byte CorrugatedSteelDeck = 149;
+
+        /// <summary>Saman ve Lifli Kutuk Derz Dolgu Demeti (150 - Ekol 1/5 Chinking yalitim dolgusu, vakum bagisik).</summary>
+        public const byte StrawChinkingBundle = 150;
+
+        /// <summary>Kirma Kirectasi &amp; Cakil Beton Agregasi (151 - Ekol 8/10 blokaj ve harc/beton agregasi, vakum bagisik).</summary>
+        public const byte CrushedLimeAggregate = 151;
+
+        /// <summary>Kalip ve Kemer Iskelesi Tahtasi (152 - Gecici kalip, kayar toprak kalibi &amp; kemer kalibi, vakum bagisik).</summary>
+        public const byte FormworkTimberBoard = 152;
+
         /// <summary>Kusaklama Batarya Cekirdegi (160).</summary>
         public const byte BatteryCore = 160;
 
@@ -370,6 +419,9 @@ namespace Stratocraft.Core.Constants
                    materialId == ReinforcedSteelBlock ||
                    materialId == IronGrating ||
                    materialId == IronTieBeamBlock ||
+                   materialId == SteelRebarMesh ||
+                   materialId == StructuralSteelHBeam ||
+                   materialId == CorrugatedSteelDeck ||
                    materialId == BatteryCore;
         }
 
@@ -479,6 +531,22 @@ namespace Stratocraft.Core.Constants
             IronTieBeamBlock => "Demir Gergi Kirişi",
             LeadedGlassPane => "Kurşunlu Mimari Cam",
             TimberShingleRoof => "Ahşap Zona Çatı",
+            EnglishBondBrickMasonry => "İngiliz Bağı Pişmiş Tuğla",
+            CobMudBrick => "Samanlı Cob Çamur Duvar",
+            RammedEarthCompacted => "Sıkıştırılmış Toprak (Taze)",
+            DriedRammedEarth => "Kurutulmuş Sıkıştırılmış Toprak",
+            PlywoodOsbPanel => "Kontrplak / OSB Perde Levha",
+            TreatedTimberBeam => "İşlenmiş Yapısal Kiriş",
+            GroovedLogTimber => "Oluklu Kütük Dikmesi",
+            LimeWashPlaster => "Kireç Badana Sıva",
+            SteelRebarMesh => "İnşaat Demiri Hasırı",
+            WetPortlandConcrete => "Taze Portland Betonu",
+            CuredReinforcedConcrete => "Kürlenmiş Betonarme",
+            StructuralSteelHBeam => "Yapısal H-Profil Çelik",
+            CorrugatedSteelDeck => "Oluklu Trapez Çelik Sac",
+            StrawChinkingBundle => "Samanlı Derz Dolgu",
+            CrushedLimeAggregate => "Kırma Kireçtaşı Agregası",
+            FormworkTimberBoard => "Kalıp Tahtası",
             BatteryCore => "Batarya Çekirdeği",
             GlowingMoss => "Parlayan Mağara Yosunu",
             CampfireBlock => "Kamp Ateşi",
@@ -488,5 +556,77 @@ namespace Stratocraft.Core.Constants
             >= DungeonSanctumImmuneStart => "Kadim Zindan Taşı",
             _ => "Bilinmeyen Malzeme"
         };
+
+        /// <summary>
+        /// Verilen MaterialID icin tahsissiz (0-GC) kanonik 24-bit RGB renk kodunu (0xRRGGBB) doner.
+        /// 9-ekol mimari malzemeler (120..152) ve temel dogal yapi malzemeleri icin Unity/Core ortak renk kaynagidir.
+        /// </summary>
+        public static uint GetBaseColorRgb24(byte materialId) => materialId switch
+        {
+            Stone => 0x8A8E91u,
+            Dirt => 0x6F4E37u,
+            Grass => 0x567D46u,
+            Sand => 0xD2BC8Fu,
+            Bedrock => 0x2A2D30u,
+            NaturalObsidian => 0x1E1929u,
+            Basalt => 0x45494Fu,
+            Cobblestone => 0x7A7D80u,
+            Gravel => 0x8F8A82u,
+            Marble => 0xE6E2DAu,
+            Clay => 0x9C7A63u,
+            Limestone => 0xCFC6B2u,
+            Bronze => 0xB07A3Fu,
+            Steel => 0x7C8794u,
+            DamascusSteel => 0x5A6470u,
+            OakWood => 0x8B5E3Cu,
+            Ironwood => 0x5B3A29u,
+            SpiritWood => 0x7D6B8Au,
+            YggdrasilBranch => 0x997D4Eu,
+            StoneBrick => 0x96999Cu,
+            WoodPlank => 0xA67B51u,
+            ReinforcedSteelBlock => 0x5E6A75u,
+            ObsidianBrick => 0x262036u,
+            ThatchTile => 0xC4A459u,
+            IronGrating => 0x4C545Cu,
+            CutAshlarStone => 0xB8B2A6u,
+            DressedMarbleBlock => 0xECE8DFu,
+            FiredClayBrick => 0xB24C34u,
+            RoofClayTile => 0xC25A38u,
+            AdobeBrickBlock => 0xC49A6Cu,
+            WattleDaubPanelBlock => 0xD4C4A8u,
+            LimeMortarStoneWall => 0xABA495u,
+            ChinkedLogBlock => 0x7F5436u,
+            IronTieBeamBlock => 0x3D434Au,
+            LeadedGlassPane => 0x8FB8C8u,
+            TimberShingleRoof => 0x6E4B32u,
+            EnglishBondBrickMasonry => 0xA4442Eu,
+            CobMudBrick => 0xB88E62u,
+            RammedEarthCompacted => 0x9C724Cu,
+            DriedRammedEarth => 0xBE966Eu,
+            PlywoodOsbPanel => 0xC8A165u,
+            TreatedTimberBeam => 0x6B462Bu,
+            GroovedLogTimber => 0x845735u,
+            LimeWashPlaster => 0xE8E2D5u,
+            SteelRebarMesh => 0x525B64u,
+            WetPortlandConcrete => 0x7E8284u,
+            CuredReinforcedConcrete => 0xA5A8AAu,
+            StructuralSteelHBeam => 0x495664u,
+            CorrugatedSteelDeck => 0x8A96A2u,
+            StrawChinkingBundle => 0xCCB268u,
+            CrushedLimeAggregate => 0xC2BCB0u,
+            FormworkTimberBoard => 0xB88E54u,
+            _ => 0x999999u
+        };
+
+        /// <summary>
+        /// Verilen MaterialID icin tahsissiz (0-GC) RGB bilesenlerini (0..255) doner.
+        /// </summary>
+        public static void GetBaseColorRgb(byte materialId, out byte r, out byte g, out byte b)
+        {
+            uint rgb = GetBaseColorRgb24(materialId);
+            r = (byte)((rgb >> 16) & 0xFFu);
+            g = (byte)((rgb >> 8) & 0xFFu);
+            b = (byte)(rgb & 0xFFu);
+        }
     }
 }
