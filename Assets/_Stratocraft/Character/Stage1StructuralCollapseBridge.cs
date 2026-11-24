@@ -832,11 +832,12 @@ namespace Stratocraft.Character
                                 haloSrc[colBaseIdx + ly * HaloWindowSizeXZ] = chunkVoxels[(wy << 8) | chunkCol];
                             }
 
-                            // Pencere alt siniri (originY > DeepMantleFloorY) gercekten ana kayaya kadar dolu mu kontrol et:
+                            // Pencere alt siniri (originY > DeepMantleFloorY) altinda kesintisiz masif kabuk veya ana kaya var mi kontrol et:
                             if (originY > StratocraftFloatingIslandWorldGen.DeepMantleFloorY)
                             {
                                 bool grounded = true;
-                                for (int checkY = originY; checkY >= StratocraftFloatingIslandWorldGen.DeepMantleFloorY; checkY--)
+                                int minCrustCheckY = Math.Max(StratocraftFloatingIslandWorldGen.DeepMantleFloorY, originY - 12);
+                                for (int checkY = originY; checkY >= minCrustCheckY; checkY--)
                                 {
                                     if (checkY >= chunkMaxY || !VoxelBitUtility.IsPhysicallySolid(chunkVoxels[(checkY << 8) | chunkCol]))
                                     {
@@ -1215,11 +1216,26 @@ namespace Stratocraft.Character
 
                     if (anchorWholeColumn)
                     {
-                        // Pencere alt tabani (ly == 0) ana kayaya kadar kesintisiz doluysa mesnet olarak sabitlenir
                         uint outerBottom = dst[colBaseIdx];
-                        if (groundedBottomMask[col2D] != 0 && VoxelBitUtility.IsPhysicallySolid(outerBottom))
+                        if (VoxelBitUtility.IsPhysicallySolid(outerBottom))
                         {
-                            dst[colBaseIdx] = VoxelBitUtility.WithOriginState(outerBottom, BlokKokenDurumu.KaliciYapi);
+                            byte obMat = VoxelBitUtility.GetMaterialId(outerBottom);
+                            byte obShape = VoxelBitUtility.GetShapeId(outerBottom);
+                            StructuralMaterialProps obProps = StructuralMaterialProps.GetForMaterial(obMat);
+                            bool obIsArch = IsStructuralArchitecturalOrMicroVoxel(obMat, obShape, in obProps);
+                            if (groundedBottomMask[col2D] != 0)
+                            {
+                                dst[colBaseIdx] = VoxelBitUtility.WithOriginState(outerBottom, BlokKokenDurumu.KaliciYapi);
+                            }
+                            else if (!obIsArch && VoxelBitUtility.GetOriginState(outerBottom) == BlokKokenDurumu.DogalKutle)
+                            {
+                                dst[colBaseIdx] = VoxelBitUtility.WithOriginState(outerBottom, BlokKokenDurumu.KaliciYapi);
+                            }
+                            else if (obIsArch && VoxelBitUtility.GetOriginState(outerBottom) == BlokKokenDurumu.DogalKutle &&
+                                     !obProps.IsGranular && obMat != MaterialIdCatalog.Stalagnate)
+                            {
+                                dst[colBaseIdx] = VoxelBitUtility.WithOriginState(outerBottom, BlokKokenDurumu.OyuncuItemBlogu);
+                            }
                         }
 
                         for (int ly = 1; ly < sizeY; ly++)
@@ -1229,8 +1245,14 @@ namespace Stratocraft.Character
                             if (VoxelBitUtility.IsPhysicallySolid(raw) &&
                                 VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
                             {
-                                byte oMat = VoxelBitUtility.GetMaterialId(raw);
                                 byte oShape = VoxelBitUtility.GetShapeId(raw);
+                                byte oMat = VoxelBitUtility.GetMaterialId(raw);
+                                if (oShape == 0 && oMat < MaterialIdCatalog.StoneBrick)
+                                {
+                                    dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                                    continue;
+                                }
+
                                 StructuralMaterialProps oProps = StructuralMaterialProps.GetForMaterial(oMat);
                                 if (IsStructuralArchitecturalOrMicroVoxel(oMat, oShape, in oProps))
                                 {
@@ -1248,11 +1270,30 @@ namespace Stratocraft.Character
                         continue;
                     }
 
-                    // Pencere alt tabani (ly == 0) gercekten ana kayaya oturuyorsa mesnet olarak sabitlenir
+                    // Pencere alt tabani (ly == 0): Ana kayaya oturuyorsa veya minReleaseY altindaki dogal SDF ana kayasiysa sabitlenir;
+                    // havada asili mimari/mikro-voksel bloksa ASLA sabitlenmez (%100 gercek fiziksel cokus!)
                     uint bottomRaw = dst[colBaseIdx];
-                    if (groundedBottomMask[col2D] != 0 && VoxelBitUtility.IsPhysicallySolid(bottomRaw))
+                    if (VoxelBitUtility.IsPhysicallySolid(bottomRaw))
                     {
-                        dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.KaliciYapi);
+                        byte bMat = VoxelBitUtility.GetMaterialId(bottomRaw);
+                        byte bShape = VoxelBitUtility.GetShapeId(bottomRaw);
+                        StructuralMaterialProps bProps = StructuralMaterialProps.GetForMaterial(bMat);
+                        bool bIsArch = IsStructuralArchitecturalOrMicroVoxel(bMat, bShape, in bProps);
+                        if (groundedBottomMask[col2D] != 0)
+                        {
+                            dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.KaliciYapi);
+                        }
+                        else if (minReleaseY > 0 && !bIsArch &&
+                                 VoxelBitUtility.GetOriginState(bottomRaw) == BlokKokenDurumu.DogalKutle &&
+                                 !IsTreeTrunkMaterial(bMat))
+                        {
+                            dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.KaliciYapi);
+                        }
+                        else if (bIsArch && VoxelBitUtility.GetOriginState(bottomRaw) == BlokKokenDurumu.DogalKutle &&
+                                 !bProps.IsGranular && bMat != MaterialIdCatalog.Stalagnate)
+                        {
+                            dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.OyuncuItemBlogu);
+                        }
                     }
 
                     int surfY = surfaceYOverride != null

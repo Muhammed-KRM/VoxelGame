@@ -671,24 +671,27 @@ namespace Stratocraft.WorldGen.Generators
                         if (zSouth == zNorth)
                         {
                             f.ToWorld(bx, zSouth, out int rWx, out int rWz);
-                            canvas.SetBlock(rWx, wy - 1, rWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
+                            {
+                                canvas.SetBlock(rWx, suppY, rWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            }
                             canvas.SetBlock(rWx, wy, rWz, pal.RoofMat, ArchitecturalShapeCatalog.FullMasonryCube);
                             continue;
                         }
 
                         // Guney (-Z) egimli cati yuzu (localRot = 0 -> disari -Z'ye egimli)
                         f.ToWorld(bx, zSouth, out int sWx, out int sWz);
-                        if (step > 0)
+                        for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                         {
-                            canvas.SetBlock(sWx, wy - 1, sWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(sWx, suppY, sWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
                         }
                         canvas.SetBlock(sWx, wy, sWz, pal.RoofMat, ArchitecturalShapeCatalog.Ramp45, f.Rot(0));
 
                         // Kuzey (+Z) egimli cati yuzu (localRot = 2 -> disari +Z'ye egimli)
                         f.ToWorld(bx, zNorth, out int nWx, out int nWz);
-                        if (step > 0)
+                        for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
                         {
-                            canvas.SetBlock(nWx, wy - 1, nWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                            canvas.SetBlock(nWx, suppY, nWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
                         }
                         canvas.SetBlock(nWx, wy, nWz, pal.RoofMat, ArchitecturalShapeCatalog.Ramp45, f.Rot(2));
 
@@ -698,7 +701,10 @@ namespace Stratocraft.WorldGen.Generators
                             f.ToWorld(bx, bz, out int gWx, out int gWz);
                             if (step == maxRise)
                             {
-                                canvas.SetBlock(gWx, wy - 1, gWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                for (int suppY = roofBaseY + 1; suppY <= wy - 1; suppY++)
+                                {
+                                    canvas.SetBlock(gWx, suppY, gWz, isGableWall ? pal.WallMat : pal.TimberMat, ArchitecturalShapeCatalog.FullMasonryCube);
+                                }
                                 canvas.SetBlock(gWx, wy, gWz, pal.RoofMat, ArchitecturalShapeCatalog.FullMasonryCube);
                             }
                             else if (isGableWall)

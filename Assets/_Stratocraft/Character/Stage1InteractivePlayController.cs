@@ -606,7 +606,8 @@ namespace Stratocraft.Character
             {
                 Array.Clear(microPools, 0, microPools.Length);
             }
-            StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(cx, cz, voxels, fluids);
+            StratocraftFloatingIslandWorldGen.PopulateVolumetricFloatingIslandChunkInto(
+                cx, cz, voxels, fluids, microPools: microPools);
         }
 
         /// <summary>Sahnedeki bir voksel chunk'ini canli CSG, Domino, MicroVoxelPool4096 ve .sregion sistemlerine kaydeder.</summary>
@@ -1017,6 +1018,7 @@ namespace Stratocraft.Character
             _collapseBridge.ExternalTimberSupportLookup = _hasGroundedTimberSupportDelegateCached;
             _rasterizeTimberSupportDelegateCached ??= _looseBuildSystem.TryRasterizeGroundedTimberSupportInWindow;
             _collapseBridge.ExternalTimberSupportWindowRasterizer = _rasterizeTimberSupportDelegateCached;
+            _collapseBridge.WorldMicroPools = _worldMicroPools;
             _creatureBridge.MiningControllerForLootDrops = _miningCtrl;
             _looseBuildSystem.SiteLogistics = _siteLogisticsCtrl.Core;
             _siteLogisticsCtrl.BindToLooseBuildSystem(_looseBuildSystem);
@@ -7406,8 +7408,8 @@ namespace Stratocraft.Character
                 MaterialIdCatalog.Ironwood or
                 MaterialIdCatalog.SpiritWood or
                 MaterialIdCatalog.ChinkedLogBlock or
-                MaterialIdCatalog.WroughtIronBar or
-                MaterialIdCatalog.ReinforcedSteelBeam;
+                MaterialIdCatalog.IronTieBeamBlock or
+                MaterialIdCatalog.StructuralSteelHBeam;
         }
 
         public bool TryToggleVoxelDoorAtWorldCoord(int wx, int wy, int wz)
@@ -7441,12 +7443,39 @@ namespace Stratocraft.Character
                 _worldMicroPools[(cx, cz)] = chunkPools;
             }
 
+            if (VoxelMicroFurnitureTemplates.TryToggleDoorMicroVoxel(voxels, chunkPools, lx, wy, lz, out bool isHingedDoorOpen))
+            {
+                MarkSubChunkDirtyInternal(cx, cz, wy, lx, lz, includeNeighbors: true);
+                if (wy > 1) MarkSubChunkDirtyInternal(cx, cz, wy - 1, lx, lz, includeNeighbors: true);
+                if (wy + 1 < MaxEditableVoxelY) MarkSubChunkDirtyInternal(cx, cz, wy + 1, lx, lz, includeNeighbors: true);
+                MarkChunkDirtyFlag((cx, cz), ChunkDirtyFlags.MicroPool | ChunkDirtyFlags.Structures);
+                _dirtyChunks.Add((cx, cz));
+                if (lx == 0) _dirtyChunks.Add((cx - 1, cz));
+                if (lx == 15) _dirtyChunks.Add((cx + 1, cz));
+                if (lz == 0) _dirtyChunks.Add((cx, cz - 1));
+                if (lz == 15) _dirtyChunks.Add((cx, cz + 1));
+                _miningCtrl.LastFeedbackText = isHingedDoorOpen
+                    ? "🚪 Voksel Kapı açıldı."
+                    : "🚪 Voksel Kapı kapatıldı.";
+                return true;
+            }
+
             MicroVoxelPool4096 subPool = chunkPools[wy >> 4] ??= new MicroVoxelPool4096();
             ushort slot12 = VoxelBitUtility.GetMicroPoolIndex(raw);
             ulong curMask = subPool.IsAllocated ? subPool.GetMask(slot12) : 0UL;
             if (curMask == 0UL)
             {
                 curMask = MicroVoxelPool4096.FaceNegZMask;
+            }
+
+            bool isThinPanelMask =
+                curMask == MicroVoxelPool4096.FaceNegZMask ||
+                curMask == MicroVoxelPool4096.FacePosZMask ||
+                curMask == MicroVoxelPool4096.FaceNegXMask ||
+                curMask == MicroVoxelPool4096.FacePosXMask;
+            if (!isThinPanelMask)
+            {
+                return false;
             }
 
             ulong toggledMask = TransposeMicroVoxelDoorMaskXZ(curMask);
