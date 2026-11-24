@@ -1209,8 +1209,8 @@ namespace Stratocraft.Inventory.Systems
 
                     // Menteşeli tek kanat açık: -X sövesinden +Z yönüne 90 deg döner, merkez geçit tamamen açık!
                     outBoxes[3] = new LocalSolidBox(
-                        new Vector3(-clearHalf - 0.04f, 0.00f, halfT),
-                        new Vector3(-clearHalf + 0.06f, lintelY, halfT + 1.00f),
+                        new Vector3(-clearHalf - 0.06f, 0.00f, halfT),
+                        new Vector3(-clearHalf + 0.02f, lintelY, halfT + 0.98f),
                         isWalkableTop: false);
                     return 4;
                 }
@@ -1285,14 +1285,191 @@ namespace Stratocraft.Inventory.Systems
 
                 case StructuralElementRole.TemporaryCenteringScaffold:
                     outBoxes[0] = new LocalSolidBox(
-                        new Vector3(-0.95f, 0.00f, -0.14f),
-                        new Vector3(-0.80f, 1.80f, 0.14f),
+                        new Vector3(-0.76f, 0.00f, -0.10f),
+                        new Vector3(-0.22f, 0.52f, 0.10f),
                         isWalkableTop: false);
                     outBoxes[1] = new LocalSolidBox(
-                        new Vector3(0.80f, 0.00f, -0.14f),
-                        new Vector3(0.95f, 1.80f, 0.14f),
+                        new Vector3(-0.28f, 0.46f, -0.10f),
+                        new Vector3(0.24f, 1.02f, 0.10f),
                         isWalkableTop: false);
+                    outBoxes[2] = new LocalSolidBox(
+                        new Vector3(0.20f, 0.96f, -0.10f),
+                        new Vector3(0.76f, 1.56f, 0.10f),
+                        isWalkableTop: false);
+                    return 3;
+
+                // --- F. 9-Ekol Genişletilmiş Yapı ve Geçici Destek Rolleri (43..63 — 18 Yeni .glb 1:1 Pivot) ---
+                case StructuralElementRole.GroovedLogPost:
+                    // mod_grooved_log_post_3m.glb (3.0m oluklu dikey kütük dikmesi)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.18f, 0.00f, -0.18f),
+                        new Vector3(0.18f, 3.00f, 0.18f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.SaddleNotchedBaseLog:
+                case StructuralElementRole.HalfFlatStarterLog:
+                    // mod_notched_log_saddle_2m.glb / mod_notched_log_dovetail_2m.glb
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.02f, 0.00f, -0.18f),
+                        new Vector3(1.02f, 0.36f, 0.18f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.LogChinkingFill:
+                    // mod_chinked_log_course_2m.glb
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -halfT),
+                        new Vector3(1.00f, 2.00f, halfT),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.TimberRingBeam:
+                    // mod_timber_ring_beam_2m.glb (2.0m çift kirişli ahşap hatıl kuşağı)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.02f, 0.00f, -0.22f),
+                        new Vector3(1.02f, 0.22f, 0.22f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.PlatformStudWall:
+                case StructuralElementRole.PlywoodSheathingPanel:
+                {
+                    // mod_platform_stud_frame_2x2m.glb / mod_osb_sheathing_panel_2x2m.glb
+                    float studHalfT = MathF.Max(0.08f, halfT);
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -studHalfT),
+                        new Vector3(1.00f, 2.00f, studHalfT),
+                        isWalkableTop: true);
+                    return 1;
+                }
+
+                case StructuralElementRole.RammedEarthWall:
+                case StructuralElementRole.CobCurvedWall:
+                {
+                    // mod_rammed_earth_wall_2x2m.glb / mod_cob_curved_wall_2m.glb
+                    float earthHalfT = MathF.Max(0.22f, halfT);
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -earthHalfT),
+                        new Vector3(1.00f, 2.00f, earthHalfT),
+                        isWalkableTop: true);
+                    return 1;
+                }
+
+                case StructuralElementRole.EnglishBondBrickWall:
+                {
+                    // mod_english_bond_brick_2x2m.glb
+                    float brickHalfT = MathF.Max(0.18f, halfT);
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -brickHalfT),
+                        new Vector3(1.00f, 2.00f, brickHalfT),
+                        isWalkableTop: true);
+                    return 1;
+                }
+
+                case StructuralElementRole.RebarFoundationCage:
+                    // mod_rebar_foundation_cage_2m.glb (2x2m grobeton + hasır + merkez L-filiz)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -1.00f),
+                        new Vector3(1.00f, 0.32f, 1.00f),
+                        isWalkableTop: true);
+                    outBoxes[1] = new LocalSolidBox(
+                        new Vector3(-0.18f, 0.32f, -0.18f),
+                        new Vector3(0.18f, 0.95f, 0.18f),
+                        isWalkableTop: true);
                     return 2;
+
+                case StructuralElementRole.RebarColumnCage:
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.20f, 0.00f, -0.20f),
+                        new Vector3(0.20f, 3.00f, 0.20f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.ConcreteColumnFormwork:
+                    // mod_concrete_column_formwork_3m.glb (3.0m kuşaklı betonarme kolon kalıbı)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.32f, 0.00f, -0.32f),
+                        new Vector3(0.32f, 3.00f, 0.32f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.TelescopicShoringProp:
+                case StructuralElementRole.SlabDeckFormwork:
+                    // mod_telescopic_shoring_2x3m.glb: Üst 2x2m tabliye kalıbı (Y=2.68..3.00m) + 4 köşe teleskopik çelik dikme (X,Z=±0.76m)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 2.68f, -1.00f),
+                        new Vector3(1.00f, 3.00f, 1.00f),
+                        isWalkableTop: true);
+                    outBoxes[1] = new LocalSolidBox(new Vector3(-0.84f, 0.00f, -0.84f), new Vector3(-0.68f, 2.68f, -0.68f), isWalkableTop: false);
+                    outBoxes[2] = new LocalSolidBox(new Vector3(0.68f, 0.00f, -0.84f), new Vector3(0.84f, 2.68f, -0.68f), isWalkableTop: false);
+                    outBoxes[3] = new LocalSolidBox(new Vector3(-0.84f, 0.00f, 0.68f), new Vector3(-0.68f, 2.68f, 0.84f), isWalkableTop: false);
+                    outBoxes[4] = new LocalSolidBox(new Vector3(0.68f, 0.00f, 0.68f), new Vector3(0.84f, 2.68f, 0.84f), isWalkableTop: false);
+                    return 5;
+
+                case StructuralElementRole.SteelHBeamColumn:
+                    // mod_steel_h_column_3m.glb (3.0m H-profil çelik kolon)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.24f, 0.00f, -0.24f),
+                        new Vector3(0.24f, 3.00f, 0.24f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.SteelGuyWireBrace:
+                    // mod_steel_x_brace_2x2m.glb (45° çelik gergi halatı)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.76f, 0.00f, -0.09f),
+                        new Vector3(-0.22f, 0.56f, 0.09f),
+                        isWalkableTop: false);
+                    outBoxes[1] = new LocalSolidBox(
+                        new Vector3(-0.28f, 0.50f, -0.09f),
+                        new Vector3(0.28f, 1.12f, 0.09f),
+                        isWalkableTop: false);
+                    outBoxes[2] = new LocalSolidBox(
+                        new Vector3(0.22f, 1.06f, -0.09f),
+                        new Vector3(0.76f, 1.68f, 0.09f),
+                        isWalkableTop: false);
+                    return 3;
+
+                case StructuralElementRole.SteelXBrace:
+                    // mod_steel_x_brace_2x2m.glb (2x2m bayrak plakalı çelik X-çapraz perde)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.98f, 0.00f, -0.09f),
+                        new Vector3(0.98f, 2.00f, 0.09f),
+                        isWalkableTop: false);
+                    return 1;
+
+                case StructuralElementRole.CorrugatedMetalDeck:
+                    // mod_metal_deck_slab_2x2m.glb (2x2x0.26m oluklu trapez sac + kompozit beton döşeme)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -1.00f),
+                        new Vector3(1.00f, 0.26f, 1.00f),
+                        isWalkableTop: true);
+                    return 1;
+
+                case StructuralElementRole.WoodenArchCentering:
+                    // mod_wooden_arch_centering_2m.glb (2.0m ahşap kemer kalıbı + kama takozları)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-0.98f, 0.00f, -0.23f),
+                        new Vector3(-0.74f, 0.90f, 0.23f),
+                        isWalkableTop: false);
+                    outBoxes[1] = new LocalSolidBox(
+                        new Vector3(0.74f, 0.00f, -0.23f),
+                        new Vector3(0.98f, 0.90f, 0.23f),
+                        isWalkableTop: false);
+                    outBoxes[2] = new LocalSolidBox(
+                        new Vector3(-0.98f, 0.12f, -0.23f),
+                        new Vector3(0.98f, 1.15f, 0.23f),
+                        isWalkableTop: false);
+                    return 3;
+
+                case StructuralElementRole.SlidingEarthFormwork:
+                    // mod_sliding_earth_formwork_2m.glb (2.0m x 0.92m gergili kayar toprak kalıbı)
+                    outBoxes[0] = new LocalSolidBox(
+                        new Vector3(-1.00f, 0.00f, -0.28f),
+                        new Vector3(1.00f, 0.92f, 0.28f),
+                        isWalkableTop: true);
+                    return 1;
 
                 // Analitik eğimli/sarmal/kemer elemanlar özel değerlendiricilerle çözülür
                 case StructuralElementRole.StairStringerFlight:
@@ -1305,6 +1482,76 @@ namespace Stratocraft.Inventory.Systems
                 default:
                     return 0;
             }
+        }
+
+        /// <summary>
+        /// Verilen <see cref="StructuralElementRole"/> (0..63) için BottomCenter_Zero yerel-uzay AABB sınırlarını döner (0-GC).
+        /// </summary>
+        public static void GetRoleLocalBounds(
+            StructuralElementRole role,
+            out Vector3 localMin,
+            out Vector3 localMax,
+            StructureThicknessProfile thickness = StructureThicknessProfile.Standard)
+        {
+            var probe = new StructuralNode64
+            {
+                Role = role,
+                ThicknessProfile = (byte)thickness,
+                Integrity01 = 1.0f,
+                CollapseState = StructureCollapseState.Stable
+            };
+
+            if (IsArchOrVaultRole(role))
+            {
+                GetArchGeometryParams(in probe, out float spanL, out float pierW, out _, out _, out float topY, out float halfZ);
+                float hx = (spanL * 0.5f) + pierW;
+                localMin = new Vector3(-hx, 0.00f, -halfZ);
+                localMax = new Vector3(hx, topY, halfZ);
+                return;
+            }
+
+            if (role == StructuralElementRole.StairStringerFlight)
+            {
+                localMin = new Vector3(-0.80f, 0.00f, -1.25f);
+                localMax = new Vector3(0.80f, thickness == StructureThicknessProfile.HeavyBearing ? 3.00f : 2.00f, 1.25f);
+                return;
+            }
+
+            if (role is StructuralElementRole.InclinedRoofRafter or StructuralElementRole.RoofCoveringCourse)
+            {
+                float rise = thickness == StructureThicknessProfile.HeavyBearing ? 2.00f : 1.00f;
+                localMin = new Vector3(-1.00f, 0.00f, -1.05f);
+                localMax = new Vector3(1.00f, rise + RoofSlabThickness, 1.02f);
+                return;
+            }
+
+            Span<LocalSolidBox> boxes = stackalloc LocalSolidBox[8];
+            int count = PopulateNodeLocalSolidBoxes(in probe, boxes);
+            if (count <= 0)
+            {
+                localMin = new Vector3(-0.50f, 0.00f, -0.50f);
+                localMax = new Vector3(0.50f, 1.00f, 0.50f);
+                return;
+            }
+
+            Vector3 minV = boxes[0].Min;
+            Vector3 maxV = boxes[0].Max;
+            for (int i = 1; i < count; i++)
+            {
+                minV = Vector3.Min(minV, boxes[i].Min);
+                maxV = Vector3.Max(maxV, boxes[i].Max);
+            }
+            localMin = minV;
+            localMax = maxV;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static bool IsHorizontalFloorDeckRole(StructuralElementRole role)
+        {
+            return role is
+                StructuralElementRole.FloorJoistDeck or
+                StructuralElementRole.CorrugatedMetalDeck or
+                StructuralElementRole.SlabDeckFormwork;
         }
 
         /// <summary>
@@ -1499,7 +1746,7 @@ namespace Stratocraft.Inventory.Systems
             if ((dx * dx + dz * dz) > BroadPhaseHorizRadiusSq) return false;
             if (MathF.Abs(probeFeet.Y - node.PosY) > BroadPhaseVertHalfSpan) return false;
 
-            if (isFloorExemptByStairwell && node.Role == StructuralElementRole.FloorJoistDeck)
+            if (isFloorExemptByStairwell && IsHorizontalFloorDeckRole(node.Role))
             {
                 return false;
             }
@@ -1631,7 +1878,7 @@ namespace Stratocraft.Inventory.Systems
             bool isFloorExemptByStairwell)
         {
             if (!IsNodeActiveForCollision(in node)) return false;
-            if (isFloorExemptByStairwell && node.Role == StructuralElementRole.FloorJoistDeck) return false;
+            if (isFloorExemptByStairwell && IsHorizontalFloorDeckRole(node.Role)) return false;
 
             float dx = posX - node.PosX;
             float dz = posZ - node.PosZ;
@@ -1731,7 +1978,7 @@ namespace Stratocraft.Inventory.Systems
             bool isFloorExemptByStairwell)
         {
             if (!IsNodeActiveForCollision(in node)) return -30f;
-            if (isFloorExemptByStairwell && node.Role == StructuralElementRole.FloorJoistDeck) return -30f;
+            if (isFloorExemptByStairwell && IsHorizontalFloorDeckRole(node.Role)) return -30f;
 
             float dx = posX - node.PosX;
             float dz = posZ - node.PosZ;
@@ -1804,7 +2051,7 @@ namespace Stratocraft.Inventory.Systems
         {
             lowestCeilingY = float.MaxValue;
             if (!IsNodeActiveForCollision(in node)) return false;
-            if (isFloorExemptByStairwell && node.Role == StructuralElementRole.FloorJoistDeck) return false;
+            if (isFloorExemptByStairwell && IsHorizontalFloorDeckRole(node.Role)) return false;
 
             float dx = feetPos.X - node.PosX;
             float dz = feetPos.Z - node.PosZ;
@@ -1918,7 +2165,7 @@ namespace Stratocraft.Inventory.Systems
                 for (int i = 0; i < nodes.Length; i++)
                 {
                     ref readonly StructuralNode64 node = ref nodes[i];
-                    bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                    bool exempt = IsHorizontalFloorDeckRole(node.Role) &&
                                   IsPointInsideStairwellOpening(nodes, probeFeet.X, node.PosY, probeFeet.Z);
                     if (IsNodeBlockingCapsule(in node, curFeet, probeFeet, h, r, maxStepUpMeters, exempt))
                     {
@@ -1950,7 +2197,7 @@ namespace Stratocraft.Inventory.Systems
             for (int i = 0; i < nodes.Length; i++)
             {
                 ref readonly StructuralNode64 node = ref nodes[i];
-                bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                bool exempt = IsHorizontalFloorDeckRole(node.Role) &&
                               IsPointInsideStairwellOpening(nodes, posX, node.PosY, posZ);
                 float candidateY = SampleNodeSupportGroundY(in node, posX, posZ, refFeetY, maxStepUpMeters, r, exempt);
                 if (candidateY > bestY)
@@ -1985,7 +2232,7 @@ namespace Stratocraft.Inventory.Systems
             for (int i = 0; i < nodes.Length; i++)
             {
                 ref readonly StructuralNode64 node = ref nodes[i];
-                bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                bool exempt = IsHorizontalFloorDeckRole(node.Role) &&
                               IsPointInsideStairwellOpening(nodes, feetPos.X, node.PosY, feetPos.Z);
                 if (TrySampleNodeCeilingY(in node, feetPos, effH, effR, chestY, crownY, exempt, out float worldCeilingY))
                 {
@@ -2586,7 +2833,7 @@ namespace Stratocraft.Inventory.Systems
                                 visited++;
 
                                 ref readonly StructuralNode64 node = ref _unifiedNodes[encoded];
-                                bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                                bool exempt = ModularStructureCollisionSolver.IsHorizontalFloorDeckRole(node.Role) &&
                                               IsPointInsideIndexedStairwell(probeFeet.X, node.PosY, probeFeet.Z);
                                 if (ModularStructureCollisionSolver.IsNodeBlockingCapsule(in node, curFeet, probeFeet, h, r, maxStepUpMeters, exempt))
                                 {
@@ -2658,7 +2905,7 @@ namespace Stratocraft.Inventory.Systems
                                 visited++;
 
                                 ref readonly StructuralNode64 node = ref _unifiedNodes[encoded];
-                                bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                                bool exempt = ModularStructureCollisionSolver.IsHorizontalFloorDeckRole(node.Role) &&
                                               IsPointInsideIndexedStairwell(posX, node.PosY, posZ);
                                 if (ModularStructureCollisionSolver.ResolveNodeHorizontalDepenetration(in node, ref posX, posY, ref posZ, h, r, maxStepUpMeters, exempt))
                                 {
@@ -2728,7 +2975,7 @@ namespace Stratocraft.Inventory.Systems
                             visited++;
 
                             ref readonly StructuralNode64 node = ref _unifiedNodes[encoded];
-                            bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                            bool exempt = ModularStructureCollisionSolver.IsHorizontalFloorDeckRole(node.Role) &&
                                           IsPointInsideIndexedStairwell(posX, node.PosY, posZ);
                             float candidateY = ModularStructureCollisionSolver.SampleNodeSupportGroundY(in node, posX, posZ, posY, maxStepUpMeters, r, exempt);
                             if (candidateY > bestY) bestY = candidateY;
@@ -2794,7 +3041,7 @@ namespace Stratocraft.Inventory.Systems
                             visited++;
 
                             ref readonly StructuralNode64 node = ref _unifiedNodes[encoded];
-                            bool exempt = node.Role == StructuralElementRole.FloorJoistDeck &&
+                            bool exempt = ModularStructureCollisionSolver.IsHorizontalFloorDeckRole(node.Role) &&
                                           IsPointInsideIndexedStairwell(feetPos.X, node.PosY, feetPos.Z);
                             if (ModularStructureCollisionSolver.TrySampleNodeCeilingY(in node, feetPos, effH, effR, chestY, crownY, exempt, out float worldCeilingY) &&
                                 worldCeilingY < lowestCeilingY)
