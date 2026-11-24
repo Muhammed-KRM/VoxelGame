@@ -84,6 +84,72 @@ namespace Stratocraft.Character
         /// </summary>
         public Func<int, int, int, int, int, int, byte[], bool, bool>? ExternalTimberSupportWindowRasterizer { get; set; }
 
+        /// <summary>
+        /// Opsiyonel dunya mikro-voksel havuzu haritasi ((cx, cz) -> 16 dikey alt-chunk MicroVoxelPool4096[]).
+        /// Baglandiginda ShapeID == 63 mikro-voksel mobilya/kapi/pencere coktugunde 12-bit slot otomatik serbest birakilir (DK-04).
+        /// </summary>
+        public IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? WorldMicroPools { get; set; }
+
+        /// <summary>
+        /// Coken veya silinen ShapeID == 63 mikro-vokselin (cx, cz, worldY) alt-chunk'indaki
+        /// MicroVoxelPool4096 12-bit slotunu serbest birakir (0-GC, null-guvenli).
+        /// </summary>
+        public static bool TryReleaseCollapsedMicroVoxelSlot(
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools,
+            int cx,
+            int cz,
+            int worldY,
+            uint removedRawVoxel)
+        {
+            if (worldMicroPools == null ||
+                VoxelBitUtility.GetShapeId(removedRawVoxel) != VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            {
+                return false;
+            }
+
+            int subChunkY = worldY >> 4;
+            if (subChunkY < 0 ||
+                !worldMicroPools.TryGetValue((cx, cz), out MicroVoxelPool4096?[]? subPools) ||
+                subPools == null ||
+                (uint)subChunkY >= (uint)subPools.Length)
+            {
+                return false;
+            }
+
+            MicroVoxelPool4096? pool = subPools[subChunkY];
+            if (pool == null)
+            {
+                return false;
+            }
+
+            ushort slot12 = VoxelBitUtility.GetMicroPoolIndex(removedRawVoxel);
+            pool.Free(slot12);
+            return true;
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        internal static bool IsStructuralArchitecturalOrMicroVoxel(byte mat, byte shape, in StructuralMaterialProps props)
+        {
+            if (props.IsUnbreakableAnchor || props.IsSkyAnchor)
+            {
+                return false;
+            }
+
+            if (shape == VoxelBitUtility.ChiseledMicroVoxelShapeId)
+            {
+                return true;
+            }
+
+            if (MaterialIdCatalog.IsCraftedItemBlockMaterial(mat))
+            {
+                return true;
+            }
+
+            // ShapeID 1..62 mimari sekiller (cati Ramp45, merdiven, kemer, sutun, plaka) dogal arazi SDF (shape == 0) degildir;
+            // Stalagnate haric (magara sutunu kendi kuralini korur) asla havada KaliciYapi anakayasi olarak kilitlenmez.
+            return shape != 0 && mat != MaterialIdCatalog.Stalagnate;
+        }
+
         private static byte[] EnsureTimberSupportMaskBuffer(int volume)
         {
             if (_tlsTimberSupportMask == null || _tlsTimberSupportMask.Length < volume)
@@ -355,7 +421,20 @@ namespace Stratocraft.Character
                             if (VoxelBitUtility.IsPhysicallySolid(raw) &&
                                 VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
                             {
-                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                                byte oMat = VoxelBitUtility.GetMaterialId(raw);
+                                byte oShape = VoxelBitUtility.GetShapeId(raw);
+                                StructuralMaterialProps oProps = StructuralMaterialProps.GetForMaterial(oMat);
+                                if (IsStructuralArchitecturalOrMicroVoxel(oMat, oShape, in oProps))
+                                {
+                                    if (!oProps.IsGranular && oMat != MaterialIdCatalog.Stalagnate)
+                                    {
+                                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.OyuncuItemBlogu);
+                                    }
+                                }
+                                else
+                                {
+                                    dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                                }
                             }
                         }
                         continue;
@@ -413,13 +492,6 @@ namespace Stratocraft.Character
                             continue;
                         }
 
-                        if (y < minY)
-                        {
-                            hasSolidFloorBelow = true;
-                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
-                            continue;
-                        }
-
                         byte shape = VoxelBitUtility.GetShapeId(raw);
                         bool isTreeTrunk = IsTreeTrunkMaterial(mat);
                         bool isTreeCanopy = (mat == MaterialIdCatalog.Grass ||
@@ -429,6 +501,26 @@ namespace Stratocraft.Character
 
                         if (isTreeTrunk || isTreeCanopy)
                         {
+                            continue;
+                        }
+
+                        if (IsStructuralArchitecturalOrMicroVoxel(mat, shape, in props))
+                        {
+                            if (!props.IsGranular && mat != MaterialIdCatalog.Stalagnate)
+                            {
+                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.OyuncuItemBlogu);
+                            }
+                            if (!seenOpenVoidAboveFloor)
+                            {
+                                hasSolidFloorBelow = true;
+                            }
+                            continue;
+                        }
+
+                        if (y < minY)
+                        {
+                            hasSolidFloorBelow = true;
+                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
                             continue;
                         }
 
@@ -533,7 +625,11 @@ namespace Stratocraft.Character
                             return true;
                         }
                         byte mat = VoxelBitUtility.GetMaterialId(raw);
-                        if (IsTreeTrunkMaterial(mat) || mat == MaterialIdCatalog.Stalagnate)
+                        byte shape = VoxelBitUtility.GetShapeId(raw);
+                        if (IsTreeTrunkMaterial(mat) ||
+                            mat == MaterialIdCatalog.Stalagnate ||
+                            shape == VoxelBitUtility.ChiseledMicroVoxelShapeId ||
+                            MaterialIdCatalog.IsCraftedItemBlockMaterial(mat))
                         {
                             return true;
                         }
@@ -563,7 +659,8 @@ namespace Stratocraft.Character
             int seedWorldZ,
             float extraCantileverLoadKg,
             out int rubbledCount,
-            Func<int, int, int>? surfaceYOverride = null)
+            Func<int, int, int>? surfaceYOverride = null,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools = null)
         {
             rubbledCount = 0;
             int seedCx = FloorDiv16(seedWorldX);
@@ -593,7 +690,8 @@ namespace Stratocraft.Character
                 surfaceYOverride,
                 extraCantileverLoadKg,
                 commitDetachedToWorldChunks: true,
-                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer);
+                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer,
+                worldMicroPools: worldMicroPools ?? WorldMicroPools);
 
             rubbledCount = collapsed;
             return collapsed;
@@ -615,7 +713,8 @@ namespace Stratocraft.Character
             Func<int, int, int>? surfaceYOverride = null,
             float extraCantileverLoadKg = 0f,
             bool commitDetachedToWorldChunks = true,
-            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null)
+            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools = null)
         {
             _tlsPureCollapseSystem ??= new StructuralCollapseSystem();
             return EvaluateHaloCollapseInternal(
@@ -637,7 +736,8 @@ namespace Stratocraft.Character
                 surfaceYOverride,
                 extraCantileverLoadKg,
                 commitDetachedToWorldChunks,
-                externalTimberSupportWindowRasterizer);
+                externalTimberSupportWindowRasterizer,
+                worldMicroPools);
         }
 
         private static int EvaluateHaloCollapseInternal(
@@ -659,7 +759,8 @@ namespace Stratocraft.Character
             Func<int, int, int>? surfaceYOverride,
             float extraCantileverLoadKg,
             bool commitDetachedToWorldChunks,
-            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null)
+            Func<int, int, int, int, int, int, byte[], bool, bool>? externalTimberSupportWindowRasterizer = null,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools = null)
         {
             clusterCount = 0;
             detachedWindowSnapshot = null;
@@ -795,7 +896,9 @@ namespace Stratocraft.Character
                 groundedBottomMask,
                 surfaceYOverride);
 
-            int localSupportFloorY = Math.Max(0, StratocraftFloatingIslandWorldGen.DeepMantleFloorY - originY);
+            int localSupportFloorY = originY > StratocraftFloatingIslandWorldGen.DeepMantleFloorY
+                ? -1
+                : (StratocraftFloatingIslandWorldGen.DeepMantleFloorY - originY);
             var worldOriginOffset = new System.Numerics.Vector3(originX, originY, originZ);
 
             // 4) Gercek 3B Kemer & Tahkimat Destekli Domino Cokus Cozucusu (ZMajorLocal, allowBoundaryOpenSpan == false!)
@@ -855,6 +958,7 @@ namespace Stratocraft.Character
 
                                 int wy = originY + ly;
                                 targetChunk[(wy << 8) | (clz << 4) | clx] = 0u;
+                                TryReleaseCollapsedMicroVoxelSlot(worldMicroPools, cx, cz, wy, srcRaw);
                                 chunkTouched = true;
 #if UNITY_5_3_OR_NEWER
                                 Stage1InteractivePlayController.NotifyWorldVoxelEdited(
@@ -960,7 +1064,11 @@ namespace Stratocraft.Character
                         return false;
                     }
                     byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
-                    if (nMat == MaterialIdCatalog.Stalagnate || IsTreeTrunkMaterial(nMat))
+                    byte nShape = VoxelBitUtility.GetShapeId(nRaw);
+                    if (nMat == MaterialIdCatalog.Stalagnate ||
+                        IsTreeTrunkMaterial(nMat) ||
+                        nShape != 0 ||
+                        MaterialIdCatalog.IsCraftedItemBlockMaterial(nMat))
                     {
                         return false;
                     }
@@ -1038,7 +1146,11 @@ namespace Stratocraft.Character
                     solidFloorNeighbors++;
                     if (VoxelBitUtility.GetOriginState(nRaw) == BlokKokenDurumu.OyuncuItemBlogu) return false;
                     byte nMat = VoxelBitUtility.GetMaterialId(nRaw);
-                    if (nMat == MaterialIdCatalog.Stalagnate || IsTreeTrunkMaterial(nMat)) return false;
+                    byte nShape = VoxelBitUtility.GetShapeId(nRaw);
+                    if (nMat == MaterialIdCatalog.Stalagnate ||
+                        IsTreeTrunkMaterial(nMat) ||
+                        nShape != 0 ||
+                        MaterialIdCatalog.IsCraftedItemBlockMaterial(nMat)) return false;
                     if (!VoxelBitUtility.IsPhysicallySolid(chunkVoxels[((seedY - 1) << 8) | (nz << 4) | nx])) return false;
                 }
 
@@ -1103,14 +1215,34 @@ namespace Stratocraft.Character
 
                     if (anchorWholeColumn)
                     {
-                        for (int ly = 0; ly < sizeY; ly++)
+                        // Pencere alt tabani (ly == 0) ana kayaya kadar kesintisiz doluysa mesnet olarak sabitlenir
+                        uint outerBottom = dst[colBaseIdx];
+                        if (groundedBottomMask[col2D] != 0 && VoxelBitUtility.IsPhysicallySolid(outerBottom))
+                        {
+                            dst[colBaseIdx] = VoxelBitUtility.WithOriginState(outerBottom, BlokKokenDurumu.KaliciYapi);
+                        }
+
+                        for (int ly = 1; ly < sizeY; ly++)
                         {
                             int idx = colBaseIdx + ly * sizeX;
                             uint raw = dst[idx];
                             if (VoxelBitUtility.IsPhysicallySolid(raw) &&
                                 VoxelBitUtility.GetOriginState(raw) == BlokKokenDurumu.DogalKutle)
                             {
-                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                                byte oMat = VoxelBitUtility.GetMaterialId(raw);
+                                byte oShape = VoxelBitUtility.GetShapeId(raw);
+                                StructuralMaterialProps oProps = StructuralMaterialProps.GetForMaterial(oMat);
+                                if (IsStructuralArchitecturalOrMicroVoxel(oMat, oShape, in oProps))
+                                {
+                                    if (!oProps.IsGranular && oMat != MaterialIdCatalog.Stalagnate)
+                                    {
+                                        dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.OyuncuItemBlogu);
+                                    }
+                                }
+                                else
+                                {
+                                    dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
+                                }
                             }
                         }
                         continue;
@@ -1118,9 +1250,7 @@ namespace Stratocraft.Character
 
                     // Pencere alt tabani (ly == 0) gercekten ana kayaya oturuyorsa mesnet olarak sabitlenir
                     uint bottomRaw = dst[colBaseIdx];
-                    if (groundedBottomMask[col2D] != 0 &&
-                        VoxelBitUtility.IsPhysicallySolid(bottomRaw) &&
-                        VoxelBitUtility.GetOriginState(bottomRaw) == BlokKokenDurumu.DogalKutle)
+                    if (groundedBottomMask[col2D] != 0 && VoxelBitUtility.IsPhysicallySolid(bottomRaw))
                     {
                         dst[colBaseIdx] = VoxelBitUtility.WithOriginState(bottomRaw, BlokKokenDurumu.KaliciYapi);
                     }
@@ -1180,13 +1310,6 @@ namespace Stratocraft.Character
                             continue;
                         }
 
-                        if (ly < minReleaseY)
-                        {
-                            hasSolidFloorBelow = true;
-                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
-                            continue;
-                        }
-
                         int wy = originY + ly;
                         byte shape = VoxelBitUtility.GetShapeId(raw);
                         bool isTreeTrunk = IsTreeTrunkMaterial(mat);
@@ -1197,6 +1320,26 @@ namespace Stratocraft.Character
 
                         if (isTreeTrunk || isTreeCanopy)
                         {
+                            continue;
+                        }
+
+                        if (IsStructuralArchitecturalOrMicroVoxel(mat, shape, in props))
+                        {
+                            if (!props.IsGranular && mat != MaterialIdCatalog.Stalagnate)
+                            {
+                                dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.OyuncuItemBlogu);
+                            }
+                            if (!seenOpenVoidAboveFloor)
+                            {
+                                hasSolidFloorBelow = true;
+                            }
+                            continue;
+                        }
+
+                        if (ly < minReleaseY)
+                        {
+                            hasSolidFloorBelow = true;
+                            dst[idx] = VoxelBitUtility.WithOriginState(raw, BlokKokenDurumu.KaliciYapi);
                             continue;
                         }
 
@@ -1414,7 +1557,8 @@ namespace Stratocraft.Character
             float extraCantileverLoadKg,
             Material? sharedVoxelMaterial,
             out int rubbledCount,
-            out string feedbackText)
+            out string feedbackText,
+            IReadOnlyDictionary<(int cx, int cz), MicroVoxelPool4096?[]>? worldMicroPools = null)
         {
             if (sharedVoxelMaterial != null) DefaultVoxelMaterial = sharedVoxelMaterial;
             rubbledCount = 0;
@@ -1447,7 +1591,8 @@ namespace Stratocraft.Character
                 surfaceYOverride: null,
                 extraCantileverLoadKg: extraCantileverLoadKg,
                 commitDetachedToWorldChunks: true,
-                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer);
+                externalTimberSupportWindowRasterizer: ExternalTimberSupportWindowRasterizer,
+                worldMicroPools: worldMicroPools ?? WorldMicroPools);
 
             if (collapsedVoxels <= 0 || detachedWindowSnapshot == null)
             {
@@ -1555,6 +1700,7 @@ namespace Stratocraft.Character
                     int wy = i >> 8;
                     int lz = (i >> 4) & 15;
                     int lx = i & 15;
+                    TryReleaseCollapsedMicroVoxelSlot(WorldMicroPools, cx, cz, wy, detachedRaw);
                     Stage1InteractivePlayController.NotifyWorldVoxelEdited(
                         cx, cz, wy, lx, lz,
                         includeNeighbors: true,

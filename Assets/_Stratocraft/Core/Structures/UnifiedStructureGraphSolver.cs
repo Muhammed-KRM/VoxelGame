@@ -242,6 +242,10 @@ namespace Stratocraft.Core.Structures
         private bool _allIslandsDirty;
         private bool _hasAnyUncuredMortar;
 
+        // Cokme / kopma / uyari durum degisikligi yasayan dugumlerin gorsel senkronizasyon chunk kuyrugu (0-GC)
+        private (int cx, int cz)[] _visualDirtyChunks;
+        private int _visualDirtyChunkCount;
+
         private float _globalLateralWindLoadKn;
         private byte _globalRoofSweUnits;
         private float _globalRoofPitchDegrees = 26.0f;
@@ -274,12 +278,17 @@ namespace Stratocraft.Core.Structures
 
             _dirtySeedSlots = new int[nCap];
             _dirtySlotQueued = new byte[nCap];
+            _visualDirtyChunks = new (int cx, int cz)[64];
+            _visualDirtyChunkCount = 0;
         }
 
         public int ActiveNodeCount => _activeNodeCount;
         public int NodeSlotCount => _nodeSlotCount;
         public int EdgeSlotCount => _edgeSlotCount;
         public bool HasDirtyWork => _allIslandsDirty || _dirtyCount > 0;
+        /// <summary>Cokme/kopma/uyari durum degisikligi yasayan ve renderer senkronizasyonu bekleyen chunk varsa true doner.</summary>
+        public bool HasPendingVisualSync => _visualDirtyChunkCount > 0;
+        public int PendingVisualSyncChunkCount => _visualDirtyChunkCount;
         public double LastSolveMilliseconds { get; private set; }
         public StructureSolveSummary LastSolveSummary { get; private set; }
         public bool HasActiveClanBreachWindow => _hasActiveClanBreachWindow;
@@ -288,6 +297,31 @@ namespace Stratocraft.Core.Structures
 
         public Span<StructuralNode64> NodesSpan => _nodes.AsSpan(0, _nodeSlotCount);
         public Span<StructuralJointEdge32> EdgesSpan => _edges.AsSpan(0, _edgeSlotCount);
+
+        /// <summary>
+        /// Cokme, kopma (DetachedInstantFall) veya uyari durum degisikligi yasayan dugumlerin bulundugu
+        /// tekil (cx, cz) chunk koordinatlarini 0-GC olarak disari aktarir ve kuyruktan temizler.
+        /// outChunks kapasitesi yetersizse kalan chunk'lar bir sonraki cagri icin korunur.
+        /// </summary>
+        public int DrainDirtyChunkCoords(Span<(int cx, int cz)> outChunks)
+        {
+            if (_visualDirtyChunkCount <= 0 || outChunks.IsEmpty)
+            {
+                return 0;
+            }
+
+            int count = System.Math.Min(_visualDirtyChunkCount, outChunks.Length);
+            _visualDirtyChunks.AsSpan(0, count).CopyTo(outChunks);
+
+            int remaining = _visualDirtyChunkCount - count;
+            if (remaining > 0)
+            {
+                _visualDirtyChunks.AsSpan(count, remaining).CopyTo(_visualDirtyChunks.AsSpan(0, remaining));
+            }
+
+            _visualDirtyChunkCount = remaining;
+            return count;
+        }
 
         public void Clear()
         {
@@ -308,6 +342,7 @@ namespace Stratocraft.Core.Structures
             _dirtyHead = 0;
             _dirtyTail = 0;
             _dirtyCount = 0;
+            _visualDirtyChunkCount = 0;
             _allIslandsDirty = false;
             _hasAnyUncuredMortar = false;
             _globalLateralWindLoadKn = 0f;
@@ -941,6 +976,7 @@ namespace Stratocraft.Core.Structures
             _nodes[slot].FirstEdgeIndex = -1;
             _nodes[slot].CollapseState = StructureCollapseState.Collapsed;
             _nodes[slot].Integrity01 = 0f;
+            RecordVisualDirtyChunkForNode(in _nodes[slot]);
             _nodePrematurelyStripped[slot] = 0;
             _nodePresent[slot] = 0;
             _activeNodeCount = System.Math.Max(0, _activeNodeCount - 1);
@@ -1968,9 +2004,14 @@ namespace Stratocraft.Core.Structures
                 if (n.GeoSupportDist == MortarConstants.DetachedGeodesicDistance)
                 {
                     // Karar A1: d_geo == 65535 -> 0.0 sn aninda DetachedInstantFall!
+                    bool stateChanged = n.CollapseState != StructureCollapseState.DetachedInstantFall;
                     n.CollapseState = StructureCollapseState.DetachedInstantFall;
                     n.CollapseWarningTimerSec = 0.0f;
                     n.StressRatio = MathF.Max(n.StressRatio, 2.0f);
+                    if (stateChanged)
+                    {
+                        RecordVisualDirtyChunkForNode(in n);
+                    }
                     outDetachedCount++;
                     if (n.StressRatio > outMaxStress)
                     {
@@ -2131,6 +2172,7 @@ namespace Stratocraft.Core.Structures
                     {
                         node.CollapseState = StructureCollapseState.Warning1500ms;
                         node.CollapseWarningTimerSec = MortarConstants.OverloadCollapseWarningSeconds;
+                        RecordVisualDirtyChunkForNode(in node);
                     }
 
                     outWarningCount++;
@@ -2138,6 +2180,10 @@ namespace Stratocraft.Core.Structures
                 else
                 {
                     // Acil dikme/payanda/gergi eklendiyse yapi kurtarilir -> Stable!
+                    if (node.CollapseState != StructureCollapseState.Stable)
+                    {
+                        RecordVisualDirtyChunkForNode(in node);
+                    }
                     node.CollapseState = StructureCollapseState.Stable;
                     node.CollapseWarningTimerSec = 0.0f;
                 }
@@ -3970,6 +4016,7 @@ namespace Stratocraft.Core.Structures
             node.CollapseState = StructureCollapseState.Collapsed;
             node.CollapseWarningTimerSec = 0f;
             node.Integrity01 = 0f;
+            RecordVisualDirtyChunkForNode(in node);
             _nodePrematurelyStripped[slot] = 0;
 
             if (notifyClanBreach && IsClanPerimeterBarrierRole(node.Role))
@@ -4349,6 +4396,37 @@ namespace Stratocraft.Core.Structures
                 _dirtyTail = 0;
                 _dirtyCount = 0;
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void RecordVisualDirtyChunkForNode(in StructuralNode64 node)
+        {
+            RecordVisualDirtyChunk(FloorDiv16(node.PosX), FloorDiv16(node.PosZ));
+        }
+
+        private void RecordVisualDirtyChunk(int cx, int cz)
+        {
+            for (int i = 0; i < _visualDirtyChunkCount; i++)
+            {
+                if (_visualDirtyChunks[i].cx == cx && _visualDirtyChunks[i].cz == cz)
+                {
+                    return;
+                }
+            }
+
+            if (_visualDirtyChunkCount >= _visualDirtyChunks.Length)
+            {
+                Array.Resize(ref _visualDirtyChunks, System.Math.Max(64, _visualDirtyChunks.Length * 2));
+            }
+
+            _visualDirtyChunks[_visualDirtyChunkCount++] = (cx, cz);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int FloorDiv16(float meters)
+        {
+            int v = (int)MathF.Floor(meters);
+            return v >= 0 ? (v >> 4) : -(((-v) + 15) >> 4);
         }
 
         private void EnsureNodeCapacity(int minCapacity)
