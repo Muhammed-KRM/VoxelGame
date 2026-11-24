@@ -3357,57 +3357,10 @@ namespace Stratocraft.WorldGen.Generators
 
         public static void PopulateArchitecturalStructuresForChunk(int chunkX, int chunkZ, uint[] voxels, ushort[]? fluids = null)
         {
-            int chunkBiomeId = GetBiomeId(chunkX * 16 + 8, chunkZ * 16 + 8);
-            if (chunkX == -1 && chunkZ == -1)
-            {
-                int baseY = RoundToInt(SampleIslandTopSurfaceY(-8f, -2f));
-                const int archLz = 14;
-                for (int lx = 4; lx <= 12; lx++)
-                    if (lx <= 6 || lx >= 10) EnsureSolidFoundationUnder(voxels, lx, baseY, archLz, chunkBiomeId);
-                EnsureSolidFoundationUnder(voxels, 13, baseY, 11, chunkBiomeId);
-
-                SetArchitecturalVoxel(voxels, 6, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 63, rot: 0);
-                SetArchitecturalVoxel(voxels, 10, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 63, rot: 1);
-                for (int dy = 1; dy <= 2; dy++)
-                {
-                    SetArchitecturalVoxel(voxels, 6, baseY + dy, archLz, MaterialIdCatalog.Stone, shapeId: 2, rot: 0);
-                    SetArchitecturalVoxel(voxels, 10, baseY + dy, archLz, MaterialIdCatalog.Stone, shapeId: 2, rot: 0);
-                }
-
-                SetArchitecturalVoxel(voxels, 6, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 7, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 0);
-                SetArchitecturalVoxel(voxels, 8, baseY + 3, archLz, MaterialIdCatalog.StoneBrick, shapeId: 5, rot: 0);
-                SetArchitecturalVoxel(voxels, 9, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 2);
-                SetArchitecturalVoxel(voxels, 10, baseY + 3, archLz, MaterialIdCatalog.Stone, shapeId: 4, rot: 2);
-
-                SetArchitecturalVoxel(voxels, 5, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 3, rot: 1);
-                SetArchitecturalVoxel(voxels, 11, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 3, rot: 3);
-                SetArchitecturalVoxel(voxels, 4, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 1, rot: 0);
-                SetArchitecturalVoxel(voxels, 4, baseY + 1, archLz, MaterialIdCatalog.Stone, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 12, baseY, archLz, MaterialIdCatalog.Stone, shapeId: 1, rot: 0);
-                SetArchitecturalVoxel(voxels, 12, baseY + 1, archLz, MaterialIdCatalog.Stone, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 13, baseY, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-            }
-            else if (chunkX == 0 && chunkZ == -1)
-            {
-                int bY1 = RoundToInt(SampleIslandTopSurfaceY(5f, -4f));
-                int bY2 = RoundToInt(SampleIslandTopSurfaceY(11f, -5f));
-                int bY3 = RoundToInt(SampleIslandTopSurfaceY(12f, -9f));
-                EnsureSolidFoundationUnder(voxels, 5, bY1, 12, chunkBiomeId);
-                EnsureSolidFoundationUnder(voxels, 11, bY2, 11, chunkBiomeId);
-                EnsureSolidFoundationUnder(voxels, 12, bY3, 7, chunkBiomeId);
-
-                SetArchitecturalVoxel(voxels, 5, bY1, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 5, bY1 + 1, 12, MaterialIdCatalog.NaturalObsidian, shapeId: 2, rot: 0);
-                SetArchitecturalVoxel(voxels, 11, bY2, 11, MaterialIdCatalog.StoneBrick, shapeId: 6, rot: 0);
-                SetArchitecturalVoxel(voxels, 12, bY3, 7, MaterialIdCatalog.StarCore, shapeId: 7, rot: 1);
-            }
-            else
-            {
-                // PT-02: Dagınık tekil ev spam'ı kaldırıldı! Yalnizca 3 katmanli (Koy / Kasaba / Sehir)
-                // yerlesimlerin yol, meydan, sulamali tarla, kuyu/cesme havuzu ve moduler bina teraslari damgalanir!
-                SettlementLayoutSystem.StampSettlementTerrainFeaturesForChunk(chunkX, chunkZ, voxels, fluids);
-            }
+            // KN-6 & PT-02: Eski surumlerden kalan tekil kulube/kemer/obsidyen sus bloklari ve
+            // daginik dairesel yama spami tamamen kaldirildi! Yalnizca 3 katmanli (Koy / Kasaba / Sehir)
+            // yerlesimlerin yol, meydan, sulamali tarla, kuyu/cesme havuzu ve moduler bina teraslari damgalanir.
+            SettlementLayoutSystem.StampSettlementTerrainFeaturesForChunk(chunkX, chunkZ, voxels, fluids);
         }
 
         /// <summary>
