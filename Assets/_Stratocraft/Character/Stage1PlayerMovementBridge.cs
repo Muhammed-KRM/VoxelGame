@@ -1846,9 +1846,7 @@ namespace Stratocraft.Character
 
         private static bool IsHardCollisionVoxel(uint raw)
         {
-            if (!VoxelBitUtility.IsPhysicallySolid(raw)) return false;
-            byte mat = VoxelBitUtility.GetMaterialId(raw);
-            return mat != MaterialIdCatalog.Air && mat != MaterialIdCatalog.GlowingMoss;
+            return IsHardCollisionVoxelPure(raw);
         }
 
         private static void MeasureHeadroomClearance(
@@ -1879,8 +1877,19 @@ namespace Stratocraft.Character
                 return;
             }
 
-            bool blockedCrouchHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy + 1, wz));
-            bool blockedStandHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, airBaseWy + 2, wz));
+            int crouchHeadWy = Mathf.Max(airBaseWy, Mathf.FloorToInt(refFeetY + 1.12f));
+            int standHeadWy = Mathf.Max(airBaseWy + 1, Mathf.FloorToInt(refFeetY + 1.78f));
+
+            bool blockedCrouchHead = IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, crouchHeadWy, wz));
+            bool blockedStandHead = false;
+            for (int cy = airBaseWy + 1; cy <= standHeadWy; cy++)
+            {
+                if (IsHardCollisionVoxel(ReadWorldVoxelRaw(worldChunks, wx, cy, wz)))
+                {
+                    blockedStandHead = true;
+                    break;
+                }
+            }
 
             canCrouch115 = !blockedCrouchHead;
             canStand180 = canCrouch115 && !blockedStandHead;

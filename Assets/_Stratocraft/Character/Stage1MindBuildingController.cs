@@ -434,6 +434,12 @@ namespace Stratocraft.Character
         private GUIStyle? _toastTextStyle;
 
         public bool IsMindMenuOpen { get; private set; }
+        public void CloseMindMenuExternal()
+        {
+            IsMindMenuOpen = false;
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
         public UnifiedBuildMenuTab ActiveTab => _activeTab;
         public int ActiveEntryIndex => _selectedEntryIndex;
         public bool ConsumedEscapeThisFrame { get; private set; }

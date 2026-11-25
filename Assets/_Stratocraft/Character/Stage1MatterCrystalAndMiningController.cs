@@ -10,6 +10,7 @@ using Stratocraft.Inventory.Rendering;
 using Stratocraft.Inventory.Systems;
 using Stratocraft.Physics.Data;
 using Stratocraft.Physics.Jobs;
+using Stratocraft.Physics.RigidTimber;
 using Stratocraft.Physics.Systems;
 using Stratocraft.Voxel.Data;
 using Stratocraft.Voxel.Jobs;
@@ -100,6 +101,10 @@ namespace Stratocraft.Character
         public float ToolDurability01 => Mathf.Clamp01(CurrentToolDurability / Mathf.Max(1f, MaxToolDurability));
         public int ActiveDroppedItemCount => _droppedWorldItems.Count;
         public bool IsCrystalActive { get; set; }
+        public bool IsFlattenModeActive { get; private set; }
+        public Action<int, int, int>? OnTerrainVoxelModified;
+        private bool _flattenPlaneLocked;
+        private int _flattenTargetVoxelY;
         public byte SelectedMaterialId => _customSelectedMaterialId != 0 ? _customSelectedMaterialId : BuildableMaterials[_materialIdx];
         public byte SelectedShapeId => ShapeWheelCycle[_shapeIdx];
         public byte LastArchitecturalShapeId => ShapeWheelCycle[Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1)];
@@ -207,19 +212,34 @@ namespace Stratocraft.Character
 
         public byte ToggleNaturalScatterAndArchitecturalShape()
         {
-            if (_shapeIdx != 0)
+            if (IsFlattenModeActive)
             {
-                _lastArchitecturalShapeIdx = Mathf.Clamp(_shapeIdx, 1, ShapeWheelCycle.Length - 1);
+                // 3. Mod (Yer Duzleme) -> 1. Mod (Dogal Arazi Fircasi)
+                IsFlattenModeActive = false;
+                _flattenPlaneLocked = false;
                 _shapeIdx = 0;
                 float rXZ = GetTierScatterRadiusXZ(Mathf.Max(1, CurrentCrystalTier));
                 LastFeedbackText =
-                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI [V]: {GetShapeDisplayName(0)} (R={rXZ:0.1}m) | [V] Mimariye Dön ({GetShapeDisplayName(LastArchitecturalShapeId)}) | [Shift+V] Mimari Şekiller | [B] Tarif & Malzeme Kitabı";
+                    $"🌿 DOĞAL ARAZİ SAÇILIM FIRÇASI [V]: {GetShapeDisplayName(0)} (R={rXZ:0.1}m) | [V] Mimariye Geç | [Shift+V] Mimari Şekiller";
+            }
+            else if (_shapeIdx != 0)
+            {
+                // 2. Mod (Mimari Blok) -> 3. Mod (Astroneer Yer Duzleme / Flatten)
+                _lastArchitecturalShapeIdx = Mathf.Clamp(_shapeIdx, 1, ShapeWheelCycle.Length - 1);
+                _shapeIdx = 0;
+                IsFlattenModeActive = true;
+                _flattenPlaneLocked = false;
+                LastFeedbackText =
+                    $"📐 ASTRONEER YER DÜZLEME MODU [V]: [Sol/Sağ Tık Basılı Tut] İlk dokunduğun yüksekliği kilitler, çıkıntıları traşlar ve çukurları doldurur! (R={BrushRadiusMeters:0.1}m | [Shift+T] Fırça | [V] Doğal Mod)";
             }
             else
             {
+                // 1. Mod (Dogal Arazi) -> 2. Mod (Mimari Blok)
+                IsFlattenModeActive = false;
+                _flattenPlaneLocked = false;
                 _shapeIdx = Mathf.Clamp(_lastArchitecturalShapeIdx, 1, ShapeWheelCycle.Length - 1);
                 LastFeedbackText =
-                    $"🧱 MİMARİ BLOK MODU [V]: {GetShapeDisplayName(SelectedShapeId)} | [V] Doğal Arazi Fırçası (0) | [Shift+V] Mimari Şekiller (1..14, 63) | [R] 90° | [Shift+R] 24-Yön | [B] Kitap";
+                    $"🧱 MİMARİ BLOK MODU [V]: {GetShapeDisplayName(SelectedShapeId)} | [V] Yer Düzleme Modu (Astroneer) | [Shift+V] Mimari Şekiller (1..14, 63) | [R] 90°";
             }
             if (WaveADeepDiagnosticProbe.Enabled)
             {
@@ -751,6 +771,50 @@ namespace Stratocraft.Character
                         fluidChunks, dirtyFluidChunks, holsterCtrl);
                     return;
                 }
+            }
+
+            if (IsCrystalActive && IsFlattenModeActive)
+            {
+                bool flattenHeld = Input.GetMouseButton(0) || Input.GetMouseButton(1);
+                if (!flattenHeld)
+                {
+                    _flattenPlaneLocked = false;
+                    return;
+                }
+                if (HasAimHit && AimHit.distance <= 9.5f)
+                {
+                    if (!_flattenPlaneLocked)
+                    {
+                        _flattenTargetVoxelY = Mathf.Clamp(AimVoxelCoord.y, 2, maxEditableY - 2);
+                        _flattenPlaneLocked = true;
+                    }
+                    bool isCreative = holsterCtrl != null && holsterCtrl.IsCreativeMode;
+                    byte fillMat = SelectedMaterialId == MaterialIdCatalog.Air ? MaterialIdCatalog.Dirt : SelectedMaterialId;
+                    float flattenRadius = Mathf.Max(1.65f, BrushRadiusMeters);
+                    _actionCooldown = 0.08f;
+
+                    var res = CrystalTerrainFlattenUtility.ApplyFlattenBrush(
+                        AimVoxelCoord.x,
+                        AimVoxelCoord.z,
+                        _flattenTargetVoxelY,
+                        flattenRadius,
+                        maxEditableY,
+                        fillMat,
+                        isCreative,
+                        worldChunks,
+                        dirtyChunks,
+                        onShavedDeposit: mat => CrystalStorage.TryDepositMassQ24_8(mat, CrystalMassStorageData.OneBlockQ24_8, 0),
+                        onFillWithdraw: mat => CrystalStorage.TryWithdrawNaturalBlock(mat, out _) || CrystalStorage.TryWithdrawMassQ24_8(mat, 64u, out _));
+
+                    if (res.ShavedVoxels > 0 || res.FilledVoxels > 0)
+                    {
+                        OnTerrainVoxelModified?.Invoke(AimVoxelCoord.x, _flattenTargetVoxelY, AimVoxelCoord.z);
+                        LastFeedbackText =
+                            $"📐 YER DÜZLEME (Y={_flattenTargetVoxelY} | R={flattenRadius:0.1}m): -{res.ShavedVoxels} traşlandı, +{res.FilledVoxels} dolduruldu" +
+                            (res.SkippedProtectedVoxels > 0 ? $" | 🛡️ {res.SkippedProtectedVoxels} oyuncu/cevher bloğu korundu" : string.Empty);
+                    }
+                }
+                return;
             }
 
             bool placeClick = isHoldingMaterialBlock
@@ -2232,6 +2296,14 @@ namespace Stratocraft.Character
                 if (curMat == MaterialIdCatalog.Air) continue;
                 if (curMat == MaterialIdCatalog.Bedrock && (!isCreative || wy <= 1)) continue;
 
+                // Oyuncu eliyle [V] voksel dolgu olarak konulan toprak/kil/kum/cakil
+                // Yaratici Mod (F4) acikken bile [C] Madde Kristali ile vakumlanamaz!
+                if (VoxelBitUtility.GetOriginState(curRaw) == BlokKokenDurumu.OyuncuItemBlogu)
+                {
+                    hitCraftedBlock = true;
+                    continue;
+                }
+
                 if (!isCreative)
                 {
                     if (MaterialIdCatalog.IsCraftedItemBlockMaterial(curMat))
@@ -2275,6 +2347,11 @@ namespace Stratocraft.Character
                     cx, cz, lx, lz, dirty, worldChunks, wy,
                     checkTreeFell: Stage1StructuralCollapseBridge.IsTreeTrunkMaterial(curMat));
                 RecordTouchedVacuumFluidRegion(cx, cz, lx, wy, lz);
+            }
+
+            if (vacuumedQ24_8 > 0u)
+            {
+                OnTerrainVoxelModified?.Invoke(targetVc.x, targetVc.y, targetVc.z);
             }
 
             if (vacuumedQ24_8 > 0u)

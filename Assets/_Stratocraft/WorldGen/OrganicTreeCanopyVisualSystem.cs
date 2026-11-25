@@ -295,7 +295,7 @@ namespace Stratocraft.WorldGen
         public const int FloraAssetCount = 4;
         public const int MaxBranchesPerTree = 12;
         public const float VoxelTrunkOctagonalRadiusMeters = 0.38f;
-        public const float TrunkCollarAnchorRadiusMeters = 0.34f;
+        public const float TrunkCollarAnchorRadiusMeters = 0.18f;
         private const int MaxBrokenDropRingCapacity = 64;
 
         private static OrganicTreeCanopyVisualSystem? _activeInstance;
@@ -658,7 +658,7 @@ namespace Stratocraft.WorldGen
                     }
 
                     int spanH = maxTrunkY - minTrunkY;
-                    if (minTrunkY < 0 || spanH < 4) continue;
+                    if (minTrunkY < 0 || spanH < 2) continue;
 
                     int wx = chunkX * 16 + lx;
                     int wz = chunkZ * 16 + lz;
@@ -1673,8 +1673,8 @@ namespace Stratocraft.WorldGen
             int segs = isThickPrimary ? 6 : 4;
             float r0 = 1.0f;
             float r1 = isThickPrimary ? 0.62f : 0.45f;
-            Color32 barkDark = new Color32(72, 50, 36, 224);
-            Color32 barkRidge = new Color32(96, 68, 46, 234);
+            Color32 barkDark = new Color32(124, 84, 54, 240);
+            Color32 barkRidge = new Color32(146, 100, 65, 248);
 
             var verts = new List<Vector3>((segs + 1) * 2 + 2);
             var norms = new List<Vector3>((segs + 1) * 2 + 2);
@@ -1928,18 +1928,66 @@ namespace Stratocraft.WorldGen
                         ? ReadGlbIndices(bytes, binStart, root, prim.indices)
                         : CreateSequentialIndices(vCount);
 
-                    int baseV = verts.Count;
+                    // Yaprak taci merkezi (yumusak kuresel normal & gunes/golge AO gradyani icin)
+                    Vector3 leafSum = Vector3.zero;
+                    int leafCount = 0;
                     for (int i = 0; i < vCount; i++)
                     {
-                        verts.Add(new Vector3(-posArr[i].x, posArr[i].y, posArr[i].z));
-                        norms.Add(new Vector3(-nrmArr[i].x, nrmArr[i].y, nrmArr[i].z));
-                        cols.Add(colArr[i]);
+                        NormalizeTreeGlbVertexColor(colArr[i], out bool isLeafCheck);
+                        if (isLeafCheck)
+                        {
+                            leafSum += new Vector3(-posArr[i].x, posArr[i].y, posArr[i].z);
+                            leafCount++;
+                        }
                     }
+                    Vector3 crownCenter = leafCount > 0 ? (leafSum / leafCount) : new Vector3(0f, 1.5f, 0f);
+
                     for (int i = 0; i + 2 < idxArr.Length; i += 3)
                     {
-                        tris.Add(baseV + idxArr[i]);
-                        tris.Add(baseV + idxArr[i + 2]);
-                        tris.Add(baseV + idxArr[i + 1]);
+                        int ia = idxArr[i];
+                        int ib = idxArr[i + 2];
+                        int ic = idxArr[i + 1];
+                        if ((uint)ia >= (uint)vCount || (uint)ib >= (uint)vCount || (uint)ic >= (uint)vCount) continue;
+
+                        Color32 ca = NormalizeTreeGlbVertexColor(colArr[ia], out bool isLeafA);
+                        Color32 cb = NormalizeTreeGlbVertexColor(colArr[ib], out bool isLeafB);
+                        Color32 cc = NormalizeTreeGlbVertexColor(colArr[ic], out bool isLeafC);
+
+                        Vector3 va = new Vector3(-posArr[ia].x, posArr[ia].y, posArr[ia].z);
+                        Vector3 vb = new Vector3(-posArr[ib].x, posArr[ib].y, posArr[ib].z);
+                        Vector3 vc = new Vector3(-posArr[ic].x, posArr[ic].y, posArr[ic].z);
+
+                        Vector3 na = new Vector3(-nrmArr[ia].x, nrmArr[ia].y, nrmArr[ia].z);
+                        Vector3 nb = new Vector3(-nrmArr[ib].x, nrmArr[ib].y, nrmArr[ib].z);
+                        Vector3 nc = new Vector3(-nrmArr[ic].x, nrmArr[ic].y, nrmArr[ic].z);
+
+                        if (isLeafA || isLeafB || isLeafC)
+                        {
+                            // Valheim / BotW standardi: tek blok yerine capraz 3B yaprak demeti kartlari
+                            // + tacin merkezinden disa yumusak kuresel normal (Radial Normals) + gunes/golge AO!
+                            Vector3 triCenter = (va + vb + vc) * (1.0f / 3.0f);
+                            float edgeLen = (Vector3.Distance(va, vb) + Vector3.Distance(vb, vc) + Vector3.Distance(vc, va)) * (1.0f / 3.0f);
+                            float cardRadius = Mathf.Clamp(edgeLen * 0.62f, 0.28f, 0.95f);
+                            Vector3 radialN = (triCenter - crownCenter);
+                            radialN = radialN.sqrMagnitude > 1e-4f ? radialN.normalized : Vector3.up;
+                            Vector3 softNormal = Vector3.Lerp(radialN, Vector3.up, 0.28f).normalized;
+
+                            EmitCrossedLeafClusterCards(
+                                verts, norms, cols, tris,
+                                triCenter, softNormal, cardRadius, ca, i);
+                            continue;
+                        }
+
+                        bool isRootMesh = meshName.IndexOf("Root", StringComparison.OrdinalIgnoreCase) >= 0;
+                        va = FitBarkCollarToVoxelTrunk(va, isRootMesh);
+                        vb = FitBarkCollarToVoxelTrunk(vb, isRootMesh);
+                        vc = FitBarkCollarToVoxelTrunk(vc, isRootMesh);
+
+                        int vBase = verts.Count;
+                        verts.Add(va); verts.Add(vb); verts.Add(vc);
+                        norms.Add(na); norms.Add(nb); norms.Add(nc);
+                        cols.Add(ca); cols.Add(cb); cols.Add(cc);
+                        tris.Add(vBase); tris.Add(vBase + 1); tris.Add(vBase + 2);
                     }
                 }
             }
@@ -1957,6 +2005,149 @@ namespace Stratocraft.WorldGen
             built.SetTriangles(tris, 0, calculateBounds: true);
             if (norms[0].sqrMagnitude < 1e-4f) built.RecalculateNormals();
             return built;
+        }
+
+        private static Color32 NormalizeTreeGlbVertexColor(Color32 c, out bool isFoliage)
+        {
+            // Kar / buz tepecikleri (SnowPine) korunur
+            if (c.r > 180 && c.g > 180 && c.b > 180)
+            {
+                isFoliage = true;
+                return c;
+            }
+
+            // Yesil yaprak koseleri: hafif daha dogal canli orman yesili tonlamasi
+            if (c.g > c.r + 10 && c.g > c.b + 8)
+            {
+                isFoliage = true;
+                byte r = (byte)Mathf.Clamp(c.r + 6, 26, 130);
+                byte g = (byte)Mathf.Clamp(c.g + 16, 68, 178);
+                byte b = (byte)Mathf.Clamp(c.b + 4, 22, 96);
+                return new Color32(r, g, b, c.a);
+            }
+
+            // Koyu siyahimsi/koyu kahve kabuk, kok ve ust tac dallari -> voksel OakWood (139, 94, 60) ile %100 esit sicak kabuk!
+            isFoliage = false;
+            float lum01 = Mathf.Clamp01((c.r * 0.299f + c.g * 0.587f + c.b * 0.114f) / 140.0f);
+            float shade = 0.86f + lum01 * 0.22f;
+            byte br = (byte)Mathf.Clamp(Mathf.RoundToInt(139.0f * shade), 112, 158);
+            byte bg = (byte)Mathf.Clamp(Mathf.RoundToInt(94.0f * shade), 74, 108);
+            byte bb = (byte)Mathf.Clamp(Mathf.RoundToInt(60.0f * shade), 46, 72);
+            return new Color32(br, bg, bb, 245);
+        }
+
+        /// <summary>
+        /// Ust tac ve alt kok .glb bileziklerinin govdeyle bulusan uclarini voksel OctagonalColumn yaricapina (0.375m)
+        /// yumusakca daraltir; boylece govde ustunde sapka/basamak cikintisi olmadan tek parca gibi oturur.
+        /// </summary>
+        private static Vector3 FitBarkCollarToVoxelTrunk(Vector3 v, bool isRootMesh)
+        {
+            const float targetTrunkR = 0.372f;
+            float rXZ = Mathf.Sqrt(v.x * v.x + v.z * v.z);
+            if (rXZ < 1e-4f) return v;
+
+            if (!isRootMesh)
+            {
+                // Ust tac alt bilezigi (y <= 1.15m): y=0'da tam 0.372m, y=1.15m'de dogal dallanmaya yumusak gecis
+                if (v.y < 1.15f && rXZ > targetTrunkR)
+                {
+                    float t = Mathf.Clamp01((v.y + 0.20f) / 1.35f);
+                    float smooth = t * t * (3.0f - 2.0f * t);
+                    float desiredR = Mathf.Lerp(targetTrunkR, rXZ, smooth);
+                    float scaleXZ = desiredR / rXZ;
+                    v.x *= scaleXZ;
+                    v.z *= scaleXZ;
+                }
+            }
+            else
+            {
+                // Alt kok ust ucu (y >= 0.25m): govdeye tam sarilip dikissiz birlessin, tabandaki kokler topraga yayilsin
+                if (v.y > 0.25f && rXZ > targetTrunkR)
+                {
+                    float t = Mathf.Clamp01((v.y - 0.25f) / 0.55f);
+                    float smooth = t * t * (3.0f - 2.0f * t);
+                    float desiredR = Mathf.Lerp(rXZ, targetTrunkR, smooth);
+                    float scaleXZ = desiredR / rXZ;
+                    v.x *= scaleXZ;
+                    v.z *= scaleXZ;
+                }
+            }
+            return v;
+        }
+
+        /// <summary>
+        /// Her yaprak taci noktasina 2 adet capraz 3B elmas/yaprak-demeti karti (cift yuzlu, kuresel normal + AO gradyanli)
+        /// ekler. 0 ekstra doku VRAM, dusuk ucgen sayisi ve dogal katmanli yaprak gorunumu saglar.
+        /// </summary>
+        private static void EmitCrossedLeafClusterCards(
+            List<Vector3> verts,
+            List<Vector3> norms,
+            List<Color32> cols,
+            List<int> tris,
+            Vector3 center,
+            Vector3 radialNormal,
+            float radius,
+            Color32 baseColor,
+            int seedIdx)
+        {
+            // Deterministik aci ve boyut varyasyonu
+            uint h = unchecked((uint)(seedIdx * 2654435761u));
+            float yaw = ((h & 0xFFu) / 255.0f) * Mathf.PI;
+            float pitch = ((((h >> 8) & 0xFFu) / 255.0f) - 0.5f) * 0.65f;
+            float sizeJitter = 0.85f + (((h >> 16) & 0xFFu) / 255.0f) * 0.35f;
+            float r = radius * sizeJitter;
+
+            // Ust/gunese bakan yapraklar daha canli sari-yesil, alt/ic yapraklar daha koyu zumrut golge
+            float sunFactor = Mathf.Clamp01(radialNormal.y * 0.55f + 0.50f);
+            bool isSnow = baseColor.r > 180 && baseColor.g > 180 && baseColor.b > 180;
+            Color32 tipCol;
+            Color32 innerCol;
+            if (isSnow)
+            {
+                tipCol = baseColor;
+                innerCol = new Color32(205, 220, 232, 255);
+            }
+            else
+            {
+                float shade = 0.72f + sunFactor * 0.44f;
+                tipCol = new Color32(
+                    (byte)Mathf.Clamp(Mathf.RoundToInt((baseColor.r + 14f) * shade), 24, 155),
+                    (byte)Mathf.Clamp(Mathf.RoundToInt((baseColor.g + 22f) * shade), 58, 196),
+                    (byte)Mathf.Clamp(Mathf.RoundToInt((baseColor.b + 4f) * shade), 18, 92),
+                    255);
+                innerCol = new Color32(
+                    (byte)Mathf.Clamp(Mathf.RoundToInt(baseColor.r * 0.62f), 16, 95),
+                    (byte)Mathf.Clamp(Mathf.RoundToInt(baseColor.g * 0.68f), 38, 130),
+                    (byte)Mathf.Clamp(Mathf.RoundToInt(baseColor.b * 0.65f), 14, 70),
+                    255);
+            }
+
+            // 2 capraz yaprak karti (0° ve 90°) — her biri 4 koseli elmas (yaprak sekli), cift yuzlu!
+            for (int card = 0; card < 2; card++)
+            {
+                float ang = yaw + card * (Mathf.PI * 0.5f);
+                Quaternion rot = Quaternion.Euler(pitch * Mathf.Rad2Deg, ang * Mathf.Rad2Deg, card == 0 ? 18f : -22f);
+                Vector3 right = rot * Vector3.right * (r * 0.92f);
+                Vector3 up = rot * Vector3.up * (r * 0.68f);
+                Vector3 bend = rot * Vector3.forward * (r * 0.16f);
+
+                Vector3 p0 = center - right;
+                Vector3 p1 = center + up + bend;
+                Vector3 p2 = center + right;
+                Vector3 p3 = center - up - bend * 0.5f;
+
+                int vb = verts.Count;
+                verts.Add(p0); verts.Add(p1); verts.Add(p2); verts.Add(p3);
+                norms.Add(radialNormal); norms.Add(radialNormal); norms.Add(radialNormal); norms.Add(radialNormal);
+                cols.Add(innerCol); cols.Add(tipCol); cols.Add(tipCol); cols.Add(innerCol);
+
+                // On yuz
+                tris.Add(vb); tris.Add(vb + 1); tris.Add(vb + 2);
+                tris.Add(vb); tris.Add(vb + 2); tris.Add(vb + 3);
+                // Arka yuz (alttan bakinca yapraklar kaybolmaz!)
+                tris.Add(vb); tris.Add(vb + 2); tris.Add(vb + 1);
+                tris.Add(vb); tris.Add(vb + 3); tris.Add(vb + 2);
+            }
         }
 
         private static Vector3[] ReadGlbVec3(byte[] bytes, int binStart, GltfSimpleRoot root, int accIdx)
@@ -2223,8 +2414,11 @@ namespace Stratocraft.WorldGen
 
             if (vis.CanopyTr != null)
             {
-                vis.CanopyTr.SetPositionAndRotation(new Vector3(spec.WorldX, spec.CrownBaseY, spec.WorldZ), rot);
-                vis.CanopyTr.localScale = Vector3.one * scale;
+                // Ust tac bilezigini voksel govdenin en ust bloguna (+0.32m) dikissiz oturt;
+                // govdeye temas eden alt kismin basamak yapmamasi icin scale'i dar bantta tut.
+                float clampedCanopyScale = Mathf.Clamp(scale, 0.96f, 1.08f);
+                vis.CanopyTr.SetPositionAndRotation(new Vector3(spec.WorldX, spec.CrownBaseY + 0.32f, spec.WorldZ), rot);
+                vis.CanopyTr.localScale = new Vector3(clampedCanopyScale, scale, clampedCanopyScale);
             }
             if (vis.CanopyGo != null && !vis.CanopyGo.activeSelf)
             {
@@ -2233,8 +2427,9 @@ namespace Stratocraft.WorldGen
 
             if (vis.RootTr != null)
             {
-                vis.RootTr.SetPositionAndRotation(new Vector3(spec.WorldX, spec.BaseY, spec.WorldZ), rot);
-                vis.RootTr.localScale = Vector3.one * Mathf.Lerp(0.95f, 1.12f, Mathf.InverseLerp(0.90f, 1.15f, scale));
+                // Alt kok bilezigini hafifce zemine (-0.16m) gom ve sabit X/Z olcegiyle (1.02f) voksel govdeye tam oturt!
+                vis.RootTr.SetPositionAndRotation(new Vector3(spec.WorldX, spec.BaseY - 0.16f, spec.WorldZ), rot);
+                vis.RootTr.localScale = new Vector3(1.02f, 1.12f, 1.02f);
             }
             if (vis.RootGo != null && !vis.RootGo.activeSelf)
             {

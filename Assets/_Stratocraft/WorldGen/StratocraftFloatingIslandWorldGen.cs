@@ -4080,9 +4080,12 @@ namespace Stratocraft.WorldGen.Generators
             }
 
             baseY = Math.Clamp(RoundToInt(surfTopY), 12, MaxEditableVoxelY - 18);
-            isPine = biomeId == 4 || biomeId == 5;
+            var trunkProfile = Stratocraft.Physics.RigidTimber.TimberLogHarvestCatalog.ResolveTreeTrunkProfile(
+                wx, wz, biomeId, unchecked((uint)ActiveWorldSeed));
+            effectiveTrunkH = Math.Clamp(RoundToInt(trunkProfile.TrunkLengthM), 2, 18);
+            isPine = biomeId == 4 || biomeId == 5 || trunkProfile.Species == Stratocraft.Physics.RigidTimber.TimberWoodSpecies.Pine || trunkProfile.Species == Stratocraft.Physics.RigidTimber.TimberWoodSpecies.Spruce;
             bool isSwampWillow = biomeId == 3;
-            woodMat = (isIronwood || biomeId == 1)
+            woodMat = (isIronwood || biomeId == 1 || trunkProfile.Species == Stratocraft.Physics.RigidTimber.TimberWoodSpecies.Ironwood)
                 ? MaterialIdCatalog.Ironwood
                 : (isSwampWillow ? MaterialIdCatalog.SpiritWood : MaterialIdCatalog.OakWood);
 
