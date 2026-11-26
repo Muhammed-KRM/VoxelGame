@@ -428,6 +428,19 @@ namespace Stratocraft.Character
                 case "mind_charcoal_pit": AddControllerParts(parts, ctrlKind: 1); break;
                 case "mind_bloomery_furnace": AddControllerParts(parts, ctrlKind: 2); break;
                 case "mind_wooden_wheelbarrow": AddControllerParts(parts, ctrlKind: 3); break;
+                case "mind_log_arch_cart_and_site_rigs":
+                    AddRow(parts,
+                        (PhysicalItemArchetype.WoodenWheel, 0, 2),
+                        (PhysicalItemArchetype.NaturalStick, 0, 2),
+                        (PhysicalItemArchetype.PlantFiber, 0, 1));
+                    break;
+                case "mind_log_arch_cart_and_site_tools":
+                    AddRow(parts,
+                        (PhysicalItemArchetype.WoodenWheel, 0, 1),
+                        (PhysicalItemArchetype.SplitFirewood, MaterialIdCatalog.OakWood, 2),
+                        (PhysicalItemArchetype.PlantFiber, 0, 1),
+                        (PhysicalItemArchetype.WoodenWheel, 0, 1));
+                    break;
 
                 // ---- Sekme 4: Demircilik, Pisirme & Kristal ----
                 case "guide_cooking_meat":
@@ -718,6 +731,12 @@ namespace Stratocraft.Character
                 I(InventoryItemKind.SplitFirewood, MaterialIdCatalog.OakWood, 2, "Odun"),
                 I(InventoryItemKind.Stick, 0, 2, "Kuru Dal"),
                 I(InventoryItemKind.PlantFiber, 0, 2, "Bitki Lifi")
+            };
+            _ingredients["mind_log_arch_cart_and_site_tools"] = new[]
+            {
+                I(InventoryItemKind.WoodenWheel, 0, 2, "Ahşap Teker"),
+                I(InventoryItemKind.Stick, 0, 2, "Dal/Odun"),
+                I(InventoryItemKind.PlantFiber, 0, 1, "Bitki Lifi")
             };
 
             _ingredients["guide_cooking_meat"] = new[]

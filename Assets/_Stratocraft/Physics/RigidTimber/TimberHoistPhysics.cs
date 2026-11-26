@@ -33,11 +33,11 @@ namespace Stratocraft.Physics.RigidTimber
 
     public static class TimberHoistPhysics
     {
-        /// <summary>Oyuncunun surekli cekebilecegi konforlu maksimum halat cekme kuvveti (N).</summary>
-        public const float PlayerMaxPullForceN = 520.0f;
+        /// <summary>Oyuncunun surekli cekebilecegi maksimum iki-elli halat cekme kuvveti (N).</summary>
+        public const float PlayerMaxPullForceN = 760.0f;
 
         /// <summary>Rampa uzerinde yuvarlanan kütüğün yuvarlanma direnci katsayisi.</summary>
-        public const float RollingResistanceCoeff = 0.06f;
+        public const float RollingResistanceCoeff = 0.045f;
 
         /// <summary>
         /// 2:1 Parbuckle (egik cift halatli rampa) kurulumu baslatir.
@@ -122,8 +122,8 @@ namespace Stratocraft.Physics.RigidTimber
 
             if (appliedPullN >= reqPullN)
             {
-                float surplusRatio = Math.Clamp((appliedPullN - reqPullN) / MathF.Max(100f, reqPullN), 0.15f, 1.5f);
-                float liftSpeedMps = (1.15f / MathF.Max(1.0f, state.MechanicalAdvantage)) * (0.45f + 0.55f * surplusRatio);
+                float surplusRatio = Math.Clamp((appliedPullN - reqPullN) / MathF.Max(100f, reqPullN), 0.25f, 1.8f);
+                float liftSpeedMps = (2.20f / MathF.Max(1.0f, state.MechanicalAdvantage * 0.65f)) * (0.55f + 0.55f * surplusRatio);
                 state.ProgressM = MathF.Min(state.RampLengthM, state.ProgressM + liftSpeedMps * dt);
                 if (state.ProgressM > state.MaxRatchetM)
                 {

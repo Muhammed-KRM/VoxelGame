@@ -355,11 +355,11 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "craft_wooden_wheel_and_bucket",
                 tab: SurvivalRecipeBookTab.ClothAndKnappingRecipes,
-                categoryBadge: "[I] Lojistik & Sıvı",
+                categoryBadge: "[I] Tekerlek & Kova",
                 title: "Ahşap Tekerlek (WoodenWheel) & İlkel Ahşap Su Kovası",
-                ingredientsOrSource: "Ahşap Tekerlek = 3-4x Odun/Dal + 2x Bitki Lifi | Ahşap Su Kovası = 2x Yarılmış Odun + 2x Bitki Lifi",
-                toolOrKeybind: "[I] Çanta Ortasına Odun + Lif Koy -> [R / İple Bağla]",
-                stepByStepGuide: "Ahşap Tekerlek [T]->[4] 36 Yuvalı Ahşap El Arabasının ön aksı için kullanılır. İlkel Ahşap Su Kovası (SubId=1 su doluyken) gölden [Sol Tık] ile su alır, [Sağ Tık] ile suyu döker veya yanan Kamp Ateşi / İzabe Fırınını anında söndürür."),
+                ingredientsOrSource: "Ahşap Tekerlek = 3x Odun/Dal (Yarma Odun, Kuru Dal, Kalas veya Meşe Odunu) + 2x Bitki Lifi | Su Kovası = 2x Yarma Odun + 2x Bitki Lifi",
+                toolOrKeybind: "[I] Çantayı Aç -> Ortadaki Beze 3x Odun/Dal + 2x Lif Koy -> [Sol Tık / R] Bağla",
+                stepByStepGuide: "1) [I] tuşuyla bez çantanı aç. 2) Çantadan veya kemerden toplam 3 adet Odun/Dal (Kuru Dal, baltayla yarılmış Odun, Kalas veya Meşe Kütüğü) ve 2 adet Bitki Lifini [Sol Tık] ile orta daireye koy. 3) 'HAZIR: Ahşap Tekerlek' yazısı çıkınca üstüne [Sol Tık] yap veya [R] tuşuna bas! 4) Kütük El Arabası (Log Arch) için 2 adet Ahşap Tekerlek üretip yere sol/sağ tekerlek yuvalarına diz. (Not: Dal koymadan tam 2x Yarma Odun + 2x Lif koyarsan İlkel Ahşap Su Kovası verir.)"),
 
             new(
                 id: "craft_t2_iron_tools",
@@ -541,11 +541,20 @@ namespace Stratocraft.Inventory.Systems
             new(
                 id: "mind_6tabs_9schools_and_load_redistribution",
                 tab: SurvivalRecipeBookTab.MindBuildingStructures,
-                categoryBadge: "[T] 6 Sekme & Yük Paylaşımı",
-                title: "6 Sekmeli [T] Menüsü, 9 Yapı Ekolü, Yük Yeniden Dağılımı & Ek Destekle Sütun Değiştirme",
-                ingredientsOrSource: "[1] İstasyonlar & Lojistik (6 Yeni Tezgâh/Fırın + Yığın) | [2] Şantiye & Geçici Destekler | [3] Kütük & Ahşap | [4] Toprak & Kerpiç | [5] Taş, Tuğla & Anıtsal | [6] Betonarme & Çelik.",
-                toolOrKeybind: "[T] 6-Sekmeli Menü | [V]/[Shift+V] Parça/Kalınlık | [R] 90° Döndür | [Sol Tık Sürükle] Sıra Ör | [Shift+E] Geçici Destek Sök",
-                stepByStepGuide: "1) Yük Yeniden Dağılımı (Redundant Load Path): Bir sütun kırıldığında bina körlemesine çökmez; yük komşu sağlam sütunlara ve ek desteklere (Reshoring) aktarılır. eta_max < 1.0 kalırsa bina ayakta kalır; sınır aşılırsa yalnızca aşırı yüklü yerel kanat 1.5 sn çatırdama uyarısıyla çöker! 2) Ek Destekle Sütun Değiştirme: Değiştirmek istediğin sütunun yanına önce geçici/ek dikme atıp ardından eski sütunu kırarak sıfır kayıpla tadilat yapabilirsin.")
+                categoryBadge: "[T] 7 Sekme & Yük Paylaşımı",
+                title: "7 Sekmeli Da Vinci [T] Defteri, 9 Yapı Ekolü, Yük Paylaşımı & Ek Destekle Tadilat",
+                ingredientsOrSource: "[1] İstasyonlar | [2] Geçici Destek | [3] Kütük & Ahşap | [4] Toprak & Kerpiç | [5] Taş & Anıtsal | [6] Betonarme & Çelik | [7] Şantiye & Ev-İçi.",
+                toolOrKeybind: "[T] 7-Sekmeli Defter | [V] Varyant | [R] Döndür | [Sol Tık] Plan/İnşa | [Sağ Tık] Dizilim Doğrula | [Shift+E] Sök",
+                stepByStepGuide: "1) Yük Yeniden Dağılımı (Redundant Load Path): Bir sütun kırıldığında bina körlemesine çökmez; yük komşu sağlam sütunlara ve ek desteklere (Reshoring) aktarılır. eta_max < 1.0 kalırsa bina ayakta kalır; sınır aşılırsa yalnızca aşırı yüklü yerel kanat 1.5 sn çatırdama uyarısıyla çöker! 2) Ek Destekle Sütun Değiştirme: Değiştirmek istediğin sütunun yanına önce geçici/ek dikme atıp ardından eski sütunu kırarak sıfır kayıpla tadilat yapabilirsin."),
+
+            new(
+                id: "mind_log_arch_cart_and_site_tools",
+                tab: SurvivalRecipeBookTab.MindBuildingStructures,
+                categoryBadge: "[T] -> [7] Şantiye & Ev-İçi",
+                title: "[T]->[7] Kütük El Arabası (Log Arch), İskele, Parbuckle Rampa, Gin Pole Vinç, Bıçkı Sehpası & Taş Şömine",
+                ingredientsOrSource: "Kütük El Arabası = 2x Ahşap Tekerlek ([I] Bezte 3 Odun/Dal + 2 Lif) + 2x Dal/Odun + 1x Lif | İskele = 4x Dal/Odun | Rampa = 2x Dal/Odun + 1x Lif | Vinç = 2x Dal/Odun + 2x Lif | Bıçkı Sehpası = 2x Dal/Odun | Taş Şömine = 4x Taş + 1x Kil | Yatak = 2x Dal/Odun + 2x Yaprak/Lif | Menteşeli Kapı / Sandık = 3x Odun + 1x Lif | Kepenk = 2x Odun + 1x Lif.",
+                toolOrKeybind: "[T]->[7] Karta [Sol Tık] -> Yere Materyal Yuva Kılavuzu Koy -> Parçaları Yuvalara Diz -> [T] Karta [Sağ Tık] / 'Doğrula & El İle Yap' | Kaldır: [T]->Kaldır veya [Shift+E]",
+                stepByStepGuide: "1) Önce [I] çantada 3x Odun/Dal + 2x Bitki Lifi birleştirip 2 adet Ahşap Tekerlek üret. 2) [T] -> [7] Şantiye & Ev-İçi sekmesinden Kütük El Arabasına [Sol Tık] yap ve yere materyal yuvalarını gösteren dış çizgi kılavuzu koy (bu kılavuz [E] ile sihirli inşa edilmez, sadece nereye ne koyacağını gösterir!). 3) Sol/Sağ tekerlek halkalarının içine Ahşap Tekerlekleri, ortaya Dingil Dalı, öne Çekme Kolu Dalı ve merkeze Bitki Lifi diz (plana bakınca canlı ✅/❌ kontrol listesi görünür). 4) Tüm yuvalar ✅ olunca plana bakıp [T] -> [Sağ Tık] veya '🛠️ Dizilimi Doğrula & El İle Yap' de; karakter 1.6 sn elleriyle monte edip gerçek arabayı kurar! 5) Gerçek ağacı baltayla devir -> arabayı [E] ile tutup kütüğe yanaş -> [E] ile bağla -> 1.5-2.0m çukura [V] Dikey modda [Sol Tık] ile dik ve toprakla sıkıştır!")
         };
 
         // =====================================================================

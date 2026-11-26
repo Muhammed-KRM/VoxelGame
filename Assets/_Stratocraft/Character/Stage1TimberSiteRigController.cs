@@ -37,6 +37,8 @@ namespace Stratocraft.Character
             public TimberHoistState HoistState;
             public bool HasLoadedLog;
             public float LoadedLogLengthM;
+            public float LoadedLogDiamM;
+            public byte LoadedWoodMat;
         }
 
         private readonly List<SiteRigInstance> _rigs = new(16);
@@ -44,6 +46,76 @@ namespace Stratocraft.Character
         private uint _nextRigId = 1;
 
         public int RigCount => _rigs.Count;
+
+        /// <summary>
+        /// Faz M4: Oyuncu 2. veya 3. katta dururken 12.5m yakinindaki Parbuckle Rampa veya Gin Pole Vincin
+        /// tepesine cekilip mandallanmis gercek kutugu 1:1 onizleme ve oluga surme icin okur/tuketir!
+        /// </summary>
+        public bool TryPeekCompletedHoistLog(Vector3 playerPos, float maxRadius, out float lengthM, out float diameterM, out byte woodMat)
+        {
+            lengthM = 0f;
+            diameterM = 0.42f;
+            woodMat = MaterialIdCatalog.OakWood;
+            float bestSq = maxRadius * maxRadius;
+            int bestIdx = -1;
+            for (int i = 0; i < _rigs.Count; i++)
+            {
+                SiteRigInstance r = _rigs[i];
+                if (!r.HasLoadedLog || r.HoistState.IsCompleted == 0) continue;
+                // Yukari cekilmis kutuk yalnizca ust katta / iskelede (rampa veya vincin teslimat kotunda) duran oyuncuya onizleme acar;
+                // zemin katta veya bahcede Bos El ile dolasirken ekranda hayalet direk cikarmaz!
+                if (playerPos.y < r.Position.y + 1.60f) continue;
+                float dx = r.Position.x - playerPos.x;
+                float dz = r.Position.z - playerPos.z;
+                float dSq = dx * dx + dz * dz;
+                if (dSq <= bestSq)
+                {
+                    bestSq = dSq;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx < 0) return false;
+            SiteRigInstance chosen = _rigs[bestIdx];
+            lengthM = Mathf.Clamp(chosen.LoadedLogLengthM, 1.0f, 16.0f);
+            diameterM = Mathf.Clamp(chosen.LoadedLogDiamM, 0.34f, 0.56f);
+            woodMat = chosen.LoadedWoodMat != 0 ? chosen.LoadedWoodMat : MaterialIdCatalog.OakWood;
+            return true;
+        }
+
+        public bool TryConsumeCompletedHoistLog(Vector3 playerPos, float maxRadius, out float lengthM, out float diameterM, out byte woodMat)
+        {
+            lengthM = 0f;
+            diameterM = 0.42f;
+            woodMat = MaterialIdCatalog.OakWood;
+            float bestSq = maxRadius * maxRadius;
+            int bestIdx = -1;
+            for (int i = 0; i < _rigs.Count; i++)
+            {
+                SiteRigInstance r = _rigs[i];
+                if (!r.HasLoadedLog || r.HoistState.IsCompleted == 0) continue;
+                if (playerPos.y < r.Position.y + 1.60f) continue;
+                float dx = r.Position.x - playerPos.x;
+                float dz = r.Position.z - playerPos.z;
+                float dSq = dx * dx + dz * dz;
+                if (dSq <= bestSq)
+                {
+                    bestSq = dSq;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx < 0) return false;
+            SiteRigInstance chosen = _rigs[bestIdx];
+            lengthM = Mathf.Clamp(chosen.LoadedLogLengthM, 1.0f, 16.0f);
+            diameterM = Mathf.Clamp(chosen.LoadedLogDiamM, 0.34f, 0.56f);
+            woodMat = chosen.LoadedWoodMat != 0 ? chosen.LoadedWoodMat : MaterialIdCatalog.OakWood;
+            chosen.HasLoadedLog = false;
+            if (chosen.HoistedLogGo != null)
+            {
+                UnityEngine.Object.Destroy(chosen.HoistedLogGo);
+                chosen.HoistedLogGo = null;
+            }
+            return true;
+        }
 
         public void DisposeAll()
         {
@@ -129,10 +201,14 @@ namespace Stratocraft.Character
             Stage1HolsterAndBackpackController holsterCtrl,
             Stage1MatterCrystalAndMiningController miningCtrl,
             Material? sharedVoxelMat,
+            Stage1LogArchCartController? logCartCtrl,
+            Stage1StructuralCollapseBridge? collapseBridge,
+            Stage1RigidTimberBridge? rigidTimberBridge,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
             out string feedback)
         {
             feedback = string.Empty;
-            int idx = FindNearestRig(playerPos, 3.6f);
+            int idx = FindNearestRig(playerPos, 3.8f);
             if (idx < 0) return false;
 
             SiteRigInstance rig = _rigs[idx];
@@ -149,42 +225,116 @@ namespace Stratocraft.Character
 
             if (rig.Kind == TimberSiteRigKind.WoodScaffolding) return false;
 
-            // Rampa veya Gin Pole'a kutuk yukleme / halat cekme
+            // Rampa veya Gin Pole'a GERCEK kutuk yukleme (havadan sahte kutuk yaratilmaz!)
             if (!rig.HasLoadedLog)
             {
+                if (eHeldContinuous) return false;
+
+                float realLen = 0f;
+                float realDiam = 0.42f;
+                byte realMat = MaterialIdCatalog.OakWood;
+                bool acquiredRealLog = false;
+
+                if (logCartCtrl != null && logCartCtrl.TryConsumeBoundLogForPlacement(out float cLen, out float cDiam, out byte cMat))
+                {
+                    realLen = cLen;
+                    realDiam = cDiam;
+                    realMat = cMat;
+                    acquiredRealLog = true;
+                }
+                else if (collapseBridge != null && collapseBridge.TryPeekFallenTreeLogForCartExact(rig.Position, 6.0f, out int fIdx, out byte fMat, out _, out float fExactLen, out float fDiam, out _))
+                {
+                    collapseBridge.CommitDetachFallenTreeLogForCart(fIdx);
+                    realLen = fExactLen;
+                    realDiam = fDiam;
+                    realMat = fMat;
+                    acquiredRealLog = true;
+                }
+                else if (rigidTimberBridge != null && rigidTimberBridge.TryPeekFallenPieceForCartExact(rig.Position, 6.0f, out int rIdx, out byte rMat, out _, out float rExactLen, out float rDiam, out _))
+                {
+                    rigidTimberBridge.CommitDetachFallenPieceForCart(rIdx);
+                    realLen = rExactLen;
+                    realDiam = rDiam;
+                    realMat = rMat;
+                    acquiredRealLog = true;
+                }
+                else if (holsterCtrl.IsCreativeMode)
+                {
+                    realLen = 4.4f;
+                    realDiam = 0.44f;
+                    realMat = MaterialIdCatalog.OakWood;
+                    acquiredRealLog = true;
+                }
+
+                if (!acquiredRealLog)
+                {
+                    feedback = "⚠️ Önce Kütük El Arabasıyla (veya devrik ağaçtan) rampanın/vincin 5m yakınına gerçek bir kütük getirin!";
+                    return true;
+                }
+
                 rig.HasLoadedLog = true;
-                rig.LoadedLogLengthM = 4.2f;
+                rig.LoadedLogLengthM = Mathf.Clamp(realLen, 1.5f, 14.0f);
+                rig.LoadedLogDiamM = Mathf.Clamp(realDiam, 0.34f, 0.56f);
+                rig.LoadedWoodMat = realMat != 0 ? realMat : MaterialIdCatalog.OakWood;
+                float estMassKg = rig.LoadedLogLengthM * 24f;
                 rig.HoistState = rig.Kind == TimberSiteRigKind.ParbuckleRamp2To1
-                    ? TimberHoistPhysics.CreateParbuckleRamp(rig.RigId, 0, 175f, 3.2f, 32f)
-                    : TimberHoistPhysics.CreateGinPole(rig.RigId, 0, 165f, 6.2f, 4);
+                    ? TimberHoistPhysics.CreateParbuckleRamp(rig.RigId, 0, estMassKg, 3.2f, 30f)
+                    : TimberHoistPhysics.CreateGinPole(rig.RigId, 0, estMassKg, 6.2f, 4);
                 SpawnHoistedLogVisual(rig, sharedVoxelMat);
                 feedback = rig.Kind == TimberSiteRigKind.ParbuckleRamp2To1
-                    ? "🪢 Kütük Parbuckle 2:1 rampasına sarıldı! [E Basılı Tut] ile yukarı yuvarlayın (bırakınca mandal kaymayı önler)."
-                    : "🪢 Kiriş Gin Pole kancasına bağlandı! [E Basılı Tut] ile 3. kata çekin.";
+                    ? $"🪢 Gerçek kütük ({rig.LoadedLogLengthM:F2}m) Parbuckle 2:1 rampasına sarıldı! [E Basılı Tut] ile 2. kata yuvarlayın (bırakınca mandal tutar)."
+                    : $"🪢 Gerçek kütük ({rig.LoadedLogLengthM:F2}m) Gin Pole kancasına bağlandı! [E Basılı Tut] ile 3. kata çekin.";
                 return true;
             }
 
             if (eHeldContinuous && rig.HoistState.IsCompleted == 0)
             {
+                float prevProg = rig.HoistState.ProgressM;
                 TimberHoistPhysics.StepHoist(ref rig.HoistState, pullInput01: 1.0f, dt: Mathf.Max(0.016f, dt));
                 UpdateHoistedLogTransform(rig);
+                if (rig.HoistState.IsCompleted == 0 && rig.HoistState.ProgressM <= prevProg + 1e-5f)
+                {
+                    feedback = $"⚠️ Bu kütük ({rig.LoadedLogLengthM:F1}m, {rig.HoistState.LogMassKg:0}kg) bu rampa için çok ağır! Daha kısa kesin veya 4 makaralı Gin Pole Vinç kullanın.";
+                    return true;
+                }
                 float pct = Mathf.Clamp01(rig.HoistState.ProgressM / Mathf.Max(0.1f, rig.HoistState.RampLengthM)) * 100f;
                 feedback = rig.HoistState.IsCompleted != 0
-                    ? "✅ Kütük üst kata ulaştı ve mandalla kilitlendi! [E] ile teslim alıp yerleştirebilirsiniz."
-                    : $"🪢 Halat çekiliyor... %{pct:0} ({rig.HoistState.ProgressM:0.1}m / {rig.HoistState.RampLengthM:0.1}m | Gerilim: {rig.HoistState.RopeTensionN:0} N)";
+                    ? "✅ Kütük üst kata ulaştı ve mandalla kilitlendi! Üst kata çıkıp doğrudan oluğa sürebilir veya [E] ile döşemeye indirebilirsiniz."
+                    : $"🪢 Halat çekiliyor... %{pct:0} ({rig.HoistState.ProgressM:F1}m / {rig.HoistState.RampLengthM:F1}m | Gerilim: {rig.HoistState.RopeTensionN:0} N)";
                 return true;
             }
 
             if (rig.HoistState.IsCompleted != 0)
             {
+                // Eger oyuncu tepede mandalli bekleyen kutugu [E] ile cozmek isterse ust kat dosemesinin ustune gercek kutuk olarak indirir!
+                // (Veya oyuncu dogrudan 2./3. kata cikip iki oluklu direk arasina [Sol Tik] yaparsa dogrudan askidan alip oluga surer!)
                 rig.HasLoadedLog = false;
                 if (rig.HoistedLogGo != null)
                 {
                     UnityEngine.Object.Destroy(rig.HoistedLogGo);
                     rig.HoistedLogGo = null;
                 }
-                holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.VoxelBlock, MaterialIdCatalog.OakWood, 2, miningCtrl);
-                feedback = "🪵 Üst kata çıkarılan tam boy kiriş teslim alındı (+2 Meşe Kerestesi)!";
+
+                Quaternion rot = Quaternion.Euler(0f, rig.YawDeg, 0f);
+                float topY = rig.Kind == TimberSiteRigKind.ParbuckleRamp2To1 ? 3.35f : 6.45f;
+                float fwdOff = rig.Kind == TimberSiteRigKind.ParbuckleRamp2To1 ? 1.85f : 1.35f;
+                Vector3 deliverPos = rig.Position + rot * new Vector3(0f, topY, fwdOff);
+                if (rigidTimberBridge != null)
+                {
+                    deliverPos.y = Mathf.Max(deliverPos.y, rigidTimberBridge.ResolveSupportingSurfaceY(deliverPos.x, deliverPos.z, deliverPos.y + 1.0f) + 0.35f);
+                }
+
+                if (collapseBridge != null)
+                {
+                    Vector3 logDir = rot * Vector3.right;
+                    collapseBridge.SpawnExactLengthFallenLog(deliverPos, logDir, rig.LoadedWoodMat, rig.LoadedLogLengthM, rig.LoadedLogDiamM, sharedVoxelMat);
+                    feedback = $"🏗️ Kütük ({rig.LoadedLogLengthM:F2}m) üst kat döşemesine indirildi! ([E] Omuzla veya doğrudan rampa tepesindeyken oluğa [Sol Tık] sürebilirsiniz)";
+                }
+                else
+                {
+                    holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.LogDebarked, rig.LoadedWoodMat, 2, miningCtrl);
+                    feedback = "🪵 Üst kata çıkarılan kiriş teslim alındı!";
+                }
                 return true;
             }
 

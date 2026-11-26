@@ -27,15 +27,15 @@ namespace Stratocraft.Physics.RigidTimber
     /// </summary>
     public static class TimberTipInAndJoineryLogic
     {
-        public const float MinTipInHoleDepthM = 0.75f;
-        public const float DeepLockEmbedDepthM = 1.35f;
+        public const float MinTipInHoleDepthM = 0.55f;
+        public const float DeepLockEmbedDepthM = 1.20f;
 
         /// <summary>
         /// Kütük El Arabasından veya elden dikilecek kütüğün hedef noktasında gerçek bir çukur
-        /// kazılıp kazılmadığını 4 yönde tarar.
-        /// - Düz zeminde (HoleDepth < 0.75m veya < 3 duvar): geçici dik duramaz, devrilir!
-        /// - Dar çukurda (HoleDepth >= 0.75m ve >= 3 duvar): çukur duvarları kütüğü geçici dik tutar;
-        ///   oyuncu [V] toprak dolgusuyla etrafını kapatınca kalıcı kilitlenir!
+        /// kazılıp kazılmadığını 4 yönde 3 eşmerkezli halkada (0.85m, 1.65m, 2.35m) tarar.
+        /// - Düz zeminde (HoleDepth &lt; 0.55m veya &lt; 3 duvar): geçici dik duramaz, devrilir!
+        /// - Kazılmış çukurda (HoleDepth &gt;= 0.55m ve &gt;= 3 duvar): çukur duvarları kütüğü geçici dik tutar;
+        ///   oyuncu toprak dolgusuyla etrafını kapatınca kalıcı kilitlenir!
         /// </summary>
         public static TipInEvaluation EvaluateTipInHole(
             float targetX,
@@ -51,22 +51,30 @@ namespace Stratocraft.Physics.RigidTimber
             }
             eval.PitBottomY = pitBottomY;
 
-            // 4 yonde 0.85m disarida cevre zemin yuksekligini olc
-            ReadOnlySpan<float> dx = stackalloc float[4] { 0.85f, -0.85f, 0f, 0f };
-            ReadOnlySpan<float> dz = stackalloc float[4] { 0f, 0f, 0.85f, -0.85f };
+            // 4 yonde 0.85m, 1.65m ve 2.35m mesafelerde en yuksek cevre dudagini olc (genis cukurlari da yakalar!)
+            ReadOnlySpan<float> dirX = stackalloc float[4] { 1f, -1f, 0f, 0f };
+            ReadOnlySpan<float> dirZ = stackalloc float[4] { 0f, 0f, 1f, -1f };
+            ReadOnlySpan<float> rings = stackalloc float[3] { 0.85f, 1.65f, 2.35f };
             float sumRimY = 0f;
             int validWalls = 0;
 
             for (int d = 0; d < 4; d++)
             {
-                if (soilSampler.TrySampleGroundSurfaceY(targetX + dx[d], targetZ + dz[d], pitBottomY + 3.0f, out float rimY, out _))
+                float bestRimY = pitBottomY;
+                for (int r = 0; r < 3; r++)
                 {
-                    float wallH = rimY - pitBottomY;
-                    if (wallH >= MinTipInHoleDepthM)
+                    float sx = targetX + dirX[d] * rings[r];
+                    float sz = targetZ + dirZ[d] * rings[r];
+                    if (soilSampler.TrySampleGroundSurfaceY(sx, sz, pitBottomY + 3.5f, out float rimY, out _) && rimY > bestRimY)
                     {
-                        validWalls++;
-                        sumRimY += rimY;
+                        bestRimY = rimY;
                     }
+                }
+                float wallH = bestRimY - pitBottomY;
+                if (wallH >= MinTipInHoleDepthM)
+                {
+                    validWalls++;
+                    sumRimY += bestRimY;
                 }
             }
 

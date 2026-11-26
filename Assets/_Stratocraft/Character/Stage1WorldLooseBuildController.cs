@@ -310,6 +310,80 @@ namespace Stratocraft.Character
             return wasActive;
         }
 
+        public bool HasNearestPlayerUnifiedNode(Vector3 playerPos, out string roleLabel)
+        {
+            roleLabel = string.Empty;
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            float bestDistSq = 4.8f * 4.8f;
+            bool found = false;
+            StructuralElementRole bestRole = StructuralElementRole.StonePlinthFoundation;
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly StructuralNode64 n = ref span[i];
+                if (n.NodeId == 0u ||
+                    n.CollapseState == StructureCollapseState.Collapsed ||
+                    n.CollapseState == StructureCollapseState.DetachedInstantFall)
+                {
+                    continue;
+                }
+
+                float dx = n.PosX - playerPos.x;
+                float dy = n.PosY - (playerPos.y + 0.8f);
+                float dz = n.PosZ - playerPos.z;
+                float dSq = dx * dx + dy * dy + dz * dz;
+                if (dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    bestRole = n.Role;
+                    found = true;
+                }
+            }
+
+            if (found) roleLabel = bestRole.ToString();
+            return found;
+        }
+
+        /// <summary>
+        /// [Shift+E] ile oyuncunun [T] menusunden yerlestirdigi herhangi bir birlesik yapi parcasini (duvar, temel, kiris, cati vb.) temizce soker.
+        /// </summary>
+        public bool TryDismantleNearestPlayerUnifiedNode(Vector3 playerPos, out string feedback)
+        {
+            feedback = string.Empty;
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            uint bestId = 0u;
+            float bestDistSq = 4.2f * 4.2f;
+            StructuralElementRole bestRole = StructuralElementRole.StonePlinthFoundation;
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly StructuralNode64 n = ref span[i];
+                if (n.NodeId == 0u ||
+                    n.CollapseState == StructureCollapseState.Collapsed ||
+                    n.CollapseState == StructureCollapseState.DetachedInstantFall)
+                {
+                    continue;
+                }
+
+                float dx = n.PosX - playerPos.x;
+                float dy = n.PosY - (playerPos.y + 0.8f);
+                float dz = n.PosZ - playerPos.z;
+                float dSq = dx * dx + dy * dy + dz * dz;
+                if (dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    bestId = n.NodeId;
+                    bestRole = n.Role;
+                }
+            }
+
+            if (bestId == 0u) return false;
+            if (!UnifiedGraphSolver.RemoveNodeAndRedistribute(bestId, out _)) return false;
+
+            feedback = $"♻️ Yapı parçası ({bestRole}) [Shift+E] ile sökülüp kaldırıldı!";
+            return true;
+        }
+
         public void NotifyHotbarSlotChanged(bool newSlotIsStoneHammer)
         {
             _hammerSuppressedUntilSlotChange = false;
@@ -326,7 +400,6 @@ namespace Stratocraft.Character
         public static bool IsDirectHotbarBuildableKit(InventoryItemKind kind) => kind switch
         {
             InventoryItemKind.ModularScaffoldingKit or
-            InventoryItemKind.TimberPlank or
             InventoryItemKind.FiredBrick or
             InventoryItemKind.AshlarBlock or
             InventoryItemKind.MortarBucket or
@@ -1061,6 +1134,46 @@ namespace Stratocraft.Character
                 WorldLoosePartInstance inst = _parts[idx];
                 inst.BoundStationId = stationId;
                 _parts[idx] = inst;
+            }
+        }
+
+        /// <summary>
+        /// El ile montaj (Kutuk El Arabasi, Iskele, Rampa, Vinc, Sehpa, Somine, Yatak) tamamlandiginda
+        /// yere dizilmis fiziksel parcalari (dal, tekerlek, lif, tas, kil) gercekten tuketip yok eder!
+        /// </summary>
+        public void ConsumeAndDestroyLooseParts(ReadOnlySpan<int> partIndices)
+        {
+            if (partIndices.Length == 0 || _parts.Count == 0) return;
+            Span<int> sorted = partIndices.Length <= 32 ? stackalloc int[partIndices.Length] : new int[partIndices.Length];
+            int count = 0;
+            for (int i = 0; i < partIndices.Length; i++)
+            {
+                int idx = partIndices[i];
+                if ((uint)idx >= (uint)_parts.Count) continue;
+                bool dup = false;
+                for (int k = 0; k < count; k++)
+                {
+                    if (sorted[k] == idx) { dup = true; break; }
+                }
+                if (!dup) sorted[count++] = idx;
+            }
+            // Buyukten kucuge sirala ki RemoveAt sirasinda indeksler kaymasin
+            for (int i = 0; i < count - 1; i++)
+            for (int j = i + 1; j < count; j++)
+            {
+                if (sorted[j] > sorted[i])
+                {
+                    int tmp = sorted[i];
+                    sorted[i] = sorted[j];
+                    sorted[j] = tmp;
+                }
+            }
+            for (int i = 0; i < count; i++)
+            {
+                int idx = sorted[i];
+                WorldLoosePartInstance inst = _parts[idx];
+                if (inst.VisualGo != null) UnityEngine.Object.Destroy(inst.VisualGo);
+                _parts.RemoveAt(idx);
             }
         }
 
@@ -3003,7 +3116,7 @@ namespace Stratocraft.Character
                 _sharedGhostHologramMaterial.renderQueue = (int)RenderQueue.Transparent + 20;
             }
 
-            Color c = new Color(tint.r / 255f, tint.g / 255f, tint.b / 255f, Mathf.Clamp(tint.a / 255f, 0.50f, 0.64f));
+            Color c = new Color(tint.r / 255f, tint.g / 255f, tint.b / 255f, Mathf.Clamp(tint.a / 255f, 0.34f, 0.44f));
             if (_sharedGhostHologramMaterial.HasProperty("_GhostTint"))
             {
                 _sharedGhostHologramMaterial.SetColor("_GhostTint", c);
@@ -3014,7 +3127,7 @@ namespace Stratocraft.Character
             }
             if (_sharedGhostHologramMaterial.HasProperty("_NaturalPreserveWeight"))
             {
-                _sharedGhostHologramMaterial.SetFloat("_NaturalPreserveWeight", 0.70f);
+                _sharedGhostHologramMaterial.SetFloat("_NaturalPreserveWeight", 0.42f);
             }
             if (_sharedGhostHologramMaterial.HasProperty("_BaseColor"))
             {
@@ -3707,6 +3820,80 @@ namespace Stratocraft.Character
             IsModularBuildModeActive = false;
             HasValidGhostPlacement = false;
             return was;
+        }
+
+        public bool HasNearestPlayerUnifiedNode(Vector3 playerPos, out string roleLabel)
+        {
+            roleLabel = string.Empty;
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            float bestDistSq = 4.8f * 4.8f;
+            bool found = false;
+            StructuralElementRole bestRole = StructuralElementRole.StonePlinthFoundation;
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly StructuralNode64 n = ref span[i];
+                if (n.NodeId == 0u ||
+                    n.CollapseState == StructureCollapseState.Collapsed ||
+                    n.CollapseState == StructureCollapseState.DetachedInstantFall)
+                {
+                    continue;
+                }
+
+                float dx = n.PosX - playerPos.X;
+                float dy = n.PosY - (playerPos.Y + 0.8f);
+                float dz = n.PosZ - playerPos.Z;
+                float dSq = dx * dx + dy * dy + dz * dz;
+                if (dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    bestRole = n.Role;
+                    found = true;
+                }
+            }
+
+            if (found) roleLabel = bestRole.ToString();
+            return found;
+        }
+
+        /// <summary>
+        /// [Shift+E] ile oyuncunun [T] menusunden yerlestirdigi herhangi bir birlesik yapi parcasini (duvar, temel, kiris, cati vb.) temizce soker.
+        /// </summary>
+        public bool TryDismantleNearestPlayerUnifiedNode(Vector3 playerPos, out string feedback)
+        {
+            feedback = string.Empty;
+            ReadOnlySpan<StructuralNode64> span = UnifiedGraphSolver.NodesSpan;
+            uint bestId = 0u;
+            float bestDistSq = 4.2f * 4.2f;
+            StructuralElementRole bestRole = StructuralElementRole.StonePlinthFoundation;
+
+            for (int i = 0; i < span.Length; i++)
+            {
+                ref readonly StructuralNode64 n = ref span[i];
+                if (n.NodeId == 0u ||
+                    n.CollapseState == StructureCollapseState.Collapsed ||
+                    n.CollapseState == StructureCollapseState.DetachedInstantFall)
+                {
+                    continue;
+                }
+
+                float dx = n.PosX - playerPos.X;
+                float dy = n.PosY - (playerPos.Y + 0.8f);
+                float dz = n.PosZ - playerPos.Z;
+                float dSq = dx * dx + dy * dy + dz * dz;
+                if (dSq < bestDistSq)
+                {
+                    bestDistSq = dSq;
+                    bestId = n.NodeId;
+                    bestRole = n.Role;
+                }
+            }
+
+            if (bestId == 0u) return false;
+            if (!UnifiedGraphSolver.RemoveNodeAndRedistribute(bestId, out _)) return false;
+
+            feedback = $"♻️ Yapı parçası ({bestRole}) [Shift+E] ile sökülüp kaldırıldı!";
+            return true;
         }
 
         public void NotifyHotbarSlotChanged(bool newSlotIsStoneHammer)

@@ -1539,6 +1539,7 @@ namespace Stratocraft.Character
             public int RemainingSegments;
             public int InitialSegments;
             public float SegmentLengthMeters;
+            public float ExactLengthMeters;
             public Vector3 TrunkDirection;
             public float CurrentDamage;
             public float VerticalVelocity;
@@ -1586,6 +1587,55 @@ namespace Stratocraft.Character
         public Vector3 PreferredStrikeDirectionXZ { get; set; } = Vector3.forward;
         public int ActiveFallingClusterCount => _activeClusterCount;
         public int ActiveFallenTreeLogCount => _fallenTreeLogs.Count;
+
+        /// <summary>
+        /// Devrilen gercek agac govdeleriyle oyuncu kapsulu carpisma cozucusu (artik devrik agacin icinden gecilmez!).
+        /// </summary>
+        public void ResolvePlayerFallenTreeCollision(ref Vector3 playerPos, float playerRadius, float playerHeight)
+        {
+            if (_fallenTreeLogs.Count == 0) return;
+            for (int i = 0; i < _fallenTreeLogs.Count; i++)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (log.LogObject == null || log.RemainingSegments <= 0) continue;
+
+                Vector3 center = log.LogObject.transform.position;
+                Vector3 axis = log.TrunkDirection.sqrMagnitude > 1e-4f ? log.TrunkDirection.normalized : log.LogObject.transform.up;
+                float halfLen = Mathf.Max(0.6f, log.RemainingSegments * Mathf.Max(0.8f, log.SegmentLengthMeters) * 0.5f);
+                float logRadius = Mathf.Clamp(log.DiameterMeters * 0.5f, 0.24f, 0.45f);
+
+                // Oyuncu kapsul merkezini (bel hizasi) kutuk dogru parcasina izdusur
+                Vector3 pMid = playerPos + Vector3.up * Mathf.Min(0.65f, playerHeight * 0.4f);
+                Vector3 rel = pMid - center;
+                float proj = Mathf.Clamp(Vector3.Dot(rel, axis), -halfLen, halfLen);
+                Vector3 closest = center + axis * proj;
+
+                // Oyuncu kutugun ustundeyse ustunde durabilir
+                if (playerPos.y >= closest.y + logRadius * 0.65f && playerPos.y <= closest.y + logRadius + 0.35f)
+                {
+                    float dxzSq = (playerPos.x - closest.x) * (playerPos.x - closest.x) + (playerPos.z - closest.z) * (playerPos.z - closest.z);
+                    if (dxzSq <= (logRadius + playerRadius * 0.5f) * (logRadius + playerRadius * 0.5f))
+                    {
+                        playerPos.y = Mathf.Max(playerPos.y, closest.y + logRadius);
+                        continue;
+                    }
+                }
+
+                // Dikey ortusme yoksa atla
+                if (playerPos.y > closest.y + logRadius + 0.1f || playerPos.y + playerHeight < closest.y - logRadius) continue;
+
+                Vector2 dXZ = new Vector2(playerPos.x - closest.x, playerPos.z - closest.z);
+                float dist = dXZ.magnitude;
+                float minDist = logRadius + playerRadius;
+                if (dist < minDist)
+                {
+                    Vector2 pushDir = dist > 1e-4f ? (dXZ / dist) : new Vector2(1f, 0f);
+                    float push = minDist - dist;
+                    playerPos.x += pushDir.x * push;
+                    playerPos.z += pushDir.y * push;
+                }
+            }
+        }
         public float LastImpactFractureRatio { get; private set; }
         public int LastPancakeBreachedBlocksCount { get; private set; }
 
@@ -2679,6 +2729,14 @@ namespace Stratocraft.Character
             if (hitIndex < 0) return false;
 
             FallenTreeLogInstance target = _fallenTreeLogs[hitIndex];
+            if (target.LogObject != null)
+            {
+                var srcMr = target.LogObject.GetComponent<MeshRenderer>();
+                if (srcMr != null && srcMr.sharedMaterial != null)
+                {
+                    DefaultVoxelMaterial = srcMr.sharedMaterial;
+                }
+            }
             target.CurrentDamage += chopPower;
             LastLogChopHitPoint = hitPoint;
             LastLogChopMaterialId = target.WoodMaterialId != 0 ? target.WoodMaterialId : MaterialIdCatalog.OakWood;
@@ -2770,46 +2828,46 @@ namespace Stratocraft.Character
                 return true;
             }
 
-            // KM-1.3: Vurulan noktadan kalici 2 ayri tek-parca kutuge bolme (temiz ayirma boslugu +/-0.18m ile ic ice binmez!)
+            // KM-1.3: Vurulan noktadan kalici 2 ayri tek-parca kutuge bolme (ONCE listeden cikar ki index kaymasiyla kutuk silinmesin!)
             int baseSegs = Mathf.Clamp(Mathf.RoundToInt(t * target.RemainingSegments), 1, target.RemainingSegments - 1);
             int tipSegs = target.RemainingSegments - baseSegs;
-            const float cutSepHalfM = 0.18f;
+            const float cutSepHalfM = 0.24f;
+            Quaternion origRot = target.LogObject != null ? target.LogObject.transform.rotation : Quaternion.identity;
 
             if (baseSegs <= 2 && tipSegs <= 2)
             {
-                Vector3 basePos = pBase + u * (baseSegs * target.SegmentLengthMeters * 0.5f) - u * cutSepHalfM;
-                Vector3 tipPos = pTip - u * (tipSegs * target.SegmentLengthMeters * 0.5f) + u * cutSepHalfM;
-                SpawnBuckedTimberLog(basePos, target.WoodMaterialId, target.TrunkDirection);
-                SpawnBuckedTimberLog(tipPos, target.WoodMaterialId, target.TrunkDirection);
                 if (target.LogObject != null) UnityEngine.Object.Destroy(target.LogObject);
                 _fallenTreeLogs.RemoveAt(hitIndex);
-                feedback = $"KÜTÜK VURULAN NOKTADAN İKİYE BÖLÜNDÜ! ({baseSegs}m + {tipSegs}m — Omuzlamak için [E]).";
+                Vector3 basePos = pBase + u * (baseSegs * target.SegmentLengthMeters * 0.5f) - u * cutSepHalfM;
+                Vector3 tipPos = pTip - u * (tipSegs * target.SegmentLengthMeters * 0.5f) + u * cutSepHalfM;
+                SpawnBuckedTimberLog(basePos, target.WoodMaterialId, target.TrunkDirection, DefaultVoxelMaterial);
+                SpawnBuckedTimberLog(tipPos, target.WoodMaterialId, target.TrunkDirection, DefaultVoxelMaterial);
+                feedback = $"🪓 KÜTÜK VURDUĞUN YERDEN İKİ AYRI PARÇAYA AYRILDI! ({baseSegs}m + {tipSegs}m — [E] ile omuzlayıp götürebilirsin!).";
             }
             else if (baseSegs <= 2)
             {
-                Vector3 buckedBasePos = pBase + u * (baseSegs * target.SegmentLengthMeters * 0.5f) - u * cutSepHalfM;
-                SpawnBuckedTimberLog(buckedBasePos, target.WoodMaterialId, target.TrunkDirection);
-
                 float newLen = tipSegs * target.SegmentLengthMeters;
                 Vector3 newCenter = pTip - u * (newLen * 0.5f) + u * cutSepHalfM;
                 if (target.LogObject != null) target.LogObject.transform.position = newCenter;
                 RebuildLogMeshAndCollider(target, tipSegs);
-                feedback = $"KÖK TARAFINDAN KESİLDİ! ({baseSegs}m omuzlanabilir kütük ayrıldı | Kalan tam kütük: {tipSegs}m).";
+
+                Vector3 buckedBasePos = pBase + u * (baseSegs * target.SegmentLengthMeters * 0.5f) - u * cutSepHalfM;
+                SpawnBuckedTimberLog(buckedBasePos, target.WoodMaterialId, target.TrunkDirection, DefaultVoxelMaterial);
+                feedback = $"🪓 KÖK TARAFINDAN KESİLDİ! ({baseSegs}m ayrı kütük [E] ile taşınabilir | Kalan gövde: {tipSegs}m).";
             }
             else if (tipSegs <= 2)
             {
-                Vector3 buckedTipPos = pTip - u * (tipSegs * target.SegmentLengthMeters * 0.5f) + u * cutSepHalfM;
-                SpawnBuckedTimberLog(buckedTipPos, target.WoodMaterialId, target.TrunkDirection);
-
                 float newLen = baseSegs * target.SegmentLengthMeters;
                 Vector3 newCenter = pBase + u * (newLen * 0.5f) - u * cutSepHalfM;
                 if (target.LogObject != null) target.LogObject.transform.position = newCenter;
                 RebuildLogMeshAndCollider(target, baseSegs);
-                feedback = $"UÇ TARAFINDAN KESİLDİ! ({tipSegs}m omuzlanabilir kütük ayrıldı | Kalan tam kütük: {baseSegs}m).";
+
+                Vector3 buckedTipPos = pTip - u * (tipSegs * target.SegmentLengthMeters * 0.5f) + u * cutSepHalfM;
+                SpawnBuckedTimberLog(buckedTipPos, target.WoodMaterialId, target.TrunkDirection, DefaultVoxelMaterial);
+                feedback = $"🪓 UÇ TARAFINDAN KESİLDİ! ({tipSegs}m ayrı kütük [E] ile taşınabilir | Kalan gövde: {baseSegs}m).";
             }
             else
             {
-                // Her iki parca da >= 3m tam boy kutuk olarak kalir (Log Arch / El Arabasi ile tasinabilir!)
                 float baseLen = baseSegs * target.SegmentLengthMeters;
                 Vector3 newBaseCenter = pBase + u * (baseLen * 0.5f) - u * cutSepHalfM;
                 if (target.LogObject != null) target.LogObject.transform.position = newBaseCenter;
@@ -2817,8 +2875,8 @@ namespace Stratocraft.Character
 
                 float tipLen = tipSegs * target.SegmentLengthMeters;
                 Vector3 newTipCenter = pTip - u * (tipLen * 0.5f) + u * cutSepHalfM;
-                SpawnPartialFallenTreeLog(newTipCenter, target.LogObject != null ? target.LogObject.transform.rotation : Quaternion.identity, target.WoodMaterialId, tipSegs, target.TrunkDirection);
-                feedback = $"TAM KÜTÜK İKİ BAĞIMSIZ PARÇAYA BÖLÜNDÜ! ({baseSegs}m ve {tipSegs}m — Kütük Arabası ile taşınabilir).";
+                SpawnPartialFallenTreeLog(newTipCenter, origRot, target.WoodMaterialId, tipSegs, target.TrunkDirection);
+                feedback = $"🪓 GÖVDE TAM VURDUĞUN YERDEN İKİ BAĞIMSIZ KÜTÜĞE AYRILDI! ({baseSegs}m + {tipSegs}m — <=3m ise [E] Omuzla, >3m ise Arabayla [E] Yükle!).";
             }
 
             uint splitPid = target.PieceId != 0 ? target.PieceId : ++_nextRigidTimberPieceId;
@@ -2855,15 +2913,73 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// Yerde yatan boylanmis bir Agir Kutuk (~2m, ~32 kg) arar; oyuncu bakip [E] bastiginda omuza alinmak uzere nesneyi kaldirir.
+        /// Faz M1: Oyuncu elinde Balta varken yerdeki devrik agaca baktiginda nisangahin tam hangi metreden kesecegini olcer.
+        /// </summary>
+        public bool TryInspectAimedFallenLogCutRuler(
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float maxDistance,
+            out float leftLenM,
+            out float rightLenM,
+            out float totalLenM)
+        {
+            leftLenM = 0f;
+            rightLenM = 0f;
+            totalLenM = 0f;
+            if (_fallenTreeLogs.Count == 0) return false;
+
+            int bestIdx = -1;
+            Vector3 bestHit = Vector3.zero;
+            float bestDist = maxDistance;
+            Ray ray = new Ray(rayOrigin, rayDirection);
+
+            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (log.LogObject == null || log.Collider == null) continue;
+                if (log.Collider.Raycast(ray, out RaycastHit hit, bestDist))
+                {
+                    bestDist = hit.distance;
+                    bestHit = hit.point;
+                    bestIdx = i;
+                }
+            }
+
+            if (bestIdx < 0) return false;
+            FallenTreeLogInstance target = _fallenTreeLogs[bestIdx];
+            Vector3 u = target.LogObject != null ? target.LogObject.transform.up.normalized : Vector3.up;
+            Vector3 pCenter = target.LogObject != null ? target.LogObject.transform.position : bestHit;
+            totalLenM = target.ExactLengthMeters > 0.2f
+                ? target.ExactLengthMeters
+                : Mathf.Max(1.0f, target.RemainingSegments * Mathf.Max(0.5f, target.SegmentLengthMeters));
+            Vector3 pBase = pCenter - u * (totalLenM * 0.5f);
+            float distAlong = Mathf.Clamp(Vector3.Dot(bestHit - pBase, u), 0.10f, Mathf.Max(0.20f, totalLenM - 0.10f));
+            leftLenM = distAlong;
+            rightLenM = Mathf.Max(0f, totalLenM - distAlong);
+            return true;
+        }
+
+        /// <summary>
+        /// Yerde yatan boylanmis bir Agir Kutuk (<= 4.2m) arar; oyuncu bakip [E] bastiginda omuza alinmak uzere nesneyi kaldirir.
         /// </summary>
         public bool TryPickupBuckedTimberLog(
             Vector3 rayOrigin,
             Vector3 rayDirection,
             float maxDistance,
             out byte woodMat)
+            => TryPickupBuckedTimberLogExact(rayOrigin, rayDirection, maxDistance, out woodMat, out _, out _);
+
+        public bool TryPickupBuckedTimberLogExact(
+            Vector3 rayOrigin,
+            Vector3 rayDirection,
+            float maxDistance,
+            out byte woodMat,
+            out float exactLengthM,
+            out float diameterM)
         {
             woodMat = MaterialIdCatalog.Air;
+            exactLengthM = 2.0f;
+            diameterM = 0.42f;
             if (_fallenTreeLogs.Count == 0) return false;
 
             int bestIdx = -1;
@@ -2872,7 +2988,8 @@ namespace Stratocraft.Character
             for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
             {
                 FallenTreeLogInstance log = _fallenTreeLogs[i];
-                if (!log.IsBuckedTimberLog || log.LogObject == null || log.Collider == null) continue;
+                float effLen = log.ExactLengthMeters > 0.2f ? log.ExactLengthMeters : log.RemainingSegments * Mathf.Max(0.5f, log.SegmentLengthMeters);
+                if ((!log.IsBuckedTimberLog && effLen > 4.25f) || log.LogObject == null || log.Collider == null) continue;
 
                 Ray ray = new Ray(rayOrigin, rayDirection);
                 if (log.Collider.Raycast(ray, out RaycastHit hit, bestDist))
@@ -2895,7 +3012,11 @@ namespace Stratocraft.Character
             if (bestIdx < 0) return false;
 
             FallenTreeLogInstance target = _fallenTreeLogs[bestIdx];
-            woodMat = target.WoodMaterialId;
+            woodMat = target.WoodMaterialId != 0 ? target.WoodMaterialId : MaterialIdCatalog.OakWood;
+            exactLengthM = target.ExactLengthMeters > 0.2f
+                ? target.ExactLengthMeters
+                : Mathf.Clamp(target.RemainingSegments * Mathf.Max(0.5f, target.SegmentLengthMeters), 1.0f, 4.25f);
+            diameterM = target.DiameterMeters > 0.1f ? target.DiameterMeters : 0.42f;
             if (target.LogObject != null)
             {
                 UnityEngine.Object.Destroy(target.LogObject);
@@ -2905,8 +3026,82 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// KM-2.2: Yerde yatan tam boy (2m..18m) bir kutugu KESMEDEN Kutuk El Arabasina (Log Arch) baglamak uzere ayirir.
+        /// KM-2.2: Atomik yukleme icin once en yakin devrik kutugu silmeden kontrol eder (tam float boy destekli, 0 kutuk kaybi!).
         /// </summary>
+        public bool TryPeekFallenTreeLogForCart(
+            Vector3 cartPosition,
+            float maxSearchRadius,
+            out int foundIndex,
+            out byte woodMat,
+            out int segments,
+            out float diameterM,
+            out uint pieceId)
+            => TryPeekFallenTreeLogForCartExact(cartPosition, maxSearchRadius, out foundIndex, out woodMat, out segments, out _, out diameterM, out pieceId);
+
+        public bool TryPeekFallenTreeLogForCartExact(
+            Vector3 cartPosition,
+            float maxSearchRadius,
+            out int foundIndex,
+            out byte woodMat,
+            out int segments,
+            out float exactLengthM,
+            out float diameterM,
+            out uint pieceId)
+        {
+            foundIndex = -1;
+            woodMat = MaterialIdCatalog.Air;
+            segments = 0;
+            exactLengthM = 0f;
+            diameterM = 0.40f;
+            pieceId = 0;
+
+            int bestIdx = -1;
+            float bestScore = float.MaxValue;
+            float maxDistSq = maxSearchRadius * maxSearchRadius;
+            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
+            {
+                FallenTreeLogInstance log = _fallenTreeLogs[i];
+                if (log.LogObject == null) continue;
+                float dSq = (log.LogObject.transform.position - cartPosition).sqrMagnitude;
+                if (dSq > maxDistSq) continue;
+
+                float candLen = log.ExactLengthMeters > 0.2f
+                    ? log.ExactLengthMeters
+                    : (log.RemainingSegments * Mathf.Max(0.5f, log.SegmentLengthMeters));
+                // El arabasi omza sigmayan (> 3.2m) tam boy kutukler icindir; yaninda kisa kesim artigi olsa bile uzun kutuge oncelik ver!
+                float dist = Mathf.Sqrt(dSq);
+                float score = dist - (candLen >= 3.2f ? 3.4f : 0f);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+
+            if (bestIdx < 0) return false;
+
+            FallenTreeLogInstance chosen = _fallenTreeLogs[bestIdx];
+            foundIndex = bestIdx;
+            woodMat = chosen.WoodMaterialId != 0 ? chosen.WoodMaterialId : MaterialIdCatalog.OakWood;
+            exactLengthM = chosen.ExactLengthMeters > 0.2f
+                ? Mathf.Clamp(chosen.ExactLengthMeters, 1.0f, 18.0f)
+                : Mathf.Clamp(chosen.RemainingSegments * Mathf.Max(0.5f, chosen.SegmentLengthMeters), 1.5f, 18.0f);
+            segments = Mathf.Clamp(Mathf.RoundToInt(exactLengthM), 2, 18);
+            diameterM = chosen.DiameterMeters > 0.1f ? chosen.DiameterMeters : 0.40f;
+            pieceId = chosen.PieceId != 0 ? chosen.PieceId : ++_nextRigidTimberPieceId;
+            return true;
+        }
+
+        public void CommitDetachFallenTreeLogForCart(int index)
+        {
+            if ((uint)index >= (uint)_fallenTreeLogs.Count) return;
+            if (_fallenTreeLogs[index].LogObject != null)
+            {
+                UnityEngine.Object.Destroy(_fallenTreeLogs[index].LogObject);
+            }
+            _fallenTreeLogs.RemoveAt(index);
+        }
+
         public bool TryDetachFallenTreeLogForCart(
             Vector3 cartPosition,
             float maxSearchRadius,
@@ -2915,82 +3110,65 @@ namespace Stratocraft.Character
             out float diameterM,
             out uint pieceId)
         {
-            woodMat = MaterialIdCatalog.Air;
-            segments = 0;
-            diameterM = 0.34f;
-            pieceId = 0;
-
-            int bestIdx = -1;
-            float bestDistSq = maxSearchRadius * maxSearchRadius;
-            for (int i = _fallenTreeLogs.Count - 1; i >= 0; i--)
-            {
-                FallenTreeLogInstance log = _fallenTreeLogs[i];
-                if (log.LogObject == null) continue;
-                float dSq = (log.LogObject.transform.position - cartPosition).sqrMagnitude;
-                if (dSq <= bestDistSq)
-                {
-                    bestDistSq = dSq;
-                    bestIdx = i;
-                }
-            }
-
-            if (bestIdx < 0) return false;
-
-            FallenTreeLogInstance chosen = _fallenTreeLogs[bestIdx];
-            woodMat = chosen.WoodMaterialId;
-            segments = Mathf.Clamp(chosen.RemainingSegments, 2, 18);
-            diameterM = chosen.DiameterMeters > 0.1f ? chosen.DiameterMeters : 0.34f;
-            pieceId = chosen.PieceId != 0 ? chosen.PieceId : ++_nextRigidTimberPieceId;
-
-            if (chosen.LogObject != null)
-            {
-                UnityEngine.Object.Destroy(chosen.LogObject);
-            }
-            _fallenTreeLogs.RemoveAt(bestIdx);
+            if (!TryPeekFallenTreeLogForCart(cartPosition, maxSearchRadius, out int idx, out woodMat, out segments, out diameterM, out pieceId))
+                return false;
+            CommitDetachFallenTreeLogForCart(idx);
             return true;
         }
 
         /// <summary>
-        /// KM-2.2: Kutuk El Arabasindan indirilen tam boy kutugu (2m..18m) hedef noktada yere serbest tek-parca kutuk olarak birakir.
+        /// KM-2.2: Kutuk El Arabasindan indirilen veya oluk boyuna kesildikten sonra artan kutugu TAM FLOAT METRE boyuyla yere birakir.
         /// </summary>
         public void SpawnFullLogFromCart(
             Vector3 dropCenter,
             Vector3 forwardDirXZ,
             byte woodMat,
             int segments)
+            => SpawnExactLengthFallenLog(dropCenter, forwardDirXZ, woodMat, Mathf.Max(1.0f, segments), 0.42f);
+
+        public void SpawnExactLengthFallenLog(
+            Vector3 dropCenter,
+            Vector3 forwardDirXZ,
+            byte woodMat,
+            float exactLengthM,
+            float diameterM = 0.42f,
+            Material? sharedMat = null)
         {
+            if (sharedMat != null) DefaultVoxelMaterial = sharedMat;
             Vector3 dir = new Vector3(forwardDirXZ.x, 0f, forwardDirXZ.z);
             if (dir.sqrMagnitude < 1e-4f) dir = Vector3.forward;
             dir.Normalize();
 
-            if (segments <= 2)
-            {
-                SpawnBuckedTimberLog(dropCenter, woodMat, dir);
-            }
-            else
-            {
-                Quaternion rot = Quaternion.FromToRotation(Vector3.up, dir);
-                SpawnPartialFallenTreeLog(dropCenter, rot, woodMat, Mathf.Clamp(segments, 2, 18), dir);
-            }
+            float clampedLen = Mathf.Clamp(exactLengthM, 0.85f, 18.0f);
+            int segs = Mathf.Clamp(Mathf.RoundToInt(clampedLen), 1, 18);
+            Quaternion rot = Quaternion.FromToRotation(Vector3.up, dir);
+            SpawnPartialFallenTreeLog(dropCenter, rot, woodMat, segs, dir, clampedLen, diameterM);
         }
 
         /// <summary>
         /// Oyuncu omuzundaki Agir Kutugu [E], [G] veya [X] ile onune yere birakir.
         /// </summary>
-        public void SpawnDroppedTimberLogFromShoulder(Vector3 playerPos, Vector3 playerForward, byte woodMat, Material? sharedMat = null)
+        public void SpawnDroppedTimberLogFromShoulder(Vector3 playerPos, Vector3 playerForward, byte woodMat, Material? sharedMat = null, float exactLengthM = 2.0f)
         {
             Vector3 fwdXZ = new Vector3(playerForward.x, 0f, playerForward.z);
             if (fwdXZ.sqrMagnitude < 0.01f) fwdXZ = Vector3.forward;
             fwdXZ.Normalize();
 
             Vector3 spawnPos = playerPos + fwdXZ * 1.25f + new Vector3(0f, 0.45f, 0f);
-            SpawnBuckedTimberLog(spawnPos, woodMat, fwdXZ, sharedMat);
+            if (exactLengthM > 2.35f)
+            {
+                SpawnExactLengthFallenLog(spawnPos, fwdXZ, woodMat, exactLengthM, 0.42f, sharedMat);
+            }
+            else
+            {
+                SpawnBuckedTimberLog(spawnPos, woodMat, fwdXZ, sharedMat);
+            }
         }
 
-        private void SpawnPartialFallenTreeLog(Vector3 centerPos, Quaternion rot, byte woodMat, int segments, Vector3 trunkDir)
+        private void SpawnPartialFallenTreeLog(Vector3 centerPos, Quaternion rot, byte woodMat, int segments, Vector3 trunkDir, float exactLengthOverride = 0f, float diameterM = 0.42f)
         {
             if (woodMat == MaterialIdCatalog.Air) woodMat = MaterialIdCatalog.OakWood;
-            if (_fallenTreeLogs.Count >= 24)
+            if (_fallenTreeLogs.Count >= 64)
             {
                 if (_fallenTreeLogs[0].LogObject != null)
                 {
@@ -2999,10 +3177,13 @@ namespace Stratocraft.Character
                 _fallenTreeLogs.RemoveAt(0);
             }
 
+            int safeSegs = Mathf.Max(1, segments);
+            float realExactLen = exactLengthOverride > 0.2f ? exactLengthOverride : safeSegs * 1.0f;
+
             _proxyTris.Clear();
-            for (int s = 0; s < segments; s++)
+            for (int s = 0; s < safeSegs; s++)
             {
-                float offsetY = (s - (segments - 1) * 0.5f);
+                float offsetY = (s - (safeSegs - 1) * 0.5f);
                 HybridSurfaceNetsAndShapeMesher.EmitArchitecturalShape(
                     new System.Numerics.Vector3(-0.5f, offsetY - 0.5f, -0.5f),
                     woodMat,
@@ -3021,12 +3202,13 @@ namespace Stratocraft.Character
 
             logGo.transform.position = centerPos;
             logGo.transform.rotation = rot;
+            logGo.transform.localScale = new Vector3(1f, realExactLen / safeSegs, 1f);
 
             BoxCollider col = logGo.AddComponent<BoxCollider>();
-            col.size = new Vector3(1.15f, segments * 1.05f, 1.15f);
+            col.size = new Vector3(1.15f, safeSegs * 1.02f, 1.15f);
 
             Rigidbody rb = logGo.AddComponent<Rigidbody>();
-            rb.mass = segments * 85f;
+            rb.mass = realExactLen * 85f;
             rb.useGravity = false;
             rb.isKinematic = true;
 
@@ -3036,9 +3218,12 @@ namespace Stratocraft.Character
                 Body = rb,
                 Collider = col,
                 WoodMaterialId = woodMat,
-                RemainingSegments = segments,
-                InitialSegments = segments,
-                SegmentLengthMeters = 1.0f,
+                DiameterMeters = Mathf.Clamp(diameterM, 0.34f, 0.56f),
+                RemainingSegments = safeSegs,
+                InitialSegments = safeSegs,
+                SegmentLengthMeters = realExactLen / safeSegs,
+                ExactLengthMeters = realExactLen,
+                IsBuckedTimberLog = realExactLen <= 2.35f,
                 TrunkDirection = trunkDir,
                 CurrentDamage = 0f,
                 VerticalVelocity = 0f
@@ -3094,7 +3279,7 @@ namespace Stratocraft.Character
             if (woodMat == MaterialIdCatalog.Air) woodMat = MaterialIdCatalog.OakWood;
             if (sharedMat != null) DefaultVoxelMaterial = sharedMat;
 
-            if (_fallenTreeLogs.Count >= 18)
+            if (_fallenTreeLogs.Count >= 64)
             {
                 if (_fallenTreeLogs[0].LogObject != null)
                 {

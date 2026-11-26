@@ -28,6 +28,7 @@ namespace Stratocraft.Character
             public GameObject? BoundLogVisualGo;
             public byte BoundWoodMat;
             public int BoundSegments;
+            public float BoundExactLengthM;
             public Vector3 Position;
             public float VerticalVelocity;
             public float YawDeg;
@@ -45,13 +46,15 @@ namespace Stratocraft.Character
         public bool TryPeekBoundLog(out float lengthM, out float diameterM, out byte woodMat)
         {
             lengthM = 0f;
-            diameterM = 0.54f;
+            diameterM = 0.42f;
             woodMat = MaterialIdCatalog.OakWood;
             if (!IsPullingCart) return false;
             LogArchCartRuntime cart = _carts[_activePullingCartIndex];
             if (cart.State.HasBoundLog == 0) return false;
-            lengthM = Mathf.Clamp(cart.State.BoundLogLengthM, 2.0f, 18.0f);
-            diameterM = 0.54f;
+            lengthM = cart.BoundExactLengthM > 0.2f
+                ? Mathf.Clamp(cart.BoundExactLengthM, 0.85f, 18.0f)
+                : Mathf.Clamp(cart.State.BoundLogLengthM, 1.0f, 18.0f);
+            diameterM = cart.State.BoundLogDiameterM > 0.1f ? Mathf.Clamp(cart.State.BoundLogDiameterM, 0.34f, 0.56f) : 0.42f;
             woodMat = cart.BoundWoodMat != 0 ? cart.BoundWoodMat : MaterialIdCatalog.OakWood;
             return true;
         }
@@ -62,6 +65,7 @@ namespace Stratocraft.Character
             LogArchCartRuntime cart = _carts[_activePullingCartIndex];
             cart.State = LogArchCartState.CreateEmpty(cart.State.CartId);
             cart.BoundSegments = 0;
+            cart.BoundExactLengthM = 0f;
             if (cart.BoundLogVisualGo != null)
             {
                 UnityEngine.Object.Destroy(cart.BoundLogVisualGo);
@@ -91,6 +95,25 @@ namespace Stratocraft.Character
                 }
                 return "🛞 KÜTÜK ARABASI (BOŞ) | Tam kütüğün yanına gelip [E] ile Bağla | [Q] Arabayı Bırak";
             }
+        }
+
+        public bool TryDismantleNearestIdleCart(Vector3 playerPos, out string feedback)
+        {
+            feedback = string.Empty;
+            for (int i = 0; i < _carts.Count; i++)
+            {
+                if (i == _activePullingCartIndex) continue;
+                float dXZ = Vector2.Distance(new Vector2(_carts[i].Position.x, _carts[i].Position.z), new Vector2(playerPos.x, playerPos.z));
+                if (dXZ <= 3.5f && _carts[i].State.HasBoundLog == 0)
+                {
+                    if (_carts[i].RootGo != null) UnityEngine.Object.Destroy(_carts[i].RootGo);
+                    _carts.RemoveAt(i);
+                    if (_activePullingCartIndex > i) _activePullingCartIndex--;
+                    feedback = "♻️ Boş Kütük El Arabası sökülüp kaldırıldı!";
+                    return true;
+                }
+            }
+            return false;
         }
 
         public void DisposeAll()
@@ -158,6 +181,7 @@ namespace Stratocraft.Character
             Vector3 playerPos,
             Vector3 playerForwardXZ,
             Stage1StructuralCollapseBridge collapseBridge,
+            Stage1RigidTimberBridge? rigidTimberBridge,
             Material? sharedVoxelMat,
             out string feedback)
         {
@@ -169,28 +193,53 @@ namespace Stratocraft.Character
                 if (cart.State.HasBoundLog != 0)
                 {
                     Vector3 fwd = new Vector3(Mathf.Sin(cart.YawDeg * Mathf.Deg2Rad), 0f, Mathf.Cos(cart.YawDeg * Mathf.Deg2Rad));
-                    float logZOff = ComputeBoundLogLocalZOffset(cart.BoundSegments);
+                    float exactLen = cart.BoundExactLengthM > 0.2f ? cart.BoundExactLengthM : cart.BoundSegments;
+                    float logZOff = ComputeBoundLogLocalZOffset(Mathf.Max(1, Mathf.RoundToInt(exactLen)));
                     Vector3 dropCenter = cart.Position + fwd * logZOff;
                     dropCenter.y = cart.Position.y + 0.42f;
-                    collapseBridge.SpawnFullLogFromCart(dropCenter, fwd, cart.BoundWoodMat, cart.BoundSegments);
+                    collapseBridge.SpawnExactLengthFallenLog(dropCenter, fwd, cart.BoundWoodMat, exactLen, cart.State.BoundLogDiameterM, sharedVoxelMat);
                     if (cart.BoundLogVisualGo != null)
                     {
                         UnityEngine.Object.Destroy(cart.BoundLogVisualGo);
                         cart.BoundLogVisualGo = null;
                     }
+                    cart.BoundExactLengthM = 0f;
+                    cart.BoundSegments = 0;
                     LogArchCartPhysics.UnbindLog(ref cart.State);
-                    feedback = $"🪵 Tam boy kütük ({cart.BoundSegments}m) indirildi.";
+                    feedback = $"🪵 Kütük ({exactLen:F2}m) indirildi.";
                     return true;
                 }
 
-                if (collapseBridge.TryDetachFallenTreeLogForCart(
-                        cart.Position,
-                        maxSearchRadius: 4.5f,
-                        out byte woodMat,
-                        out int segments,
-                        out float diamM,
-                        out uint pieceId))
+                byte woodMat = 0;
+                int segments = 0;
+                float exactLoadLenM = 0f;
+                float diamM = 0.42f;
+                uint pieceId = 0;
+                int collapsePeekIdx = -1;
+                int rigidPeekIdx = -1;
+
+                bool fromCollapse = collapseBridge.TryPeekFallenTreeLogForCartExact(
+                    cart.Position,
+                    maxSearchRadius: 5.2f,
+                    out collapsePeekIdx,
+                    out woodMat,
+                    out segments,
+                    out exactLoadLenM,
+                    out diamM,
+                    out pieceId);
+                bool fromRigid = !fromCollapse && rigidTimberBridge != null && rigidTimberBridge.TryPeekFallenPieceForCartExact(
+                    cart.Position,
+                    maxSearchRadius: 5.2f,
+                    out rigidPeekIdx,
+                    out woodMat,
+                    out segments,
+                    out exactLoadLenM,
+                    out diamM,
+                    out pieceId);
+
+                if (fromCollapse || fromRigid)
                 {
+                    if (exactLoadLenM < 0.2f) exactLoadLenM = segments * 1.0f;
                     TimberWoodSpecies sp = woodMat == MaterialIdCatalog.Ironwood
                         ? TimberWoodSpecies.Ironwood
                         : (woodMat == MaterialIdCatalog.SpiritWood ? TimberWoodSpecies.Cedar : TimberWoodSpecies.Oak);
@@ -198,8 +247,8 @@ namespace Stratocraft.Character
                         pieceId: pieceId,
                         kind: RigidTimberPieceKind.Log,
                         species: sp,
-                        lengthM: segments * 1.0f,
-                        diameterM: diamM,
+                        lengthM: exactLoadLenM,
+                        diameterM: Mathf.Clamp(diamM, 0.34f, 0.52f),
                         position: System.Numerics.Vector3.Zero,
                         rotation: System.Numerics.Quaternion.Identity,
                         initialState: RigidTimberState.DynamicActive);
@@ -212,17 +261,28 @@ namespace Stratocraft.Character
                             out feedback,
                             RigidTimberPhysicsTraceRecorder.Shared))
                     {
+                        // ATOMIK ONAY: Yalnizca arabaya basariyla baglandiktan sonra sahnedeki kutugu sil (0 kutuk kaybi!)
+                        if (fromCollapse) collapseBridge.CommitDetachFallenTreeLogForCart(collapsePeekIdx);
+                        else if (fromRigid && rigidTimberBridge != null) rigidTimberBridge.CommitDetachFallenPieceForCart(rigidPeekIdx);
+
                         cart.BoundWoodMat = woodMat;
-                        cart.BoundSegments = segments;
-                        AttachBoundLogVisual(cart, woodMat, segments, sharedVoxelMat);
+                        cart.BoundSegments = Mathf.Max(1, segments);
+                        cart.BoundExactLengthM = exactLoadLenM;
+                        AttachBoundLogVisual(cart, woodMat, Mathf.Max(1, segments), sharedVoxelMat);
+                        if (cart.BoundLogVisualGo != null)
+                        {
+                            cart.BoundLogVisualGo.transform.localScale = new Vector3(1f, exactLoadLenM / Mathf.Max(1, segments), 1f);
+                        }
                         RigidTimberPhysicsTraceRecorder.Shared.FlushToJsonl(
                             System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "Logs"));
                         return true;
                     }
+                    // Kapasite asimi vb. olursa kutuk sahnede oldugu gibi kalir ve geri bildirim doner!
+                    return true;
                 }
 
-                feedback = "Yakında bağlanacak devrilmiş tam boy kütük yok (4.5m içinde olmalı).";
-                return true;
+                // Yakinda kutuk yoksa [E] tusunu YUTMA! Oyuncu yerdeki dal/tas/esyalari [E] ile rahatca toplayabilsin!
+                return false;
             }
 
             // Yakindaki kutuk arabasini tut (2B XZ mesafesi <= 3.8m, dikey <= 3.0m)
@@ -302,58 +362,62 @@ namespace Stratocraft.Character
             if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.forward;
             fwd.Normalize();
 
-            // Araba oyuncunun 2.45m arkasindan cekilir; oyuncu geri yururse araba icinden gecmez!
-            Vector3 targetXZ = playerPos - fwd * 2.45f;
-            Vector3 toTarget = new Vector3(targetXZ.x - cart.Position.x, 0f, targetXZ.z - cart.Position.z);
-            float distToPlayerXZ = new Vector2(playerPos.x - cart.Position.x, playerPos.z - cart.Position.z).magnitude;
-            float dist = toTarget.magnitude;
+            // GERCEK ROMORK / CEKME KOLU KINEMATIGI:
+            // Cekme kolunun ucu (+2.10m) oyuncunun ellerine kilitli kalir; dingil kol uzunlugu (2.10m) arkasindan
+            // dogal donus acisiyla kesintisiz takip eder (asla kopmaz, geride kalmaz!).
+            const float handleLen = 2.05f;
+            Vector3 handleTarget = playerPos - fwd * 0.25f;
+            Vector3 axleToHandle = new Vector3(handleTarget.x - cart.Position.x, 0f, handleTarget.z - cart.Position.z);
+            float curLen = axleToHandle.magnitude;
+            Vector3 pullDir = curLen > 0.05f ? (axleToHandle / curLen) : fwd;
 
-            float followRate = brakeHeld ? 1.5f : 7.0f;
+            Vector3 desiredAxleXZ = new Vector3(handleTarget.x - pullDir.x * handleLen, cart.Position.y, handleTarget.z - pullDir.z * handleLen);
+            Vector3 delta = new Vector3(desiredAxleXZ.x - cart.Position.x, 0f, desiredAxleXZ.z - cart.Position.z);
+            float stepMag = delta.magnitude;
+
             Vector3 nextPos = cart.Position;
-            float nextYaw = cart.YawDeg;
+            float nextYaw = Mathf.Atan2(pullDir.x, pullDir.z) * Mathf.Rad2Deg;
 
-            if (dist > 0.05f && distToPlayerXZ >= 2.25f)
+            if (stepMag > 0.005f)
             {
-                Vector3 move = toTarget * Mathf.Clamp01(followRate * dt);
+                float maxMove = brakeHeld ? (1.2f * dt) : Mathf.Max(stepMag, 12f * dt);
+                Vector3 move = stepMag > maxMove ? (delta / stepMag) * maxMove : delta;
                 Vector3 candPos = new Vector3(cart.Position.x + move.x, cart.Position.y, cart.Position.z + move.z);
-                float desiredYaw = Mathf.Atan2(playerPos.x - candPos.x, playerPos.z - candPos.z) * Mathf.Rad2Deg;
-                float candYaw = Mathf.LerpAngle(cart.YawDeg, desiredYaw, Mathf.Clamp01(6.0f * dt));
 
-                // Agac govdesi / duvar / kaya engeli kontrolu: engel varsa tepesine cikmaz, carpip takilir!
-                if (!IsCartBlockedByObstacle(worldChunks, candPos, candYaw, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
+                // Yalnizca gercek agac govdesi / dikey yapi engeli kontrolu (cimen yokuslar ASLA takilmaz!)
+                if (!IsCartBlockedByObstacle(worldChunks, candPos, nextYaw, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
                 {
                     nextPos = candPos;
-                    nextYaw = candYaw;
-                    float movedDist = move.magnitude;
-                    cart.WheelSpinDeg = (cart.WheelSpinDeg + (movedDist / 0.50f) * Mathf.Rad2Deg) % 360f;
+                    cart.WheelSpinDeg = (cart.WheelSpinDeg + (move.magnitude / 0.48f) * Mathf.Rad2Deg) % 360f;
                 }
                 else
                 {
-                    // Sadece X veya sadece Z kayma denemesi (duvar/agac kenarindan takilarak kayma)
                     Vector3 slideX = new Vector3(candPos.x, cart.Position.y, cart.Position.z);
                     Vector3 slideZ = new Vector3(cart.Position.x, cart.Position.y, candPos.z);
-                    if (!IsCartBlockedByObstacle(worldChunks, slideX, cart.YawDeg, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
-                    {
+                    if (!IsCartBlockedByObstacle(worldChunks, slideX, nextYaw, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
                         nextPos = slideX;
-                    }
-                    else if (!IsCartBlockedByObstacle(worldChunks, slideZ, cart.YawDeg, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
-                    {
+                    else if (!IsCartBlockedByObstacle(worldChunks, slideZ, nextYaw, cart.State.HasBoundLog != 0 ? cart.BoundSegments : 0))
                         nextPos = slideZ;
-                    }
                 }
             }
 
-            // Yalnizca gercek zemin yuksekligini oku (agac govdesi / duvar ASLA zemin sayilmaz!)
+            // 3 Noktali Tekerlek + Merkez Zemin Yuksekligi (egimli arazide tekerlek ASLA yere gomulmez!)
             float prevY = cart.Position.y;
-            float groundY = SampleTerrainY(worldChunks, nextPos.x, nextPos.z, prevY);
-            // Tek karede dikey sicrama limiti (en fazla 1.1m egim -> asla agac tepesine cikmaz!)
-            if (Mathf.Abs(groundY - prevY) <= 1.25f)
-            {
-                nextPos.y = Mathf.Lerp(prevY, groundY, Mathf.Clamp01(14f * dt));
-            }
+            float radY = nextYaw * Mathf.Deg2Rad;
+            Vector3 rightVec = new Vector3(Mathf.Cos(radY), 0f, -Mathf.Sin(radY));
+            float refY = Mathf.Max(prevY, playerPos.y) + 2.5f;
+            float yC = SampleTerrainY(worldChunks, nextPos.x, nextPos.z, refY);
+            float yL = SampleTerrainY(worldChunks, nextPos.x - rightVec.x * 0.78f, nextPos.z - rightVec.z * 0.78f, refY);
+            float yR = SampleTerrainY(worldChunks, nextPos.x + rightVec.x * 0.78f, nextPos.z + rightVec.z * 0.78f, refY);
+            float groundY = Mathf.Max(yC, Mathf.Max(yL, yR));
+            nextPos.y = Mathf.Lerp(prevY, groundY, Mathf.Clamp01(18f * dt));
 
-            float slopeSin = dist > 0.05f ? Mathf.Clamp((nextPos.y - prevY) / Mathf.Max(0.05f, dist), -0.6f, 0.6f) : 0f;
+            float slopeSin = stepMag > 0.02f ? Mathf.Clamp((nextPos.y - prevY) / Mathf.Max(0.05f, stepMag), -0.6f, 0.6f) : 0f;
             LogArchCartPhysics.RecomputeCompoundMassAndBalance(ref cart.State, slopeSin);
+            // Cekme kolunu oyuncunun bel/el yuksekligine gore hafifce eg (elde tutuyormus gibi gorunur!)
+            float handTargetY = playerPos.y + 0.92f;
+            float handleTipRestY = nextPos.y + 1.18f;
+            float visualHandlePitch = Mathf.Clamp((handleTipRestY - handTargetY) * 14f, -18f, 18f);
             cart.Position = nextPos;
             cart.YawDeg = nextYaw;
 
@@ -364,7 +428,7 @@ namespace Stratocraft.Character
             }
             if (cart.ChassisTr != null)
             {
-                cart.ChassisTr.localRotation = Quaternion.Euler(cart.State.PitchTiltDeg, 0f, 0f);
+                cart.ChassisTr.localRotation = Quaternion.Euler(cart.State.PitchTiltDeg + visualHandlePitch, 0f, 0f);
             }
             if (cart.LeftWheelTr != null)
             {
@@ -376,7 +440,7 @@ namespace Stratocraft.Character
             }
         }
 
-        private static bool IsTreeOrVerticalObstacleVoxel(uint raw)
+        internal static bool IsTreeOrVerticalObstacleVoxel(uint raw)
         {
             if (!Stage1PlayerMovementBridge.IsHardCollisionVoxelPure(raw)) return false;
             byte mat = VoxelBitUtility.GetMaterialId(raw);
@@ -400,8 +464,8 @@ namespace Stratocraft.Character
             float rad = yawDeg * Mathf.Deg2Rad;
             Vector3 fwd = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
             Vector3 right = new Vector3(fwd.z, 0f, -fwd.x);
-            int checkY1 = Mathf.FloorToInt(cartPos.y + 0.65f);
-            int checkY2 = Mathf.FloorToInt(cartPos.y + 1.35f);
+            int checkY1 = Mathf.FloorToInt(cartPos.y + 1.15f);
+            int checkY2 = Mathf.FloorToInt(cartPos.y + 1.85f);
 
             // Sasi sol/sag tekerlek ve merkez noktalarini kontrol et
             for (int side = -1; side <= 1; side++)
@@ -447,22 +511,31 @@ namespace Stratocraft.Character
             int lx = ix - (cx << 4);
             int lz = iz - (cz << 4);
             uint raw = voxels[(wy << 8) | (lz << 4) | lx];
-            return Stage1PlayerMovementBridge.IsHardCollisionVoxelPure(raw);
+            // Yalnizca agac govdeleri ve dikey yapilar arabayi durdurur; dogal cimen/toprak yokuslari ASLA durdurmaz!
+            return Stage1PlayerMovementBridge.IsHardCollisionVoxelPure(raw) && IsTreeOrVerticalObstacleVoxel(raw);
         }
 
-        private static float SampleTerrainY(Dictionary<(int cx, int cz), uint[]> worldChunks, float wx, float wz, float refY)
+        internal static float SampleTerrainY(Dictionary<(int cx, int cz), uint[]> worldChunks, float wx, float wz, float refY)
         {
+            if (worldChunks == null || worldChunks.Count == 0)
+            {
+                return Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            }
+
             int ix = Mathf.FloorToInt(wx);
             int iz = Mathf.FloorToInt(wz);
             int cx = ix >= 0 ? (ix >> 4) : ((ix - 15) >> 4);
             int cz = iz >= 0 ? (iz >> 4) : ((iz - 15) >> 4);
-            if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return refY;
+            if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null)
+            {
+                return Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
+            }
 
             int lx = ix - (cx << 4);
             int lz = iz - (cz << 4);
             int col = (lz << 4) | lx;
             int maxY = voxels.Length >> 8;
-            int startY = Mathf.Clamp(Mathf.RoundToInt(refY) + 2, 2, maxY - 2);
+            int startY = Mathf.Clamp(Mathf.RoundToInt(refY) + 12, 2, maxY - 3);
             for (int y = startY; y >= 1; y--)
             {
                 uint raw = voxels[(y << 8) | col];
@@ -471,6 +544,11 @@ namespace Stratocraft.Character
                 if (IsTreeOrVerticalObstacleVoxel(raw)) continue;
 
                 uint above = (y + 1 < maxY) ? voxels[((y + 1) << 8) | col] : 0u;
+                // Ust voksel kati zemin ise (yokus/tepe ici) aramaya devam et; arabayi topragin icine gomme!
+                if (Stage1PlayerMovementBridge.IsHardCollisionVoxelPure(above) && !IsTreeOrVerticalObstacleVoxel(above))
+                {
+                    continue;
+                }
                 return Stage1PlayerMovementBridge.GetVoxelWalkableTopYPure(raw, above, y);
             }
             return refY;

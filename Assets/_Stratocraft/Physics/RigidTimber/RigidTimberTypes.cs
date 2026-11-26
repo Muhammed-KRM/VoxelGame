@@ -43,7 +43,123 @@ namespace Stratocraft.Physics.RigidTimber
         SaddleNotch = 1,
         Dovetail = 2,
         Pegged = 3,
-        JoistPocket = 4
+        JoistPocket = 4,
+        GroovedChannel = 5,
+        SideMortisePegged = 6
+    }
+
+    /// <summary>
+    /// Tek-parca kutuk/direk uzerinde baltayla acilan gercek 3B marangozluk oyuklari (0 B GC blittable):
+    /// - GrooveSectorMask: 8 sekizgen yuzey diliminde (0..7) dikey Pièce-sur-Pièce olugu,
+    /// - EndSaddleNotchMask: Yatay kutuk uclarinda (bit0: -Y ucu, bit1: +Y ucu) 3B Eyer Kertigi,
+    /// - SideMortise0..3: Kesintisiz ana direkte kat kirisi yan zivana/omuz yuvalari,
+    /// - TenonEndMask: Yatay dolgu kutugu uclarinda oluk icine giren inceltilmis zivana dilleri,
+    /// - ChinkedSeamMask: Kutuk derzlerinde gorunur kil/lif harc seridi.
+    /// </summary>
+    public struct PieceCarpentryProfile
+    {
+        public byte GrooveSectorMask;
+        public byte PendingSector;
+        public byte PendingHits;
+        public byte PendingActionKind; // 1=Groove, 2=SideMortise, 3=EndSaddleNeg, 4=EndSaddlePos
+        public byte EndSaddleNotchMask;
+        public byte TenonEndMask;      // bit0: -Y tenon, bit1: +Y tenon
+        public byte ChinkedSeamMask;
+        public byte SideMortiseCount;
+        public float MortiseLocalY0, MortiseLocalY1, MortiseLocalY2, MortiseLocalY3, MortiseLocalY4, MortiseLocalY5, MortiseLocalY6, MortiseLocalY7;
+        public byte MortiseSector0, MortiseSector1, MortiseSector2, MortiseSector3, MortiseSector4, MortiseSector5, MortiseSector6, MortiseSector7;
+
+        public readonly bool HasGrooveNearSector(int targetSector)
+        {
+            int s = ((targetSector % 8) + 8) % 8;
+            int prev = (s + 7) & 7;
+            int next = (s + 1) & 7;
+            return (GrooveSectorMask & ((1 << s) | (1 << prev) | (1 << next))) != 0;
+        }
+
+        public readonly bool TryFindMortiseNear(int targetSector, float localY, float heightTol, out float snappedLocalY)
+        {
+            int s = ((targetSector % 8) + 8) % 8;
+            for (int i = 0; i < SideMortiseCount; i++)
+            {
+                byte ms = GetMortiseSector(i);
+                float my = GetMortiseLocalY(i);
+                int diff = Math.Abs(ms - s);
+                if (diff > 4) diff = 8 - diff;
+                if (diff <= 1 && MathF.Abs(my - localY) <= heightTol)
+                {
+                    snappedLocalY = my;
+                    return true;
+                }
+            }
+            snappedLocalY = localY;
+            return false;
+        }
+
+        public readonly byte GetMortiseSector(int index) => index switch
+        {
+            0 => MortiseSector0,
+            1 => MortiseSector1,
+            2 => MortiseSector2,
+            3 => MortiseSector3,
+            4 => MortiseSector4,
+            5 => MortiseSector5,
+            6 => MortiseSector6,
+            _ => MortiseSector7
+        };
+
+        public readonly float GetMortiseLocalY(int index) => index switch
+        {
+            0 => MortiseLocalY0,
+            1 => MortiseLocalY1,
+            2 => MortiseLocalY2,
+            3 => MortiseLocalY3,
+            4 => MortiseLocalY4,
+            5 => MortiseLocalY5,
+            6 => MortiseLocalY6,
+            _ => MortiseLocalY7
+        };
+
+        public void AddOrUpdateMortise(byte sector, float localY)
+        {
+            for (int i = 0; i < SideMortiseCount; i++)
+            {
+                if (GetMortiseSector(i) == sector && MathF.Abs(GetMortiseLocalY(i) - localY) <= 0.40f)
+                {
+                    SetMortise(i, sector, localY);
+                    return;
+                }
+            }
+            int slot = SideMortiseCount < 8 ? SideMortiseCount++ : 7;
+            SetMortise(slot, sector, localY);
+        }
+
+        public void ShiftAllMortisesLocalY(float addY)
+        {
+            MortiseLocalY0 += addY;
+            MortiseLocalY1 += addY;
+            MortiseLocalY2 += addY;
+            MortiseLocalY3 += addY;
+            MortiseLocalY4 += addY;
+            MortiseLocalY5 += addY;
+            MortiseLocalY6 += addY;
+            MortiseLocalY7 += addY;
+        }
+
+        private void SetMortise(int index, byte sector, float localY)
+        {
+            switch (index)
+            {
+                case 0: MortiseSector0 = sector; MortiseLocalY0 = localY; break;
+                case 1: MortiseSector1 = sector; MortiseLocalY1 = localY; break;
+                case 2: MortiseSector2 = sector; MortiseLocalY2 = localY; break;
+                case 3: MortiseSector3 = sector; MortiseLocalY3 = localY; break;
+                case 4: MortiseSector4 = sector; MortiseLocalY4 = localY; break;
+                case 5: MortiseSector5 = sector; MortiseLocalY5 = localY; break;
+                case 6: MortiseSector6 = sector; MortiseLocalY6 = localY; break;
+                default: MortiseSector7 = sector; MortiseLocalY7 = localY; break;
+            }
+        }
     }
 
     /// <summary>Gomulu sutun 4 durumlu geoteknik karar makinesi (DOK4 Bolum 3).</summary>

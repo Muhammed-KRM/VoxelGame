@@ -719,5 +719,61 @@ namespace Stratocraft.StandaloneCoreTests
             Assert.That(cozy.SmokeHazardWarning, Is.EqualTo(0));
             Assert.That(cozy.IndoorTempDeltaC, Is.GreaterThanOrEqualTo(20.0f));
         }
+
+        private sealed class WideDugPitSoilSampler : IVoxelSoilSampler
+        {
+            public bool TrySampleSolidMaterialAt(float worldX, float worldY, float worldZ, out byte materialId)
+            {
+                float rSq = worldX * worldX + worldZ * worldZ;
+                float topY = rSq <= 1.25f * 1.25f ? 98.5f : 100.0f; // 1.25m yaricapli (2.5m genis!), 1.5m derin cukur
+                if (worldY < topY)
+                {
+                    materialId = MaterialIdCatalog.Dirt;
+                    return true;
+                }
+                materialId = MaterialIdCatalog.Air;
+                return false;
+            }
+
+            public bool TrySampleGroundSurfaceY(float worldX, float worldZ, float referenceY, out float groundSurfaceY, out byte topMaterialId)
+            {
+                float rSq = worldX * worldX + worldZ * worldZ;
+                groundSurfaceY = rSq <= 1.25f * 1.25f ? 98.5f : 100.0f;
+                topMaterialId = MaterialIdCatalog.Dirt;
+                return true;
+            }
+        }
+
+        [Test]
+        public void TipIn_Wide250cmDugPit_DetectedByMultiRingSamplerAndHoldsPostUpright()
+        {
+            // Genis (2.5m capli) kazilmis cukurda 0.85m halkasi cukur icinde kalsa bile 1.65m halkasi kenar dudagini yakalamali!
+            var widePit = new WideDugPitSoilSampler();
+            TipInEvaluation eval = TimberTipInAndJoineryLogic.EvaluateTipInHole(0f, 0f, 99f, widePit);
+
+            Assert.That(eval.Result, Is.Not.EqualTo(TipInPlacementResult.NoHoleFlatGroundTipsOver),
+                "2.5m genisligindeki kazilmis cukur duz zemin sayilip kutugu devirmemeli!");
+            Assert.That(eval.HoleDepthMeters, Is.EqualTo(1.5f).Within(0.05f));
+            Assert.That(eval.SolidWallSides, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void LogArchCart_Heavy14mFullOakLog_BindsWithoutPayloadRejectionOrLoss()
+        {
+            var cart = LogArchCartState.CreateEmpty(1);
+            var heavyOak = RigidStructurePiece.Create(
+                pieceId: 9001,
+                kind: RigidTimberPieceKind.Log,
+                species: TimberWoodSpecies.Oak,
+                lengthM: 14.0f,
+                diameterM: 0.54f,
+                position: Vector3.Zero,
+                rotation: Quaternion.Identity,
+                initialState: RigidTimberState.DynamicActive);
+
+            bool bound = LogArchCartPhysics.TryBindFullLog(ref cart, in heavyOak, 0.14f, 1, out string msg);
+            Assert.That(bound, Is.True, $"14m kalin mese kutugu arabadan geri alinirken reddedilmemeli: {msg}");
+            Assert.That(cart.HasBoundLog, Is.EqualTo(1));
+        }
     }
 }

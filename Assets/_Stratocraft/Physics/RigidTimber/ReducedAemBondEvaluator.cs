@@ -40,6 +40,10 @@ namespace Stratocraft.Physics.RigidTimber
         private static readonly JoineryStrengthSpec PeggedSpec = new(6.5e5f, 9.5e5f, 1.35f, 24e6f, 2.8e-7f);
         // Doseme Kiris Cebi (JoistPocket — kat diyaframi kilidi)
         private static readonly JoineryStrengthSpec JoistPocketSpec = new(1.1e6f, 1.5e6f, 2.05f, 26e6f, 2.0e-7f);
+        // Pièce-sur-Pièce Dikey Oluk + Zivana Dili (GroovedChannel — sifir ic ice gecmeli yanal kilit!)
+        private static readonly JoineryStrengthSpec GroovedChannelSpec = new(1.6e6f, 2.1e6f, 2.45f, 30e6f, 1.5e-7f);
+        // Kesintisiz Ana Direk Yan Zivana + Kavela (SideMortisePegged — 2./3. kat ana tasiyici kiris kilidi!)
+        private static readonly JoineryStrengthSpec SideMortisePeggedSpec = new(2.2e6f, 2.6e6f, 2.60f, 32e6f, 1.2e-7f);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static JoineryStrengthSpec GetJoinerySpec(TimberJoineryKind kind)
@@ -50,6 +54,8 @@ namespace Stratocraft.Physics.RigidTimber
                 TimberJoineryKind.Dovetail => DovetailSpec,
                 TimberJoineryKind.Pegged => PeggedSpec,
                 TimberJoineryKind.JoistPocket => JoistPocketSpec,
+                TimberJoineryKind.GroovedChannel => GroovedChannelSpec,
+                TimberJoineryKind.SideMortisePegged => SideMortisePeggedSpec,
                 _ => FrictionOnlySpec
             };
         }

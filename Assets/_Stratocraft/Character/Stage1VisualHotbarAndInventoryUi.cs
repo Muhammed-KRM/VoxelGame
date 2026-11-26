@@ -179,7 +179,10 @@ namespace Stratocraft.Character
                 : PhysicalItemArchetype.OreBearingRock,
             InventoryItemKind.VoxelBlock => subId == MaterialIdCatalog.QuartzGem
                 ? PhysicalItemArchetype.QuartzCrystalCluster
-                : PhysicalItemArchetype.ArchitecturalBlock,
+                : ((subId == MaterialIdCatalog.OakWood || subId == MaterialIdCatalog.Ironwood || subId == MaterialIdCatalog.SpiritWood ||
+                    subId == MaterialIdCatalog.WoodPlank || subId == MaterialIdCatalog.TreatedTimberBeam)
+                    ? PhysicalItemArchetype.SplitFirewood
+                    : PhysicalItemArchetype.ArchitecturalBlock),
             InventoryItemKind.KnappedAxeHead => PhysicalItemArchetype.KnappedAxeHead,
             InventoryItemKind.KnappedPickaxeHead => PhysicalItemArchetype.KnappedPickaxeHead,
             InventoryItemKind.KnappedKnifeBlade => PhysicalItemArchetype.KnappedKnifeBlade,
@@ -2151,10 +2154,13 @@ namespace Stratocraft.Character
         {
             if (kind == InventoryItemKind.Empty || requiredCount <= 0) return;
             int rem = requiredCount;
+            bool acceptWoodEquiv = kind == InventoryItemKind.SplitFirewood;
             for (int i = 0; i < CenterCraftSlotCount && rem > 0; i++)
             {
                 ref VisualInventorySlot s = ref CenterCraftSlots[i];
-                if (s.IsEmpty || s.Kind != kind) continue;
+                if (s.IsEmpty) continue;
+                bool match = s.Kind == kind || (acceptWoodEquiv && s.MapToPhysicalArchetype() == PhysicalItemArchetype.SplitFirewood);
+                if (!match) continue;
                 int take = Mathf.Min(rem, s.Count);
                 s.Count -= take;
                 rem -= take;

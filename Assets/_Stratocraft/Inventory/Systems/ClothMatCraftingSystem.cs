@@ -267,41 +267,50 @@ namespace Stratocraft.Inventory.Systems
                 };
             }
 
-            // 7 & 8) Ahsap Tekerlek (3x Yarma Odun + 2x Lif) veya Ilkel Ahsap Kova (2x Yarma Odun + 2x Lif)
-            if (firewood > 0 && totalHeads == 0 && sticks == 0 && leaves == 0 && hides == 0 && clay == 0 && sand == 0 && wroughtBars == 0)
+            // 7 & 8) Ahsap Tekerlek (3x Odun/Dal + 2x Lif) veya Ilkel Ahsap Kova (2x Yarma Odun + 2x Lif)
+            int totalWood = firewood + sticks;
+            if (totalWood > 0 && totalHeads == 0 && leaves == 0 && hides == 0 && clay == 0 && sand == 0 && wroughtBars == 0)
             {
-                if (firewood >= 3 && fibers >= 2)
-                {
-                    return new ClothCenterCraftEvaluation
-                    {
-                        Output = ClothCenterCraftOutput.WoodenWheel,
-                        InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0x77EE1100u, 100),
-                        OutputDisplayName = "Ahşap El Arabası Tekerleği",
-                        HintOrActionMessage = "🛠️ HAZIR: Ahşap Tekerlek — [İple Bağla / R] ile bağla!",
-                        IsReadyToBind = true,
-                        ConsumeFirewood = 3,
-                        ConsumePlantFiber = 2
-                    };
-                }
-                if (firewood == 2 && fibers >= 2)
+                if (firewood == 2 && sticks == 0 && fibers >= 2)
                 {
                     return new ClothCenterCraftEvaluation
                     {
                         Output = ClothCenterCraftOutput.WoodenBucket,
                         InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0xB0C4E701u, 100),
                         OutputDisplayName = "İlkel Ahşap Su Kovası",
-                        HintOrActionMessage = "🛠️ HAZIR: İlkel Ahşap Kova — [İple Bağla / R] ile bağla! (Tekerlek için +1 Yarma Odun daha ekleyin)",
+                        HintOrActionMessage = "🛠️ HAZIR: İlkel Ahşap Kova — [İple Bağla / R] ile bağla! (Ahşap Tekerlek için +1 Odun/Dal daha ekleyin)",
                         IsReadyToBind = true,
                         ConsumeFirewood = 2,
                         ConsumePlantFiber = 2
                     };
                 }
-                return new ClothCenterCraftEvaluation
+                if (totalWood >= 3 && fibers >= 2)
                 {
-                    Output = ClothCenterCraftOutput.None,
-                    IsReadyToBind = false,
-                    HintOrActionMessage = "💭 Ahşap Kova (2x Odun + 2x Lif) veya El Arabası Tekerleği (3x Odun + 2x Lif) için malzeme ekleyin"
-                };
+                    int takeFirewood = Math.Min(firewood, 3);
+                    int takeSticks = 3 - takeFirewood;
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.WoodenWheel,
+                        InheritedOutputDna = PhysicalItemShapeDna.CreateNatural(0x77EE1100u, 100),
+                        OutputDisplayName = "Ahşap El Arabası Tekerleği",
+                        HintOrActionMessage = "🛠️ HAZIR: Ahşap Tekerlek — [Sol Tık / R] ile bağla! (Kütük El Arabası için 2 adet üret)",
+                        IsReadyToBind = true,
+                        ConsumeFirewood = takeFirewood,
+                        ConsumeStick = takeSticks,
+                        ConsumePlantFiber = 2
+                    };
+                }
+                if (firewood > 0 || (sticks >= 2 && fibers > 0))
+                {
+                    int needWood = Math.Max(0, 3 - totalWood);
+                    int needFiber = Math.Max(0, 2 - fibers);
+                    return new ClothCenterCraftEvaluation
+                    {
+                        Output = ClothCenterCraftOutput.None,
+                        IsReadyToBind = false,
+                        HintOrActionMessage = $"💭 Ahşap Tekerlek için +{needWood}x Odun/Dal, +{needFiber}x Bitki Lifi daha koyun (Su Kovası: 2x Yarma Odun + 2x Lif)"
+                    };
+                }
             }
 
             // 9 & 10) Cig Kil Seramik Sekillendirme (Kamp atesinde 12 sn pisirilir):

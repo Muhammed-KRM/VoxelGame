@@ -154,9 +154,9 @@ namespace Stratocraft.Physics.RigidTimber
                     if (localDepthFromTop <= 0f) continue; // Bu dilimde o tarafta toprak kazilmis / bos!
 
                     byte mat = dirMat[sideIdx];
-                    if (hasStoneCollar && localDepthFromTop <= 0.35f)
+                    if (hasStoneCollar && (localDepthFromTop <= 0.55f || !isUpper))
                     {
-                        mat = MaterialIdCatalog.Gravel; // IBC 1807.3.2.2 yuzey tas takoz kisiti
+                        mat = MaterialIdCatalog.Gravel; // IBC 1807.3.2.2 ust bogaz + dip tas kama takozu
                     }
 
                     // 1m disarisi ucurum/hendek mi (Mezazigh & Levacher sev indirgemesi f_m)?
@@ -232,12 +232,11 @@ namespace Stratocraft.Physics.RigidTimber
             float leverH = MathF.Max(0.25f, lateralHeightAboveGroundM) + profile.PivotDepthZr;
 
             // P-Delta etkisi (mevcut plastik egilme + ust yuk eksantrikligi + gercek yapi geometrik eksantrikligi e_min)
-            // Eurocode 5 / IBC 1807.3: Uzun ve agir bir yapida kusursuz 0.000m eksantriklik yoktur;
-            // yukseklik (H) ve ust agirlik arttikca minimum devirici moment artar -> az gomulen 3 katli yapi ayakta duramaz!
+            // Eurocode 5 §5.4.4 cerceve geometrik kusur eksantrikligi: e_min = H / 200 (maks 0.06m)
             Vector3 axisUp = Vector3.Transform(Vector3.UnitY, post.Rotation);
             float aboveGroundH = MathF.Max(0.5f, post.LengthM - profile.EmbedDepthM);
             float comHeight = aboveGroundH * 0.55f;
-            float naturalEccentricity = topLoadKg > 250f ? MathF.Max(0.06f, aboveGroundH * 0.025f) : 0f;
+            float naturalEccentricity = topLoadKg > 250f ? Math.Clamp(aboveGroundH * 0.005f, 0.02f, 0.06f) : 0f;
             float pDeltaX = axisUp.X * comHeight + topLoadEccentricityXZ.X + naturalEccentricity;
             float pDeltaZ = axisUp.Z * comHeight + topLoadEccentricityXZ.Y;
 

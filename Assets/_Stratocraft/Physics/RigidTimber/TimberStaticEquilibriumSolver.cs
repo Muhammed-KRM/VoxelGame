@@ -62,6 +62,7 @@ namespace Stratocraft.Physics.RigidTimber
             Vector3[] accumLatN = _tlsAccumLateralN!;
 
             int totalWoken = 0;
+            Span<Vector2> postXZ = stackalloc Vector2[8];
 
             // Kaskad dongusu (maks 4 tur: bir sutun/kiris kirilinca ustundeki parcalar da ayni olayda uyanir!)
             for (int cascade = 0; cascade < 4; cascade++)
@@ -157,14 +158,15 @@ namespace Stratocraft.Physics.RigidTimber
                     }
                 }
 
-                // 3b) Destek Cokgeni & Agirlik Merkezi Devrilmesi (1 Kose Sutunu Kesilince Evin Kesilen Yone Devrilmesi!)
-                // Cok katli bir yapida (yukseklik >= 4.5m) 4 kose sutunundan 1'i kesildiginde, desteksiz kalan kosedeki
-                // agir yuk Agirlik Merkezini kalan sutunlarin destek merkezinden disari ceker -> kesilen koseye dogru devrilir!
+                // 3b) Gercek Destek Cokgeni & Konsol Devrilmesi:
+                // - 2 saglam direk arasindaki oluklu duvar (perpDist ≈ 0) veya 3 direkli L-kose (CoM ucgen icinde) ASLA kendi kendine yikilmaz!
+                // - Yalnizca 4 koseli yuksek bir binanin 1 kose sutunu kesildiginde ve ust yapi agirligi kalan destek dogrusundan/ucgeninden
+                //   disariya (konsol / overhang > 1.35m) tasarsa kesilen koseye dogru devrilir!
                 int visitedCount = 0;
                 int anchoredPostCount = 0;
                 float minY = float.MaxValue, maxY = float.MinValue;
                 double totalMass = 0.0, comX = 0.0, comZ = 0.0;
-                double postSumX = 0.0, postSumZ = 0.0;
+                double superMass = 0.0, superComX = 0.0, superComZ = 0.0;
 
                 for (int i = 0; i < n; i++)
                 {
@@ -178,26 +180,85 @@ namespace Stratocraft.Physics.RigidTimber
                     comZ += p.Position.Z * p.MassKg;
                     if (p.Kind == RigidTimberPieceKind.Post)
                     {
+                        if (anchoredPostCount < postXZ.Length)
+                        {
+                            postXZ[anchoredPostCount] = new Vector2(p.Position.X, p.Position.Z);
+                        }
                         anchoredPostCount++;
-                        postSumX += p.Position.X;
-                        postSumZ += p.Position.Z;
+                    }
+                    else
+                    {
+                        superMass += p.MassKg;
+                        superComX += p.Position.X * p.MassKg;
+                        superComZ += p.Position.Z * p.MassKg;
                     }
                 }
 
                 if (visitedCount >= 10 && (maxY - minY) >= 4.5f && anchoredPostCount >= 1 && anchoredPostCount <= 3 && totalMass > 1.0)
                 {
-                    float cx = (float)(comX / totalMass);
-                    float cz = (float)(comZ / totalMass);
-                    float px = (float)(postSumX / anchoredPostCount);
-                    float pz = (float)(postSumZ / anchoredPostCount);
-                    Vector3 leanDir = new Vector3(cx - px, 0f, cz - pz);
-                    float eccentricity = leanDir.Length();
+                    Vector2 com = superMass > 1.0
+                        ? new Vector2((float)(superComX / superMass), (float)(superComZ / superMass))
+                        : new Vector2((float)(comX / totalMass), (float)(comZ / totalMass));
+                    Vector2 nearestSupport = postXZ[0];
+                    Vector2 tipVec = Vector2.Zero;
+                    bool shouldOverturn = false;
 
-                    // Kose sutunu eksildiginde CoM destek merkezinden >= 0.35m kesilen koseye dogru kayar!
-                    if (eccentricity >= 0.35f)
+                    if (anchoredPostCount == 1)
                     {
-                        Vector3 tipDir = Vector3.Normalize(leanDir);
-                        // Tum ust yapiyi ve yetersiz kalan sutunlari kesilen kose yonune dogru devrilme torkuyla uyandir!
+                        nearestSupport = postXZ[0];
+                        tipVec = com - nearestSupport;
+                        shouldOverturn = tipVec.Length() >= 1.35f;
+                    }
+                    else if (anchoredPostCount == 2)
+                    {
+                        Vector2 a = postXZ[0], b = postXZ[1];
+                        Vector2 ab = b - a;
+                        float abLenSq = ab.LengthSquared();
+                        float t = abLenSq > 1e-4f ? Math.Clamp(Vector2.Dot(com - a, ab) / abLenSq, 0f, 1f) : 0f;
+                        nearestSupport = a + ab * t;
+                        tipVec = com - nearestSupport;
+                        // Iki direk arasindaki duz duvarin CoM'u dogru uzerindedir (mesafe ~0m -> yikilmaz);
+                        // yalnizca yan tarafa desteksiz > 1.45m konsol tasarsa devrilir!
+                        shouldOverturn = tipVec.Length() >= 1.45f;
+                    }
+                    else if (anchoredPostCount == 3)
+                    {
+                        Vector2 p0 = postXZ[0], p1 = postXZ[1], p2 = postXZ[2];
+                        nearestSupport = ClosestPointOnTriangle2D(com, p0, p1, p2);
+                        float outDist = Vector2.Distance(com, nearestSupport);
+                        Vector2 postCentroid = (p0 + p1 + p2) / 3.0f;
+
+                        // En uzun kenara (kesilen 4. kosenin karsisindaki diyagonal hipotenuse) gore ic guvenlik payini olc:
+                        // - Gercek 3 direkli L-duvarda superCom hipotenusun > 0.85m ICINDEDIR -> ASLA yikilmaz!
+                        // - 4 koseli 3 katli bir binanin 1 kose sutunu kesildiginde ust yapi CoM'u diyagonal sinirin ustune/disina (inwardMargin <= 0.25m) duser -> kesilen koseye devrilir!
+                        Vector2 eA = p0, eB = p1, opp = p2;
+                        float d01 = Vector2.DistanceSquared(p0, p1);
+                        float d12 = Vector2.DistanceSquared(p1, p2);
+                        float d20 = Vector2.DistanceSquared(p2, p0);
+                        if (d12 >= d01 && d12 >= d20) { eA = p1; eB = p2; opp = p0; }
+                        else if (d20 >= d01 && d20 >= d12) { eA = p2; eB = p0; opp = p1; }
+
+                        Vector2 edgeDir = Vector2.Normalize(eB - eA);
+                        Vector2 inwardNormal = new Vector2(-edgeDir.Y, edgeDir.X);
+                        if (Vector2.Dot(opp - eA, inwardNormal) < 0f) inwardNormal = -inwardNormal;
+                        float inwardMargin = Vector2.Dot(com - eA, inwardNormal);
+
+                        if (outDist >= 0.35f)
+                        {
+                            shouldOverturn = true;
+                            tipVec = com - nearestSupport;
+                        }
+                        else if (inwardMargin <= 0.25f)
+                        {
+                            shouldOverturn = true;
+                            tipVec = com - postCentroid;
+                            if (tipVec.LengthSquared() < 1e-4f) tipVec = -inwardNormal;
+                        }
+                    }
+
+                    if (shouldOverturn && tipVec.LengthSquared() > 1e-4f)
+                    {
+                        Vector3 tipDir = Vector3.Normalize(new Vector3(tipVec.X, 0f, tipVec.Y));
                         for (int b = 0; b < bonds.Length; b++)
                         {
                             if (bonds[b].IsActive == 0) continue;
@@ -423,6 +484,42 @@ namespace Stratocraft.Physics.RigidTimber
                 if (profiles[i].PieceId == pieceId) return i;
             }
             return -1;
+        }
+
+        private static Vector2 ClosestPointOnSegment2D(Vector2 p, Vector2 a, Vector2 b)
+        {
+            Vector2 ab = b - a;
+            float lenSq = ab.LengthSquared();
+            if (lenSq < 1e-6f) return a;
+            float t = Math.Clamp(Vector2.Dot(p - a, ab) / lenSq, 0f, 1f);
+            return a + ab * t;
+        }
+
+        private static Vector2 ClosestPointOnTriangle2D(Vector2 p, Vector2 a, Vector2 b, Vector2 c)
+        {
+            // Barycentric ic bolge kontrolu
+            Vector2 v0 = c - a, v1 = b - a, v2 = p - a;
+            float dot00 = Vector2.Dot(v0, v0);
+            float dot01 = Vector2.Dot(v0, v1);
+            float dot02 = Vector2.Dot(v0, v2);
+            float dot11 = Vector2.Dot(v1, v1);
+            float dot12 = Vector2.Dot(v1, v2);
+            float denom = dot00 * dot11 - dot01 * dot01;
+            if (MathF.Abs(denom) > 1e-6f)
+            {
+                float inv = 1f / denom;
+                float u = (dot11 * dot02 - dot01 * dot12) * inv;
+                float v = (dot00 * dot12 - dot01 * dot02) * inv;
+                if (u >= -0.01f && v >= -0.01f && (u + v) <= 1.02f) return p;
+            }
+            Vector2 pAB = ClosestPointOnSegment2D(p, a, b);
+            Vector2 pBC = ClosestPointOnSegment2D(p, b, c);
+            Vector2 pCA = ClosestPointOnSegment2D(p, c, a);
+            float dAB = Vector2.DistanceSquared(p, pAB);
+            float dBC = Vector2.DistanceSquared(p, pBC);
+            float dCA = Vector2.DistanceSquared(p, pCA);
+            if (dAB <= dBC && dAB <= dCA) return pAB;
+            return dBC <= dCA ? pBC : pCA;
         }
 
         private static void EnsureScratchBuffers(int n)

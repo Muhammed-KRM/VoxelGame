@@ -53,7 +53,7 @@ namespace Stratocraft.Physics.RigidTimber
     /// </summary>
     public static class LogArchCartPhysics
     {
-        public const float MaxPayloadMassKg = 2400.0f;
+        public const float MaxPayloadMassKg = 3800.0f;
         public const float HandleLeverLengthM = 2.10f;
         public const float PartialSkidLengthThresholdM = 6.0f;
 

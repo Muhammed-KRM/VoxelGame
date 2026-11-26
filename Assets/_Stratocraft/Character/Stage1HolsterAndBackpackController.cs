@@ -183,12 +183,15 @@ namespace Stratocraft.Character
 
         public bool IsCarryingShoulderLog { get; set; }
         public byte ShoulderLogMaterialId { get; set; }
-        public float ShoulderLogMassKg => IsCarryingShoulderLog ? 32.0f : 0f;
+        public float ShoulderLogExactLengthM { get; set; } = 2.4f;
+        public float ShoulderLogDiameterM { get; set; } = 0.42f;
+        public float ShoulderLogMassKg => IsCarryingShoulderLog ? Mathf.Clamp(ShoulderLogExactLengthM * 16.0f, 18.0f, 68.0f) : 0f;
         private GameObject? _shoulderTimberLogProxyGo;
 
         public void ClearCarriedShoulderLog()
         {
             IsCarryingShoulderLog = false;
+            ShoulderLogExactLengthM = 2.4f;
             if (_shoulderTimberLogProxyGo != null && _shoulderTimberLogProxyGo.activeSelf)
             {
                 _shoulderTimberLogProxyGo.SetActive(false);
@@ -2593,7 +2596,7 @@ namespace Stratocraft.Character
                 ActiveHolsterSlot = 0;
                 InventoryUi.SelectHotbarSlot(-1);
                 miningCtrl.IsCrystalActive = false;
-                miningCtrl.LastFeedbackText = $"El Bosaltildi -> [0: Bos El] (Kilifa koyma: {sheatheSec:0.2}s). [1..9 / Tekerlek] ile kilif secin.";
+                miningCtrl.LastFeedbackText = $"El Bosaltildi -> [0: Bos El] (Kilifa koyma: {sheatheSec:F2}s). [1..9 / Tekerlek] ile kilif secin.";
                 return;
             }
 
@@ -2620,7 +2623,7 @@ namespace Stratocraft.Character
                 ActiveHolsterSlot = 0;
                 InventoryUi.SelectHotbarSlot(-1);
                 miningCtrl.IsCrystalActive = false;
-                miningCtrl.LastFeedbackText = $"Kilif [{pressedSlotIdx + 1}] geri konuldu ({sheatheSec:0.2}s) -> [0: Bos El]";
+                miningCtrl.LastFeedbackText = $"Kilif [{pressedSlotIdx + 1}] geri konuldu ({sheatheSec:F2}s) -> [0: Bos El]";
                 return;
             }
 
@@ -2682,10 +2685,11 @@ namespace Stratocraft.Character
                                   Input.GetKeyDown(KeyCode.X);
             if (IsCarryingShoulderLog && dropLogPressed)
             {
-                collapseBridge?.SpawnDroppedTimberLogFromShoulder(playerTransform.position, playerTransform.forward, ShoulderLogMaterialId, sharedVoxelMat);
+                collapseBridge?.SpawnDroppedTimberLogFromShoulder(playerTransform.position, playerTransform.forward, ShoulderLogMaterialId, sharedVoxelMat, ShoulderLogExactLengthM);
                 IsCarryingShoulderLog = false;
+                ShoulderLogExactLengthM = 2.4f;
                 if (_shoulderTimberLogProxyGo != null) _shoulderTimberLogProxyGo.SetActive(false);
-                miningCtrl.LastFeedbackText = "AGIR KUTUK YERE BIRAKILDI: [E], [G] veya [X] ile kutuk yere birakildi. Silah ve aletler serbest!";
+                miningCtrl.LastFeedbackText = "🪵 OMUZDAKİ KÜTÜK YERE BIRAKILDI: Aletler serbest!";
                 return;
             }
 
@@ -2760,20 +2764,22 @@ namespace Stratocraft.Character
 
             if (!Input.GetKeyDown(Stage1GameSettings.KeyInteract) && !Input.GetKeyDown(KeyCode.E)) return;
 
-            // [E] ONCELIK 0: Yerdeki Kesilmis Agir Kutugu (Timber Log) Omuzlama (<= 2.8m Raycast)
+            // [E] ONCELIK 0: Yerdeki Kesilmis Kutugu (<= 4.25m) Tam Boyuyla Omuzlama (merdivenden 2./3. kata cikarilabilir!)
             if (!IsCarryingShoulderLog)
             {
                 Vector3 rayOrigin = playerCamera != null ? playerCamera.transform.position : playerTransform.position + Vector3.up * 1.5f;
                 Vector3 rayDir = playerCamera != null ? playerCamera.transform.forward : playerTransform.forward;
-                if (collapseBridge != null && collapseBridge.TryPickupBuckedTimberLog(rayOrigin, rayDir, 2.8f, out byte logMat))
+                if (collapseBridge != null && collapseBridge.TryPickupBuckedTimberLogExact(rayOrigin, rayDir, 2.85f, out byte logMat, out float pickedExactLen, out float pickedDiam))
                 {
                     IsCarryingShoulderLog = true;
                     ShoulderLogMaterialId = logMat;
+                    ShoulderLogExactLengthM = pickedExactLen;
+                    ShoulderLogDiameterM = pickedDiam;
                     HolsterMachine.RequestSheatheToEmptyHands();
                     ActiveHolsterSlot = 0;
                     InventoryUi.SelectHotbarSlot(-1);
                     EnsureShoulderTimberLogProxyInitialized(playerBodyRoot, sharedVoxelMat, logMat);
-                    miningCtrl.LastFeedbackText = "AGIR KUTUK OMUZLANDI (+32 kg): Kutuk cantaya sigmaz, omuzda tasinir! [E], [G] veya [X] ile yere birakabilirsiniz.";
+                    miningCtrl.LastFeedbackText = $"🪵 KÜTÜK OMUZLANDI ({pickedExactLen:F2}m): [V] Dik/Yatay | [Sol Tık] Oluklara/Kirişe Yerleştir | [G/X] Yere Bırak!";
                     return;
                 }
             }

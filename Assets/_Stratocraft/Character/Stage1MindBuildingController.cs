@@ -522,6 +522,58 @@ namespace Stratocraft.Character
                 entry.GhostFallbackKind);
         }
 
+        private bool _isTimberSiteTabActive;
+
+        private readonly struct TimberToolCardSpec
+        {
+            public readonly TimberBuildPreviewKind Kind;
+            public readonly DaVinciSketchKind Sketch;
+            public readonly string Title;
+            public readonly string Description;
+
+            public TimberToolCardSpec(TimberBuildPreviewKind kind, DaVinciSketchKind sketch, string title, string description)
+            {
+                Kind = kind;
+                Sketch = sketch;
+                Title = title;
+                Description = description;
+            }
+        }
+
+        private static readonly TimberToolCardSpec[] Tab7TimberTools =
+        {
+            new(TimberBuildPreviewKind.LogArchCart, DaVinciSketchKind.LogArchCart,
+                "Kütük El Arabası (Log Arch)",
+                "Yere diz: 2x Ahşap Teker ([I] Bez Örtüde üret) + 2x Dal/Odun (Dingil+Kol) + 1x Lif. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.WoodScaffolding, DaVinciSketchKind.Scaffolding,
+                "Ahşap İskele (2×2×2m)",
+                "Yere 4 köşeye 4x Dal/Odun diz. [Sol Tık] Kılavuz Plan | [Sağ Tık] Dizilimi Doğrula & El İle Yap"),
+            new(TimberBuildPreviewKind.ParbuckleRamp2To1, DaVinciSketchKind.ParbuckleRamp,
+                "Parbuckle 2:1 Eğik Rampa",
+                "Yere 2 paralel Dal/Odun sırık + üste 1x Bitki Lifi diz. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.GinPoleHoist, DaVinciSketchKind.GinPoleCrane,
+                "Gin Pole Makaralı Vinç",
+                "Yere 2x Dal/Odun (Direk+Bom) + yanlara 2x Bitki Lifi diz. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.SawhorseBench, DaVinciSketchKind.SawhorseBench,
+                "Bıçkı / Marangoz Sehpası",
+                "Yere 2 paralel Dal/Odun diz. Kalas/mobilya yontar. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.StoneFireplace, DaVinciSketchKind.StoneFireplace,
+                "Taş Şömine & Baca",
+                "Yere U-şeklinde 4x Taş + ortaya 1x Kil diz. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.WoodBed, DaVinciSketchKind.GenericFrame,
+                "Ahşap Yatak (SpawnPoint)",
+                "Yere 2x Dal/Odun çerçeve + ortaya 2x Yaprak/Lif döşek diz. [Sol Tık] Kılavuz | [Sağ Tık] Doğrula & Yap"),
+            new(TimberBuildPreviewKind.HingedDoor, DaVinciSketchKind.DoorWindow,
+                "Menteşeli Ahşap Kapı ([E] Aç/Kapa)",
+                "Yere 3x Dal/Odun/Kalas kanat + 1x Lif menteşe diz. Kapalıyken geçişi tutar, [Shift+E] sürgüler, [Alt+E] söker."),
+            new(TimberBuildPreviewKind.WindowShutter, DaVinciSketchKind.DoorWindow,
+                "Pencere Kepengi ([E] Aç/Kapa)",
+                "Yere 2x Dal/Odun/Kalas + 1x Lif diz. Rüzgârı kesip ısıyı içeride tutar ([Alt+E] Sök)."),
+            new(TimberBuildPreviewKind.StorageChest, DaVinciSketchKind.GenericFrame,
+                "Ahşap Eşya Sandığı ([E] Aç)",
+                "Yere 3x Dal/Odun/Kalas + 1x Lif diz. Ev içinde malzeme depolama sandığı ([Shift+E] Sök).")
+        };
+
         public void Step(
             float dt,
             UnityEngine.Camera? cam,
@@ -602,13 +654,14 @@ namespace Stratocraft.Character
                 return;
             }
 
-            // [1..6] Sekme Değiştirme Kısayolları (6 Sekmeli [T] Menüsü!)
-            if (Input.GetKeyDown(KeyCode.Alpha1)) { _activeTab = UnifiedBuildMenuTab.StationsAndLogistics; _selectedEntryIndex = 0; return; }
-            if (Input.GetKeyDown(KeyCode.Alpha2)) { _activeTab = UnifiedBuildMenuTab.SiteAndTemporarySupports; _selectedEntryIndex = 0; return; }
-            if (Input.GetKeyDown(KeyCode.Alpha3)) { _activeTab = UnifiedBuildMenuTab.LogAndTimberHouse; _selectedEntryIndex = 0; return; }
-            if (Input.GetKeyDown(KeyCode.Alpha4)) { _activeTab = UnifiedBuildMenuTab.EarthAndAdobeCob; _selectedEntryIndex = 0; return; }
-            if (Input.GetKeyDown(KeyCode.Alpha5)) { _activeTab = UnifiedBuildMenuTab.StoneBrickAndMonumental; _selectedEntryIndex = 0; return; }
-            if (Input.GetKeyDown(KeyCode.Alpha6)) { _activeTab = UnifiedBuildMenuTab.ReinforcedConcreteAndSteel; _selectedEntryIndex = 0; return; }
+            // [1..7] Sekme Değiştirme Kısayolları (7 Sekmeli Leonardo da Vinci [T] İnşa Defteri!)
+            if (Input.GetKeyDown(KeyCode.Alpha1)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.StationsAndLogistics; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha2)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.SiteAndTemporarySupports; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha3)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.LogAndTimberHouse; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha4)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.EarthAndAdobeCob; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha5)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.StoneBrickAndMonumental; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha6)) { _isTimberSiteTabActive = false; _activeTab = UnifiedBuildMenuTab.ReinforcedConcreteAndSteel; _selectedEntryIndex = 0; return; }
+            if (Input.GetKeyDown(KeyCode.Alpha7)) { _isTimberSiteTabActive = true; _selectedEntryIndex = 0; return; }
 
             if (Input.GetKeyDown(KeyCode.V))
             {
@@ -652,7 +705,9 @@ namespace Stratocraft.Character
             Stage1WheelbarrowController? wheelbarrowCtrl = null,
             Stage1WindmillController? windmillCtrl = null,
             BuildingSiteLogisticsController? siteLogisticsCtrl = null,
-            Stage1HolsterAndBackpackController? holsterCtrl = null)
+            Stage1HolsterAndBackpackController? holsterCtrl = null,
+            Stage1TimberPlacementPreviewController? timberPreviewCtrl = null,
+            bool isCreativeMode = false)
         {
             EnsureGuiStyles();
             EnsureVariantCycleHook(looseBuildSystem);
@@ -671,65 +726,146 @@ namespace Stratocraft.Character
 
             if (!IsMindMenuOpen) return;
 
-            float panelW = Mathf.Min(1040f, Screen.width - 24f);
+            float panelW = Mathf.Min(1080f, Screen.width - 20f);
             float panelH = Mathf.Min(700f, Screen.height - 20f);
             float px = (Screen.width - panelW) * 0.5f;
             float py = (Screen.height - panelH) * 0.5f;
             Vector2 mousePos = Event.current.mousePosition;
 
+            // Leonardo da Vinci Codex Atlanticus sıcak parşömen defter sayfası arka planı
             Color prevColor = GUI.color;
-            GUI.color = new Color(0.06f, 0.08f, 0.11f, 0.95f);
-            GUI.Box(new Rect(px, py, panelW, panelH), GUIContent.none, _panelStyle!);
-            GUI.color = prevColor;
+            GUI.color = Color.white;
+            GUI.DrawTexture(new Rect(px, py, panelW, panelH), DaVinciBlueprintSketchAtlas.GetParchmentPanelBg(), ScaleMode.StretchToFill);
 
-            GUI.Label(new Rect(px + 18f, py + 8f, panelW - 220f, 24f),
-                "🏛️ 9-EKOL GERÇEKÇİ MİMARİ, ŞANTİYE LOJİSTİĞİ & ZİHİN İNŞA MENÜSÜ  ([T] / [ESC] Kapat)", _titleStyle!);
+            GUI.Label(new Rect(px + 18f, py + 8f, panelW - 440f, 24f),
+                "CODEX ARCHITECTURA — MİMARİ PROJE & ŞANTİYE DEFTERİ  ([T]/[ESC])", _titleStyle!);
 
-            if (looseBuildSystem.IsModularBuildModeActive || looseBuildSystem.IsUnifiedBuildModeActive)
+            float rightCursorX = px + panelW - 18f;
+            if (looseBuildSystem.IsModularBuildModeActive || looseBuildSystem.IsUnifiedBuildModeActive || (timberPreviewCtrl != null && timberPreviewCtrl.HasActiveToolPreview))
             {
-                Rect stopRect = new Rect(px + panelW - 196f, py + 8f, 178f, 24f);
-                if (GUI.Button(stopRect, "İnşa Modunu Bırak [Q]"))
+                float stopW = 148f;
+                rightCursorX -= stopW;
+                if (GUI.Button(new Rect(rightCursorX, py + 8f, stopW, 24f), "İnşayı Bırak [Q]"))
                 {
                     looseBuildSystem.CancelActiveBuildPlacement(
                         holsterCtrl,
                         miningCtrl: miningCtrl,
                         emptyHotbarSelectionIfHammer: false,
                         customFeedback: "🔨 İnşa modu kapatıldı — el boşaltıldı.");
+                    timberPreviewCtrl?.CancelPreview();
+                    CloseMindMenu(restoreCursorLock: true);
+                    return;
+                }
+                rightCursorX -= 6f;
+            }
+
+            if (timberPreviewCtrl != null && timberPreviewCtrl.TryFindAimedBlueprint(cam, playerTransform, out int aimedBpIdx, out string aimedBpLabel))
+            {
+                float rmW = 195f;
+                rightCursorX -= rmW;
+                Color prevBg = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.85f, 0.25f, 0.18f, 1f);
+                if (GUI.Button(new Rect(rightCursorX, py + 8f, rmW, 24f), $"🗑️ Kaldır ({aimedBpLabel})"))
+                {
+                    GUI.backgroundColor = prevBg;
+                    if (timberPreviewCtrl.RemoveBlueprintAt(aimedBpIdx, out string rmMsg))
+                    {
+                        miningCtrl.LastFeedbackText = rmMsg;
+                        ShowToast(rmMsg, isSuccess: true, durationSec: 3.0f);
+                    }
+                    CloseMindMenu(restoreCursorLock: true);
+                    return;
+                }
+                rightCursorX -= 6f;
+
+                if (timberPreviewCtrl.TryGetBlueprintKindAt(aimedBpIdx, out TimberBuildPreviewKind bpKind))
+                {
+                    float valW = 215f;
+                    rightCursorX -= valW;
+                    GUI.backgroundColor = new Color(0.22f, 0.56f, 0.28f, 1f);
+                    if (GUI.Button(new Rect(rightCursorX, py + 8f, valW, 24f), "🛠️ Dizilimi Doğrula & El İle Yap"))
+                    {
+                        GUI.backgroundColor = prevBg;
+                        bool ok = timberPreviewCtrl.TryValidateGroundClusterAndStartAssembly(
+                            bpKind, cam, playerTransform, looseBuildSystem, this, out string valMsg);
+                        miningCtrl.LastFeedbackText = valMsg;
+                        ShowToast(valMsg, isSuccess: ok, durationSec: 3.8f);
+                        CloseMindMenu(restoreCursorLock: true);
+                        return;
+                    }
+                    rightCursorX -= 6f;
+                }
+                GUI.backgroundColor = prevBg;
+            }
+            else if (looseBuildSystem.HasNearestPlayerUnifiedNode(playerTransform.position, out string nearNodeLabel))
+            {
+                float rmW = 240f;
+                rightCursorX -= rmW;
+                Color prevBg = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.85f, 0.25f, 0.18f, 1f);
+                if (GUI.Button(new Rect(rightCursorX, py + 8f, rmW, 24f), $"🗑️ Yakındaki Yapıyı Kaldır ({nearNodeLabel})"))
+                {
+                    GUI.backgroundColor = prevBg;
+                    if (looseBuildSystem.TryDismantleNearestPlayerUnifiedNode(playerTransform.position, out string rmMsg))
+                    {
+                        miningCtrl.LastFeedbackText = rmMsg;
+                        ShowToast(rmMsg, isSuccess: true, durationSec: 3.0f);
+                    }
+                    CloseMindMenu(restoreCursorLock: true);
+                    return;
+                }
+                GUI.backgroundColor = prevBg;
+                rightCursorX -= 6f;
+            }
+
+            if (timberPreviewCtrl != null && timberPreviewCtrl.PinnedBlueprintCount > 0)
+            {
+                float clrW = 148f;
+                rightCursorX -= clrW;
+                if (GUI.Button(new Rect(rightCursorX, py + 8f, clrW, 24f), $"Planları Temizle ({timberPreviewCtrl.PinnedBlueprintCount})"))
+                {
+                    if (timberPreviewCtrl.ClearAllBlueprints(out string clrMsg))
+                    {
+                        miningCtrl.LastFeedbackText = clrMsg;
+                        ShowToast(clrMsg, isSuccess: true, durationSec: 2.8f);
+                    }
                     CloseMindMenu(restoreCursorLock: true);
                     return;
                 }
             }
 
             GUI.Label(new Rect(px + 18f, py + 32f, panelW - 36f, 20f),
-                "Sekmeler: [1..6] | Yerleştir: [Sol Tık / Basılı Tut-Çek] | Varyant: [V / Shift+V] | Döndür: [R] 90° | Geçici Destek Sök (%100 İade): [Shift+E] | İptal: [Sağ Tık/Q/ESC]",
+                "Sekmeler: [1..7] | Yerleştir: [Sol Tık / Sürükle] | Varyant: [V] | Döndür: [R] | Sök/Kaldır: [Shift+E] | İptal: [Sağ Tık/Q/ESC]",
                 _subTitleStyle!);
 
-            // 1) 6 Sekme Çubuğu ([1] İstasyonlar & Lojistik .. [6] Betonarme & Çelik)
+            // 1) 7 Sekme Çubuğu ([1..6] Mimari Ekoller + [7] Tek-Parça & Şantiye)
+            int totalTabs = UnifiedBuildMenuCatalog.TabCount + 1;
             float tabY = py + 56f;
-            float tabGap = 6f;
-            float tabW = (panelW - 36f - tabGap * (UnifiedBuildMenuCatalog.TabCount - 1)) / UnifiedBuildMenuCatalog.TabCount;
-            float tabH = 32f;
+            float tabGap = 5f;
+            float tabW = (panelW - 36f - tabGap * (totalTabs - 1)) / totalTabs;
+            float tabH = 30f;
 
-            for (int ti = 0; ti < UnifiedBuildMenuCatalog.TabCount; ti++)
+            for (int ti = 0; ti < totalTabs; ti++)
             {
-                UnifiedBuildMenuTab tab = (UnifiedBuildMenuTab)ti;
+                bool isTab7 = ti == UnifiedBuildMenuCatalog.TabCount;
                 Rect tabRect = new Rect(px + 18f + ti * (tabW + tabGap), tabY, tabW, tabH);
                 bool tabHov = tabRect.Contains(mousePos);
-                bool tabAct = _activeTab == tab;
+                bool tabAct = isTab7 ? _isTimberSiteTabActive : (!_isTimberSiteTabActive && _activeTab == (UnifiedBuildMenuTab)ti);
 
-                GUI.color = tabAct
-                    ? new Color(0.18f, 0.46f, 0.30f, 0.98f)
-                    : (tabHov ? new Color(0.22f, 0.34f, 0.48f, 0.96f) : new Color(0.11f, 0.15f, 0.21f, 0.92f));
-                GUI.Box(tabRect, GUIContent.none, _panelStyle!);
-                GUI.color = prevColor;
+                Texture2D tabTex = tabAct
+                    ? DaVinciBlueprintSketchAtlas.GetParchmentTabActiveBg()
+                    : (tabHov ? DaVinciBlueprintSketchAtlas.GetParchmentCardHoverBg() : DaVinciBlueprintSketchAtlas.GetParchmentCardBg());
+                GUI.DrawTexture(tabRect, tabTex, ScaleMode.StretchToFill);
 
-                GUI.Label(new Rect(tabRect.x + 6f, tabRect.y + 5f, tabRect.width - 12f, 22f),
-                    UnifiedBuildMenuCatalog.GetTabTitle(tab), _cardDescStyle!);
+                string tabLabel = isTab7 ? "[7] Şantiye & Ev-İçi" : UnifiedBuildMenuCatalog.GetTabTitle((UnifiedBuildMenuTab)ti);
+                GUIStyle labelStyle = tabAct ? _toastTextStyle! : _cardDescStyle!;
+                GUI.Label(new Rect(tabRect.x + 4f, tabRect.y + 4f, tabRect.width - 8f, 22f), tabLabel, labelStyle);
 
                 if (tabHov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
                 {
                     Event.current.Use();
-                    _activeTab = tab;
+                    _isTimberSiteTabActive = isTab7;
+                    if (!isTab7) _activeTab = (UnifiedBuildMenuTab)ti;
                     _selectedEntryIndex = 0;
                     return;
                 }
@@ -746,13 +882,12 @@ namespace Stratocraft.Character
                 Rect tr = new Rect(px + 18f + k * (thickW + 6f), barY, thickW, thickH);
                 bool thov = tr.Contains(mousePos);
                 bool tsel = activeThick == tk;
-                GUI.color = tsel
-                    ? new Color(0.28f, 0.44f, 0.18f, 0.96f)
-                    : (thov ? new Color(0.22f, 0.32f, 0.44f, 0.96f) : new Color(0.11f, 0.15f, 0.20f, 0.92f));
-                GUI.Box(tr, GUIContent.none, _panelStyle!);
-                GUI.color = prevColor;
+                Texture2D tTex = tsel
+                    ? DaVinciBlueprintSketchAtlas.GetParchmentTabActiveBg()
+                    : (thov ? DaVinciBlueprintSketchAtlas.GetParchmentCardHoverBg() : DaVinciBlueprintSketchAtlas.GetParchmentCardBg());
+                GUI.DrawTexture(tr, tTex, ScaleMode.StretchToFill);
                 GUI.Label(new Rect(tr.x + 8f, tr.y + 3f, tr.width - 16f, 20f),
-                    SotfStructuralBuildMechanics.GetThicknessTurkishName(tk), _cardDescStyle!);
+                    SotfStructuralBuildMechanics.GetThicknessTurkishName(tk), tsel ? _toastTextStyle! : _cardDescStyle!);
                 if (thov && Event.current.type == EventType.MouseDown && Event.current.button == 0)
                 {
                     Event.current.Use();
@@ -769,16 +904,74 @@ namespace Stratocraft.Character
                 $"Aktif Yapı Düğümü: {activeNodes} | İstasyon: {activeStations} | Yığın: {activePiles}",
                 _subTitleStyle!);
 
-            // 3) Aktif Sekmenin Kart Izgarası (3 Sütunlu, Sıfır Taşma)
-            ReadOnlySpan<UnifiedBuildMenuEntry> entries = UnifiedBuildMenuCatalog.GetEntriesForTab(_activeTab);
+            // 3) Aktif Sekmenin Kart Izgarası (3 Sütunlu Leonardo da Vinci Proje Eskiz Kartları)
             float gridY = barY + thickH + 8f;
             float colGap = 10f;
-            float rowGap = 6f;
+            float rowGap = 7f;
             int cols = 3;
             float cardW = (panelW - 36f - colGap * (cols - 1)) / cols;
-            int rows = Mathf.Max(1, (entries.Length + cols - 1) / cols);
             float availH = panelH - (gridY - py) - 14f;
-            float cardH = Mathf.Clamp((availH - rowGap * (rows - 1)) / rows, 68f, 96f);
+
+            if (_isTimberSiteTabActive)
+            {
+                int rows7 = Mathf.Max(1, (Tab7TimberTools.Length + cols - 1) / cols);
+                float cardH7 = Mathf.Clamp((availH - rowGap * (rows7 - 1)) / rows7, 84f, 118f);
+                for (int i = 0; i < Tab7TimberTools.Length; i++)
+                {
+                    ref readonly TimberToolCardSpec spec = ref Tab7TimberTools[i];
+                    int c = i % cols;
+                    int r = i / cols;
+                    Rect cardRect = new Rect(px + 18f + c * (cardW + colGap), gridY + r * (cardH7 + rowGap), cardW, cardH7);
+                    bool hov = cardRect.Contains(mousePos);
+
+                    GUI.DrawTexture(cardRect, hov ? DaVinciBlueprintSketchAtlas.GetParchmentCardHoverBg() : DaVinciBlueprintSketchAtlas.GetParchmentCardBg(), ScaleMode.StretchToFill);
+
+                    float iconSize = Mathf.Min(56f, cardRect.height - 14f);
+                    GUI.DrawTexture(
+                        new Rect(cardRect.x + 8f, cardRect.y + (cardRect.height - iconSize) * 0.5f, iconSize, iconSize),
+                        DaVinciBlueprintSketchAtlas.GetSketchTexture(spec.Sketch),
+                        ScaleMode.ScaleToFit);
+
+                    float textX = cardRect.x + iconSize + 16f;
+                    float textW = cardRect.width - iconSize - 24f;
+                    GUI.Label(new Rect(textX, cardRect.y + 6f, textW, 22f), spec.Title, _cardTitleStyle!);
+                    GUI.Label(new Rect(textX, cardRect.y + 28f, textW, cardRect.height - 34f), spec.Description, _cardDescStyle!);
+
+                    if (hov && Event.current.type == EventType.MouseDown && (Event.current.button == 0 || Event.current.button == 1))
+                    {
+                        int btn = Event.current.button;
+                        Event.current.Use();
+                        if (timberPreviewCtrl != null)
+                        {
+                            if (btn == 1)
+                            {
+                                // [Sag Tik]: Yerdeki gercek dal/odun/tas/lif dizilimini dogrula ve el animasyonuyla monte et!
+                                bool ok = timberPreviewCtrl.TryValidateGroundClusterAndStartAssembly(
+                                    spec.Kind, cam, playerTransform, looseBuildSystem, this, out string valMsg);
+                                miningCtrl.LastFeedbackText = valMsg;
+                                ShowToast(valMsg, isSuccess: ok, durationSec: 3.8f);
+                            }
+                            else
+                            {
+                                // [Sol Tik]: Yalnizca gorsel dis-cizgi proje izi (kilavuz) yerlestirme modunu ac!
+                                float yawDeg = cam != null ? cam.transform.eulerAngles.y : playerTransform.eulerAngles.y;
+                                looseBuildSystem.CancelActiveBuildPlacement(holsterCtrl, miningCtrl: miningCtrl, emptyHotbarSelectionIfHammer: false);
+                                timberPreviewCtrl.StartToolPreview(spec.Kind, yawDeg, out string previewMsg);
+                                miningCtrl.LastFeedbackText = previewMsg;
+                                ShowToast(previewMsg, isSuccess: true, durationSec: 3.4f);
+                            }
+                        }
+                        CloseMindMenu(restoreCursorLock: true);
+                        return;
+                    }
+                }
+                GUI.color = prevColor;
+                return;
+            }
+
+            ReadOnlySpan<UnifiedBuildMenuEntry> entries = UnifiedBuildMenuCatalog.GetEntriesForTab(_activeTab);
+            int rows = Mathf.Max(1, (entries.Length + cols - 1) / cols);
+            float cardH = Mathf.Clamp((availH - rowGap * (rows - 1)) / rows, 70f, 96f);
 
             for (int i = 0; i < entries.Length; i++)
             {
@@ -794,20 +987,29 @@ namespace Stratocraft.Character
                     _hoveredBlueprintIndex = (int)entry.MindBlueprint;
                 }
 
-                GUI.color = hov
-                    ? new Color(0.20f, 0.34f, 0.48f, 0.97f)
-                    : (sel ? new Color(0.14f, 0.32f, 0.24f, 0.95f) : new Color(0.10f, 0.14f, 0.19f, 0.92f));
-                GUI.Box(cardRect, GUIContent.none, _panelStyle!);
-                GUI.color = prevColor;
+                Texture2D cardTex = (hov || sel)
+                    ? DaVinciBlueprintSketchAtlas.GetParchmentCardHoverBg()
+                    : DaVinciBlueprintSketchAtlas.GetParchmentCardBg();
+                GUI.DrawTexture(cardRect, cardTex, ScaleMode.StretchToFill);
 
-                GUI.Label(new Rect(cardRect.x + 10f, cardRect.y + 4f, cardRect.width - 20f, 20f), entry.DisplayName, _cardTitleStyle!);
-                GUI.Label(new Rect(cardRect.x + 10f, cardRect.y + 24f, cardRect.width - 20f, cardRect.height - 28f), entry.SupportAndPhysicsHint, _cardDescStyle!);
+                float iconSize = Mathf.Min(54f, cardRect.height - 12f);
+                DaVinciSketchKind sketchKind = DaVinciBlueprintSketchAtlas.InferSketchFromTitle(entry.DisplayName);
+                GUI.DrawTexture(
+                    new Rect(cardRect.x + 7f, cardRect.y + (cardRect.height - iconSize) * 0.5f, iconSize, iconSize),
+                    DaVinciBlueprintSketchAtlas.GetSketchTexture(sketchKind),
+                    ScaleMode.ScaleToFit);
+
+                float textX = cardRect.x + iconSize + 14f;
+                float textW = cardRect.width - iconSize - 20f;
+                GUI.Label(new Rect(textX, cardRect.y + 4f, textW, 20f), entry.DisplayName, _cardTitleStyle!);
+                GUI.Label(new Rect(textX, cardRect.y + 24f, textW, cardRect.height - 28f), entry.SupportAndPhysicsHint, _cardDescStyle!);
 
                 if (hov && Event.current.type == EventType.MouseDown)
                 {
                     int btn = Event.current.button;
                     Event.current.Use();
                     _selectedEntryIndex = i;
+                    timberPreviewCtrl?.CancelPreview();
                     ExecuteMenuEntrySelection(
                         in entry,
                         btn,
@@ -826,6 +1028,7 @@ namespace Stratocraft.Character
                     return;
                 }
             }
+            GUI.color = prevColor;
         }
 
         private void ExecuteMenuEntrySelection(
@@ -914,6 +1117,11 @@ namespace Stratocraft.Character
             {
                 _thoughtSilhouetteGo.SetActive(false);
             }
+        }
+
+        public void TriggerFinishingTouchAnimation(float durationSec = 1.6f)
+        {
+            _finishingCrouchTimer = Mathf.Max(_finishingCrouchTimer, durationSec);
         }
 
         private void OpenMindMenu()
@@ -1435,35 +1643,36 @@ namespace Stratocraft.Character
             _panelStyle = new GUIStyle(GUI.skin.box);
             _titleStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 16,
+                fontSize = 15,
                 fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(0.88f, 0.96f, 1.0f) }
+                normal = { textColor = new Color(0.24f, 0.13f, 0.06f) } // Sepya koyu murekkep
             };
             _subTitleStyle = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 12,
-                normal = { textColor = new Color(0.72f, 0.85f, 0.95f) }
+                fontStyle = FontStyle.Italic,
+                normal = { textColor = new Color(0.38f, 0.23f, 0.12f) } // Orta sepya not murekkebi
             };
             _cardTitleStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 14,
+                fontSize = 13,
                 fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(1.0f, 0.92f, 0.72f) }
+                normal = { textColor = new Color(0.46f, 0.15f, 0.09f) } // Venedik kirmizisi / sepya baslik
             };
             _cardDescStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 12,
+                fontSize = 11,
                 wordWrap = true,
-                normal = { textColor = new Color(0.90f, 0.93f, 0.96f) }
+                normal = { textColor = new Color(0.22f, 0.14f, 0.08f) } // Okunakli koyu sepya govde
             };
             _toastBoxStyle = new GUIStyle(GUI.skin.box);
             _toastTextStyle = new GUIStyle(GUI.skin.label)
             {
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = 13,
+                fontSize = 12,
                 fontStyle = FontStyle.Bold,
                 wordWrap = true,
-                normal = { textColor = Color.white }
+                normal = { textColor = new Color(0.98f, 0.95f, 0.88f) }
             };
         }
     }
