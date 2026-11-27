@@ -1916,6 +1916,12 @@ namespace Stratocraft.Character
         private static float SampleActualVoxelGroundY(
             Dictionary<(int cx, int cz), uint[]> worldChunks, float worldX, float worldZ, int referenceY)
         {
+            // Oncelikle gercek render edilen Surface Nets zemin MeshCollider yuzeyini oku (havada kalma / yer altina girme %0!)
+            if (Stage1LogArchCartController.TryRaycastRenderedTerrainY(worldX, worldZ, referenceY, out float renderedY))
+            {
+                return renderedY;
+            }
+
             int wx = Mathf.FloorToInt(worldX);
             int wz = Mathf.FloorToInt(worldZ);
             int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
@@ -2544,7 +2550,7 @@ namespace Stratocraft.Character
             float yTip = SampleActualVoxelGroundY(worldChunks, tipXZ.x, tipXZ.z, refY);
 
             float centerGroundY = Mathf.Max((yButt + yTip) * 0.5f, yMid);
-            Vector3 baseGroundPos = new Vector3(midXZ.x, centerGroundY + 0.58f, midXZ.z);
+            Vector3 baseGroundPos = new Vector3(midXZ.x, centerGroundY + 0.44f, midXZ.z);
             Vector3 logSlopeDir = new Vector3(dirXZ.x * totalLogLength, yTip - yButt, dirXZ.z * totalLogLength).normalized;
             if (logSlopeDir.sqrMagnitude < 0.01f) logSlopeDir = dirXZ;
 
@@ -2652,22 +2658,33 @@ namespace Stratocraft.Character
                 float yMid = SampleActualVoxelGroundY(worldChunks, pos.x, pos.z, refY);
                 float yTip = SampleActualVoxelGroundY(worldChunks, pos.x + dirXZ.x * halfSpan, pos.z + dirXZ.z * halfSpan, refY);
 
-                float targetY = Mathf.Max((yButt + yTip) * 0.5f, yMid) + 0.58f;
-                if (pos.y > targetY + 0.05f)
+                float logRad = Mathf.Clamp(log.DiameterMeters > 0.1f ? log.DiameterMeters * 0.52f : 0.44f, 0.24f, 0.46f);
+                // OctagonalColumn mesh genisligi ~0.88m (yaricap 0.44m) oldugu icin tam yuzeye oturt:
+                float targetY = Mathf.Max((yButt + yTip) * 0.5f, yMid) + Mathf.Max(0.42f, logRad);
+                if (pos.y > targetY + 0.04f)
                 {
                     log.VerticalVelocity = Mathf.Max(log.VerticalVelocity - GravityAcceleration * dt, -18f);
                     pos.y = Mathf.Max(targetY, pos.y + log.VerticalVelocity * dt);
                     log.LogObject.transform.position = pos;
                 }
-                else if (pos.y < targetY - 0.01f)
+                else if (Mathf.Abs(pos.y - targetY) > 0.015f)
                 {
                     log.VerticalVelocity = 0f;
-                    pos.y = targetY;
+                    pos.y = Mathf.Lerp(pos.y, targetY, Mathf.Clamp01(16f * dt));
                     log.LogObject.transform.position = pos;
                 }
                 else
                 {
                     log.VerticalVelocity = 0f;
+                }
+
+                // Egimli arazide kutugun iki ucunu zemin egimine hizala (bir ucu havada / yer altinda kalmaz!)
+                float fullSpan = Mathf.Max(1.0f, halfSpan * 2.0f);
+                Vector3 slopeDir = new Vector3(dirXZ.x * fullSpan, Mathf.Clamp(yTip - yButt, -fullSpan * 0.65f, fullSpan * 0.65f), dirXZ.z * fullSpan).normalized;
+                if (slopeDir.sqrMagnitude > 0.01f)
+                {
+                    Quaternion targetRot = Quaternion.FromToRotation(Vector3.up, slopeDir);
+                    log.LogObject.transform.rotation = Quaternion.Slerp(log.LogObject.transform.rotation, targetRot, Mathf.Clamp01(12f * dt));
                 }
             }
         }

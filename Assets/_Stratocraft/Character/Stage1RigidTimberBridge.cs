@@ -54,8 +54,8 @@ namespace Stratocraft.Character
 
             int wx = Mathf.FloorToInt(worldX);
             int wz = Mathf.FloorToInt(worldZ);
-            int cx = wx >= 0 ? (wx >> 4) : ((wx - 15) >> 4);
-            int cz = wz >= 0 ? (wz >> 4) : ((wz - 15) >> 4);
+            int cx = wx >> 4;
+            int cz = wz >> 4;
             if (!WorldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
 
             int lx = wx - (cx << 4);
@@ -82,6 +82,8 @@ namespace Stratocraft.Character
 
         public float SampleSurfaceHeightY(float worldX, float worldZ, float fallbackY)
         {
+            if (Stage1LogArchCartController.TryRaycastRenderedTerrainY(worldX, worldZ, fallbackY, out float meshY))
+                return meshY;
             return TrySampleGroundSurfaceY(worldX, worldZ, fallbackY + 3.5f, out float gy, out _) ? gy : fallbackY;
         }
     }
@@ -188,11 +190,13 @@ namespace Stratocraft.Character
             TimberWoodSpecies species,
             Material? sharedVoxelMat,
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
-            out string feedback)
+            out string feedback,
+            bool lockExactXZ = false)
         {
             _soilSampler.WorldChunks = worldChunks;
             // 3x3 cevre taramasiyla kazilmis cukurun GERCEK tabanini bul; ANCAK altindaki magaraya acilan delik varsa
             // ASLA 20m yerin altina isinlama (targetPos.y - 2.8m alt sinir korumasi)!
+            // ONEMLI: lockExactXZ=true (Plan diregine kilitliyken) X/Z koordinati ASLA yana kaydirilmaz — sadece taban derinligi (bestPitY) olculur!
             float minAllowedPitY = targetPos.y - 2.8f;
             float bestX = targetPos.x;
             float bestZ = targetPos.z;
@@ -201,18 +205,22 @@ namespace Stratocraft.Character
 
             int baseIx = Mathf.FloorToInt(targetPos.x);
             int baseIz = Mathf.FloorToInt(targetPos.z);
+            float scanMaxR = lockExactXZ ? 0.95f : 0.72f;
             for (int ox = -1; ox <= 1; ox++)
             for (int oz = -1; oz <= 1; oz++)
             {
                 float sx = baseIx + ox + 0.5f;
                 float sz = baseIz + oz + 0.5f;
-                if (Vector2.Distance(new Vector2(sx, sz), new Vector2(targetPos.x, targetPos.z)) > 1.15f) continue;
+                if (Vector2.Distance(new Vector2(sx, sz), new Vector2(targetPos.x, targetPos.z)) > scanMaxR) continue;
                 float sy = _soilSampler.SampleSurfaceHeightY(sx, sz, targetPos.y + 1.5f);
                 if (sy >= minAllowedPitY && sy < bestPitY - 0.08f)
                 {
                     bestPitY = sy;
-                    bestX = sx;
-                    bestZ = sz;
+                    if (!lockExactXZ)
+                    {
+                        bestX = sx;
+                        bestZ = sz;
+                    }
                 }
             }
 
@@ -283,12 +291,26 @@ namespace Stratocraft.Character
 
             if (eval.Result == TipInPlacementResult.TemporaryHoleHeldNeedsBackfill)
             {
-                feedback = $"🪵 {realLen:F1}m kütük çukurun dibine DİK OLARAK oturtuldu (derinlik {eval.HoleDepthMeters:F2}m)! Etrafını toprakla [Sağ Tık] doldurup kalıcı kilitleyin!";
+                feedback = $"🪵 {realLen:F1}m kütük çukurun dibine DİK OLARAK oturtuldu (derinlik {eval.HoleDepthMeters:F2}m)! Elinde Toprak veya Ham Taş varken [E], [Sol Tık] veya [Sağ Tık] ile çukuru doldurup kilitleyin!";
                 return true;
             }
 
-            feedback = $"🪵 {realLen:F1}m kütük derin çukura ({eval.HoleDepthMeters:F2}m) dikildi! Etrafını toprakla sıkıştırın.";
+            feedback = $"🪵 {realLen:F1}m kütük derin çukura ({eval.HoleDepthMeters:F2}m) dikildi! Elinde Toprak/Taş ile [E] veya [Tık] basıp sıkıştırın.";
             return true;
+        }
+
+        public bool HasUnwedgedHolePostNear(Vector3 playerPos, float maxRadius = 3.5f)
+        {
+            float maxSq = maxRadius * maxRadius;
+            for (int i = 0; i < _pieceCount; i++)
+            {
+                if (_pieceRemoved[i] != 0 || _pieces[i].Kind != RigidTimberPieceKind.Post || _pieces[i].State != RigidTimberState.StaticAnchored) continue;
+                if ((_pieces[i].Flags & 2) == 0 && _soilProfiles[i].EmbedDepthM >= 1.35f) continue;
+                float dx = _pieces[i].Position.X - playerPos.x;
+                float dz = _pieces[i].Position.Z - playerPos.z;
+                if (dx * dx + dz * dz <= maxSq) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -482,39 +504,40 @@ namespace Stratocraft.Character
         }
 
         /// <summary>
-        /// [Shift+E] ile oyuncunun diktigi veya yerdeki herhangi bir kutugu Yarma Odun olarak geri almasini saglar.
+        /// [K] ile oyuncunun yanlis diktigi veya yerdeki herhangi bir kutuk/diregi GERCEK KUTUK olarak geri almasini saglar!
         /// </summary>
-        public bool TryRetrieveAimedTimberPiece(Vector3 rayOrigin, Vector3 rayDir, float maxRange, out int firewoodCount, out string feedback)
+        public bool TryRetrieveAimedTimberPiece(
+            Vector3 rayOrigin, Vector3 rayDir, float maxRange,
+            out float retrievedLengthM, out float retrievedDiamM, out byte retrievedWoodMat, out string feedback)
         {
-            firewoodCount = 0;
+            retrievedLengthM = 0f;
+            retrievedDiamM = 0.36f;
+            retrievedWoodMat = MaterialIdCatalog.OakWood;
             feedback = string.Empty;
-            int bestIdx = -1;
-            float bestDist = maxRange;
-            for (int i = 0; i < _pieceCount; i++)
+
+            if (!TryRaycastAnyPiece(rayOrigin, rayDir, maxRange, out int bestIdx, out _, out _, out _))
+                return false;
+
+            ref RigidStructurePiece p = ref _pieces[bestIdx];
+            retrievedLengthM = p.LengthM;
+            retrievedDiamM = p.DiameterM;
+            retrievedWoodMat = p.Species == TimberWoodSpecies.Ironwood ? MaterialIdCatalog.Ironwood : MaterialIdCatalog.OakWood;
+
+            uint pid = p.PieceId;
+            for (int b = 0; b < _bondCount; b++)
             {
-                if (_pieceRemoved[i] != 0) continue;
-                Vector3 center = ToUnityVec3(_pieces[i].Position);
-                Vector3 to = center - rayOrigin;
-                float along = Vector3.Dot(to, rayDir);
-                if (along < 0.2f || along > bestDist) continue;
-                float perpSq = (to - rayDir * along).sqrMagnitude;
-                float hitR = Mathf.Max(0.85f, _pieces[i].LengthM * 0.45f);
-                if (perpSq <= hitR * hitR)
-                {
-                    bestDist = along;
-                    bestIdx = i;
-                }
+                if (_bonds[b].PieceA == pid || _bonds[b].PieceB == pid)
+                    _bonds[b].IsActive = 0;
             }
-            if (bestIdx < 0) return false;
-            float len = _pieces[bestIdx].LengthM;
-            firewoodCount = Mathf.Clamp(Mathf.RoundToInt(len), 2, 6);
+
             _pieceRemoved[bestIdx] = 1;
             if (_pieceVisuals[bestIdx] != null)
             {
                 UnityEngine.Object.Destroy(_pieceVisuals[bestIdx]);
                 _pieceVisuals[bestIdx] = null;
             }
-            feedback = $"♻️ Kütük ({len:F1}m) sökülüp geri alındı (+{firewoodCount}x Yarma Odun).";
+            _needsStaticReeval = true;
+            feedback = $"♻️ {p.Kind} ({retrievedLengthM:F2}m) sökülüp bütün kütük olarak geri alındı!";
             return true;
         }
 
@@ -550,8 +573,55 @@ namespace Stratocraft.Character
             Vector3 localDir = Quaternion.Inverse(pieceRot) * new Vector3(worldDirXZ.x, 0f, worldDirXZ.z);
             float ang = Mathf.Atan2(localDir.z, localDir.x);
             if (ang < 0f) ang += Mathf.PI * 2f;
-            int sec = Mathf.FloorToInt((ang / (Mathf.PI * 2f)) * 8f) & 7;
+            // Duz sekizgen yuzey merkezleri tam 0° (+X Dogu), 45° (KD), 90° (+Z Kuzey), 135° (KB), 180° (-X Bati), 225° (GB), 270° (-Z Guney), 315° (GD) hizasindadir!
+            int sec = Mathf.RoundToInt((ang / (Mathf.PI * 2f)) * 8f) & 7;
             return sec;
+        }
+
+        public static Vector3 LocalOctantSectorToWorldDir(Quaternion pieceRot, int sector)
+        {
+            float aMid = ((sector & 7) / 8.0f) * Mathf.PI * 2f;
+            Vector3 localOut = new Vector3(Mathf.Cos(aMid), 0f, Mathf.Sin(aMid));
+            Vector3 w = pieceRot * localOut;
+            w.y = 0f;
+            return w.sqrMagnitude > 1e-6f ? w.normalized : Vector3.right;
+        }
+
+        public static bool HasGrooveFacingWorldDir(in PieceCarpentryProfile carp, Quaternion pieceRot, Vector2 targetDirXZ, float minDot = 0.50f)
+        {
+            if (carp.GrooveSectorMask == 0 || targetDirXZ.sqrMagnitude < 1e-6f) return false;
+            Vector2 dirN = targetDirXZ.normalized;
+            for (int s = 0; s < 8; s++)
+            {
+                if ((carp.GrooveSectorMask & (1 << s)) == 0) continue;
+                Vector3 w = LocalOctantSectorToWorldDir(pieceRot, s);
+                if (Vector2.Dot(new Vector2(w.x, w.z), dirN) >= minDot) return true;
+            }
+            return false;
+        }
+
+        public static bool TryFindMortiseFacingWorldDir(in PieceCarpentryProfile carp, Quaternion pieceRot, Vector2 targetDirXZ, float localY, float heightTol, out float snappedLocalY, float minDot = 0.50f)
+        {
+            snappedLocalY = localY;
+            if (carp.SideMortiseCount == 0 || targetDirXZ.sqrMagnitude < 1e-6f) return false;
+            Vector2 dirN = targetDirXZ.normalized;
+            float bestDot = minDot;
+            bool found = false;
+            for (int i = 0; i < carp.SideMortiseCount; i++)
+            {
+                byte ms = carp.GetMortiseSector(i);
+                float my = carp.GetMortiseLocalY(i);
+                if (Mathf.Abs(my - localY) > heightTol) continue;
+                Vector3 w = LocalOctantSectorToWorldDir(pieceRot, ms);
+                float dot = Vector2.Dot(new Vector2(w.x, w.z), dirN);
+                if (dot >= bestDot)
+                {
+                    bestDot = dot;
+                    snappedLocalY = my;
+                    found = true;
+                }
+            }
+            return found;
         }
 
         public static string GetSectorCompassLabel(Vector3 worldDirXZ)
@@ -682,12 +752,14 @@ namespace Stratocraft.Character
 
                 float groundY = SampleMaxSurfaceAlongSpan(startSurface, endSurface, targetPos.y + 0.75f);
 
-                // A) Once bu yukseklikte iki direkte de YAN KIRIS ZIVANASI (SideMortise) acilmis ve oyuncu dogrudan o yuvaya (+-0.42m) nisan almis mi kontrol et!
+                // A) Once bu yukseklikte iki direkte de YAN KIRIS ZIVANASI (SideMortise) acilmis ve oyuncu dogrudan o yuvaya (+-0.45m) nisan almis mi kontrol et!
                 // DIKKAT: Eger bu zivana yuvasina daha once bir Ana Kat Kirisi (Beam) oturtulduysa ayni yuvaya ikinci kez ust uste kiris koyma!
                 float localYA = targetPos.y - pA.y;
                 float localYB = targetPos.y - pB.y;
-                bool hasMortiseA = _carpentryProfiles[bestA].TryFindMortiseNear(secA, localYA, 0.42f, out float snapLocYA);
-                bool hasMortiseB = _carpentryProfiles[bestB].TryFindMortiseNear(secB, localYB, 0.42f, out float snapLocYB);
+                bool hasMortiseA = TryFindMortiseFacingWorldDir(in _carpentryProfiles[bestA], rotA, ab, localYA, 0.45f, out float snapLocYA) ||
+                                   _carpentryProfiles[bestA].TryFindMortiseNear(secA, localYA, 0.45f, out snapLocYA);
+                bool hasMortiseB = TryFindMortiseFacingWorldDir(in _carpentryProfiles[bestB], rotB, -ab, localYB, 0.45f, out float snapLocYB) ||
+                                   _carpentryProfiles[bestB].TryFindMortiseNear(secB, localYB, 0.45f, out snapLocYB);
                 if (hasMortiseA && hasMortiseB && Mathf.Abs((pA.y + snapLocYA) - (pB.y + snapLocYB)) <= 0.55f)
                 {
                     float beamY = ((pA.y + snapLocYA) + (pB.y + snapLocYB)) * 0.5f;
@@ -748,8 +820,10 @@ namespace Stratocraft.Character
                 }
 
                 float finalY = targetPos.y > stackedY + 0.55f ? targetPos.y : stackedY;
-                bool hasGrooveA = _carpentryProfiles[bestA].HasGrooveNearSector(secA);
-                bool hasGrooveB = _carpentryProfiles[bestB].HasGrooveNearSector(secB);
+                bool hasGrooveA = HasGrooveFacingWorldDir(in _carpentryProfiles[bestA], rotA, ab, 0.50f) ||
+                                  _carpentryProfiles[bestA].HasGrooveNearSector(secA);
+                bool hasGrooveB = HasGrooveFacingWorldDir(in _carpentryProfiles[bestB], rotB, -ab, 0.50f) ||
+                                  _carpentryProfiles[bestB].HasGrooveNearSector(secB);
 
                 eval.PostA = bestA;
                 eval.PostB = bestB;
@@ -1981,7 +2055,7 @@ namespace Stratocraft.Character
             _needsStaticReeval = true;
             ReevaluateStaticEquilibrium(worldChunks);
 
-            feedback = "🏠 Gerçek 3 Katlı Tek-Parça Ahşap Ev (7.6×6.4m, kalın kütük duvarlı, döşemeli, merdivenli ve çatılı) kuruldu! İçine yürüyüp 3. kata çıkabilir, [Alt+L] ile parça kesebilirsiniz!";
+            feedback = "🏠 Gerçek 3 Katlı Tek-Parça Ahşap Ev (7.6×6.4m, kalın kütük duvarlı, döşemeli, merdivenli ve çatılı) kuruldu! İçine yürüyüp 3. kata çıkabilir, Balta [V] Kip 4 ile parça kesebilir veya [K] ile sökebilirsiniz!";
             return true;
         }
 
@@ -2305,56 +2379,15 @@ namespace Stratocraft.Character
 
             if (bestIdx < 0) return false;
 
-            // A) AYAKTAKI YAPI PARCASINA FIZIKSEL BALTA DARBESI!
+            // DIKKAT (KULLANICI GERI BILDIRIMI DUZELTMESI):
+            // 240 Hz fiziksel balta bicagi savurmasi ASLA dikili ana direkleri, duvarlari veya catilari (StaticAnchored)
+            // yanlislikla kesip ikiye bolmez! Ayaktaki yapi marangozlugu ve budamasi YALNIZCA secili Balta Kipi ([V]) uzerinden yapilir.
             if (_pieces[bestIdx].State == RigidTimberState.StaticAnchored)
             {
-                uint hitPieceId = _pieces[bestIdx].PieceId;
-                // 1) Birlesim ucuna (<= 0.85m) vurulduysa: kesmek yerine KERTIK ACIP KILITLE (FrictionOnly -> SaddleNotch -> Dovetail)!
-                for (int b = 0; b < _bondCount; b++)
-                {
-                    if (_bonds[b].IsActive == 0) continue;
-                    if (_bonds[b].PieceA != hitPieceId && _bonds[b].PieceB != hitPieceId) continue;
-                    if (_bonds[b].Joinery != TimberJoineryKind.FrictionOnly && _bonds[b].Joinery != TimberJoineryKind.SaddleNotch) continue;
-
-                    SysVec3 localMid = _bonds[b].PieceA == hitPieceId
-                        ? (_bonds[b].LocalA0 + _bonds[b].LocalA2) * 0.5f
-                        : (_bonds[b].LocalB0 + _bonds[b].LocalB2) * 0.5f;
-                    Vector3 bondPos = ToUnityVec3(_pieces[bestIdx].Position) + ToUnityQuat(_pieces[bestIdx].Rotation) * ToUnityVec3(localMid);
-                    if ((bladeTipWorld - bondPos).sqrMagnitude <= 0.95f * 0.95f || _bonds[b].Joinery == TimberJoineryKind.FrictionOnly)
-                    {
-                        if (TimberTipInAndJoineryLogic.UpgradeJoineryWithAxeNotch(ref _bonds[b], out TimberJoineryKind upgraded))
-                        {
-                            string jLbl = upgraded == TimberJoineryKind.SaddleNotch ? "Eyer Kertiği (SaddleNotch)" : "Kırlangıç Kertiği (Dovetail)";
-                            feedback = $"🪓 Uç bağlantısına baltayla {jLbl} açılıp kilitlendi! (Kesmek için gövde ortasına vurun)";
-                            return true;
-                        }
-                    }
-                }
-
-                // 2) Govdeye vurulduysa: hasar birikir -> 3. darbede ASLA yok olmaz, TAM VURULAN YERDEN IKIYE BOLUNUR!
-                _pieces[bestIdx].Damage01 += 0.36f;
-                if (_pieces[bestIdx].Damage01 < 1.0f)
-                {
-                    int pct = Mathf.Clamp(Mathf.RoundToInt(_pieces[bestIdx].Damage01 * 100f), 1, 99);
-                    feedback = $"🪓 {_pieces[bestIdx].Kind} baltayla kesiliyor (Hasar: %{pct}) — kırılınca tam vurduğun yerden ayrılır!";
-                    return true;
-                }
-
-                // 3. darbe -> baglari kopar, TAM VURULAN NOKTADAN ikiye bol (veya kisaysa Yarma Odun dusur) ve ust yapiyi coz!
-                for (int b = 0; b < _bondCount; b++)
-                {
-                    if (_bonds[b].PieceA == hitPieceId || _bonds[b].PieceB == hitPieceId)
-                    {
-                        _bonds[b].IsActive = 0;
-                    }
-                }
-                bool splitOk = TrySplitPieceAtWorldPoint(bestIdx, bladeTipWorld, worldChunks, out salvagedMaterialId, out salvagedCount, out feedback);
-                _needsStaticReeval = true;
-                ReevaluateStaticEquilibrium(worldChunks);
-                return splitOk;
+                return false;
             }
 
-            // B) YERDE YATAN YIKINTI PARCASINA FIZIKSEL BALTA DARBESI!
+            // YERDE YATAN SERBEST / YIKINTI PARCASINA FIZIKSEL BALTA DARBESI!
             return TrySplitPieceAtWorldPoint(bestIdx, bladeTipWorld, worldChunks, out salvagedMaterialId, out salvagedCount, out feedback);
         }
 
@@ -2906,11 +2939,13 @@ namespace Stratocraft.Character
             float grooveDepth = Mathf.Min(0.11f, radius * 0.42f);
             float innerR = Mathf.Max(0.06f, radius - grooveDepth);
 
+            const float halfStep = Mathf.PI / sides;
             for (int i = 0; i < sides; i++)
             {
-                float a0 = (i / (float)sides) * Mathf.PI * 2f;
-                float a1 = ((i + 1) / (float)sides) * Mathf.PI * 2f;
-                float aMid = (a0 + a1) * 0.5f;
+                // Duz yuzey merkezleri tam 0° (+X), 45°, 90° (+Z), 135°, 180° (-X), 225°, 270° (-Z), 315° hizasina oturur!
+                float aMid = (i / (float)sides) * Mathf.PI * 2f;
+                float a0 = aMid - halfStep;
+                float a1 = aMid + halfStep;
                 Vector3 nOut = new Vector3(Mathf.Cos(aMid), 0f, Mathf.Sin(aMid));
                 Vector2 dir0 = new Vector2(Mathf.Cos(a0), Mathf.Sin(a0));
                 Vector2 dir1 = new Vector2(Mathf.Cos(a1), Mathf.Sin(a1));
@@ -3128,6 +3163,512 @@ namespace Stratocraft.Character
             return true;
         }
 
+        public enum AxeCarpentryToolMode : byte
+        {
+            TreeAndLooseChop = 0,     // Varsayilan: Yalnizca agac ve yerdeki serbest kutugu keser (ayaktaki yapi %100 korumali!)
+            VerticalWallGroove = 1,   // Yalnizca dikey duvar olugu acar ([R] 45° yon cevirir, karsi direkle otomatik hizalar!)
+            SideMortiseAndNotch = 2,  // Yalnizca yan kiris zivanasi (Post) veya eyer kertigi (Log) acar!
+            StructuralTrimAndCut = 3  // Yalnizca yapi kesimi & cati ustu fazla direk ucu sifira sifir budama!
+        }
+
+        public struct AxeCarpentryPreviewState
+        {
+            public bool HasTarget;
+            public int PieceIdx;
+            public RigidTimberPieceKind PieceKind;
+            public AxeCarpentryToolMode Mode;
+            public byte Sector;
+            public bool AlreadyCarved;
+            public bool IsSafePostTopTrim;
+            public Vector3 PieceCenter;
+            public Quaternion PieceRot;
+            public float PieceLengthM;
+            public float PieceRadiusM;
+            public Vector3 HitWorldPt;
+            public Vector3 FaceDirWorld; // Secili oluk/zivana dis yonu (XZ birim vektoru)
+            public int PairedPostIdx;    // Hizadaki karsi direk (-1 ise yok)
+            public Vector3 PairedPostFacePt;
+            public float PairedSpanM;
+            public string HudText;
+        }
+
+        public int FindAlignedOppositePost(int postIdx, Vector3 postCenter, Vector3 dirWorldXZ, out float spanM)
+        {
+            spanM = 0f;
+            Vector2 dir2 = new Vector2(dirWorldXZ.x, dirWorldXZ.z);
+            if (dir2.sqrMagnitude < 1e-5f) return -1;
+            dir2.Normalize();
+
+            int bestJ = -1;
+            float bestScore = -1f;
+            for (int j = 0; j < _pieceCount; j++)
+            {
+                if (j == postIdx || _pieceRemoved[j] != 0 || _pieces[j].State != RigidTimberState.StaticAnchored || _pieces[j].Kind != RigidTimberPieceKind.Post)
+                    continue;
+                Vector2 diff = new Vector2(_pieces[j].Position.X - postCenter.x, _pieces[j].Position.Z - postCenter.z);
+                float dist = diff.magnitude;
+                if (dist < 1.05f || dist > 14.5f) continue;
+                Vector2 toJ = diff / dist;
+                float dot = Vector2.Dot(dir2, toJ);
+                if (dot < 0.85f) continue; // +-31 derece koni icindeki karsi direk
+
+                // Arada baska bir dikili direk varsa atla
+                bool blocked = false;
+                for (int k = 0; k < _pieceCount; k++)
+                {
+                    if (k == postIdx || k == j || _pieceRemoved[k] != 0 || _pieces[k].State != RigidTimberState.StaticAnchored || _pieces[k].Kind != RigidTimberPieceKind.Post)
+                        continue;
+                    Vector2 kDiff = new Vector2(_pieces[k].Position.X - postCenter.x, _pieces[k].Position.Z - postCenter.z);
+                    float projK = Vector2.Dot(kDiff, toJ);
+                    if (projK > 0.35f && projK < dist - 0.35f)
+                    {
+                        float perpK = Vector2.Distance(toJ * projK, kDiff);
+                        if (perpK <= 0.65f) { blocked = true; break; }
+                    }
+                }
+                if (blocked) continue;
+
+                float score = dot - dist * 0.015f;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestJ = j;
+                    spanM = dist;
+                }
+            }
+            return bestJ;
+        }
+
+        public bool TryEvaluateAxeCarpentryPreview(
+            AxeCarpentryToolMode mode,
+            int manualSectorOffset,
+            bool pairBothPosts,
+            Vector3 rayOrigin,
+            Vector3 rayDir,
+            float maxDist,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out AxeCarpentryPreviewState state)
+        {
+            state = default;
+            state.PairedPostIdx = -1;
+            state.Mode = mode;
+
+            if (!TryRaycastAnyPiece(rayOrigin, rayDir, maxDist, out int idx, out Vector3 hitPt, out _, out _))
+                return false;
+
+            _soilSampler.WorldChunks = worldChunks;
+            ref readonly RigidStructurePiece p = ref _pieces[idx];
+            ref readonly PieceCarpentryProfile carp = ref _carpentryProfiles[idx];
+            Quaternion rot = ToUnityQuat(p.Rotation);
+            Vector3 center = ToUnityVec3(p.Position);
+
+            state.HasTarget = true;
+            state.PieceIdx = idx;
+            state.PieceKind = p.Kind;
+            state.PieceCenter = center;
+            state.PieceRot = rot;
+            state.PieceLengthM = p.LengthM;
+            state.PieceRadiusM = p.DiameterM * 0.5f;
+            state.HitWorldPt = hitPt;
+
+            // Kip 0: Agac & Yerdeki Kutuk Kesimi (Ayaktaki yapi %100 korumali!)
+            if (mode == AxeCarpentryToolMode.TreeAndLooseChop)
+            {
+                if (p.State == RigidTimberState.StaticAnchored)
+                {
+                    state.HudText = $"🛡️ YAPI KORUMASI AKTİF ({p.Kind}): Yanlışlıkla kesilmez! | [V] Oluk / Zıvana / Budama Kipi | [K] Sök";
+                    return true;
+                }
+                Vector3 splitAxis = rot * Vector3.up;
+                float halfL = p.LengthM * 0.5f;
+                float tAlong = Mathf.Clamp(Vector3.Dot(hitPt - center, splitAxis), -halfL, halfL);
+                float leftM = halfL + tAlong;
+                float rightM = p.LengthM - leftM;
+                state.FaceDirWorld = splitAxis;
+                state.HudText = $"📏 SERBEST KÜTÜK KESİMİ: {leftM:F2}m | {rightM:F2}m (Toplam {p.LengthM:F2}m) — [Sol Tık] Kes | [V] Oluk Kipi";
+                return true;
+            }
+
+            // Kip 1: Dikey Duvar Olugu Acma (Yalnizca dikili Post uzerinde!)
+            if (mode == AxeCarpentryToolMode.VerticalWallGroove)
+            {
+                if (p.Kind != RigidTimberPieceKind.Post || p.State != RigidTimberState.StaticAnchored)
+                {
+                    state.HudText = "🪵 [Kip 2/4: DİKEY OLUK] Dikili bir Ana Direğe (Post) bakın! | [V] Sonraki Kip";
+                    return true;
+                }
+
+                Vector3 aimRadial = new Vector3(hitPt.x - center.x, 0f, hitPt.z - center.z);
+                if (aimRadial.sqrMagnitude < 1e-4f) aimRadial = new Vector3(-rayDir.x, 0f, -rayDir.z);
+
+                // Eger oyuncu [R] ile elle cevirmemisse (offset == 0): ister iki diregin arasinda dursun (aim2),
+                // ister disarida durup bu diregin uzerinden karsi direge baksin (camFwd2), o yondeki dikili direge otomatik kilitlen!
+                if ((manualSectorOffset & 7) == 0)
+                {
+                    Vector2 aim2 = new Vector2(aimRadial.x, aimRadial.z).normalized;
+                    Vector2 camFwd2 = new Vector2(rayDir.x, rayDir.z).normalized;
+                    int bestAutoPost = -1;
+                    float bestAutoScore = -1f;
+                    for (int j = 0; j < _pieceCount; j++)
+                    {
+                        if (j == idx || _pieceRemoved[j] != 0 || _pieces[j].State != RigidTimberState.StaticAnchored || _pieces[j].Kind != RigidTimberPieceKind.Post)
+                            continue;
+                        Vector2 diff = new Vector2(_pieces[j].Position.X - center.x, _pieces[j].Position.Z - center.z);
+                        float dist = diff.magnitude;
+                        if (dist < 1.05f || dist > 14.5f) continue;
+                        Vector2 toJ = diff / dist;
+                        float dot = Mathf.Max(Vector2.Dot(aim2, toJ), Vector2.Dot(camFwd2, toJ));
+                        if (dot < 0.42f) continue;
+                        bool thisAlreadyFacesJ = HasGrooveFacingWorldDir(in carp, rot, toJ, 0.75f);
+                        Quaternion rotJ = ToUnityQuat(_pieces[j].Rotation);
+                        bool jFacesBack = HasGrooveFacingWorldDir(in _carpentryProfiles[j], rotJ, -toJ, 0.50f);
+                        float sc = dot + (!thisAlreadyFacesJ ? 0.35f : 0f) + (jFacesBack ? 0.35f : 0.10f) - dist * 0.015f;
+                        if (sc > bestAutoScore)
+                        {
+                            bestAutoScore = sc;
+                            bestAutoPost = j;
+                        }
+                    }
+                    if (bestAutoPost >= 0)
+                    {
+                        aimRadial = new Vector3(_pieces[bestAutoPost].Position.X - center.x, 0f, _pieces[bestAutoPost].Position.Z - center.z).normalized;
+                    }
+                }
+
+                int baseSec = WorldDirToLocalOctantSector(rot, aimRadial);
+                byte finalSec = (byte)((baseSec + (manualSectorOffset & 7)) & 7);
+                Vector3 faceDir = LocalOctantSectorToWorldDir(rot, finalSec);
+                string dirLbl = GetSectorCompassLabel(faceDir);
+                bool hasGroove = (carp.GrooveSectorMask & (1 << finalSec)) != 0;
+
+                state.Sector = finalSec;
+                state.FaceDirWorld = faceDir;
+                state.AlreadyCarved = hasGroove;
+
+                int oppIdx = pairBothPosts ? FindAlignedOppositePost(idx, center, faceDir, out float oppSpan) : -1;
+                float actualOppSpan = oppIdx >= 0 ? Vector2.Distance(new Vector2(center.x, center.z), new Vector2(_pieces[oppIdx].Position.X, _pieces[oppIdx].Position.Z)) : 0f;
+                if (oppIdx >= 0)
+                {
+                    Vector3 oppC = ToUnityVec3(_pieces[oppIdx].Position);
+                    state.PairedPostIdx = oppIdx;
+                    state.PairedSpanM = actualOppSpan;
+                    state.PairedPostFacePt = new Vector3(oppC.x, Mathf.Clamp(hitPt.y, oppC.y - _pieces[oppIdx].LengthM * 0.45f, oppC.y + _pieces[oppIdx].LengthM * 0.45f), oppC.z)
+                                             - faceDir * (_pieces[oppIdx].DiameterM * 0.5f);
+                }
+
+                if (oppIdx >= 0)
+                {
+                    state.HudText = $"🪵 [DİKEY OLUK — {dirLbl}] ↔ Karşı Direkle Birlikte ({actualOppSpan:F2}m) | [Sol Tık] Aç | [R] 45° Yön | [J] Tek/Çift | [K] Kapat";
+                }
+                else
+                {
+                    string modeLbl = pairBothPosts ? "[J] Tek Direk Modu" : "Tek Direk Modu ([J] Çift)";
+                    state.HudText = hasGroove
+                        ? $"✅ [DİKEY OLUK — {dirLbl}] Bu yüz oluklu! | [R] 45° Başka Yön | [K] Bu Oluğu Kapat | [V] Sonraki Kip"
+                        : $"🪵 [DİKEY OLUK — {dirLbl}] [Sol Tık] Oy | [R] 45° Yön Çevir | {modeLbl} | [V] Kip";
+                }
+                return true;
+            }
+
+            // Kip 2: Yan Kiris Zivanasi (Post) & Eyer Kertigi (Log)
+            if (mode == AxeCarpentryToolMode.SideMortiseAndNotch)
+            {
+                if (p.Kind == RigidTimberPieceKind.Post && p.State == RigidTimberState.StaticAnchored)
+                {
+                    Vector3 aimRadial = new Vector3(hitPt.x - center.x, 0f, hitPt.z - center.z);
+                    if (aimRadial.sqrMagnitude < 1e-4f) aimRadial = new Vector3(-rayDir.x, 0f, -rayDir.z);
+                    if ((manualSectorOffset & 7) == 0)
+                    {
+                        Vector2 aim2 = new Vector2(aimRadial.x, aimRadial.z).normalized;
+                        Vector2 camFwd2 = new Vector2(rayDir.x, rayDir.z).normalized;
+                        int bestMPost = -1;
+                        float bestMSc = -1f;
+                        for (int j = 0; j < _pieceCount; j++)
+                        {
+                            if (j == idx || _pieceRemoved[j] != 0 || _pieces[j].State != RigidTimberState.StaticAnchored || _pieces[j].Kind != RigidTimberPieceKind.Post)
+                                continue;
+                            Vector2 diff = new Vector2(_pieces[j].Position.X - center.x, _pieces[j].Position.Z - center.z);
+                            float dist = diff.magnitude;
+                            if (dist < 1.05f || dist > 14.5f) continue;
+                            Vector2 toJ = diff / dist;
+                            float dot = Mathf.Max(Vector2.Dot(aim2, toJ), Vector2.Dot(camFwd2, toJ));
+                            if (dot >= 0.42f && dot - dist * 0.015f > bestMSc)
+                            {
+                                bestMSc = dot - dist * 0.015f;
+                                bestMPost = j;
+                            }
+                        }
+                        if (bestMPost >= 0)
+                        {
+                            aimRadial = new Vector3(_pieces[bestMPost].Position.X - center.x, 0f, _pieces[bestMPost].Position.Z - center.z).normalized;
+                        }
+                    }
+                    int baseSec = WorldDirToLocalOctantSector(rot, aimRadial);
+                    byte finalSec = (byte)((baseSec + (manualSectorOffset & 7)) & 7);
+                    Vector3 faceDir = LocalOctantSectorToWorldDir(rot, finalSec);
+                    string dirLbl = GetSectorCompassLabel(faceDir);
+                    float surfY = SampleSurroundingRimSurfaceY(center.x, center.z, hitPt.y + 1.5f);
+                    float hAbove = hitPt.y - surfY;
+                    Vector3 localHit = Quaternion.Inverse(rot) * (hitPt - center);
+                    bool hasMort = carp.TryFindMortiseNear(finalSec, localHit.y, 0.35f, out _);
+
+                    state.Sector = finalSec;
+                    state.FaceDirWorld = faceDir;
+                    state.AlreadyCarved = hasMort;
+
+                    float oppSpan = 0f;
+                    int oppIdx = pairBothPosts ? FindAlignedOppositePost(idx, center, faceDir, out oppSpan) : -1;
+                    if (oppIdx >= 0)
+                    {
+                        Vector3 oppC = ToUnityVec3(_pieces[oppIdx].Position);
+                        state.PairedPostIdx = oppIdx;
+                        state.PairedSpanM = oppSpan;
+                        state.PairedPostFacePt = new Vector3(oppC.x, hitPt.y, oppC.z) - faceDir * (_pieces[oppIdx].DiameterM * 0.5f);
+                    }
+
+                    string pairNote = oppIdx >= 0 ? $" ↔ Karşı Direkle +{hAbove:F2}m" : " (Tek Direk)";
+                    state.HudText = $"🏗️ [YAN ZIVANA — {dirLbl}, +{hAbove:F2}m]{pairNote} | [Sol Tık] Oy | [R] 45° Yön | [J] Tek/Çift | [V] Kip";
+                    return true;
+                }
+
+                if (p.Kind == RigidTimberPieceKind.Log && p.State == RigidTimberState.StaticAnchored && p.LengthM >= 1.6f)
+                {
+                    Vector3 localHit = Quaternion.Inverse(rot) * (hitPt - center);
+                    bool isNegEnd = localHit.y < 0f;
+                    byte bit = isNegEnd ? (byte)1 : (byte)2;
+                    state.Sector = bit;
+                    state.FaceDirWorld = rot * (isNegEnd ? Vector3.down : Vector3.up);
+                    state.AlreadyCarved = (carp.EndSaddleNotchMask & bit) != 0;
+                    state.HudText = state.AlreadyCarved
+                        ? "✅ [EYER KERTİĞİ] Bu uç oyulmuş! | Kapatmak için [K] | [V] Kip Değiştir"
+                        : "🪵 [EYER KERTİĞİ — SADDLE NOTCH] Kütük ucuna 90° oyuk aç — [Sol Tık] Oy | [V] Kip";
+                    return true;
+                }
+
+                state.HudText = "🏗️ [Kip 3/4: ZIVANA & KERTİK] Dikili direğe (Yan Kiriş Yuvası) veya yatay kütük ucuna (Eyer Kertiği) bakın! | [V] Kip";
+                return true;
+            }
+
+            // Kip 3: Yapi Kesim & Cati Ustu Fazla Direk Ucu Budama!
+            if (p.Kind == RigidTimberPieceKind.Post && p.State == RigidTimberState.StaticAnchored)
+            {
+                float footY = center.y - p.LengthM * 0.5f;
+                float topY = center.y + p.LengthM * 0.5f;
+                uint pid = p.PieceId;
+                float highestBondY = footY + 1.5f;
+                for (int b = 0; b < _bondCount; b++)
+                {
+                    if (_bonds[b].IsActive == 0) continue;
+                    if (_bonds[b].PieceA == pid)
+                    {
+                        float by = center.y + (_bonds[b].LocalA0.Y + _bonds[b].LocalA2.Y) * 0.5f;
+                        if (by > highestBondY) highestBondY = by;
+                    }
+                    else if (_bonds[b].PieceB == pid)
+                    {
+                        float by = center.y + (_bonds[b].LocalB0.Y + _bonds[b].LocalB2.Y) * 0.5f;
+                        if (by > highestBondY) highestBondY = by;
+                    }
+                }
+                bool isSafeTrim = hitPt.y >= highestBondY + 0.10f && hitPt.y > footY + 1.8f && hitPt.y < topY - 0.12f;
+                state.IsSafePostTopTrim = isSafeTrim;
+                float keepLen = Mathf.Max(0f, hitPt.y - footY);
+                float trimLen = Mathf.Max(0f, topY - hitPt.y);
+                state.HudText = isSafeTrim
+                    ? $"🪚 [ÇATI ÜSTÜ FAZLA UÇ BUDAMA] Altta Kalan: {keepLen:F2}m | Kesilecek Üst: {trimLen:F2}m (Alt bağlar kopmaz!) — [Sol Tık] Kes"
+                    : $"⚠️ [ANA DİREK YIKIM KESİMİ] Dikkat: Bağlantı altından ({keepLen:F2}m) kesmek direği devirir! — [Sol Tık x3] Kes | [V] Korumalı Kip";
+                return true;
+            }
+
+            state.HudText = $"⚠️ [YAPI ELEMANI KESİMİ — {p.Kind}] Tam mavi/kırmızı halkadan kesmek için [Sol Tık x2] | [V] Korumalı Kip";
+            return true;
+        }
+
+        public bool TryUndoAxeCarpentryKeyK(
+            AxeCarpentryToolMode mode,
+            int manualSectorOffset,
+            Vector3 rayOrigin,
+            Vector3 rayDir,
+            float maxDist,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out string feedback)
+        {
+            feedback = string.Empty;
+            if (!TryEvaluateAxeCarpentryPreview(mode, manualSectorOffset, pairBothPosts: false, rayOrigin, rayDir, maxDist, worldChunks, out AxeCarpentryPreviewState st) || !st.HasTarget)
+                return false;
+
+            int idx = st.PieceIdx;
+            ref RigidStructurePiece p = ref _pieces[idx];
+            ref PieceCarpentryProfile carp = ref _carpentryProfiles[idx];
+
+            if (mode == AxeCarpentryToolMode.VerticalWallGroove && p.Kind == RigidTimberPieceKind.Post)
+            {
+                if ((carp.GrooveSectorMask & (1 << st.Sector)) == 0)
+                {
+                    feedback = "ℹ️ Bu yüzde kapatılacak açık bir oluk yok ([R] ile oluklu yüze çevirebilirsiniz).";
+                    return true;
+                }
+                carp.GrooveSectorMask &= unchecked((byte)~(1 << st.Sector));
+                RebuildPieceMeshVisual(idx);
+                feedback = $"♻️ Ana Direğin {GetSectorCompassLabel(st.FaceDirWorld)} yüzündeki oluk [K] ile kapatıldı!";
+                return true;
+            }
+
+            if (mode == AxeCarpentryToolMode.SideMortiseAndNotch && p.Kind == RigidTimberPieceKind.Log)
+            {
+                if ((carp.EndSaddleNotchMask & st.Sector) == 0)
+                {
+                    feedback = "ℹ️ Bu kütük ucunda kapatılacak açık bir Eyer Kertiği yok.";
+                    return true;
+                }
+                carp.EndSaddleNotchMask &= unchecked((byte)~st.Sector);
+                RebuildPieceMeshVisual(idx);
+                feedback = "♻️ Kütük ucundaki Eyer Kertiği [K] ile kapatıldı!";
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryExecuteAxeCarpentryAction(
+            AxeCarpentryToolMode mode,
+            int manualSectorOffset,
+            bool pairBothPosts,
+            Vector3 rayOrigin,
+            Vector3 rayDir,
+            float maxDist,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out byte salvagedMaterialId,
+            out int salvagedCount,
+            out string feedback)
+        {
+            salvagedMaterialId = MaterialIdCatalog.OakWood;
+            salvagedCount = 0;
+            feedback = string.Empty;
+
+            if (!TryEvaluateAxeCarpentryPreview(mode, manualSectorOffset, pairBothPosts, rayOrigin, rayDir, maxDist, worldChunks, out AxeCarpentryPreviewState st) || !st.HasTarget)
+                return false;
+
+            int idx = st.PieceIdx;
+            ref RigidStructurePiece p = ref _pieces[idx];
+            ref PieceCarpentryProfile carp = ref _carpentryProfiles[idx];
+
+            // Kip 0: Ayaktaki yapiyi ASLA kesmez; yalnizca yerdeki serbest kutugu keser!
+            if (mode == AxeCarpentryToolMode.TreeAndLooseChop)
+            {
+                if (p.State == RigidTimberState.StaticAnchored)
+                {
+                    feedback = "🛡️ Yapı Koruması Aktif: Yanlış diktiysen [K] ile bütün kütüğü geri alabilir, kesmek için [V] ile Kip 4'e geçebilirsin!";
+                    return true;
+                }
+                return TrySplitPieceAtWorldPoint(idx, st.HitWorldPt, worldChunks, out salvagedMaterialId, out salvagedCount, out feedback);
+            }
+
+            // Kip 1: Dikey Duvar Olugu Acma (Tek tikta net oyma + karsi direk eslestirme!)
+            if (mode == AxeCarpentryToolMode.VerticalWallGroove)
+            {
+                if (p.Kind != RigidTimberPieceKind.Post || p.State != RigidTimberState.StaticAnchored)
+                {
+                    feedback = "🪵 Dikey oluk yalnızca dikili Ana Direklere (Post) açılır! Direğe bakıp [Sol Tık] yapın.";
+                    return true;
+                }
+
+                byte sec = st.Sector;
+                string dirLbl = GetSectorCompassLabel(st.FaceDirWorld);
+                carp.GrooveSectorMask |= (byte)(1 << sec);
+                carp.PendingHits = 0;
+                carp.PendingActionKind = 0;
+                RebuildPieceMeshVisual(idx);
+
+                if (pairBothPosts && st.PairedPostIdx >= 0)
+                {
+                    int opp = st.PairedPostIdx;
+                    Quaternion oppRot = ToUnityQuat(_pieces[opp].Rotation);
+                    Vector3 toFirst = (st.PieceCenter - ToUnityVec3(_pieces[opp].Position));
+                    toFirst.y = 0f;
+                    byte oppSec = (byte)WorldDirToLocalOctantSector(oppRot, toFirst);
+                    _carpentryProfiles[opp].GrooveSectorMask |= (byte)(1 << oppSec);
+                    RebuildPieceMeshVisual(opp);
+                    feedback = $"✅ {dirLbl} yüzü ve karşı direğin bakan iç yüzünde ({st.PairedSpanM:F2}m) karşılıklı 3B DİKEY OLUKLAR açıldı! Artık araya doğrudan duvar kütüğü sürebilirsiniz!";
+                    return true;
+                }
+
+                feedback = $"🪵 Ana Direğin {dirLbl} yüzünde 3B DİKEY OLUK açıldı! ([R] 45° Yön | [J] Tek/Çift Direk | [K] Oluğu Kapat)";
+                return true;
+            }
+
+            // Kip 2: Yan Kiris Zivanasi & Eyer Kertigi
+            if (mode == AxeCarpentryToolMode.SideMortiseAndNotch)
+            {
+                if (p.Kind == RigidTimberPieceKind.Post && p.State == RigidTimberState.StaticAnchored)
+                {
+                    Vector3 localHit = Quaternion.Inverse(st.PieceRot) * (st.HitWorldPt - st.PieceCenter);
+                    carp.AddOrUpdateMortise(st.Sector, localHit.y);
+                    RebuildPieceMeshVisual(idx);
+                    float surfY = SampleSurroundingRimSurfaceY(st.PieceCenter.x, st.PieceCenter.z, st.HitWorldPt.y + 1.5f);
+                    float hAbove = st.HitWorldPt.y - surfY;
+                    string dirLbl = GetSectorCompassLabel(st.FaceDirWorld);
+
+                    if (pairBothPosts && st.PairedPostIdx >= 0)
+                    {
+                        int opp = st.PairedPostIdx;
+                        Quaternion oppRot = ToUnityQuat(_pieces[opp].Rotation);
+                        Vector3 oppCenter = ToUnityVec3(_pieces[opp].Position);
+                        byte oppSec = (byte)WorldDirToLocalOctantSector(oppRot, st.PieceCenter - oppCenter);
+                        float oppLocalY = st.HitWorldPt.y - oppCenter.y;
+                        _carpentryProfiles[opp].AddOrUpdateMortise(oppSec, oppLocalY);
+                        RebuildPieceMeshVisual(opp);
+                        feedback = $"🏗️ İki direk arasında (+{hAbove:F2}m terazi kotunda) karşılıklı 3B YAN KİRİŞ ZIVANALARI açıldı! Ana kirişi oturtabilirsiniz.";
+                        return true;
+                    }
+
+                    feedback = $"🏗️ Ana Direğin {dirLbl} yüzünde (+{hAbove:F2}m) 3B YAN KİRİŞ ZIVANASI açıldı! ([J] Tek/Çift Direk)";
+                    return true;
+                }
+
+                if (p.Kind == RigidTimberPieceKind.Log && p.State == RigidTimberState.StaticAnchored && p.LengthM >= 1.6f)
+                {
+                    carp.EndSaddleNotchMask |= st.Sector;
+                    RebuildPieceMeshVisual(idx);
+                    feedback = "🪵 Yatay kütük ucunda 3B EYER KERTİĞİ (Saddle Notch) açıldı! 90° çapraz kütük bindirebilirsiniz.";
+                    return true;
+                }
+
+                feedback = "🏗️ Yan Kiriş Yuvası için dikili direğe, Eyer Kertiği için yatay kütük ucuna bakın!";
+                return true;
+            }
+
+            // Kip 3: Yapi Kesim & Cati Ustu Fazla Direk Ucu Budama
+            if (st.IsSafePostTopTrim && TryTrimStandingPostExcessTop(idx, st.HitWorldPt.y, out salvagedMaterialId, out salvagedCount, out feedback))
+            {
+                return true;
+            }
+
+            if (p.State == RigidTimberState.StaticAnchored)
+            {
+                float dmgStep = p.Kind == RigidTimberPieceKind.Post ? 0.36f : 0.52f;
+                p.Damage01 += dmgStep;
+                if (p.Damage01 < 1.0f)
+                {
+                    int pct = Mathf.Clamp(Mathf.RoundToInt(p.Damage01 * 100f), 1, 99);
+                    feedback = $"🪚 {p.Kind} kesiliyor (%{pct}) — devam etmek için aynı halkaya tekrar vurun!";
+                    return true;
+                }
+
+                uint hitId = p.PieceId;
+                for (int b = 0; b < _bondCount; b++)
+                {
+                    if (_bonds[b].PieceA == hitId || _bonds[b].PieceB == hitId) _bonds[b].IsActive = 0;
+                }
+                bool ok = TrySplitPieceAtWorldPoint(idx, st.HitWorldPt, worldChunks, out salvagedMaterialId, out salvagedCount, out feedback);
+                _needsStaticReeval = true;
+                ReevaluateStaticEquilibrium(worldChunks);
+                return ok;
+            }
+
+            return TrySplitPieceAtWorldPoint(idx, st.HitWorldPt, worldChunks, out salvagedMaterialId, out salvagedCount, out feedback);
+        }
+
         private byte ResolvePostSectorSmart(int postIdx, Vector3 postCenter, Quaternion postRot, ref Vector3 radialWorld, bool preferUngrooved, byte grooveMask)
         {
             Vector2 aimDir2 = new Vector2(radialWorld.x, radialWorld.z);
@@ -3230,7 +3771,7 @@ namespace Stratocraft.Character
                     {
                         byte actKind = isNegEnd ? (byte)3 : (byte)4;
                         int prog = carp.PendingActionKind == actKind ? carp.PendingHits : 0;
-                        hudHint = $"🪓 YIĞMA KÜTÜK UCU: 3B Eyer Kertiği (Saddle Notch) Oy [{prog}/2] — [Sol Tık] Baltayla Oy | [Alt+Sol Tık] Kes";
+                        hudHint = $"🪓 YIĞMA KÜTÜK UCU: 3B Eyer Kertiği (Saddle Notch) Oy [{prog}/2] — [Sol Tık] Baltayla Oy | [V] Kip Değiştir";
                         return true;
                     }
                 }
@@ -3537,6 +4078,31 @@ namespace Stratocraft.Character
 
             hitDist = tMin;
             return true;
+        }
+
+        public bool HasStaticPieceMatchingBlueprint(Vector3 blueprintCenter, bool expectPost, float toleranceM = 0.65f)
+        {
+            float tolSq = toleranceM * toleranceM;
+            for (int i = 0; i < _pieceCount; i++)
+            {
+                ref readonly RigidStructurePiece p = ref _pieces[i];
+                if (p.State != RigidTimberState.StaticAnchored) continue;
+                bool isPost = p.Kind == RigidTimberPieceKind.Post;
+                if (expectPost != isPost) continue;
+
+                Vector3 pos = ToUnityVec3(p.Position);
+                if (expectPost)
+                {
+                    float dx = pos.x - blueprintCenter.x;
+                    float dz = pos.z - blueprintCenter.z;
+                    if (dx * dx + dz * dz <= tolSq) return true;
+                }
+                else
+                {
+                    if ((pos - blueprintCenter).sqrMagnitude <= tolSq * 1.4f) return true;
+                }
+            }
+            return false;
         }
 
         private static SysVec3 ToSysVec3(Vector3 v) => new SysVec3(v.x, v.y, v.z);

@@ -365,8 +365,12 @@ namespace Stratocraft.Character
         private readonly Stage1TimberSiteRigController _timberSiteRigCtrl = new();
         private readonly Stage1TimberInteriorController _timberInteriorCtrl = new();
         private readonly Stage1TimberPlacementPreviewController _timberPreviewCtrl = new();
+        private readonly Stage1TimberBlueprintPlannerController _blueprintPlannerCtrl = new();
         private string _lastTimberPreviewHudHint = string.Empty;
-        private bool _soilVoxelBackfillMode;
+        private bool _timberPreviewConsumedClickThisFrame;
+        private bool _cartConsumedKeyQThisFrame;
+        private bool _stationOrBuildConsumedClickThisFrame;
+        private bool _soilVoxelBackfillMode = true;
         private readonly Stage1WindmillController _windmillCtrl = new();
         private readonly Stage1ArticulatedRigAnimator _rigAnimator = new();
         private static readonly Func<int, byte, Mesh?> ResolveArmorSlotGlbMeshCached = static (hitZoneIndex, tier) =>
@@ -3069,8 +3073,8 @@ namespace Stratocraft.Character
             bool wantCrouch = _stoneKnappingCtrl.ForcePlayerCrouch ||
                               _mindBuildingCtrl.ForcePlayerCrouch ||
                               _looseBuildSystem.IsKneeSnapAnimActive ||
-                              (!menuOpen && Input.GetKey(KeyCode.LeftControl));
-            if (!menuOpen && (Input.GetKeyDown(Stage1GameSettings.KeyProne) || Input.GetKeyDown(KeyCode.Z)))
+                              (!menuOpen && !_blueprintPlannerCtrl.IsDrawingModeActive && Input.GetKey(KeyCode.LeftControl));
+            if (!menuOpen && !_blueprintPlannerCtrl.IsDrawingModeActive && (Input.GetKeyDown(Stage1GameSettings.KeyProne) || Input.GetKeyDown(KeyCode.Z)))
             {
                 _isUserProneToggled = !_isUserProneToggled;
             }
@@ -3089,24 +3093,59 @@ namespace Stratocraft.Character
                 _isUserProneToggled = false;
                 wantProne = false;
             }
-            // Gercek 1:1 3B Hayalet Onizleme & Yerlestirme:
-            // - Kestigin gercek agaci arabaya [E] ile yuklediginde otomatik 1:1 kutuk onizlemesi cikar ([V] Dik/Yatay | [R] Dondur | [Sol Tik] Koy)
-            // - [T] menusunden secilen santiye/ev-ici araclari ([R] Dondur | [Sol Tik] Kur | [Sag Tik/ESC] Iptal)
-            _timberPreviewCtrl.StepPreviewAndPlacement(
+            // [N] 3B Mimari Ev Plani Cizim & Canli Yapisal Dayaniklilik Simulatörü (Valheim + SOTF + Gercek Statik Cozucu):
+            _blueprintPlannerCtrl.Step(
                 menuOpen,
                 PlayerCamera,
                 transform,
                 _miningCtrl,
-                _looseBuildSystem,
-                _logArchCartCtrl,
                 _rigidTimberBridge,
-                _collapseBridge,
-                _timberSiteRigCtrl,
-                _timberInteriorCtrl,
                 _holsterCtrl,
-                _worldChunks,
-                SharedVoxelMaterial,
-                out _lastTimberPreviewHudHint);
+                _worldChunks);
+
+            if (_blueprintPlannerCtrl.IsDrawingModeActive)
+            {
+                _timberPreviewConsumedClickThisFrame = _blueprintPlannerCtrl.ConsumedClickThisFrame;
+                _lastTimberPreviewHudHint = _blueprintPlannerCtrl.LastHudHint;
+            }
+            else
+            {
+                // Gercek 1:1 3B Hayalet Onizleme & Yerlestirme:
+                // - Kestigin gercek agaci arabaya [E] ile yuklediginde otomatik 1:1 kutuk onizlemesi cikar ([V] Dik/Yatay | [R] Dondur | [Sol Tik] Koy)
+                // - [T] menusunden secilen santiye/ev-ici araclari ([R] Dondur | [Sol Tik] Kur | [Sag Tik/ESC] Iptal)
+                _timberPreviewConsumedClickThisFrame = _timberPreviewCtrl.StepPreviewAndPlacement(
+                    menuOpen,
+                    PlayerCamera,
+                    transform,
+                    _miningCtrl,
+                    _looseBuildSystem,
+                    _logArchCartCtrl,
+                    _rigidTimberBridge,
+                    _collapseBridge,
+                    _timberSiteRigCtrl,
+                    _timberInteriorCtrl,
+                    _holsterCtrl,
+                    _worldChunks,
+                    SharedVoxelMaterial,
+                    out _lastTimberPreviewHudHint,
+                    _blueprintPlannerCtrl);
+                if (string.IsNullOrEmpty(_lastTimberPreviewHudHint) && !string.IsNullOrEmpty(_blueprintPlannerCtrl.LastHudHint))
+                {
+                    _lastTimberPreviewHudHint = _blueprintPlannerCtrl.LastHudHint;
+                }
+            }
+            if (string.IsNullOrEmpty(_lastTimberPreviewHudHint) && !menuOpen && !_miningCtrl.IsCrystalActive)
+            {
+                var heldForHole = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                if (!heldForHole.IsEmpty &&
+                    (heldForHole.Kind == InventoryItemKind.RoughStoneChunk ||
+                     heldForHole.Kind == InventoryItemKind.LooseDirtClod ||
+                     heldForHole.Kind == InventoryItemKind.ClayLump) &&
+                    _rigidTimberBridge.HasUnwedgedHolePostNear(transform.position, 3.5f))
+                {
+                    _lastTimberPreviewHudHint = "🪨 DİREK ÇUKURU AÇIK — [Sol Tık], [Sağ Tık] veya [E] ile Taş/Toprak Doldurup Direği Kalıcı Kilitle!";
+                }
+            }
             if (_timberPreviewCtrl.StepHandAssembly(
                     dt,
                     _looseBuildSystem,
@@ -3143,7 +3182,6 @@ namespace Stratocraft.Character
             if (!menuOpen && Input.GetKeyDown(KeyCode.L))
             {
                 bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
                 bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
                 Vector3 fwdFlat = PlayerCamera != null ? new Vector3(PlayerCamera.transform.forward.x, 0f, PlayerCamera.transform.forward.z).normalized : Vector3.forward;
                 if (fwdFlat.sqrMagnitude < 1e-4f) fwdFlat = Vector3.forward;
@@ -3153,12 +3191,7 @@ namespace Stratocraft.Character
                     _rigidTimberBridge.ClearAllLooseDebris(out string clearMsg);
                     _miningCtrl.LastFeedbackText = clearMsg;
                 }
-                else if (altHeld && PlayerCamera != null)
-                {
-                    _rigidTimberBridge.TryCutAimedPiece(PlayerCamera.transform.position, PlayerCamera.transform.forward, 8.5f, _worldChunks, out string cutMsg);
-                    _miningCtrl.LastFeedbackText = cutMsg;
-                }
-                else if (shiftHeld)
+                else if (_holsterCtrl.IsCreativeMode && shiftHeld)
                 {
                     Vector3 cabinOrigin = transform.position + fwdFlat * 6.5f;
                     float cabinYaw = Mathf.Atan2(fwdFlat.x, fwdFlat.z) * Mathf.Rad2Deg;
@@ -3168,7 +3201,7 @@ namespace Stratocraft.Character
                     }
                     _miningCtrl.LastFeedbackText = cabinMsg;
                 }
-                else
+                else if (_holsterCtrl.IsCreativeMode)
                 {
                     Vector3 postPos = _miningCtrl.HasAimHit && _miningCtrl.AimHit.distance <= 6.5f
                         ? _miningCtrl.AimHit.point
@@ -3182,11 +3215,13 @@ namespace Stratocraft.Character
                 _miningCtrl.OnTerrainVoxelModified ??= (wx, wy, wz) => _rigidTimberBridge.OnTerrainVoxelChanged(wx, wy, wz, _worldChunks);
                 _rigidTimberBridge.Tick(dt, _worldChunks);
             }
+            _cartConsumedKeyQThisFrame = false;
             if (_logArchCartCtrl.IsPullingCart)
             {
                 bool brakeHeld = !menuOpen && Input.GetKey(KeyCode.Space);
                 if (!menuOpen && Input.GetKeyDown(KeyCode.Q) && _logArchCartCtrl.TryReleaseCart(out string releaseMsg))
                 {
+                    _cartConsumedKeyQThisFrame = true;
                     _miningCtrl.LastFeedbackText = releaseMsg;
                 }
                 else
@@ -3767,6 +3802,62 @@ namespace Stratocraft.Character
                 _bloomeryCtrl, _wheelbarrowCtrl, _windmillCtrl, _siteLogisticsCtrl, _holsterCtrl);
 
             bool uiBlocked = externalUiBlocked || _mindBuildingCtrl.IsMindMenuOpen;
+
+            // [K] BIRLESIK SOKUM / KALDIRMA TUSU (Shift+E kosarak yanlislikla sokme ve Alt geri-atilma cakismasini %100 bitirir!):
+            if (!uiBlocked && !_miningCtrl.IsCrystalActive && !_timberPreviewConsumedClickThisFrame &&
+                !_blueprintPlannerCtrl.IsDrawingModeActive && !_blueprintPlannerCtrl.ConsumedKeyKThisFrame &&
+                Input.GetKeyDown(KeyCode.K))
+            {
+                if (_timberPreviewCtrl.TryRemoveAimedBlueprint(PlayerCamera, transform, out string bpRemoveMsg))
+                {
+                    _miningCtrl.LastFeedbackText = bpRemoveMsg;
+                }
+                else if (_logArchCartCtrl.TryDismantleNearestIdleCart(transform.position, out string dismantleCartMsg))
+                {
+                    _miningCtrl.LastFeedbackText = dismantleCartMsg;
+                }
+                else if (_timberSiteRigCtrl.TryDismantleNearestRigKeyK(transform.position, _holsterCtrl, _miningCtrl, out string dismantleRigMsg))
+                {
+                    _miningCtrl.LastFeedbackText = dismantleRigMsg;
+                }
+                else if (_timberInteriorCtrl.TryDismantleNearestFixtureKeyK(
+                             transform.position, _holsterCtrl.IsCreativeMode, _holsterCtrl, _miningCtrl, _rigidTimberBridge, out string dismantleFixMsg))
+                {
+                    _miningCtrl.LastFeedbackText = dismantleFixMsg;
+                }
+                else if (PlayerCamera != null && _rigidTimberBridge.TryRetrieveAimedTimberPiece(
+                             PlayerCamera.transform.position,
+                             PlayerCamera.transform.forward,
+                             5.5f,
+                             out float retrievedLenM,
+                             out float retrievedDiamM,
+                             out byte retrievedWoodMat,
+                             out string retrieveTimberMsg))
+                {
+                    // Yanlis dikilen kutugu butun olarak geri ver: Omuz bos ve <=4.6m ise omuza al, degilse tam onune yere birak (arabayla da yukleyebilirsin!)
+                    if (!_holsterCtrl.IsCarryingShoulderLog && !_logArchCartCtrl.IsPullingCart && retrievedLenM <= 4.6f)
+                    {
+                        _holsterCtrl.IsCarryingShoulderLog = true;
+                        _holsterCtrl.ShoulderLogMaterialId = retrievedWoodMat;
+                        _holsterCtrl.ShoulderLogExactLengthM = retrievedLenM;
+                        _holsterCtrl.ShoulderLogDiameterM = retrievedDiamM;
+                        _miningCtrl.LastFeedbackText = $"🪵 {retrievedLenM:F2}m kütük sökülüp OMUZUNA geri alındı! Doğru yere [Sol Tık] ile dik!";
+                    }
+                    else
+                    {
+                        Vector3 fwdDrop = new Vector3(PlayerCamera.transform.forward.x, 0f, PlayerCamera.transform.forward.z).normalized;
+                        if (fwdDrop.sqrMagnitude < 1e-4f) fwdDrop = Vector3.forward;
+                        Vector3 dropPt = transform.position + fwdDrop * 1.6f + Vector3.up * 0.45f;
+                        _collapseBridge.SpawnExactLengthFallenLog(dropPt, fwdDrop, retrievedWoodMat, retrievedLenM, retrievedDiamM, SharedVoxelMaterial);
+                        _miningCtrl.LastFeedbackText = $"{retrieveTimberMsg} Önüne bırakıldı — [E] ile omuzlayabilir veya el arabasına yükleyebilirsin!";
+                    }
+                }
+                else if (_looseBuildSystem.TryDismantleNearestPlayerUnifiedNode(transform.position, out string dismantleNodeMsg))
+                {
+                    _miningCtrl.LastFeedbackText = dismantleNodeMsg;
+                }
+            }
+
             bool consumedEarlyInteract = false;
             if (!uiBlocked && (Input.GetKeyDown(Stage1GameSettings.KeyInteract) || Input.GetKeyDown(KeyCode.E)))
             {
@@ -3806,30 +3897,9 @@ namespace Stratocraft.Character
                 {
                     consumedEarlyInteract = true;
                 }
-                else if (shiftHeld && _timberPreviewCtrl.TryRemoveAimedBlueprint(PlayerCamera, transform, out string bpRemoveMsg))
-                {
-                    _miningCtrl.LastFeedbackText = bpRemoveMsg;
-                    consumedEarlyInteract = true;
-                }
-                else if (shiftHeld && _logArchCartCtrl.TryDismantleNearestIdleCart(transform.position, out string dismantleCartMsg))
-                {
-                    _miningCtrl.LastFeedbackText = dismantleCartMsg;
-                    consumedEarlyInteract = true;
-                }
-                else if (_logArchCartCtrl.TryInteract(
-                             transform.position,
-                             PlayerCamera != null ? PlayerCamera.transform.forward : transform.forward,
-                             _collapseBridge,
-                             _rigidTimberBridge,
-                             SharedVoxelMaterial,
-                             out string logCartMsg))
-                {
-                    _miningCtrl.LastFeedbackText = logCartMsg;
-                    consumedEarlyInteract = true;
-                }
-                else if (!shiftHeld &&
-                         (_holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.RoughStoneChunk ||
-                          _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.LooseDirtClod) &&
+                else if ((_holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.RoughStoneChunk ||
+                          _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.LooseDirtClod ||
+                          _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.ClayLump) &&
                          _rigidTimberBridge.TryWedgeOrTampNearestHolePost(
                              transform.position,
                              isStoneWedge: _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.RoughStoneChunk,
@@ -3846,6 +3916,17 @@ namespace Stratocraft.Character
                         _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
                     }
                     _miningCtrl.LastFeedbackText = wedgePostMsg;
+                    consumedEarlyInteract = true;
+                }
+                else if (_logArchCartCtrl.TryInteract(
+                             transform.position,
+                             PlayerCamera != null ? PlayerCamera.transform.forward : transform.forward,
+                             _collapseBridge,
+                             _rigidTimberBridge,
+                             SharedVoxelMaterial,
+                             out string logCartMsg))
+                {
+                    _miningCtrl.LastFeedbackText = logCartMsg;
                     consumedEarlyInteract = true;
                 }
                 else if (_timberSiteRigCtrl.TryInteractWithRig(
@@ -3875,25 +3956,6 @@ namespace Stratocraft.Character
                              _rigidTimberBridge))
                 {
                     _miningCtrl.LastFeedbackText = interiorMsg;
-                    consumedEarlyInteract = true;
-                }
-                else if (shiftHeld && PlayerCamera != null && _rigidTimberBridge.TryRetrieveAimedTimberPiece(
-                             PlayerCamera.transform.position,
-                             PlayerCamera.transform.forward,
-                             4.8f,
-                             out int retrievedWoodCnt,
-                             out string retrieveTimberMsg))
-                {
-                    if (retrievedWoodCnt > 0)
-                    {
-                        _holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.SplitFirewood, MaterialIdCatalog.OakWood, retrievedWoodCnt, _miningCtrl);
-                    }
-                    _miningCtrl.LastFeedbackText = retrieveTimberMsg;
-                    consumedEarlyInteract = true;
-                }
-                else if (shiftHeld && _looseBuildSystem.TryDismantleNearestPlayerUnifiedNode(transform.position, out string dismantleNodeMsg))
-                {
-                    _miningCtrl.LastFeedbackText = dismantleNodeMsg;
                     consumedEarlyInteract = true;
                 }
                 else if (PlayerCamera != null && _rigidTimberBridge.TrySalvageAimedDebris(
@@ -3947,7 +4009,8 @@ namespace Stratocraft.Character
                     dt, transform, PlayerBodyRoot, PlayerCamera, TacticalBackpackMatRoot, ChestLidTransform, AnvilTransform,
                     swordGo, PickaxeVisualRoot, AxeVisualRoot, SharedVoxelMaterial,
                     ref _movementBridge.MovementState, ref _cameraPitch, ref _pitchBeforeBackpack, _miningCtrl, _combatBridge, _collapseBridge,
-                    _worldChunks, _looseBuildSystem);
+                    _worldChunks, _looseBuildSystem,
+                    externalConsumedKeyQ: _cartConsumedKeyQThisFrame || _timberPreviewCtrl.ConsumedKeyQThisFrame || _blueprintPlannerCtrl.ConsumedKeyQThisFrame);
             }
             _holsterCtrl.InventoryUi.UpdateSelectedToolDurability(_miningCtrl.ToolDurability01);
             _miningCtrl.HandleHotkeysAndAim(dt, PlayerCamera, uiBlocked, _holsterCtrl.ActiveHolsterSlot, _worldChunks, SharedVoxelMaterial, _holsterCtrl, _fluidChunks);
@@ -4000,6 +4063,7 @@ namespace Stratocraft.Character
 
             if (!uiBlocked && !_miningCtrl.IsCrystalActive &&
                 !_looseBuildSystem.IsModularBuildModeActive && !_looseBuildSystem.IsUnifiedBuildModeActive &&
+                _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind != InventoryItemKind.ToolAxe &&
                 Input.GetKeyDown(KeyCode.V))
             {
                 if (TryResolveHeldSoilBackfillMaterial(out byte heldSoilMat))
@@ -4054,9 +4118,40 @@ namespace Stratocraft.Character
                                        Input.GetMouseButtonDown(0) &&
                                        TryExcavateFoundationSoilWithShovel();
 
+            bool postholeClickWedge = false;
+            if (!uiBlocked && !logisticsConsumedClick && !shovelConsumedClick &&
+                !_miningCtrl.IsCrystalActive && !_looseBuildSystem.IsModularBuildModeActive && !_looseBuildSystem.IsUnifiedBuildModeActive &&
+                (Input.GetMouseButtonDown(0) || Input.GetMouseButtonDown(1)))
+            {
+                var heldWedgeSlot = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
+                if (!heldWedgeSlot.IsEmpty &&
+                    (heldWedgeSlot.Kind == InventoryItemKind.RoughStoneChunk ||
+                     heldWedgeSlot.Kind == InventoryItemKind.LooseDirtClod ||
+                     heldWedgeSlot.Kind == InventoryItemKind.ClayLump) &&
+                    _rigidTimberBridge.TryWedgeOrTampNearestHolePost(
+                        transform.position,
+                        isStoneWedge: heldWedgeSlot.Kind == InventoryItemKind.RoughStoneChunk,
+                        out string clickWedgeMsg,
+                        _worldChunks,
+                        _dirtyChunks))
+                {
+                    foreach (var ck in _dirtyChunks)
+                    {
+                        MarkChunkDirtyFlag(ck, ChunkDirtyFlags.Terrain);
+                    }
+                    if (!_holsterCtrl.IsCreativeMode)
+                    {
+                        _holsterCtrl.InventoryUi.TryConsumeActiveHotbarSlot(1);
+                    }
+                    _miningCtrl.LastFeedbackText = clickWedgeMsg;
+                    postholeClickWedge = true;
+                }
+            }
+
             bool soilBackfillConsumedClick = !uiBlocked &&
                                              !logisticsConsumedClick &&
                                              !shovelConsumedClick &&
+                                             !postholeClickWedge &&
                                              !_miningCtrl.IsCrystalActive &&
                                              !_looseBuildSystem.IsModularBuildModeActive &&
                                              !_looseBuildSystem.IsUnifiedBuildModeActive &&
@@ -4065,7 +4160,7 @@ namespace Stratocraft.Character
                                              TryPlaceCrystalImmuneSoilVoxelFromHand();
 
             bool weatherInstConsumedClick = TryPlaceHeldWeatherInstrumentOnRightClick(uiBlocked);
-            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || windmillConsumedClick || weatherInstConsumedClick || logisticsConsumedClick || shovelConsumedClick || soilBackfillConsumedClick;
+            bool stationConsumedClick = campfireConsumedClick || bloomeryConsumedClick || wheelbarrowConsumedClick || windmillConsumedClick || weatherInstConsumedClick || logisticsConsumedClick || shovelConsumedClick || postholeClickWedge || soilBackfillConsumedClick || _timberPreviewConsumedClickThisFrame;
             bool suppressLooseBuild = stationConsumedClick ||
                                       _wheelbarrowCtrl.IsPushingWheelbarrow ||
                                       _wheelbarrowCtrl.HasAimedWheelbarrow(PlayerCamera, transform.position, out _, out _) ||
@@ -4104,6 +4199,7 @@ namespace Stratocraft.Character
             bool looseConsumedClick = _looseBuildSystem.ConsumedRightClickCancelThisFrame ||
                                       (!suppressLooseBuild && _looseBuildSystem.IsModularBuildModeActive && Input.GetMouseButton(0)) ||
                                       (!suppressLooseBuild && Input.GetMouseButtonDown(1) && _looseBuildSystem.HasValidGhostPlacement);
+            _stationOrBuildConsumedClickThisFrame = stationConsumedClick || looseConsumedClick;
 
             _miningCtrl.ExecuteMiningOrBuilding(
                 dt, _holsterCtrl.ActiveHolsterSlot, uiBlocked, MaxEditableVoxelY,
@@ -4201,7 +4297,7 @@ namespace Stratocraft.Character
             }
             bool lockCamForUi = anyModalOpen || crystalAltPaletteOpen;
             if (!lockCamForUi && !_miningCtrl.IsCrystalActive && !_looseBuildSystem.IsModularBuildModeActive &&
-                !_holsterCtrl.IsCarryingShoulderLog &&
+                !_holsterCtrl.IsCarryingShoulderLog && !_stationOrBuildConsumedClickThisFrame && !_timberPreviewConsumedClickThisFrame &&
                 _holsterCtrl.HolsterTransitionRemaining <= 0.01f && Input.GetMouseButtonDown(0))
             {
                 if (slot == 0)
@@ -4234,9 +4330,10 @@ namespace Stratocraft.Character
             }
             _combatBridge.WeaponViewDistanceOffsetMeters = Stage1GameSettings.WeaponViewDistanceOffset;
 
+            bool blockCombatMouseThisFrame = lockCamForUi || _stationOrBuildConsumedClickThisFrame || _timberPreviewConsumedClickThisFrame;
             _combatBridge.StepCombatAndCameraInput(
                 mouseX, mouseY,
-                !lockCamForUi && Input.GetMouseButton(0), !lockCamForUi && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
+                !blockCombatMouseThisFrame && Input.GetMouseButton(0), !blockCombatMouseThisFrame && Input.GetMouseButton(1), !lockCamForUi && Input.GetMouseButtonUp(0),
                 canCombat, massScale, dt, ref _cameraYaw, ref _cameraPitch,
                 out _, out _, out _, _rigAnimator.PlayerLeftArmSevered,
                 isPlayerAirborne, _movementBridge.VerticalVelocity,
@@ -4408,16 +4505,36 @@ namespace Stratocraft.Character
                     }
                     else if (slot == 2 || slot == 3 || _holsterCtrl.InventoryUi.GetActiveHotbarSlot().Kind == InventoryItemKind.ToolAxe)
                     {
-                        bool shiftCarp = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-                        bool altCarp = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
                         byte choppedMat = 0;
                         int choppedCnt = 0;
                         string chopMsg = string.Empty;
-                        bool hitCarpentry =
-                            (PlayerCamera != null && _rigidTimberBridge.TryStrikeCarpentryWithAimedAxe(
-                                PlayerCamera.transform.position, PlayerCamera.transform.forward, 3.35f, shiftCarp, altCarp, _worldChunks, out choppedMat, out choppedCnt, out chopMsg)) ||
-                            _rigidTimberBridge.TryPhysicalBladeSwingHitDebris(
-                                bladeMidWorld, bladeTipWorld, 0.44f, _worldChunks, out choppedMat, out choppedCnt, out chopMsg);
+                        var curAxeMode = _timberPreviewCtrl.ActiveAxeCarpentryMode;
+                        bool hitCarpentry = false;
+
+                        // Kip 1, 2, 3 dogrudan tiklama aninda milimetrik islenir; savurma yayi yalnizca Kip 0'da (Yapi Korumali Serbest Kesim!) calisir!
+                        if (!_timberPreviewConsumedClickThisFrame &&
+                            curAxeMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop)
+                        {
+                            hitCarpentry =
+                                (PlayerCamera != null && _rigidTimberBridge.TryExecuteAxeCarpentryAction(
+                                    Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop,
+                                    0,
+                                    false,
+                                    PlayerCamera.transform.position,
+                                    PlayerCamera.transform.forward,
+                                    3.60f,
+                                    _worldChunks,
+                                    out choppedMat,
+                                    out choppedCnt,
+                                    out chopMsg)) ||
+                                _rigidTimberBridge.TryPhysicalBladeSwingHitDebris(
+                                    bladeMidWorld, bladeTipWorld, 0.44f, _worldChunks, out choppedMat, out choppedCnt, out chopMsg);
+                        }
+                        else if (_timberPreviewConsumedClickThisFrame)
+                        {
+                            _lastModularDamageSwingId = _combatBridge.CurrentSwingId;
+                        }
+
                         if (hitCarpentry)
                         {
                             _lastModularDamageSwingId = _combatBridge.CurrentSwingId;
@@ -4487,7 +4604,13 @@ namespace Stratocraft.Character
             if (!_escapeMenuCtrl.IsMenuOpen && !_holsterCtrl.InventoryUi.IsCreativeCatalogOpen &&
                 !_recipeBookUi.IsOpen && !_mindBuildingCtrl.IsMindMenuOpen && !_isBodyInspectMode)
             {
-                bool buildPlacementActive = _looseBuildSystem.IsModularBuildModeActive || _looseBuildSystem.HasValidGhostPlacement;
+                bool buildPlacementActive = _looseBuildSystem.IsModularBuildModeActive ||
+                                            _looseBuildSystem.HasValidGhostPlacement ||
+                                            _timberPreviewCtrl.HasActiveToolPreview ||
+                                            _timberPreviewCtrl.IsConsumingKeyR ||
+                                            _blueprintPlannerCtrl.IsConsumingKeyR ||
+                                            _logArchCartCtrl.IsPullingCart ||
+                                            _holsterCtrl.IsCarryingShoulderLog;
                 _stoneKnappingCtrl.Step(
                     dt, PlayerCamera, transform, _miningCtrl, _holsterCtrl, _combatBridge,
                     _worldChunks, _dirtyChunks, isBuildPlacementActive: buildPlacementActive);
@@ -4682,7 +4805,7 @@ namespace Stratocraft.Character
             {
                 HandleTimeScaleHotkeyStep(+1, resetToOne: false);
             }
-            else if (Input.GetKeyDown(KeyCode.Backspace))
+            else if (Input.GetKeyDown(KeyCode.Backspace) && !_blueprintPlannerCtrl.IsDrawingModeActive)
             {
                 HandleTimeScaleHotkeyStep(0, resetToOne: true);
             }
@@ -8015,27 +8138,41 @@ namespace Stratocraft.Character
         private bool TryExcavateFoundationSoilWithShovel()
         {
             VisualInventorySlot active = _holsterCtrl.InventoryUi.GetActiveHotbarSlot();
-            if (active.IsEmpty || active.Kind != InventoryItemKind.ToolShovel || !_miningCtrl.HasAimHit || _miningCtrl.AimHit.distance > 3.65f)
+            if (active.IsEmpty || active.Kind != InventoryItemKind.ToolShovel || !_miningCtrl.HasAimHit || _miningCtrl.AimHit.distance > 5.0f)
             {
                 return false;
             }
 
-            Vector3Int cell = _miningCtrl.AimVoxelCoord;
-            int wx = cell.x, wy = Mathf.Clamp(cell.y, 1, MaxEditableVoxelY), wz = cell.z;
-            int cx = wx >> 4, cz = wz >> 4;
+            // Smooth Surface Nets yuzeyinde tam bakilan toprak/cim/kil/cakil vokselini bul (egimli zeminde asla iskalama!)
+            Vector3 probe = _miningCtrl.AimHit.point - _miningCtrl.AimHit.normal * 0.28f;
+            int wx = Mathf.FloorToInt(probe.x);
+            int wy = Mathf.Clamp(Mathf.FloorToInt(probe.y), 1, MaxEditableVoxelY);
+            int wz = Mathf.FloorToInt(probe.z);
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - (cx << 4), lz = wz - (cz << 4);
             if (!_worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
 
             int idx = (wy << 8) | (lz << 4) | lx;
             byte mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
-            if (mat == MaterialIdCatalog.Air && wy > 1)
+            if (mat == MaterialIdCatalog.Air)
             {
-                wy -= 1;
-                idx = (wy << 8) | (lz << 4) | lx;
-                mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
+                if (wy > 1 && VoxelBitUtility.GetMaterialId(voxels[((wy - 1) << 8) | (lz << 4) | lx]) != MaterialIdCatalog.Air)
+                {
+                    wy -= 1;
+                    idx = (wy << 8) | (lz << 4) | lx;
+                    mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
+                }
+                else if (wy < MaxEditableVoxelY && VoxelBitUtility.GetMaterialId(voxels[((wy + 1) << 8) | (lz << 4) | lx]) != MaterialIdCatalog.Air)
+                {
+                    wy += 1;
+                    idx = (wy << 8) | (lz << 4) | lx;
+                    mat = VoxelBitUtility.GetMaterialId(voxels[idx]);
+                }
             }
 
-            if (mat != MaterialIdCatalog.Dirt && mat != MaterialIdCatalog.Grass && mat != MaterialIdCatalog.Sand && mat != MaterialIdCatalog.Clay)
+            if (mat != MaterialIdCatalog.Dirt && mat != MaterialIdCatalog.Grass && mat != MaterialIdCatalog.Sand &&
+                mat != MaterialIdCatalog.Clay && mat != MaterialIdCatalog.Gravel)
             {
                 return false;
             }
@@ -8099,14 +8236,28 @@ namespace Stratocraft.Character
 
         private bool TryPlaceCrystalImmuneSoilVoxelFromHand()
         {
-            if (!TryResolveHeldSoilBackfillMaterial(out byte soilMat) || !_miningCtrl.HasAimHit || _miningCtrl.AimHit.distance > 4.5f)
+            if (!TryResolveHeldSoilBackfillMaterial(out byte soilMat) || !_miningCtrl.HasAimHit || _miningCtrl.AimHit.distance > 5.0f)
             {
                 return false;
             }
 
-            Vector3Int placeVc = _miningCtrl.PlacementVoxelCoord;
-            int wx = placeVc.x, wy = Mathf.Clamp(placeVc.y, 1, MaxEditableVoxelY - 1), wz = placeVc.z;
-            int cx = wx >> 4, cz = wz >> 4;
+            // Tam bakilan yuzeyin onune koy (asla kendi ayaginin/govdenin icine koyma!)
+            Vector3 placePt = _miningCtrl.AimHit.point + _miningCtrl.AimHit.normal * 0.38f;
+            int wx = Mathf.FloorToInt(placePt.x);
+            int wy = Mathf.Clamp(Mathf.FloorToInt(placePt.y), 1, MaxEditableVoxelY - 1);
+            int wz = Mathf.FloorToInt(placePt.z);
+
+            if (!Stage1PlayerMovementBridge.CanPlaceBlockOutsidePlayerCapsule(
+                    wx, wy, wz,
+                    transform.position.x, transform.position.y, transform.position.z,
+                    _movementBridge.MovementState.CapsuleHeightMeters))
+            {
+                _miningCtrl.LastFeedbackText = "⚠️ Kendi ayağının altına/içine toprak koyamazsın — yarım adım geri çekilip hedef noktaya bak!";
+                return true;
+            }
+
+            int cx = wx >= 0 ? (wx >> 4) : -(((-wx) + 15) >> 4);
+            int cz = wz >= 0 ? (wz >> 4) : -(((-wz) + 15) >> 4);
             int lx = wx - (cx << 4), lz = wz - (cz << 4);
             if (!_worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
 
@@ -8959,8 +9110,12 @@ namespace Stratocraft.Character
                 _timberPreviewCtrl, _holsterCtrl.IsCreativeMode);
             if (!_mindBuildingCtrl.IsMindMenuOpen && !string.IsNullOrEmpty(_lastTimberPreviewHudHint) && !_isPlayerDeathScreenOpen && !_escapeMenuCtrl.IsMenuOpen)
             {
-                float bw = Mathf.Min(Screen.width - 40f, 860f);
+                float bw = Mathf.Min(Screen.width - 40f, 920f);
                 GUI.Box(new Rect((Screen.width - bw) * 0.5f, 118f, bw, 30f), _lastTimberPreviewHudHint);
+            }
+            if (!_isPlayerDeathScreenOpen && !_escapeMenuCtrl.IsMenuOpen && _showAllHud)
+            {
+                _blueprintPlannerCtrl.DrawBlueprintStabilityHud();
             }
             DrawTimeScaleBadgeAndCalendarHudGui(_showAllHud, hudInteractionBlocked, refreshPeriodicStrings);
 

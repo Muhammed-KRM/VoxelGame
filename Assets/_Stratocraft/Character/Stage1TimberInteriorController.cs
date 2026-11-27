@@ -95,6 +95,36 @@ namespace Stratocraft.Character
             _chinkedWallsCount = 0;
         }
 
+        public bool TryDismantleNearestFixtureKeyK(
+            Vector3 playerPos,
+            bool isCreativeMode,
+            Stage1HolsterAndBackpackController holster,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1RigidTimberBridge? rigidTimberBridge,
+            out string feedback)
+        {
+            feedback = string.Empty;
+            int idx = FindNearestFixture(playerPos, 3.0f);
+            if (idx < 0) return false;
+
+            InteriorFixture fx = _fixtures[idx];
+            if (!isCreativeMode)
+            {
+                if (fx.Kind == InteriorFixtureKind.StoneFireplaceWithChimney)
+                    holster.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.RoughStoneChunk, MaterialIdCatalog.Stone, 6, miningCtrl);
+                else if (fx.Kind == InteriorFixtureKind.WallTorchSconce)
+                    holster.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.Stick, 0, 1, miningCtrl);
+                else
+                    holster.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.TimberPlank, 0, 2, miningCtrl);
+            }
+
+            if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
+            _fixtures.RemoveAt(idx);
+            RecomputeThermalState(rigidTimberBridge, playerPos);
+            feedback = $"♻️ {fx.Kind} [K] ile güvenle söküldü ve malzemesi çantaya iade edildi!";
+            return true;
+        }
+
         /// <summary>
         /// 3 Katli pilot ev kuruldugunda icini yasanabilir kilan temel donanimlari (calisan kapi, tas somine+baca, yatak, bicki sehpasi) monte eder.
         /// </summary>
@@ -234,23 +264,15 @@ namespace Stratocraft.Character
             {
                 case InteriorFixtureKind.HingedDoor:
                 case InteriorFixtureKind.WindowShutter:
-                    if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
-                    {
-                        if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
-                        _fixtures.RemoveAt(idx);
-                        RecomputeThermalState(rigidTimberBridge, playerPos);
-                        feedback = fx.Kind == InteriorFixtureKind.HingedDoor ? "♻️ Menteşeli Kapı söküldü!" : "♻️ Pencere Kepengi söküldü!";
-                        return true;
-                    }
                     if (shiftHeld)
                     {
                         fx.IsBoltedLocked = !fx.IsBoltedLocked;
-                        feedback = fx.IsBoltedLocked ? "🔒 İç sürgü kilitlendi!" : "🔓 İç sürgü açıldı.";
+                        feedback = fx.IsBoltedLocked ? "🔒 İç sürgü kilitlendi! (Sökmek için [K])" : "🔓 İç sürgü açıldı. (Sökmek için [K])";
                         return true;
                     }
                     if (fx.IsBoltedLocked)
                     {
-                        feedback = "🔒 Kapı/kepenk sürgülü! Açmak için önce [Shift+E] ile sürgüyü çekin.";
+                        feedback = "🔒 Kapı/kepenk sürgülü! Açmak için önce [Shift+E] ile sürgüyü çekin (Sök: [K]).";
                         return true;
                     }
                     fx.IsOpenOrLit = !fx.IsOpenOrLit;
@@ -260,52 +282,30 @@ namespace Stratocraft.Character
                     }
                     RecomputeThermalState(rigidTimberBridge, playerPos);
                     feedback = fx.IsOpenOrLit
-                        ? $"🚪 {(fx.Kind == InteriorFixtureKind.HingedDoor ? "Kapı" : "Kepenk")} içe doğru açıldı (Oda yalıtımı: %{_lastThermalState.SealFactor01 * 100f:0})."
-                        : $"🚪 {(fx.Kind == InteriorFixtureKind.HingedDoor ? "Kapı" : "Kepenk")} kapatıldı (Oda yalıtımı: %{_lastThermalState.SealFactor01 * 100f:0}).";
+                        ? $"🚪 {(fx.Kind == InteriorFixtureKind.HingedDoor ? "Kapı" : "Kepenk")} içe doğru açıldı (Oda yalıtımı: %{_lastThermalState.SealFactor01 * 100f:0} | Sök: [K])."
+                        : $"🚪 {(fx.Kind == InteriorFixtureKind.HingedDoor ? "Kapı" : "Kepenk")} kapatıldı (Oda yalıtımı: %{_lastThermalState.SealFactor01 * 100f:0} | Sök: [K]).";
                     return true;
 
                 case InteriorFixtureKind.StoneFireplaceWithChimney:
-                    if (shiftHeld)
-                    {
-                        if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
-                        _fixtures.RemoveAt(idx);
-                        RecomputeThermalState(rigidTimberBridge, playerPos);
-                        feedback = "♻️ Taş Şömine & Baca sökülüp kaldırıldı!";
-                        return true;
-                    }
                     fx.IsOpenOrLit = !fx.IsOpenOrLit;
                     if (fx.PointLight != null) fx.PointLight.enabled = fx.IsOpenOrLit;
                     RecomputeThermalState(rigidTimberBridge, playerPos);
                     feedback = fx.IsOpenOrLit
                         ? $"🔥 Taş şömine yakıldı! Baca çekişi aktif | İç Isı: +{_lastThermalState.IndoorTempDeltaC:F1}°C | Yalıtım: %{_lastThermalState.SealFactor01 * 100f:0}" +
                           (_lastThermalState.IsEnclosedWarmRoom ? " (✅ SICAK KAPALI ODA!)" : "")
-                        : "💨 Taş şömine söndürüldü. (Sökmek için [Shift+E])";
+                        : "💨 Taş şömine söndürüldü. (Sökmek için [K])";
                     return true;
 
                 case InteriorFixtureKind.WoodBed:
-                    if (shiftHeld)
-                    {
-                        if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
-                        _fixtures.RemoveAt(idx);
-                        feedback = "♻️ Ahşap Yatak sökülüp kaldırıldı!";
-                        return true;
-                    }
-                    feedback = "🛏️ Yatak dinlenme & Yeniden Doğma Noktası (SpawnPoint) bu eve kaydedildi! (Sökmek için [Shift+E])";
+                    feedback = "🛏️ Yatak dinlenme & Yeniden Doğma Noktası (SpawnPoint) bu eve kaydedildi! (Sökmek için [K])";
                     return true;
 
                 case InteriorFixtureKind.SawhorseBench:
-                    if (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt))
-                    {
-                        if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
-                        _fixtures.RemoveAt(idx);
-                        feedback = "♻️ Bıçkı / Marangoz Sehpası sökülüp kaldırıldı!";
-                        return true;
-                    }
                     if (shiftHeld)
                     {
                         fx.SelectedRecipeIdx = (fx.SelectedRecipeIdx + 1) % TimberCabinInteriorSystem.SawhorseRecipes.Length;
                         var nextRec = TimberCabinInteriorSystem.SawhorseRecipes[fx.SelectedRecipeIdx];
-                        feedback = $"🪚 Bıçkı Sehpası Tarifi [Shift+E]: {nextRec.DisplayName} (Gerekli: {nextRec.RequiredOakLogs} Kütük, {nextRec.RequiredPlanks} Kalas, {nextRec.RequiredSticks} Dal) | Üret: [E] | Sök: [Alt+E]";
+                        feedback = $"🪚 Bıçkı Sehpası Tarifi [Shift+E]: {nextRec.DisplayName} (Gerekli: {nextRec.RequiredOakLogs} Kütük, {nextRec.RequiredPlanks} Kalas, {nextRec.RequiredSticks} Dal) | Üret: [E] | Sök: [K]";
                         return true;
                     }
                     var rec = TimberCabinInteriorSystem.SawhorseRecipes[fx.SelectedRecipeIdx];
@@ -317,34 +317,27 @@ namespace Stratocraft.Character
                             holster.InventoryUi.TryConsumeItemFromInventory(InventoryItemKind.VoxelBlock, MaterialIdCatalog.OakWood, rec.RequiredOakLogs, miningCtrl);
                         if (!hasWood)
                         {
-                            feedback = $"🪚 {rec.DisplayName} için en az {rec.RequiredOakLogs}x Odun (Yarma Odun / Soyulmuş Kütük / Meşe Kütüğü) gerekir! (Tarif: [Shift+E] | Sök: [Alt+E])";
+                            feedback = $"🪚 {rec.DisplayName} için en az {rec.RequiredOakLogs}x Odun gerekir! (Tarif: [Shift+E] | Sök: [K])";
                             return true;
                         }
                     }
                     if (rec.Kind == TimberInteriorCraftKind.WoodPlanks4)
                     {
                         holster.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.TimberPlank, 0, 4, miningCtrl);
-                        feedback = "🪚 Bıçkı Sehpasında biçildi: +4x Ahşap Kalas (TimberPlank)! ([T]->[3] Döşeme, Çatı, Merdiven, Kapı ve Pencere örmek için hazır!)";
+                        feedback = "🪚 Bıçkı Sehpasında biçildi: +4x Ahşap Kalas! ([V] Döşeme / Merdiven / Çatı | Sök: [K])";
                     }
                     else
                     {
                         holster.InventoryUi.TryAddHarvestedWorldItem(InventoryItemKind.LogDebarked, 0, 2, miningCtrl);
-                        feedback = $"🪚 Bıçkı Sehpasında işlendi: +2x Soyulmuş Kütük / Kiriş ({rec.DisplayName})! ([T]->[3] Duvar & Kiriş için hazır!)";
+                        feedback = $"🪚 Bıçkı Sehpasında işlendi: +2x Soyulmuş Kütük / Kiriş ({rec.DisplayName})!";
                     }
                     return true;
 
                 case InteriorFixtureKind.StorageChest:
-                    if (shiftHeld)
-                    {
-                        if (fx.RootGo != null) UnityEngine.Object.Destroy(fx.RootGo);
-                        _fixtures.RemoveAt(idx);
-                        feedback = "♻️ Ahşap Eşya Sandığı sökülüp kaldırıldı!";
-                        return true;
-                    }
                     fx.IsOpenOrLit = !fx.IsOpenOrLit;
                     feedback = fx.IsOpenOrLit
-                        ? "📦 Ahşap Eşya Sandığı açıldı! ([I] ile çantanızı düzenleyebilir, [Shift+E] ile sandığı sökebilirsiniz)"
-                        : "📦 Ahşap Eşya Sandığı kapatıldı.";
+                        ? "📦 Ahşap Eşya Sandığı açıldı! ([I] ile çantanızı düzenleyebilir, [K] ile sandığı sökebilirsiniz)"
+                        : "📦 Ahşap Eşya Sandığı kapatıldı. (Sökmek için [K])";
                     return true;
 
                 case InteriorFixtureKind.WallTorchSconce:

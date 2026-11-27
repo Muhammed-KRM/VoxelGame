@@ -318,6 +318,34 @@ namespace Stratocraft.Character
             return true;
         }
 
+        private static readonly RaycastHit[] s_terrainRayHits = new RaycastHit[16];
+
+        internal static bool TryRaycastRenderedTerrainY(float wx, float wz, float refY, out float hitY)
+        {
+            hitY = refY;
+            Vector3 origin = new Vector3(wx, refY + 4.5f, wz);
+            int count = UnityEngine.Physics.RaycastNonAlloc(origin, Vector3.down, s_terrainRayHits, 16.0f, ~0, QueryTriggerInteraction.Ignore);
+            float bestY = float.MinValue;
+            bool found = false;
+            for (int i = 0; i < count; i++)
+            {
+                Collider col = s_terrainRayHits[i].collider;
+                if (col == null) continue;
+                string n = col.gameObject.name;
+                bool isTerrainChunk = n.StartsWith("VoxelChunk_", StringComparison.Ordinal) ||
+                                      (col.transform.parent != null && col.transform.parent.name.StartsWith("VoxelChunk_", StringComparison.Ordinal));
+                if (!isTerrainChunk) continue;
+                float py = s_terrainRayHits[i].point.y;
+                if (py <= refY + 3.2f && py > bestY)
+                {
+                    bestY = py;
+                    found = true;
+                }
+            }
+            if (found) hitY = bestY;
+            return found;
+        }
+
         public void TickIdleCartsGravity(float dt, Dictionary<(int cx, int cz), uint[]> worldChunks)
         {
             if (_carts.Count == 0 || dt <= 1e-5f) return;
@@ -325,7 +353,15 @@ namespace Stratocraft.Character
             {
                 if (i == _activePullingCartIndex) continue;
                 LogArchCartRuntime cart = _carts[i];
-                float groundY = SampleTerrainY(worldChunks, cart.Position.x, cart.Position.z, cart.Position.y);
+                float radY = cart.YawDeg * Mathf.Deg2Rad;
+                Vector3 rightVec = new Vector3(Mathf.Cos(radY), 0f, -Mathf.Sin(radY));
+                float refY = cart.Position.y + 1.5f;
+                float yC = SampleTerrainY(worldChunks, cart.Position.x, cart.Position.z, refY);
+                float yL = SampleTerrainY(worldChunks, cart.Position.x - rightVec.x * 0.72f, cart.Position.z - rightVec.z * 0.72f, refY);
+                float yR = SampleTerrainY(worldChunks, cart.Position.x + rightVec.x * 0.72f, cart.Position.z + rightVec.z * 0.72f, refY);
+                float groundY = Mathf.Max(yC, (yL + yR) * 0.5f);
+                float rollDeg = Mathf.Clamp(Mathf.Atan2(yL - yR, 1.44f) * Mathf.Rad2Deg, -18f, 18f);
+
                 if (cart.Position.y > groundY + 0.03f)
                 {
                     cart.VerticalVelocity = Mathf.Max(-28f, cart.VerticalVelocity - 9.81f * dt);
@@ -335,13 +371,16 @@ namespace Stratocraft.Character
                         cart.Position.y = groundY;
                         cart.VerticalVelocity = 0f;
                     }
-                    if (cart.RootGo != null) cart.RootGo.transform.position = cart.Position;
                 }
                 else
                 {
                     cart.Position.y = groundY;
                     cart.VerticalVelocity = 0f;
-                    if (cart.RootGo != null) cart.RootGo.transform.position = cart.Position;
+                }
+                if (cart.RootGo != null)
+                {
+                    cart.RootGo.transform.position = cart.Position;
+                    cart.RootGo.transform.rotation = Quaternion.Euler(0f, cart.YawDeg, rollDeg);
                 }
             }
         }
@@ -401,16 +440,17 @@ namespace Stratocraft.Character
                 }
             }
 
-            // 3 Noktali Tekerlek + Merkez Zemin Yuksekligi (egimli arazide tekerlek ASLA yere gomulmez!)
+            // 3 Noktali Tekerlek + Merkez Zemin Yuksekligi (gercek Surface Nets MeshCollider uzerinden — asla gomulmez/havada kalmaz!)
             float prevY = cart.Position.y;
             float radY = nextYaw * Mathf.Deg2Rad;
             Vector3 rightVec = new Vector3(Mathf.Cos(radY), 0f, -Mathf.Sin(radY));
-            float refY = Mathf.Max(prevY, playerPos.y) + 2.5f;
+            float refY = Mathf.Max(prevY, playerPos.y) + 1.5f;
             float yC = SampleTerrainY(worldChunks, nextPos.x, nextPos.z, refY);
-            float yL = SampleTerrainY(worldChunks, nextPos.x - rightVec.x * 0.78f, nextPos.z - rightVec.z * 0.78f, refY);
-            float yR = SampleTerrainY(worldChunks, nextPos.x + rightVec.x * 0.78f, nextPos.z + rightVec.z * 0.78f, refY);
-            float groundY = Mathf.Max(yC, Mathf.Max(yL, yR));
-            nextPos.y = Mathf.Lerp(prevY, groundY, Mathf.Clamp01(18f * dt));
+            float yL = SampleTerrainY(worldChunks, nextPos.x - rightVec.x * 0.72f, nextPos.z - rightVec.z * 0.72f, refY);
+            float yR = SampleTerrainY(worldChunks, nextPos.x + rightVec.x * 0.72f, nextPos.z + rightVec.z * 0.72f, refY);
+            float groundY = Mathf.Max(yC, (yL + yR) * 0.5f);
+            float rollDeg = Mathf.Clamp(Mathf.Atan2(yL - yR, 1.44f) * Mathf.Rad2Deg, -18f, 18f);
+            nextPos.y = Mathf.Lerp(prevY, groundY, Mathf.Clamp01(22f * dt));
 
             float slopeSin = stepMag > 0.02f ? Mathf.Clamp((nextPos.y - prevY) / Mathf.Max(0.05f, stepMag), -0.6f, 0.6f) : 0f;
             LogArchCartPhysics.RecomputeCompoundMassAndBalance(ref cart.State, slopeSin);
@@ -424,7 +464,7 @@ namespace Stratocraft.Character
             if (cart.RootGo != null)
             {
                 cart.RootGo.transform.position = cart.Position;
-                cart.RootGo.transform.rotation = Quaternion.Euler(0f, cart.YawDeg, 0f);
+                cart.RootGo.transform.rotation = Quaternion.Euler(0f, cart.YawDeg, rollDeg);
             }
             if (cart.ChassisTr != null)
             {
@@ -503,8 +543,8 @@ namespace Stratocraft.Character
         {
             int ix = Mathf.FloorToInt(wx);
             int iz = Mathf.FloorToInt(wz);
-            int cx = ix >= 0 ? (ix >> 4) : ((ix - 15) >> 4);
-            int cz = iz >= 0 ? (iz >> 4) : ((iz - 15) >> 4);
+            int cx = ix >> 4;
+            int cz = iz >> 4;
             if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null) return false;
             int maxY = voxels.Length >> 8;
             if (wy < 1 || wy >= maxY) return false;
@@ -517,6 +557,12 @@ namespace Stratocraft.Character
 
         internal static float SampleTerrainY(Dictionary<(int cx, int cz), uint[]> worldChunks, float wx, float wz, float refY)
         {
+            // 1) Oncelikle gercek render edilen Surface Nets VoxelChunk_ MeshCollider yuzeyini milimetrik oku!
+            if (TryRaycastRenderedTerrainY(wx, wz, refY, out float meshGroundY))
+            {
+                return meshGroundY;
+            }
+
             if (worldChunks == null || worldChunks.Count == 0)
             {
                 return Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);
@@ -524,8 +570,8 @@ namespace Stratocraft.Character
 
             int ix = Mathf.FloorToInt(wx);
             int iz = Mathf.FloorToInt(wz);
-            int cx = ix >= 0 ? (ix >> 4) : ((ix - 15) >> 4);
-            int cz = iz >= 0 ? (iz >> 4) : ((iz - 15) >> 4);
+            int cx = ix >> 4;
+            int cz = iz >> 4;
             if (!worldChunks.TryGetValue((cx, cz), out uint[]? voxels) || voxels == null)
             {
                 return Stratocraft.WorldGen.Generators.StratocraftFloatingIslandWorldGen.SampleIslandTopSurfaceY(wx, wz);

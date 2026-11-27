@@ -163,7 +163,7 @@ namespace Stratocraft.Character
             {
                 case TimberSiteRigKind.WoodScaffolding:
                     BuildScaffoldingMesh(_meshScratch);
-                    feedback = "🪜 Ahşap İskele (2×2×2m) kuruldu! Üstüne yürüyüp çıkabilir, [Shift+E] ile %100 malzeme iadesiyle sökebilirsiniz.";
+                    feedback = "🪜 Ahşap İskele (2×2×2m) kuruldu! Üstüne yürüyüp çıkabilir, [K] ile %100 malzeme iadesiyle sökebilirsiniz.";
                     break;
                 case TimberSiteRigKind.ParbuckleRamp2To1:
                     BuildParbuckleRampMesh(_meshScratch);
@@ -189,9 +189,26 @@ namespace Stratocraft.Character
             return true;
         }
 
+        public bool TryDismantleNearestRigKeyK(
+            Vector3 playerPos,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            out string feedback)
+        {
+            feedback = string.Empty;
+            int idx = FindNearestRig(playerPos, 3.8f);
+            if (idx < 0) return false;
+            SiteRigInstance rig = _rigs[idx];
+            RefundRigMaterials(rig.Kind, holsterCtrl, miningCtrl);
+            if (rig.HoistedLogGo != null) UnityEngine.Object.Destroy(rig.HoistedLogGo);
+            if (rig.RootGo != null) UnityEngine.Object.Destroy(rig.RootGo);
+            _rigs.RemoveAt(idx);
+            feedback = $"♻️ {rig.Kind} [K] ile %100 malzeme iadesiyle söküldü!";
+            return true;
+        }
+
         /// <summary>
-        /// [Shift+E] ile yakindaki santiye aracini %100 malzeme iadesiyle soker;
-        /// [E] ile Rampa veya Gin Pole'a kütük yükler / halat çekerek 3B yukarı kaldırır!
+        /// [E] ile Rampa veya Gin Pole'a kütük yükler / halat çekerek 3B yukarı kaldırır! (Söküm yalnızca bağımsız [K] tuşundadır — koşarken Shift+E ile yanlışlıkla sökülmez!)
         /// </summary>
         public bool TryInteractWithRig(
             Vector3 playerPos,
@@ -207,22 +224,12 @@ namespace Stratocraft.Character
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
             out string feedback)
         {
+            _ = shiftHeld;
             feedback = string.Empty;
             int idx = FindNearestRig(playerPos, 3.8f);
             if (idx < 0) return false;
 
             SiteRigInstance rig = _rigs[idx];
-
-            // [Shift+E] -> %100 malzeme iadesiyle hizli sokum!
-            if (shiftHeld)
-            {
-                RefundRigMaterials(rig.Kind, holsterCtrl, miningCtrl);
-                if (rig.RootGo != null) UnityEngine.Object.Destroy(rig.RootGo);
-                _rigs.RemoveAt(idx);
-                feedback = $"♻️ {rig.Kind} %100 malzeme iadesiyle söküldü!";
-                return true;
-            }
-
             if (rig.Kind == TimberSiteRigKind.WoodScaffolding) return false;
 
             // Rampa veya Gin Pole'a GERCEK kutuk yukleme (havadan sahte kutuk yaratilmaz!)

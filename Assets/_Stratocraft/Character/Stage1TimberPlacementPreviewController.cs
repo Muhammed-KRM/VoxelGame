@@ -53,6 +53,13 @@ namespace Stratocraft.Character
         private int _ignorePlaceUntilFrame;
         private bool _logVerticalMode = true;
         private int _plankCarpentryMode; // 0=FloorDeck, 1=StairFlight, 2=RoofSlope
+        private Stage1RigidTimberBridge.AxeCarpentryToolMode _axeCarpentryMode = Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop;
+        private int _axeManualSectorOffset;
+        private bool _axePairBothPosts = true;
+        private int _lastAimedAxePostIdx = -1;
+        private bool _wasHoldingAxeLastFrame;
+        private bool _isShowingRealLogOrPlankPreviewThisFrame;
+        private GameObject? _axeCarpentryGhostGo;
         private float _previewYawDeg;
         private float _lastBuiltLen;
         private Vector3 _lastBuiltPlankSize;
@@ -67,7 +74,18 @@ namespace Stratocraft.Character
             _activeKind != TimberBuildPreviewKind.None &&
             _activeKind != TimberBuildPreviewKind.RealLogFromCart &&
             _activeKind != TimberBuildPreviewKind.PlankCarpentry;
+        public bool ConsumedKeyQThisFrame { get; private set; }
+        public bool IsConsumingKeyR =>
+            HasActiveToolPreview ||
+            _isShowingRealLogOrPlankPreviewThisFrame ||
+            (_wasHoldingAxeLastFrame &&
+             (_axeCarpentryMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.VerticalWallGroove ||
+              _axeCarpentryMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.SideMortiseAndNotch));
         public int PinnedBlueprintCount => _pinnedBlueprints.Count;
+
+        public Stage1RigidTimberBridge.AxeCarpentryToolMode ActiveAxeCarpentryMode => _axeCarpentryMode;
+        public int ActiveAxeManualSectorOffset => _axeManualSectorOffset;
+        public bool ActiveAxePairBothPosts => _axePairBothPosts;
 
         public void Dispose()
         {
@@ -75,6 +93,11 @@ namespace Stratocraft.Character
             {
                 UnityEngine.Object.Destroy(_ghostGo);
                 _ghostGo = null;
+            }
+            if (_axeCarpentryGhostGo != null)
+            {
+                UnityEngine.Object.Destroy(_axeCarpentryGhostGo);
+                _axeCarpentryGhostGo = null;
             }
             for (int i = 0; i < _pinnedBlueprints.Count; i++)
             {
@@ -782,12 +805,16 @@ namespace Stratocraft.Character
             Stage1HolsterAndBackpackController holsterCtrl,
             Dictionary<(int cx, int cz), uint[]>? worldChunks,
             Material? sharedVoxelMat,
-            out string hudHint)
+            out string hudHint,
+            Stage1TimberBlueprintPlannerController? blueprintPlanner = null)
         {
             hudHint = string.Empty;
+            ConsumedKeyQThisFrame = false;
+            _isShowingRealLogOrPlankPreviewThisFrame = false;
             if (menuOpen || miningCtrl.IsCrystalActive)
             {
                 if (_ghostGo != null) _ghostGo.SetActive(false);
+                if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
                 return false;
             }
 
@@ -799,29 +826,45 @@ namespace Stratocraft.Character
             VisualInventorySlot activeSlot = holsterCtrl.InventoryUi.GetActiveHotbarSlot();
             bool holdingPlank = !activeSlot.IsEmpty && activeSlot.Kind == InventoryItemKind.TimberPlank;
             bool holdingAxe = !activeSlot.IsEmpty && activeSlot.Kind == InventoryItemKind.ToolAxe;
+            bool allowCartLogPreview = activeSlot.IsEmpty || logCartCtrl.IsPullingCart || holsterCtrl.IsCarryingShoulderLog;
+
+            if (!holdingAxe)
+            {
+                if (_wasHoldingAxeLastFrame)
+                {
+                    // Balta birakildiginda guvenli varsayilan kesim kipine sifirla!
+                    _axeCarpentryMode = Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop;
+                    _axeManualSectorOffset = 0;
+                    _lastAimedAxePostIdx = -1;
+                }
+                if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
+            }
+            _wasHoldingAxeLastFrame = holdingAxe;
 
             TimberBuildPreviewKind effectiveKind = HasActiveToolPreview
                 ? _activeKind
-                : (hasRealLog
+                : ((hasRealLog && allowCartLogPreview && !holdingAxe && !holdingPlank)
                     ? TimberBuildPreviewKind.RealLogFromCart
                     : (holdingPlank ? TimberBuildPreviewKind.PlankCarpentry : TimberBuildPreviewKind.None));
+            _isShowingRealLogOrPlankPreviewThisFrame = effectiveKind != TimberBuildPreviewKind.None;
 
             if (_assembly.Active)
             {
                 if (_ghostGo != null) _ghostGo.SetActive(false);
+                if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
                 int pct = Mathf.RoundToInt(HandAssemblyProgress01 * 100f);
                 hudHint = $"🛠️ Elleriyle {GetKindLabel(_assembly.Kind)} monte ediliyor... %{pct}";
                 return false;
             }
 
             bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-            bool altHeld = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
 
             if (effectiveKind == TimberBuildPreviewKind.None)
             {
                 if (_ghostGo != null) _ghostGo.SetActive(false);
                 if (TryFindAimedBlueprint(cam, playerTr, out int aimedIdx, out string aimedBpLbl))
                 {
+                    if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
                     PinnedBlueprint bp = _pinnedBlueprints[aimedIdx];
                     BlueprintSlotSpec[] slots = GetSlotsForKind(bp.Kind);
                     int filled = EvaluateSpatialSlots(bp.Kind, bp.Position, bp.YawDeg, looseBuildSystem.SnapshotPointCloud(), _slotFilledScratch, _slotMatchedIdxScratch);
@@ -830,30 +873,27 @@ namespace Stratocraft.Character
                     {
                         checklist += (s > 0 ? " | " : "") + (_slotFilledScratch[s] ? "✅" : "❌") + slots[s].Label;
                     }
-                    hudHint = $"📐 {aimedBpLbl} [{filled}/{slots.Length}]: {checklist}  ([T] Doğrula/Kaldır)";
+                    hudHint = $"📐 {aimedBpLbl} [{filled}/{slots.Length}]: {checklist}  ([T] Doğrula | [K] Şablonu Kaldır)";
                     return false;
                 }
 
-                // Faz M1 & M2: Elde Balta varken direk olugu, yan zivana, eyer kertigi veya kesim metre cetvelini canli goster!
+                // 4-KIPLI BALTA MARANGOZLUK SISTEMI (Sifir Cakisma + 3B Oluk Oku + Karsi Direk Hiza Cizgisi + [V] Kip + [R] 45° Yon + [J] Tek/Cift + [K] Kapat!):
                 if (holdingAxe && cam != null)
                 {
-                    if (rigidTimberBridge.TryInspectAxeCarpentryTarget(
-                            cam.transform.position, cam.transform.forward, 3.35f, shiftHeld, altHeld, worldChunks, out string carpHint))
-                    {
-                        hudHint = carpHint;
-                    }
-                    else if (collapseBridge.TryInspectAimedFallenLogCutRuler(
-                                 cam.transform.position, cam.transform.forward, 3.35f, out float lM, out float rM, out float totM))
-                    {
-                        hudHint = $"📏 AĞAÇ KESİM CETVELİ: Sol {lM:F2}m | Sağ {rM:F2}m (Toplam {totM:F2}m) — [Sol Tık] Baltayla Kes";
-                    }
+                    return StepAxeCarpentryModesAndHologram(
+                        cam, shiftHeld, miningCtrl, holsterCtrl, rigidTimberBridge, collapseBridge, worldChunks, out hudHint);
                 }
+
+                if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
                 return false;
             }
+            if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
 
-            // Iptal ([Sag Tik] / [ESC] / [Q]) — sadece arac onizlemesi icin
-            if (HasActiveToolPreview && (Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Q)))
+            // Iptal ([Sag Tik] / [ESC] / [Q]) — sadece arac onizlemesi icin ([Q] tuketildigi icin eldeki esyayi yere atmaz!)
+            bool qCancelPressed = Input.GetKeyDown(KeyCode.Q);
+            if (HasActiveToolPreview && (Input.GetMouseButtonDown(1) || Input.GetKeyDown(KeyCode.Escape) || qCancelPressed))
             {
+                if (qCancelPressed) ConsumedKeyQThisFrame = true;
                 CancelPreview();
                 miningCtrl.LastFeedbackText = "Önizleme iptal edildi.";
                 return true;
@@ -976,14 +1016,23 @@ namespace Stratocraft.Character
                 }
             }
 
-            // C) GERCEK KUTUK YERLESTIRME (SIFIR IC ICE GECME + OLUK KONTROLU + ARTAN KUTUK DUSURME — Faz M3 & M4)
+            // C) GERCEK KUTUK YERLESTIRME (SIFIR IC ICE GECME + PLAN DIREK MIKNATISI + OLUK KONTROLU — Faz M3 & M4)
             // Rampa / Gin Pole Vinc askisindan alinan ust kat kutukleri varsayilan olarak YATAY (duvar/kiris) modunda acilir!
             bool effectiveVertical = logSourceKind == 3 ? false : _logVerticalMode;
+            bool snappedToBlueprintPost = false;
             Stage1RigidTimberBridge.HorizontalPlacementEval horizEval = default;
             float ghostLen = hasRealLog ? availLogLen : 4.5f;
             Color ghostTint = new Color(0.96f, 0.84f, 0.42f, 0.58f);
 
-            if (effectiveKind == TimberBuildPreviewKind.RealLogFromCart && !effectiveVertical)
+            if (effectiveKind == TimberBuildPreviewKind.RealLogFromCart && effectiveVertical &&
+                blueprintPlanner != null &&
+                blueprintPlanner.TryFindNearestUnbuiltPost(targetPos, 1.45f, out Vector3 bpPostBase, out _))
+            {
+                targetPos = bpPostBase;
+                snappedToBlueprintPost = true;
+                ghostTint = new Color(0.24f, 0.96f, 0.48f, 0.72f); // Parlak Yesil: Mavi plan diregine milimetrik kilitlendi!
+            }
+            else if (effectiveKind == TimberBuildPreviewKind.RealLogFromCart && !effectiveVertical)
             {
                 horizEval = rigidTimberBridge.EvaluateSmartHorizontalPlacement(targetPos, _previewYawDeg, availLogLen, availLogDiam, worldChunks);
                 ghostLen = Mathf.Max(0.6f, horizEval.ClearBodyLengthM);
@@ -1024,7 +1073,9 @@ namespace Stratocraft.Character
             {
                 if (effectiveVertical)
                 {
-                    hudHint = $"🪵 ANA DİREK DİKME ({availLogLen:F2}m — {srcTag}) | [V] Yatay Mod | [Sol Tık] Çukura Dik";
+                    hudHint = snappedToBlueprintPost
+                        ? $"🎯 PLAN DİREĞİNE TAM KİLİTLİ ({availLogLen:F2}m — {srcTag}) | [Sol Tık] Tam Yerine Dik | [V] Yatay"
+                        : $"🪵 ANA DİREK DİKME ({availLogLen:F2}m — {srcTag}) | [V] Yatay Mod | [Sol Tık] Tam Buraya Dik";
                 }
                 else
                 {
@@ -1065,7 +1116,7 @@ namespace Stratocraft.Character
                         TimberWoodSpecies sp = wMat == MaterialIdCatalog.Ironwood ? TimberWoodSpecies.Ironwood : TimberWoodSpecies.Oak;
                         if (effectiveVertical)
                         {
-                            rigidTimberBridge.TryTipInLogIntoHole(targetPos, len, diam, sp, sharedVoxelMat, worldChunks, out string tipMsg);
+                            rigidTimberBridge.TryTipInLogIntoHole(targetPos, len, diam, sp, sharedVoxelMat, worldChunks, out string tipMsg, lockExactXZ: snappedToBlueprintPost);
                             miningCtrl.LastFeedbackText = tipMsg;
                         }
                         else
@@ -1294,6 +1345,298 @@ namespace Stratocraft.Character
             TimberBuildPreviewKind.WallTorchSconce => "Duvar Meşalesi",
             _ => "Kütük"
         };
+
+        private static string GetAxeModeTitle(Stage1RigidTimberBridge.AxeCarpentryToolMode mode) => mode switch
+        {
+            Stage1RigidTimberBridge.AxeCarpentryToolMode.VerticalWallGroove => "🪵 Kip 2/4: DİKEY DUVAR OLUĞU AÇMA",
+            Stage1RigidTimberBridge.AxeCarpentryToolMode.SideMortiseAndNotch => "🏗️ Kip 3/4: YAN KİRİŞ YUVASI & EYER KERTİĞİ",
+            Stage1RigidTimberBridge.AxeCarpentryToolMode.StructuralTrimAndCut => "🪚 Kip 4/4: YAPI KESİM & ÇATI ÜSTÜ DİREK BUDAMA",
+            _ => "🪓 Kip 1/4: AĞAÇ & YERDEKİ KÜTÜK KESİMİ (Yapı Korumalı 🛡️)"
+        };
+
+        private bool StepAxeCarpentryModesAndHologram(
+            UnityEngine.Camera cam,
+            bool shiftHeld,
+            Stage1MatterCrystalAndMiningController miningCtrl,
+            Stage1HolsterAndBackpackController holsterCtrl,
+            Stage1RigidTimberBridge rigidTimberBridge,
+            Stage1StructuralCollapseBridge collapseBridge,
+            Dictionary<(int cx, int cz), uint[]>? worldChunks,
+            out string hudHint)
+        {
+            hudHint = string.Empty;
+
+            // [V]: 4 Balta Kipi arasinda kesin ve cakismasiz gecis!
+            if (Input.GetKeyDown(KeyCode.V))
+            {
+                int cur = (int)_axeCarpentryMode;
+                int next = shiftHeld ? ((cur + 3) & 3) : ((cur + 1) & 3);
+                _axeCarpentryMode = (Stage1RigidTimberBridge.AxeCarpentryToolMode)next;
+                _axeManualSectorOffset = 0;
+                miningCtrl.LastFeedbackText = $"{GetAxeModeTitle(_axeCarpentryMode)}  ([V] Kip | [R] 45° Yön | [J] Tek/Çift | [K] Kapat)";
+            }
+
+            bool inGrooveOrMortise =
+                _axeCarpentryMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.VerticalWallGroove ||
+                _axeCarpentryMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.SideMortiseAndNotch;
+
+            // [R]: Oluk ve Zivana kiplerinde secili yuzu direk etrafinda 45° dondur!
+            if (inGrooveOrMortise && Input.GetKeyDown(KeyCode.R))
+            {
+                _axeManualSectorOffset = (_axeManualSectorOffset + (shiftHeld ? 7 : 1)) & 7;
+            }
+
+            // [J]: Cift Direk Otomatik Hizalama <-> Sadece Tek Direk gecisi (Shift/Kosma ile cakismaz!)
+            if (inGrooveOrMortise && Input.GetKeyDown(KeyCode.J))
+            {
+                _axePairBothPosts = !_axePairBothPosts;
+                miningCtrl.LastFeedbackText = _axePairBothPosts
+                    ? "🔗 ÇİFT DİREK EŞLEME AÇIK ([J]): Oluk açarken karşı direk de otomatik aynı eksende oyulur!"
+                    : "🎯 TEK DİREK KİPİ ([J]): Yalnızca baktığınız direğin seçili yüzü oyulur.";
+            }
+
+            // [K]: Acilmis olugu veya eyer kertigini geri kapatma (Alt/Geri Atilma ile SIFIR cakisma!)
+            if (inGrooveOrMortise && Input.GetKeyDown(KeyCode.K))
+            {
+                if (rigidTimberBridge.TryUndoAxeCarpentryKeyK(
+                        _axeCarpentryMode,
+                        _axeManualSectorOffset,
+                        cam.transform.position,
+                        cam.transform.forward,
+                        4.25f,
+                        worldChunks,
+                        out string undoMsg))
+                {
+                    miningCtrl.LastFeedbackText = undoMsg;
+                    return true;
+                }
+            }
+
+            bool hasTimberTarget = rigidTimberBridge.TryEvaluateAxeCarpentryPreview(
+                _axeCarpentryMode,
+                _axeManualSectorOffset,
+                _axePairBothPosts,
+                cam.transform.position,
+                cam.transform.forward,
+                4.25f,
+                worldChunks,
+                out Stage1RigidTimberBridge.AxeCarpentryPreviewState st);
+
+            if (hasTimberTarget && st.HasTarget)
+            {
+                if (st.PieceIdx != _lastAimedAxePostIdx)
+                {
+                    _lastAimedAxePostIdx = st.PieceIdx;
+                    _axeManualSectorOffset = 0;
+                    rigidTimberBridge.TryEvaluateAxeCarpentryPreview(
+                        _axeCarpentryMode, 0, _axePairBothPosts, cam.transform.position, cam.transform.forward, 4.25f, worldChunks, out st);
+                }
+
+                hudHint = st.HudText;
+                UpdateAxeCarpentryHologramMesh(in st);
+
+                // Kip 1, 2, 3'te [Sol Tik] dogrudan tam onizlenen yuzeye/halkaya milimetrik uygulanir (savurma sirasinda kayma olmaz!)
+                if (_axeCarpentryMode != Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop &&
+                    Time.frameCount >= _ignorePlaceUntilFrame &&
+                    Input.GetMouseButtonDown(0))
+                {
+                    if (rigidTimberBridge.TryExecuteAxeCarpentryAction(
+                            _axeCarpentryMode,
+                            _axeManualSectorOffset,
+                            _axePairBothPosts,
+                            cam.transform.position,
+                            cam.transform.forward,
+                            4.25f,
+                            worldChunks,
+                            out byte salvMat,
+                            out int salvCnt,
+                            out string actMsg))
+                    {
+                        if (salvCnt > 0)
+                        {
+                            InventoryItemKind outKind = salvMat == MaterialIdCatalog.WoodPlank
+                                ? InventoryItemKind.TimberPlank
+                                : InventoryItemKind.SplitFirewood;
+                            holsterCtrl.InventoryUi.TryAddHarvestedWorldItem(outKind, salvMat, salvCnt, miningCtrl);
+                        }
+                        miningCtrl.LastFeedbackText = actMsg;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
+
+            if (_axeCarpentryMode == Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop &&
+                collapseBridge.TryInspectAimedFallenLogCutRuler(cam.transform.position, cam.transform.forward, 3.85f, out float lM, out float rM, out float totM))
+            {
+                hudHint = $"📏 AĞAÇ KESİM CETVELİ: Sol {lM:F2}m | Sağ {rM:F2}m (Toplam {totM:F2}m) — [Sol Tık] Kes | [V] Oluk Açma Kipi";
+            }
+            else
+            {
+                hudHint = $"{GetAxeModeTitle(_axeCarpentryMode)} | [V] Kip Değiştir";
+            }
+            return false;
+        }
+
+        private void UpdateAxeCarpentryHologramMesh(in Stage1RigidTimberBridge.AxeCarpentryPreviewState st)
+        {
+            if (st.Mode == Stage1RigidTimberBridge.AxeCarpentryToolMode.TreeAndLooseChop &&
+                st.PieceKind == RigidTimberPieceKind.Post)
+            {
+                if (_axeCarpentryGhostGo != null) _axeCarpentryGhostGo.SetActive(false);
+                return;
+            }
+
+            EnsureGhostMaterial();
+            if (_axeCarpentryGhostGo == null)
+            {
+                _axeCarpentryGhostGo = new GameObject("AxeCarpentry3DHologram");
+                _axeCarpentryGhostGo.AddComponent<MeshFilter>();
+                var mr = _axeCarpentryGhostGo.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = _ghostMat;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                mr.receiveShadows = false;
+            }
+
+            _meshScratch.Clear();
+            Color holoCol = new Color(0.22f, 0.98f, 0.48f, 0.72f);
+
+            if (st.Mode == Stage1RigidTimberBridge.AxeCarpentryToolMode.VerticalWallGroove &&
+                st.PieceKind == RigidTimberPieceKind.Post)
+            {
+                holoCol = st.AlreadyCarved
+                    ? new Color(0.35f, 0.85f, 1.00f, 0.65f)
+                    : new Color(0.18f, 0.98f, 0.45f, 0.76f);
+
+                Vector3 fwd = st.FaceDirWorld.sqrMagnitude > 1e-4f ? st.FaceDirWorld.normalized : Vector3.forward;
+                Vector3 right = new Vector3(-fwd.z, 0f, fwd.x);
+                float r = st.PieceRadiusM + 0.025f;
+                float botY = Mathf.Max(st.PieceCenter.y - st.PieceLengthM * 0.5f + 0.15f, st.HitWorldPt.y - 1.45f);
+                float topY = Mathf.Min(st.PieceCenter.y + st.PieceLengthM * 0.5f - 0.15f, st.HitWorldPt.y + 1.45f);
+                Vector3 faceBase = new Vector3(st.PieceCenter.x, 0f, st.PieceCenter.z) + fwd * r;
+
+                // 1) Direk yuzeyinde parlak 3B dikey U-oluk seridi
+                EmitOrientedSlab(_meshScratch, new Vector3(faceBase.x, (botY + topY) * 0.5f, faceBase.z), fwd, right, Vector3.up,
+                    width: 0.16f, height: Mathf.Max(0.4f, topY - botY), depth: 0.07f, MaterialIdCatalog.WoodPlank);
+
+                // 2) Oluk yonunu net gosteren kalin 3B disari ok (Shaft + 2 Kanat!)
+                Vector3 arrowOrigin = new Vector3(faceBase.x, st.HitWorldPt.y, faceBase.z) + fwd * 0.34f;
+                EmitOrientedSlab(_meshScratch, arrowOrigin, fwd, right, Vector3.up, width: 0.08f, height: 0.08f, depth: 0.58f, MaterialIdCatalog.WoodPlank);
+                Vector3 tip = arrowOrigin + fwd * 0.32f;
+                EmitOrientedSlab(_meshScratch, tip - fwd * 0.10f + right * 0.11f, (fwd - right).normalized, (fwd + right).normalized, Vector3.up, 0.07f, 0.08f, 0.26f, MaterialIdCatalog.WoodPlank);
+                EmitOrientedSlab(_meshScratch, tip - fwd * 0.10f - right * 0.11f, (fwd + right).normalized, (right - fwd).normalized, Vector3.up, 0.07f, 0.08f, 0.26f, MaterialIdCatalog.WoodPlank);
+
+                // 3) Karsi direk hizadaysa iki direk arasina parlayan yesil 3B hizalama baglanti cizgisi!
+                if (st.PairedPostIdx >= 0)
+                {
+                    Vector3 pStart = new Vector3(faceBase.x, st.HitWorldPt.y, faceBase.z);
+                    Vector3 pEnd = new Vector3(st.PairedPostFacePt.x, st.HitWorldPt.y, st.PairedPostFacePt.z);
+                    Vector3 spanVec = pEnd - pStart;
+                    float spanLen = spanVec.magnitude;
+                    if (spanLen > 0.25f)
+                    {
+                        Vector3 sDir = spanVec / spanLen;
+                        Vector3 sRight = new Vector3(-sDir.z, 0f, sDir.x);
+                        EmitOrientedSlab(_meshScratch, (pStart + pEnd) * 0.5f, sDir, sRight, Vector3.up, 0.055f, 0.055f, spanLen, MaterialIdCatalog.WoodPlank);
+                        // Karsi direk ic yuzunde de karsilikli oluk izi!
+                        EmitOrientedSlab(_meshScratch, pEnd, -sDir, sRight, Vector3.up, 0.16f, 1.40f, 0.07f, MaterialIdCatalog.WoodPlank);
+                    }
+                }
+            }
+            else if (st.Mode == Stage1RigidTimberBridge.AxeCarpentryToolMode.SideMortiseAndNotch)
+            {
+                holoCol = new Color(1.00f, 0.78f, 0.20f, 0.76f);
+                if (st.PieceKind == RigidTimberPieceKind.Post)
+                {
+                    Vector3 fwd = st.FaceDirWorld.sqrMagnitude > 1e-4f ? st.FaceDirWorld.normalized : Vector3.forward;
+                    Vector3 right = new Vector3(-fwd.z, 0f, fwd.x);
+                    Vector3 pocketPos = new Vector3(st.PieceCenter.x, st.HitWorldPt.y, st.PieceCenter.z) + fwd * (st.PieceRadiusM + 0.04f);
+                    EmitOrientedSlab(_meshScratch, pocketPos, fwd, right, Vector3.up, width: 0.28f, height: 0.42f, depth: 0.14f, MaterialIdCatalog.WoodPlank);
+                    EmitOrientedSlab(_meshScratch, pocketPos + Vector3.down * 0.23f + fwd * 0.08f, fwd, right, Vector3.up, width: 0.32f, height: 0.07f, depth: 0.24f, MaterialIdCatalog.WoodPlank);
+
+                    if (st.PairedPostIdx >= 0)
+                    {
+                        Vector3 pEnd = new Vector3(st.PairedPostFacePt.x, st.HitWorldPt.y, st.PairedPostFacePt.z);
+                        Vector3 spanVec = pEnd - pocketPos;
+                        float spanLen = spanVec.magnitude;
+                        if (spanLen > 0.25f)
+                        {
+                            Vector3 sDir = spanVec / spanLen;
+                            Vector3 sRight = new Vector3(-sDir.z, 0f, sDir.x);
+                            EmitOrientedSlab(_meshScratch, (pocketPos + pEnd) * 0.5f, sDir, sRight, Vector3.up, 0.06f, 0.06f, spanLen, MaterialIdCatalog.WoodPlank);
+                            EmitOrientedSlab(_meshScratch, pEnd, -sDir, sRight, Vector3.up, 0.28f, 0.42f, 0.14f, MaterialIdCatalog.WoodPlank);
+                        }
+                    }
+                }
+                else
+                {
+                    Vector3 endDir = st.FaceDirWorld.sqrMagnitude > 1e-4f ? st.FaceDirWorld.normalized : Vector3.right;
+                    Vector3 notchPos = st.PieceCenter + endDir * Mathf.Max(0.1f, st.PieceLengthM * 0.5f - 0.34f) + Vector3.up * (st.PieceRadiusM * 0.65f);
+                    Vector3 right = Vector3.Cross(Vector3.up, endDir).normalized;
+                    if (right.sqrMagnitude < 1e-4f) right = Vector3.right;
+                    EmitOrientedSlab(_meshScratch, notchPos, endDir, right, Vector3.up, width: st.PieceRadiusM * 2.1f, height: 0.22f, depth: 0.42f, MaterialIdCatalog.WoodPlank);
+                }
+            }
+            else
+            {
+                // Kip 3 (Yapi Kesim & Cati Ustu Budama) veya Kip 0 Serbest Kutuk Kesim Halkasi!
+                holoCol = st.IsSafePostTopTrim
+                    ? new Color(0.20f, 0.94f, 1.00f, 0.78f) // Turkuaz: Guvenli cati ustu direk budama!
+                    : new Color(1.00f, 0.24f, 0.20f, 0.78f); // Kirmizi: Kesim halkasi!
+
+                Vector3 axis = (st.PieceRot * Vector3.up).normalized;
+                float tAlong = Vector3.Dot(st.HitWorldPt - st.PieceCenter, axis);
+                Vector3 ringCenter = st.PieceCenter + axis * tAlong;
+                Vector3 u = Mathf.Abs(axis.y) > 0.8f ? Vector3.right : Vector3.up;
+                Vector3 v = Vector3.Cross(axis, u).normalized;
+                u = Vector3.Cross(v, axis).normalized;
+                float ringR = Mathf.Max(0.26f, st.PieceRadiusM + 0.055f);
+                EmitOrientedSlab(_meshScratch, ringCenter + u * ringR, u, v, axis, ringR * 2.1f, 0.06f, 0.06f, MaterialIdCatalog.WoodPlank);
+                EmitOrientedSlab(_meshScratch, ringCenter - u * ringR, u, v, axis, ringR * 2.1f, 0.06f, 0.06f, MaterialIdCatalog.WoodPlank);
+                EmitOrientedSlab(_meshScratch, ringCenter + v * ringR, v, u, axis, ringR * 2.1f, 0.06f, 0.06f, MaterialIdCatalog.WoodPlank);
+                EmitOrientedSlab(_meshScratch, ringCenter - v * ringR, v, u, axis, ringR * 2.1f, 0.06f, 0.06f, MaterialIdCatalog.WoodPlank);
+            }
+
+            SetGhostTintColor(holoCol);
+            _axeCarpentryGhostGo.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            var mf = _axeCarpentryGhostGo.GetComponent<MeshFilter>();
+            mf.sharedMesh = HybridSurfaceNetsAndShapeMesher.BuildUnityMeshZeroGc(_meshScratch, "Mesh_AxeCarpentryHolo");
+            _axeCarpentryGhostGo.SetActive(_meshScratch.Count > 0);
+        }
+
+        private static void EmitOrientedSlab(
+            List<FacetedVoxelTriangle> dst,
+            Vector3 center,
+            Vector3 fwd,
+            Vector3 right,
+            Vector3 up,
+            float width,
+            float height,
+            float depth,
+            byte matId)
+        {
+            Vector3 rx = right.normalized * (width * 0.5f);
+            Vector3 uy = up.normalized * (height * 0.5f);
+            Vector3 fz = fwd.normalized * (depth * 0.5f);
+
+            Vector3 p000 = center - rx - uy - fz;
+            Vector3 p100 = center + rx - uy - fz;
+            Vector3 p010 = center - rx + uy - fz;
+            Vector3 p110 = center + rx + uy - fz;
+            Vector3 p001 = center - rx - uy + fz;
+            Vector3 p101 = center + rx - uy + fz;
+            Vector3 p011 = center - rx + uy + fz;
+            Vector3 p111 = center + rx + uy + fz;
+
+            EmitQuad(dst, p000, p010, p110, p100, -fwd, matId);
+            EmitQuad(dst, p101, p111, p011, p001, fwd, matId);
+            EmitQuad(dst, p001, p011, p010, p000, -right, matId);
+            EmitQuad(dst, p100, p110, p111, p101, right, matId);
+            EmitQuad(dst, p010, p011, p111, p110, up, matId);
+            EmitQuad(dst, p001, p000, p100, p101, -up, matId);
+        }
 
         private static void EmitWireframeBox(List<FacetedVoxelTriangle> dst, Vector3 min, Vector3 max, float t, byte matId)
         {

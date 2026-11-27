@@ -511,14 +511,10 @@ namespace Stratocraft.Character
             }
 
             bool isCarryingLog = holsterCtrl.IsCarryingShoulderLog;
-            bool menuBlockingLog = holsterCtrl.IsBackpackOpen ||
-                                   holsterCtrl.InventoryUi.IsCreativeCatalogOpen ||
-                                   holsterCtrl.InventoryUi.IsChestWindowOpen ||
-                                   Cursor.lockState == CursorLockMode.None;
-            if (isCarryingLog && !menuBlockingLog && !miningCtrl.IsCrystalActive && cam != null)
+            if (isCarryingLog)
             {
-                StepShoulderLogPlacement(
-                    cam, playerTransform, miningCtrl, holsterCtrl, worldChunks, sharedVoxelMat, rightClickConsumedExternally);
+                // Omuzdaki kutuk onizlemesi ve yerlestirmesi tamamen Stage1TimberPlacementPreviewController (1:1 RigidTimber) tarafindan yurutulur; cifte hayalet onizleme engellendi!
+                HideGhostPreview();
                 return;
             }
 
@@ -564,13 +560,8 @@ namespace Stratocraft.Character
 
             if (Input.GetKeyDown(KeyCode.R))
             {
-                _userPlacementYawDeg = Mathf.Repeat(_userPlacementYawDeg + 35f, 360f);
-            }
-            else if ((Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)) &&
-                     Mathf.Abs(Input.GetAxis("Mouse ScrollWheel")) > 0.001f)
-            {
-                float scr = Input.GetAxis("Mouse ScrollWheel");
-                _userPlacementYawDeg = Mathf.Repeat(_userPlacementYawDeg + (scr > 0f ? 22.5f : -22.5f), 360f);
+                float stepDeg = (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) ? 15f : 35f;
+                _userPlacementYawDeg = Mathf.Repeat(_userPlacementYawDeg + stepDeg, 360f);
             }
 
             if (!TrySampleAimSurface(cam, playerTransform.position, miningCtrl, worldChunks, out Vector3 surfPt, out Vector3 surfNrm))

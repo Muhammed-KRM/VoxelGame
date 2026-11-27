@@ -255,7 +255,8 @@ namespace Stratocraft.Character
             Stage1DirectionalCombatBridge? combatBridge = null,
             Stage1StructuralCollapseBridge? collapseBridge = null,
             IReadOnlyDictionary<(int cx, int cz), uint[]>? worldChunks = null,
-            WorldLooseBuildSystem? looseBuildSystem = null)
+            WorldLooseBuildSystem? looseBuildSystem = null,
+            bool externalConsumedKeyQ = false)
         {
             if (worldChunks != null) _lastWorldChunks = worldChunks;
             HolsterMachine.StepHolster(dt);
@@ -301,7 +302,7 @@ namespace Stratocraft.Character
             HandleHolsterSlotHotkeys(miningCtrl, combatBridge, swordVisual != null ? swordVisual.transform : null, looseBuildSystem);
             HandleQuickDropAndInteractHotkeys(
                 playerTransform, playerBodyRoot, playerCamera, chestLidTransform, anvilTransform, swordVisual, pickaxeVisual, axeVisual,
-                sharedVoxelMat, miningCtrl, combatBridge, collapseBridge, looseBuildSystem);
+                sharedVoxelMat, miningCtrl, combatBridge, collapseBridge, looseBuildSystem, externalConsumedKeyQ);
             StepDroppedWorldItemsPhysics(dt);
             SyncHandAndBodyHolsterVisuals(
                 playerBodyRoot, playerCamera, swordVisual, pickaxeVisual, axeVisual, sharedVoxelMat,
@@ -2676,11 +2677,11 @@ namespace Stratocraft.Character
             Stage1MatterCrystalAndMiningController miningCtrl,
             Stage1DirectionalCombatBridge? combatBridge,
             Stage1StructuralCollapseBridge? collapseBridge = null,
-            WorldLooseBuildSystem? looseBuildSystem = null)
+            WorldLooseBuildSystem? looseBuildSystem = null,
+            bool externalConsumedKeyQ = false)
         {
-            bool dropLogPressed = Input.GetKeyDown(KeyCode.E) ||
-                                  Input.GetKeyDown(Stage1GameSettings.KeyInteract) ||
-                                  Input.GetKeyDown(KeyCode.G) ||
+            // Omuzda kutuk tasirken [E] tusu kapilari acmak icin serbest birakildi; kutugu yere birakmak yalnizca [Q] veya [X] iledir!
+            bool dropLogPressed = (!externalConsumedKeyQ && Input.GetKeyDown(KeyCode.Q)) ||
                                   Input.GetKeyDown(Stage1GameSettings.KeyQuickDrop) ||
                                   Input.GetKeyDown(KeyCode.X);
             if (IsCarryingShoulderLog && dropLogPressed)
@@ -2689,7 +2690,7 @@ namespace Stratocraft.Character
                 IsCarryingShoulderLog = false;
                 ShoulderLogExactLengthM = 2.4f;
                 if (_shoulderTimberLogProxyGo != null) _shoulderTimberLogProxyGo.SetActive(false);
-                miningCtrl.LastFeedbackText = "🪵 OMUZDAKİ KÜTÜK YERE BIRAKILDI: Aletler serbest!";
+                miningCtrl.LastFeedbackText = "🪵 OMUZDAKİ KÜTÜK YERE BIRAKILDI ([Q]/[X]): Aletler serbest!";
                 return;
             }
 
@@ -2701,7 +2702,7 @@ namespace Stratocraft.Character
             if (!BackpackSystem.IsBackpackOpen &&
                 looseBuildSystem != null &&
                 looseBuildSystem.IsModularBuildModeActive &&
-                !altHeld &&
+                !externalConsumedKeyQ &&
                 (Input.GetKeyDown(KeyCode.Q) || Input.GetKeyDown(KeyCode.X)))
             {
                 looseBuildSystem.CancelActiveBuildPlacement(
@@ -2713,7 +2714,7 @@ namespace Stratocraft.Character
             }
 
             bool combatConsumingQ = combatBridge != null && combatBridge.IsCombatConsumingScrollOrQ;
-            bool qDropPressed = !BackpackSystem.IsBackpackOpen && !combatConsumingQ && !altHeld && Input.GetKeyDown(KeyCode.Q);
+            bool qDropPressed = !externalConsumedKeyQ && !BackpackSystem.IsBackpackOpen && !combatConsumingQ && Input.GetKeyDown(KeyCode.Q);
 
             // PT-04: Elde Kilic varken yalin [X] tusu Yari-Kilic (Halbschwert) tutusunu acar/kapatir; kilici yere atmaz!
             VisualInventorySlot activeSlotForX = InventoryUi.GetActiveHotbarSlot();
